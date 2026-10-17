@@ -1,0 +1,58 @@
+{
+  "case_id": "spec0236-seam-boundary-unasserted-caller",
+  "subject_id": "authored-spec0236-18",
+  "diff": "cases/spec0236-seam-boundary-unasserted-caller.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "smoke_call_no_assert",
+  "hard_case": "Seam class matches example 18: `suffix` and `label` both read reachable_unrevealed and both evidence records stay static_limitation (the known remaining split). The diff finding reads propagation_unknown with label_three_runs related at oracle unknown/none, an abstention where the test asserts nothing.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if v >= 1 { \"items\" } else { \"item\" }",
+        "mutated_line": "if v >= 1 { \"items\" } else { \"item\" }",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: v == 1 now reads items; the test calls label(3) without asserting its text, so it cannot see it"
+      },
+      {
+        "replacement": "if v > 3 { \"items\" } else { \"item\" }",
+        "mutated_line": "if v > 3 { \"items\" } else { \"item\" }",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 2 and 3 now read item"
+      },
+      {
+        "replacement": "if v > 1 { \"item\" } else { \"items\" }",
+        "mutated_line": "if v > 1 { \"item\" } else { \"items\" }",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the branches swap, so 3 reads item"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "let _ = label(3) asserts nothing, so no mutant can fail. Spec cells: RIPR-SPEC-0236 example 18.",
+  "labeling_observation": {
+    "ripr_commit": "b0428d112",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "propagation_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

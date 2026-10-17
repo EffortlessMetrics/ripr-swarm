@@ -5,17 +5,19 @@ use super::super::rust_index::{
 
 use super::arm_selection::ArmSelector;
 use super::builder_override::{
-    OwnerCall, overridden_fields_read, setter_names, struct_literal_fields,
+    EarlierWrite, KeyedFallback, OwnerCall, is_literal_key, literals_equal, overridden_fields_read,
+    setter_names, struct_literal_fields,
 };
 use super::propagation_witness::{
-    assertion_field_collection_reads, assertion_observes_direct_collection,
-    direct_collection_mutation_receiver, field_collection_write_path,
+    assertion_field_collection_reads, assertion_keyed_getter_reads,
+    assertion_observes_direct_collection_in_test, direct_collection_mutation_receiver,
+    field_collection_insert_key, field_collection_write_appends, field_collection_write_path,
 };
 use super::reach::{invokes_opaque_macro, is_proximity_only};
 use super::rust_string_literals;
 use super::text::changed_error_variant;
 use crate::analysis::classifier::oracle_binds_sink_identity;
-use crate::analysis::extract::mask_comments_and_strings;
+use crate::analysis::extract::{group_end, mask_comments_and_strings};
 use crate::domain::*;
 
 /// Shared oracle provenance at the reveal admission boundary. The same
@@ -24,6 +26,11 @@ use crate::domain::*;
 pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     pub(in crate::analysis) owner_return_pin: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     pub(in crate::analysis) assertion_admitted: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    /// Whether the assertion's macros are the standard ones (no visible
+    /// binding rebinds `assert_ne!`, `assert!` or `matches!`). Consulted
+    /// only before a RIPR-SPEC-0231 sibling exclusion is credited.
+    pub(in crate::analysis) sibling_exclusion_admitted:
+        &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// Whether a test related only by file or module may run the owner
     /// (#6297). One that cannot, by any name path, does not confirm a match
     /// arm while another related test reaches the owner.
@@ -42,6 +49,12 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// type a call names (`Money` in `Money::new(8)`), when it names one:
     /// such a call reaches the owner only through that type's function.
     pub(in crate::analysis) expected_reaches_owner: &'a dyn Fn(Option<&str>, &str) -> bool,
+    /// RIPR-SPEC-0035: the value an expected operand `(test, operand)`
+    /// stands for when it names a test `let` binding or a workspace
+    /// `const`/`static` the scan can read, so the equality is judged as if
+    /// that value were written in place of the name.
+    pub(in crate::analysis) expected_operand_value:
+        &'a dyn Fn(&TestSummary, &str) -> Option<String>,
     /// RIPR-SPEC-0094 Part D: whether an effect observer can carry the state
     /// the changed effect writes (`EffectStateCarrier::admits`). Consulted
     /// only for effect families after `effect_observer_confirms`.
@@ -51,11 +64,43 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// field (`builder_override::setter_plainly_writes`). Only a verified
     /// setter defeats a changed default.
     pub(in crate::analysis) setter_writes_field: &'a dyn Fn(&str, &str, &str) -> bool,
+    /// Exact projected mutable argument read through the shared collection observer.
+    pub(in crate::analysis) collection_argument_observed:
+        &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// RIPR-SPEC-0228 getter credit: whether the owner type's method
     /// `(type, getter, field)` returns that field path itself
     /// (`builder_override::getter_plainly_reads`). Only a verified getter
     /// lets a read through a method confirm a field-path collection write.
     pub(in crate::analysis) getter_reads_field: &'a dyn Fn(&str, &str, &str) -> bool,
+    /// RIPR-SPEC-0228 keyed getter credit: whether the owner type's method
+    /// `(type, getter, field)` looks its one argument up in that field path
+    /// (`builder_override::getter_plainly_reads_key`).
+    /// `Some` carries what the getter returns for a missing key.
+    pub(in crate::analysis) getter_reads_key: &'a dyn Fn(&str, &str, &str) -> Option<KeyedFallback>,
+    /// The owner's call parameters in order, receiver excluded; a
+    /// destructured parameter is an empty name. A keyed read confirms a
+    /// map insert only through the argument the insert's key comes from.
+    pub(in crate::analysis) owner_argument_names: &'a [String],
+    /// Whether the owner declares a return type. A bare call to such an
+    /// owner (`s.place("A", 0);`) may have returned before its insert, so
+    /// only a call whose result is consumed confirms a keyed read.
+    pub(in crate::analysis) owner_returns_value: bool,
+    /// #8051: whether the owner body before the changed expression may
+    /// leave early (`if self.locked { return; }`, `?`, a panicking call),
+    /// including a guard sharing the changed line. Only then can a test
+    /// that expects the written collection empty have skipped the changed
+    /// push.
+    pub(in crate::analysis) owner_may_exit_before_probe: bool,
+    /// RIPR-SPEC-0228 keyed reads: whether `(type, ctor, field)`, the
+    /// constructor a test builds its binding with, leaves that map field
+    /// empty (`builder_override::constructor_starts_empty`).
+    pub(in crate::analysis) constructor_starts_empty: &'a dyn Fn(&str, &str, &str) -> bool,
+    /// RIPR-SPEC-0228 keyed reads: for `(type, method, field, expected)`, a
+    /// call the test makes on its binding before the owner call, how it
+    /// writes that map field when it can never store the expected literal
+    /// itself, else `None` (`builder_override::method_cannot_store`).
+    pub(in crate::analysis) call_cannot_store:
+        &'a dyn Fn(&str, &str, &str, &str) -> Option<EarlierWrite>,
 }
 
 #[cfg(test)]
@@ -73,16 +118,67 @@ fn reveal_evidence(
         &ReturnOracleAdmission {
             owner_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
+            sibling_exclusion_admitted: &|_, _| true,
             proximity_may_reach_owner: &|_| false,
             owner_parameters: &[],
             expected_reaches_owner: &|_, _| false,
+            expected_operand_value: &|_, _| None,
             effect_state_carried: &|_, _| true,
             setter_writes_field: &|_, _, _| true,
+            collection_argument_observed: &|_, _| false,
             getter_reads_field: &|_, _, _| false,
+            getter_reads_key: &|_, _, _| None,
+            owner_argument_names: &[],
+            owner_returns_value: true,
+            owner_may_exit_before_probe: false,
+            constructor_starts_empty: &|_, _, _| false,
+            call_cannot_store: &|_, _, _, _| None,
         },
         None,
     );
     (observe, discriminate, related)
+}
+
+/// [`reveal_evidence`] with the #8051 early-exit flag under the test's
+/// control, reporting the first related row's oracle strength.
+#[cfg(test)]
+fn reveal_evidence_with_exit(
+    probe: &Probe,
+    test: &TestSummary,
+    owner_may_exit_before_probe: bool,
+) -> (StageEvidence, OracleStrength) {
+    let (_, discriminate, related, _) = reveal_evidence_with_expression(
+        probe,
+        &probe.expression,
+        &[(test, RelationReason::DirectOwnerCall)],
+        &[],
+        &|_, _| false,
+        &|_, _| false,
+        &ReturnOracleAdmission {
+            owner_return_pin: &|_, _| false,
+            assertion_admitted: &|_, _| true,
+            sibling_exclusion_admitted: &|_, _| true,
+            proximity_may_reach_owner: &|_| false,
+            owner_parameters: &[],
+            expected_reaches_owner: &|_, _| false,
+            expected_operand_value: &|_, _| None,
+            effect_state_carried: &|_, _| true,
+            setter_writes_field: &|_, _, _| true,
+            collection_argument_observed: &|_, _| false,
+            getter_reads_field: &|_, _, _| false,
+            getter_reads_key: &|_, _, _| None,
+            owner_argument_names: &[],
+            owner_returns_value: true,
+            owner_may_exit_before_probe,
+            constructor_starts_empty: &|_, _, _| false,
+            call_cannot_store: &|_, _, _, _| None,
+        },
+        None,
+    );
+    let strength = related
+        .first()
+        .map_or(OracleStrength::None, |row| row.oracle_strength.clone());
+    (discriminate, strength)
 }
 
 #[cfg(test)]
@@ -342,11 +438,15 @@ fn effect_observer_confirms(assertion: &OracleFact) -> bool {
     )
 }
 
-fn collection_observer_confirms(expression: &str, assertion: &OracleFact) -> bool {
+fn collection_observer_confirms(
+    expression: &str,
+    test: &TestSummary,
+    assertion: &OracleFact,
+) -> bool {
     let Some(receiver) = direct_collection_mutation_receiver(expression) else {
         return false;
     };
-    assertion_observes_direct_collection(&assertion.text, receiver)
+    assertion_observes_direct_collection_in_test(&assertion.text, receiver, &test.body)
 }
 
 /// RIPR-SPEC-0228: whether `assertion` observes the field collection `path`
@@ -356,9 +456,15 @@ fn collection_observer_confirms(expression: &str, assertion: &OracleFact) -> boo
 /// returns that field (`inv.history()` with
 /// `fn history(&self) -> &[Event] { &self.log }`). A shared name is not a
 /// read: `inv.log()` returning another field does not confirm.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the field-collection observer groups the write identity (path, append, insert key) with the test and assertion it judges"
+)]
 fn field_collection_observer_confirms(
     path: &str,
     count_reads: bool,
+    append_write: bool,
+    insert_key_index: Option<usize>,
     owner: Option<OwnerCall<'_>>,
     test: &TestSummary,
     assertion: &OracleFact,
@@ -367,20 +473,231 @@ fn field_collection_observer_confirms(
     let Some(owner) = owner else {
         return false;
     };
-    assertion_field_collection_reads(&assertion.text, path, count_reads)
+    let plain_reads = assertion_field_collection_reads(&assertion.text, path, false, append_write);
+    assertion_field_collection_reads(&assertion.text, path, count_reads, append_write)
         .into_iter()
         .any(|read| {
-            owner_call_precedes_read(
-                &test.body,
-                test.start_line,
-                &read.binding,
-                owner.name(),
-                assertion.line,
-            ) && read.getter.as_deref().is_none_or(|getter| {
-                owner
-                    .impl_type()
-                    .is_some_and(|impl_type| getter_reads_field(impl_type, getter, path))
+            // #8204: a count-only read of a map the owner inserts into
+            // cannot confirm deleting that insert when the test may
+            // already hold the inserted key: overwriting it leaves the
+            // count unchanged.
+            let count_only = !plain_reads.contains(&read);
+            !(count_only
+                && insert_key_index.is_some_and(|index| {
+                    insert_count_may_overwrite(
+                        test,
+                        owner,
+                        &read.binding,
+                        path,
+                        index,
+                        assertion.line,
+                    )
+                }))
+                && owner_call_precedes_read(
+                    &test.body,
+                    test.start_line,
+                    &read.binding,
+                    owner.name(),
+                    assertion.line,
+                )
+                && read.getter.as_deref().is_none_or(|getter| {
+                    owner
+                        .impl_type()
+                        .is_some_and(|impl_type| getter_reads_field(impl_type, getter, path))
+                })
+        })
+}
+
+/// #8204: whether the test may already hold, in `binding.path`, the key an
+/// accepted owner call passes at argument `key_index`, so the owner's
+/// insert only overwrites it and a count of the map cannot notice the
+/// insert being deleted. Positive evidence only: a direct
+/// `binding.path.insert(key, ..)` before the owner call with a matching
+/// key (literal keys compared by value, anything else by spelling), or a
+/// `binding.path = ..` seeding assignment whose right-hand side names the
+/// literal key. Any other setup keeps the count credit: no seeding
+/// evidence means the insert may be the entry that makes the count.
+fn insert_count_may_overwrite(
+    test: &TestSummary,
+    owner: OwnerCall<'_>,
+    binding: &str,
+    path: &str,
+    key_index: usize,
+    read_line: usize,
+) -> bool {
+    let masked = mask_comments_and_strings(&test.body);
+    let normalize = |text: &str| normalize_insert_key(text);
+    let call_name = format!("{binding}.{}", owner.name());
+    let seed_name = format!("{binding}.{path}.insert");
+    owner_calls_before_read(
+        &test.body,
+        test.start_line,
+        binding,
+        owner.name(),
+        read_line,
+    )
+    .into_iter()
+    .any(|at| {
+        let Some(key) = test
+            .body
+            .get(at..)
+            .and_then(|text| super::activation::call_arguments(text, &call_name))
+            .and_then(|args| args.get(key_index).map(|arg| normalize(arg)))
+        else {
+            return false;
+        };
+        masked[..at]
+            .match_indices(&format!("{seed_name}("))
+            .any(|(seed_at, _)| {
+                test.body
+                    .get(seed_at..)
+                    .and_then(|text| super::activation::call_arguments(text, &seed_name))
+                    .and_then(|args| args.first().map(|arg| normalize(arg)))
+                    .is_some_and(|seed| insert_keys_match(&key, &seed))
             })
+            || is_literal_key(&key)
+                && masked[..at]
+                    .match_indices(&format!("{binding}.{path}"))
+                    .any(|(seed_at, needle)| {
+                        // Only the right-hand side of this assignment
+                        // statement can seed the map: bound the search at
+                        // its terminating `;` and require the key in key
+                        // position, so a later statement or a value-side
+                        // mention of the literal cannot demote the count.
+                        let Some(after) = masked.get(seed_at + needle.len()..at) else {
+                            return false;
+                        };
+                        if after
+                            .chars()
+                            .next()
+                            .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+                        {
+                            return false;
+                        }
+                        let Some(rhs) = after
+                            .trim_start()
+                            .strip_prefix('=')
+                            .filter(|rest| !rest.starts_with('=') && !rest.starts_with('>'))
+                        else {
+                            return false;
+                        };
+                        // The masked text fixes the statement span (a `;`
+                        // inside a string cannot end it early); the key
+                        // itself is matched in the unmasked text.
+                        let rhs_end = rhs.find(';').unwrap_or(rhs.len());
+                        let rhs_start = at - rhs.len();
+                        test.body
+                            .get(rhs_start..rhs_start + rhs_end)
+                            .is_some_and(|rhs| key_in_key_position(rhs, key.as_str()))
+                    })
+    })
+}
+
+/// Whether `rhs` (one assignment right-hand side) names `key` as a map key:
+/// the literal appears where an entry key belongs, followed by `,`, `:`,
+/// or `=>` and preceded by an opening bracket or the start. A literal in
+/// value position (`from([("B", "A")])`) does not seed the key.
+fn key_in_key_position(rhs: &str, key: &str) -> bool {
+    rhs.match_indices(key).any(|(at, _)| {
+        let before = rhs[..at].trim_end();
+        let after = rhs[at + key.len()..].trim_start();
+        (before.is_empty() || before.ends_with(['(', '[', '{', ',']))
+            && (after.starts_with(',') || after.starts_with(':') || after.starts_with("=>"))
+    })
+}
+
+/// An insert key as the value it names: owned-copy spellings of the same
+/// key (`"A"`, `"A".to_string()`, `String::from("A")`, `sku.clone()`)
+/// normalize to the copied value, so a seeded entry and the owner call
+/// that overwrites it compare equal.
+fn normalize_insert_key(text: &str) -> String {
+    let mut value = text.trim();
+    loop {
+        let trimmed = value.trim().trim_start_matches('&').trim();
+        let stripped = [".to_string()", ".to_owned()", ".into()", ".clone()"]
+            .iter()
+            .find_map(|suffix| trimmed.strip_suffix(suffix))
+            .or_else(|| {
+                ["String::from(", "str::to_string("]
+                    .iter()
+                    .find_map(|prefix| trimmed.strip_prefix(prefix))
+                    .and_then(|inner| inner.strip_suffix(')'))
+            });
+        match stripped {
+            Some(inner) => value = inner,
+            None => return trimmed.to_string(),
+        }
+    }
+}
+/// Whether two insert keys name the same entry: literal keys compare by
+/// value (`"A"` and `"A"` respelled), anything else by spelling, so the
+/// same variable passed twice still matches.
+fn insert_keys_match(key: &str, seed: &str) -> bool {
+    match literals_equal(key, seed) {
+        Some(equal) => equal,
+        None => key == seed,
+    }
+}
+
+/// RIPR-SPEC-0228 keyed reads: whether `assertion` reads back the entry the
+/// owner inserted into the field map `path` under its argument number
+/// `key_index`. One compared side must be `binding.getter(key)` on the
+/// binding the test called the owner on; `getter` must resolve to an
+/// inherent method of the owner type that looks its argument up in `path`
+/// (`getter_reads_key`); and an accepted owner call before the read must
+/// pass `key` in that argument position. The `assert_eq!` must expect a
+/// literal the getter cannot return for a missing key
+/// ([`KeyedFallback::differs_from`]): `assert_eq!(s.count("A"), 0)` passes
+/// whether or not `.unwrap_or(0)` found the insert. `inv.on_hand("A")`
+/// after `inv.ship("A", 3)` reads the entry `self.stock.insert(sku, ..)`
+/// wrote; `inv.on_hand("B")` does not.
+fn keyed_field_read_confirms(
+    path: &str,
+    key_index: usize,
+    owner: Option<OwnerCall<'_>>,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    return_admission: &ReturnOracleAdmission<'_>,
+) -> bool {
+    let Some(owner) = owner else {
+        return false;
+    };
+    let Some(impl_type) = owner.impl_type() else {
+        return false;
+    };
+    // A `#[should_panic]` test passes when the values differ.
+    if test
+        .attrs
+        .iter()
+        .map(String::as_str)
+        .chain(std::iter::once(test.body.as_str()))
+        .any(|text| text.contains("should_panic"))
+    {
+        return false;
+    }
+    assertion_keyed_getter_reads(&assertion.text)
+        .into_iter()
+        .any(|read| {
+            (return_admission.getter_reads_key)(impl_type, &read.getter, path)
+                .is_some_and(|fallback| fallback.differs_from(&read.expected))
+                && owner_call_passes_key(
+                    &test.body,
+                    test.start_line,
+                    assertion.line,
+                    &KeyedCall {
+                        binding: &read.binding,
+                        method: owner.name(),
+                        getter: &read.getter,
+                        expected: &read.expected,
+                        impl_type,
+                        returns_value: return_admission.owner_returns_value,
+                        index: key_index,
+                        key: &read.key,
+                        path,
+                        starts_empty: return_admission.constructor_starts_empty,
+                        cannot_store: return_admission.call_cannot_store,
+                    },
+                )
         })
 }
 
@@ -395,6 +712,18 @@ pub(in crate::analysis) fn owner_call_precedes_read(
     method: &str,
     read_line: usize,
 ) -> bool {
+    !owner_calls_before_read(body, start_line, binding, method, read_line).is_empty()
+}
+
+/// The offsets in `body` of the `binding.method(..)` calls that
+/// [`owner_call_precedes_read`] accepts.
+fn owner_calls_before_read(
+    body: &str,
+    start_line: usize,
+    binding: &str,
+    method: &str,
+    read_line: usize,
+) -> Vec<usize> {
     let masked = mask_comments_and_strings(body);
     let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
     let line_at = |at: usize| start_line + masked[..at].matches('\n').count();
@@ -433,11 +762,332 @@ pub(in crate::analysis) fn owner_call_precedes_read(
     masked
         .match_indices(&call)
         .filter(|(at, _)| bound_at(*at) && runs_unconditionally(&masked, *at))
-        .any(|(at, _)| {
-            line_at(at) < read_line
+        .map(|(at, _)| at)
+        .filter(|at| {
+            line_at(*at) < read_line
                 && !rebindings
                     .iter()
-                    .any(|rebound| *rebound > at && line_at(*rebound) <= read_line)
+                    .any(|rebound| *rebound > *at && line_at(*rebound) <= read_line)
+        })
+        .collect()
+}
+
+/// One accepted owner call a keyed read is checked against.
+struct KeyedCall<'a> {
+    /// The test binding the owner is called on and the getter read from.
+    binding: &'a str,
+    method: &'a str,
+    /// The verified keyed getter the assertion reads through.
+    getter: &'a str,
+    /// The literal the assertion expects the entry to hold.
+    expected: &'a str,
+    /// The owner's impl type, which `binding` must be built as.
+    impl_type: &'a str,
+    /// Whether the owner declares a return type.
+    returns_value: bool,
+    /// The insert key's argument position, receiver excluded.
+    index: usize,
+    /// The key the getter reads, as spelled in the assertion.
+    key: &'a str,
+    /// The map field the owner inserts into.
+    path: &'a str,
+    /// Whether `(type, ctor, field)` builds that field empty.
+    starts_empty: &'a dyn Fn(&str, &str, &str) -> bool,
+    /// How `(type, method, field, expected)` writes the field when it can
+    /// never store `expected` itself; `None` otherwise.
+    cannot_store: &'a dyn Fn(&str, &str, &str, &str) -> Option<EarlierWrite>,
+}
+
+/// RIPR-SPEC-0228 keyed reads: whether some owner call that
+/// [`owner_call_precedes_read`] accepts passes `key` as its argument number
+/// `index` (receiver excluded), so the entry the owner inserted under that
+/// parameter is the one the test reads back. The call must be a bare
+/// statement (`inv.ship("A", 3);`), optionally ending in `.unwrap()`,
+/// `.expect(..)` or `?`, or bind its result only after one of those
+/// (`let r = inv.ship("A", 3).unwrap();`): an owner that returned before the
+/// insert would then have failed the test. A result kept or projected
+/// unconsumed (`let r = inv.ship(..)`, `let _ = ..`, `.unwrap_err()`,
+/// `.is_err()`, `.is_ok()`) or a call inside an assertion does not count,
+/// and neither does a bound result named again before the read: a returned
+/// `&mut Self` (`r.set("A", 7)`) writes the entry without naming the
+/// binding. Fails closed on anything it cannot read.
+fn owner_call_passes_key(
+    body: &str,
+    start_line: usize,
+    read_line: usize,
+    call: &KeyedCall,
+) -> bool {
+    let masked = mask_comments_and_strings(body);
+    let normalize = |text: &str| text.trim().trim_start_matches('&').trim().to_string();
+    let key = normalize(call.key);
+    let name = format!("{}.{}", call.binding, call.method);
+    let Some(lines_before) = read_line.checked_sub(start_line) else {
+        return false;
+    };
+    let read_at: usize = masked
+        .split_inclusive('\n')
+        .take(lines_before)
+        .map(str::len)
+        .sum();
+    // The read line must open with the assertion: `s.set("K", 5); assert_eq!(..)`
+    // writes the entry on the read's own line, outside the checked window.
+    if !masked
+        .get(read_at..)
+        .is_some_and(|line| line.trim_start().starts_with("assert"))
+    {
+        return false;
+    }
+    owner_calls_before_read(body, start_line, call.binding, call.method, read_line)
+        .into_iter()
+        .any(|at| {
+            let statement_start = masked[..at].rfind([';', '{', '}']).map_or(0, |i| i + 1);
+            let Some((end, consumed)) = call_statement_tail(&masked, at, name.len() + 1) else {
+                return false;
+            };
+            let prefix = masked[statement_start..at].trim();
+            let shape = if prefix.is_empty() {
+                consumed || !call.returns_value
+            } else {
+                consumed
+                    && plain_let_binding_name(prefix).is_some_and(|bound| {
+                        bound_result_only_compared(&masked, end, read_at, bound)
+                    })
+            };
+            // Cheap checks first: the constructor check may scan the index.
+            shape
+                && body
+                    .get(at..)
+                    .and_then(|text| super::activation::call_arguments(text, &name))
+                    .and_then(|arguments| {
+                        arguments
+                            .get(call.index)
+                            .map(|argument| normalize(argument))
+                    })
+                    .is_some_and(|argument| argument == key)
+                && key_holds_between(&masked, end, read_at, &key)
+                // An early `return` (a platform skip) anywhere before the read
+                // passes without it.
+                && !masked
+                    .get(..read_at)
+                    .is_none_or(|window| contains_as_whole_word(window, "return"))
+                && only_getter_reads_between(&masked, end, read_at, call.binding, call.getter)
+                && binding_starts_without_expected(body, &masked, statement_start, call)
+        })
+}
+
+/// RIPR-SPEC-0228 rule 3 for keyed reads: between the owner call (ending
+/// at `from`) and the read (at `to`) in masked `code`, `binding` may appear
+/// only as `binding.getter(..)` through the verified read-only getter. Any
+/// other mention (`s.set("K", 5)`, `s.m.clear()`, `&mut s`) may rewrite the
+/// entry the read sees.
+fn only_getter_reads_between(
+    code: &str,
+    from: usize,
+    to: usize,
+    binding: &str,
+    getter: &str,
+) -> bool {
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let Some(window) = code.get(from..to) else {
+        return false;
+    };
+    let read = format!(".{getter}(");
+    window.match_indices(binding).all(|(at, name)| {
+        let after = &window[at + name.len()..];
+        window[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ident(ch) || ch == '.')
+            || after.starts_with(ident)
+            || after.starts_with(read.as_str())
+    })
+}
+
+/// RIPR-SPEC-0228 keyed reads: whether the test builds `binding` with its
+/// map field empty and, before the owner call (statement starting at
+/// `call_start` in masked `code`), touches it only in ways that cannot
+/// already store the expected value. The last `let [mut] binding` must be
+/// `Type::ctor(..)`, or `Default::default()` annotated `: Type`, with
+/// `Type` the owner's impl type and the constructor verified to build the
+/// field empty ([`KeyedCall::starts_empty`]). Every later statement that
+/// names `binding` must be a call `binding.m(..)` whose arguments are all
+/// plain literals, none equal to the expected value, optionally ending in
+/// `.unwrap()`, `.expect(..)` or `?`, to a method verified unable to store
+/// the expected literal ([`KeyedCall::cannot_store`]); literal tokens are
+/// read from the unmasked `body`. The binding must be declared once, at the
+/// test's top level. A seeding call (`s.set("K", 5)`, `s.set("K", v)`), a
+/// helper (`seed(&mut s)`), a struct literal and a seeding constructor
+/// (`S::with("K", 5)`) all fail closed: the entry could already hold the
+/// value the assertion expects whether or not the owner's insert ran.
+fn binding_starts_without_expected(
+    body: &str,
+    code: &str,
+    call_start: usize,
+    call: &KeyedCall,
+) -> bool {
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let Some(before) = code.get(..call_start) else {
+        return false;
+    };
+    // The binding must be declared once, at the top level of the test: a
+    // `let` in a nested block or a second `let` may not be the value the
+    // owner call sees.
+    let declarations: Vec<(usize, usize)> = before
+        .match_indices("let ")
+        .filter_map(|(at, keyword)| {
+            if before[..at].chars().next_back().is_some_and(ident) {
+                return None;
+            }
+            let rest = before[at + keyword.len()..].trim_start();
+            let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
+            let after = rest.strip_prefix(call.binding)?;
+            (!after.starts_with(ident)).then_some((at, before.len() - after.len()))
+        })
+        .collect();
+    let [(let_at, after_name)] = declarations.as_slice() else {
+        return false;
+    };
+    let after_name = *after_name;
+    if !runs_unconditionally(code, *let_at) {
+        return false;
+    }
+    let Some(declaration_end) = before[after_name..].find(';').map(|at| after_name + at) else {
+        return false;
+    };
+    let Some((annotation, initializer)) = before[after_name..declaration_end].split_once('=')
+    else {
+        return false;
+    };
+    let (annotation, initializer) = (annotation.trim(), initializer.trim());
+    let annotated = match annotation.strip_prefix(':').map(str::trim) {
+        None => false,
+        Some(ty)
+            if ty == call.impl_type
+                || ty
+                    .strip_prefix(call.impl_type)
+                    .is_some_and(|rest| rest.starts_with('<')) =>
+        {
+            true
+        }
+        _ => return false,
+    };
+    let constructor = if annotated && initializer == "Default::default()" {
+        Some(super::builder_override::TRAIT_DEFAULT)
+    } else {
+        initializer
+            .strip_prefix(call.impl_type)
+            .and_then(|rest| rest.strip_prefix("::"))
+            .and_then(|rest| {
+                let name_len = rest.find(|ch: char| !ident(ch)).unwrap_or(rest.len());
+                let (name, arguments) = rest.split_at(name_len);
+                // The argument list must close the initializer.
+                (!name.is_empty()
+                    && arguments.starts_with('(')
+                    && closing_paren(arguments).is_some_and(|close| close + 1 == arguments.len()))
+                .then_some(name)
+            })
+    };
+    if !constructor.is_some_and(|ctor| (call.starts_empty)(call.impl_type, ctor, call.path)) {
+        return false;
+    }
+    let names_binding = |text: &str| {
+        text.match_indices(call.binding).any(|(at, found)| {
+            !text[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ident(ch) || ch == '.')
+                && !text[at + found.len()..].starts_with(ident)
+        })
+    };
+    let expected = call.expected.trim();
+    let expected = expected
+        .strip_prefix("Some(")
+        .and_then(|inner| inner.strip_suffix(')'))
+        .unwrap_or(expected);
+    let mut writers = 0usize;
+    let mut accumulates = false;
+    let mut start = declaration_end + 1;
+    while start < call_start {
+        let end = before[start..]
+            .find(';')
+            .map_or(call_start, |at| start + at);
+        let statement = &before[start..end];
+        let at = start + (statement.len() - statement.trim_start().len());
+        start = end + 1;
+        if !names_binding(statement) {
+            continue;
+        }
+        let Some(method) = before[at..]
+            .strip_prefix(call.binding)
+            .and_then(|rest| rest.strip_prefix('.'))
+            .map(|rest| &rest[..rest.find(|ch: char| !ident(ch)).unwrap_or(rest.len())])
+            .filter(|method| !method.is_empty())
+        else {
+            return false;
+        };
+        let name = format!("{}.{method}", call.binding);
+        let ends_here = before[at + name.len()..].starts_with('(')
+            && call_statement_tail(code, at, name.len() + 1)
+                .is_some_and(|(tail, _)| tail == end + 1);
+        let literal_arguments = body
+            .get(at..end)
+            .and_then(|text| super::activation::call_arguments(text, &name))
+            .is_some_and(|arguments| {
+                arguments
+                    .iter()
+                    .all(|argument| literals_equal(argument, expected) == Some(false))
+            });
+        let Some(write) = (ends_here && literal_arguments)
+            .then(|| (call.cannot_store)(call.impl_type, method, call.path, expected))
+            .flatten()
+        else {
+            return false;
+        };
+        writers += usize::from(write != EarlierWrite::Reads);
+        accumulates |= write == EarlierWrite::Accumulates;
+    }
+    // An accumulating call adds to whatever another call stored
+    // (`add("K", 2); add("K", 3)` reaches 5).
+    !(accumulates && writers > 1)
+}
+
+/// The offset of the `)` closing the `(` that opens `text`.
+fn closing_paren(text: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (at, ch) in text.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(at);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether `key` names the same value from offset `from` (just past the
+/// owner call) up to `to` (the read) in masked `code`: a literal always
+/// does; a plain identifier does when nothing in between names it, so no
+/// reassignment, shadow or mutation can change it. Anything else fails
+/// closed.
+fn key_holds_between(code: &str, from: usize, to: usize, key: &str) -> bool {
+    if is_literal_key(key) {
+        return true;
+    }
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let Some(window) = code.get(from..to) else {
+        return false;
+    };
+    !key.is_empty()
+        && key.chars().all(ident)
+        && !key.starts_with(|ch: char| ch.is_ascii_digit())
+        && !window.match_indices(key).any(|(at, name)| {
+            !window[..at].chars().next_back().is_some_and(ident)
+                && !window[at + name.len()..].starts_with(ident)
         })
 }
 
@@ -541,6 +1191,12 @@ pub(in crate::analysis) fn binding_untouched_after_owner_call(
 /// `code`. Only `.unwrap()`, `.expect(..)` or `?` may follow the call: they
 /// consume its result, so a returned `&mut Self` is never written.
 fn bare_call_end(code: &str, call_at: usize, call_len: usize) -> Option<usize> {
+    call_statement_tail(code, call_at, call_len).map(|(end, _)| end)
+}
+
+/// [`bare_call_end`]'s end offset, with whether `.unwrap()`, `.expect(..)`
+/// or `?` consumed the call's result before the `;`.
+fn call_statement_tail(code: &str, call_at: usize, call_len: usize) -> Option<(usize, bool)> {
     let args_at = call_at + call_len;
     let mut depth = 0usize;
     let mut close = None;
@@ -555,7 +1211,8 @@ fn bare_call_end(code: &str, call_at: usize, call_len: usize) -> Option<usize> {
             _ => {}
         }
     }
-    let mut tail = code[close? + 1..].trim_start();
+    let after_call = code.get(close? + 1..)?.trim_start();
+    let mut tail = after_call;
     loop {
         if let Some(rest) = tail.strip_prefix(".unwrap()") {
             tail = rest.trim_start();
@@ -571,7 +1228,63 @@ fn bare_call_end(code: &str, call_at: usize, call_len: usize) -> Option<usize> {
             break;
         }
     }
-    tail.starts_with(';').then(|| code.len() - tail.len() + 1)
+    tail.starts_with(';')
+        .then(|| (code.len() - tail.len() + 1, tail.len() < after_call.len()))
+}
+
+/// Whether every mention of `bound` in masked `code` between `from` and
+/// `to` is a whole operand of an assertion macro, first
+/// (`assert_eq!(receipt, ..)`) or last (`assert_eq!(.., receipt);`): a
+/// comparison only borrows the value, while any other use
+/// (`receipt.set(..)`, `let _ = receipt;`, `assert!(touch(receipt))`) may
+/// write through a returned `&mut Self`.
+fn bound_result_only_compared(code: &str, from: usize, to: usize, bound: &str) -> bool {
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let Some(window) = code.get(from..to) else {
+        return false;
+    };
+    window.match_indices(bound).all(|(at, name)| {
+        let before = &window[..at];
+        let after = &window[at + name.len()..];
+        if before.chars().next_back().is_some_and(ident) || after.starts_with(ident) {
+            return true;
+        }
+        // Split on `;` only: a struct literal operand holds braces.
+        let statement = before.rfind(';').map_or(before, |i| &before[i + 1..]);
+        let before = before.trim_end();
+        let after = after.trim_start();
+        // Only the std assertion opener, and no other macro before the
+        // mention: `assert_reset!(r, 7)` or `assert_eq!(x, touch!(r))` may
+        // write through `r`.
+        let head = statement.trim_start();
+        let Some(inner) = ["assert_eq!(", "assert_ne!(", "assert!("]
+            .iter()
+            .find_map(|opener| head.strip_prefix(opener))
+        else {
+            return false;
+        };
+        !inner.contains('!')
+            && ((inner.trim().is_empty() && after.starts_with(','))
+                || (before.ends_with(',')
+                    && after
+                        .strip_prefix(')')
+                        .is_some_and(|rest| rest.trim_start().starts_with(';'))))
+    })
+}
+
+/// The `NAME` of `let NAME =` or `let mut NAME =` with one plain
+/// identifier: the bound value is the consumed result, not a guard or a
+/// projection of it.
+fn plain_let_binding_name(prefix: &str) -> Option<&str> {
+    let rest = prefix.strip_prefix("let ")?.strip_suffix('=')?.trim();
+    let name = rest.strip_prefix("mut ").map_or(rest, str::trim);
+    (name != "_"
+        && name
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_alphabetic() || first == '_')
+        && name.chars().all(|ch| ch.is_alphanumeric() || ch == '_'))
+    .then_some(name)
 }
 
 /// Whether a masked `statement` (no trailing `;`) leaves `binding` alone:
@@ -663,6 +1376,42 @@ pub(in crate::analysis) fn owner_called_on_other_receiver(
         masked[..receiver_start].trim_end().ends_with('.')
             || masked[receiver_start..receiver_end] != *binding
     })
+}
+
+/// RIPR-SPEC-0228 keyed reads: the field path `<path>` when file line
+/// `line` of the owner whose source text `owner_body` starts at file line
+/// `owner_start_line` begins with a `self.<path>.insert(` statement at the
+/// top level of the owner body, outside any branch, loop, block or closure;
+/// `None` otherwise. An insert under
+/// `if qty > 100 { .. }` runs only for some inputs, so a test reading the
+/// key back says nothing about it unless its inputs reach the branch.
+pub(in crate::analysis) fn unconditional_owner_insert_field(
+    owner_body: &str,
+    owner_start_line: usize,
+    line: usize,
+) -> Option<String> {
+    let masked = mask_comments_and_strings(owner_body);
+    let lines_before = line.checked_sub(owner_start_line)?;
+    let line_at: usize = masked
+        .split_inclusive('\n')
+        .take(lines_before)
+        .map(str::len)
+        .sum();
+    let text = masked.get(line_at..)?;
+    let at = line_at + (text.len() - text.trim_start().len());
+    // The statement must be the insert itself (`self.a.b.insert(`), not a
+    // call that hands it to a closure (`self.items.iter().for_each(|k| ..)`).
+    text.trim_start()
+        .split_once('(')
+        .and_then(|(target, _)| target.strip_prefix("self."))
+        .and_then(|target| target.strip_suffix(".insert"))
+        .filter(|path| {
+            path.split('.').all(|segment| {
+                !segment.is_empty() && segment.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
+            })
+        })
+        .filter(|_| runs_unconditionally(&masked, at))
+        .map(str::to_string)
 }
 
 /// Whether the call at `at` in a test body (masked, starting at its `fn`)
@@ -791,6 +1540,21 @@ fn analyze_related_assertions(
         .as_deref()
         .and_then(|path| path.rsplit("::").next())
         .map(str::to_string);
+    // #7063: a payload-carrying construction whose variant the change kept
+    // (or whose old text is unknown) may have changed only its payload.
+    // A changed variant is seen by a variant pin, as before.
+    let payload_pin_required = matches!(
+        probe.family,
+        ProbeFamily::ErrorPath | ProbeFamily::ReturnValue
+    ) && error_construction_path.as_deref().is_some_and(|path| {
+        (super::text::variant_carries_payload(&probe.expression, path)
+            || super::text::variant_carries_payload(analysis_expression, path))
+            && probe
+                .before
+                .as_deref()
+                .and_then(error_path_variant_path)
+                .is_none_or(|before| variant_key(&before) == variant_key(path))
+    });
     // The enum segment before the variant (`PayError` in
     // `PayError::Insufficient`): the shared qualifier a sibling-variant pin
     // names. See `names_only_sibling_variants`.
@@ -872,7 +1636,11 @@ fn analyze_related_assertions(
         arm_selector: arm_selector.filter(|_| matches!(probe.family, ProbeFamily::MatchArm)),
         arm_inputs_readable: false,
         arm_pattern_pinned: false,
+        arm_lent_selected: false,
         owner_scoped_tokens: &owner_scoped_tokens,
+        owner_shadowed: false,
+        sibling_excluded: false,
+        payload_pin_required,
     };
     let confirm_required = needs_token_confirmation(&probe.family);
     // RIPR-SPEC-0040 builder override (#6613): the fields a changed struct
@@ -913,6 +1681,12 @@ fn analyze_related_assertions(
     // RIPR-SPEC-0228: a field-path collection write (`self.log.push(..)`) is
     // observed by a read of that field, never by a shared name alone.
     let field_write = field_collection_write_path(&probe.expression);
+    let insert_key_index = field_collection_insert_key(&probe.expression).and_then(|key| {
+        return_admission
+            .owner_argument_names
+            .iter()
+            .position(|name| *name == key)
+    });
     let mut override_defeated = false;
     let mut related = Vec::new();
     let mut strongest = OracleStrength::None;
@@ -963,10 +1737,22 @@ fn analyze_related_assertions(
             // expression (#7094 review).
             || error_construction_path.is_some()));
 
+    // #7763: a reason string also occurs in unrelated plan/gate values.
+    // When another test reaches the owner, proximity alone cannot make that
+    // shared literal an oracle for its predicate. Preserve possible opaque or
+    // transitive owner calls, and retain the uncredited row for explanation.
+    let shared_string_predicate = matches!(probe.family, ProbeFamily::Predicate)
+        && !rust_string_literals(&probe.expression).is_empty();
+
     for (test, reason) in related_tests {
         let relation_reason = Some(*reason);
         let relation_confidence = Some(reason.confidence());
-        let credits_oracle = credits(*reason);
+        let credits_oracle = credits(*reason)
+            && !(shared_string_predicate
+                && owner_reaching_related
+                && is_proximity_only(*reason)
+                && !invokes_opaque_macro(&test.body)
+                && !(return_admission.proximity_may_reach_owner)(test));
         // #6297: a match arm's variant (`Unit::Fortnight`) names an enum value
         // that every function handling the enum shares, so unlike a
         // return-value token it does not tie an assertion to the owner (the
@@ -1035,6 +1821,7 @@ fn analyze_related_assertions(
         // expected side, so such a test confirms nothing either. A test that
         // never names the owner (it reaches it only through a wrapper) passes
         // no input to read, so its tokens confirm as before selection (#6297).
+        let unfiltered_arm_selector = match_context.arm_selector;
         let arm_selector = match_context
             .arm_selector
             .filter(|selector| selector.mentioned_by(test));
@@ -1043,6 +1830,9 @@ fn analyze_related_assertions(
             arm_inputs_readable: arm_selector.is_some_and(|selector| {
                 selector.observed_inputs(test).is_some() && !selector.binds_owner_result(test)
             }),
+            owner_shadowed: match_context
+                .owner_callee
+                .is_some_and(|owner| test_body_shadows_owner(test, owner)),
             ..match_context
         };
         // Refusing credit must not manufacture the singleton-test fallback
@@ -1050,12 +1840,37 @@ fn analyze_related_assertions(
         let assertion_count = test.assertions.len();
         let related_before = related.len();
         for assertion in assertions {
+            // RIPR-SPEC-0231 examples 19 and 20: an inequality on the owner
+            // call that excludes only a sibling variant of the changed error
+            // observes the changed result, but only as `relational_check` /
+            // weak (rule 1), whatever the classifier read.
+            // A test-visible `macro_rules! assert_ne` (or `assert`,
+            // `matches`) may check nothing, so the exclusion is credited
+            // only under the shared assertion-context admission.
+            let sibling_excluded =
+                excludes_only_sibling_variant(
+                    &match_context,
+                    assertion,
+                    import_defeats_owner,
+                    cross_package_defeats_owner,
+                ) && (return_admission.sibling_exclusion_admitted)(test, assertion);
+            let excluded_sibling;
+            let assertion = if sibling_excluded {
+                excluded_sibling = OracleFact {
+                    kind: OracleKind::RelationalCheck,
+                    strength: OracleStrength::Weak,
+                    ..assertion.clone()
+                };
+                &excluded_sibling
+            } else {
+                assertion
+            };
             // #4478: whether this `assert_eq!` pins the owner's whole return
             // value through a call that names the owner. The owner-side and
             // test-side identity gates live in `owner_pin`; the family and
             // oracle-kind gates are checked first so the closure only runs
-            // for return-value exact pins. #6692: a field of a hand-written
-            // `Clone::clone`'s returned literal is pinned by
+            // for return-value and error-path exact pins. #6692: a field of a
+            // hand-written `Clone::clone`'s returned literal is pinned by
             // `assert_eq!(recv.clone(), recv)` under the same gates
             // (`OwnerReturnPin::establish_clone_field`).
             //
@@ -1063,24 +1878,40 @@ fn analyze_related_assertions(
             // (`assert!(f(x))` is `assert_eq!(f(x), true)`), which also
             // observes a predicate that is that owner's whole tail. Its kind
             // stays the classifier's `relational_check` (RIPR-SPEC-0231);
-            // only its strength relative to this probe rises.
+            // only its strength relative to this probe rises. #6578: the
+            // same holds for an inline expect-test comparison
+            // (`expect![["5"]].assert_eq(&owner(..))`), whose kind stays
+            // `snapshot` (RIPR-SPEC-0231 step 6); the pin admits no other
+            // snapshot spelling.
             let owner_pinned = match probe.family {
                 ProbeFamily::ReturnValue => matches!(
                     assertion.kind,
                     OracleKind::ExactValue
+                        | OracleKind::ExactErrorVariant
                         | OracleKind::WholeObjectEquality
                         | OracleKind::RelationalCheck
+                        | OracleKind::Snapshot
                 ),
+                // A changed `return Err(..);` is an `error_path` probe; its
+                // pin compares the owner's whole `Err(..)` result.
+                ProbeFamily::ErrorPath => matches!(assertion.kind, OracleKind::ExactErrorVariant),
                 ProbeFamily::Predicate => matches!(assertion.kind, OracleKind::RelationalCheck),
+                // #7063: a field of a changed `return Err(E::V { .. })` is
+                // pinned by an `exact_error_variant` `assert_eq!` whose
+                // expected `Err(E::V { .. })` the owner pin's early
+                // error-variant gate admits.
                 ProbeFamily::FieldConstruction => matches!(
                     assertion.kind,
-                    OracleKind::ExactValue | OracleKind::WholeObjectEquality
+                    OracleKind::ExactValue
+                        | OracleKind::WholeObjectEquality
+                        | OracleKind::ExactErrorVariant
                 ),
                 _ => false,
             } && pin_strength_admits(assertion)
                 && (return_admission.owner_return_pin)(test, assertion);
-            let bool_owner_pinned =
-                owner_pinned && matches!(assertion.kind, OracleKind::RelationalCheck);
+            let strength_raising_pin = owner_pinned
+                && (matches!(assertion.kind, OracleKind::RelationalCheck)
+                    || is_inline_expect_snapshot(assertion));
             let owner_bound = !match_context.owner_scoped_tokens.is_empty()
                 && oracle_binds_sink_identity(
                     &assertion.text,
@@ -1091,6 +1922,13 @@ fn analyze_related_assertions(
                 arm_pattern_pinned: match_context
                     .arm_selector
                     .is_some_and(|selector| selector.pattern_pin_selects(test, assertion)),
+                // A helper-lending test may never name the owner, so the
+                // selector the mention filter dropped still reads its loan;
+                // a table test names it and keeps the filtered selector's
+                // readability gate in `has_token_match`.
+                arm_lent_selected: unfiltered_arm_selector
+                    .is_some_and(|selector| selector.lent_selects(test, assertion)),
+                sibling_excluded,
                 ..match_context
             };
             let (matched, mut has_token_match) = assertion_matches_probe_detail_with_literals(
@@ -1111,13 +1949,33 @@ fn analyze_related_assertions(
                     // Only a deleted write changes how many elements the
                     // collection holds; a changed argument does not.
                     matches!(probe.family, ProbeFamily::CallDeletion),
+                    field_collection_write_appends(&probe.expression),
+                    insert_key_index,
                     override_owner,
                     test,
                     assertion,
                     return_admission.getter_reads_field,
                 )
             });
-            let matched = matched || field_collection_read;
+            // A keyed getter read (`inv.on_hand("A")`) of a map entry the
+            // owner inserted under the same argument (`self.stock.insert(sku,
+            // ..)` with `inv.ship("A", ..)`).
+            let keyed_read = field_write
+                .zip(insert_key_index)
+                .is_some_and(|(path, index)| {
+                    keyed_field_read_confirms(
+                        path,
+                        index,
+                        override_owner,
+                        test,
+                        assertion,
+                        return_admission,
+                    )
+                });
+            let field_collection_read = field_collection_read || keyed_read;
+            let collection_argument_read =
+                (return_admission.collection_argument_observed)(test, assertion);
+            let matched = matched || field_collection_read || collection_argument_read;
             // RIPR-SPEC-0040 builder override (#6613): drop the field tokens
             // the test overwrote before this assertion reads them, and ask
             // again whether anything else confirms.
@@ -1158,8 +2016,57 @@ fn analyze_related_assertions(
                         &assertion.text,
                         owner,
                         return_admission.expected_reaches_owner,
-                    )
+                    ) || expected_operand_bound_to_owner(&assertion.text, owner, &|operand| {
+                        (return_admission.expected_operand_value)(test, operand)
+                    })
                 });
+            // #8051: when the owner may leave before its push, a test that
+            // passes expecting the written collection empty took that exit,
+            // so it cannot tell a deleted or changed push from a kept one.
+            // Without an earlier exit the push ran, and a test that empties
+            // the collection again (`add(1); remove(1)`) can still catch a
+            // changed argument, so the assertion keeps its strength. Like a
+            // self-computed expected value, it then neither confirms
+            // observation nor pins the owner.
+            let empty_after_skipped_push = matched
+                && return_admission.owner_may_exit_before_probe
+                && is_effect_family(&probe.family)
+                && (field_write.is_some()
+                    || direct_collection_mutation_receiver(&probe.expression).is_some())
+                && super::propagation_witness::assertion_expects_empty_collection(&assertion.text);
+            // #8205: the same cap applies when the assertion expects
+            // exactly the state the test seeded before the call. The
+            // skipped push never ran, so restating the pre-call state
+            // passes whether or not the push exists or is correct. An
+            // expectation that differs from the seeded state (including
+            // the seeded state plus the pushed element) keeps its credit.
+            let seeded_after_skipped_push = matched
+                && return_admission.owner_may_exit_before_probe
+                && is_effect_family(&probe.family)
+                && match (
+                    field_write,
+                    direct_collection_mutation_receiver(&probe.expression),
+                ) {
+                    (Some(path), _) => {
+                        super::propagation_witness::assertion_restates_seeded_collection(
+                            &assertion.text,
+                            &test.body,
+                            path,
+                            Some(path),
+                        )
+                    }
+                    (None, Some(receiver)) => {
+                        super::propagation_witness::assertion_restates_seeded_collection(
+                            &assertion.text,
+                            &test.body,
+                            receiver,
+                            None,
+                        )
+                    }
+                    (None, None) => false,
+                };
+            let self_computed =
+                self_computed || empty_after_skipped_push || seeded_after_skipped_push;
             // #6692: the owner pin is credited only through an assertion
             // that matched, from a test that may supply the oracle, with the
             // pin surviving the reveal-side defeats. The missing-field
@@ -1193,8 +2100,9 @@ fn analyze_related_assertions(
                 let observation_confirmed = !self_computed
                     && (!confirm_required
                         || (confirms_observation
-                            && (collection_observer_confirms(&probe.expression, assertion)
+                            && (collection_observer_confirms(&probe.expression, test, assertion)
                                 || field_collection_read
+                                || collection_argument_read
                                 || (direct_collection_mutation_receiver(&probe.expression)
                                     .is_none()
                                     && ((has_token_match && field_write.is_none())
@@ -1226,7 +2134,7 @@ fn analyze_related_assertions(
                     }
                 }
                 matched_any = true;
-                let mut relative_strength = if bool_owner_pinned {
+                let mut relative_strength = if strength_raising_pin {
                     OracleStrength::Strong
                 } else {
                     probe_relative_oracle_strength(&probe.family, assertion)
@@ -1301,6 +2209,15 @@ fn analyze_related_assertions(
     }
 }
 
+/// #7063: the last two segments of an error variant path, as the
+/// `ErrVariant` owner pin reads them: `crate::ConfigError::MissingEquals`
+/// and `ConfigError::MissingEquals` name the same variant.
+fn variant_key(path: &str) -> (&str, &str) {
+    let mut segments = path.rsplit("::").map(str::trim);
+    let variant = segments.next().unwrap_or_default();
+    (segments.next().unwrap_or_default(), variant)
+}
+
 /// Extracts the variant path from a changed expression that constructs an
 /// exact error variant.
 ///
@@ -1358,6 +2275,123 @@ fn names_only_sibling_variants(text: &str, qualifier: &str, variant: &str) -> bo
         named_any = true;
     }
     named_any
+}
+
+/// RIPR-SPEC-0231 examples 19 and 20: `assert_ne!(owner(..), Err(E::Bad))`
+/// or `assert!(!matches!(owner(..), Err(E::Bad)))` against a changed
+/// `Err(E::Big)`. The assertion names the changed error's enum only through
+/// a sibling variant, but it excludes that sibling from the owner's own
+/// result, so a change that returned the sibling would fail it: it observes
+/// the result, weakly. One compared operand (or the whole `matches!`
+/// scrutinee) must be a bare call to the owner, with no foreign import,
+/// nested `fn` or local binding making that call ambiguous, and the negated
+/// `matches!` must be the whole condition with an unguarded pattern. An
+/// inequality on any other value shares only the enum qualifier and stays
+/// refused.
+fn excludes_only_sibling_variant(
+    context: &RevealMatchContext,
+    assertion: &OracleFact,
+    import_defeats_owner: bool,
+    cross_package_defeats_owner: bool,
+) -> bool {
+    let (Some(variant), Some(qualifier), Some(owner)) = (
+        context.error_construction_variant,
+        context.error_construction_qualifier,
+        context.owner_callee,
+    ) else {
+        return false;
+    };
+    if import_defeats_owner || cross_package_defeats_owner || context.owner_shadowed {
+        return false;
+    }
+    let masked = crate::analysis::extract::mask_comments_and_strings(&assertion.text);
+    let statement = masked.trim();
+    let statement = statement.strip_suffix(';').unwrap_or(statement).trim_end();
+    let excluded = if let Some(rest) = statement.strip_prefix("assert_ne!") {
+        // The message arguments after the two operands never decide it.
+        let operands = macro_arguments(rest);
+        match operands.as_slice() {
+            [left, right, ..] if is_whole_owner_call(left, owner) => Some(*right),
+            [left, right, ..] if is_whole_owner_call(right, owner) => Some(*left),
+            _ => None,
+        }
+    } else if let Some(rest) = statement.strip_prefix("assert!") {
+        // The negated `matches!` must be the whole condition (no `||`,
+        // `^` or other operand beside it) with an unguarded pattern.
+        macro_arguments(rest)
+            .first()
+            .and_then(|condition| condition.strip_prefix('!'))
+            .and_then(|negated| negated.trim_start().strip_prefix("matches!"))
+            .and_then(|rest| match macro_arguments(rest).as_slice() {
+                [scrutinee, pattern]
+                    if is_whole_owner_call(scrutinee, owner) && !has_word(pattern, "if") =>
+                {
+                    Some(*pattern)
+                }
+                _ => None,
+            })
+    } else {
+        None
+    };
+    excluded.is_some_and(|excluded| names_only_sibling_variants(excluded, qualifier, variant))
+}
+
+/// The trimmed top-level comma-separated arguments of a macro call whose
+/// parenthesised arguments are all of `rest` (`(a, f(b, c))`), or nothing
+/// when `rest` is not exactly one balanced group.
+pub(super) fn macro_arguments(rest: &str) -> Vec<&str> {
+    let rest = rest.trim();
+    if !rest.starts_with('(') || group_end(rest, 0) != Some(rest.len() - 1) {
+        return Vec::new();
+    }
+    let inner = &rest[1..rest.len() - 1];
+    let mut parts = Vec::new();
+    let mut depth = 0_usize;
+    let mut start = 0;
+    for (at, byte) in inner.bytes().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => {
+                parts.push(inner[start..at].trim());
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    let last = inner[start..].trim();
+    if !last.is_empty() {
+        parts.push(last);
+    }
+    parts
+}
+
+/// Whether `operand` is exactly one bare call `owner(..)`: not a path
+/// segment, method, nested argument or larger expression.
+fn is_whole_owner_call(operand: &str, owner: &str) -> bool {
+    operand.strip_prefix(owner).is_some_and(|rest| {
+        let rest = rest.trim_start();
+        rest.starts_with('(') && group_end(rest, 0) == Some(rest.len() - 1)
+    })
+}
+
+fn has_word(text: &str, word: &str) -> bool {
+    text.split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .any(|part| part == word)
+}
+
+/// Whether the test body defines a nested `fn <owner>` or binds a local
+/// named `owner` anywhere, under either shadow authority. Conservative: a
+/// binding after the assertion also refuses the sibling exclusion.
+fn test_body_shadows_owner(test: &TestSummary, owner: &str) -> bool {
+    use crate::analysis::extract::ShadowAuthority;
+    let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
+    ShadowAuthority::LexicalMaskedBody.body_shadows_callee_at_line(&masked, owner, usize::MAX)
+        || ShadowAuthority::ParserBodyFacts {
+            nested_fn_names: &test.nested_fn_names,
+            let_bindings: &test.let_bindings,
+        }
+        .body_shadows_callee_at_line("", owner, usize::MAX)
 }
 
 /// Whether an assertion observes an error at all: a typed error oracle, a
@@ -1435,11 +2469,32 @@ struct RevealMatchContext<'a> {
     /// pattern pin (a verified local `assert_matches!`) whose value
     /// operand is a direct owner call selecting the arm.
     arm_pattern_pinned: bool,
+    /// RIPR-SPEC-0229 decisions 5 and 7: an input lent to the owner call in
+    /// the current assertion selects the arm, either from an eager call of
+    /// the check helper (#6482) it is borrowed from or from a row of the
+    /// constant-row table (#5328) it loops over.
+    arm_lent_selected: bool,
     /// Probe tokens that name a binding only the owner holds (a parameter
     /// or `let` local) on a value probe. They confirm observation only in
     /// an assertion that calls the owner; anywhere else the shared name is
     /// coincidence (#5830).
     owner_scoped_tokens: &'a [String],
+    /// Whether the current test's body defines or binds a local under the
+    /// owner's bare name, so a bare call to it may not reach the owner
+    /// (RIPR-SPEC-0231 sibling exclusion).
+    owner_shadowed: bool,
+    /// Whether the current assertion is an admitted RIPR-SPEC-0231
+    /// sibling exclusion on the owner call (`excludes_only_sibling_variant`
+    /// under standard macro bindings), decided once per assertion.
+    sibling_excluded: bool,
+    /// #7063: the changed error construction carries a payload
+    /// (`Err(E::V { line: n })`) and the change may be confined to it: the
+    /// paired old text constructs the same variant, or there is none. A
+    /// variant-only oracle (`matches!(r, Err(E::V { .. }))`) cannot see a
+    /// payload change, so a value or error probe confirms observation only
+    /// through the owner-return pin, a whole-value equality tied to the
+    /// owner call (RIPR-SPEC-0197 "Early error-variant pins").
+    payload_pin_required: bool,
 }
 
 /// The field a `field_construction` expression assigns: the identifier
@@ -1537,6 +2592,48 @@ fn self_computed_cap(strength: OracleStrength, self_computed: bool) -> OracleStr
     }
 }
 
+/// The two compared operands of an equality assertion. RIPR-SPEC-0197:
+/// `assert!(a == b)` and its Err-return guard twin compare the same
+/// operands an `assert_eq!` would. Selected the way the pin selects (#7094
+/// follow-up): a guard reads its condition and a plain `assert!` its
+/// comparison, so an `assert_eq!` spelled in a message, comment or guard
+/// body cannot switch the reader.
+fn equality_operands(text: &str) -> Option<[String; 2]> {
+    let reads_equality = crate::analysis::extract::err_return_guard_twin(text).is_some()
+        || super::owner_pin::is_plain_macro(text, "assert");
+    if !reads_equality && text.contains("assert_eq!") {
+        assertion_comparison_operands(text).map(|operands| operands.map(str::to_string))
+    } else {
+        super::owner_pin::equality_condition_operands(text)
+    }
+}
+
+/// RIPR-SPEC-0035: an equality whose one side calls the owner and whose
+/// other side names a binding or constant holding an owner value
+/// (`const EXPECTED: u32 = quota(2); assert_eq!(quota(2), EXPECTED)`). The
+/// name's value is judged as if written in place, by the rule
+/// [`expected_computed_through_owner`] applies when both sides call the
+/// owner: a value that differs outside its owner calls (`let want =
+/// v.len();` against `my_vec.len()`) still pins the owner.
+fn expected_operand_bound_to_owner(
+    text: &str,
+    owner: &str,
+    operand_value: &dyn Fn(&str) -> Option<String>,
+) -> bool {
+    let Some([left, right]) = equality_operands(text) else {
+        return false;
+    };
+    let (actual, expected) = match (text_calls(&left, owner), text_calls(&right, owner)) {
+        (true, false) => (left, right),
+        (false, true) => (right, left),
+        _ => return false,
+    };
+    operand_value(&expected).is_some_and(|value| {
+        text_calls(&value, owner)
+            && terms_outside_owner_calls(&actual, owner) == terms_outside_owner_calls(&value, owner)
+    })
+}
+
 /// RIPR-SPEC-0035 self-computed expected value (#5830): an `assert_eq!`
 /// with one operand calling `owner` and the other calling a function that
 /// transitively reaches `owner`. Both sides then carry the changed
@@ -1550,26 +2647,10 @@ fn expected_computed_through_owner(
     owner: &str,
     reaches_owner: &dyn Fn(Option<&str>, &str) -> bool,
 ) -> bool {
-    // RIPR-SPEC-0197: `assert!(a == b)` and its Err-return guard twin
-    // compare the same operands an `assert_eq!` would.
-    // Selected the way the pin selects (#7094 follow-up): a guard reads its
-    // condition and a plain `assert!` its comparison, so an `assert_eq!`
-    // spelled in a message, comment or guard body cannot switch the reader.
-    let equality;
-    let reads_equality = crate::analysis::extract::err_return_guard_twin(text).is_some()
-        || super::owner_pin::is_plain_macro(text, "assert");
-    let [left, right] = if !reads_equality && text.contains("assert_eq!") {
-        let Some(operands) = assertion_comparison_operands(text) else {
-            return false;
-        };
-        operands
-    } else {
-        equality = super::owner_pin::equality_condition_operands(text);
-        let Some([left, right]) = &equality else {
-            return false;
-        };
-        [left.as_str(), right.as_str()]
+    let Some([left, right]) = equality_operands(text) else {
+        return false;
     };
+    let (left, right) = (left.as_str(), right.as_str());
     let reaches = |operand: &str| {
         called_paths(operand)
             .iter()
@@ -2318,7 +3399,11 @@ fn assertion_matches_probe_detail_with_literals(
         arm_selector,
         arm_inputs_readable,
         arm_pattern_pinned,
+        arm_lent_selected,
         owner_scoped_tokens,
+        owner_shadowed,
+        sibling_excluded,
+        payload_pin_required,
     } = *context;
     // #4748: use the same operand boundary as extraction, including token and
     // exact-variant matching. A genuine error oracle cannot borrow its changed
@@ -2422,6 +3507,12 @@ fn assertion_matches_probe_detail_with_literals(
         import_defeats_owner,
         cross_package_defeats_owner,
     );
+    // #7063: on a construction whose change may sit only in its payload,
+    // only the owner-return pin confirms observation: a whole-value equality
+    // tied to the owner call. A variant token, a `matches!` or guarded match
+    // on the variant, a written-out equality not tied to the owner, or a
+    // shared field name says nothing about the payload's value (fail closed).
+    let payload_observed = !payload_pin_required || owner_return_pinned;
     // For MatchArm probes, restrict the confirmation check to variant-only
     // tokens (post-`::`). The qualifier ("Mode" in "Mode::Frozen") is shared
     // across all arms and therefore cannot confirm this specific arm.
@@ -2430,7 +3521,18 @@ fn assertion_matches_probe_detail_with_literals(
     // (parameter names, the callee name, `Into::into`, a message string) is
     // token coincidence by construction, so observation stays unverified and
     // the seam cannot read `exposed` from lexical heuristics.
-    let has_token_match = if let Some(selector) = arm_selector
+    let has_token_match = if arm_lent_selected && matches!(family, ProbeFamily::MatchArm) {
+        // RIPR-SPEC-0229 decisions 5 and 7: the owner call receives a lent
+        // input (a helper's literal or a table row's cell) that selects the
+        // arm, under the same owner defeats. A test that names the owner
+        // (every table test) must also read as the direct path requires:
+        // each mention a readable call, no owner result bound with `let`
+        // that may stand on the expected side, and no local shadow.
+        !import_defeats_owner
+            && !cross_package_defeats_owner
+            && !owner_shadowed
+            && (arm_selector.is_none() || arm_inputs_readable)
+    } else if let Some(selector) = arm_selector
         && matches!(family, ProbeFamily::MatchArm)
     {
         // RIPR-SPEC-0229 selection outranks tokens: once the arm's
@@ -2464,6 +3566,8 @@ fn assertion_matches_probe_detail_with_literals(
         // touches an error (`assert_eq!(reader.len(), 10)`) cannot observe
         // it, however many identifiers it shares with the changed line.
         false
+    } else if !payload_observed {
+        false
     } else if matches!(assertion.kind, OracleKind::GuardedResultMatch)
         && error_construction_variant.is_some()
     {
@@ -2495,6 +3599,11 @@ fn assertion_matches_probe_detail_with_literals(
         (error_construction_variant, error_construction_qualifier)
         && names_only_sibling_variants(&assertion.text, qualifier, variant)
     {
+        if sibling_excluded {
+            // #7063 rule 7: excluding a sibling says nothing about the
+            // changed variant's payload.
+            return (true, payload_observed);
+        }
         if matches!(family, ProbeFamily::ErrorPath) {
             return (false, false);
         }
@@ -2507,10 +3616,11 @@ fn assertion_matches_probe_detail_with_literals(
         && let Some(variant) = error_construction_variant
     {
         let variant_matches = contains_as_whole_word(&assertion.text, variant);
+        let variant_confirms = variant_matches && payload_observed;
         if matches!(family, ProbeFamily::ErrorPath) {
-            return (variant_matches, variant_matches);
+            return (variant_matches, variant_confirms);
         }
-        return (token_match || effect_literal_match, variant_matches);
+        return (token_match || effect_literal_match, variant_confirms);
     }
     let family_match = oracle_matches_family(family, assertion);
     let matched = token_match
@@ -2572,7 +3682,11 @@ fn assertion_matches_probe_detail(
             arm_selector: None,
             arm_inputs_readable: false,
             arm_pattern_pinned: false,
+            arm_lent_selected: false,
             owner_scoped_tokens: &[],
+            owner_shadowed: false,
+            sibling_excluded: false,
+            payload_pin_required: false,
         },
         assertion,
         assertion_count,
@@ -3604,7 +4718,19 @@ fn probe_relative_oracle_strength(family: &ProbeFamily, assertion: &OracleFact) 
 /// the whole two-valued result, and `owner_pin` alone admits that shape.
 fn pin_strength_admits(assertion: &OracleFact) -> bool {
     matches!(assertion.kind, OracleKind::RelationalCheck)
+        || is_inline_expect_snapshot(assertion)
         || assertion.strength == OracleStrength::Strong
+}
+
+/// #6578: a `snapshot` oracle the owner pin may raise is only the inline
+/// `expect![[..]].assert_eq(..)` or golden-file `expect_file![..].assert_eq(..)`
+/// comparison it reads like `assert_eq!`; an `insta` macro, `assert_debug_eq`
+/// or any other text the classifier grades `snapshot` keeps its medium
+/// strength.
+pub(in crate::analysis) fn is_inline_expect_snapshot(assertion: &OracleFact) -> bool {
+    matches!(assertion.kind, OracleKind::Snapshot)
+        && assertion.text.contains("assert_eq")
+        && super::owner_pin::inline_expect_operands(&assertion.text).is_some()
 }
 
 #[cfg(test)]
@@ -3696,6 +4822,389 @@ mod tests {
         ] {
             assert!(called(refused), "{refused}");
         }
+    }
+
+    /// RIPR-SPEC-0228 keyed reads: only an insert at the owner's top level
+    /// runs on every call.
+    #[test]
+    fn unconditional_owner_insert_field_only_at_the_top_level() {
+        let owner = "pub fn put(&mut self, sku: &str, qty: u32) {\n    if qty > 100 {\n        self.m.insert(sku.to_string(), 100);\n    } else {\n        self.m.insert(sku.to_string(), qty);\n    }\n    self.m.insert(sku.to_string(), qty);\n    self.items.iter().for_each(|k| self.m.insert(k.clone(), 1));\n    // self.m.insert(sku.to_string(), 0);\n}";
+        let runs = |line: usize| unconditional_owner_insert_field(owner, 20, line).is_some();
+        assert_eq!(
+            unconditional_owner_insert_field(owner, 20, 26).as_deref(),
+            Some("m")
+        );
+        assert!(!runs(22));
+        assert!(!runs(24));
+        assert!(runs(26));
+        assert!(!runs(27));
+        assert!(!runs(28));
+        assert!(!runs(19));
+        assert!(!runs(99));
+    }
+
+    /// #8204: a count-only read cannot confirm a map insert the test may
+    /// already hold the key for; an empty start or another key still can.
+    #[test]
+    fn field_collection_count_read_refuses_a_preexisting_key() {
+        let owner = OwnerCall::from_symbol("src/shelf.rs::impl Shelf::restock");
+        let confirms = |body: &str, assertion_text: &str, line: usize| {
+            let test = TestSummary {
+                start_line: 1,
+                ..test_with_body_assertions(
+                    "case",
+                    body,
+                    vec![OracleFact {
+                        line,
+                        ..oracle(
+                            assertion_text,
+                            OracleKind::ExactValue,
+                            OracleStrength::Strong,
+                        )
+                    }],
+                )
+            };
+            field_collection_observer_confirms(
+                "stock",
+                true,
+                false,
+                Some(0),
+                owner,
+                &test,
+                &test.assertions[0],
+                &|_, _, _| false,
+            )
+        };
+        let seeded = "fn case() {\n    let mut shelf = Shelf::new();\n    shelf.stock.insert(\"A\".to_string(), 1);\n    shelf.restock(\"A\", 2);\n    assert_eq!(shelf.stock.len(), 1);\n}";
+        assert!(!confirms(seeded, "assert_eq!(shelf.stock.len(), 1);", 5));
+        let empty = "fn case() {\n    let mut shelf = Shelf::new();\n    shelf.restock(\"A\", 2);\n    assert_eq!(shelf.stock.len(), 1);\n}";
+        assert!(confirms(empty, "assert_eq!(shelf.stock.len(), 1);", 4));
+        let other_key = "fn case() {\n    let mut shelf = Shelf::new();\n    shelf.stock.insert(\"B\".to_string(), 1);\n    shelf.restock(\"A\", 2);\n    assert_eq!(shelf.stock.len(), 2);\n}";
+        assert!(confirms(other_key, "assert_eq!(shelf.stock.len(), 2);", 5));
+        // A whole-map read of the seeded map still observes the write.
+        let whole = "fn case() {\n    let mut shelf = Shelf::new();\n    shelf.stock.insert(\"A\".to_string(), 1);\n    shelf.restock(\"A\", 2);\n    assert_eq!(&shelf.stock[\"A\"], &2);\n}";
+        assert!(confirms(whole, "assert_eq!(&shelf.stock[\"A\"], &2);", 5));
+        // #8204: an assignment seeding names the key in its own right-hand
+        // side; a later statement or a value-side literal cannot demote.
+        let assign_seeded = "fn case() {\n    let mut shelf = Shelf::new();\n    shelf.stock = BTreeMap::from([(\"A\", 1)]);\n    shelf.restock(\"A\", 2);\n    assert_eq!(shelf.stock.len(), 1);\n}";
+        assert!(!confirms(
+            assign_seeded,
+            "assert_eq!(shelf.stock.len(), 1);",
+            5
+        ));
+        let later_mention = "fn case() {\n    let mut shelf = Shelf::new();\n    shelf.stock = BTreeMap::new();\n    let label = \"A\";\n    shelf.restock(\"A\", 2);\n    assert_eq!(shelf.stock.len(), 1);\n}";
+        assert!(confirms(
+            later_mention,
+            "assert_eq!(shelf.stock.len(), 1);",
+            6
+        ));
+        let value_side = "fn case() {\n    let mut shelf = Shelf::new();\n    shelf.stock = BTreeMap::from([(\"B\", \"A\")]);\n    shelf.restock(\"A\", 2);\n    assert_eq!(shelf.stock.len(), 2);\n}";
+        assert!(confirms(value_side, "assert_eq!(shelf.stock.len(), 2);", 5));
+    }
+    /// RIPR-SPEC-0228 keyed reads: a `#[should_panic]` test passes when the
+    /// compared values differ, so it never confirms a keyed read.
+    #[test]
+    fn keyed_field_read_refuses_should_panic_tests() {
+        let assertion_text = "assert_eq!(inv.on_hand(\"A\"), 7);";
+        let test = TestSummary {
+            start_line: 1,
+            ..test_with_body_assertions(
+                "ships",
+                "fn ships() {\n    let mut inv = Inventory::new(2);\n    inv.ship(\"A\", 3).unwrap();\n    assert_eq!(inv.on_hand(\"A\"), 7);\n}",
+                vec![OracleFact {
+                    line: 4,
+                    ..oracle(
+                        assertion_text,
+                        OracleKind::ExactValue,
+                        OracleStrength::Strong,
+                    )
+                }],
+            )
+        };
+        let admission = ReturnOracleAdmission {
+            owner_return_pin: &|_, _| false,
+            assertion_admitted: &|_, _| true,
+            sibling_exclusion_admitted: &|_, _| true,
+            proximity_may_reach_owner: &|_| false,
+            owner_parameters: &[],
+            expected_reaches_owner: &|_, _| false,
+            expected_operand_value: &|_, _| None,
+            effect_state_carried: &|_, _| true,
+            setter_writes_field: &|_, _, _| false,
+            getter_reads_field: &|_, _, _| false,
+            collection_argument_observed: &|_, _| false,
+            getter_reads_key: &|_, getter, field| {
+                (getter == "on_hand" && field == "stock")
+                    .then(|| KeyedFallback::Literal("0".to_string()))
+            },
+            owner_argument_names: &[],
+            owner_returns_value: true,
+            owner_may_exit_before_probe: false,
+            constructor_starts_empty: &|_, _, _| true,
+            call_cannot_store: &|_, _, _, _| Some(EarlierWrite::Reads),
+        };
+        let confirms = |test: &TestSummary| {
+            keyed_field_read_confirms(
+                "stock",
+                0,
+                OwnerCall::from_symbol("src/inv.rs::impl Inventory::ship"),
+                test,
+                &test.assertions[0],
+                &admission,
+            )
+        };
+        assert!(confirms(&test));
+        let panicking = TestSummary {
+            attrs: vec!["#[should_panic]".to_string()],
+            ..test.clone()
+        };
+        assert!(!confirms(&panicking));
+    }
+
+    /// RIPR-SPEC-0228 keyed reads: the owner call must pass the read key in
+    /// the insert key's argument position and must not end on an error path.
+    #[test]
+    fn owner_call_passes_key_matches_the_key_argument_position() {
+        // The body starts at file line 10; the read is its last line.
+        let body = |lines: &str| format!("fn case() {{\n{lines}\n}}");
+        let check = |lines: &str, returns_value: bool, index: usize, key: &str| {
+            owner_call_passes_key(
+                &body(lines),
+                10,
+                10 + lines.lines().count(),
+                &KeyedCall {
+                    binding: "inv",
+                    method: "ship",
+                    getter: "on_hand",
+                    expected: "7",
+                    impl_type: "Inventory",
+                    returns_value,
+                    index,
+                    key,
+                    path: "stock",
+                    // `Inventory::seeded(..)` stands for a constructor that
+                    // fills the map.
+                    starts_empty: &|impl_type, ctor, field| {
+                        impl_type == "Inventory" && field == "stock" && ctor != "seeded"
+                    },
+                    // `inv.load_defaults()` stands for a method that stores
+                    // the expected value; `receive` adds to an entry and
+                    // `set` overwrites one.
+                    cannot_store: &|impl_type, method, field, expected| {
+                        (impl_type == "Inventory"
+                            && field == "stock"
+                            && expected == "7"
+                            && method != "load_defaults")
+                            .then_some(match method {
+                                "receive" => EarlierWrite::Accumulates,
+                                "set" => EarlierWrite::Overwrites,
+                                _ => EarlierWrite::Reads,
+                            })
+                    },
+                },
+            )
+        };
+        let passes = |lines: &str, index: usize, key: &str| check(lines, true, index, key);
+        let shipped = "    let mut inv = Inventory::new(2);\n    inv.ship(\"BOLT-M8\", 3).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);";
+        assert!(passes(shipped, 0, "\"BOLT-M8\""));
+        // A `&` on either side is the same key.
+        assert!(passes(shipped, 0, "&\"BOLT-M8\""));
+        assert!(passes(
+            "    let mut inv = Inventory::new(2);\n    let receipt = inv.ship(sku, 3).unwrap();\n    assert_eq!(inv.on_hand(&sku), 7);",
+            0,
+            "&sku"
+        ));
+        // A bound result named again before the read may be a `&mut Self`
+        // that rewrites the entry.
+        for compared in [
+            "    assert_eq!(receipt, Receipt { remaining: 7 });\n",
+            "    assert_eq!(Receipt { remaining: 7 }, receipt);\n",
+        ] {
+            assert!(
+                passes(
+                    &format!(
+                        "    let mut inv = Inventory::new(2);\n    let receipt = inv.ship(sku, 3).unwrap();\n{compared}    assert_eq!(inv.on_hand(&sku), 7);"
+                    ),
+                    0,
+                    "&sku"
+                ),
+                "{compared}"
+            );
+        }
+        for reused in [
+            "    let _ = receipt;\n",
+            "    receipt.set(sku, 7);\n",
+            "    assert_eq!(receipt.set(sku, 7), ());\n",
+            "    assert!(touch(receipt));\n",
+            "    assert_eq!(x, touch(1, receipt));\n",
+            "    assert_reset!(receipt, 7);\n",
+            "    assert_eq!(x, touch!(1, receipt));\n",
+        ] {
+            assert!(!passes(
+                &format!(
+                    "    let mut inv = Inventory::new(2);\n    let receipt = inv.ship(sku, 3).unwrap();\n{reused}    assert_eq!(inv.on_hand(&sku), 7);"
+                ),
+                0,
+                "&sku"
+            ));
+        }
+        // `?` and `.expect(..)` run the owner to completion; so does a bare
+        // call when the owner returns nothing.
+        for consumed in [
+            "    let mut inv = Inventory::new(2);\n    inv.ship(\"BOLT-M8\", 3)?;\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);",
+            "    let mut inv = Inventory::new(2);\n    let mut r = inv.ship(\"BOLT-M8\", 3).expect(\"ships\");\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);",
+            "    let mut inv: Inventory = Default::default();\n    inv.ship(\"BOLT-M8\", 3).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);",
+            "    let mut inv = Inventory::default();\n    inv.ship(\"BOLT-M8\", 3).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);",
+        ] {
+            assert!(passes(consumed, 0, "\"BOLT-M8\""), "{consumed}");
+        }
+        let bare = "    let mut inv = Inventory::new(2);\n    inv.ship(\"BOLT-M8\", 3);\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);";
+        assert!(check(bare, false, 0, "\"BOLT-M8\""));
+        // A bare call to an owner that returns a value may have returned
+        // `Err` before the insert.
+        assert!(!check(bare, true, 0, "\"BOLT-M8\""));
+        // Another key, another position, a key past the argument list.
+        assert!(!passes(shipped, 0, "\"NUT-M8\""));
+        assert!(!passes(shipped, 1, "\"BOLT-M8\""));
+        assert!(!passes(shipped, 2, "\"BOLT-M8\""));
+        for refused in [
+            // The owner may have returned before the insert.
+            "    let mut inv = Inventory::new(2);\n    inv.ship(\"BOLT-M8\", 30).unwrap_err();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 10);",
+            "    let mut inv = Inventory::new(2);\n    let e = inv.ship(\"BOLT-M8\", 30).expect_err(\"refused\");\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 10);",
+            "    let mut inv = Inventory::new(2);\n    assert!(inv.ship(\"BOLT-M8\", 30).is_err());\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 10);",
+            // A result kept, discarded or projected without being consumed.
+            "    let mut inv = Inventory::new(2);\n    let r = inv.ship(\"BOLT-M8\", 30);\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 10);",
+            "    let mut inv = Inventory::new(2);\n    let _ = inv.ship(\"BOLT-M8\", 30).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 10);",
+            "    let mut inv = Inventory::new(2);\n    let ok = inv.ship(\"BOLT-M8\", 30).is_ok();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 10);",
+            "    let mut inv = Inventory::new(2);\n    assert!(!inv.ship(\"BOLT-M8\", 30).is_ok());\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 10);",
+            "    let mut inv = Inventory::new(2);\n    let (a, b) = inv.ship(\"BOLT-M8\", 30).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 10);",
+            // A call that may never run, or no call before the read.
+            "    let mut inv = Inventory::new(2);\n    if false { inv.ship(\"BOLT-M8\", 3).unwrap(); }\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 10);",
+            "    let mut inv = Inventory::new(2);\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 10);\n    inv.ship(\"BOLT-M8\", 3).unwrap();",
+            // A receiver not built as the owner type, or not declared here.
+            "    let mut inv = Other::new(2);\n    inv.ship(\"BOLT-M8\", 3).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);",
+            "    let mut inv = inventory();\n    inv.ship(\"BOLT-M8\", 3).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);",
+            "    let mut inv: InventoryView = make();\n    inv.ship(\"BOLT-M8\", 3).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);",
+            "    let mut inv = InventoryView::new();\n    inv.ship(\"BOLT-M8\", 3).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);",
+            "    inv.ship(\"BOLT-M8\", 3).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);",
+            // A struct literal or an unannotated `Default::default()` is not
+            // a constructor verified to leave the map empty.
+            "    let mut inv = Inventory { stock: BTreeMap::new() };\n    inv.ship(\"BOLT-M8\", 3).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);",
+            "    let mut inv = Default::default();\n    inv.ship(\"BOLT-M8\", 3).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);",
+            "    let mut inv = Inventory::new(2).with(\"BOLT-M8\", 7);\n    inv.ship(\"BOLT-M8\", 3).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);",
+            // A second or nested declaration of the binding.
+            "    let mut inv = Inventory::seeded(&[(\"BOLT-M8\", 7)]);\n    { let inv = Inventory::new(2); inv.len(); }\n    inv.ship(\"BOLT-M8\", 3).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);",
+            "    let mut inv = Inventory::seeded(&[(\"BOLT-M8\", 7)]);\n    let mut inv = Inventory::new(2);\n    inv.ship(\"BOLT-M8\", 3).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);",
+            "    {\n    let mut inv = Inventory::new(2);\n    inv.ship(\"BOLT-M8\", 3).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);\n    }",
+            // An early return before the read, after or before the call.
+            "    let mut inv = Inventory::new(2);\n    if skip() { return; }\n    inv.ship(\"BOLT-M8\", 3).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);",
+            "    let mut inv = Inventory::new(2);\n    inv.ship(\"BOLT-M8\", 3).unwrap();\n    if skip() { return; }\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);",
+            // A write on the read's own line, before the assertion.
+            "    let mut inv = Inventory::new(2);\n    inv.ship(\"BOLT-M8\", 3).unwrap();\n    inv.set(\"BOLT-M8\", 7); assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);",
+        ] {
+            assert!(!passes(refused, 0, "\"BOLT-M8\""), "{refused}");
+        }
+        // A key variable must hold the same value at the call and the read.
+        let keyed = |between: &str| {
+            format!(
+                "    let mut inv = Inventory::new(2);\n    let mut sku = \"A\";\n    inv.ship(sku, 3).unwrap();\n{between}    assert_eq!(inv.on_hand(sku), 7);"
+            )
+        };
+        assert!(passes(&keyed(""), 0, "sku"));
+        assert!(passes(&keyed("    let n = 1;\n"), 0, "sku"));
+        for between in [
+            "    sku = \"B\";\n",
+            "    let sku = \"B\";\n",
+            "    change(&mut sku);\n",
+        ] {
+            assert!(!passes(&keyed(between), 0, "sku"), "{between}");
+        }
+        // Rule 3: between the call and the read the binding may only be
+        // read through the getter.
+        let rewritten = |between: &str| {
+            format!(
+                "    let mut inv = Inventory::new(2);\n    inv.ship(\"BOLT-M8\", 3).unwrap();\n{between}    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);"
+            )
+        };
+        assert!(passes(
+            &rewritten("    let before = inv.on_hand(\"BOLT-M8\");\n"),
+            0,
+            "\"BOLT-M8\""
+        ));
+        assert!(passes(
+            &rewritten("    let invoice = 3;\n"),
+            0,
+            "\"BOLT-M8\""
+        ));
+        // A second owner call is itself the accepted call before the read.
+        assert!(passes(
+            &rewritten("    inv.ship(\"BOLT-M8\", 1).unwrap();\n"),
+            0,
+            "\"BOLT-M8\""
+        ));
+        for between in [
+            "    inv.set(\"BOLT-M8\", 7);\n",
+            "    inv.stock.clear();\n",
+            "    reset(&mut inv);\n",
+        ] {
+            assert!(!passes(&rewritten(between), 0, "\"BOLT-M8\""), "{between}");
+        }
+        // An earlier statement that already stores the expected value under
+        // the key: the read passes whether or not the insert runs.
+        let seeded = |before: &str| {
+            format!(
+                "    let mut inv = Inventory::new(2);\n{before}    inv.ship(\"BOLT-M8\", 3).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);"
+            )
+        };
+        assert!(passes(
+            &seeded("    inv.receive(\"BOLT-M8\", 10);\n"),
+            0,
+            "\"BOLT-M8\""
+        ));
+        assert!(passes(
+            &seeded("    inv.set(\"NUT-M8\", 1).unwrap();\n    inv.set(\"BOLT-M8\", 10)?;\n"),
+            0,
+            "\"BOLT-M8\""
+        ));
+        assert!(passes(
+            &seeded("    other.set(\"BOLT-M8\", 7);\n"),
+            0,
+            "\"BOLT-M8\""
+        ));
+        // Any earlier call on the binding that could store the expected
+        // value: a literal equal to it under any spelling or suffix, a
+        // computed or variable argument, a helper taking the binding, or
+        // anything that is not a plain call statement.
+        for before in [
+            "    inv.set(\"BOLT-M8\", 7);\n",
+            "    inv.receive(\"BOLT-M8\", 7).unwrap();\n",
+            "    inv.receive(\"NUT-M8\", 7);\n",
+            "    inv.set(\"BOLT-M8\", 7u32);\n",
+            "    inv.set(\"BOLT-M8\", 7_u32);\n",
+            "    inv.set(\"BOLT-M8\", 3 + 4);\n",
+            "    let v = 7;\n    inv.set(\"BOLT-M8\", v);\n",
+            "    seed(&mut inv);\n",
+            "    inv.stock.insert(\"BOLT-M8\".into(), 7);\n",
+            "    inv.set(\"BOLT-M8\", 10).set(\"BOLT-M8\", 7);\n",
+            "    if ready { inv.set(\"BOLT-M8\", 10); }\n",
+            "    inv.load_defaults();\n",
+            // Two writes where one accumulates can sum to the expected value.
+            "    inv.receive(\"BOLT-M8\", 3);\n    inv.receive(\"BOLT-M8\", 4);\n",
+            "    inv.set(\"BOLT-M8\", 3);\n    inv.receive(\"BOLT-M8\", 4);\n",
+        ] {
+            assert!(!passes(&seeded(before), 0, "\"BOLT-M8\""), "{before}");
+        }
+        assert!(!passes(
+            "    let mut inv = Inventory::seeded(&[(\"BOLT-M8\", 7)]);\n    inv.ship(\"BOLT-M8\", 3).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);",
+            0,
+            "\"BOLT-M8\""
+        ));
+        // A computed key is never matched by spelling alone.
+        assert!(!passes(
+            "    let mut inv = Inventory::new(2);\n    inv.ship(next(), 3).unwrap();\n    assert_eq!(inv.on_hand(next()), 7);",
+            0,
+            "next()"
+        ));
     }
 
     #[test]
@@ -4033,6 +5542,276 @@ mod tests {
         Ok(())
     }
 
+    /// #7063: the discriminate stage of `probe`, read at `expression`,
+    /// against `test` when the owner-return pin admits every `assert_eq!`
+    /// (`pinned`) or none.
+    fn discriminate_with_owner_pin(
+        probe: &Probe,
+        expression: &str,
+        test: &TestSummary,
+        pinned: bool,
+    ) -> StageEvidence {
+        let pin = move |_: &TestSummary, assertion: &OracleFact| {
+            pinned && assertion.text.starts_with("assert_eq!")
+        };
+        reveal_evidence_with_expression(
+            probe,
+            expression,
+            &[(test, RelationReason::DirectOwnerCall)],
+            &[],
+            &|_, _| false,
+            &|_, _| false,
+            &ReturnOracleAdmission {
+                owner_return_pin: &pin,
+                assertion_admitted: &|_, _| true,
+                sibling_exclusion_admitted: &|_, _| true,
+                proximity_may_reach_owner: &|_| false,
+                owner_parameters: &[],
+                expected_reaches_owner: &|_, _| false,
+                expected_operand_value: &|_, _| None,
+                effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
+                getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| None,
+                owner_argument_names: &[],
+                owner_returns_value: true,
+                owner_may_exit_before_probe: false,
+                constructor_starts_empty: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| None,
+            },
+            None,
+        )
+        .1
+    }
+
+    /// #7063 rule 7: a RIPR-SPEC-0231 sibling exclusion on the owner call
+    /// (`assert_ne!(owner(..), Err(E::Sibling { .. }))`) observes that the
+    /// changed result is not the sibling; it says nothing about the changed
+    /// variant's payload, so it confirms a changed variant but not a change
+    /// that may sit only in the payload.
+    #[test]
+    fn a_sibling_exclusion_does_not_confirm_a_payload_only_change() {
+        let changed = "return Err(ConfigError::MissingEquals { line: idx + 1 });";
+        let with_before = |before: Option<&str>| Probe {
+            before: before.map(str::to_string),
+            after: Some(changed.to_string()),
+            ..owned_probe(ProbeFamily::ErrorPath, changed, "parse_pairs")
+        };
+        for text in [
+            "assert_ne!(parse_pairs(\"port\"), Err(ConfigError::EmptyKey { line: 1 }));",
+            "assert!(!matches!(parse_pairs(\"port\"), Err(ConfigError::EmptyKey { .. })));",
+        ] {
+            let test = test_with_assertions(
+                "port_is_not_an_empty_key",
+                vec![oracle(
+                    text,
+                    OracleKind::RelationalCheck,
+                    OracleStrength::Weak,
+                )],
+            );
+            let variant_changed = with_before(Some(
+                "return Err(ConfigError::DuplicateKey { line: idx + 1 });",
+            ));
+            let seen = discriminate_with_owner_pin(&variant_changed, changed, &test, false);
+            assert!(
+                !seen.summary.contains("observation_unverified"),
+                "{text}: a changed variant is confirmed by the exclusion: {seen:?}"
+            );
+            for before in [
+                Some("return Err(ConfigError::MissingEquals { line: line_no });"),
+                None,
+            ] {
+                let payload_only = with_before(before);
+                let unseen = discriminate_with_owner_pin(&payload_only, changed, &test, false);
+                assert!(
+                    unseen.summary.contains("observation_unverified"),
+                    "{text} {before:?}: a payload-only change was confirmed: {unseen:?}"
+                );
+            }
+        }
+    }
+
+    /// #7063: a changed construction whose payload may be all that changed
+    /// (`line: line_no` -> `line: idx + 1`) is not observed by a variant-only
+    /// oracle: `matches!(r, Err(E::V { .. }))`, a guarded match on the
+    /// variant, or an `assert_eq!` the owner-return pin refused. Only the
+    /// admitted whole-value owner pin confirms it. A changed variant is still
+    /// seen by a variant pin.
+    #[test]
+    fn a_payload_change_needs_the_whole_value_owner_pin() -> Result<(), String> {
+        let reveal = |probe: &Probe, test: &TestSummary, pinned: bool| {
+            let pin = move |_: &TestSummary, assertion: &OracleFact| {
+                pinned && assertion.text.starts_with("assert_eq!")
+            };
+            reveal_evidence_with_expression(
+                probe,
+                &probe.expression,
+                &[(test, RelationReason::DirectOwnerCall)],
+                &[],
+                &|_, _| false,
+                &|_, _| false,
+                &ReturnOracleAdmission {
+                    owner_return_pin: &pin,
+                    assertion_admitted: &|_, _| true,
+                    sibling_exclusion_admitted: &|_, _| true,
+                    proximity_may_reach_owner: &|_| false,
+                    owner_parameters: &[],
+                    expected_reaches_owner: &|_, _| false,
+                    expected_operand_value: &|_, _| None,
+                    effect_state_carried: &|_, _| true,
+                    setter_writes_field: &|_, _, _| true,
+                    collection_argument_observed: &|_, _| false,
+                    getter_reads_field: &|_, _, _| false,
+                    getter_reads_key: &|_, _, _| None,
+                    owner_argument_names: &[],
+                    owner_returns_value: true,
+                    owner_may_exit_before_probe: false,
+                    constructor_starts_empty: &|_, _, _| false,
+                    call_cannot_store: &|_, _, _, _| None,
+                },
+                None,
+            )
+            .1
+        };
+        let changed = "return Err(ConfigError::MissingEquals { line: idx + 1 });";
+        let payload_only = |family: ProbeFamily| Probe {
+            before: Some("return Err(ConfigError::MissingEquals { line: line_no });".to_string()),
+            after: Some(changed.to_string()),
+            ..owned_probe(family, changed, "parse_pairs")
+        };
+        let whole = test_with_assertions(
+            "missing_equals_reports_its_line",
+            vec![oracle(
+                "assert_eq!(parse_pairs(\"port 9000\"), Err(ConfigError::MissingEquals { line: 1 }));",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        let variant_only = test_with_assertions(
+            "missing_equals_is_reported",
+            vec![oracle(
+                "assert!(matches!(parse_pairs(\"port 9000\"), Err(ConfigError::MissingEquals { .. })));",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        for family in [ProbeFamily::ErrorPath, ProbeFamily::ReturnValue] {
+            // Positive: the admitted whole-value pin confirms the payload.
+            let pinned = reveal(&payload_only(family.clone()), &whole, true);
+            if pinned.state != StageState::Yes {
+                return Err(format!(
+                    "{family:?}: whole-value pin must confirm: {pinned:?}"
+                ));
+            }
+            // The same `assert_eq!` without an admitted pin names the
+            // variant but not, for ripr, the payload's source.
+            let refused = reveal(&payload_only(family.clone()), &whole, false);
+            if refused.state == StageState::Yes {
+                return Err(format!(
+                    "{family:?}: unpinned equality confirmed: {refused:?}"
+                ));
+            }
+            // A variant-only `matches!` never sees a payload change.
+            let loose = reveal(&payload_only(family.clone()), &variant_only, true);
+            if loose.state == StageState::Yes {
+                return Err(format!(
+                    "{family:?}: variant-only oracle confirmed: {loose:?}"
+                ));
+            }
+            // An unknown old text is held to the payload rule too.
+            let unknown_before = Probe {
+                before: None,
+                ..payload_only(family.clone())
+            };
+            let unknown = reveal(&unknown_before, &variant_only, true);
+            if unknown.state == StageState::Yes {
+                return Err(format!(
+                    "{family:?}: unknown old text confirmed: {unknown:?}"
+                ));
+            }
+            // A changed variant is what a variant pin sees.
+            let variant_changed = Probe {
+                before: Some("return Err(ConfigError::EmptyKey { line: line_no });".to_string()),
+                ..payload_only(family.clone())
+            };
+            let seen = reveal(&variant_changed, &variant_only, false);
+            if seen.state != StageState::Yes {
+                return Err(format!(
+                    "{family:?}: changed variant must confirm: {seen:?}"
+                ));
+            }
+            // An unknown old text with the admitted pin confirms.
+            let unknown_pinned = reveal(&unknown_before, &whole, true);
+            if unknown_pinned.state != StageState::Yes {
+                return Err(format!(
+                    "{family:?}: pinned unknown old text must confirm: {unknown_pinned:?}"
+                ));
+            }
+        }
+        // The old and new paths name one variant by their two trailing
+        // segments: a re-qualified path (`crate::ConfigError::..`) with a
+        // changed payload is still a payload-only change.
+        for family in [ProbeFamily::ErrorPath, ProbeFamily::ReturnValue] {
+            let requalified_text =
+                "return Err(crate::ConfigError::MissingEquals { line: idx + 1 });";
+            let requalified = Probe {
+                before: Some(
+                    "return Err(ConfigError::MissingEquals { line: line_no });".to_string(),
+                ),
+                after: Some(requalified_text.to_string()),
+                ..owned_probe(family.clone(), requalified_text, "parse_pairs")
+            };
+            let loose = reveal(&requalified, &variant_only, false);
+            if loose.state == StageState::Yes {
+                return Err(format!(
+                    "{family:?}: re-qualified payload change confirmed: {loose:?}"
+                ));
+            }
+        }
+        // Named residual (RIPR-SPEC-0197 early error-variant pins, rule 7):
+        // a `.ok_or(E::V(x))?` builds the variant inside a `?`, which no
+        // early error-variant gate admits, so even a written-out equality
+        // on the owner call does not confirm its payload.
+        let ok_or = "let v = slot.ok_or(ConfigError::MissingLine(idx + 1))?;";
+        let ok_or_probe = Probe {
+            before: Some("let v = slot.ok_or(ConfigError::MissingLine(line_no))?;".to_string()),
+            after: Some(ok_or.to_string()),
+            ..owned_probe(ProbeFamily::ErrorPath, ok_or, "parse_pairs")
+        };
+        let ok_or_whole = test_with_assertions(
+            "missing_line_reports_its_line",
+            vec![oracle(
+                "assert_eq!(parse_pairs(\"port 9000\"), Err(ConfigError::MissingLine(1)));",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        let residual = reveal(&ok_or_probe, &ok_or_whole, false);
+        if residual.state == StageState::Yes {
+            return Err(format!("`ok_or(..)?` payload confirmed: {residual:?}"));
+        }
+        // Named residual: a literal-field pattern pins one field by
+        // `matches!`, not the whole value, so it does not confirm either.
+        let field_pattern = test_with_assertions(
+            "missing_equals_names_line_two",
+            vec![oracle(
+                "assert!(matches!(parse_pairs(\"a = 1\\nport\"), Err(ConfigError::MissingEquals { line: 2 })));",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        for family in [ProbeFamily::ErrorPath, ProbeFamily::ReturnValue] {
+            let pattern = reveal(&payload_only(family.clone()), &field_pattern, false);
+            if pattern.state == StageState::Yes {
+                return Err(format!(
+                    "{family:?}: literal-field pattern confirmed: {pattern:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// A deleted call on a binding the owner introduces (`let table = ..;
     /// table.validate()?;`, regex `dfa.accels.validate()?`) is not observed by
     /// a test's same-named local. A parameter receiver (`cache.insert(..)` on
@@ -4052,12 +5831,21 @@ mod tests {
                 &ReturnOracleAdmission {
                     owner_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
+                    sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
+                    expected_operand_value: &|_, _| None,
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
+                    collection_argument_observed: &|_, _| false,
                     getter_reads_field: &|_, _, _| false,
+                    getter_reads_key: &|_, _, _| None,
+                    owner_argument_names: &[],
+                    owner_returns_value: true,
+                    owner_may_exit_before_probe: false,
+                    constructor_starts_empty: &|_, _, _| false,
+                    call_cannot_store: &|_, _, _, _| None,
                 },
                 None,
             )
@@ -4147,12 +5935,21 @@ mod tests {
                 &ReturnOracleAdmission {
                     owner_return_pin: &pin,
                     assertion_admitted: &|_, _| true,
+                    sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
+                    expected_operand_value: &|_, _| None,
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
+                    collection_argument_observed: &|_, _| false,
                     getter_reads_field: &|_, _, _| false,
+                    getter_reads_key: &|_, _, _| None,
+                    owner_argument_names: &[],
+                    owner_returns_value: true,
+                    owner_may_exit_before_probe: false,
+                    constructor_starts_empty: &|_, _, _| false,
+                    call_cannot_store: &|_, _, _, _| None,
                 },
                 None,
             )
@@ -4499,12 +6296,21 @@ mod tests {
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| None,
+                owner_argument_names: &[],
+                owner_returns_value: true,
+                owner_may_exit_before_probe: false,
+                constructor_starts_empty: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| None,
             },
             None,
         );
@@ -4570,12 +6376,21 @@ mod tests {
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| None,
+                owner_argument_names: &[],
+                owner_returns_value: true,
+                owner_may_exit_before_probe: false,
+                constructor_starts_empty: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| None,
             },
             None,
         );
@@ -4853,7 +6668,11 @@ mod tests {
                 arm_selector: None,
                 arm_inputs_readable: false,
                 arm_pattern_pinned: false,
+                arm_lent_selected: false,
                 owner_scoped_tokens: &empty,
+                owner_shadowed: false,
+                sibling_excluded: false,
+                payload_pin_required: false,
             };
             let (_, has_token) = assertion_matches_probe_detail_with_literals(
                 &context,
@@ -5538,6 +7357,27 @@ return Err(\"typed pin\".into());
             OracleKind::RelationalCheck,
             OracleStrength::Weak,
         )));
+        // #6578: of the medium snapshots, only the inline and golden-file
+        // expect-test comparisons the owner pin reads like `assert_eq!`.
+        for text in [
+            "expect![[\"w12\"]].assert_eq(&render(4));",
+            "expect_file![\"w.txt\"].assert_eq(&render(4));",
+        ] {
+            assert!(
+                pin_strength_admits(&oracle(text, OracleKind::Snapshot, OracleStrength::Medium)),
+                "{text}"
+            );
+        }
+        for text in [
+            "insta::assert_snapshot!(render(4));",
+            "expect![[\"w12\"]].assert_debug_eq(&render(4));",
+            "expect_file![\"w.txt\"].assert_debug_eq(&render(4));",
+        ] {
+            assert!(
+                !pin_strength_admits(&oracle(text, OracleKind::Snapshot, OracleStrength::Medium)),
+                "{text}"
+            );
+        }
     }
 
     #[test]
@@ -6194,12 +8034,21 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| None,
+                owner_argument_names: &[],
+                owner_returns_value: true,
+                owner_may_exit_before_probe: false,
+                constructor_starts_empty: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| None,
             },
             None,
         );
@@ -6250,12 +8099,21 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| None,
+                owner_argument_names: &[],
+                owner_returns_value: true,
+                owner_may_exit_before_probe: false,
+                constructor_starts_empty: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| None,
             },
             None,
         );
@@ -6277,12 +8135,21 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| None,
+                owner_argument_names: &[],
+                owner_returns_value: true,
+                owner_may_exit_before_probe: false,
+                constructor_starts_empty: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| None,
             },
             None,
         );
@@ -6323,12 +8190,21 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| None,
+                owner_argument_names: &[],
+                owner_returns_value: true,
+                owner_may_exit_before_probe: false,
+                constructor_starts_empty: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| None,
             },
             None,
         );
@@ -6371,12 +8247,21 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| None,
+                owner_argument_names: &[],
+                owner_returns_value: true,
+                owner_may_exit_before_probe: false,
+                constructor_starts_empty: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| None,
             },
             None,
         );
@@ -6544,12 +8429,21 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| None,
+                owner_argument_names: &[],
+                owner_returns_value: true,
+                owner_may_exit_before_probe: false,
+                constructor_starts_empty: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| None,
             },
             None,
         );
@@ -6574,12 +8468,21 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| None,
+                owner_argument_names: &[],
+                owner_returns_value: true,
+                owner_may_exit_before_probe: false,
+                constructor_starts_empty: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| None,
             },
             None,
         );
@@ -6963,12 +8866,21 @@ return Err(\"typed pin\".into());
                 &ReturnOracleAdmission {
                     owner_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
+                    sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
+                    expected_operand_value: &|_, _| None,
                     effect_state_carried: &carried,
                     setter_writes_field: &|_, _, _| true,
+                    collection_argument_observed: &|_, _| false,
                     getter_reads_field: &|_, _, _| false,
+                    getter_reads_key: &|_, _, _| None,
+                    owner_argument_names: &[],
+                    owner_returns_value: true,
+                    owner_may_exit_before_probe: false,
+                    constructor_starts_empty: &|_, _, _| false,
+                    call_cannot_store: &|_, _, _, _| None,
                 },
                 None,
             )
@@ -7239,12 +9151,21 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|test| test.name == "from_str_fortnight",
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| None,
+                owner_argument_names: &[],
+                owner_returns_value: true,
+                owner_may_exit_before_probe: false,
+                constructor_starts_empty: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| None,
             },
             None,
         );
@@ -7330,12 +9251,21 @@ return Err(\"typed pin\".into());
                 &ReturnOracleAdmission {
                     owner_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
+                    sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|test| test.name == "a_large_refund_hits_the_limit",
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
+                    expected_operand_value: &|_, _| None,
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
+                    collection_argument_observed: &|_, _| false,
                     getter_reads_field: &|_, _, _| false,
+                    getter_reads_key: &|_, _, _| None,
+                    owner_argument_names: &[],
+                    owner_returns_value: true,
+                    owner_may_exit_before_probe: false,
+                    constructor_starts_empty: &|_, _, _| false,
+                    call_cannot_store: &|_, _, _, _| None,
                 },
                 None,
             );
@@ -7364,12 +9294,21 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| None,
+                owner_argument_names: &[],
+                owner_returns_value: true,
+                owner_may_exit_before_probe: false,
+                constructor_starts_empty: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| None,
             },
             None,
         );
@@ -7548,7 +9487,13 @@ return Err(\"typed pin\".into());
     fn error_path_exact_variant_oracle_keeps_discriminate_yes() {
         // Probe: Err(ParseError::TooLong(len)) — variant token "TooLong".
         // Assertion: assert_eq!(err, ParseError::TooLong(12)) — contains "TooLong".
-        let probe = probe(ProbeFamily::ErrorPath, "Err(ParseError::TooLong(len))");
+        // #7063: the change replaced the variant (`Empty` -> `TooLong`), so a
+        // variant pin sees it; a payload-only change needs the whole-value pin
+        // (`a_payload_change_needs_the_whole_value_owner_pin`).
+        let probe = Probe {
+            before: Some("Err(ParseError::Empty)".to_string()),
+            ..probe(ProbeFamily::ErrorPath, "Err(ParseError::TooLong(len))")
+        };
         let test = test_with_assertions(
             "too_long_error_pinned",
             vec![oracle(
@@ -7569,6 +9514,22 @@ return Err(\"typed pin\".into());
             !discriminate.summary.contains("observation_unverified"),
             "variant-confirmed oracle must NOT emit observation_unverified: got `{}`",
             discriminate.summary
+        );
+        // Repo mode has no old text: the change may sit only in the payload,
+        // so the same equality confirms through the owner-return pin alone.
+        let unknown_before = Probe {
+            before: None,
+            ..probe.clone()
+        };
+        assert_eq!(
+            discriminate_with_owner_pin(&unknown_before, &unknown_before.expression, &test, true)
+                .state,
+            StageState::Yes
+        );
+        assert_ne!(
+            discriminate_with_owner_pin(&unknown_before, &unknown_before.expression, &test, false)
+                .state,
+            StageState::Yes
         );
     }
 
@@ -7696,7 +9657,13 @@ return Err(\"typed pin\".into());
 
     #[test]
     fn error_path_parser_context_cannot_replace_emitted_probe_variant() {
-        let probe = probe(ProbeFamily::ErrorPath, "Err(ParseError::TooLong(len))");
+        // #7063: the change replaced the variant (`Empty` -> `TooLong`), so a
+        // variant pin sees it; a payload-only change needs the whole-value pin
+        // (`a_payload_change_needs_the_whole_value_owner_pin`).
+        let probe = Probe {
+            before: Some("Err(ParseError::Empty)".to_string()),
+            ..probe(ProbeFamily::ErrorPath, "Err(ParseError::TooLong(len))")
+        };
         let test = test_with_assertions(
             "too_long_is_exact",
             vec![oracle(
@@ -7716,12 +9683,21 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| None,
+                owner_argument_names: &[],
+                owner_returns_value: true,
+                owner_may_exit_before_probe: false,
+                constructor_starts_empty: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| None,
             },
             None,
         );
@@ -7736,13 +9712,45 @@ return Err(\"typed pin\".into());
             "variant fallback must preserve exact-error confirmation: got `{}`",
             discriminate.summary
         );
+        // With no old text the emitted variant confirms only through the
+        // owner-return pin.
+        let unknown_before = Probe {
+            before: None,
+            ..probe.clone()
+        };
+        assert_eq!(
+            discriminate_with_owner_pin(
+                &unknown_before,
+                "Err(ParseError::SiblingVariant)",
+                &test,
+                true
+            )
+            .state,
+            StageState::Yes
+        );
+        assert_ne!(
+            discriminate_with_owner_pin(
+                &unknown_before,
+                "Err(ParseError::SiblingVariant)",
+                &test,
+                false
+            )
+            .state,
+            StageState::Yes
+        );
     }
 
     /// RIPR-SPEC-0107 Control B continued: `matches!(err, ParseError::TooLong(_))`
     /// also pins the variant token and must keep the seam `exposed`.
     #[test]
     fn error_path_matches_variant_oracle_keeps_discriminate_yes() {
-        let probe = probe(ProbeFamily::ErrorPath, "Err(ParseError::TooLong(len))");
+        // #7063: the change replaced the variant (`Empty` -> `TooLong`), so a
+        // variant pin sees it; a payload-only change needs the whole-value pin
+        // (`a_payload_change_needs_the_whole_value_owner_pin`).
+        let probe = Probe {
+            before: Some("Err(ParseError::Empty)".to_string()),
+            ..probe(ProbeFamily::ErrorPath, "Err(ParseError::TooLong(len))")
+        };
         let test = test_with_assertions(
             "too_long_error_matches",
             vec![oracle(
@@ -7758,6 +9766,19 @@ return Err(\"typed pin\".into());
             discriminate.state,
             StageState::Yes,
             "ErrorPath probe with a matches! variant oracle must stay exposed"
+        );
+        // #7063: the same `matches!` cannot see a change confined to the
+        // payload (`TooLong(len - 1)` -> `TooLong(len)`).
+        let payload_only = Probe {
+            before: Some("Err(ParseError::TooLong(len - 1))".to_string()),
+            ..probe.clone()
+        };
+        let (_observe, payload_discriminate, _related) =
+            reveal_evidence(&payload_only, &[(&test, RelationReason::DirectOwnerCall)]);
+        assert_ne!(
+            payload_discriminate.state,
+            StageState::Yes,
+            "a variant-only matches! must not confirm a payload-only change"
         );
     }
 
@@ -7883,6 +9904,182 @@ return Err(\"typed pin\".into());
         }
     }
 
+    /// #8051 / #8141 review: in every recognized form, an assertion
+    /// expecting the written collection empty caps both effect families at
+    /// weak and leaves the observation unconfirmed when the owner may
+    /// leave before the changed push. Without an earlier exit the push
+    /// ran, so the canonical form keeps its strength, and a non-empty
+    /// expectation is never capped. The owner-wide flag is the accepted
+    /// boundary: the cap cannot read which path one test took, so a test
+    /// that bypasses the exit and empties the collection again is capped
+    /// with it (recorded in RIPR-SPEC-0228).
+    #[test]
+    fn empty_collection_expectations_cap_effect_families_only_after_an_early_exit() {
+        let forms = [
+            "assert_eq!(items, vec![]);",
+            "assert_eq!(vec![], items);",
+            "assert_eq!(items, Vec::new());",
+            "assert_eq!(items, Vec::<Entry>::new());",
+            "assert_eq!(&items, &[]);",
+            "assert_eq!(items.len(), 0);",
+            "assert_eq!(0, items.len());",
+            "assert!(items.is_empty());",
+        ];
+        for family in [ProbeFamily::SideEffect, ProbeFamily::CallDeletion] {
+            for text in forms {
+                let probe = probe(family.clone(), "items.push(5)");
+                // The harness labels the assertion strong whole-object
+                // evidence, so only a cap can move the result to weak.
+                let test = test_with_assertions(
+                    "leaves_items_empty",
+                    vec![oracle(
+                        text,
+                        OracleKind::WholeObjectEquality,
+                        OracleStrength::Strong,
+                    )],
+                );
+                let (discriminate, strength) = reveal_evidence_with_exit(&probe, &test, true);
+                assert_eq!(
+                    discriminate.state,
+                    StageState::Weak,
+                    "{text} against {family:?} must not read exposed after a skippable push"
+                );
+                assert_eq!(strength, OracleStrength::Weak, "{text} against {family:?}");
+                assert!(
+                    discriminate.summary.contains("observation_unverified"),
+                    "{text} against {family:?} must not confirm a skipped push: got `{}`",
+                    discriminate.summary
+                );
+                // Without an earlier exit the push ran, and the canonical
+                // form keeps its strength.
+                if text == "assert_eq!(items, vec![]);" {
+                    let (discriminate, strength) = reveal_evidence_with_exit(&probe, &test, false);
+                    assert_eq!(
+                        discriminate.state,
+                        StageState::Yes,
+                        "{text} against {family:?} must stay exposed when the push cannot be skipped"
+                    );
+                    assert_eq!(
+                        strength,
+                        OracleStrength::Strong,
+                        "{text} against {family:?}"
+                    );
+                }
+            }
+            // The cap is about the empty expectation, not about the
+            // early-exit owner: a non-empty equality is never capped.
+            let probe = probe(family.clone(), "items.push(5)");
+            let seeded = test_with_assertions(
+                "logs_the_beat",
+                vec![oracle(
+                    "assert_eq!(items, vec![5]);",
+                    OracleKind::WholeObjectEquality,
+                    OracleStrength::Strong,
+                )],
+            );
+            let (discriminate, strength) = reveal_evidence_with_exit(&probe, &seeded, true);
+            assert_eq!(
+                discriminate.state,
+                StageState::Yes,
+                "a non-empty expectation against {family:?} must stay exposed"
+            );
+            assert_eq!(
+                strength,
+                OracleStrength::Strong,
+                "a non-empty expectation against {family:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn seeded_collection_expectations_cap_effect_families_only_after_an_early_exit() {
+        for family in [ProbeFamily::SideEffect, ProbeFamily::CallDeletion] {
+            let probe = probe(family.clone(), "items.push(5)");
+            let seeded = test_with_body_assertions(
+                "keeps_seeded_items",
+                "let mut items = vec![9];\n    record(&mut items);\n    assert_eq!(items, vec![9]);",
+                vec![oracle(
+                    "assert_eq!(items, vec![9]);",
+                    OracleKind::WholeObjectEquality,
+                    OracleStrength::Strong,
+                )],
+            );
+            let (discriminate, strength) = reveal_evidence_with_exit(&probe, &seeded, true);
+            assert_eq!(
+                discriminate.state,
+                StageState::Weak,
+                "a seeded expectation against {family:?} must not read exposed after a skippable push"
+            );
+            assert_eq!(strength, OracleStrength::Weak, "{family:?}");
+            assert!(
+                discriminate.summary.contains("observation_unverified"),
+                "a seeded expectation against {family:?} must not confirm a skipped push: got `{}`",
+                discriminate.summary
+            );
+            // Without an earlier exit the push ran and the same seeded
+            // expectation keeps its strength.
+            let (discriminate, strength) = reveal_evidence_with_exit(&probe, &seeded, false);
+            assert_eq!(
+                discriminate.state,
+                StageState::Yes,
+                "a seeded expectation against {family:?} must stay exposed when the push cannot be skipped"
+            );
+            assert_eq!(strength, OracleStrength::Strong, "{family:?}");
+            // An expectation that includes the pushed value discriminates
+            // the push even when the owner may exit early.
+            let appended = test_with_assertions(
+                "logs_seed_and_push",
+                vec![oracle(
+                    "assert_eq!(items, vec![9, 5]);",
+                    OracleKind::WholeObjectEquality,
+                    OracleStrength::Strong,
+                )],
+            );
+            let (discriminate, strength) = reveal_evidence_with_exit(&probe, &appended, true);
+            assert_eq!(
+                discriminate.state,
+                StageState::Yes,
+                "an expectation holding the pushed value against {family:?} must stay exposed"
+            );
+            assert_eq!(strength, OracleStrength::Strong, "{family:?}");
+            // An expectation that differs from the seeded state
+            // discriminates the push: the skipped push leaves vec![8].
+            let differing = test_with_body_assertions(
+                "expects_more_than_the_seed",
+                "let mut items = vec![8];\n    record(&mut items);\n    assert_eq!(items, vec![9]);",
+                vec![oracle(
+                    "assert_eq!(items, vec![9]);",
+                    OracleKind::WholeObjectEquality,
+                    OracleStrength::Strong,
+                )],
+            );
+            let (discriminate, strength) = reveal_evidence_with_exit(&probe, &differing, true);
+            assert_eq!(
+                discriminate.state,
+                StageState::Yes,
+                "an expectation differing from the seed against {family:?} must stay exposed"
+            );
+            assert_eq!(strength, OracleStrength::Strong, "{family:?}");
+            // Without a spelled-out seed construction, an expectation
+            // that merely looks seeded keeps its credit.
+            let unseeded = test_with_assertions(
+                "expects_the_pushed_value",
+                vec![oracle(
+                    "assert_eq!(items, vec![9]);",
+                    OracleKind::WholeObjectEquality,
+                    OracleStrength::Strong,
+                )],
+            );
+            let (discriminate, strength) = reveal_evidence_with_exit(&probe, &unseeded, true);
+            assert_eq!(
+                discriminate.state,
+                StageState::Yes,
+                "an expectation with no seeded construction against {family:?} must stay exposed"
+            );
+            assert_eq!(strength, OracleStrength::Strong, "{family:?}");
+        }
+    }
+
     #[test]
     fn asserting_affected_collection_retains_confirmation_in_either_order() {
         let probe = probe(ProbeFamily::SideEffect, "items.push(5)");
@@ -8004,6 +10201,17 @@ return Err(\"typed pin\".into());
         owner_parameters: &[String],
         reaches: &dyn Fn(Option<&str>, &str) -> bool,
     ) -> (StageEvidence, OracleStrength) {
+        tax_reveal_with_operand(expression, test, owner_parameters, reaches, &|_, _| None)
+    }
+
+    /// [`tax_reveal`] with an expected-operand binding/constant answer.
+    fn tax_reveal_with_operand(
+        expression: &str,
+        test: &TestSummary,
+        owner_parameters: &[String],
+        reaches: &dyn Fn(Option<&str>, &str) -> bool,
+        operand_value: &dyn Fn(&TestSummary, &str) -> Option<String>,
+    ) -> (StageEvidence, OracleStrength) {
         let probe = owned_probe(ProbeFamily::ReturnValue, expression, "tax");
         let (_, discriminate, related, _) = reveal_evidence_with_expression(
             &probe,
@@ -8015,12 +10223,21 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters,
                 expected_reaches_owner: reaches,
+                expected_operand_value: operand_value,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| None,
+                owner_argument_names: &[],
+                owner_returns_value: true,
+                owner_may_exit_before_probe: false,
+                constructor_starts_empty: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| None,
             },
             None,
         );
@@ -8152,6 +10369,90 @@ return Err(\"typed pin\".into());
             "{}",
             discriminate.summary
         );
+    }
+
+    #[test]
+    fn expected_operand_holding_an_owner_value_is_weak_and_unconfirmed() {
+        // RIPR-SPEC-0035: `RATE` is the changed token, so the assertion
+        // matches the probe; `EXPECTED` holds `tax(RATE)` through a constant,
+        // so the equality compares the owner with itself.
+        let params = vec!["subtotal".to_string()];
+        let test = test_with_assertions(
+            "tax_matches_the_table",
+            vec![exact("assert_eq!(tax(RATE), EXPECTED);")],
+        );
+        let value = |_: &TestSummary, operand: &str| {
+            (operand.trim() == "EXPECTED").then(|| "tax(RATE)".to_string())
+        };
+        let (discriminate, strength) =
+            tax_reveal_with_operand("subtotal * RATE", &test, &params, &|_, _| false, &value);
+        assert_eq!(strength, OracleStrength::Weak);
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "{}",
+            discriminate.summary
+        );
+        // An independent expected value keeps its credit.
+        let (discriminate, strength) = tax_reveal("subtotal * RATE", &test, &params, &|_, _| false);
+        assert_eq!(strength, OracleStrength::Strong);
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "{}",
+            discriminate.summary
+        );
+        let held = |value: &'static str| {
+            move |operand: &str| (operand.trim() == "EXPECTED").then(|| value.to_string())
+        };
+        // Only the side that does not call the owner is asked about, and
+        // both sides calling the owner is the existing rule's.
+        assert!(expected_operand_bound_to_owner(
+            "assert!(EXPECTED == tax(RATE));",
+            "tax",
+            &held("tax(RATE)")
+        ));
+        assert!(expected_operand_bound_to_owner(
+            "assert_eq!(tax(4), EXPECTED);",
+            "tax",
+            &held("crate::tax(2)")
+        ));
+        assert!(!expected_operand_bound_to_owner(
+            "assert_eq!(tax(RATE), tax(RATE));",
+            "tax",
+            &|_| Some("tax(RATE)".to_string())
+        ));
+        assert!(!expected_operand_bound_to_owner(
+            "assert_eq!(EXPECTED, OTHER);",
+            "tax",
+            &|_| Some("tax(RATE)".to_string())
+        ));
+        // A value that differs outside its owner calls, or never calls the
+        // owner (a struct literal, a macro, a field), still pins the owner,
+        // as the same value written in place would.
+        for value in [
+            "tax(RATE) * 2",
+            "v.tax()",
+            "Other::tax(RATE)",
+            "Expected { tax: 3 }",
+            "tax!(RATE)",
+            "fixture.tax",
+            "12",
+        ] {
+            assert!(
+                !expected_operand_bound_to_owner(
+                    "assert_eq!(cart.tax(), EXPECTED);",
+                    "tax",
+                    &held(value)
+                ),
+                "{value}"
+            );
+        }
+        assert!(!expected_operand_bound_to_owner(
+            "assert_eq!(tax(RATE), EXPECTED);",
+            "tax",
+            &|_| None
+        ));
     }
 
     #[test]

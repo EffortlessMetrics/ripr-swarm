@@ -142,6 +142,13 @@ pub struct RustIndex {
     pub harness_subjects: Vec<HarnessSubjectFact>,
     pub harness_limitations: Vec<HarnessLimitationFact>,
     pub(crate) workspace_authority: Option<WorkspaceRootAuthority>,
+    /// Per-analysis call-identity memos (#7716 residual): one workspace
+    /// shape pass and one identity per owner definition. The index is
+    /// rebuilt per analysis run and its sources never change after the
+    /// build (the post-build oracle-policy pass edits only test assertion
+    /// facts), so the memos can never answer for sources other than the
+    /// ones they were computed from; a cloned index starts empty.
+    pub(crate) call_identity_memos: crate::analysis::classify::CallIdentityMemos,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -481,6 +488,7 @@ impl RustIndex {
     /// Insert each supplied occurrence once. Shared membership is explicit;
     /// equal names, coordinates and bodies never collapse two occurrences.
     pub fn insert_file(&mut self, path: PathBuf, facts: FileFacts, flat: bool) {
+        self.call_identity_memos.clear();
         self.bump_membership_revision();
         let FileFacts {
             path: fact_path,
@@ -545,6 +553,7 @@ impl RustIndex {
     }
     #[cfg(test)]
     pub(crate) fn insert_file_only(&mut self, path: PathBuf, facts: FileFacts) {
+        self.call_identity_memos.clear();
         self.insert_file(path, facts, false);
     }
     pub fn push_function(&mut self, fact: FunctionFact) {
@@ -778,12 +787,14 @@ impl RustIndex {
     }
     #[cfg(test)]
     pub fn extend_functions(&mut self, facts: impl IntoIterator<Item = FunctionFact>) {
+        self.call_identity_memos.clear();
         for fact in facts {
             self.push_function(fact);
         }
     }
     #[cfg(test)]
     pub fn extend_tests(&mut self, facts: impl IntoIterator<Item = TestFact>) {
+        self.call_identity_memos.clear();
         for fact in facts {
             self.push_test(fact);
         }

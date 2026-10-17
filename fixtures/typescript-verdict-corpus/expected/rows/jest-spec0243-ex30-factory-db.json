@@ -1,0 +1,22 @@
+{
+  "case_id": "jest-spec0243-ex30-factory-db",
+  "subject_id": "authored-ts-jest-relations",
+  "origin": "authored",
+  "anchor": "src/saveFactory.ts:6",
+  "behavior_family": "side_effect",
+  "test_shape": "jest_mock_fn_tohavebeencalledwith_factory_object",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

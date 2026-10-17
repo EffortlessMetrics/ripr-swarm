@@ -1,0 +1,6 @@
+[package]
+name = "rust_ffi_attribute_literals_fixture"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]

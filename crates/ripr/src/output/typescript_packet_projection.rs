@@ -14,7 +14,7 @@
 //! - No parallel TypeScript-specific completeness validator is introduced.
 //!   The only flip gate is `validate_agent_gap_record_packet(..) == Ok(())`.
 
-use crate::domain::Finding;
+use crate::domain::{Finding, OracleStrength, ProbeFamily, StageState};
 use crate::output::gap_decision_ledger::{
     GapAnchor, GapRecord, GapRepairRoute, ProjectionEligibility, preview_receipt_write_command,
 };
@@ -1066,10 +1066,11 @@ fn static_literal_argument_reaches_boundary(
 }
 
 /// Project a TypeScript preview finding into a `GapRecord` for validator
-/// consumption, applying all §1.2 preconditions (G-A through G-G).
+/// consumption, applying all §1.2 preconditions (G-A through G-H).
 ///
-/// Returns `None` whenever ANY precondition fails — the false case requires
-/// no positive proof. Only `Ok(())` from the shared validator leads to a flip.
+/// Returns `None` when a pre-projection guard fails. Target refusals retain an
+/// ineligible diagnostic record. Only `Ok(())` from the shared validator
+/// leads to a readiness flip.
 ///
 /// # Preconditions checked (fail-closed)
 /// - G-A: `actionability_category == "incomplete_repair_packet"`
@@ -1083,6 +1084,8 @@ fn static_literal_argument_reaches_boundary(
 ///   non-reaching input keeps the record projected with a boundary placeholder
 ///   shape but fails the packet closed (`agent_packet` ineligible). An
 ///   unresolved named-constant boundary fails closed the same way (#4215).
+/// - G-H (#7514): a strong assertion refused as an effect observer cannot
+///   supply the repair shape; retain an ineligible diagnostic record.
 pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> {
     // Base-side evidence names a line the candidate no longer has (#7689),
     // so it is never a repair target (#3281).
@@ -1197,7 +1200,20 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
             boundary_parameters.as_ref(),
         )
     });
-    let assertion_shape = target_shape.as_ref().map(|shape| shape.shape().to_string());
+    // #7514: a strong assertion rejected by the effect observation guard has
+    // no confirmed static link to the effect. Do not offer its borrowed shape
+    // as a ready repair. Keep weaker-oracle strengthening and
+    // other families on their existing paths; the shared validator below
+    // consumes this refusal through normal projection eligibility.
+    let unconfirmed_effect = matches!(
+        finding.probe.family,
+        ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+    ) && related_test.oracle_strength == OracleStrength::Strong
+        && finding.ripr.reveal.observe.state != StageState::Yes;
+    let assertion_shape = target_shape
+        .as_ref()
+        .filter(|_| !unconfirmed_effect)
+        .map(|shape| shape.shape().to_string());
     let mut stop_conditions = vec![
         "Stop if the gap record is no longer present or loses agent-packet eligibility."
             .to_string(),
@@ -1248,15 +1264,23 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
     // validator fails the packet closed while the placeholder shape still
     // names the boundary — a complete packet must not instruct a duplicate
     // of a non-discriminating assertion.
-    let boundary_ineligibility = target_shape
-        .as_ref()
-        .and_then(TargetAssertionShape::packet_ineligibility_reason);
+    let target_ineligibility = if unconfirmed_effect {
+        Some(
+            "the strong borrowed assertion is not confirmed to observe the changed effect; \
+             identify an effect-observing assertion before the packet is delegatable"
+                .to_string(),
+        )
+    } else {
+        target_shape
+            .as_ref()
+            .and_then(TargetAssertionShape::packet_ineligibility_reason)
+    };
     let mut projection_eligibility = BTreeMap::new();
     projection_eligibility.insert(
         "agent_packet".to_string(),
         ProjectionEligibility {
-            eligible: boundary_ineligibility.is_none(),
-            reason: boundary_ineligibility.unwrap_or_else(|| {
+            eligible: target_ineligibility.is_none(),
+            reason: target_ineligibility.unwrap_or_else(|| {
                 "TypeScript preview complete-contract projection (RIPR-SPEC-0087)".to_string()
             }),
         },
@@ -1599,6 +1623,71 @@ mod tests {
         );
     }
 
+    #[test]
+    fn unconfirmed_strong_effect_observers_fail_shared_packet_validation() -> Result<(), String> {
+        for family in [ProbeFamily::SideEffect, ProbeFamily::CallDeletion] {
+            for state in [StageState::Weak, StageState::No, StageState::Unknown] {
+                let mut finding = complete_finding();
+                finding.probe.family = family.clone();
+                finding.related_tests[0].oracle_strength = OracleStrength::Strong;
+                finding.ripr.reveal.observe.state = state;
+                let record = typescript_gap_record_for(&finding)
+                    .ok_or("the refused target must retain a diagnostic record")?;
+                let reason = validate_agent_gap_record_packet(&record)
+                    .err()
+                    .ok_or("an unconfirmed effect target must not be delegatable")?;
+                assert!(reason.contains("effect-observing assertion"), "{reason}");
+                assert!(
+                    record
+                        .repair_route
+                        .as_ref()
+                        .is_some_and(|route| { route.assertion_shape.is_none() })
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn effect_refusal_preserves_other_packet_target_paths() -> Result<(), String> {
+        for (family, strength, observation) in [
+            (
+                ProbeFamily::Predicate,
+                OracleStrength::Strong,
+                StageState::Weak,
+            ),
+            (
+                ProbeFamily::ReturnValue,
+                OracleStrength::Strong,
+                StageState::Weak,
+            ),
+            (
+                ProbeFamily::SideEffect,
+                OracleStrength::Medium,
+                StageState::Weak,
+            ),
+            (
+                ProbeFamily::SideEffect,
+                OracleStrength::Strong,
+                StageState::Yes,
+            ),
+        ] {
+            let mut finding = complete_finding();
+            finding.probe.family = family;
+            finding.related_tests[0].oracle_strength = strength;
+            finding.ripr.reveal.observe.state = observation;
+            let record = typescript_gap_record_for(&finding).ok_or("missing control packet")?;
+            validate_agent_gap_record_packet(&record)?;
+            assert!(
+                record
+                    .repair_route
+                    .as_ref()
+                    .is_some_and(|route| { route.assertion_shape.is_some() })
+            );
+        }
+        Ok(())
+    }
+
     /// §7.4: Dynamic oracle limitation → G-C fails, returns None.
     #[test]
     fn validator_parity_dynamic_oracle_returns_none() {
@@ -1705,11 +1794,15 @@ mod tests {
             .receipt_command
             .as_deref()
             .ok_or("projected record must carry a receipt command")?;
+        // Host-aware quoting (#7729).
         assert_eq!(
             cmd,
-            "ripr receipt write --gap gap:typescript:typescript_preview:a1b2c3d4 \
-             --verify-command 'jest tests/discount.test.ts' --status not_run \
-             --out target/ripr/receipts/gap-typescript-typescript_preview-a1b2c3d4.json"
+            format!(
+                "ripr receipt write --gap gap:typescript:typescript_preview:a1b2c3d4 \
+                 --verify-command {} --status not_run \
+                 --out target/ripr/receipts/gap-typescript-typescript_preview-a1b2c3d4.json",
+                crate::agent::loop_commands::shell_arg("jest tests/discount.test.ts")
+            )
         );
         assert!(
             !cmd.contains("ripr outcome"),

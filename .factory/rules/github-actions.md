@@ -25,6 +25,6 @@
 
 ## Droid workflows
 
-- Automatic Droid review should run on same-repo PRs.
+- Automatic Droid PR review is retired under #5086; do not restore its workflow or lane policy.
 - Manual `@droid` triggers should be restricted to trusted actors.
 - Do not enable `show_full_output` in normal operation.

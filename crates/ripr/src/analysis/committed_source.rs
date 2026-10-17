@@ -53,6 +53,12 @@ pub(crate) struct CommittedSourceOverlay {
     /// output layer can tell the `--worktree`-visible edits from the files
     /// no flag covers.
     untracked: BTreeSet<String>,
+    /// Files the TypeScript committed-snapshot reading depends on (`.snap`
+    /// files, `package.json`, runner configs; RIPR-SPEC-0258) that
+    /// differ from `HEAD`: edited, deleted, untracked or ignored. The reading
+    /// refuses for them instead of crediting a working-tree entry `HEAD` does
+    /// not hold.
+    snapshot_inputs: BTreeSet<String>,
 }
 
 #[derive(Debug, Default)]
@@ -139,11 +145,51 @@ impl CommittedSourceOverlay {
             canonical_root: root.canonicalize().ok(),
             ignored: IgnoredPaths::default(),
             untracked: BTreeSet::new(),
+            snapshot_inputs: BTreeSet::new(),
             entries: entries
                 .into_iter()
                 .map(|(path, bytes)| (path.to_string(), bytes.map(<[u8]>::to_vec)))
                 .collect(),
         }
+    }
+
+    /// Test-only: mark `paths` as snapshot inputs that differ from `HEAD`.
+    #[cfg(test)]
+    pub(crate) fn with_snapshot_inputs(mut self, paths: &[&str]) -> Self {
+        self.snapshot_inputs = paths.iter().map(|path| path.to_string()).collect();
+        self
+    }
+
+    fn serves(&self, root: &Path) -> bool {
+        root == self.root || self.canonical_root.as_deref() == Some(root)
+    }
+
+    fn snapshot_inputs_differ_in(&self, root: &Path, directory: &Path) -> bool {
+        if !self.serves(root) {
+            return false;
+        }
+        // The root itself has no key; any other path that cannot be keyed
+        // (absolute, or escaping the root) is not one this overlay vouches
+        // for.
+        let directory = if directory.components().next().is_none() {
+            String::new()
+        } else {
+            let Some(directory) = normalized_key(directory) else {
+                return true;
+            };
+            directory
+        };
+        // A file directly in `directory` names it as its parent; a key one
+        // level below it falls inside any ignored directory that holds it.
+        let child = if directory.is_empty() {
+            "_".to_string()
+        } else {
+            format!("{directory}/_")
+        };
+        self.snapshot_inputs.iter().any(|path| {
+            let parent = path.rsplit_once('/').map_or("", |(parent, _)| parent);
+            parent == directory
+        }) || self.ignored.contains(&child)
     }
 
     fn lookup(&self, root: &Path, relative: &Path) -> CommittedSourceRead {
@@ -236,10 +282,23 @@ pub(crate) fn lookup(root: &Path, relative: &Path) -> CommittedSourceRead {
     })
 }
 
+/// `true` when the installed overlay for `root` records a snapshot input
+/// (RIPR-SPEC-0258) in `directory` that differs from `HEAD`, or `directory`
+/// sits in an ignored directory. Without an overlay the working tree matches
+/// `HEAD` for every such file, so this is `false`.
+pub(crate) fn snapshot_inputs_differ_in(root: &Path, directory: &Path) -> bool {
+    CURRENT_OVERLAY.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .is_some_and(|overlay| overlay.snapshot_inputs_differ_in(root, directory))
+    })
+}
+
 /// Read `root.join(relative)` as source bytes: committed bytes for a dirty
 /// path, `Ok(None)` for a dirty path with no content at `HEAD`, and the
 /// working-tree bytes otherwise.
 pub(crate) fn read_source_bytes(root: &Path, relative: &Path) -> std::io::Result<Option<Vec<u8>>> {
+    crate::analysis::input_boundary::observe_module_read(root, &root.join(relative), false);
     match lookup(root, relative) {
         CommittedSourceRead::Worktree => std::fs::read(root.join(relative)).map(Some),
         CommittedSourceRead::Committed(bytes) => Ok(Some(bytes)),
@@ -280,6 +339,7 @@ pub(crate) fn probe(
     if records.dirty.is_empty()
         && records.ignored_files.is_empty()
         && records.ignored_directories.is_empty()
+        && records.snapshot_inputs.is_empty()
     {
         return Ok(None);
     }
@@ -309,7 +369,12 @@ pub(crate) fn probe(
     // here, so the output layer can distinguish them from the edits
     // `--worktree` covers.
     let untracked = below_root(records.untracked);
-    if dirty.is_empty() && ignored.files.is_empty() && ignored.directories.is_empty() {
+    let snapshot_inputs = below_root(records.snapshot_inputs);
+    if dirty.is_empty()
+        && ignored.files.is_empty()
+        && ignored.directories.is_empty()
+        && snapshot_inputs.is_empty()
+    {
         return Ok(None);
     }
     let directories = ignored
@@ -354,6 +419,7 @@ pub(crate) fn probe(
         entries,
         ignored,
         untracked,
+        snapshot_inputs,
     }))
 }
 
@@ -447,10 +513,19 @@ struct StatusRecords {
     ignored_files: Vec<String>,
     /// Ignored directories, without the trailing `/`.
     ignored_directories: Vec<String>,
+    /// Snapshot inputs (RIPR-SPEC-0258) that differ from `HEAD`, routed or
+    /// not.
+    snapshot_inputs: Vec<String>,
 }
 
 fn routed(path: &[u8]) -> bool {
     super::language::route(Path::new(String::from_utf8_lossy(path).as_ref())).is_some()
+}
+
+/// A file the TypeScript committed-snapshot reading reads (a `.ts` or `.js`
+/// runner config is also routed); a non-UTF-8 name is not one.
+fn snapshot_input(path: &[u8]) -> bool {
+    std::str::from_utf8(path).is_ok_and(|path| super::language::snapshot_input(Path::new(path)))
 }
 
 fn parse_porcelain_z(bytes: &[u8]) -> Result<StatusRecords, String> {
@@ -476,10 +551,18 @@ fn parse_porcelain_z(bytes: &[u8]) -> Result<StatusRecords, String> {
                 if let Ok(directory) = utf8_path(directory) {
                     out.ignored_directories.push(directory);
                 }
-            } else if routed(path) {
-                out.ignored_files.push(utf8_path(path)?);
+            } else {
+                if routed(path) {
+                    out.ignored_files.push(utf8_path(path)?);
+                }
+                if snapshot_input(path) {
+                    out.snapshot_inputs.push(utf8_path(path)?);
+                }
             }
             continue;
+        }
+        if snapshot_input(path) {
+            out.snapshot_inputs.push(utf8_path(path)?);
         }
         if routed(path) {
             let named = utf8_path(path)?;
@@ -490,8 +573,13 @@ fn parse_porcelain_z(bytes: &[u8]) -> Result<StatusRecords, String> {
             }
             out.dirty.push(named);
         }
-        if let Some(original) = original.filter(|original| routed(original)) {
-            out.dirty.push(utf8_path(original)?);
+        if let Some(original) = original {
+            if routed(original) {
+                out.dirty.push(utf8_path(original)?);
+            }
+            if snapshot_input(original) {
+                out.snapshot_inputs.push(utf8_path(original)?);
+            }
         }
     }
     Ok(out)

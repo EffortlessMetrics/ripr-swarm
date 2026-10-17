@@ -1008,7 +1008,9 @@ impl AnalysisSnapshot {
 
     /// The diagnostics one URI serves under the stored delivery selection
     /// (#1973). A committed snapshot always carries a selection, so this is
-    /// the selection-filtered set push and pull agree on. A snapshot without
+    /// the canonical membership push and pull agree on. Transports append the
+    /// shared delivery limitation separately; it is not canonical evidence.
+    /// A snapshot without
     /// a committed selection (unit-test fixture) serves its complete
     /// diagnostics, matching the pre-selection-authority behavior.
     pub(super) fn served_diagnostics_for_uri(&self, uri: &Uri) -> Vec<Diagnostic> {
@@ -1488,6 +1490,24 @@ impl DocumentStore {
         let transition = state.refresh_quarantine();
         self.documents.insert(uri, state);
         transition
+    }
+
+    /// Whether the just-opened buffer already matches the persisted saved
+    /// bytes the store recorded for it at open. Such an open carries no new
+    /// saved-workspace input: the analysis reads persisted bytes, so the
+    /// open can neither change the analysis input nor advance the saved
+    /// workspace revision. `false` when the saved bytes could not be
+    /// established (virtual or unreadable URI) or the buffer diverges from
+    /// them (a recovered dirty buffer) — those keep today's interactive
+    /// refresh so a genuinely new input still schedules analysis.
+    pub(super) fn open_matches_persisted_saved_content(&self, uri: &Uri) -> bool {
+        self.state_for_uri(uri)
+            .map(|state| {
+                state
+                    .staleness_for_analyzed(state.saved_digest.as_ref())
+                    .is_none()
+            })
+            .unwrap_or(false)
     }
 
     pub(super) fn change(

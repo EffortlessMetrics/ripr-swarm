@@ -2,6 +2,9 @@
 use std::path::PathBuf;
 use std::process::Command;
 
+#[path = "../../tools/repo-policy/tests/common/executable_index.rs"]
+mod executable_index;
+
 #[path = "../../tools/repo-policy/tests/common/git_environment.rs"]
 mod git_environment;
 
@@ -18,18 +21,15 @@ impl Fixture {
         ));
         let fixture = Self(root);
         std::fs::create_dir_all(fixture.0.join("policy")).map_err(|e| e.to_string())?;
-        fixture.git(&["init", "--quiet"])?;
-        for name in ["allowed", "demoted", "ordinary", "unregistered"] {
-            std::fs::write(fixture.0.join(name), format!("{name}\n")).map_err(|e| e.to_string())?;
-            fixture.git(&["-c", "core.filemode=false", "add", name])?;
-            fixture.git(&["update-index", "--chmod=-x", name])?;
-        }
-        for name in ["allowed", "demoted", "unregistered"] {
-            fixture.git(&["update-index", "--chmod=+x", name])?;
-        }
+        let mut git_calls = 0;
+        executable_index::initialize(&fixture.0, |args| {
+            git_calls += 1;
+            fixture.git(args).map(|_| ())
+        })?;
+        assert_eq!(git_calls, 4, "executable-index setup subprocess budget");
         Ok(fixture)
     }
-    fn git(&self, args: &[&str]) -> Result<(), String> {
+    fn git(&self, args: &[&str]) -> Result<String, String> {
         let mut command = Command::new("git");
         command.args(args).current_dir(&self.0);
         git_environment::isolate_git_environment(&mut command);
@@ -40,7 +40,7 @@ impl Fixture {
                 String::from_utf8_lossy(&output.stderr)
             ));
         }
-        Ok(())
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 }
 impl Drop for Fixture {
@@ -51,9 +51,43 @@ impl Drop for Fixture {
     }
 }
 
+fn assert_executable_fixture_index(fixture: &Fixture) -> Result<(), String> {
+    let index = fixture.git(&["ls-files", "--stage"])?;
+    let rows = index.lines().collect::<Vec<_>>();
+    assert_eq!(
+        rows.len(),
+        4,
+        "only intended fixture files are staged: {index}"
+    );
+    for (name, mode) in [
+        ("allowed", "100755"),
+        ("demoted", "100755"),
+        ("ordinary", "100644"),
+        ("unregistered", "100755"),
+    ] {
+        let row = rows
+            .iter()
+            .find(|row| row.ends_with(&format!("\t{name}")))
+            .ok_or_else(|| format!("missing {name}: {index}"))?;
+        assert!(row.starts_with(&format!("{mode} ")), "wrong mode: {row}");
+        assert_eq!(
+            fixture.git(&["show", &format!(":{name}")])?,
+            format!("{name}\n"),
+            "index content for {name}"
+        );
+        assert_eq!(
+            std::fs::read(fixture.0.join(name)).map_err(|e| e.to_string())?,
+            format!("{name}\n").as_bytes(),
+            "working content for {name}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn retained_xtask_frontdoor_matches_lightweight_policy_snapshots() -> Result<(), String> {
     let fixture = Fixture::new()?;
+    assert_executable_fixture_index(&fixture)?;
     let allowlist = fixture.0.join("policy/executable_allowlist.txt");
     for (case, rows, expected) in [
         (

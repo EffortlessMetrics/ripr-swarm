@@ -1,0 +1,22 @@
+{
+  "case_id": "jest-spec0258-ex04-hint",
+  "subject_id": "authored-ts-jest-oracles",
+  "origin": "authored",
+  "anchor": "src/priceSnapHint.ts:3",
+  "behavior_family": "return_value",
+  "test_shape": "jest_expect_tomatchsnapshot_hint_committed",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

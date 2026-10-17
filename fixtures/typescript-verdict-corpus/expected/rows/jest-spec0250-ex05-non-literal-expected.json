@@ -1,0 +1,22 @@
+{
+  "case_id": "jest-spec0250-ex05-non-literal-expected",
+  "subject_id": "authored-ts-jest-mined",
+  "origin": "authored",
+  "anchor": "src/profileExpected.ts:4",
+  "behavior_family": "field_construction",
+  "test_shape": "jest_tomatchobject_non_literal_argument",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

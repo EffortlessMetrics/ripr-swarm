@@ -514,3 +514,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_mock_assert_called (15)
+
+Reason:
+RIPR-SPEC-0238 rule 17 (#7586): a mock passed for a called parameter, with the changed literal argument pinned by assert_called_once_with, discriminates the change
+
+Command:
+`cargo xtask goldens bless python_mock_assert_called --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_mock_assert_called (16)
+
+Reason:
+RIPR-SPEC-0002: re-bless human render copy/grammar fixes #7755 (double-colon labels), #7752 (a/an oracle articles), #7756 (trailing-period rule); formatting-only drift
+
+Command:
+`cargo xtask goldens bless python_mock_assert_called --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

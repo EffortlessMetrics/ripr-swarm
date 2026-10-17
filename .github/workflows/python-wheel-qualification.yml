@@ -462,7 +462,7 @@ jobs:
       EXPECTED_PAYLOAD_SHA256: ${{ needs.build-wheel.outputs.payload_sha256 }}
       EXPECTED_WHEEL_SHA256: ${{ needs.build-wheel.outputs.wheel_sha256 }}
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: ripr-rs-python-wheel-${{ env.CANDIDATE_SHA }}
           path: evidence

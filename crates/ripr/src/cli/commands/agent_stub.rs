@@ -14,19 +14,24 @@ use crate::app::test_stub::{
 };
 use crate::cli::CommandError;
 use crate::cli::agent::AgentStubOptions;
-use crate::cli::commands_context::ensure_command_root;
+use crate::cli::commands_context::{ensure_command_root, write_stderr_refusal_json};
 use crate::config::{RiprConfig, load_for_root};
 use crate::output::gap_vocabulary::exposure_counterpart;
 
 /// Schema version of the `rust_test_stub` JSON document.
-const RUST_TEST_STUB_SCHEMA_VERSION: &str = "0.1";
+const RUST_TEST_STUB_SCHEMA_VERSION: &str = "0.2";
 
 pub(super) fn run_agent_stub(options: AgentStubOptions) -> Result<(), CommandError> {
     ensure_command_root(&options.root, "agent stub")?;
     let config = load_for_root(&options.root).map_err(CommandError::Failure)?;
     let resolution = match resolve_test_stub(&options.root, &config, &options.selector) {
         Ok(resolution) => resolution,
-        Err(TestStubError::NotFound(message)) => {
+        Err(error) => {
+            let (refusal_kind, message) = match error {
+                TestStubError::NotFound(message) => ("seam_not_found", message),
+                TestStubError::Ambiguous(message) => ("selector_ambiguous", message),
+                TestStubError::Operational(message) => return Err(CommandError::Failure(message)),
+            };
             let root = shell_arg(&bound_root(&options.root.to_string_lossy()));
             if options.json {
                 // EXIT_CODES.md promises the versioned `rust_test_stub`
@@ -37,11 +42,9 @@ pub(super) fn run_agent_stub(options: AgentStubOptions) -> Result<(), CommandErr
                 // seam resolution would have supplied a value; stdout stays
                 // empty and the prose still reaches stderr via
                 // `CommandError` after the envelope.
-                match render_not_found_refusal_document(&options.selector, &message) {
+                match render_selector_refusal_document(&options.selector, refusal_kind, &message) {
                     // A JSON document, not report text: keep it parseable (#6309).
-                    Ok(rendered) => {
-                        ::std::eprintln!("{}", crate::terminal_text::json_terminal_safe(rendered))
-                    }
+                    Ok(rendered) => write_stderr_refusal_json(rendered),
                     Err(render_error) => eprintln!("ripr: {render_error}"),
                 }
             }
@@ -49,7 +52,6 @@ pub(super) fn run_agent_stub(options: AgentStubOptions) -> Result<(), CommandErr
                 "agent stub: {message}. Run `ripr check --root {root}` to list finding locations or `ripr pilot --root {root}` to list seam IDs."
             )));
         }
-        Err(TestStubError::Operational(message)) => return Err(CommandError::Failure(message)),
     };
     let disclosure = stub_grip_disclosure(&resolution.seam_id, resolution.grip_class, &config);
     let stub = match &resolution.outcome {
@@ -68,10 +70,7 @@ pub(super) fn run_agent_stub(options: AgentStubOptions) -> Result<(), CommandErr
                     "warnings": disclosure.warnings,
                 });
                 // A JSON document, not report text: keep it parseable (#6309).
-                ::std::eprintln!(
-                    "{}",
-                    crate::terminal_text::json_terminal_safe(render(&document)?)
-                );
+                write_stderr_refusal_json(render(&document)?);
             }
             return Err(CommandError::Decision(format!(
                 "agent stub: no test stub for seam {} ({}): {}",
@@ -194,13 +193,15 @@ fn render(document: &serde_json::Value) -> Result<String, CommandError> {
 }
 
 /// The versioned `rust_test_stub` `state: "refused"` document for a
-/// selector that named no reported gap (#7390): the same field set the
+/// selector that named no reported gap (#7390) or was ambiguous (#7762):
+/// the same field set the
 /// post-resolution refusal arm emits, with `null` where seam resolution
 /// would have supplied a value. `seam_id` repeats the requested id for a
 /// `--seam-id` selector and is `null` for a location selector, which never
 /// resolved to a seam id.
-fn render_not_found_refusal_document(
+fn render_selector_refusal_document(
     selector: &TestStubSelector,
+    refusal_kind: &str,
     message: &str,
 ) -> Result<String, CommandError> {
     let seam_id = match selector {
@@ -213,7 +214,7 @@ fn render_not_found_refusal_document(
         "seam_id": seam_id,
         "owner": serde_json::Value::Null,
         "state": "refused",
-        "refusal": {"kind": "seam_not_found", "reason": message},
+        "refusal": {"kind": refusal_kind, "reason": message},
         "grip_class": serde_json::Value::Null,
         "classification": serde_json::Value::Null,
         "warnings": [],
@@ -260,14 +261,15 @@ mod tests {
     /// `refusal.kind` instead of meeting free prose.
     #[test]
     fn not_found_refusal_renders_the_typed_envelope() -> Result<(), String> {
-        let rendered = render_not_found_refusal_document(
+        let rendered = render_selector_refusal_document(
             &TestStubSelector::SeamId("no-such-seam".to_string()),
+            "seam_not_found",
             "seam_id no-such-seam was not found",
         )
         .map_err(|error| format!("envelope render refused: {error:?}"))?;
         let document: serde_json::Value = serde_json::from_str(&rendered)
             .map_err(|error| format!("envelope was not parseable JSON: {error}"))?;
-        assert_eq!(document["schema_version"], "0.1");
+        assert_eq!(document["schema_version"], "0.2");
         assert_eq!(document["kind"], "rust_test_stub");
         assert_eq!(document["seam_id"], "no-such-seam");
         assert_eq!(document["state"], "refused");
@@ -285,12 +287,13 @@ mod tests {
     /// an identity.
     #[test]
     fn not_found_refusal_for_location_selector_keeps_seam_id_null() -> Result<(), String> {
-        let rendered = render_not_found_refusal_document(
+        let rendered = render_selector_refusal_document(
             &TestStubSelector::At {
                 file: "src/lib.rs".to_string(),
                 line: 12,
                 kind: None,
             },
+            "seam_not_found",
             "no finding matched src/lib.rs:12",
         )
         .map_err(|error| format!("envelope render refused: {error:?}"))?;

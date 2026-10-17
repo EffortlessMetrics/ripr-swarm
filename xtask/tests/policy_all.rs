@@ -272,3 +272,57 @@ fn policy_all_keeps_early_io_error_and_does_not_trust_stale_leaf_report() -> Res
     assert!(report.contains("check-lint-policy`: pass"));
     Ok(())
 }
+
+#[test]
+fn ci_policy_collects_real_cheap_failures_before_expensive_work() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    fixture.git(&[
+        "-c",
+        "user.name=fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-qm",
+        "base",
+    ])?;
+    fixture.git(&["branch", "-f", "main"])?;
+    fixture.write(
+        "README.md",
+        &format!("{} claim.\n", "prov".to_string() + "en"),
+    )?;
+    fixture.git(&["update-index", "--chmod=+x", "ordinary"])?;
+    // A stale pass and a local receipt cannot supply a CI result or be overwritten.
+    std::fs::write(
+        fixture.reports().join("ci-policy.json"),
+        r#"{"status":"pass"}"#,
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(fixture.reports().join("precommit-v2.json"), "local witness")
+        .map_err(|e| e.to_string())?;
+    let output = fixture.run("ci-policy")?;
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(
+            "check-policy-all: 2 gate(s) failed: check-static-language, check-executable-files"
+        ),
+        "{stderr}"
+    );
+    let report: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(fixture.reports().join("ci-policy.json")).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    assert_eq!(report["status"], "source_or_policy_failure");
+    assert_eq!(report["composition"], "ci_policy");
+    assert_eq!(
+        std::fs::read_to_string(fixture.reports().join("precommit-v2.json"))
+            .map_err(|e| e.to_string())?,
+        "local witness"
+    );
+    assert!(!fixture.reports().join("file-policy.md").exists());
+    assert!(!fixture.reports().join("precommit.md").exists());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("check-lint-policy: pass"));
+    Ok(())
+}

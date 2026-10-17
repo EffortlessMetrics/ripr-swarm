@@ -5,7 +5,10 @@ use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, Seam
 use crate::analysis::test_grip_evidence::{
     RelatedTestGrip, RelationConfidence, RelationReason, TestGripEvidence,
 };
-use crate::analysis::{ClassifiedChangeReport, ClassifiedSeam};
+use crate::analysis::{
+    ClassifiedChangeReport, ClassifiedSeam, FileFacts, RaRustSyntaxAdapter, RustIndex,
+    RustSyntaxAdapter, inventory_seams_from_index,
+};
 use crate::analysis_outcome::{
     AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
     AnalysisStage,
@@ -87,6 +90,7 @@ fn pilot_context(artifacts: &PilotArtifacts) -> PilotSummaryContext<'_> {
         config_path: Some(Path::new("ripr.toml")),
         max_seams: 5,
         timeout_ms: 30_000,
+        timeout_extension_ms: 0,
         artifacts,
         python_first_use: None,
         language_routes: None,
@@ -166,6 +170,7 @@ fn pilot_context_with_python<'a>(
         config_path: None,
         max_seams: 5,
         timeout_ms: 30_000,
+        timeout_extension_ms: 0,
         artifacts,
         python_first_use: Some(python_first_use),
         language_routes: None,
@@ -847,6 +852,7 @@ fn pilot_summary_json_contains_config_state_artifacts_and_next_commands() {
         config_path: Some(Path::new("ripr.toml")),
         max_seams: 5,
         timeout_ms: 30_000,
+        timeout_extension_ms: 0,
         artifacts: &artifacts,
         python_first_use: None,
         language_routes: None,
@@ -950,10 +956,16 @@ fn pilot_summary_md_pairs_bash_next_commands_with_powershell_variants() -> Resul
         "powershell after-snapshot translation missing:\n{md}"
     );
     // Disclosure precedes the first copyable command, mirroring the landed
-    // agent_workflow ordering, and states the cmd.exe boundary.
+    // agent_workflow ordering, and states the host shell boundary (#7729:
+    // cmd.exe unsupported off Windows; the Windows console named on it).
+    let boundary = if cfg!(windows) {
+        "Windows console"
+    } else {
+        "cmd.exe is not supported"
+    };
     let disclosure = md
-        .find("cmd.exe is not supported")
-        .ok_or_else(|| format!("pilot markdown must state the cmd.exe boundary: {md}"))?;
+        .find(boundary)
+        .ok_or_else(|| format!("pilot markdown must state the host shell boundary: {md}"))?;
     let first_fence = md
         .find("```bash")
         .ok_or_else(|| format!("pilot markdown must fence the bash commands: {md}"))?;
@@ -1069,6 +1081,7 @@ fn timeout_summary_json_is_partial_and_points_to_retry() {
         config_path: None,
         max_seams: 5,
         timeout_ms: 1,
+        timeout_extension_ms: 0,
         artifacts: &artifacts,
         python_first_use: None,
         language_routes: None,
@@ -1115,6 +1128,7 @@ fn pilot_context_without_config<'a>(artifacts: &'a PilotArtifacts) -> PilotSumma
         config_path: None,
         max_seams: 5,
         timeout_ms: 30_000,
+        timeout_extension_ms: 0,
         artifacts,
         python_first_use: None,
         language_routes: None,
@@ -1168,9 +1182,14 @@ fn timeout_summary_md_pairs_bash_retry_with_powershell_variant() -> Result<(), S
         !md.contains("```powershell"),
         "an unchanged retry must not repeat as a PowerShell block:\n{md}"
     );
-    let disclosure = md
-        .find("cmd.exe is not supported")
-        .ok_or_else(|| format!("pilot timeout markdown must state the cmd.exe boundary: {md}"))?;
+    let boundary = if cfg!(windows) {
+        "Windows console"
+    } else {
+        "cmd.exe is not supported"
+    };
+    let disclosure = md.find(boundary).ok_or_else(|| {
+        format!("pilot timeout markdown must state the host shell boundary: {md}")
+    })?;
     let first_fence = md
         .find("```bash")
         .ok_or_else(|| format!("pilot timeout markdown must fence the bash command: {md}"))?;
@@ -1225,6 +1244,160 @@ fn timeout_terminal_reports_missing_config_branch_when_no_config_loaded() {
     assert!(
         terminal.contains("missing: using built-in defaults"),
         "expected missing-config line in timeout terminal, got:\n{terminal}"
+    );
+}
+
+#[test]
+fn suggested_retry_timeout_ms_floors_doubles_caps_and_never_shrinks() {
+    // Literals are independent of the production constants so a wrong
+    // *4, a cap without the spent floor, or a floor that drops the 120s
+    // minimum still fails (#5443, #7427).
+    assert_eq!(super::commands::suggested_retry_timeout_ms(1), 120_000);
+    assert_eq!(super::commands::suggested_retry_timeout_ms(30_000), 120_000);
+    assert_eq!(
+        super::commands::suggested_retry_timeout_ms(120_000),
+        240_000
+    );
+    assert_eq!(
+        super::commands::suggested_retry_timeout_ms(150_000),
+        300_000
+    );
+    assert_eq!(
+        super::commands::suggested_retry_timeout_ms(270_000),
+        300_000
+    );
+    assert_eq!(
+        super::commands::suggested_retry_timeout_ms(400_000),
+        400_000
+    );
+}
+
+#[test]
+fn timeout_summary_after_default_extension_names_the_default_and_caps_retry() {
+    let artifacts = pilot_artifacts();
+    let context = PilotSummaryContext {
+        timeout_ms: 270_000,
+        timeout_extension_ms: 240_000,
+        ..pilot_context(&artifacts)
+    };
+    let reason = "analysis timed out after 270000 ms total: 30000 default + 240000 automatic extension; pass --timeout-ms to set a hard budget";
+
+    let json = render_pilot_timeout_summary_json(context);
+    assert!(
+        json.contains("\"timeout_ms\": 270000"),
+        "JSON keeps the spent budget; schema 0.3 is unchanged:\n{json}"
+    );
+    assert!(
+        json.contains("--timeout-ms 300000"),
+        "retry must be the interactive cap, not 4x spent:\n{json}"
+    );
+    assert!(
+        !json.contains("1080000"),
+        "default-plus-extension must not suggest 18 minutes:\n{json}"
+    );
+
+    let md = render_pilot_timeout_summary_md(context);
+    assert!(
+        md.contains(&format!("- Reason: {reason}")),
+        "markdown must name the default and the extension separately:\n{md}"
+    );
+    assert!(md.contains("--timeout-ms 300000"), "{md}");
+    assert!(!md.contains("1080000"), "{md}");
+    assert!(
+        md.contains("Rerun with a larger explicit budget:"),
+        "300s is larger than the 270s spent budget:\n{md}"
+    );
+    assert!(
+        md.contains("never smaller than the time already spent"),
+        "capped retry must disclose the interactive bound:\n{md}"
+    );
+
+    let terminal = render_pilot_timeout_terminal(context);
+    assert!(
+        terminal.contains(reason),
+        "terminal must name the default and the extension separately:\n{terminal}"
+    );
+    assert!(terminal.contains("--timeout-ms 300000"), "{terminal}");
+    assert!(!terminal.contains("1080000"), "{terminal}");
+    assert!(
+        terminal.contains("never smaller than the time already spent"),
+        "capped retry must disclose the interactive bound:\n{terminal}"
+    );
+}
+
+#[test]
+fn timeout_summary_explicit_270s_does_not_claim_an_automatic_extension() {
+    // Discriminator: spent == default+extension must not imply the
+    // extension sentence when the user set a hard `--timeout-ms 270000`.
+    let artifacts = pilot_artifacts();
+    let context = PilotSummaryContext {
+        timeout_ms: 270_000,
+        timeout_extension_ms: 0,
+        ..pilot_context(&artifacts)
+    };
+    let md = render_pilot_timeout_summary_md(context);
+    assert!(
+        md.contains("- Reason: analysis timed out after 270000 ms\n"),
+        "explicit 270s is a hard budget, not the default-plus-extension path:\n{md}"
+    );
+    assert!(!md.contains("automatic extension"), "{md}");
+    assert!(md.contains("--timeout-ms 300000"), "{md}");
+}
+
+#[test]
+fn timeout_summary_explicit_large_timeout_never_suggests_a_smaller_retry() {
+    let artifacts = pilot_artifacts();
+    let context = PilotSummaryContext {
+        timeout_ms: 400_000,
+        timeout_extension_ms: 0,
+        ..pilot_context(&artifacts)
+    };
+    let json = render_pilot_timeout_summary_json(context);
+    assert!(
+        json.contains("--timeout-ms 400000"),
+        "retry must not shrink below the time already spent:\n{json}"
+    );
+    assert!(
+        !json.contains("--timeout-ms 300000"),
+        "the interactive cap must not undercut a larger spent budget:\n{json}"
+    );
+    assert!(
+        !json.contains("1600000"),
+        "an already-large spent budget must not be multiplied by four:\n{json}"
+    );
+
+    let md = render_pilot_timeout_summary_md(context);
+    assert!(
+        md.contains("- Reason: analysis timed out after 400000 ms\n"),
+        "{md}"
+    );
+    assert!(!md.contains("automatic extension"), "{md}");
+    assert!(
+        md.contains(
+            "Rerun with an explicit --timeout-ms at least as large as the time already spent:"
+        ),
+        "a retry equal to spent must not promise a larger budget:\n{md}"
+    );
+    assert!(!md.contains("Rerun with a larger explicit budget:"), "{md}");
+    assert!(
+        md.contains("never smaller than the time already spent"),
+        "a retry floored at spent must still disclose the bound:\n{md}"
+    );
+}
+
+#[test]
+fn timeout_summary_short_explicit_timeout_keeps_the_two_minute_floor() {
+    let artifacts = pilot_artifacts();
+    let md = render_pilot_timeout_summary_md(pilot_context(&artifacts));
+    assert!(
+        md.contains("- Reason: analysis timed out after 30000 ms\n"),
+        "{md}"
+    );
+    assert!(md.contains("--timeout-ms 120000"), "{md}");
+    assert!(!md.contains("automatic extension"), "{md}");
+    assert!(
+        !md.contains("never smaller than the time already spent"),
+        "the 120s floor is not the interactive-cap disclosure:\n{md}"
     );
 }
 
@@ -1698,11 +1871,25 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
         PilotLanguageRoutes::commands(&required.routes),
         expected_commands
     );
+    // Only TypeScript is enabled among the routed languages here. Python is
+    // detected but disabled, so it must not headline (#7665 / enabled gate).
+    if typescript_available {
+        assert!(
+            required
+                .supported_headline_route()
+                .is_some_and(|(route, _)| route.language == LanguageId::TypeScript
+                    && route.enabled),
+            "enabled TypeScript is a supported headline route: {required:?}"
+        );
+    } else {
+        assert!(required.supported_headline_route().is_none());
+    }
 
     let supplementary = PilotLanguageRoutes::from_discovered(root, true, &enabled, &files);
     assert_eq!(supplementary.state, PilotLanguageRoutesState::Supplementary);
     assert_eq!(supplementary.routes, required.routes);
     assert!(supplementary.required().is_none());
+    assert!(supplementary.supported_headline_route().is_none());
 }
 
 #[test]
@@ -2017,8 +2204,21 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
             assert!(!md.contains("```bash"), "{md}");
         }
     } else {
+        // Available but not enabled: the languages section still names the
+        // check route, but `ripr check` skips it until `[languages] enabled`
+        // includes it, so the headline stays none (#7665).
         assert!(
             terminal.contains(&format!("typescript: 1 file (preview, diff-first; not enabled in ripr.toml [languages])\n    route: {}\n", route_command())),
+            "{terminal}"
+        );
+        assert!(
+            terminal.contains(
+                "none: pilot ranks Rust seams and found none here; see the languages below"
+            ),
+            "{terminal}"
+        );
+        assert!(
+            !terminal.contains("analyze the TypeScript diff:"),
             "{terminal}"
         );
         assert!(
@@ -2029,8 +2229,49 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
             "{terminal}"
         );
         assert!(
+            !md.contains(&format!(
+                "Analyze the TypeScript diff: `{}`",
+                route_command()
+            )),
+            "{md}"
+        );
+        assert!(
             md.contains(&format!("```bash\n{}\n```", route_command())),
             "{md}"
+        );
+
+        let enabled_ts = PilotLanguageRoutes::from_discovered(
+            root,
+            false,
+            &[LanguageId::Rust, LanguageId::TypeScript],
+            &files,
+        );
+        let enabled_context = PilotSummaryContext {
+            language_routes: Some(&enabled_ts),
+            seam_limit: None,
+            ..pilot_context(&artifacts)
+        };
+        let enabled_terminal = render_pilot_terminal(&[], enabled_context);
+        assert!(
+            enabled_terminal.contains(&format!(
+                "Top recommendation:\n  analyze the TypeScript diff: {}\n",
+                route_command()
+            )),
+            "{enabled_terminal}"
+        );
+        assert!(
+            !enabled_terminal.contains(
+                "none: pilot ranks Rust seams and found none here; see the languages below"
+            ),
+            "{enabled_terminal}"
+        );
+        let enabled_md = render_pilot_summary_md(&[], enabled_context);
+        assert!(
+            enabled_md.contains(&format!(
+                "Analyze the TypeScript diff: `{}`",
+                route_command()
+            )),
+            "{enabled_md}"
         );
     }
     assert!(!terminal.contains("ripr outcome --before"), "{terminal}");
@@ -2062,6 +2303,12 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
         };
         let terminal = render_pilot_terminal(&[], context);
         assert!(
+            terminal.contains(
+                "none: pilot ranks Rust seams and found none here; see the languages below"
+            ),
+            "unavailable-only languages keep the none headline:\n{terminal}"
+        );
+        assert!(
             terminal.ends_with("No follow-up command applies: this ripr binary cannot analyze the languages listed above.\n"),
             "{terminal}"
         );
@@ -2069,6 +2316,167 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
         assert!(md.ends_with("No follow-up command applies: this ripr binary cannot analyze the languages listed above.\n"), "{md}");
         assert!(!md.contains("```bash"), "{md}");
     }
+    Ok(())
+}
+
+/// #7665: a Python-only repo with no Rust seam and no repair card used to
+/// headline `Top recommendation: none` even though `ripr check` is the
+/// supported route. The headline names that route; JSON `language_routes`
+/// and `current_change.top_recommendation_in_change` stay as they were.
+#[test]
+#[cfg(feature = "lang-python")]
+fn pilot_headline_names_supported_language_check_route_when_no_rust_seams() -> Result<(), String> {
+    use crate::domain::LanguageId;
+
+    let artifacts = pilot_artifacts();
+    let files = discovered_files(&[(LanguageId::Python, "src/pricing.py")]);
+    let routes =
+        PilotLanguageRoutes::from_discovered(Path::new("."), false, &[LanguageId::Python], &files);
+    let python = PilotPythonFirstUse {
+        status: super::types::PilotPythonFirstUseStatus::NoPythonFindings,
+        findings_total: 0,
+        repair_cards_total: 0,
+        limitation_count: 0,
+        analysis_error: None,
+        top_repair_card: None,
+    };
+    let command = route_command();
+    let context = PilotSummaryContext {
+        language_routes: Some(&routes),
+        python_first_use: Some(&python),
+        ..pilot_context(&artifacts)
+    };
+
+    let terminal = render_pilot_terminal(&[], context);
+    let headline = format!("analyze the Python diff: {command}");
+    assert!(
+        terminal.contains(&format!("Top recommendation:\n  {headline}\n")),
+        "supported-language headline must lead with the check route, not none:\n{terminal}"
+    );
+    assert!(
+        !terminal
+            .contains("none: pilot ranks Rust seams and found none here; see the languages below"),
+        "headline must not read as an empty recommendation:\n{terminal}"
+    );
+    assert!(
+        terminal.contains("(pilot ranks Rust seams and found none here; see the languages below)"),
+        "Rust-scan explanation stays secondary:\n{terminal}"
+    );
+    assert!(
+        terminal.contains("Python preview:\n  status: no_python_findings"),
+        "{terminal}"
+    );
+    assert!(
+        terminal.contains(&format!(
+            "python: 1 file (preview, diff-first)\n    route: {command}\n"
+        )),
+        "{terminal}"
+    );
+    assert!(
+        terminal.contains("Next, analyze the changed code in these languages:"),
+        "{terminal}"
+    );
+
+    let md = render_pilot_summary_md(&[], context);
+    assert!(
+        md.contains(&format!("Analyze the Python diff: `{command}`")),
+        "{md}"
+    );
+    assert!(
+        md.contains("Pilot ranks Rust seams and found none in this repository. This is not a clean result for the languages listed under Languages Outside The Rust Seam Scan."),
+        "{md}"
+    );
+
+    let json = render_pilot_summary_json(&[], context);
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
+    assert!(
+        parsed.get("top_recommendation").is_none(),
+        "schema must not grow a top_recommendation field: {json}"
+    );
+    assert_eq!(parsed["language_routes"]["state"], "required");
+    assert_eq!(parsed["language_routes"]["routes"][0]["language"], "python");
+    assert_eq!(parsed["language_routes"]["routes"][0]["command"], command);
+    assert_eq!(parsed["python_first_use"]["status"], "no_python_findings");
+    assert_eq!(parsed["current_change"], serde_json::Value::Null);
+    assert!(parsed["next"]["repair_command"].is_null(), "{json}");
+
+    // A repair card still outranks the language-route headline.
+    let carded = python_first_use();
+    let carded_context = PilotSummaryContext {
+        language_routes: Some(&routes),
+        ..pilot_context_with_python(&artifacts, &carded)
+    };
+    let carded_terminal = render_pilot_terminal(&[], carded_context);
+    assert!(
+        !carded_terminal.contains(&headline),
+        "a Python repair card remains the top recommendation:\n{carded_terminal}"
+    );
+    assert!(
+        carded_terminal.contains("Top recommendation:\n  language: python (preview)"),
+        "{carded_terminal}"
+    );
+
+    // Disabled TypeScript still lists the check route below, but must not
+    // headline "analyze the TypeScript diff": check skips it until enabled.
+    let ts_files = discovered_files(&[(LanguageId::TypeScript, "web/c.ts")]);
+    let disabled_ts =
+        PilotLanguageRoutes::from_discovered(Path::new("."), false, &[LanguageId::Rust], &ts_files);
+    if LanguageId::TypeScript.is_available() {
+        assert!(
+            disabled_ts.supported_headline_route().is_none(),
+            "{disabled_ts:?}"
+        );
+        let disabled_context = PilotSummaryContext {
+            language_routes: Some(&disabled_ts),
+            seam_limit: None,
+            ..pilot_context(&artifacts)
+        };
+        let disabled_terminal = render_pilot_terminal(&[], disabled_context);
+        assert!(
+            disabled_terminal.contains(
+                "none: pilot ranks Rust seams and found none here; see the languages below"
+            ),
+            "{disabled_terminal}"
+        );
+        assert!(
+            !disabled_terminal.contains("analyze the TypeScript diff:"),
+            "{disabled_terminal}"
+        );
+    }
+
+    // Mixed: TypeScript is first in route order but disabled; enabled Python
+    // must headline, not the disabled TypeScript check command.
+    let mixed_files = discovered_files(&[
+        (LanguageId::TypeScript, "web/c.ts"),
+        (LanguageId::Python, "src/pricing.py"),
+    ]);
+    let mixed = PilotLanguageRoutes::from_discovered(
+        Path::new("."),
+        false,
+        &[LanguageId::Python],
+        &mixed_files,
+    );
+    let Some((headline_route, _)) = mixed.supported_headline_route() else {
+        return Err(
+            "enabled Python is the supported headline when TypeScript is disabled".to_string(),
+        );
+    };
+    assert_eq!(headline_route.language, LanguageId::Python);
+    let mixed_context = PilotSummaryContext {
+        language_routes: Some(&mixed),
+        python_first_use: Some(&python),
+        ..pilot_context(&artifacts)
+    };
+    let mixed_terminal = render_pilot_terminal(&[], mixed_context);
+    assert!(
+        mixed_terminal.contains(&format!("Top recommendation:\n  {headline}\n")),
+        "{mixed_terminal}"
+    );
+    assert!(
+        !mixed_terminal.contains("analyze the TypeScript diff:"),
+        "{mixed_terminal}"
+    );
     Ok(())
 }
 
@@ -2604,6 +3012,115 @@ fn pilot_ranking_puts_seams_in_the_current_change_first() {
             "{change:?}"
         );
     }
+}
+
+/// #5604: display snippets normalize whitespace and match origins stay
+/// at `match` / `=>`; neither is the changed-line coverage range.
+#[test]
+fn multiline_match_heads_follow_changed_lines_without_moving_seam_identity() -> Result<(), String> {
+    let path = PathBuf::from("src/classify.rs");
+    let source = "pub fn classify(value: (bool, bool)) -> u8 {\n    match (\n        value.0,\n        value.1,\n    ) {\n        (\n            true,\n            false,\n        ) =>\n            7,\n        _ => 9,\n    }\n}\n";
+    for source in [source.to_owned(), source.replace('\n', "\r\n")] {
+        for cached in [false, true] {
+            let facts = RaRustSyntaxAdapter.summarize_file(&path, &source)?;
+            let facts: FileFacts = if cached {
+                // The file-fact cache uses this wire boundary. Normalized
+                // text must not lose its independent parser-owned range.
+                serde_json::from_slice(&serde_json::to_vec(&facts).map_err(|e| e.to_string())?)
+                    .map_err(|e| e.to_string())?
+            } else {
+                facts
+            };
+            let mut index = RustIndex::default();
+            index.extend_functions(facts.functions.clone());
+            index.insert_file_only(path.clone(), facts);
+            let seams = inventory_seams_from_index(std::slice::from_ref(&path), &index);
+            let heads: Vec<_> = seams
+                .iter()
+                .filter(|seam| seam.kind() == SeamKind::MatchArm)
+                .collect();
+            // Literal pins from the pre-fix token anchors and documented
+            // FNV identity contract; no expected value uses the selector.
+            assert_eq!(
+                heads
+                    .iter()
+                    .map(|seam| (seam.display_line(), seam.id().as_str()))
+                    .collect::<Vec<_>>(),
+                [
+                    (2, "e940643c461ff034"),
+                    (9, "4ce9196b0fa03e6d"),
+                    (11, "4d0e996b0fc0342a"),
+                ]
+            );
+            for (head, expected_lines) in
+                heads
+                    .iter()
+                    .zip([&[2, 3, 4, 5][..], &[6, 7, 8, 9][..], &[11][..]])
+            {
+                assert!(head.span().is_none(), "calibration remains line-only");
+                for line in 1..=14 {
+                    let diff = format!(
+                        "diff --git a/src/classify.rs b/src/classify.rs\n--- a/src/classify.rs\n+++ b/src/classify.rs\n@@ -{line} +{line} @@\n-old\n+new\n"
+                    );
+                    let change = PilotCurrentChange::from_diff_text(Path::new("."), None, &diff);
+                    assert_eq!(
+                        change.touches_seam(head),
+                        expected_lines.contains(&line),
+                        "head at {}, changed line {line}, cached={cached}",
+                        head.display_line()
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn multiline_match_guard_lines_exclude_the_arm_body() -> Result<(), String> {
+    let path = PathBuf::from("src/guard.rs");
+    let source = "pub fn choose(value: u8) -> &'static str {\n    match value {\n        1\n            if value\n                > 0 =>\n        {\n            \" => }\"\n        },\n        _ => \"other\",\n    }\n}\n";
+    let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+    let mut index = RustIndex::default();
+    index.extend_functions(facts.functions.clone());
+    index.insert_file_only(path.clone(), facts);
+    let seams = inventory_seams_from_index(&[path], &index);
+    let arm = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::MatchArm && seam.display_line() == 5)
+        .ok_or("missing guarded match arm")?;
+    for line in 1..=11 {
+        let diff = format!(
+            "diff --git a/src/guard.rs b/src/guard.rs\n--- a/src/guard.rs\n+++ b/src/guard.rs\n@@ -{line} +{line} @@\n-old\n+new\n"
+        );
+        let change = PilotCurrentChange::from_diff_text(Path::new("."), None, &diff);
+        assert_eq!(
+            change.touches_seam(arm),
+            [3, 4, 5].contains(&line),
+            "changed line {line}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn pilot_match_source_lines_preserve_identity_and_refuse_invalid_ranges() -> Result<(), String> {
+    let base = seam("src/b.rs", 20, "pattern\n    =>");
+    let covered = base.clone().with_source_lines(Some((18, 20)));
+    assert_eq!(covered.id(), base.id());
+    assert_eq!(covered.display_line(), 20);
+    let covered: RepoSeam =
+        serde_json::from_slice(&serde_json::to_vec(&covered).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    assert!(changed("src/b.rs", 18).touches_seam(&covered));
+    assert!(!changed("src/b.rs", 21).touches_seam(&covered));
+    for lines in [None, Some((0, 20)), Some((22, 20))] {
+        let fallback = base.clone().with_source_lines(lines);
+        assert!(!changed("src/b.rs", 18).touches_seam(&fallback));
+        assert!(changed("src/b.rs", 21).touches_seam(&fallback));
+        assert!(!changed("src/b.rs", 22).touches_seam(&fallback));
+    }
+    Ok(())
 }
 
 #[test]

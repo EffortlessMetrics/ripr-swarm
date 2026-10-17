@@ -19,6 +19,7 @@ import {
   messageClaimsHungServer
 } from '../../src/cockpitRequest';
 import { compatibleLspEvidence } from './testCompatibility';
+import { shouldShowMainStatusBar, type RiprStatusKind } from '../../src/statusRender';
 
 suite('Extension Smoke', () => {
   suiteSetup(async function (this: Mocha.Context) {
@@ -3735,6 +3736,11 @@ suite('Extension Smoke', () => {
       await context.controller.start();
 
       assert.ok(context.status.text.includes('ripr: disabled'));
+      assert.strictEqual(
+        context.statusVisible(),
+        false,
+        'disabled configuration must hide the main status-bar item'
+      );
       assert.ok(String(context.status.tooltip).includes('Set ripr.enabled to true'));
       assert.ok(String(context.status.tooltip).includes('Workspace:'));
       assert.ok(String(context.status.tooltip).includes('Server: not resolved'));
@@ -3747,12 +3753,178 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('disable restart hides the status item before server stop finishes', async () => {
+    let releaseStop: (() => void) | undefined;
+    let sawStop: (() => void) | undefined;
+    const stopGate = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
+    const stopStarted = new Promise<void>((resolve) => {
+      sawStop = resolve;
+    });
+    const context = createControllerTestContext({
+      beforeClientStop: async () => {
+        sawStop?.();
+        await stopGate;
+      }
+    });
+    let restarting: Promise<void> | undefined;
+    try {
+      await context.controller.start();
+      assert.strictEqual(context.statusVisible(), true);
+
+      context.setEnabled(false);
+      restarting = context.controller.restart();
+      await stopStarted;
+      assert.strictEqual(
+        context.statusVisible(),
+        false,
+        'disable must hide the main item before client.stop() finishes'
+      );
+      assert.ok(context.status.text.includes('ripr: disabled'));
+      releaseStop?.();
+      await restarting;
+      assert.strictEqual(context.statusVisible(), false);
+    } finally {
+      releaseStop?.();
+      await restarting?.catch(() => undefined);
+      await context.dispose();
+    }
+  });
+
+  test('disable restart keeps the status item hidden if analysis status arrives during stop', async () => {
+    let releaseStop: (() => void) | undefined;
+    let sawStop: (() => void) | undefined;
+    const stopGate = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
+    const stopStarted = new Promise<void>((resolve) => {
+      sawStop = resolve;
+    });
+    const context = createControllerTestContext({
+      beforeClientStop: async () => {
+        sawStop?.();
+        await stopGate;
+      }
+    });
+    let restarting: Promise<void> | undefined;
+    try {
+      await context.controller.start();
+      assert.strictEqual(context.statusVisible(), true);
+
+      context.setEnabled(false);
+      restarting = context.controller.restart();
+      await stopStarted;
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1',
+        tool: 'ripr',
+        kind: 'analysis_status',
+        state: 'running',
+        attempt_id: '1',
+        run_status: 'in_progress'
+      });
+      assert.strictEqual(
+        context.statusVisible(),
+        false,
+        'analysis status during disabled stop must not unhide the main item'
+      );
+      assert.ok(context.status.text.includes('ripr: disabled'));
+      releaseStop?.();
+      await restarting;
+      assert.strictEqual(context.statusVisible(), false);
+      assert.ok(context.status.text.includes('ripr: disabled'));
+    } finally {
+      releaseStop?.();
+      await restarting?.catch(() => undefined);
+      await context.dispose();
+    }
+  });
+
+  test('disable restart hides the status item before setup-file reads finish', async () => {
+    let releaseRead: (() => void) | undefined;
+    let sawDisabledRead: (() => void) | undefined;
+    const readGate = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    const disabledReadStarted = new Promise<void>((resolve) => {
+      sawDisabledRead = resolve;
+    });
+    let holdReads = false;
+    const context = createControllerTestContext({
+      beforeReadFile: async () => {
+        if (!holdReads) {
+          return;
+        }
+        sawDisabledRead?.();
+        await readGate;
+      }
+    });
+    try {
+      await context.controller.start();
+      assert.strictEqual(context.statusVisible(), true);
+
+      holdReads = true;
+      context.setEnabled(false);
+      const restarting = context.controller.restart();
+      await disabledReadStarted;
+      assert.strictEqual(
+        context.statusVisible(),
+        false,
+        'disable must hide the main item before setup-file reads finish'
+      );
+      assert.ok(context.status.text.includes('ripr: disabled'));
+      releaseRead?.();
+      await restarting;
+      assert.strictEqual(context.statusVisible(), false);
+    } finally {
+      releaseRead?.();
+      await context.dispose();
+    }
+  });
+
+  test('status bar hides when disabled and reappears after re-enable', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      assert.strictEqual(context.statusVisible(), true, 'enabled start keeps the main item visible');
+      assert.ok(!context.status.text.includes('ripr: disabled'));
+      assert.strictEqual(context.client.startCalls, 1);
+
+      context.setEnabled(false);
+      await context.controller.restart();
+      assert.strictEqual(
+        context.statusVisible(),
+        false,
+        'setting ripr.enabled to false must hide the main item'
+      );
+      assert.ok(context.status.text.includes('ripr: disabled'));
+      assert.strictEqual(context.client.startCalls, 1, 'disabled restart must not start a second server');
+
+      context.setEnabled(true);
+      await context.controller.restart();
+      assert.strictEqual(
+        context.statusVisible(),
+        true,
+        're-enabling ripr.enabled must show the main item again'
+      );
+      assert.ok(!context.status.text.includes('ripr: disabled'));
+      assert.strictEqual(context.client.startCalls, 2, 're-enable restart must start the server again');
+    } finally {
+      await context.dispose();
+    }
+  });
+
   test('status bar reports missing workspace without starting server', async () => {
     const context = createControllerTestContext({ workspaceRoot: null });
     try {
       await context.controller.start();
 
       assert.ok(context.status.text.includes('ripr: open workspace'));
+      assert.strictEqual(
+        context.statusVisible(),
+        true,
+        'noWorkspace stays visible as an actionable next-step cue'
+      );
       assert.ok(String(context.status.tooltip).includes('needs a workspace folder'));
       assert.ok(String(context.status.tooltip).includes('Workspace: not open'));
       assert.ok(String(context.status.tooltip).includes('Config: ripr.toml (no workspace'));
@@ -3761,6 +3933,38 @@ suite('Extension Smoke', () => {
       assert.strictEqual(context.client.startCalls, 0);
     } finally {
       await context.dispose();
+    }
+  });
+
+  test('main status bar visibility hides only disabled and keeps noWorkspace', () => {
+    const expectedVisible: Record<RiprStatusKind, boolean> = {
+      disabled: false,
+      noWorkspace: true,
+      workspaceUntrusted: true,
+      workspaceAmbiguous: true,
+      resolvingServer: true,
+      serverUnavailable: true,
+      starting: true,
+      analysisQueued: true,
+      ready: true,
+      analysisRunning: true,
+      analysisReady: true,
+      analysisLimited: true,
+      gapActionable: true,
+      gapNoAction: true,
+      gapArtifactWarning: true,
+      noActionableSeams: true,
+      noEnabledLanguages: true,
+      stale: true,
+      analysisFailed: true,
+      stopped: true
+    };
+    for (const [kind, visible] of Object.entries(expectedVisible) as Array<[RiprStatusKind, boolean]>) {
+      assert.strictEqual(
+        shouldShowMainStatusBar(kind),
+        visible,
+        `${kind} should ${visible ? 'show' : 'hide'} the main status-bar item`
+      );
     }
   });
 
@@ -4149,6 +4353,82 @@ suite('Extension Smoke', () => {
       });
     } finally {
       await context.dispose();
+    }
+  });
+
+  test('copyContext keeps the CLI fallback after a failed server start', async () => {
+    // A rejected client.start() clears the live client but keeps the selected
+    // root and resolved binary; the context copy must still reach its
+    // root-validated CLI path instead of the session blocker (#7408 review).
+    const context = createControllerTestContext({
+      startupError: new Error('server exited during initialize'),
+      cliResult: '{"fallback":"after-failed-start"}'
+    });
+    try {
+      await assert.rejects(context.controller.start(), /server exited during initialize/);
+      await context.controller.copyContext({
+        uri: workspaceFileUri('src/lib.rs').toString(),
+        line: 9,
+        seam_id: 'abc123'
+      });
+
+      assert.strictEqual(context.client.requests.length, 0);
+      assert.strictEqual(context.runRiprCalls.length, 1);
+      assert.strictEqual(context.runRiprCalls[0].args[0], 'context');
+      assert.deepStrictEqual(JSON.parse(context.clipboardWrites[0]), {
+        fallback: 'after-failed-start'
+      });
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('copyContext still fails closed during root removal quarantine', async () => {
+    const context = createControllerTestContext({
+      cliResult: '{"fallback":"must-not-run"}'
+    });
+    try {
+      await context.controller.start();
+      context.controller.quarantineRemovedWorkspaceRoot();
+      await context.controller.copyContext({
+        uri: workspaceFileUri('src/lib.rs').toString(),
+        line: 9,
+        seam_id: 'abc123'
+      });
+
+      assert.strictEqual(context.client.requests.length, 0);
+      assert.strictEqual(context.runRiprCalls.length, 0);
+      assert.strictEqual(context.clipboardWrites.length, 0);
+      assert.strictEqual(
+        context.infoMessages[0],
+        'ripr action requires a running server with a selected workspace root.'
+      );
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('copyAgentLoopCommand keeps the clipboard path after a failed server start', async () => {
+    const relativePath = 'src/agent-loop-failed-start.rs';
+    const uri = workspaceFileUri(relativePath);
+    const context = createControllerTestContext({
+      startupError: new Error('server exited during initialize')
+    });
+    try {
+      await writeWorkspaceFile(relativePath, 'pub fn agent_loop_failed_start_target() {}\n');
+      await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(uri));
+      await assert.rejects(context.controller.start(), /server exited during initialize/);
+      const selectedRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      assert.ok(selectedRoot, 'test workspace root must be open');
+      const rootArg = serverShellArg(selectedRoot.replace(/\\/g, '/'));
+      const target = agentLoopCommandTarget('gap_verify', `ripr agent verify --root ${rootArg} --json`);
+      await context.controller.copyAgentLoopCommand(target);
+
+      assert.deepStrictEqual(context.clipboardWrites, [target.command]);
+    } finally {
+      await context.dispose();
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await removeWorkspacePath(relativePath);
     }
   });
 
@@ -5059,6 +5339,7 @@ interface ControllerTestOptions {
   baseRef?: string;
   lspResult?: unknown;
   lspError?: Error;
+  startupError?: Error;
   cliResult?: string;
   firstActionJson?: string | null;
   files?: Record<string, string | null>;
@@ -5067,6 +5348,8 @@ interface ControllerTestOptions {
   resolveFailure?: { message: string; detail: string };
   serverVersion?: string;
   workspaceTrusted?: boolean;
+  beforeReadFile?: () => Promise<void>;
+  beforeClientStop?: () => Promise<void>;
 }
 
 // Mirror of the server's `shell_arg` (crates/ripr/src/agent/loop_commands.rs).
@@ -5411,9 +5694,16 @@ class FakeLanguageClient {
 
   async start(): Promise<void> {
     this.startCalls += 1;
+    if (this.options.startupError) {
+      throw this.options.startupError;
+    }
   }
 
-  async stop(): Promise<void> {}
+  async stop(): Promise<void> {
+    if (this.options.beforeClientStop) {
+      await this.options.beforeClientStop();
+    }
+  }
 
   captureClientOptions(options: unknown): void {
     this.receivedInitializationOptions = (options as {
@@ -5449,6 +5739,18 @@ function createControllerTestContext(options: ControllerTestOptions) {
   const outputLines: string[] = [];
   const output = fakeOutputChannel(outputLines);
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
+  let statusVisible = false;
+  const nativeShow = status.show.bind(status);
+  const nativeHide = status.hide.bind(status);
+  status.show = () => {
+    statusVisible = true;
+    nativeShow();
+  };
+  status.hide = () => {
+    statusVisible = false;
+    nativeHide();
+  };
+  let enabled = options.enabled ?? true;
   const runRiprCalls: Array<{ command: string; args: string[]; cwd: string }> = [];
   const watcherPatterns: vscode.GlobPattern[] = [];
   const clipboardWrites: string[] = [];
@@ -5463,7 +5765,7 @@ function createControllerTestContext(options: ControllerTestOptions) {
     getConfig: (resource) => {
       configResources.push(resource);
       return {
-        enabled: options.enabled ?? true,
+        enabled,
         serverPath: '',
         serverArgs: ['lsp', '--stdio'],
         autoDownload: false,
@@ -5498,7 +5800,12 @@ function createControllerTestContext(options: ControllerTestOptions) {
       watcherPatterns.push(pattern);
       return fakeFileSystemWatcher();
     },
-    readFile: async (filePath) => testFileContents(filePath, options),
+    readFile: async (filePath) => {
+      if (options.beforeReadFile) {
+        await options.beforeReadFile();
+      }
+      return testFileContents(filePath, options);
+    },
     runRipr: async (command, args, cwd) => {
       runRiprCalls.push({ command, args, cwd });
       return options.cliResult ?? '{}';
@@ -5525,6 +5832,10 @@ function createControllerTestContext(options: ControllerTestOptions) {
     client,
     controller,
     status,
+    statusVisible: () => statusVisible,
+    setEnabled: (value: boolean) => {
+      enabled = value;
+    },
     runRiprCalls,
     clipboardWrites,
     watcherPatterns,

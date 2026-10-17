@@ -12,6 +12,20 @@ const COMMAND_HIERARCHY_DOC: &str = include_str!("../../docs/COMMAND_HIERARCHY.m
 const ROOT_README: &str = include_str!("../../README.md");
 const QUICKSTART_DOC: &str = include_str!("../../docs/QUICKSTART.md");
 const EXIT_CODES_DOC: &str = include_str!("../../docs/EXIT_CODES.md");
+const FIRST_RUN_REPORT_TEMPLATE: &str =
+    include_str!("../../.github/ISSUE_TEMPLATE/first_run_report.yml");
+const WRONG_VERDICT_TEMPLATE: &str = include_str!("../../.github/ISSUE_TEMPLATE/wrong_verdict.yml");
+
+/// The templates live in this repo. GitHub ignores an unknown `template=`
+/// query, so sending readers to EffortlessMetrics/ripr opens a blank form.
+const SWARM_FIRST_RUN_REPORT: &str =
+    "https://github.com/EffortlessMetrics/ripr-swarm/issues/new?template=first_run_report.yml";
+const SWARM_WRONG_VERDICT: &str =
+    "https://github.com/EffortlessMetrics/ripr-swarm/issues/new?template=wrong_verdict.yml";
+const RIPR_FIRST_RUN_REPORT: &str =
+    "https://github.com/EffortlessMetrics/ripr/issues/new?template=first_run_report.yml";
+const RIPR_WRONG_VERDICT: &str =
+    "https://github.com/EffortlessMetrics/ripr/issues/new?template=wrong_verdict.yml";
 
 /// User-facing guides whose `ripr ...` commands a reader or agent copies.
 /// Internal specs, plans, and handoffs are historical records and stay out.
@@ -66,6 +80,11 @@ const PUBLIC_COMMAND_DOCS: &[(&str, &str)] = &[
     ),
 ];
 
+/// The C2 `cmd:feedback.record` example in
+/// `crates/ripr/src/cli/command_metadata.rs`. Bare `ripr feedback record`
+/// always refuses without `--snapshot` and `--reason`.
+const FEEDBACK_RECORD_EXAMPLE: &str = "ripr feedback record --snapshot ID --reason CODE";
+
 /// Validate the command cell of each task row, not mentions elsewhere in the
 /// document. The result prose can change without changing the command's job.
 fn assert_doc_command_routes(doc: &str) -> Result<(), String> {
@@ -77,7 +96,7 @@ fn assert_doc_command_routes(doc: &str) -> Result<(), String> {
         ("Compose PR evidence", "ripr first-pr"),
         ("Add advisory CI", "ripr init --ci github"),
         ("Diagnose setup", "ripr doctor"),
-        ("Record result usefulness", "ripr feedback record"),
+        ("Record result usefulness", FEEDBACK_RECORD_EXAMPLE),
     ] {
         let mut matches = doc.lines().filter_map(|line| {
             let mut cells = line.trim().strip_prefix('|')?.split('|');
@@ -229,14 +248,83 @@ fn doc_routes_reject_missing_wrong_and_duplicate_tasks() -> Result<(), String> {
     );
     let duplicate =
         format!("{COMMAND_HIERARCHY_DOC}\n| Inspect one change | `ripr check` | Duplicate. |\n");
+    let bare_feedback = COMMAND_HIERARCHY_DOC.replace(
+        &format!("`{FEEDBACK_RECORD_EXAMPLE}`"),
+        "`ripr feedback record`",
+    );
     for (case, changed) in [
         ("missing", missing),
         ("wrong", wrong),
         ("duplicate", duplicate),
+        ("bare-feedback", bare_feedback),
     ] {
         if assert_doc_command_routes(&changed).is_ok() {
             return Err(format!("doc route guard accepted the {case} task mutation"));
         }
+    }
+    Ok(())
+}
+
+/// Keep the hierarchy task row on the same spelling the typed catalog example
+/// already ships. A docs-only re-pin of the refusing bare command must fail.
+#[test]
+fn hierarchy_feedback_record_row_matches_the_c2_example() -> Result<(), String> {
+    const COMMAND_METADATA: &str = include_str!("../../crates/ripr/src/cli/command_metadata.rs");
+    let example_field = format!("example: \"{FEEDBACK_RECORD_EXAMPLE}\"");
+    if !COMMAND_METADATA.contains(&example_field) {
+        return Err(format!(
+            "command_metadata.rs lost the C2 example `{FEEDBACK_RECORD_EXAMPLE}`"
+        ));
+    }
+    assert_doc_command_routes(COMMAND_HIERARCHY_DOC)?;
+    Ok(())
+}
+
+/// Live default-help dispatch, not the HELP constant: `ripr`, `--help`, `-h`,
+/// and `help` must share one unqualified first-run command.
+fn canonical_first_run_command(help: &str) -> Result<String, String> {
+    let lf = help.replace("\r\n", "\n");
+    let Some((_, after)) = lf.split_once("Try this first:\n") else {
+        return Err("default help lost its first-run section".to_string());
+    };
+    let section = after.split("\n\n").next().unwrap_or_default();
+    let commands: Vec<_> = section
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("ripr "))
+        .collect();
+    let [line] = commands.as_slice() else {
+        return Err(format!(
+            "first run must name exactly one command, got:\n{section}"
+        ));
+    };
+    let command = line.split_once("  ").map(|(part, _)| part).unwrap_or(line);
+    if normalized(command) != "ripr check" {
+        return Err(format!(
+            "first run must be `ripr check` without a fixed base, got `{command}`"
+        ));
+    }
+    if section.contains("--base") {
+        return Err("first-run command must not hardcode --base".to_string());
+    }
+    Ok(command.to_string())
+}
+
+#[test]
+fn rendered_default_help_routes_share_one_canonical_first_run() -> Result<(), String> {
+    for args in [
+        [].as_slice(),
+        ["--help"].as_slice(),
+        ["-h"].as_slice(),
+        ["help"].as_slice(),
+    ] {
+        let stdout = rendered_help(args)?;
+        if stdout.replace("\r\n", "\n").lines().count() > 40 {
+            return Err(format!(
+                "default help {args:?} exceeded the 40-line screen budget"
+            ));
+        }
+        canonical_first_run_command(&stdout)?;
     }
     Ok(())
 }
@@ -247,11 +335,196 @@ fn first_run_guard_does_not_credit_a_later_correct_example() -> Result<(), Strin
     if first_bash_block(changed)? == "ripr check" {
         return Err("a later command must not hide a wrong first-run route".to_string());
     }
-    let cli = doc_section(QUICKSTART_DOC, "## CLI First Hour")?;
-    let wrong = cli.replacen("ripr check", "ripr pilot", 1);
-    if first_bash_block(&wrong)? == "ripr check" {
+    for (surface, section, expected) in [
+        (
+            "README",
+            doc_section(ROOT_README, "## The first useful run")?,
+            "cargo install ripr ripr check",
+        ),
+        (
+            "Quickstart CLI",
+            doc_section(QUICKSTART_DOC, "## CLI First Hour")?,
+            "ripr check",
+        ),
+    ] {
+        for command in [
+            "ripr doctor",
+            "ripr pilot --root .",
+            "ripr check --base origin/main",
+        ] {
+            let wrong = section.replacen("\nripr check\n", &format!("\n{command}\n"), 1);
+            if wrong == section {
+                return Err(format!(
+                    "{surface} negative control did not change a command"
+                ));
+            }
+            if first_bash_block(&wrong)? == expected {
+                return Err(format!(
+                    "{surface} first-run guard accepted `{command}` before a later correct example"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// First-run usability: a clean checkout needs a tracked source edit, and a
+/// new file needs `git add -N PATH`. Command-only checks stay green if this
+/// note is deleted (#8179 review 5543109598).
+fn assert_clean_checkout_guidance(surface: &str, text: &str) -> Result<(), String> {
+    let n = normalized(text);
+    for needle in ["tracked source", "git add -N PATH"] {
+        assert_contains(surface, &n, needle)?;
+    }
+    if !(n.contains("clean base") || n.contains("clean checkout")) {
+        return Err(format!(
+            "{surface} lost clean-base-branch first-run guidance"
+        ));
+    }
+    for forbidden in ["is a clean bill of health", "commit your changes first"] {
+        if n.contains(forbidden) {
+            return Err(format!(
+                "{surface} presents `{forbidden}` as first-run guidance"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn without_clean_checkout_note(text: &str) -> String {
+    text.replace("git add -N PATH", "")
+        .replace("tracked source", "")
+}
+
+#[test]
+fn first_run_surfaces_require_clean_checkout_guidance() -> Result<(), String> {
+    let readme = doc_section(ROOT_README, "## The first useful run")?;
+    let quickstart = doc_section(QUICKSTART_DOC, "## CLI First Hour")?;
+    let mut surfaces = vec![
+        ("README first useful run".to_string(), readme),
+        ("Quickstart CLI First Hour".to_string(), quickstart),
+    ];
+    for args in [
+        [].as_slice(),
+        ["--help"].as_slice(),
+        ["-h"].as_slice(),
+        ["help"].as_slice(),
+    ] {
+        surfaces.push((
+            format!("rendered default help {args:?}"),
+            rendered_help(args)?,
+        ));
+    }
+    for (surface, text) in &surfaces {
+        assert_clean_checkout_guidance(surface, text)?;
+        let removed = without_clean_checkout_note(text);
+        if assert_clean_checkout_guidance(surface, &removed).is_ok() {
+            return Err(format!(
+                "{surface} still passed after removing tracked-edit / git add -N PATH guidance"
+            ));
+        }
+        let wrong = format!("{text}\nAn empty diff is a clean bill of health.\n");
+        if assert_clean_checkout_guidance(surface, &wrong).is_ok() {
+            return Err(format!(
+                "{surface} accepted empty-diff-as-clean-bill-of-health guidance"
+            ));
+        }
+    }
+    let help = rendered_help(&["--help"])?;
+    canonical_first_run_command(&without_clean_checkout_note(&help))?;
+    Ok(())
+}
+
+/// #7661: troubleshooting report links must open the swarm templates that
+/// exist in this repo. The README already routes problem reports to
+/// EffortlessMetrics/ripr-swarm/issues; QUICKSTART must not send the same
+/// reader to EffortlessMetrics/ripr, which has neither template.
+fn markdown_link(label: &str, url: &str) -> String {
+    format!("[{label}]({url})")
+}
+
+fn assert_quickstart_report_links(doc: &str) -> Result<(), String> {
+    let troubleshooting = doc_section(doc, "## Troubleshooting")?;
+    for (label, url) in [
+        ("first run report", SWARM_FIRST_RUN_REPORT),
+        ("wrong finding report", SWARM_WRONG_VERDICT),
+    ] {
+        assert_contains(
+            "docs/QUICKSTART.md troubleshooting",
+            &troubleshooting,
+            &markdown_link(label, url),
+        )?;
+    }
+    for forbidden in [RIPR_FIRST_RUN_REPORT, RIPR_WRONG_VERDICT] {
+        if troubleshooting.contains(forbidden) {
+            return Err(format!(
+                "docs/QUICKSTART.md troubleshooting still opens `{forbidden}`; those templates exist only on EffortlessMetrics/ripr-swarm"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn quickstart_report_links_open_the_swarm_templates() -> Result<(), String> {
+    assert_quickstart_report_links(QUICKSTART_DOC)?;
+    assert_contains(
+        "README.md problem reports",
+        ROOT_README,
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues",
+    )?;
+    assert_contains(
+        ".github/ISSUE_TEMPLATE/first_run_report.yml",
+        FIRST_RUN_REPORT_TEMPLATE,
+        "name: First run report",
+    )?;
+    assert_contains(
+        ".github/ISSUE_TEMPLATE/wrong_verdict.yml",
+        WRONG_VERDICT_TEMPLATE,
+        "name: Wrong or misleading finding",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn quickstart_report_links_reject_the_release_repo_and_a_dropped_close() -> Result<(), String> {
+    let release_repo = QUICKSTART_DOC
+        .replace(SWARM_FIRST_RUN_REPORT, RIPR_FIRST_RUN_REPORT)
+        .replace(SWARM_WRONG_VERDICT, RIPR_WRONG_VERDICT);
+    if assert_quickstart_report_links(&release_repo).is_ok() {
+        return Err("report-link guard accepted EffortlessMetrics/ripr template URLs".to_string());
+    }
+    let dropped = QUICKSTART_DOC.replace(
+        "Still stuck, or ripr gave a wrong or confusing answer?",
+        "Still stuck?",
+    );
+    let without_close = dropped
+        .lines()
+        .filter(|line| !line.contains("issues/new?template="))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if assert_quickstart_report_links(&without_close).is_ok() {
         return Err(
-            "the CLI section credited a later check instead of its first command".to_string(),
+            "report-link guard accepted a troubleshooting section with no report URLs".to_string(),
+        );
+    }
+    let unclickable = QUICKSTART_DOC
+        .replace(
+            &markdown_link("first run report", SWARM_FIRST_RUN_REPORT),
+            &format!(
+                "[first run report](https://github.com/EffortlessMetrics/ripr-swarm/issues) {SWARM_FIRST_RUN_REPORT}"
+            ),
+        )
+        .replace(
+            &markdown_link("wrong finding report", SWARM_WRONG_VERDICT),
+            &format!(
+                "[wrong finding report](https://github.com/EffortlessMetrics/ripr-swarm/issues) {SWARM_WRONG_VERDICT}"
+            ),
+        );
+    if assert_quickstart_report_links(&unclickable).is_ok() {
+        return Err(
+            "report-link guard credited a plain-text swarm URL whose markdown link pointed elsewhere"
+                .to_string(),
         );
     }
     Ok(())
@@ -282,6 +555,48 @@ fn doctor_exit_code_guide_distinguishes_analysis_and_source_build() -> Result<()
             "docs/EXIT_CODES.md still says the default doctor fails on a missing toolchain"
                 .to_string(),
         );
+    }
+    Ok(())
+}
+
+/// #7450: the targeted-test workflow must produce cargo-mutants artifacts,
+/// not assume `target/ripr/workflow/cargo-mutants.json` already exists.
+#[test]
+fn targeted_test_workflow_names_the_cargo_mutants_producer() -> Result<(), String> {
+    let doc = include_str!("../../docs/TARGETED_TEST_WORKFLOW.md");
+    let help = rendered_help(&["calibrate", "cargo-mutants", "--help"])?;
+    for needle in [
+        "cargo install cargo-mutants --locked",
+        "cargo mutants",
+        "mutants.out",
+    ] {
+        assert_contains("docs/TARGETED_TEST_WORKFLOW.md", doc, needle)?;
+        assert_contains("ripr calibrate cargo-mutants --help", &help, needle)?;
+    }
+    if doc.contains("target/ripr/workflow/cargo-mutants.json") {
+        return Err(
+            "docs/TARGETED_TEST_WORKFLOW.md still points at a producer-less cargo-mutants.json path"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// #7451: naming mutants.json as a valid path is not the denominator
+/// caveat. Help and the targeted-test workflow must say a mutants.json-only
+/// import counts unexecuted candidates in matched_total.
+#[test]
+fn targeted_test_workflow_discloses_mutants_json_only_denominator() -> Result<(), String> {
+    let doc = include_str!("../../docs/TARGETED_TEST_WORKFLOW.md");
+    let help = rendered_help(&["calibrate", "cargo-mutants", "--help"])?;
+    for needle in [
+        "mutants.json-only",
+        "unexecuted candidates",
+        "matched_total",
+        "no runtime observation",
+    ] {
+        assert_contains("docs/TARGETED_TEST_WORKFLOW.md", doc, needle)?;
+        assert_contains("ripr calibrate cargo-mutants --help", &help, needle)?;
     }
     Ok(())
 }
@@ -317,6 +632,11 @@ const PORTABLE_TESTS: &[&str] = &[
     "exhaustive_help_keeps_the_same_roles_and_boundaries",
     "exhaustive_help_marks_non_public_rows_visibly",
     "help_screens_state_the_surfaces_the_parsers_accept",
+    "bare_groups_display_their_documented_help",
+    "discovery_rows_require_path_and_example_in_the_same_object",
+    "group_help_preserves_explicit_errors_and_gate_flag_alias",
+    "calibrate_help_names_how_to_produce_the_imported_artifacts",
+    "calibrate_help_discloses_mutants_json_only_denominator",
     "outcome_help_matches_the_enforced_canonical_gap_contract",
     "agent_help_makes_repair_primary_without_removing_control_surfaces",
     "agent_repair_help_names_the_primary_transaction_and_its_limits",
@@ -326,12 +646,15 @@ const PORTABLE_TESTS: &[&str] = &[
     "check_and_diff_help_state_the_real_base_default",
     "check_help_chooses_one_format_per_task",
     "doc_flag_guard_rejects_removed_flags_and_accepts_prose",
+    "check_help_is_one_screen_and_all_is_the_full_reference",
+    "check_help_all_is_a_parsed_flag_not_a_raw_scan",
+    "check_help_wins_over_later_option_values",
 ];
 
 #[test]
-fn packaged_help_target_compiles_and_runs_every_portable_case() -> Result<(), String> {
+fn packaged_help_target_runs_every_case_and_rejects_missing_shared_asset() -> Result<(), String> {
     use ripr_help::{Scratch, compile_portable, extracted_package, require_success, run};
-    let scratch = Scratch::new("packaged-help-positive")?;
+    let scratch = Scratch::new("packaged-help-contract")?;
     let package = extracted_package(&scratch.0)?;
     let executable = scratch
         .0
@@ -352,7 +675,7 @@ fn packaged_help_target_compiles_and_runs_every_portable_case() -> Result<(), St
         .iter()
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
-    if actual != expected || actual.len() != 16 {
+    if actual != expected || actual.len() != 24 {
         return Err(format!(
             "portable test inventory drifted: expected {expected:?}, got {actual:?}"
         ));
@@ -361,27 +684,16 @@ fn packaged_help_target_compiles_and_runs_every_portable_case() -> Result<(), St
     execute.arg("--test-threads=1").current_dir(&scratch.0);
     let result = require_success(run(execute)?, "extracted help execution")?;
     let text = String::from_utf8(result.stdout).map_err(|error| error.to_string())?;
-    if !text.contains("test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out")
+    if !text.contains("test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out")
     {
         return Err(format!(
-            "extracted target did not run all 16 portable cases:\n{text}"
+            "extracted target did not run all 24 portable cases:\n{text}"
         ));
     }
-    Ok(())
-}
-
-#[test]
-fn packaged_help_target_rejects_a_missing_shared_test_asset() -> Result<(), String> {
-    use ripr_help::{Scratch, compile_portable, extracted_package, require_success};
-    let scratch = Scratch::new("packaged-help-negative")?;
-    let package = extracted_package(&scratch.0)?;
-    let pristine = scratch
-        .0
-        .join(format!("pristine-tests{}", std::env::consts::EXE_SUFFIX));
-    require_success(
-        compile_portable(&package, &pristine)?,
-        "negative-control precondition",
-    )?;
+    // The successful compile, exact inventory and execution above establish
+    // the pristine precondition for this same archive. Keeping the removal
+    // control in this transaction avoids repeating package/build/compile setup
+    // in a separate nextest process; no test result is reused across runs.
     let helper = package.join("tests/common/help_contract.rs");
     std::fs::remove_file(&helper).map_err(|error| error.to_string())?;
     let broken = scratch

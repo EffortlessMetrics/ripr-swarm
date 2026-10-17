@@ -1,0 +1,199 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/propagated_error_closing_early_path/input",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":1,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:3b7a180e8d4f12f4103294a586d56a50bc807a9954537c5298918f4df594131e","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":2,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:error_path:107ffe09",
+      "canonical_gap_id": "gap:rust:src/lib.rs:check:error_variant:error_path:value.ok_or_failure_missing",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:check:error_variant:error_path:value.ok_or_failure_missing",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "check",
+        "behavior_kind": "error_variant",
+        "probe_kind": "error_path",
+        "normalized_discriminator": "value.ok_or_failure_missing"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:error_path:107ffe09",
+        "family": "error_path",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 6,
+        "expression": "value.ok_or(\n        Failure::Missing\n    )?"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach check: observes_only_the_early_error"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"weak","confidence":"low","summary":"No complete owner-bound propagation witness found for error variant: value.ok_or(\n        Failure::Missing\n    )?"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"Complete propagation subject located; activation of the changed `?` exit is unestablished (propagation_boundary_activation_unestablished)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach check: observes_only_the_early_error", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: No complete owner-bound propagation witness found for error variant: value.ok_or(\n        Failure::Missing\n    )?", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Complete propagation subject located; activation of the changed `?` exit is unestablished (propagation_boundary_activation_unestablished)", "local flow reaches error variant: value.ok_or(\n        Failure::Missing\n    )? (line 6)", "related test src/lib.rs:16 observes_only_the_early_error uses strong exact error variant oracle: assert_eq!(check(true, None), Err(Failure::Missing));", "source enum variant value Failure::Missing at line 17", "source function argument value early = true at line 17"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"value.ok_or(\n        Failure::Missing\n    )?","line":6}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation subject located; activation of the changed `?` exit is unestablished (propagation_boundary_activation_unestablished)", "No complete owner-bound propagation witness found for error variant: value.ok_or(\n        Failure::Missing\n    )?", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach check: observes_only_the_early_error"],
+      "missing": ["No exact error variant discriminator was detected"],
+      "assertion_texts": {
+        "17": "assert_eq!(check(true, None), Err(Failure::Missing));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 17,
+            "value": "Failure::Missing",
+            "context": "enum_variant"
+          },
+          {
+            "line": 17,
+            "value": "early = true",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 17,
+          "value": "Failure::Missing",
+          "context": "enum_variant"
+        },
+        {
+          "line": 17,
+          "value": "early = true",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "observes_only_the_early_error",
+          "file": "src/lib.rs",
+          "line": 16,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_error_variant",
+          "oracle": "assert_eq!(check(true, None), Err(Failure::Missing));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_error_variant",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Inspect existing tests for activation of the changed `?` exit and whether their oracle constrains that path; static activation is unestablished.",
+      "suggested_next_action": "Inspect existing tests for activation of the changed `?` exit and whether their oracle constrains that path; static activation is unestablished.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:static_unknown:52cc7810",
+      "canonical_gap_id": "gap:rust:src/lib.rs:check:static_unknown:static_unknown:unknown",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:check:static_unknown:static_unknown:unknown",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "check",
+        "behavior_kind": "static_unknown",
+        "probe_kind": "static_unknown",
+        "normalized_discriminator": "unknown"
+
+      },
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.50,
+      "probe": {
+        "id": "probe:src_lib.rs:static_unknown:52cc7810",
+        "family": "static_unknown",
+        "delta": "unknown",
+        "file": "./src/lib.rs",
+        "line": 8,
+        "expression": ");"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach check: observes_only_the_early_error"},
+        "infect": {"state":"unknown","confidence":"unknown","summary":"Changed syntax is not mapped to a high-confidence probe family"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"No propagation model is available for this changed syntax"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"unknown","confidence":"low","summary":"Assertions exist, but oracle strength is unknown"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach check: observes_only_the_early_error", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 8)", "related test src/lib.rs:16 observes_only_the_early_error uses unknown exact error variant oracle: assert_eq!(check(true, None), Err(Failure::Missing));", "source enum variant value Failure::Missing at line 17", "source function argument value early = true at line 17"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"unknown sink","line":8}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Assertions exist, but oracle strength is unknown", "Changed syntax is not mapped to a high-confidence probe family", "No propagation model is available for this changed syntax", "Related tests appear to reach check: observes_only_the_early_error"],
+      "missing": ["No strong discriminator was detected", "Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests"],
+      "assertion_texts": {
+        "17": "assert_eq!(check(true, None), Err(Failure::Missing));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 17,
+            "value": "Failure::Missing",
+            "context": "enum_variant"
+          },
+          {
+            "line": 17,
+            "value": "early = true",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 17,
+          "value": "Failure::Missing",
+          "context": "enum_variant"
+        },
+        {
+          "line": 17,
+          "value": "early = true",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "observes_only_the_early_error",
+          "file": "src/lib.rs",
+          "line": 16,
+          "oracle_strength": "unknown",
+          "oracle_kind": "exact_error_variant",
+          "oracle": "assert_eq!(check(true, None), Err(Failure::Missing));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["static_probe_unknown"],
+      "oracle_kind": "exact_error_variant",
+      "oracle_strength": "unknown",
+      "recommended_next_step": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "suggested_next_action": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "language": "rust",
+      "source_currentness": "base_deleted"
+    }
+  ]
+}

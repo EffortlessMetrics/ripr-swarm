@@ -626,6 +626,10 @@ fn build_production_file_evidence(
             file_owners,
             all_tests,
             PythonNoBehaviorContext::default(),
+            // Repo mode discards the file source after parsing; without it
+            // the guarded-arm gate (#7392) stays off, matching diff mode
+            // before this fix and keeping repo verdicts unchanged.
+            None,
         ) {
             // Repo mode classifies every representative behavior line, so
             // identical statements under one owner produce identical probe

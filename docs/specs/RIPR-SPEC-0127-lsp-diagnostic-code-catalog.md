@@ -41,9 +41,14 @@ constructor that is the single source of truth for that family:
 - scope-limitation codes (#2299): workspace-scoped guard disclosures,
   currently `ripr-scope-diff-oversized` — the single warning emitted when
   the fail-closed diff-scope guard converts to a limited snapshot.
-- delivery-limitation code (#2596): `ripr-diagnostic-budget-omitted` names
-  current diagnostics withheld by the passive push budget. This is not an
-  analyzer finding or an actionable repair.
+- delivery-limitation codes: `ripr-diagnostic-budget-omitted` (#2596) names
+  current diagnostics withheld by the passive push budget;
+  `ripr-diagnostic-quarantine-withdrawn` (#7771) names a dirty-buffer
+  document whose saved-state diagnostics were withdrawn;
+  `ripr-diagnostic-analysis-pending` (#7774) names a workspace no analysis
+  snapshot exists for yet, served on both pull paths in place of an empty
+  report that would claim a clean workspace. These are not
+  analyzer findings or actionable repairs.
 
 Each catalog entry carries the code identity used today: the stable `code` and
 the deprecated `aliases` that still resolve to it. Compatibility aliases are

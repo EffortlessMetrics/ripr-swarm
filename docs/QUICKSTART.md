@@ -66,11 +66,22 @@ For another installation method or a pinned server, see
 
 ## CLI First Hour
 
-From a Rust repository on a branch with committed changes:
+From a Rust repository with a change to inspect:
 
 ```bash
 ripr check
 ```
+
+In this development build, `check` uses uncommitted tracked edits when present,
+otherwise committed history against the default base. On a clean checkout of
+the base branch, edit a tracked source file and run `ripr check` again. For a new
+file, first use `git add -N PATH` so it enters the tracked diff. See
+[Choose the change](#choose-the-change) for explicit diff selection.
+
+Use `ripr doctor` to diagnose setup if analysis cannot complete; it is not a
+required first step. To explore a clean repository without making a change,
+use the separate [repository exploration](#explore-the-repository) path,
+`ripr pilot --root .`.
 
 No `ripr.toml` is required. The development CLI prints a summary and a bounded
 `Start here:` section with a finding, a no-action result, or the limitation
@@ -102,13 +113,20 @@ before any test edit.
 
 ### Choose the change
 
-By default, `check` analyzes committed history and reads every source and
-test file as committed at `HEAD`. In this development build, include staged
-and unstaged edits to tracked files with:
+By default, `check` analyzes the working tree when the repository has
+uncommitted tracked changes, and committed history when the tree is clean.
+This applies with or without `--base`. Force the working-tree read, or force
+committed history even when the tree is dirty, with:
 
 ```bash
 ripr check --worktree
+ripr check --committed
 ```
+
+`--worktree` always reads staged and unstaged tracked edits. `--committed`
+always diffs `<base>...HEAD`, even when the tree is dirty.
+Untracked files never select the working-tree default and stay out of the
+diff until staged (`git add -N`).
 
 The CLI resolves its default base by trying `origin/HEAD`, then `origin/main`,
 `origin/master`, `main`, and `master`. To choose another comparison, replace
@@ -119,8 +137,9 @@ ripr check --base REF
 ```
 
 On an unchanged base branch, an empty diff is expected. To analyze a saved patch,
-use `ripr check --diff PATH`, replacing `PATH` with your patch file. Details and
-options are available in `ripr help check`.
+use `ripr check --diff PATH`, replacing `PATH` with your patch file. The common
+options are in `ripr help check`; `ripr help check --all` lists every option,
+output format, and environment variable.
 
 ### Explore the repository
 
@@ -268,7 +287,7 @@ PR-facing packet. It does not run analysis or repair the code. See
 | --- | --- |
 | Cargo installation fails. | Check the first Cargo error and `rustc --version` (Rust 1.95 or newer). Fix the reported build or download problem before retrying. |
 | ripr is installed, but repository setup fails. | Run `ripr doctor` and inspect its individual capability results. |
-| `check` sees no change after an edit. | In a development build, use `--worktree` for staged and unstaged tracked edits. Otherwise inspect a committed change using your installed version's supported options. |
+| `check` sees no change after an edit. | Uncommitted tracked edits are included by default in this development build. Confirm the resolved base (`--base REF`). Untracked files stay out of the diff until `git add` or `git add -N`. Pass `--committed` to analyze committed history only. A published 0.10 install still needs `--worktree`. |
 | The wrong base is selected. | Use `--base REF` with an existing reference in this repository. |
 | Configuration is rejected. | Run `ripr config validate` and fix the named setting. Configuration is optional, but an invalid file is not ignored. |
 | Editor diagnostics are missing or stale. | Check `ripr: Show Status`, save the file, and use the extension's refresh action. |
@@ -276,7 +295,7 @@ PR-facing packet. It does not run analysis or repair the code. See
 | An attempt cannot continue. | Run `ripr status --root .` and follow [repair recovery](REPAIR_ATTEMPT.md). |
 | Analysis is partial or limited. | Read the limitation and suggested retry. Missing evidence is not a successful empty result. |
 
-Still stuck, or ripr gave a wrong or confusing answer? Open a [first run report](https://github.com/EffortlessMetrics/ripr/issues/new?template=first_run_report.yml) or a [wrong finding report](https://github.com/EffortlessMetrics/ripr/issues/new?template=wrong_verdict.yml) with your `ripr --version`.
+Still stuck, or ripr gave a wrong or confusing answer? Open a [first run report](https://github.com/EffortlessMetrics/ripr-swarm/issues/new?template=first_run_report.yml) or a [wrong finding report](https://github.com/EffortlessMetrics/ripr-swarm/issues/new?template=wrong_verdict.yml) with your `ripr --version`.
 
 ## Known Limits
 

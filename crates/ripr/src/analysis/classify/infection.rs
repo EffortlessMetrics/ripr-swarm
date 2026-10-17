@@ -1,8 +1,9 @@
 use super::super::rust_index::{TestSummary, extract_literals};
 use super::activation::{
-    ARM_UNSELECTED_REASON_PREFIX, boundary_constant_operand_name, comparison_operands,
-    has_observed_boundary_equality, is_computed_value_expression, owner_input_values,
+    boundary_constant_operand_name, comparison_operands, has_observed_boundary_equality,
+    is_computed_value_expression, owner_input_values,
 };
+use crate::analysis::probes::same_connectives;
 use crate::domain::*;
 
 #[cfg(test)]
@@ -62,6 +63,10 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
                 })
                 .cloned()
                 .collect::<Vec<_>>();
+            let changed_operands = probe
+                .before
+                .as_deref()
+                .filter(|before| !same_connectives(&probe.expression, before));
             if related_tests.is_empty() {
                 StageEvidence::new(
                     StageState::Unknown,
@@ -78,7 +83,7 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
                     Confidence::Medium,
                     "Related tests contain input values, but the equality-boundary discriminator is missing",
                 )
-            } else if has_observed_boundary_equality(activation) {
+            } else if changed_operands.is_none() && has_observed_boundary_equality(activation) {
                 StageEvidence::new(
                     StageState::Yes,
                     Confidence::Medium,
@@ -102,6 +107,23 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
                     StageState::Unknown,
                     Confidence::Low,
                     unresolved_boundary_summary(reason),
+                )
+            } else if let Some(before) = changed_operands.filter(|_| {
+                has_observed_boundary_equality(activation) || !boundary_input_literals.is_empty()
+            }) {
+                // #7898: the edit adds or removes a `&&`/`||` operand
+                // (`other > 0 && 100 <= points` to `100 < points`). An input
+                // at the surviving comparison's boundary says nothing about
+                // the operand that came or went, so the boundary is not
+                // credited. Without such an input the weak readings below
+                // still name the missing boundary test.
+                StageEvidence::new(
+                    StageState::Unknown,
+                    Confidence::Low,
+                    format!(
+                        "The edit changes the predicate's `&&`/`||` operands (before: `{}`), so a test input at the changed comparison's boundary does not establish that the whole predicate's change is reached",
+                        before.trim()
+                    ),
                 )
             } else if !boundary_input_literals.is_empty() {
                 StageEvidence::new(
@@ -175,10 +197,12 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
             } else if let Some(unselected) = activation
                 .missing_discriminators
                 .iter()
-                .find(|fact| fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX))
+                .find(|fact| is_unselected_input_reason(&fact.reason))
             {
                 // RIPR-SPEC-0229: every related test's owner input selects a
-                // different arm, so none activates this one.
+                // different arm, so none activates this one. RIPR-SPEC-0263:
+                // every input leaves the enclosing guard false, so none runs
+                // the changed side effect.
                 StageEvidence::new(
                     StageState::Weak,
                     Confidence::Medium,

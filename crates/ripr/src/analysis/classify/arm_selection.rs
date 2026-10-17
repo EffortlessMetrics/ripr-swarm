@@ -29,12 +29,36 @@
 
 use super::super::rust_index::{FunctionSummary, TestSummary};
 use super::activation::function_parameters;
+use super::boundary_pairing::loan_call_literals;
 use super::reveal::{
     UsePath, assertion_comparison_operands, find_fat_arrow, flattened_use_paths, lex_strings,
     matching_parenthesis, split_top_level_arguments, string_span_ranges,
 };
-use crate::analysis::extract::mask_comments_and_strings;
+use crate::analysis::extract::{mask_comments_and_strings, mask_with_char_literals};
+use crate::analysis::syntax::HelperLoan;
 use crate::domain::Probe;
+
+mod guard_entry;
+pub(in crate::analysis) use guard_entry::{GuardEntry, named_integer_bound};
+
+/// RIPR-SPEC-0229 decision 6: an integer scrutinee computed from its
+/// parameter by one division or remainder by a positive integer literal
+/// (`match status / 100`). An integer input is evaluated as Rust does, so
+/// `301` reads as `3`; any other input is not provable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ScrutineeArithmetic {
+    Div(i128),
+    Rem(i128),
+}
+
+impl ScrutineeArithmetic {
+    fn apply(self, value: i128) -> Option<i128> {
+        match self {
+            Self::Div(divisor) => value.checked_div(divisor),
+            Self::Rem(divisor) => value.checked_rem(divisor),
+        }
+    }
+}
 
 /// Where the owner's `match` reads its scrutinee from.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -71,6 +95,9 @@ pub(in crate::analysis) struct ArmSelector {
     /// may compare `Self::GET`, a `Router` constant, by value.
     self_is_scrutinee_type: bool,
     binding: ScrutineeBinding,
+    /// The arithmetic a computed integer scrutinee applies to the bound
+    /// parameter (decision 6), or `None` for the parameter itself.
+    arithmetic: Option<ScrutineeArithmetic>,
     owner: String,
     method: bool,
     /// Whether every call of the owner runs the enclosing `match`: it is
@@ -118,8 +145,10 @@ pub(in crate::analysis) struct ArmSelector {
     /// file binds that name from another enum.
     test_imports: Option<std::collections::BTreeMap<std::path::PathBuf, Vec<UsePath>>>,
     /// The variants of the scrutinee's enum, once `in_workspace` finds its
-    /// declaration in the owner's file (`declared_enum_variants`). `None`
-    /// leaves every uncased name unreadable.
+    /// declaration in the owner's file (`declared_enum_variants`) or in the
+    /// one workspace file the owner's import of it names
+    /// (`imported_enum_variants`, #7675). `None` leaves every uncased name
+    /// unreadable.
     declared_variants: Option<std::collections::BTreeSet<String>>,
     /// Whether a test's uncased input (`Kind::A`) names the owner's
     /// `Kind`. `in_workspace` clears it when a related test file declares
@@ -130,6 +159,13 @@ pub(in crate::analysis) struct ArmSelector {
     /// exact pattern pin, keyed by test file, test start line, test name,
     /// assertion line and assertion text.
     pattern_pins: std::collections::BTreeMap<PatternPinKey, String>,
+    /// RIPR-SPEC-0229 decisions 5 and 7: the assertions whose owner call
+    /// takes an input lent from outside it that selects this arm. Either
+    /// the assertion is borrowed from a check helper (#6482) and an eager
+    /// call to the helper fills the scrutinee parameter with a selecting
+    /// literal, or the call is fed by a constant-row table (#5328) one of
+    /// whose cells selects. Same key as `pattern_pins`.
+    lent_selections: std::collections::BTreeSet<PatternPinKey>,
 }
 
 type PatternPinKey = (std::path::PathBuf, usize, String, usize, String);
@@ -308,6 +344,10 @@ impl ArmSelector {
             probe.location.line,
             matches!(changed_from, Some(Some(_))),
         )?;
+        let (scrutinee, arithmetic) = match integer_scrutinee(&scrutinee) {
+            Some((name, arithmetic)) => (name.to_string(), Some(arithmetic)),
+            None => (scrutinee, None),
+        };
         // The first arm from the changed line on is the changed arm itself;
         // the rest are the arms an input that misses it falls through to.
         let (result, later) = match arms_from_changed.as_deref() {
@@ -363,6 +403,17 @@ impl ArmSelector {
                 if parameter_may_change(owner, &scrutinee, declared.mutable) {
                     return None;
                 }
+                // Arithmetic is evaluated only on a primitive integer
+                // parameter, whose `/` and `%` are the built-in ones.
+                if arithmetic.is_some()
+                    && (declared.qualified
+                        || !declared
+                            .type_name
+                            .as_deref()
+                            .is_some_and(|name| INTEGER_TYPES.contains(&name)))
+                {
+                    return None;
+                }
                 let bare = declared.type_name.clone().filter(|_| !declared.qualified);
                 (ScrutineeBinding::Parameter(index), declared.type_name, bare)
             };
@@ -394,6 +445,7 @@ impl ArmSelector {
             declared_variants: None,
             uncased_inputs_trusted: true,
             binding,
+            arithmetic,
             owner: owner.name.clone(),
             method,
             reached,
@@ -406,6 +458,7 @@ impl ArmSelector {
             owner_file: owner.file.clone(),
             test_imports: None,
             pattern_pins: std::collections::BTreeMap::new(),
+            lent_selections: std::collections::BTreeSet::new(),
         })
     }
 
@@ -428,7 +481,13 @@ impl ArmSelector {
             .get(&self.owner_file)
             .map(|facts| facts.source.clone());
         self.demote_constant_bindings(owner_source.as_deref());
-        self.resolve_uncased_variants(owner_source.as_deref());
+        let declared = self.bare_scrutinee_type.as_deref().and_then(|type_name| {
+            owner_source
+                .as_deref()
+                .and_then(|source| declared_enum_variants(source, type_name, &self.owner))
+                .or_else(|| imported_enum_variants(index, &self.owner_file, type_name, &self.owner))
+        });
+        self.resolve_uncased_variants(declared);
         let mut imports = std::collections::BTreeMap::new();
         for file in test_files {
             if let Some(facts) = index.files().get(file) {
@@ -484,10 +543,8 @@ impl ArmSelector {
 
     /// Reads each uncased name (`Kind::A`) as a variant or as unreadable,
     /// from the enum the owner's file declares (#7543).
-    fn resolve_uncased_variants(&mut self, owner_source: Option<&str>) {
-        self.declared_variants = owner_source.and_then(|source| {
-            declared_enum_variants(source, self.bare_scrutinee_type.as_deref()?)
-        });
+    fn resolve_uncased_variants(&mut self, declared: Option<std::collections::BTreeSet<String>>) {
+        self.declared_variants = declared;
         let resolve = |heads: &mut Vec<PatternHead>, selector: &Self| {
             for head in heads.iter_mut() {
                 *head = selector.resolve_head(std::mem::replace(head, PatternHead::Opaque));
@@ -507,6 +564,14 @@ impl ArmSelector {
             resolve(original, self);
         }
         self.changed_from = changed_from;
+        // Later arms decide where a moved input lands (#7670).
+        let mut later = self.later.take();
+        later
+            .iter_mut()
+            .flatten()
+            .filter_map(|arm| arm.alternatives.as_mut())
+            .for_each(|arm| resolve(arm, self));
+        self.later = later;
     }
 
     /// An uncased pattern name becomes a `Variant` when its qualifier names
@@ -700,6 +765,163 @@ impl ArmSelector {
             .is_some_and(|value| self.operand_selects(value))
     }
 
+    /// RIPR-SPEC-0229 decision 5: keeps each related test's admitted
+    /// assertion borrowed from a check helper (#6482) that selects this arm
+    /// through the helper's parameters, as `loan` lends them.
+    pub(in crate::analysis) fn with_helper_loans<'a>(
+        mut self,
+        tests: impl IntoIterator<Item = &'a TestSummary>,
+        loan: impl Fn(&TestSummary, &crate::analysis::facts::OracleFact) -> Option<HelperLoan>,
+    ) -> Self {
+        for test in tests {
+            for assertion in &test.assertions {
+                if let Some(loan) = loan(test, assertion)
+                    && self.loan_selects(test, &assertion.text, &loan)
+                {
+                    self.lent_selections.insert((
+                        test.file.clone(),
+                        test.start_line,
+                        test.name.clone(),
+                        assertion.line,
+                        assertion.text.clone(),
+                    ));
+                }
+            }
+        }
+        self
+    }
+
+    /// RIPR-SPEC-0229 decision 7: keeps each related test's `assert_eq!`
+    /// whose compared operand is exactly a direct owner call fed by a
+    /// column of a constant-row `for` table (#5328), when some row's cell
+    /// selects this arm. The loop runs the assertion once per row, so that
+    /// row's call is a selecting call with an exact oracle on its result.
+    pub(in crate::analysis) fn with_table_rows<'a>(
+        mut self,
+        tests: impl IntoIterator<Item = &'a TestSummary>,
+    ) -> Self {
+        for test in tests {
+            for assertion in &test.assertions {
+                if self.table_row_selects(test, &assertion.text, assertion.line) {
+                    self.lent_selections.insert((
+                        test.file.clone(),
+                        test.start_line,
+                        test.name.clone(),
+                        assertion.line,
+                        assertion.text.clone(),
+                    ));
+                }
+            }
+        }
+        self
+    }
+
+    fn table_row_selects(&self, test: &TestSummary, assertion_text: &str, line: usize) -> bool {
+        let Some(operands) = self.exact_operands(assertion_text) else {
+            return false;
+        };
+        operands.iter().any(|operand| {
+            let operand = operand.trim();
+            owner_calls_in(operand, &self.owner, self.method, &self.local_roots)
+                .into_iter()
+                .filter(|call| call.span == (0, operand.len()))
+                .filter_map(|call| self.call_input(&call))
+                .map(str::trim)
+                .filter(|input| is_identifier(input) && runs_in_table_loop(test, line, input))
+                .filter_map(|input| {
+                    crate::analysis::syntax::constant_table_column(&test.body, input)
+                })
+                .any(|cells| {
+                    cells.iter().any(|cell| {
+                        !self.input_import_ambiguous(test, cell)
+                            && self.judge(cell) == ArmSelection::Selects
+                    })
+                })
+        })
+    }
+
+    /// The compared operands of an `assert_eq!` that may confirm a
+    /// selection: never an `assert_ne!` form, and never one whose every
+    /// operand names the owner, since that expected side moves with the arm.
+    fn exact_operands<'t>(&self, assertion_text: &'t str) -> Option<[&'t str; 2]> {
+        if mask_comments_and_strings(assertion_text).contains("assert_ne") {
+            return None;
+        }
+        let operands = assertion_comparison_operands(assertion_text)?;
+        if operands.iter().all(|operand| {
+            !whole_word_offsets(&mask_comments_and_strings(operand), &self.owner).is_empty()
+        }) {
+            return None;
+        }
+        Some(operands)
+    }
+
+    /// Whether `assertion` selects this arm through inputs lent from
+    /// outside the owner call: a check helper's literals
+    /// (`with_helper_loans`) or a constant-row table's cells
+    /// (`with_table_rows`).
+    pub(in crate::analysis) fn lent_selects(
+        &self,
+        test: &TestSummary,
+        assertion: &crate::analysis::facts::OracleFact,
+    ) -> bool {
+        !self.lent_selections.is_empty()
+            && self.lent_selections.contains(&(
+                test.file.clone(),
+                test.start_line,
+                test.name.clone(),
+                assertion.line,
+                assertion.text.clone(),
+            ))
+    }
+
+    /// `fn check(suit: char, want: &str) { assert_eq!(suit_color(suit),
+    /// want); }` called as `check('S', "black")` compares
+    /// `suit_color('S')`: the helper's compared operand is exactly a direct
+    /// owner call whose scrutinee argument is one of the helper's plain,
+    /// never-rebound parameters, the expected side does not name the owner,
+    /// and some eager call to the helper, on a line holding only calls of
+    /// that same text, passes only
+    /// scalar literals and fills that parameter with an input selecting
+    /// this arm. That call runs the helper's assertion on its own owner
+    /// call, so it is a selecting call with an exact oracle on its result.
+    fn loan_selects(&self, test: &TestSummary, assertion_text: &str, loan: &HelperLoan) -> bool {
+        if loan.parameters.is_empty() {
+            return false;
+        }
+        let Some(operands) = self.exact_operands(assertion_text) else {
+            return false;
+        };
+        let Some(position) = operands.iter().find_map(|operand| {
+            let operand = operand.trim();
+            owner_calls_in(operand, &self.owner, self.method, &self.local_roots)
+                .into_iter()
+                .find(|call| call.span == (0, operand.len()))
+                .and_then(|call| self.call_input(&call))
+                .and_then(|input| loan.parameters.iter().position(|name| name == input.trim()))
+        }) else {
+            return false;
+        };
+        loan.call_lines.iter().any(|line| {
+            let mut on_line = test.calls.iter().filter(|call| call.line == *line);
+            let Some(helper_call) = on_line.next() else {
+                return false;
+            };
+            if helper_call.name != loan.name
+                || on_line.any(|call| call.name != loan.name || call.text != helper_call.text)
+            {
+                return false;
+            }
+            loan_call_literals(&helper_call.text, &loan.name).is_some_and(|literals| {
+                literals.len() == loan.parameters.len()
+                    && literals.get(position).is_some_and(|input| {
+                        !self.input_import_ambiguous(test, input)
+                            && self.judge(input) == ArmSelection::Selects
+                    })
+            })
+        })
+    }
+
     /// Whether the test names the owner at all. A test that reaches the
     /// owner only through other functions passes no input this selector
     /// reads, so selection has nothing to outrank there (#6297). An alias
@@ -798,6 +1020,15 @@ impl ArmSelector {
                 PatternHead::Opaque
             }
             head => self.resolve_head(head),
+        };
+        let input = match (self.arithmetic, input) {
+            (None, input) => input,
+            (Some(arithmetic), PatternHead::Literal(LiteralValue::Int(value))) => arithmetic
+                .apply(value)
+                .map_or(PatternHead::Opaque, |value| {
+                    PatternHead::Literal(LiteralValue::Int(value))
+                }),
+            (Some(_), _) => PatternHead::Opaque,
         };
         if input == PatternHead::Opaque {
             return ArmSelection::Unknown;
@@ -985,6 +1216,32 @@ fn same_alternatives(left: &str, right: &str) -> bool {
         })
     };
     normalized(left).is_some_and(|left| normalized(right).is_some_and(|right| left == right))
+        || same_literal_values(left, right)
+}
+
+/// RIPR-SPEC-0229 decision 6: alternatives that are all literals or
+/// literal-bounded integer ranges, equal as sets of values in any spelling
+/// (`3` and `0x3`), take exactly the same inputs.
+fn same_literal_values(left: &str, right: &str) -> bool {
+    let heads = |pattern: &str| {
+        top_level_alternatives(pattern).and_then(|alternatives| {
+            let heads = alternatives
+                .into_iter()
+                .map(pattern_head)
+                .collect::<Vec<_>>();
+            heads
+                .iter()
+                .all(|head| matches!(head, PatternHead::Literal(_) | PatternHead::IntRange { .. }))
+                .then_some(heads)
+        })
+    };
+    match (heads(left), heads(right)) {
+        (Some(left), Some(right)) => {
+            left.iter().all(|head| right.contains(head))
+                && right.iter().all(|head| left.contains(head))
+        }
+        _ => false,
+    }
 }
 
 /// The pattern before `=>`, without comments, trimmed, with no guard.
@@ -1005,10 +1262,11 @@ fn arm_pattern_text(expression: &str) -> Option<String> {
     Some(pattern.to_string())
 }
 
-/// `text` with every comment byte blanked and string literals kept, so a
-/// `/* "x" */` beside a pattern never reads as part of it.
+/// `text` with every comment byte blanked and string and character
+/// literals kept, so a `/* "x" */` beside a pattern never reads as part of
+/// it while `'S' | 'C'` keeps its characters.
 fn without_comments(text: &str) -> Option<String> {
-    let masked = mask_comments_and_strings(text);
+    let (masked, chars) = mask_with_char_literals(text);
     let strings = string_span_ranges(text);
     let bytes = text
         .bytes()
@@ -1017,7 +1275,12 @@ fn without_comments(text: &str) -> Option<String> {
         .map(|(index, (original, masked))| {
             let in_string = strings
                 .iter()
-                .any(|(start, end)| index >= *start && index < *end);
+                .any(|(start, end)| index >= *start && index < *end)
+                // A char span's end is its closing quote's offset, so it
+                // is inclusive where a string span's end is exclusive.
+                || chars
+                    .iter()
+                    .any(|(start, end)| index >= *start && index <= *end);
             if original != masked && !in_string {
                 b' '
             } else {
@@ -1243,7 +1506,7 @@ fn catch_all_binding(alternative: &str) -> Option<&str> {
 /// binds it, or a glob import of a module (`use consts::*`), which may
 /// bring in any name. A glob of an enum's variants (`use Rule::*`) does
 /// not count: Rust variants are CamelCase.
-fn may_name_constant(source: &str, name: &str) -> bool {
+pub(in crate::analysis) fn may_name_constant(source: &str, name: &str) -> bool {
     let masked = mask_comments_and_strings(source);
     let declared = whole_word_offsets(&masked, name).into_iter().any(|offset| {
         let before = masked[..offset].trim_end();
@@ -1272,6 +1535,7 @@ fn may_name_constant(source: &str, name: &str) -> bool {
 fn declared_enum_variants(
     source: &str,
     type_name: &str,
+    owner: &str,
 ) -> Option<std::collections::BTreeSet<String>> {
     use ra_ap_syntax::{AstNode, ast, ast::HasName};
     // Cheap text test before the parse: most owner files declare no enum
@@ -1324,16 +1588,422 @@ fn declared_enum_variants(
             || ast::TypeAlias::cast(node.clone()).is_some_and(|item| named(&item))
             || ast::Trait::cast(node.clone()).is_some_and(|item| named(&item))
             || parent_glob_outside_this_file(&node)
-            || (ast::MacroCall::can_cast(node.kind())
-                && node.parent().is_some_and(|parent| {
-                    ast::SourceFile::can_cast(parent.kind())
-                        || ast::ItemList::can_cast(parent.kind())
-                }))
+            || may_shadow_in_owner_scope(&node, owner)
         {
             return None;
         }
     }
     found
+}
+
+/// Whether a macro's unread expansion may declare an item the function
+/// `owner` sees, such as a `const p` that a bare guard binding `p` then
+/// names (#7922 review): a `macro_rules!` or `include!` anywhere in the
+/// file, any node [`may_shadow_in_owner_scope`] flags (an item-level macro
+/// call in any module, a statement macro inside `owner`), or a file that
+/// does not parse cleanly.
+pub(in crate::analysis) fn may_declare_items_in_owner_scope(source: &str, owner: &str) -> bool {
+    use ra_ap_syntax::AstNode;
+    let masked = mask_comments_and_strings(source);
+    if masked.contains("macro_rules!") || masked.contains("include!") {
+        return true;
+    }
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return true;
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .any(|node| may_shadow_in_owner_scope(&node, owner))
+}
+
+/// Whether `node` may bring an unread local item into the owner's scope:
+/// a macro call at file or module item level (its expansion is not read),
+/// a macro call in statement position inside a function named `owner`
+/// (`shadow!();` may expand to a `struct Kind;` scoped to the match), or a
+/// function named `owner` nested in a block, which sees that block's items
+/// (#7686 review). Statement macros in other functions cannot reach the
+/// owner's match, so they are not read. A macro in expression position
+/// expands to an expression.
+fn may_shadow_in_owner_scope(node: &ra_ap_syntax::SyntaxNode, owner: &str) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    let owner = owner.strip_prefix("r#").unwrap_or(owner);
+    let named_owner = |function: &ast::Fn| {
+        function.name().is_some_and(|name| {
+            let text = name.text();
+            text.strip_prefix("r#").unwrap_or(text) == owner
+        })
+    };
+    if let Some(function) = ast::Fn::cast(node.clone()) {
+        return named_owner(&function)
+            && function
+                .syntax()
+                .ancestors()
+                .skip(1)
+                .any(|ancestor| ast::StmtList::can_cast(ancestor.kind()));
+    }
+    if !ast::MacroCall::can_cast(node.kind()) {
+        return false;
+    }
+    let Some(parent) = node.parent() else {
+        return false;
+    };
+    if ast::SourceFile::can_cast(parent.kind()) || ast::ItemList::can_cast(parent.kind()) {
+        return true;
+    }
+    let statement = ast::MacroExpr::can_cast(parent.kind())
+        && parent.parent().is_some_and(|holder| {
+            ast::ExprStmt::can_cast(holder.kind()) || ast::StmtList::can_cast(holder.kind())
+        })
+        || ast::MacroStmts::can_cast(parent.kind());
+    statement
+        && node
+            .ancestors()
+            .filter_map(ast::Fn::cast)
+            .any(|function| named_owner(&function))
+}
+
+/// #7675: the variants of the enum `type_name` when the owner's file binds
+/// that name through exactly one import, a top-level non-renamed `use` whose
+/// module path the recorded `mod` edges place in exactly one workspace file
+/// (`use kinds::Kind;` after `mod kinds;`, `use crate::a::b::Kind;`,
+/// `use self::..`/`use super::..`), and that file declares the enum
+/// (`declared_enum_variants`). An owner item or item macro that may define
+/// `Kind`, an inline or `cfg`-duplicated module step, a `cfg`-gated import
+/// or step, a chain that does not start at a `src/` or `crates/<name>/src/`
+/// crate root, any workspace `#[path]`, a
+/// re-export, an external or package-named root, an `include!` edge, or any
+/// unresolved edge reads nothing, so `Kind::A` stays unreadable.
+fn imported_enum_variants(
+    index: &crate::analysis::rust_index::RustIndex,
+    owner_file: &std::path::Path,
+    type_name: &str,
+    owner_name: &str,
+) -> Option<std::collections::BTreeSet<String>> {
+    use crate::analysis::facts::SourceRoleProvenanceEdgeKind;
+    use ra_ap_syntax::{AstNode, ast, ast::HasAttrs, ast::HasName};
+    // A `cfg` or `cfg_attr` on the import or a module step may compile it
+    // out, leaving `Kind` to a glob or another item (#7686 review).
+    // The attribute's leading name is read from its text, so a parse that
+    // leaves the path off still counts.
+    let cfg_gated = |item: &dyn HasAttrs| {
+        item.attrs().any(|attr| {
+            let text = attr.syntax().text().to_string();
+            let inner = text.trim_start_matches(|ch: char| {
+                ch == '#' || ch == '!' || ch == '[' || ch.is_whitespace()
+            });
+            let name = inner
+                .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                .next()
+                .unwrap_or_default();
+            matches!(name, "cfg" | "cfg_attr")
+        })
+    };
+    let files = index.files();
+    let owner = files.get(owner_file)?;
+    let parse = crate::analysis::syntax::parse_clean_source_file(&owner.source)?;
+    let named = |item: &dyn HasName| item.name().is_some_and(|name| name.text() == type_name);
+    let mut bindings = Vec::new();
+    for node in parse.tree().syntax().descendants() {
+        // The owner's own item of that name (in an inline module or behind
+        // a `cfg` alternative to the import) or an item macro's unread
+        // output may be what `Kind` means at the match (#7686 review).
+        if ast::Struct::cast(node.clone()).is_some_and(|item| named(&item))
+            || ast::Union::cast(node.clone()).is_some_and(|item| named(&item))
+            || ast::Enum::cast(node.clone()).is_some_and(|item| named(&item))
+            || ast::TypeAlias::cast(node.clone()).is_some_and(|item| named(&item))
+            || ast::Trait::cast(node.clone()).is_some_and(|item| named(&item))
+            || may_shadow_in_owner_scope(&node, owner_name)
+        {
+            return None;
+        }
+        let Some(item) = ast::Use::cast(node) else {
+            continue;
+        };
+        let top_level = item
+            .syntax()
+            .parent()
+            .is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()));
+        for import in flattened_use_paths(&item.syntax().text().to_string()) {
+            let last = import.path.rsplit("::").next().unwrap_or_default();
+            // A glob in an inline module may bring another `Kind` into the
+            // module holding the match; `super::*` there brings this file's
+            // items, read above. At the file root the explicit import
+            // shadows any glob.
+            if !top_level && import.alias.is_none() && last == "*" && import.path != "super::*" {
+                return None;
+            }
+            if import.alias.as_deref() == Some(type_name)
+                || (import.alias.is_none() && last == type_name)
+            {
+                bindings.push((
+                    top_level && import.alias.is_none() && !cfg_gated(&item),
+                    import.path,
+                ));
+            }
+        }
+    }
+    let [(true, path)] = bindings.as_slice() else {
+        return None;
+    };
+    let segments = path.split("::").collect::<Vec<_>>();
+    let (_, modules) = segments.split_last()?;
+    // Whether a file's chain of `mod` edges is all resolved `mod` edges; a
+    // file with an unresolved or `include!` edge is not placed.
+    let placed = |file: &std::path::Path| {
+        files.get(file).is_some_and(|facts| {
+            let provenance = &facts.role_provenance;
+            provenance.earliest_unresolved_reason.is_none()
+                && provenance
+                    .edges
+                    .iter()
+                    .all(|edge| edge.kind == SourceRoleProvenanceEdgeKind::Module)
+        })
+    };
+    if !placed(owner_file) {
+        return None;
+    }
+    let owner_chain = &owner.role_provenance.edges;
+    // An out-of-line `mod` inside an inline module records no edge, so a
+    // chain can start below the crate root; `crate::` and `super::` are
+    // read only when it starts at `src/lib.rs` or `src/main.rs`. A file
+    // shared by several crates (`tests/common/mod.rs`) never does. A module
+    // file can carry such a path below inline modules (`mod outer { mod src
+    // { mod main; } }` places `src/outer/src/main.rs`), so the root must be
+    // the workspace's `src/` or a `crates/<name>/src/` root, and the
+    // package manifest must not move a target root (`[lib] path =
+    // "src/real.rs"` makes `src/lib.rs` a module). Default module
+    // resolution reaches those paths from another crate only through a
+    // `mod` of the root's stem (a `lib.rs` at the package root with `mod src
+    // { mod lib; }`, a macro's `mod $name;`, or `m!(mod, lib)`) from another
+    // root, and `#[path]` or `include!` reaches anywhere, so none of these
+    // may appear (#7686 review).
+    let root = owner_chain
+        .first()
+        .map_or(owner_file, |edge| edge.parent.as_path());
+    let components = root
+        .components()
+        .map(|component| component.as_os_str().to_str())
+        .collect::<Option<Vec<_>>>()
+        .unwrap_or_default();
+    // The package directory holding that root: "" or `crates/<name>`.
+    let package = components
+        .len()
+        .checked_sub(2)
+        .map(|len| &components[..len]);
+    let stem = components
+        .last()
+        .map(|file| file.trim_end_matches(".rs"))
+        .unwrap_or_default();
+    // The root's sibling target root (`src/main.rs` beside `src/lib.rs`)
+    // reaches it with a plain `mod lib;`, which an external macro can
+    // spell from an argument; any mention of the stem there refuses, and so
+    // does any item macro or non-builtin attribute there, whose expansion
+    // the index never reads (#7686 review).
+    let sibling = root.with_file_name(if stem == "lib" { "main.rs" } else { "lib.rs" });
+    let crate_root = matches!(
+        components.as_slice(),
+        ["src", "lib.rs" | "main.rs"] | ["crates", _, "src", "lib.rs" | "main.rs"]
+    ) && index.member_crates.is_default_target_root(root)
+        && !files.iter().any(|(path, facts)| {
+            // A package file outside Cargo's standard target directories may be
+            // a declared crate root (`[lib] path = "lib.rs"`) whose modules
+            // reach `src/lib.rs`; another member's files are its own package.
+            let parts = path
+                .components()
+                .map(|component| component.as_os_str().to_str().unwrap_or_default())
+                .collect::<Vec<_>>();
+            let nonstandard = package.is_some_and(|package| {
+                parts.starts_with(package)
+                    && !(package.is_empty() && parts.first() == Some(&"crates"))
+                    && !matches!(
+                        parts.get(package.len()).copied(),
+                        Some("src" | "tests" | "benches" | "examples" | "build.rs")
+                    )
+            });
+            let masked = mask_comments_and_strings(&facts.source);
+            nonstandard
+            || super::call_identity::has_path_attribute(&facts.source)
+            // `include!` splices unindexed text, which may declare modules.
+            || !whole_word_offsets(&masked, "include").is_empty()
+            // A `mod` keyword that does not start a plain `mod name;` or
+            // `mod name {` is macro input (`mod $name;`, `m!(mod, lib)`) and
+            // may declare a module of any name.
+            || whole_word_offsets(&masked, "mod")
+                .into_iter()
+                .any(|offset| !declares_named_module(&masked[offset + 3..]))
+            || (path.as_path() == sibling.as_path()
+                && (!whole_word_offsets(&facts.source, stem).is_empty()
+                    || may_expand_items(&facts.source)))
+            || whole_word_offsets(&masked, stem).into_iter().any(|offset| {
+                let before = masked[..offset].trim_end();
+                let before = before.strip_suffix("r#").unwrap_or(before).trim_end();
+                before.ends_with("mod")
+            })
+        });
+    if !crate_root {
+        return None;
+    }
+    let (mut file, steps) = match modules.split_first()? {
+        (&"crate", rest) => (root.to_path_buf(), rest),
+        (&"self", rest) => (owner_file.to_path_buf(), rest),
+        (&"super", rest) => (owner_chain.last()?.parent.clone(), rest),
+        _ => (owner_file.to_path_buf(), modules),
+    };
+    for step in steps {
+        if matches!(*step, "crate" | "self" | "super") {
+            return None;
+        }
+        // The step's one `mod` in this file must be out of line and at the
+        // file's top level: an inline module of that name, a `cfg`
+        // alternative to it, or a nested `mod outer { mod kinds; }` beside a
+        // top-level `use constants as kinds;` names a different module
+        // (#7686 review).
+        let parent = crate::analysis::syntax::parse_clean_source_file(&files.get(&file)?.source)?;
+        let mut modules = parent
+            .tree()
+            .syntax()
+            .descendants()
+            .filter_map(ast::Module::cast)
+            .filter(|module| {
+                module.name().is_some_and(|name| {
+                    let text = name.text();
+                    text.strip_prefix("r#").unwrap_or(text) == *step
+                })
+            });
+        let only = modules.next()?;
+        let top_level = only
+            .syntax()
+            .parent()
+            .is_some_and(|holder| ast::SourceFile::can_cast(holder.kind()));
+        if only.item_list().is_some() || !top_level || cfg_gated(&only) || modules.next().is_some()
+        {
+            return None;
+        }
+        let mut children = files.iter().filter_map(|(child, facts)| {
+            let edge = facts.role_provenance.edges.last()?;
+            (edge.parent == file
+                && edge
+                    .declaration
+                    .split_whitespace()
+                    .skip_while(|word| *word != "mod")
+                    .nth(1)
+                    .map(|name| name.trim_end_matches(';'))
+                    == Some(*step)
+                && placed(child))
+            .then(|| child.clone())
+        });
+        let child = children.next()?;
+        if children.next().is_some() {
+            return None;
+        }
+        // An inner `#![cfg]` compiles the module file out as surely as one
+        // on its `mod` item (#7686 review).
+        let tree = crate::analysis::syntax::parse_clean_source_file(&files.get(&child)?.source)?;
+        if cfg_gated(&tree.tree()) {
+            return None;
+        }
+        file = child;
+    }
+    if file == owner_file {
+        return None;
+    }
+    declared_enum_variants(&files.get(&file)?.source, type_name, owner_name)
+}
+
+/// Whether a file may hold items the index never reads: an item-level
+/// macro call, an attribute other than a compiler builtin (a proc-macro
+/// attribute or custom derive may emit any item, and `cfg_attr` may apply
+/// one), or an import that may shadow a builtin. An unparsable file may.
+fn may_expand_items(source: &str) -> bool {
+    use ra_ap_syntax::{AstNode, ast};
+    const BUILTIN_ATTRIBUTES: &[&str] = &[
+        "allow",
+        "cfg",
+        "cold",
+        "deny",
+        "deprecated",
+        "derive",
+        "doc",
+        "expect",
+        "forbid",
+        "ignore",
+        "inline",
+        "must_use",
+        "no_mangle",
+        "non_exhaustive",
+        "repr",
+        "should_panic",
+        "test",
+        "track_caller",
+        "warn",
+    ];
+    const BUILTIN_DERIVES: &[&str] = &[
+        "Clone",
+        "Copy",
+        "Debug",
+        "Default",
+        "Eq",
+        "Hash",
+        "Ord",
+        "PartialEq",
+        "PartialOrd",
+    ];
+    // A glob, or an import named like a builtin, may shadow the prelude's
+    // attribute or derive (`use pm::Clone; #[derive(Clone)]`), and a
+    // `cfg_attr` may apply any attribute, so neither is read as builtin.
+    let shadowed = flattened_use_paths(source).iter().any(|import| {
+        let name = import
+            .alias
+            .as_deref()
+            .unwrap_or_else(|| import.path.rsplit("::").next().unwrap_or_default());
+        let name = name.strip_prefix("r#").unwrap_or(name);
+        name == "*" || BUILTIN_ATTRIBUTES.contains(&name) || BUILTIN_DERIVES.contains(&name)
+    });
+    if shadowed {
+        return true;
+    }
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return true;
+    };
+    parse.tree().syntax().descendants().any(|node| {
+        if let Some(call) = ast::MacroCall::cast(node.clone()) {
+            return call.syntax().parent().is_some_and(|parent| {
+                ast::SourceFile::can_cast(parent.kind()) || ast::ItemList::can_cast(parent.kind())
+            });
+        }
+        let Some(attr) = ast::Attr::cast(node) else {
+            return false;
+        };
+        let text = attr.syntax().text().to_string();
+        let inner = text.trim_start_matches(|ch: char| {
+            ch == '#' || ch == '!' || ch == '[' || ch.is_whitespace()
+        });
+        let name_end = inner
+            .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+            .unwrap_or(inner.len());
+        let (name, rest) = inner.split_at(name_end);
+        if !BUILTIN_ATTRIBUTES.contains(&name) || rest.trim_start().starts_with("::") {
+            return true;
+        }
+        name == "derive"
+            && rest
+                .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'))
+                .filter(|word| !word.is_empty())
+                .any(|word| !BUILTIN_DERIVES.contains(&word))
+    })
+}
+
+/// Whether `rest`, the text after a `mod` keyword, starts a plain module
+/// declaration: a (raw) identifier followed by `;` or `{`.
+fn declares_named_module(rest: &str) -> bool {
+    let rest = rest.trim_start();
+    let rest = rest.strip_prefix("r#").unwrap_or(rest);
+    let end = rest
+        .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .unwrap_or(rest.len());
+    end > 0 && rest[end..].trim_start().starts_with([';', '{'])
 }
 
 /// Whether a related test file outside the owner's file may bind
@@ -1681,7 +2351,10 @@ fn enclosing_match(
     if scrutinee.is_empty() || scrutinee.contains(['{', '}', ';']) {
         return None;
     }
-    if !(scrutinee == "*self" || is_identifier(scrutinee) && !is_variant_name(scrutinee)) {
+    if !(scrutinee == "*self"
+        || is_identifier(scrutinee) && !is_variant_name(scrutinee)
+        || integer_scrutinee(scrutinee).is_some())
+    {
         return None;
     }
     let earlier_patterns = earlier_arm_patterns(&masked, &source, brace + 1, arm_offset)?;
@@ -1700,6 +2373,102 @@ fn enclosing_match(
         arms_from_changed,
         match_is_tail,
     })
+}
+
+const INTEGER_TYPES: [&str; 12] = [
+    "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
+];
+
+/// `name / N` or `name % N` (decision 6): a plain lowercase name, one
+/// operator and a positive integer literal. `self` and anything longer
+/// are not read.
+fn integer_scrutinee(scrutinee: &str) -> Option<(&str, ScrutineeArithmetic)> {
+    let (name, operator, literal) = match (scrutinee.split_once('/'), scrutinee.split_once('%')) {
+        (Some((name, literal)), None) => (name, '/', literal),
+        (None, Some((name, literal))) => (name, '%', literal),
+        _ => return None,
+    };
+    let name = name.trim();
+    if !is_identifier(name) || is_variant_name(name) || name == "self" {
+        return None;
+    }
+    let divisor = integer_value(literal.trim()).filter(|divisor| *divisor > 0)?;
+    Some((
+        name,
+        if operator == '/' {
+            ScrutineeArithmetic::Div(divisor)
+        } else {
+            ScrutineeArithmetic::Rem(divisor)
+        },
+    ))
+}
+
+/// Whether the test's own statement on `line` starts with an assertion and
+/// stands directly in the body of a `for` whose pattern binds `name`, with
+/// nothing before it in that body that may skip a row (`continue`, `break`,
+/// `return`, `?`) and no block, closure or call around it. An assertion a
+/// check helper lends (#6482) sits outside the test body and never reads
+/// the test's table (decision 7).
+fn runs_in_table_loop(test: &TestSummary, line: usize, name: &str) -> bool {
+    let Some(relative) = line.checked_sub(test.start_line) else {
+        return false;
+    };
+    let masked = mask_comments_and_strings(&test.body);
+    let offset = masked
+        .split_inclusive('\n')
+        .take(relative)
+        .map(str::len)
+        .sum::<usize>();
+    if relative == 0 || offset >= masked.len() {
+        return false;
+    }
+    let statement = masked[offset..].trim_start();
+    if !(statement.starts_with("assert_eq!")
+        || statement.starts_with("std::assert_eq!")
+        || statement.starts_with("core::assert_eq!"))
+    {
+        return false;
+    }
+    let statement_start = masked.len() - statement.len();
+    whole_word_offsets(&masked[..statement_start], "for")
+        .into_iter()
+        .rev()
+        .any(|keyword| {
+            let after = &masked[keyword + "for".len()..statement_start];
+            let Some(in_at) = whole_word_offsets(after, "in").first().copied() else {
+                return false;
+            };
+            if whole_word_offsets(&after[..in_at], name).is_empty() {
+                return false;
+            }
+            let Some(open) = masked[keyword..statement_start]
+                .find('{')
+                .map(|at| keyword + at)
+            else {
+                return false;
+            };
+            let Some(close) = matching_close_brace(&masked, open) else {
+                return false;
+            };
+            if close < statement_start {
+                return false;
+            }
+            let before = &masked[open + 1..statement_start];
+            let mut depth = 0i32;
+            for byte in before.bytes() {
+                match byte {
+                    b'{' | b'(' | b'[' => depth += 1,
+                    b'}' | b')' | b']' => depth -= 1,
+                    _ => {}
+                }
+            }
+            depth == 0
+                && !before.contains('?')
+                && ["continue", "break", "return"]
+                    .iter()
+                    .all(|word| whole_word_offsets(before, word).is_empty())
+                && (before.trim().is_empty() || before.trim_end().ends_with([';', '}']))
+        })
 }
 
 /// The offset of the `}` that closes the `{` at `open`.
@@ -2492,7 +3261,13 @@ mod tests {
 
     fn resolve_with(selector: &ArmSelector, source: Option<&str>) -> ArmSelector {
         let mut selector = selector.clone();
-        selector.resolve_uncased_variants(source);
+        let declared =
+            source
+                .zip(selector.bare_scrutinee_type.clone())
+                .and_then(|(source, type_name)| {
+                    declared_enum_variants(source, &type_name, &selector.owner)
+                });
+        selector.resolve_uncased_variants(declared);
         selector
     }
 
@@ -2505,6 +3280,26 @@ mod tests {
     }
 
     const KIND: &str = "pub fn f(k: Kind) -> i32 {\n    match k {\n        Kind::A => 1,\n        _ => 0,\n    }\n}\n";
+
+    /// #7670: an input that moved from the changed arm to a later uncased
+    /// arm earns moved-input credit once that later arm reads as the
+    /// declared variant, and none while `Kind` is undeclared.
+    #[test]
+    fn a_later_uncased_arm_resolves_for_moved_input_credit() -> Result<(), String> {
+        let body = "pub fn f(k: Kind) -> i32 {\n    match k {\n        Kind::A => 1,\n        Kind::B => 2,\n        _ => 0,\n    }\n}\n";
+        let mut narrowed = arm_probe("Kind::A => 1,", 3);
+        narrowed.before = Some("Kind::A | Kind::B =>".to_string());
+        let selector = ArmSelector::establish(&narrowed, &owner(body, "f"))
+            .ok_or_else(|| "premise: the narrowed arm is readable".to_string())?;
+        let declared = format!("pub enum Kind {{\n    A,\n    B,\n    C,\n}}\n{body}");
+        let resolved = resolve_with(&selector, Some(&declared));
+        assert!(resolved.assertion_selects("assert_eq!(f(Kind::B), 2);"));
+        // An input that stayed in this arm earns nothing from moving.
+        assert!(!resolved.assertion_selects("assert_eq!(f(Kind::C), 0);"));
+        let undeclared = resolve_with(&selector, Some(body));
+        assert!(!undeclared.assertion_selects("assert_eq!(f(Kind::B), 2);"));
+        Ok(())
+    }
 
     #[test]
     fn uncased_variants_read_only_when_the_owner_file_declares_the_enum() -> Result<(), String> {
@@ -2768,6 +3563,141 @@ mod tests {
                 .map(|observed| observed.selection),
             Some(ArmSelection::SelectsOther)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn char_literal_arms_compare_by_value() -> Result<(), String> {
+        // The arm-head reader once masked char literals as comments, so
+        // `'C' | 'S' =>` read as `|` and no char arm established.
+        let body = "pub fn suit_color(suit: char) -> &'static str {\n    match suit {\n        'H' | 'D' => \"red\",\n        'S' | 'C' => \"black\",\n        _ => \"unknown\",\n    }\n}\n";
+        let selector = ArmSelector::establish(
+            &arm_probe("'S' | 'C' => \"black\",", 4),
+            &owner(body, "suit_color"),
+        )
+        .ok_or_else(|| "premise: the char arm reads its scrutinee from suit".to_string())?;
+        assert!(selector.assertion_selects("assert_eq!(suit_color('S'), \"black\");"));
+        assert!(selector.assertion_selects("assert_eq!(suit_color('C'), \"black\");"));
+        assert!(!selector.assertion_selects("assert_eq!(suit_color('H'), \"red\");"));
+        Ok(())
+    }
+
+    #[test]
+    fn integer_scrutinee_arithmetic_evaluates_the_input() -> Result<(), String> {
+        // RIPR-SPEC-0229 decision 6: `status / 100` reads `301` as `3`.
+        let body = "pub fn http_class(status: u16) -> &'static str {\n    match status / 100 {\n        2 => \"success\",\n        3 => \"redirect\",\n        _ => \"other\",\n    }\n}\n";
+        let selector = ArmSelector::establish(
+            &arm_probe("3 => \"redirect\",", 4),
+            &owner(body, "http_class"),
+        )
+        .ok_or_else(|| "premise: the arm reads status / 100".to_string())?;
+        assert_eq!(selector.scrutinee(), "status");
+        assert!(selector.assertion_selects("assert_eq!(http_class(301), \"redirect\");"));
+        assert!(selector.assertion_selects("assert_eq!(http_class(399), \"redirect\");"));
+        assert!(!selector.assertion_selects("assert_eq!(http_class(404), \"other\");"));
+        assert!(!selector.assertion_selects("assert_eq!(http_class(code), \"redirect\");"));
+        let remainder = "pub fn weekday(day: i64) -> &'static str {\n    match day % 7 {\n        0 => \"sun\",\n        6 => \"sat\",\n        _ => \"weekday\",\n    }\n}\n";
+        let selector =
+            ArmSelector::establish(&arm_probe("6 => \"sat\",", 4), &owner(remainder, "weekday"))
+                .ok_or_else(|| "premise: the arm reads day % 7".to_string())?;
+        assert!(selector.assertion_selects("assert_eq!(weekday(13), \"sat\");"));
+        assert!(!selector.assertion_selects("assert_eq!(weekday(14), \"sun\");"));
+        // Rust's remainder keeps the dividend's sign: -1 % 7 is -1, not 6.
+        assert!(!selector.assertion_selects("assert_eq!(weekday(-1), \"sat\");"));
+        // Only a primitive integer parameter, one operator and a positive
+        // literal divisor are read.
+        for unread in [
+            "pub fn http_class(status: Code) -> &'static str {\n    match status / 100 {\n        2 => \"success\",\n        3 => \"redirect\",\n        _ => \"other\",\n    }\n}\n",
+            "pub fn http_class(status: u16) -> &'static str {\n    match status / 0 {\n        2 => \"success\",\n        3 => \"redirect\",\n        _ => \"other\",\n    }\n}\n",
+            "pub fn http_class(status: u16, by: u16) -> &'static str {\n    match status / by {\n        2 => \"success\",\n        3 => \"redirect\",\n        _ => \"other\",\n    }\n}\n",
+            "pub fn http_class(status: u16) -> &'static str {\n    match status / 10 / 10 {\n        2 => \"success\",\n        3 => \"redirect\",\n        _ => \"other\",\n    }\n}\n",
+            "pub fn http_class(status: u16) -> &'static str {\n    match status * 100 {\n        2 => \"success\",\n        3 => \"redirect\",\n        _ => \"other\",\n    }\n}\n",
+            "pub fn http_class(mut status: u16) -> &'static str {\n    status += 1;\n    match status / 100 {\n        2 => \"success\",\n        3 => \"redirect\",\n        _ => \"other\",\n    }\n}\n",
+        ] {
+            let line = unread
+                .lines()
+                .position(|line| line.contains("3 =>"))
+                .map_or(0, |at| at + 1);
+            assert!(
+                ArmSelector::establish(
+                    &arm_probe("3 => \"redirect\",", line),
+                    &owner(unread, "http_class")
+                )
+                .is_none(),
+                "must not establish: {unread}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_value_equal_literal_respelling_reads_as_unchanged() -> Result<(), String> {
+        let body = "pub fn http_class(status: u16) -> &'static str {\n    match status / 100 {\n        2 => \"success\",\n        0x3 => \"redirect\",\n        _ => \"other\",\n    }\n}\n";
+        let mut respelled = arm_probe("0x3 => \"redirect\",", 4);
+        respelled.before = Some("3 => \"redirect\",".to_string());
+        let selector = ArmSelector::establish(&respelled, &owner(body, "http_class"))
+            .ok_or_else(|| "premise: the respelled arm is readable".to_string())?;
+        assert_eq!(selector.changed_from, None);
+        assert!(selector.assertion_selects("assert_eq!(http_class(301), \"redirect\");"));
+        // A different value is a changed pattern.
+        let mut changed = arm_probe("0x3 => \"redirect\",", 4);
+        changed.before = Some("4 => \"redirect\",".to_string());
+        let selector = ArmSelector::establish(&changed, &owner(body, "http_class"))
+            .ok_or_else(|| "premise: the changed arm is readable".to_string())?;
+        assert!(selector.changed_from.is_some());
+        assert!(!same_literal_values("3", "3 | 4"));
+        assert!(same_literal_values("1..=3 | 7", "7 | 0x1..=0x3"));
+        assert!(!same_literal_values("Kind::A", "Kind::A"));
+        Ok(())
+    }
+
+    #[test]
+    fn a_constant_row_table_lends_its_cells_to_the_owner_call() -> Result<(), String> {
+        // RIPR-SPEC-0229 decision 7.
+        let body = "pub fn http_class(status: u16) -> &'static str {\n    match status / 100 {\n        2 => \"success\",\n        3 => \"redirect\",\n        _ => \"other\",\n    }\n}\n";
+        let selector = ArmSelector::establish(
+            &arm_probe("3 => \"redirect\",", 4),
+            &owner(body, "http_class"),
+        )
+        .ok_or_else(|| "premise: the arm reads status / 100".to_string())?;
+        let assertion = "assert_eq!(http_class(status), want, \"{status}\");";
+        let selecting = test_with(
+            "fn t() {\n    let cases = [(200, \"success\"), (301, \"redirect\")];\n    for (status, want) in cases {\n        assert_eq!(http_class(status), want, \"{status}\");\n    }\n}\n",
+        );
+        assert!(selector.table_row_selects(&selecting, assertion, 4));
+        let other_rows = test_with(
+            "fn t() {\n    let cases = [(200, \"success\"), (404, \"other\")];\n    for (status, want) in cases {\n        assert_eq!(http_class(status), want, \"{status}\");\n    }\n}\n",
+        );
+        assert!(!selector.table_row_selects(&other_rows, assertion, 4));
+        // A table built at run time lends nothing.
+        let computed = test_with(
+            "fn t() {\n    let cases = statuses();\n    for (status, want) in cases {\n        assert_eq!(http_class(status), want, \"{status}\");\n    }\n}\n",
+        );
+        assert!(!selector.table_row_selects(&computed, assertion, 4));
+        // `assert_ne!` passes for many arm results.
+        assert!(!selector.table_row_selects(
+            &selecting,
+            "assert_ne!(http_class(status), want, \"{status}\");",
+            4
+        ));
+        // Only the test's own statement directly in the loop body reads the
+        // table: a borrowed helper assertion on another line, a skipped
+        // row, a conditional or a closure never does.
+        assert!(!selector.table_row_selects(&selecting, assertion, 7));
+        for unrun in [
+            "fn t() {\n    let cases = [(200, \"success\"), (301, \"redirect\")];\n    for (status, want) in cases {\n        if status == 301 { continue; }\n        assert_eq!(http_class(status), want, \"{status}\");\n    }\n}\n",
+            "fn t() {\n    let cases = [(200, \"success\"), (301, \"redirect\")];\n    for (status, want) in cases {\n        if status < 300 {\n        assert_eq!(http_class(status), want, \"{status}\");\n        }\n    }\n}\n",
+            "fn t() {\n    let cases = [(200, \"success\"), (301, \"redirect\")];\n    for (status, want) in cases {\n        let check = ||\n        assert_eq!(http_class(status), want, \"{status}\");\n    }\n}\n",
+        ] {
+            let line = unrun
+                .lines()
+                .position(|line| line.trim_start().starts_with("assert_eq!"))
+                .map_or(0, |at| at + 1);
+            assert!(
+                !selector.table_row_selects(&test_with(unrun), assertion, line),
+                "must not read the table: {unrun}"
+            );
+        }
         Ok(())
     }
 

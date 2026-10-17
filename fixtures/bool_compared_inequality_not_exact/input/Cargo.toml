@@ -1,0 +1,8 @@
+[package]
+name = "bool_compared_inequality_not_exact_fixture"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "bool_compared_inequality_not_exact_fixture"
+path = "src/lib.rs"

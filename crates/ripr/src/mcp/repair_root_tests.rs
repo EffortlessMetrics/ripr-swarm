@@ -86,8 +86,32 @@ fn selected_root_argv(
         phase.as_bytes(),
     ];
     assert_eq!(argv, expected, "restart argv lost the selected Unix root");
+    assert_selected_unix_root(fixture, &argv[3])
+}
+
+/// Ordinary awaiting-edit continuation prints `ripr continue` (#7879).
+/// The Unix-root identity proof is the same as the advanced after-phase
+/// spelling: the `--root` value must name this fixture, not the decoy.
+fn selected_continue_root_argv(
+    fixture: &RootFixture,
+    command: &str,
+    attempt: &str,
+) -> Result<(), String> {
+    let argv = shell_argv(fixture, command)?;
+    let expected = [
+        b"continue".as_slice(),
+        b"--root",
+        fixture.root.as_os_str().as_bytes(),
+        b"--attempt",
+        attempt.as_bytes(),
+    ];
+    assert_eq!(argv, expected, "continue argv lost the selected Unix root");
+    assert_selected_unix_root(fixture, &argv[2])
+}
+
+fn assert_selected_unix_root(fixture: &RootFixture, root_arg: &[u8]) -> Result<(), String> {
     let selected = std::fs::metadata(&*fixture.root).map_err(|e| e.to_string())?;
-    let received = std::fs::metadata(Path::new(std::ffi::OsStr::from_bytes(&argv[3])))
+    let received = std::fs::metadata(Path::new(std::ffi::OsStr::from_bytes(root_arg)))
         .map_err(|e| e.to_string())?;
     assert_eq!(
         (received.dev(), received.ino()),
@@ -233,7 +257,7 @@ fn durable_selected_awaiting_literal_unix_root_retains_after_control() -> Result
     let command = document["next_command"]
         .as_str()
         .ok_or_else(|| "missing awaiting continuation".to_string())?;
-    selected_root_argv(&fixture, command, "--attempt", fixture.id.as_str(), "after")?;
+    selected_continue_root_argv(&fixture, command, fixture.id.as_str())?;
     assert_eq!(document["command_routes"].as_array().map(Vec::len), Some(2));
     Ok(())
 }

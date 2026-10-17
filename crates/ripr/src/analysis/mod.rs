@@ -9,7 +9,9 @@ mod diff;
 mod extract;
 mod facts;
 mod generated_rust_corpus;
-pub(crate) use generated_rust_corpus::generated_rust_recovery;
+pub(crate) use generated_rust_corpus::{
+    absent_changed_rust_file_limitations, generated_rust_recovery,
+};
 pub(crate) mod harness_projection;
 mod language;
 pub(crate) mod new_test_target;
@@ -49,8 +51,8 @@ pub use diff::records::{
     PathRecordError, StatusRecord, parse_git_path_records, parse_git_status_records,
 };
 pub(crate) use diff::{
-    AnalyzedRevisions, load_diff, load_diff_core, load_diff_range_with_deadline_core,
-    load_diff_with_effective_base_core, load_worktree_diff,
+    AnalyzedRevisions, another_base_candidate_exists, load_diff, load_diff_core,
+    load_diff_range_with_deadline_core, load_diff_with_effective_base_core, load_worktree_diff,
     load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis, parse_unified_diff,
     probe_working_tree_tracked_changes_within, resolve_base_commit, resolve_effective_base,
     resolve_effective_base_core, working_tree_has_tracked_changes,
@@ -82,6 +84,8 @@ pub use language::{
 pub(crate) use probes::{
     fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
 };
+#[cfg(test)]
+pub(crate) use rust_index::{FileFacts, RaRustSyntaxAdapter, RustIndex, RustSyntaxAdapter};
 pub use seam_cache::cache_layer_names;
 pub(crate) use seam_classification::ClassifiedSeam;
 #[cfg(test)]
@@ -90,6 +94,8 @@ pub(crate) use seam_classification::SeamGripClassCounts;
 pub(crate) use seam_classification::classify_seam;
 #[cfg(test)]
 pub(crate) use seam_inventory::apply_pilot_seam_budget_inner;
+#[cfg(test)]
+pub(crate) use seam_inventory::inventory_seams_from_index;
 pub(crate) use seam_inventory::{
     ClassifiedChangeReport, ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT,
     ScopedClassifiedSeamInventory, ScopedEvidenceConsumer, SeamLimitInfo, SeamLimitSource,
@@ -103,7 +109,9 @@ pub(crate) use seam_inventory::{
     pilot_seam_budget, seam_kind_for_probe_family, workspace_cache_key_at_with_config,
 };
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
-pub(crate) use syntax::fn_signature::{owner_fn_line_span, rust_source_parses_cleanly};
+pub(crate) use syntax::fn_signature::{
+    owner_call_shape_at_line, owner_fn_line_span, rust_source_parses_cleanly,
+};
 pub(crate) use syntax::governed_cfg_test_modules;
 pub(crate) use syntax::parse_clean_source_file;
 pub(crate) use workspace::DiffOnlySource;
@@ -287,12 +295,14 @@ pub(crate) fn detect_typescript_test_framework(root: &Path) -> Option<&'static s
     language::detect_framework_for_root(root).map(|framework| framework.as_str())
 }
 
-/// Detect the Python test framework for a workspace root (#2106): one
+/// Detect Python test frameworks for a workspace root (#2106 / #7664): one
 /// detector shared by doctor and any adapter-side repo-level check.
-/// Fail-closed: `None` when no evidence marker matches.
+/// Fail-closed: empty when no evidence marker matches. Pytest is listed
+/// before unittest when both are present. Primary-of-set consumers use
+/// `language::detect_python_test_framework`.
 #[cfg(feature = "lang-python")]
-pub(crate) fn detect_python_test_framework(root: &Path) -> Option<&'static str> {
-    language::detect_python_test_framework(root)
+pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
+    language::detect_python_test_frameworks(root)
 }
 
 #[cfg(feature = "lang-typescript")]
@@ -609,7 +619,7 @@ pub(crate) fn finding_location_text_with_platform(
 /// spelling and the plain drive spelling name the same file, and every other
 /// surface renders the plain one. Other verbatim forms (`\\?\UNC\..`,
 /// `\\?\Volume{..}`) have no plain spelling, so they stay.
-fn plain_drive_verbatim_path(path: &Path, windows: bool) -> PathBuf {
+pub(crate) fn plain_drive_verbatim_path(path: &Path, windows: bool) -> PathBuf {
     if !windows {
         return path.to_path_buf();
     }
@@ -627,6 +637,28 @@ pub enum AnalysisMode {
     Fast,
     Deep,
     Ready,
+}
+
+/// Whether a worktree analysis runs the post-analysis disclosure probes
+/// (#7716): the untracked-routed-files naming (RIPR-SPEC-0116) and the
+/// analyzed-revisions naming (#5997).
+///
+/// The probes spawn a handful of git child processes whose result only the
+/// check OUTPUT renders (GitHub annotations, JSON envelope, MCP workspace
+/// status). Consumers that never render those fields — the LSP diagnostics
+/// refresh, whose `publishDiagnostics` latency is the product — skip them:
+/// on a loaded host the probe worker loses the #7292 overlap race against
+/// the analysis thread pool and the join extends every refresh by the full
+/// probe wall time. The CLI and MCP check output keep [`DisclosureProbes::Run`],
+/// so no rendered surface loses a disclosure. Crate-internal: no library
+/// consumer selects a disclosure policy, so this is not a public contract.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DisclosureProbes {
+    /// Run the probes and populate the disclosure fields (CLI, MCP, tests).
+    Run,
+    /// Skip the probes; the disclosure fields stay empty. Only honest for
+    /// consumers that render neither field.
+    Skip,
 }
 
 #[derive(Clone, Debug)]
@@ -954,12 +986,14 @@ pub(crate) fn run_analysis_with_oracle_policy_and_rust_config(
     oracle_policy: &OraclePolicy,
     languages: &[language::LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
+    language_config: &crate::config::LanguagesConfig,
 ) -> Result<AnalysisResult, CoreError> {
     pipeline::run_diff_pipeline_with_oracle_policy_and_rust_config(
         options,
         oracle_policy,
         languages,
         rust_config,
+        language_config,
     )
 }
 
@@ -968,12 +1002,16 @@ pub(crate) fn run_worktree_analysis_with_oracle_policy_and_rust_config(
     oracle_policy: &OraclePolicy,
     languages: &[language::LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
+    language_config: &crate::config::LanguagesConfig,
+    disclosure_probes: DisclosureProbes,
 ) -> Result<AnalysisResult, CoreError> {
     pipeline::run_worktree_pipeline_with_oracle_policy_and_rust_config(
         options,
         oracle_policy,
         languages,
         rust_config,
+        language_config,
+        disclosure_probes,
     )
 }
 
@@ -1876,3 +1914,9 @@ mod git_candidate_entry_tests {
         Ok(())
     }
 }
+
+pub(crate) mod input_boundary;
+#[cfg(test)]
+pub(crate) use pipeline::diff_pipeline_entry_count;
+
+pub(crate) use workspace::cargo_input_identity;

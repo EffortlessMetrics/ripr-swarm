@@ -1,0 +1,55 @@
+{
+  "case_id": "spec0263-operator-impl-enters-guard",
+  "subject_id": "authored-spec0263-operator-impl-enters-guard",
+  "diff": "cases/spec0263-operator-impl-enters-guard.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 6
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect_push",
+  "test_shape": "direct_collection_equality_operator_impl_caller",
+  "hard_case": "Fail-closed witness: the only direct test call passes 4, but the AddAssign impl enters the guard with 14, so naming the guard here would be a false gap.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "v.push(x + 1);",
+        "mutated_line": "v.push(x + 1);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::adding_to_a_bag_records_it_higher",
+        "equivalence_review": "not equivalent: b += 4 records 15"
+      },
+      {
+        "replacement": "let _ = x;",
+        "mutated_line": "let _ = x;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::adding_to_a_bag_records_it_higher",
+        "equivalence_review": "not equivalent: b += 4 records nothing"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "adding_to_a_bag_records_it_higher calls add(&mut v, 4), which misses `x > 10`, and then b += 4 on a Bag borrowing v, whose AddAssign impl calls add(self.0, 14), which enters it. v is [14] and both mutants fail the equality. Spec cells: RIPR-SPEC-0263 example 6: production code that calls the owner (an AddAssign impl) names no guard.",
+  "labeling_observation": {
+    "ripr_commit": "46faff1e7",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0263#6"
+  ]
+}

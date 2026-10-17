@@ -32,16 +32,23 @@ adequacy, coverage adequacy, or general correctness.
 
 This compact table is the cargo-allow `spec-system` structural claim surface.
 It does not replace the buyer-facing support map below or promote any product
-surface. The active RIPR execution manifest remains outside cargo-allow's
-native active-goal validator until upstream compatibility issue
-`EffortlessMetrics/cargo-allow#2119` is resolved. The table's fixed vocabulary
+surface. Live execution comes from GitHub issues, PRs, checks, reviews, and
+the local worktree, as defined by the [repo tracking model](../REPO_TRACKING_MODEL.md).
+PR-local `ImplementationSliceV1` records describe scope, not live selection.
+[Spec Format](../SPEC_FORMAT.md) keeps document disposition separate from
+implementation, evidence, support, and live work.
+
+Historically, RIPR's execution manifest was outside cargo-allow's native
+active-goal validator (`EffortlessMetrics/cargo-allow#2119`). That compatibility
+boundary describes the retired `.ripr/goals/` scheduler, deleted in #1701,
+not a current manifest or adoption prerequisite. The table's fixed vocabulary
 and shape are a transitional projection tracked by
 `EffortlessMetrics/cargo-allow#2120`. This projection does not create a second
 product-claim authority.
 
 | Surface | Tier | Claim | Proof command | Notes |
 | --- | --- | --- | --- | --- |
-| Source-of-truth artifact graph | advisory | cargo-allow validates registered artifact paths, kinds, lifecycle states, and links; it does not execute proof commands or validate RIPR's active-goal dialect. | `cargo-allow check --profile spec-system --config .allow/profiles/spec-system.toml --mode audit` | Advisory adoption; RIPR xtask remains the proof executor. |
+| Source-of-truth artifact graph | advisory | cargo-allow validates registered artifact paths, kinds, lifecycle states, and links; it does not execute proof commands or select live work. | `cargo-allow check --profile spec-system --config .allow/profiles/spec-system.toml --mode audit` | Advisory adoption; RIPR xtask remains the proof executor. |
 
 ## Current Support Map
 

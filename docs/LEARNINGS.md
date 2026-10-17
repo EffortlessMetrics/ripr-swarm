@@ -13,6 +13,68 @@ of a ref that already resolves. Count that walk with
 does not exist, so do not call it short history. Keep the shallow
 `--unshallow` arm and the `origin/main` arms. A suffix on a base that does
 not resolve (`no-such~1`) still uses the remote advice.
+## 2026-10-14: One path can spell three ways on Windows; compare at a shared owner (#7937)
+
+Fifteen lib tests failed deterministically on Windows at a Linux-green main.
+The diagnosis grouped them into one family — the same path spelled three
+host-dependent ways — with four distinct leak sites:
+
+- `fs::canonicalize` returns the verbatim `\\?\F:\...` form on Windows. A
+  canonicalized root carried into a component comparison against a
+  plain-spelled counterpart misses (`Prefix(VerbatimDisk)` is a different
+  component from `Prefix(Disk)`): the cargo-metadata inventory anchored
+  verbatim roots against cargo's plain echoed keys, and the gap-ledger
+  selected root dropped stamped entries whose file did not exist (the
+  `canonicalize(path)` fallback arm cannot rescue an absent file). Compare
+  both sides in the plain drive family (`plain_drive_verbatim_path`,
+  `strip_absolute_root`), not at each call site.
+- `components()` round-trips re-synthesize with the native separator. A
+  confinement that re-pushed each accepted component spelled git's
+  `src/a.rs` as `src\a.rs` in every Windows consumer while tests, goldens
+  and rendered locations spell `/`. When a boundary accepts components of
+  a TEXT path (diff paths are always `/`), re-join with the text's own
+  separator.
+- A rooted path (`/tmp/x`) is absolute on POSIX but only rooted on Windows,
+  where `PathBuf::join` rewrites it against the process drive. Two
+  producers of the same string must pass the root through the SAME
+  spelling owner (`root_display` vs `bound_root` disagreed); a test
+  expectation must call that owner, not rebuild the spelling from
+  `Path::display`.
+
+Durable rules: (1) never compare paths across a canonicalize boundary
+without normalizing both sides to one family; (2) never rebuild a rendered
+path spelling in a test — call the producer's own owner; (3) a stamped
+entry with `digest: null` is legal and must survive derivation for absent
+files, so lexical prefix strips must not depend on `canonicalize`
+succeeding; (4) these failures are invisible to a Linux-only lib CI lane —
+a Windows lib run at the exact base is the discriminator.
+## 2026-10-15: Pytest evidence must not skip the unittest scan (#7664)
+
+`detect_python_test_frameworks` collects a set. Config markers and
+`import pytest` add pytest; they must not `return` before the unittest
+import scan. Doctor emits one `test_surfaces[]` row per confirmed
+framework. The singular `detect_python_test_framework` is pytest-first
+primary-of-set for adapter repo-input, not mixed catalog authority.
+Django `tests.py` admission landed in #7706: the detector reuses the
+shared `is_test_file` predicate (`tests.py` / `test.py` / `*_test.py`,
+files under a `tests`/`test` component, `.py` only) and descends one
+level into immediate app directories, keeping the 64-entry / 4096-byte
+prefix bounds.
+
+A 4096-byte evidence prefix that cuts `import unittest_extra` after
+`import unittest` is not unittest evidence. Read one extra byte; if the
+file continues and the last line is not newline-terminated (and the extra
+byte is not that newline), drop the incomplete line. Fail-closed is
+correct; a false `python: unittest` surface is not.
+
+`from unittest import mock` is not a runner. Parenthesized and multiline
+forms (`from unittest import (mock)` / `from unittest import (\n    mock,\n)`)
+must be accumulated and have delimiters stripped before that mock-only
+check; classifying each line independently treats `(` as a non-mock name.
+Strip `#` comments before joining those lines, or `mock,  # patching`
+becomes a `#` token and mints a false unittest surface. Explicit
+backslash continuations (`from unittest import \\\n    mock`) must wait
+for the next line; classifying `\\` as a name is the same false surface.
 
 ## 2026-10-12: A timed-out pilot packet must not keep the previous run's repo-exposure (#7425)
 
@@ -49,6 +111,19 @@ large findings array can omit findings). Recovery advice must be reachable:
 so its overflow guard says there is no narrower read instead of promising a
 smaller-limit page no caller can need. Other tools name their own next read,
 or say there is no narrower MCP read.
+
+## 2026-10-13: Calibrate mutants.json-only imports still count in matched_total (#7451)
+
+`ripr calibrate cargo-mutants` accepts `mutants.json` without
+`outcomes.json`. Those records default `runtime_outcome` to `unknown` and
+still join. `matched_total` is `report.matched.len()`, so a skimmer of
+the Markdown Summary sees 1 of 1 matched with no on-page flag that zero
+runtime observations exist. Disclose on `--help` and immediately after
+the default Markdown Summary; keep the same sentence in `precision_notes`
+so JSON consumers see it. Do not change `matched_total`'s meaning or add
+a schema field — that needs `docs/OUTPUT_SCHEMA.md`. Do not fold
+producer-help (#7450), provenance (#7449), or the xtask duplicate
+renderer (#6691) into this disclosure.
 
 ## 2026-10-12: Calibrate joins are identity-blind; disclose like outcome (#7449)
 
@@ -3120,3 +3195,60 @@ Durable rules:
 - Prefer proving a negative twice on two independent paths - e.g. the safe
   wrapper listing and a compile attempt that uses it - before writing that a
   capability is unavailable.
+
+## 2026-10-16: Per-macro full-file `use` scans hang dogfood PR evidence
+
+`cargo xtask ripr-pr` builds this branch's `ripr` and runs `ripr check` on
+the PR diff. On #8181 that producer stayed in `analyzing` for 3600s with
+no JSON. A 17-line `terminal_text.rs` slice of the same tree hung the same
+way. gdb showed `literal_json_import_visible` walking every descendant of
+the SourceFile for each macro in `has_escape`. When `json` is trusted,
+every `assert_eq!` / `format!` / `json!` in a 20k-line test file repeats
+that walk. Probe count times file size times macros is hours, not a
+flake, and splitting doctor tests does not remove it.
+
+Durable rules:
+
+- Dogfood PR evidence uses the PR's own binary. An analyzer quadratic on
+  large in-tree test files is a required-check failure of that PR, not a
+  reason to raise the 3600s ceiling or `workflow_dispatch` routed-rust.
+- Import visibility (or any lexical query whose answer is file-scoped)
+  must scan the file once and filter by call scope, not rescan descendants
+  per macro. Pin the scan count, not a wall-clock.
+- A tiny-diff hang that still names `analyzing [diff]` after index
+  disclosure is CPU work on indexed test files, not "the diff is too
+  many lines". Sample the stack before splitting the changed file.
+
+## 2026-10-16: Per-owner `includes_external_docs` parses hang dogfood PR evidence
+
+The per-file JSON-import use-scan (#8181 first hang) was necessary but
+not sufficient. After that landed, `ripr check` on the doctor diff still
+stayed in `analyzing [diff]` until the 3600s PR-evidence ceiling. gdb
+showed `parse_clean_source_file` under `includes_external_docs` under
+`owner_may_be_reached_unseen` under `AdmissionQuery::insert_owner`.
+`includes_external_docs` parses every indexed file that mentions `doc`
+and `!`. Asking that per changed-span owner re-parsed `crates/ripr` on
+every `doctor.rs` / `cli_smoke.rs` function. `UnseenReachNames` already
+existed for seam inventory; classify and dependent-scope still used the
+uncached per-owner walk. `owner_pin_assertions` of those same files
+finished in seconds, so a per-file owner-pin timing test does not catch
+this.
+
+Durable rules:
+
+- A workspace-scoped lexical query whose answer is "does anything name
+  this owner outside `fn`, or does any file pull external docs" must
+  scan the index once (`UnseenReachNames::build`) and answer from the
+  set. Pin the parse count against owner count, not a wall-clock.
+- Dependent-scope admission runs before classify. Caching only the
+  classify/`RelatedTestCandidateIndex` path still leaves
+  `AdmissionQuery::from_core_index` quadratic on every changed function.
+- Do not raise `RIPR_PR_EVIDENCE_TIMEOUT_SECS` or `workflow_dispatch`
+  routed-rust to hide an analyzer quadratic.
+
+After those two caches, gdb on the same doctor diff moved into classify
+`workspace_macro_binding_site` → `binding_free_local_wrapper`. That helper
+walked every `UseTree` / `macro_rules!` / `mod` / `MacroCall` descendant
+for each untrusted macro. `cli_smoke.rs` and `doctor.rs` make that
+macros × file size again. Collect those nodes once per parse and filter
+per call; pin the collect count, not a wall-clock.

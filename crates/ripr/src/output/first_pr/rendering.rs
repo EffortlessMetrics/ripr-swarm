@@ -6,6 +6,7 @@ use super::{
 use crate::agent::loop_commands::display_path;
 use crate::output::markdown::{
     PowershellForm, code_span, powershell_command, powershell_form, push_context_command,
+    translated_form_claim, unchanged_form_claim,
 };
 use crate::output::start_here_state::{
     START_HERE_PREVIEW_LIMITED, normalize_start_here_output_state,
@@ -27,10 +28,18 @@ pub(super) fn render_start_here_markdown(packet: &Value) -> String {
             .unwrap_or("unknown")
     ));
 
+    // #7372: when preflight reports needs_attention (for example the
+    // git_diff check on an empty `base..head`), a bare "stop on no-action"
+    // headline contradicts it and can be vacuous; the headline must defer
+    // to the preflight instead.
+    let preflight_needs_attention =
+        string_path(packet, &["preflight", "status"]).as_deref() == Some("needs_attention");
     match state.as_str() {
         "top_gap" => render_top_gap_markdown(selected, &mut out),
         "missing_artifact" => render_missing_artifact_markdown(selected, &mut out),
-        "empty_diff" | "no_action" => render_no_action_markdown(selected, &mut out),
+        "empty_diff" | "no_action" => {
+            render_no_action_markdown(selected, preflight_needs_attention, &mut out);
+        }
         _ => render_blocked_markdown(selected, &mut out),
     }
 
@@ -83,9 +92,13 @@ pub(super) fn start_here_cli_summary(
     if let Some(limit) = cli_evidence_limit(selected) {
         out.push_str(&format!("Evidence boundary: {limit}\n"));
     }
+    // #7372: see render_no_action_markdown — a needs_attention preflight
+    // gates the CLI "stop" phrasing the same way it gates the markdown.
+    let preflight_needs_attention =
+        string_path(packet, &["preflight", "status"]).as_deref() == Some("needs_attention");
     out.push_str(&format!(
         "Safe next action: {}\n",
-        cli_safe_next_action(&state, selected)
+        cli_safe_next_action(&state, selected, preflight_needs_attention)
     ));
     match state.as_str() {
         "top_gap" => {
@@ -236,7 +249,7 @@ fn cli_state_label(state: &str) -> &'static str {
     }
 }
 
-fn cli_safe_next_action(state: &str, selected: &Value) -> String {
+fn cli_safe_next_action(state: &str, selected: &Value, preflight_needs_attention: bool) -> String {
     match state {
         "top_gap" => {
             let identity = string_path(selected, &["canonical_gap_id"])
@@ -251,8 +264,19 @@ fn cli_safe_next_action(state: &str, selected: &Value) -> String {
         "stale_artifact" => "refresh stale evidence before repair work".to_string(),
         "wrong_root" => "rerun from the matching workspace root before repair work".to_string(),
         "timeout" => "rerun with a bounded refresh command before repair work".to_string(),
+        // #7372: with preflight at needs_attention (the usual empty-diff
+        // case), "no repair action selected" is exactly wrong; defer to the
+        // preflight and point at the real PR base.
+        "empty_diff" if preflight_needs_attention => {
+            "resolve the preflight needs-attention items before treating this conclusion as final; the printed base may not cover the work — pass the real PR base (for example `--base HEAD~1`)"
+                .to_string()
+        }
         "empty_diff" => {
             "no repair action selected; choose a head with changes or rerun after PR work"
+                .to_string()
+        }
+        "no_action" if preflight_needs_attention => {
+            "resolve the preflight needs-attention items before treating this conclusion as final; an empty or mis-scoped `base..head` diff makes a no-action headline vacuous"
                 .to_string()
         }
         "no_action" => {
@@ -332,16 +356,21 @@ fn render_preflight_markdown(packet: &Value, out: &mut String) {
             match powershell_form(command) {
                 PowershellForm::Translated(line) => {
                     out.push_str(&format!("{label} (PowerShell):\n{}\n", code_span(&line)));
-                    out.push_str("The first form is written for Bash; cmd.exe is not supported.\n");
+                    out.push_str(translated_form_claim());
+                    out.push('\n');
                 }
                 PowershellForm::SameAsBash => {
-                    out.push_str(
-                        "It runs unchanged in Bash and PowerShell; cmd.exe is not supported.\n",
-                    );
+                    out.push_str(unchanged_form_claim());
+                    out.push('\n');
                 }
                 PowershellForm::Unavailable => {
+                    let tail = if cfg!(windows) {
+                        "use the printed form."
+                    } else {
+                        "use the Bash form. cmd.exe is not supported."
+                    };
                     out.push_str(&format!(
-                        "{}; use the Bash form. cmd.exe is not supported.\n",
+                        "{}; {tail}\n",
                         crate::output::markdown::POWERSHELL_UNAVAILABLE_DISCLOSURE
                     ));
                 }
@@ -576,17 +605,20 @@ fn push_shell_command_pair(
         PowershellForm::Translated(line) => {
             out.push_str(&format!("{label} (PowerShell):\n"));
             out.push_str(&format!("`{line}`\n\n"));
-            out.push_str("The first form is written for Bash; cmd.exe is not supported.\n");
+            out.push_str(translated_form_claim());
+            out.push('\n');
         }
         PowershellForm::SameAsBash => {
-            out.push_str("It runs unchanged in Bash and PowerShell; cmd.exe is not supported.\n");
+            out.push_str(unchanged_form_claim());
+            out.push('\n');
         }
         PowershellForm::Unavailable => {
             out.push_str(&format!(
                 "{}: `{command}`\n\n",
                 crate::output::markdown::POWERSHELL_UNAVAILABLE_DISCLOSURE
             ));
-            out.push_str("The first form is written for Bash; cmd.exe is not supported.\n");
+            out.push_str(translated_form_claim());
+            out.push('\n');
         }
     }
     if trailing_blank_line {
@@ -708,7 +740,7 @@ fn render_missing_artifact_markdown(selected: &Value, out: &mut String) {
     }
 }
 
-fn render_no_action_markdown(selected: &Value, out: &mut String) {
+fn render_no_action_markdown(selected: &Value, preflight_needs_attention: bool, out: &mut String) {
     out.push_str("## Start Here\n\n");
     let state = selected
         .get("state")
@@ -719,9 +751,18 @@ fn render_no_action_markdown(selected: &Value, out: &mut String) {
         "- Output state: `{}`\n",
         selected_output_state(selected, state)
     ));
-    out.push_str(
-        "- Safe next action: stop on no-action; refresh evidence only after relevant PR changes.\n",
-    );
+    // #7372: preflight `needs_attention` (empty `base..head`, unavailable
+    // git, ...) gates the "stop" language; a vacuous no-action headline must
+    // not tell a newcomer they are done while preflight disagrees.
+    if preflight_needs_attention {
+        out.push_str(
+            "- Safe next action: preflight below reports `needs_attention`; resolve it before treating this no-action conclusion as final — an empty or mis-scoped `base..head` diff makes the headline vacuous.\n",
+        );
+    } else {
+        out.push_str(
+            "- Safe next action: stop on no-action; refresh evidence only after relevant PR changes.\n",
+        );
+    }
     let reason = selected
         .get("reason")
         .and_then(Value::as_str)
@@ -830,10 +871,12 @@ mod tests {
             out.contains("Recovery: Commit PR work before rerunning."),
             "{out}"
         );
-        assert!(
-            out.contains("It runs unchanged in Bash and PowerShell"),
-            "{out}"
-        );
+        let unchanged_claimed = if cfg!(windows) {
+            out.contains("It runs unchanged in cmd.exe, PowerShell, and Git Bash.")
+        } else {
+            out.contains("It runs unchanged in Bash and PowerShell")
+        };
+        assert!(unchanged_claimed, "{out}");
         assert!(
             out.contains("Recovery step 2 unavailable: use a single-line root/ref alias"),
             "{out}"

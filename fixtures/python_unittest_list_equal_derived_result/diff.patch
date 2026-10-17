@@ -1,0 +1,7 @@
+diff --git a/src/labels.py b/src/labels.py
+--- a/src/labels.py
++++ b/src/labels.py
+@@ -7,2 +7,2 @@
+ def labels():
+-    return Answer(0)
++    return Answer(1)

@@ -26,6 +26,38 @@
       "sha256": "86956cf35088a884feb4e318ba2052aea5c2bf7a6c74de4d3ccd5ecb5bce7587"
     },
     {
+      "path": "src/errorsBroad.ts",
+      "sha256": "479fb2821e6eaf1c044ab39c361086e8c74c085333284e8c0d3765b302299c93"
+    },
+    {
+      "path": "src/errorsFall.ts",
+      "sha256": "3772885f971c91a378245b80240f93d67435578de30294183892116db37c27c6"
+    },
+    {
+      "path": "src/errorsLocal.ts",
+      "sha256": "3c290ab245b43519cd21de478b01e937eee36632520c37fa4646dbe41b38db6f"
+    },
+    {
+      "path": "src/errorsLocalClass.ts",
+      "sha256": "7a8366a20b649367b12657f0a538ca6b5130df2b24d23065bab0cd8d326d9129"
+    },
+    {
+      "path": "src/errorsMessage.ts",
+      "sha256": "c79e1987921625a376bc64bcd76414147a3de75a5aa31a7090eac13997ce2ecf"
+    },
+    {
+      "path": "src/errorsOneLine.ts",
+      "sha256": "07b15d5137e564db1858f9b93a0b696a6d87ba3db45ad2ecc5bb7d1cda376560"
+    },
+    {
+      "path": "src/errorsSub.ts",
+      "sha256": "cc1e5ed0670ac8e97006dad5342d920cb48618b2e3558cd188aa6bb2265f7b19"
+    },
+    {
+      "path": "src/errorsWrap.ts",
+      "sha256": "2184f4638427c3256aaec5add093a8599a00f5ca4e6f876aaf67139aaaf14b7d"
+    },
+    {
       "path": "src/options.ts",
       "sha256": "2748f8c77ece47de065d064e43d17cc38235bfbc16d2ab2e850847e0bd9fd5ee"
     },
@@ -34,8 +66,36 @@
       "sha256": "92d22f85247cbf65f6397435b7a958ec066532ad703483f45695bceb8d8bd77a"
     },
     {
+      "path": "src/profileExpected.ts",
+      "sha256": "aafc9d87532c42e33d59ed2e2699da02e00cb34efda33d6db29ffedd861ef037"
+    },
+    {
+      "path": "src/profileLocal.ts",
+      "sha256": "d1c3d7de9cf75649bde33bf35cbd51c0b8d2f6ad3b4d5055f3b4dea57f57eadc"
+    },
+    {
+      "path": "src/profileName.ts",
+      "sha256": "80469f7773eab8394d9dd7c550f177a820bcc34b329b972d7be0836d7b8ffaa0"
+    },
+    {
+      "path": "src/profileNorm.ts",
+      "sha256": "0ae524d5dc69cac6d61a4166babd841645ff135479f7af03d07a8ae11dcbf467"
+    },
+    {
+      "path": "src/profileSpread.ts",
+      "sha256": "537b468549ac8f370fed099c5e9077e8e86754ff6a6a4a4d1a3dc785ffe57d26"
+    },
+    {
       "path": "src/settings.ts",
       "sha256": "769c2f5b963f6d462ad0f7f9493c6e56f7d352f2ddec8c8a96264622f4ccba6a"
+    },
+    {
+      "path": "src/settingsCopy.ts",
+      "sha256": "5a9a036b4ec24e2d88cb031b5d2cf18be68b1da1d0375b8396dd49a5abca76d7"
+    },
+    {
+      "path": "src/settingsOk.ts",
+      "sha256": "b89326f211ff15923a6c1aaa83bb74869107fc7f4b03746e8f51a44327a30d2b"
     },
     {
       "path": "src/store.ts",
@@ -58,6 +118,38 @@
       "sha256": "8b0ba4cab01f7ee60b87513062fc7b1b35507bb1d3f2dd18d39aabdc565d01fa"
     },
     {
+      "path": "test/errorsBroad.test.ts",
+      "sha256": "7fe2df911b3fa62c395326925e3ae80444a97f307ad30c8f87843a8be864e42a"
+    },
+    {
+      "path": "test/errorsFall.test.ts",
+      "sha256": "79d3bb56e3fd896ca453e8e19dd3b57c7a70cba5a63ef0e2912d144a016ec4bd"
+    },
+    {
+      "path": "test/errorsLocal.test.ts",
+      "sha256": "403a179af1b559ea68bc95f955f84b011de09691ea7bf6e8f473df6b64ee0ae7"
+    },
+    {
+      "path": "test/errorsLocalClass.test.ts",
+      "sha256": "d2208a523f715766e14ed1dfbf4c95441c6db37ea21e985a1c0f1ddece05d1af"
+    },
+    {
+      "path": "test/errorsMessage.test.ts",
+      "sha256": "515bb7d9f3a1db64cdf1704038b4d4f2d871faf617a0b4f794ffa9a7e4279c56"
+    },
+    {
+      "path": "test/errorsOneLine.test.ts",
+      "sha256": "97e237a4920b2c3f191746f92e9194c591b537602177a6b4829ec08cb7909af2"
+    },
+    {
+      "path": "test/errorsSub.test.ts",
+      "sha256": "5691c85c6fd2e22092278b5e51e0b27426e42be486d9c3f3f4909a584a40fc43"
+    },
+    {
+      "path": "test/errorsWrap.test.ts",
+      "sha256": "6ce98c635c68480864c4bd9995e51c1ad2ffa1441ed39e2de5e3536c479ae6e6"
+    },
+    {
       "path": "test/options.test.ts",
       "sha256": "2fb73644d24aae2e4ce06b0e9dbafc916613eb1eccea2ae06149f8fb9ed49f97"
     },
@@ -66,8 +158,36 @@
       "sha256": "feff3033be6e8fd77e4e7e0d444023d78d86cc3f2ea76d0ab41b526687bf1730"
     },
     {
+      "path": "test/profileExpected.test.ts",
+      "sha256": "cd6b28b4fc826240586593469a623b7de7aae70c11706470e44f7b2e42950fb4"
+    },
+    {
+      "path": "test/profileLocal.test.ts",
+      "sha256": "0f8b4618c79bb165a1f70898015010023d94e333efb7e91cda0368c5c9a84f1c"
+    },
+    {
+      "path": "test/profileName.test.ts",
+      "sha256": "9949ce264535ba946628ca93d3b89273e4099918c93add2d19946a597af5d9f7"
+    },
+    {
+      "path": "test/profileNorm.test.ts",
+      "sha256": "895e654dd78c8ae9c4575c9f421b9f48eae874d33817c2af46058c4341a3b832"
+    },
+    {
+      "path": "test/profileSpread.test.ts",
+      "sha256": "e39fb800b0e463d2c2e462ef8206098b414fdefaf958ee3ba19ae63f3d44cf0f"
+    },
+    {
       "path": "test/settings.test.ts",
       "sha256": "780f4f45218c02ceba21ac97beb5f31b1add28aa9b93baa7b295f9f3aff19571"
+    },
+    {
+      "path": "test/settingsCopy.test.ts",
+      "sha256": "53f39c140a73f091f888b2a901277638d720df5bfb3d384b42864835fc098d2e"
+    },
+    {
+      "path": "test/settingsOk.test.ts",
+      "sha256": "ee80704bd3000dfae654438bc429bee1654a3a3dbc356cf059a3ef67ced08338"
     },
     {
       "path": "test/store.test.ts",

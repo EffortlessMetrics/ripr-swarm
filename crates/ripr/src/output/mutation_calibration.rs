@@ -114,7 +114,9 @@ pub(crate) struct MutationCalibrationReport {
     agreement: MutationCalibrationAgreement,
     precision_notes: Vec<String>,
     missed_runtime_signals: Vec<MutationCalibrationRuntimeSignal>,
+    missed_runtime_signals_total: usize,
     static_only_findings: Vec<MutationCalibrationStaticOnlyFinding>,
+    static_only_findings_total: usize,
     matched: Vec<MutationCalibrationMatch>,
     ambiguous_file_line: Vec<AmbiguousMutationCalibrationMatch>,
     ambiguous_span_overlap: Vec<AmbiguousMutationCalibrationMatch>,
@@ -331,6 +333,11 @@ pub(crate) fn render_mutation_calibration_md(report: &MutationCalibrationReport)
         "| static_without_runtime_total | {} |\n",
         report.static_without_runtime.len()
     ));
+    if let Some(note) = no_observed_runtime_outcome_note(report) {
+        out.push_str("\nNote: ");
+        out.push_str(&note);
+        out.push_str(".\n");
+    }
 
     out.push_str("\n## Static/runtime agreement\n\n");
     out.push_str("| Agreement bucket | Count |\n| --- | ---: |\n");
@@ -364,6 +371,11 @@ pub(crate) fn render_mutation_calibration_md(report: &MutationCalibrationReport)
     if report.missed_runtime_signals.is_empty() {
         out.push_str("No imported runtime gap signals lacked a matching static gap.\n");
     } else {
+        push_agreement_sample_note(
+            &mut out,
+            report.missed_runtime_signals.len(),
+            report.missed_runtime_signals_total,
+        );
         out.push_str("| Runtime mutant | Location | Runtime outcome | Static class | Confidence label | Reason |\n");
         out.push_str("| --- | --- | --- | --- | --- | --- |\n");
         for record in &report.missed_runtime_signals {
@@ -390,6 +402,11 @@ pub(crate) fn render_mutation_calibration_md(report: &MutationCalibrationReport)
     if report.static_only_findings.is_empty() {
         out.push_str("No static gap seams lacked a runtime gap signal in this import.\n");
     } else {
+        push_agreement_sample_note(
+            &mut out,
+            report.static_only_findings.len(),
+            report.static_only_findings_total,
+        );
         out.push_str("| Seam | Class | Location | Confidence label | Reason |\n");
         out.push_str("| --- | --- | --- | --- | --- |\n");
         for record in &report.static_only_findings {
@@ -657,15 +674,19 @@ fn build_mutation_calibration_report(
         .cloned()
         .collect::<Vec<_>>();
 
-    let (agreement, precision_notes, missed_runtime_signals, static_only_findings) =
+    let (agreement, precision_notes, mut missed_runtime_signals, mut static_only_findings) =
         mutation_calibration_agreement(
             &static_seams,
             &matched,
             ambiguous_file_line.iter().chain(&ambiguous_span_overlap),
             &unmatched_mutants,
         );
+    let missed_runtime_signals_total = missed_runtime_signals.len();
+    let static_only_findings_total = static_only_findings.len();
+    missed_runtime_signals.truncate(AGREEMENT_SAMPLE_LIMIT);
+    static_only_findings.truncate(AGREEMENT_SAMPLE_LIMIT);
 
-    MutationCalibrationReport {
+    let mut report = MutationCalibrationReport {
         static_seams_total: static_seams.len(),
         mutants_total: matched.len()
             + ambiguous_file_line.len()
@@ -674,13 +695,30 @@ fn build_mutation_calibration_report(
         agreement,
         precision_notes,
         missed_runtime_signals,
+        missed_runtime_signals_total,
         static_only_findings,
+        static_only_findings_total,
         matched,
         ambiguous_file_line,
         ambiguous_span_overlap,
         unmatched_mutants,
         static_without_runtime,
+    };
+    if let Some(note) = no_observed_runtime_outcome_note(&report) {
+        report.precision_notes.push(note);
     }
+    let unmatched_gap_signals = report
+        .unmatched_mutants
+        .iter()
+        .filter(|unmatched| runtime_gap_signal(&unmatched.mutation.runtime_outcome))
+        .count();
+    if unmatched_gap_signals > 0 {
+        report.precision_notes.push(format!(
+            "`runtime_signal_without_static_gap` includes {unmatched_gap_signals} unmatched gap-signal record{} also counted in `unmatched_mutants_total`",
+            if unmatched_gap_signals == 1 { "" } else { "s" }
+        ));
+    }
+    report
 }
 
 fn candidate_order_key(seam: &StaticSeamRecord) -> (usize, usize, usize, usize, &str) {
@@ -925,15 +963,18 @@ fn mutation_calibration_agreement<'a>(
         }
     }
 
-    missed_runtime_signals.truncate(AGREEMENT_SAMPLE_LIMIT);
-    static_only_findings.truncate(AGREEMENT_SAMPLE_LIMIT);
-
     (
         agreement,
         mutation_calibration_precision_notes(),
         missed_runtime_signals,
         static_only_findings,
     )
+}
+
+fn push_agreement_sample_note(out: &mut String, shown: usize, total: usize) {
+    if total > shown {
+        out.push_str(&format!("Sample only; showing {shown} of {total}.\n\n"));
+    }
 }
 
 fn mutation_calibration_precision_notes() -> Vec<String> {
@@ -943,7 +984,56 @@ fn mutation_calibration_precision_notes() -> Vec<String> {
         "static_gap_without_runtime_signal includes static gap seams with no matched runtime gap signal in this import".to_string(),
         "runtime records with a complete span join by span_containment to the unique innermost static seam whose span contains the mutated range; with no containing span they fall back to file and line over seams without a span, and records without a complete span join by file and line".to_string(),
         "ambiguous runtime gap signals (ambiguous_file_line: the file/line fallback found several seams on the line; ambiguous_span_overlap: equal or crossing innermost seam spans) are counted as runtime_inconclusive until a seam_id or unambiguous location is available".to_string(),
+        "agreement buckets mix counting units: `static_gap_and_runtime_signal`, `static_gap_without_runtime_signal`, `static_clean_and_runtime_clean`, and `runtime_inconclusive` count static seams (with ambiguous records also counted in `runtime_inconclusive`), while `runtime_signal_without_static_gap` counts runtime gap-signal records, so the bucket column need not sum to `matched_total` or `mutants_total`".to_string(),
     ]
+}
+
+const NO_OBSERVED_RUNTIME_OUTCOMES_NOTE: &str = concat!(
+    "this import has no observed runtime outcomes; ",
+    "`matched_total` counts joined candidate mutants, not executed mutants. ",
+    "Those rows render as `unknown` / `no_runtime_data` and do not corroborate static evidence",
+);
+
+fn mixed_unobserved_runtime_outcome_note(unknown: usize) -> String {
+    format!(
+        "`matched_total` includes {unknown} joined candidate{} with no observed runtime outcome. Those rows render as `unknown` / `no_runtime_data` and do not corroborate static evidence",
+        if unknown == 1 { "" } else { "s" }
+    )
+}
+
+fn no_observed_runtime_outcome_note(report: &MutationCalibrationReport) -> Option<String> {
+    if report.mutants_total == 0 {
+        return None;
+    }
+    // All imported records (matched, ambiguous, unmatched) decide whether the
+    // whole import lacks runtime observations. The mixed matched_total note
+    // may only count rows that actually sit in matched_total.
+    if unobserved_imported_runtime_outcome_total(report) == report.mutants_total {
+        return Some(NO_OBSERVED_RUNTIME_OUTCOMES_NOTE.to_string());
+    }
+    let unknown_matched = unobserved_matched_runtime_outcome_total(report);
+    (unknown_matched > 0).then(|| mixed_unobserved_runtime_outcome_note(unknown_matched))
+}
+
+fn has_observed_runtime_outcome(outcome: &str) -> bool {
+    let label = normalize_runtime_label(outcome);
+    !label.is_empty() && label != "unknown"
+}
+
+fn unobserved_imported_runtime_outcome_total(report: &MutationCalibrationReport) -> usize {
+    runtime_outcome_counts(report)
+        .into_iter()
+        .filter(|(label, _)| label.is_empty() || label == "unknown")
+        .map(|(_, count)| count)
+        .sum()
+}
+
+fn unobserved_matched_runtime_outcome_total(report: &MutationCalibrationReport) -> usize {
+    report
+        .matched
+        .iter()
+        .filter(|record| !has_observed_runtime_outcome(&record.mutation.runtime_outcome))
+        .count()
 }
 
 fn static_only_reason(records: &[&MutationCalibrationMatch]) -> String {
@@ -1839,6 +1929,174 @@ mod tests {
         assert!(markdown.contains("Confidence label"));
         assert!(markdown.contains("Runtime signals without static gaps"));
         assert!(markdown.contains("Static gaps without runtime signals"));
+        assert!(
+            !markdown.contains("Sample only; showing"),
+            "tables under the sample limit must not claim sampling:\n{markdown}"
+        );
+        Ok(())
+    }
+
+    /// #7742: the agreement table mixes per-seam and per-record populations,
+    /// so its counts cannot be reconciled against `matched_total` without a
+    /// stated denominator. The precision notes must name each bucket's
+    /// counting unit and, when unmatched gap-signal records contribute, say
+    /// how many — those records are also counted in
+    /// `unmatched_mutants_total`.
+    #[test]
+    fn agreement_buckets_disclose_counting_units_and_unmatched_overlap() -> Result<(), String> {
+        let static_seams = vec![
+            static_seam("gap-runtime", "weakly_gripped", "src/pricing.rs", 10),
+            static_seam("gap-clean", "weakly_gripped", "src/pricing.rs", 20),
+            static_seam("clean-clean", "strongly_gripped", "src/pricing.rs", 30),
+            static_seam("clean-gap", "strongly_gripped", "src/pricing.rs", 40),
+            static_seam("gap-none", "ungripped", "src/pricing.rs", 50),
+        ];
+        let runtime_mutants = vec![
+            runtime("m1", Some("gap-runtime"), None, None, "missed"),
+            runtime("m2", Some("gap-clean"), None, None, "caught"),
+            runtime("m3", Some("clean-clean"), None, None, "caught"),
+            runtime("m4", Some("clean-gap"), None, None, "missed"),
+            runtime("m5", None, Some("src/other.rs"), Some(99), "missed"),
+        ];
+
+        let report = build_mutation_calibration_report(static_seams, runtime_mutants);
+        assert_eq!(report.agreement.runtime_signal_without_static_gap, 2);
+        assert_eq!(report.unmatched_mutants.len(), 1);
+
+        let markdown = render_mutation_calibration_md(&report);
+        assert!(
+            markdown.contains(
+                "`static_gap_and_runtime_signal`, `static_gap_without_runtime_signal`, `static_clean_and_runtime_clean`, and `runtime_inconclusive` count static seams"
+            ),
+            "the agreement table must state its per-seam counting units:\n{markdown}"
+        );
+        assert!(
+            markdown
+                .contains("`runtime_signal_without_static_gap` counts runtime gap-signal records"),
+            "the agreement table must state its per-record counting unit:\n{markdown}"
+        );
+        assert!(
+            markdown.contains(
+                "`runtime_signal_without_static_gap` includes 1 unmatched gap-signal record also counted in `unmatched_mutants_total`"
+            ),
+            "the reconciliation line must name the one unmatched overlap record:\n{markdown}"
+        );
+
+        let json = render_mutation_calibration_json(&report)?;
+        let value: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|err| format!("mutation calibration JSON should parse: {err}"))?;
+        let notes = value["precision_notes"]
+            .as_array()
+            .ok_or("precision_notes must remain an array")?;
+        assert!(
+            notes.iter().any(|note| {
+                note.as_str().is_some_and(|text| {
+                    text.contains("count static seams")
+                        && text.contains("counts runtime gap-signal records")
+                })
+            }),
+            "JSON precision_notes must carry the same counting-unit caveat: {notes:?}"
+        );
+        assert!(
+            notes.iter().any(|note| {
+                note.as_str()
+                    .is_some_and(|text| text.contains("includes 1 unmatched gap-signal record"))
+            }),
+            "JSON precision_notes must carry the same reconciliation line: {notes:?}"
+        );
+
+        let clean = build_mutation_calibration_report(
+            vec![static_seam(
+                "clean-clean",
+                "strongly_gripped",
+                "src/a.rs",
+                1,
+            )],
+            vec![runtime("m1", Some("clean-clean"), None, None, "caught")],
+        );
+        let clean_markdown = render_mutation_calibration_md(&clean);
+        assert!(
+            clean_markdown.contains("count static seams"),
+            "the counting-unit caveat applies to every import:\n{clean_markdown}"
+        );
+        assert!(
+            !clean_markdown.contains("unmatched gap-signal record"),
+            "no unmatched records means no reconciliation line:\n{clean_markdown}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn agreement_tables_disclose_sampling_when_truncated() -> Result<(), String> {
+        let over_limit = AGREEMENT_SAMPLE_LIMIT + 1;
+        let static_seams = (0..over_limit)
+            .map(|i| static_seam(&format!("gap-{i}"), "ungripped", "src/gap.rs", i + 1))
+            .collect();
+        let runtime_mutants = (0..over_limit)
+            .map(|i| {
+                runtime(
+                    &format!("m{i}"),
+                    None,
+                    Some("src/other.rs"),
+                    Some(i + 1),
+                    "missed",
+                )
+            })
+            .collect();
+
+        let report = build_mutation_calibration_report(static_seams, runtime_mutants);
+        assert_eq!(
+            report.agreement.runtime_signal_without_static_gap,
+            over_limit
+        );
+        assert_eq!(
+            report.agreement.static_gap_without_runtime_signal,
+            over_limit
+        );
+        assert_eq!(report.missed_runtime_signals.len(), AGREEMENT_SAMPLE_LIMIT);
+        assert_eq!(report.static_only_findings.len(), AGREEMENT_SAMPLE_LIMIT);
+        assert_eq!(report.missed_runtime_signals_total, over_limit);
+        assert_eq!(report.static_only_findings_total, over_limit);
+
+        let markdown = render_mutation_calibration_md(&report);
+        let expected = format!(
+            "Sample only; showing {} of {over_limit}.",
+            AGREEMENT_SAMPLE_LIMIT
+        );
+        let sample_notes = markdown.matches(&expected).count();
+        assert_eq!(
+            sample_notes, 2,
+            "both truncated agreement tables must disclose the pre-truncation count:\n{markdown}"
+        );
+        assert_eq!(
+            markdown_table_data_rows(&markdown, "### Runtime signals without static gaps").len(),
+            AGREEMENT_SAMPLE_LIMIT
+        );
+        assert_eq!(
+            markdown_table_data_rows(&markdown, "### Static gaps without runtime signals").len(),
+            AGREEMENT_SAMPLE_LIMIT
+        );
+
+        let json = render_mutation_calibration_json(&report)?;
+        let value: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|err| format!("failed to parse calibration JSON: {err}"))?;
+        assert_eq!(
+            value["missed_runtime_signals"].as_array().map(Vec::len),
+            Some(AGREEMENT_SAMPLE_LIMIT)
+        );
+        assert_eq!(
+            value["static_only_findings"].as_array().map(Vec::len),
+            Some(AGREEMENT_SAMPLE_LIMIT)
+        );
+        assert!(
+            value.get("missed_runtime_signals_total").is_none()
+                && value.get("static_only_findings_total").is_none()
+                && value["metrics"]
+                    .get("missed_runtime_signals_total")
+                    .is_none()
+                && value["metrics"].get("static_only_findings_total").is_none(),
+            "sampling totals must stay markdown-side without new JSON fields:\n{json}"
+        );
         Ok(())
     }
 
@@ -2207,6 +2465,136 @@ mod tests {
         let markdown = render_mutation_calibration_md(&report);
         assert!(markdown.contains("Status: advisory"));
         assert!(markdown.contains("Runtime Outcome Counts"));
+        assert!(
+            !markdown.contains("this import has no observed runtime outcomes"),
+            "an outcomes import must not claim the mutants.json-only denominator:\n{markdown}"
+        );
+        Ok(())
+    }
+
+    /// #7451: a mutants.json-only import still joins candidates and counts
+    /// them in matched_total. The Summary must say those rows carry no
+    /// runtime observation. Changing matched_total's meaning is a different
+    /// claim (schema / OUTPUT_SCHEMA).
+    #[test]
+    fn mutants_json_only_import_discloses_unexecuted_matched_total() -> Result<(), String> {
+        let report = mutation_calibration_report_from_json(
+            &repo_json_for("seam-a", "weakly_gripped", "src/pricing.rs", 42),
+            r#"{"mutants":[{"id":"m1","seam_id":"seam-a","operator":"replace"}]}"#,
+        )?;
+        assert_eq!(report.matched.len(), 1);
+        assert_eq!(report.matched[0].mutation.runtime_outcome, "unknown");
+        assert_eq!(
+            confidence_label_for_match(&report.matched[0]),
+            "no_runtime_data"
+        );
+
+        let markdown = render_mutation_calibration_md(&report);
+        let after_summary = markdown
+            .split("## Summary")
+            .nth(1)
+            .and_then(|rest| rest.split("## Static/runtime agreement").next())
+            .ok_or("markdown must keep Summary before agreement")?;
+        assert!(
+            after_summary.contains("| matched_total | 1 |"),
+            "matched_total still counts the joined candidate:\n{after_summary}"
+        );
+        assert!(
+            after_summary.contains("this import has no observed runtime outcomes")
+                && after_summary.contains("`matched_total` counts joined candidate mutants")
+                && after_summary.contains("`unknown` / `no_runtime_data`"),
+            "the default Markdown Summary must disclose the unexecuted denominator:\n{after_summary}"
+        );
+
+        let json = render_mutation_calibration_json(&report)?;
+        let value: Value = serde_json::from_str(&json)
+            .map_err(|err| format!("mutation calibration JSON should parse: {err}"))?;
+        assert_eq!(value["metrics"]["matched_total"], 1);
+        assert_eq!(value["metrics"]["runtime_outcome_counts"]["unknown"], 1);
+        let notes = value["precision_notes"]
+            .as_array()
+            .ok_or("precision_notes must remain an array")?;
+        assert!(
+            notes.iter().any(|note| {
+                note.as_str().is_some_and(|text| {
+                    text.contains("this import has no observed runtime outcomes")
+                })
+            }),
+            "JSON precision_notes must carry the same denominator caveat: {notes:?}"
+        );
+        Ok(())
+    }
+
+    /// A mixed import (some observed outcomes, some not) must not use the
+    /// all-unknown wording, and must still name how many matched_total rows
+    /// lack a runtime observation. Unmatched unknown rows are not in
+    /// matched_total and must not inflate that count.
+    #[test]
+    fn mixed_import_names_how_many_matched_rows_lack_outcomes() -> Result<(), String> {
+        let report = mutation_calibration_report_from_json(
+            &repo_json_for("seam-a", "weakly_gripped", "src/pricing.rs", 42),
+            r#"[
+  {"id":"m-observed","seam_id":"seam-a","outcome":"caught","operator":"replace"},
+  {"id":"m-candidate","seam_id":"seam-a","operator":"replace"},
+  {"id":"m-unmatched","file":"src/other.rs","line":9,"operator":"replace"}
+]"#,
+        )?;
+        assert_eq!(report.matched.len(), 2);
+        assert_eq!(report.unmatched_mutants.len(), 1);
+        assert_eq!(report.mutants_total, 3);
+        assert_eq!(unobserved_imported_runtime_outcome_total(&report), 2);
+        assert_eq!(unobserved_matched_runtime_outcome_total(&report), 1);
+
+        let markdown = render_mutation_calibration_md(&report);
+        let after_summary = markdown
+            .split("## Summary")
+            .nth(1)
+            .and_then(|rest| rest.split("## Static/runtime agreement").next())
+            .ok_or("markdown must keep Summary before agreement")?;
+        assert!(
+            after_summary.contains("| matched_total | 2 |"),
+            "matched_total counts both joined rows:\n{after_summary}"
+        );
+        assert!(
+            after_summary.contains(
+                "`matched_total` includes 1 joined candidate with no observed runtime outcome"
+            ),
+            "the mixed note must count only unobserved matched rows, not the unmatched unknown:\n{after_summary}"
+        );
+        assert!(
+            !after_summary.contains("this import has no observed runtime outcomes"),
+            "a mixed import is not mutants.json-only:\n{after_summary}"
+        );
+        Ok(())
+    }
+
+    /// An unmatched unknown row is not in matched_total. A joined observed
+    /// row plus an unmatched candidate must not claim matched_total includes
+    /// an unexecuted candidate.
+    #[test]
+    fn unmatched_unknown_does_not_claim_matched_total_includes_it() -> Result<(), String> {
+        let report = mutation_calibration_report_from_json(
+            &repo_json_for("seam-a", "weakly_gripped", "src/pricing.rs", 42),
+            r#"[
+  {"id":"m-observed","seam_id":"seam-a","outcome":"caught","operator":"replace"},
+  {"id":"m-unmatched","file":"src/other.rs","line":9,"operator":"replace"}
+]"#,
+        )?;
+        assert_eq!(report.matched.len(), 1);
+        assert_eq!(unobserved_matched_runtime_outcome_total(&report), 0);
+        assert_eq!(unobserved_imported_runtime_outcome_total(&report), 1);
+
+        let markdown = render_mutation_calibration_md(&report);
+        let after_summary = markdown
+            .split("## Summary")
+            .nth(1)
+            .and_then(|rest| rest.split("## Static/runtime agreement").next())
+            .ok_or("markdown must keep Summary before agreement")?;
+        assert!(
+            !after_summary.contains("`matched_total` includes")
+                && !after_summary.contains("this import has no observed runtime outcomes"),
+            "unmatched unknown rows must not be described as part of matched_total:\n{after_summary}"
+        );
         Ok(())
     }
 
@@ -2564,6 +2952,64 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn matched_and_unmatched_tables_render_genre_not_replacement() -> Result<(), String> {
+        let repo = repo_json_for("seam-max", "strongly_gripped", "src/lib.rs", 101);
+        let mutants = r#"{
+  "outcomes": [
+    {
+      "scenario": {"Mutant": {
+        "name": "src/lib.rs:101:9: replace values.iter().copied().max() with None",
+        "file": "src/lib.rs",
+        "span": {"start": {"line": 101, "column": 9}, "end": {"line": 101, "column": 40}},
+        "replacement": "None",
+        "genre": "FnValue"
+      }},
+      "summary": "MissedMutant"
+    },
+    {
+      "scenario": {"Mutant": {
+        "name": "src/lib.rs:200:1: replace leftover with ()",
+        "file": "src/lib.rs",
+        "span": {"start": {"line": 200, "column": 1}, "end": {"line": 200, "column": 2}},
+        "replacement": "()",
+        "genre": "FnValue"
+      }},
+      "summary": "MissedMutant"
+    }
+  ]
+}"#;
+        let report = mutation_calibration_report_from_json(&repo, mutants)?;
+        let markdown = render_mutation_calibration_md(&report);
+        let matched = markdown
+            .split("## Matched Mutants")
+            .nth(1)
+            .and_then(|rest| rest.split("## ").next())
+            .ok_or_else(|| "matched table missing".to_string())?;
+        assert!(
+            matched.contains("| FnValue | missed |"),
+            "matched operator cell should be genre, got:\n{matched}"
+        );
+        assert!(
+            !matched.contains("| None |"),
+            "matched table must not render replacement None as the operator:\n{matched}"
+        );
+        let unmatched = markdown
+            .split("## Unmatched Runtime Mutants")
+            .nth(1)
+            .and_then(|rest| rest.split("## ").next())
+            .ok_or_else(|| "unmatched table missing".to_string())?;
+        assert!(
+            unmatched.contains("| FnValue | missed |"),
+            "unmatched operator cell should be genre, got:\n{unmatched}"
+        );
+        assert!(
+            !unmatched.contains("| () |"),
+            "unmatched table must not render replacement () as the operator:\n{unmatched}"
+        );
+        Ok(())
+    }
+
     fn spanned_seam(
         id: &str,
         file: &str,
@@ -2586,6 +3032,16 @@ mod tests {
         let mut record = runtime(id, None, Some(file), Some(start.0), "missed");
         record.span = Some(RuntimeSpan { start, end });
         record
+    }
+
+    fn markdown_table_data_rows<'a>(markdown: &'a str, heading: &str) -> Vec<&'a str> {
+        let Some(rest) = markdown.split(heading).nth(1) else {
+            return Vec::new();
+        };
+        rest.lines()
+            .take_while(|line| !line.starts_with("## ") && !line.starts_with("### "))
+            .filter(|line| line.starts_with("| `"))
+            .collect()
     }
 
     fn static_seam(id: &str, grip_class: &str, file: &str, line: usize) -> StaticSeamRecord {

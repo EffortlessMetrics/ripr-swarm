@@ -17,7 +17,9 @@
 //! Both contracts are pinned by tests in this file.
 
 use super::classify::changed_error_variant;
-use super::generated_rust_corpus::{AnalyzableRustCorpus, discover_analyzable_rust_corpus};
+use super::generated_rust_corpus::{
+    AnalyzableRustCorpus, absent_changed_rust_file_limitations, discover_analyzable_rust_corpus,
+};
 use super::rust_index::{self, ProbeShapeFact, ProbeShapeKind, RustIndex};
 #[cfg(test)]
 use super::seam_cache::CLASSIFIED_SEAM_CACHE_STORE_LIMIT;
@@ -212,7 +214,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
     let inputs = workspace_key_inputs(root, config);
 
     // Stat-only fast path (issue #2108): when the corpus fingerprint store
-    // holds a mapping for the current (path, mtime, size, ctime on unix)
+    // holds a mapping for the current (path, mtime, size, ctime, device, inode on unix)
     // signature, the cache key is rebuilt without reading any file contents.
     if let Some(key) = fingerprint_cached_workspace_key(root, &inputs, fingerprint.as_deref()) {
         trace_latency_phase(
@@ -983,6 +985,7 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
     }
 
     let syntax = super::classify::OwnerPinSyntax::default();
+    let call_syntax = super::classify::TargetedCallSyntax::new(&cached.index);
     let mut candidate_functions = BTreeMap::new();
     let unresolved = |name: &str| {
         selector_limitation(
@@ -994,8 +997,13 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
         )
     };
     for test in &selected_tests {
-        let masked_body = crate::analysis::extract::mask_comments_and_strings(&test.body);
-        for call in test.calls.iter().filter(|call| call.name != test.name) {
+        for call in call_syntax.occurrences(
+            test,
+            syntax.targeted_source_provenance_is_admitted(test, &cached.index),
+            |line, name| {
+                syntax.targeted_macro_binding_is_unambiguous(test, line, name, &cached.index)
+            },
+        ) {
             use super::classify::TargetedCallShape;
             use crate::analysis::facts::FunctionImplContext;
             let functions = cached
@@ -1009,135 +1017,102 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
             if super::classify::targeted_name_is_alias(&cached.index, &call.name) {
                 return Err(unresolved(&call.name));
             }
-            // A line-only fact cannot resolve a qualifier continued from a
-            // previous line, including through masked comments/blank lines.
-            let continued_path = call
-                .line
-                .checked_sub(test.start_line)
-                .is_some_and(|offset| {
-                    masked_body
-                        .split_inclusive('\n')
-                        .take(offset)
-                        .collect::<String>()
-                        .trim_end()
-                        .ends_with("::")
-                        || {
-                            let preceding = masked_body
-                                .split_inclusive('\n')
-                                .take(offset)
-                                .collect::<String>();
-                            preceding.trim_end().ends_with('.')
-                                && !preceding.trim_end().ends_with("..")
+            let shape = call.shape;
+            if matches!(shape, TargetedCallShape::Bare)
+                && functions
+                    .iter()
+                    .filter(|function| matches!(function.impl_context, FunctionImplContext::Free))
+                    .count()
+                    > 1
+            {
+                return Err(selector_limitation(
+                    CHANGED_TEST_OWNER_AMBIGUOUS,
+                    format!(
+                        "targeted rerun changed test `{changed_test}` has ambiguous direct production owner `{}`",
+                        call.name
+                    ),
+                    selected_tests.len(),
+                ));
+            }
+            let mut matching = Vec::new();
+            for function in &functions {
+                match (&shape, &function.impl_context) {
+                    (TargetedCallShape::Bare, FunctionImplContext::Free) => {
+                        if !super::classify::targeted_free_call_reaches_owner(
+                            test,
+                            function,
+                            None,
+                            &cached.index,
+                            &syntax,
+                        ) {
+                            return Err(unresolved(&call.name));
                         }
-                });
-            let shapes = if continued_path {
-                BTreeSet::from([TargetedCallShape::Unsupported])
-            } else {
-                super::classify::targeted_call_shapes(&call.text, &call.name)
-            };
-            for shape in shapes {
-                if matches!(shape, TargetedCallShape::Bare)
-                    && functions
-                        .iter()
-                        .filter(|function| {
-                            matches!(function.impl_context, FunctionImplContext::Free)
-                        })
-                        .count()
-                        > 1
-                {
-                    return Err(selector_limitation(
-                        CHANGED_TEST_OWNER_AMBIGUOUS,
-                        format!(
-                            "targeted rerun changed test `{changed_test}` has ambiguous direct production owner `{}`",
-                            call.name
-                        ),
-                        selected_tests.len(),
-                    ));
-                }
-                let mut matching = Vec::new();
-                for function in &functions {
-                    match (&shape, &function.impl_context) {
-                        (TargetedCallShape::Bare, FunctionImplContext::Free) => {
-                            if !super::classify::targeted_free_call_reaches_owner(
+                        matching.push(*function);
+                    }
+                    (
+                        TargetedCallShape::Path { prefix, generic },
+                        FunctionImplContext::Impl { self_type },
+                    ) => {
+                        let type_name = prefix.rsplit("::").next().unwrap_or(prefix);
+                        if super::classify::targeted_type_name_is_unresolved(
+                            test,
+                            &cached.index,
+                            type_name,
+                        ) {
+                            return Err(unresolved(&call.name));
+                        }
+                        if type_name != self_type {
+                            // Parser-established different self types cannot own
+                            // this call (e.g. BTreeMap::new versus Alpha::new).
+                            continue;
+                        }
+                        if *generic
+                            || !syntax.targeted_inherent_call_is_local(
                                 test,
                                 function,
-                                None,
+                                prefix,
                                 &cached.index,
-                                &syntax,
-                            ) {
-                                return Err(unresolved(&call.name));
-                            }
-                            matching.push(*function);
+                            )
+                        {
+                            return Err(unresolved(&call.name));
                         }
-                        (
-                            TargetedCallShape::Path { prefix, generic },
-                            FunctionImplContext::Impl { self_type },
-                        ) => {
-                            let type_name = prefix.rsplit("::").next().unwrap_or(prefix);
-                            if super::classify::targeted_type_name_is_unresolved(
-                                test,
-                                &cached.index,
-                                type_name,
-                            ) {
-                                return Err(unresolved(&call.name));
-                            }
-                            if type_name != self_type {
-                                // Parser-established different self types cannot own
-                                // this call (e.g. BTreeMap::new versus Alpha::new).
-                                continue;
-                            }
+                        matching.push(*function);
+                    }
+                    (TargetedCallShape::Path { prefix, generic }, FunctionImplContext::Free) => {
+                        if super::classify::call_text_may_call_free_function(&call.text, &call.name)
+                        {
                             if *generic
-                                || !syntax.targeted_inherent_call_is_local(
+                                || !super::classify::targeted_free_call_reaches_owner(
                                     test,
                                     function,
-                                    prefix,
+                                    Some(prefix),
                                     &cached.index,
+                                    &syntax,
                                 )
                             {
                                 return Err(unresolved(&call.name));
                             }
                             matching.push(*function);
                         }
-                        (
-                            TargetedCallShape::Path { prefix, generic },
-                            FunctionImplContext::Free,
-                        ) => {
-                            if super::classify::call_text_may_call_free_function(
-                                &call.text, &call.name,
-                            ) {
-                                if *generic
-                                    || !super::classify::targeted_free_call_reaches_owner(
-                                        test,
-                                        function,
-                                        Some(prefix),
-                                        &cached.index,
-                                        &syntax,
-                                    )
-                                {
-                                    return Err(unresolved(&call.name));
-                                }
-                                matching.push(*function);
-                            }
-                        }
-                        (TargetedCallShape::Unsupported, _) | (_, FunctionImplContext::Unknown) => {
-                            return Err(unresolved(&call.name));
-                        }
-                        (TargetedCallShape::Bare, FunctionImplContext::Impl { .. }) => {}
                     }
+                    (TargetedCallShape::Unsupported, _) | (_, FunctionImplContext::Unknown) => {
+                        return Err(unresolved(&call.name));
+                    }
+                    (TargetedCallShape::Bare, FunctionImplContext::Impl { .. }) => {}
                 }
-                if matching.len() > 1 {
-                    return Err(selector_limitation(
-                        CHANGED_TEST_OWNER_AMBIGUOUS,
-                        format!(
-                            "targeted rerun changed test `{changed_test}` has ambiguous direct production owner `{}`",
-                            call.name
-                        ),
-                        selected_tests.len(),
-                    ));
-                }
-                for function in matching {
-                    candidate_functions.insert(function.id.0.replace('\\', "/"), function);
-                }
+            }
+            if matching.len() > 1 {
+                return Err(selector_limitation(
+                    CHANGED_TEST_OWNER_AMBIGUOUS,
+                    format!(
+                        "targeted rerun changed test `{changed_test}` has ambiguous direct production owner `{}`",
+                        call.name
+                    ),
+                    selected_tests.len(),
+                ));
+            }
+            for function in matching {
+                candidate_functions.insert(function.id.0.replace('\\', "/"), function);
             }
         }
     }
@@ -1486,12 +1461,22 @@ pub(crate) struct ClassifiedChangeReport {
 /// the change is classified on its own. The no-impact fast path is skipped:
 /// pilot asks only after the limit fired on a change with Rust files, where
 /// it would decline anyway.
+/// `changed_paths` retains the full diff context, including absent changed
+/// vendor markers; `changed_files` remains the Rust classification scope.
 pub(crate) fn classify_seams_in_files_at_with_config(
     root: &Path,
     config: &RiprConfig,
     changed_files: &[PathBuf],
+    changed_paths: &[PathBuf],
     on_change: &dyn Fn(&RepoSeam) -> bool,
 ) -> Result<ClassifiedChangeReport, String> {
+    cancellation::checkpoint()?;
+    // Observe admission at entry, before classification: a file restored later
+    // must not clear an absence caveat for this classification's earlier scope.
+    // The shared owner also retains bounded path-less disclosure on refusal.
+    let absent_file_limitations =
+        absent_changed_rust_file_limitations(root, config, changed_paths)?;
+    cancellation::checkpoint()?;
     let stages = DiffScopeEvidenceStages {
         first: on_change,
         sufficient: &|_| true,
@@ -1505,17 +1490,9 @@ pub(crate) fn classify_seams_in_files_at_with_config(
         Some(&stages),
         None,
     )
-    .and_then(|inventory| {
-        // The supplement keeps its classified seams: an absent-file name the
-        // portable limitation path refuses (a drive-like name on Unix, say)
-        // degrades to the bounded path-less disclosure instead of failing
-        // the whole report (#6976).
-        let absent_file_limitations =
-            workspace::supplement_absent_file_limitations(&inventory.absent_changed_files)?;
-        Ok(ClassifiedChangeReport {
-            classified: inventory.classified,
-            absent_file_limitations,
-        })
+    .map(|inventory| ClassifiedChangeReport {
+        classified: inventory.classified,
+        absent_file_limitations,
     })
 }
 
@@ -2336,7 +2313,7 @@ fn collect_workspace_state_from_files(
         workspace_root: root.to_path_buf(),
         files: sorted_files,
         files_content_hash: builder.finish(),
-        config_text: config.source_text().map(str::to_string),
+        config_text: Some(classified_config_identity(config)),
         test_intent_text: read_optional(&root.join(".ripr").join("test_intent.toml")),
         suppressions_text: read_optional(&root.join(config.suppressions().path())),
     })
@@ -2357,6 +2334,17 @@ fn scan_corpus_fingerprint(
     discover_analyzable_rust_corpus(root, config)
 }
 
+/// Bind classified reuse to the same effective producer-consumed configuration
+/// as repo-exposure artifacts. Retain raw text as an additional conservative
+/// invalidator; public typed overrides need not update that provenance text.
+fn classified_config_identity(config: &RiprConfig) -> String {
+    format!(
+        "{}\0{}",
+        crate::config::repo_exposure_config_identity_hash(config),
+        config.source_text().unwrap_or("")
+    )
+}
+
 /// Cache-key inputs other than the corpus content hash, in owned form so
 /// the fingerprint fast path can build a key without holding file bytes.
 struct WorkspaceKeyInputs {
@@ -2369,7 +2357,7 @@ struct WorkspaceKeyInputs {
 fn workspace_key_inputs(root: &Path, config: &RiprConfig) -> WorkspaceKeyInputs {
     WorkspaceKeyInputs {
         cfg_features: std::env::var("RIPR_CFG_FEATURES").ok(),
-        config_text: config.source_text().map(str::to_string),
+        config_text: Some(classified_config_identity(config)),
         test_intent_text: read_optional(&root.join(".ripr").join("test_intent.toml")),
         suppressions_text: read_optional(&root.join(config.suppressions().path())),
     }
@@ -2911,6 +2899,14 @@ fn build_seam_from_shape(
     crlf_pairs: &CrlfPairPositions,
 ) -> Option<RepoSeam> {
     let kind = seam_kind_from_probe_shape(shape.kind)?;
+    // RIPR-SPEC-0228 field assignments are diff-scope probes only: repo-scope
+    // seam grading does not know their read rule, so it would grade a
+    // well-tested write as weakly gripped.
+    if kind == SeamKind::FieldConstruction
+        && crate::analysis::classify::field_assignment_target(&shape.text).is_some()
+    {
+        return None;
+    }
     // A call whose value feeds a consumer cannot be deleted without breaking
     // the build, so no mutant asks whether tests notice it is gone. The
     // consumer's predicate, return or error seam carries that behavior
@@ -2948,7 +2944,8 @@ fn build_seam_from_shape(
         expected_sink,
         crlf_pairs,
     )
-    .with_owner_call(owner_call);
+    .with_owner_call(owner_call)
+    .with_source_lines(shape.source_lines);
     // Span geometry is additional precision: when derivation fails (stale or
     // mismatched source), the seam keeps line-only behavior rather than
     // carrying wrong coordinates. Match-arm shapes are line-only by policy:
@@ -4780,6 +4777,291 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         Ok(out)
     }
 
+    #[test]
+    fn effective_oracle_policy_invalidates_classified_cache() -> Result<(), String> {
+        use crate::domain::{OracleKind, OracleStrength};
+        let mut stale_rows = Vec::new();
+        for loaded in [false, true] {
+            let root = make_tempdir(if loaded {
+                "policy-loaded"
+            } else {
+                "policy-absent"
+            })?;
+            struct OwnedRoot(PathBuf);
+            impl Drop for OwnedRoot {
+                fn drop(&mut self) {
+                    let _ = std::fs::remove_dir_all(&self.0);
+                }
+            }
+            let _owned = OwnedRoot(root.clone());
+            write_file(
+                &root.join("src/lib.rs"),
+                r#"
+pub fn reject(value: i32) -> Result<i32, ()> {
+    if value > 0 { Ok(value) } else { Err(()) }
+}
+#[cfg(test)]
+mod tests {
+    use super::reject;
+    #[test]
+    fn rejects_negative() { assert!(reject(-1).is_err()); }
+}
+"#,
+            )?;
+            let mut original = RiprConfig::default();
+            if loaded {
+                write_file(
+                    &root.join("ripr.toml"),
+                    "[oracles]\nbroad_error_strength = \"weak\"\n",
+                )?;
+                original = crate::config::load_for_root(&root)?;
+                assert!(original.source_text.is_some());
+            }
+            let strengths = |classified: &[ClassifiedSeam]| -> Result<Vec<OracleStrength>, String> {
+                let values = classified
+                    .iter()
+                    .flat_map(|seam| &seam.evidence.related_tests)
+                    .filter(|test| test.oracle_kind == OracleKind::BroadError)
+                    .map(|test| test.oracle_strength.clone())
+                    .collect::<Vec<_>>();
+                if values.is_empty() {
+                    return Err("fixture must retain a BroadError related-test oracle".into());
+                }
+                Ok(values)
+            };
+            let cold = inventory_classified_seams_report_at_with_config(&root, &original)?;
+            let cold_strengths = strengths(&cold.classified)?;
+            assert!(
+                cold_strengths
+                    .iter()
+                    .all(|strength| *strength == OracleStrength::Weak)
+            );
+            let unchanged = inventory_classified_seams_report_at_with_config(&root, &original)?;
+            assert_eq!(
+                serde_json::to_value(&unchanged.classified).map_err(|e| e.to_string())?,
+                serde_json::to_value(&cold.classified).map_err(|e| e.to_string())?
+            );
+            if list_cache_entries(&root)?.len() != 1 {
+                return Err(
+                    "cold and unchanged runs must populate one classified cache entry".into(),
+                );
+            }
+            let mut changed = original.clone();
+            changed.oracles.broad_error_strength = OracleStrength::Strong;
+            assert_eq!(changed.source_text, original.source_text);
+            let fresh = inventory_classified_seams_uncached_with_config(&root, &changed)?;
+            let fresh_strengths = strengths(&fresh)?;
+            assert!(
+                fresh_strengths
+                    .iter()
+                    .all(|strength| *strength == OracleStrength::Strong)
+            );
+            let warm = inventory_classified_seams_report_at_with_config(&root, &changed)?;
+            let warm_strengths = strengths(&warm.classified)?;
+            eprintln!(
+                "policy row loaded={loaded}: cold={cold_strengths:?} fresh={fresh_strengths:?} warm={warm_strengths:?}; seams={}",
+                cold.classified.len()
+            );
+            if warm_strengths
+                .iter()
+                .any(|strength| *strength != OracleStrength::Strong)
+            {
+                stale_rows.push(loaded);
+            }
+        }
+        assert!(
+            stale_rows.is_empty(),
+            "changed effective policy served stale Weak oracle strength in rows loaded={stale_rows:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn effective_snapshot_policy_invalidates_full_and_compact_caches() -> Result<(), String> {
+        use crate::analysis::seams::SeamGripClass;
+        use crate::domain::{OracleKind, OracleStrength};
+        for loaded in [false, true] {
+            let root = make_tempdir(if loaded {
+                "snapshot-loaded"
+            } else {
+                "snapshot-absent"
+            })?;
+            struct OwnedRoot(PathBuf);
+            impl Drop for OwnedRoot {
+                fn drop(&mut self) {
+                    let _ = std::fs::remove_dir_all(&self.0);
+                }
+            }
+            let _owned = OwnedRoot(root.clone());
+            write_file(
+                &root.join("src/lib.rs"),
+                r#"
+pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
+#[cfg(test)] mod tests {
+    use super::discount;
+    #[test] fn snapshots_discount() { insta::assert_snapshot!(discount(12, 10)); }
+}
+"#,
+            )?;
+            let medium = if loaded {
+                write_file(
+                    &root.join("ripr.toml"),
+                    "[oracles]\nsnapshot_strength = \"medium\"\n",
+                )?;
+                crate::config::load_for_root(&root)?
+            } else {
+                RiprConfig::default()
+            };
+            assert_eq!(medium.source_text.is_some(), loaded);
+            let mut weak = medium.clone();
+            weak.oracles.snapshot_strength = OracleStrength::Weak;
+            assert_eq!(medium.source_text, weak.source_text);
+            let check = |seams: &[ClassifiedSeam],
+                         strength: OracleStrength,
+                         class: SeamGripClass,
+                         full: bool|
+             -> Result<(), String> {
+                assert_eq!(
+                    seams.len(),
+                    2,
+                    "snapshot fixture must retain exactly two seams"
+                );
+                let returned = seams
+                    .iter()
+                    .find(|entry| entry.seam.kind() == SeamKind::ReturnValue)
+                    .ok_or("missing return-value seam")?;
+                assert_eq!(returned.class, class);
+                if full {
+                    let related = returned
+                        .evidence
+                        .related_tests
+                        .iter()
+                        .find(|test| test.test_name.ends_with("snapshots_discount"))
+                        .ok_or("missing exact snapshot related test")?;
+                    assert_eq!(related.oracle_kind, OracleKind::Snapshot);
+                    assert_eq!(related.oracle_strength, strength);
+                } else {
+                    assert!(
+                        returned.evidence.related_tests.is_empty(),
+                        "compact facts omit related-test payloads"
+                    );
+                }
+                let strong = seams
+                    .iter()
+                    .filter(|entry| entry.class == SeamGripClass::StronglyGripped)
+                    .count();
+                let weak_count = seams
+                    .iter()
+                    .filter(|entry| entry.class == SeamGripClass::WeaklyGripped)
+                    .count();
+                assert_eq!(
+                    (strong, weak_count),
+                    if class == SeamGripClass::StronglyGripped {
+                        (1, 1)
+                    } else {
+                        (0, 2)
+                    }
+                );
+                Ok(())
+            };
+            let cold = inventory_classified_seams_report_at_with_config(&root, &medium)?;
+            check(
+                &cold.classified,
+                OracleStrength::Medium,
+                SeamGripClass::StronglyGripped,
+                true,
+            )?;
+            let counts = inventory_seam_grip_class_counts_at_with_config(&root, &medium)?;
+            assert_eq!(counts.analyzed_seams(), 2);
+            assert_eq!(counts.count_for(SeamGripClass::StronglyGripped), 1);
+            assert_eq!(counts.count_for(SeamGripClass::WeaklyGripped), 1);
+            let compact_cold = inventory_compact_classified_seams_at_with_config(&root, &medium)?;
+            check(
+                &compact_cold,
+                OracleStrength::Medium,
+                SeamGripClass::StronglyGripped,
+                false,
+            )?;
+            let unchanged = inventory_classified_seams_report_at_with_config(&root, &medium)?;
+            assert_eq!(
+                serde_json::to_value(&cold.classified).map_err(|e| e.to_string())?,
+                serde_json::to_value(&unchanged.classified).map_err(|e| e.to_string())?
+            );
+            let fresh = inventory_classified_seams_uncached_with_config(&root, &weak)?;
+            check(
+                &fresh,
+                OracleStrength::Weak,
+                SeamGripClass::WeaklyGripped,
+                true,
+            )?;
+            let warm = inventory_classified_seams_report_at_with_config(&root, &weak)?;
+            check(
+                &warm.classified,
+                OracleStrength::Weak,
+                SeamGripClass::WeaklyGripped,
+                true,
+            )?;
+            assert_eq!(
+                serde_json::to_value(&warm.classified).map_err(|e| e.to_string())?,
+                serde_json::to_value(&fresh).map_err(|e| e.to_string())?
+            );
+            let counts = inventory_seam_grip_class_counts_at_with_config(&root, &weak)?;
+            assert_eq!(counts.analyzed_seams(), 2);
+            assert_eq!(counts.count_for(SeamGripClass::StronglyGripped), 0);
+            assert_eq!(counts.count_for(SeamGripClass::WeaklyGripped), 2);
+            let compact_warm = inventory_compact_classified_seams_at_with_config(&root, &weak)?;
+            check(
+                &compact_warm,
+                OracleStrength::Weak,
+                SeamGripClass::WeaklyGripped,
+                false,
+            )?;
+            let reverse = inventory_classified_seams_report_at_with_config(&root, &medium)?;
+            check(
+                &reverse.classified,
+                OracleStrength::Medium,
+                SeamGripClass::StronglyGripped,
+                true,
+            )?;
+            let compact_reverse =
+                inventory_compact_classified_seams_at_with_config(&root, &medium)?;
+            check(
+                &compact_reverse,
+                OracleStrength::Medium,
+                SeamGripClass::StronglyGripped,
+                false,
+            )?;
+            assert_eq!(list_cache_entries(&root)?.len(), 2);
+            assert_eq!(list_compact_cache_entries(&root)?.len(), 2);
+            let baseline_key = workspace_cache_key_at_with_config(&root, &medium)?;
+            for policy in 0..3 {
+                let mut changed = medium.clone();
+                match policy {
+                    0 => changed.oracles.snapshot_strength = OracleStrength::Weak,
+                    1 => changed.oracles.mock_expectation_strength = OracleStrength::Strong,
+                    _ => changed.oracles.broad_error_strength = OracleStrength::Strong,
+                }
+                let content_key = collect_workspace_state(&root, &changed)?.cache_key();
+                let fingerprint_key = workspace_cache_key_at_with_config(&root, &changed)?;
+                assert_ne!(baseline_key.config_hash, content_key.config_hash);
+                assert_eq!(content_key, fingerprint_key);
+                let (export_key, file_keys) = current_cache_keys_at(&root, &changed)?;
+                assert_eq!(export_key, content_key);
+                assert_eq!(file_keys.len(), 1);
+            }
+            let mut raw_changed = weak.clone();
+            raw_changed.source_text = Some(format!(
+                "{}\n# provenance changed\n",
+                weak.source_text().unwrap_or("")
+            ));
+            assert_ne!(
+                workspace_cache_key_at_with_config(&root, &weak)?.config_hash,
+                workspace_cache_key_at_with_config(&root, &raw_changed)?.config_hash
+            );
+        }
+        Ok(())
+    }
+
     // ---- streaming workspace state (issue #4996) ----------------------
     //
     // Production inventory folds content identity incrementally and builds
@@ -4867,11 +5149,12 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         // The streaming key must equal the legacy snapshot key field for
         // field, so warm cache entries stay authoritative across the cutover.
         let cfg_features = std::env::var("RIPR_CFG_FEATURES").ok();
+        let config_identity = classified_config_identity(&config);
         let legacy_key = super::super::seam_cache::WorkspaceState {
             workspace_root: &root,
             files: &loaded,
             cfg_features: cfg_features.as_deref(),
-            config_text: config.source_text(),
+            config_text: Some(&config_identity),
             test_intent_text: None,
             suppressions_text: None,
         }
@@ -5325,6 +5608,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                     kind: ProbeShapeKind::UnsafeBoundary,
                     text: "owner_body".into(),
                     value_consumed: false,
+                    source_lines: None,
                 }],
                 ..FileFacts::default()
             },
@@ -5379,6 +5663,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                     kind: ProbeShapeKind::Predicate,
                     text: "x >= 0".into(),
                     value_consumed: false,
+                    source_lines: None,
                 }],
                 ..FileFacts::default()
             },
@@ -8494,6 +8779,2010 @@ use super::{module}::{{diagnostic_refresh_plan}};
                 })
             ),
             "callable static must select no production seams: {result:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn changed_test_inventory_exact_occurrence_multiline_constructor() -> Result<(), String> {
+        let root = make_tempdir("targeted-exact-multiline")?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        write_file(
+            &root.join("src/lib.rs"),
+            r#"
+pub struct Alpha;
+impl Alpha { pub fn new(x: i32) -> i32 { if x > 0 { x } else { 0 } } }
+#[test] fn selected() {
+    assert_eq!(crate::Alpha::
+        new(1), 1);
+}
+"#,
+        )?;
+        let file = root.join("src/lib.rs");
+        let index = crate::analysis::facts::build_index(&root, std::slice::from_ref(&file))?;
+        assert!(
+            !index
+                .files()
+                .get(&file)
+                .ok_or("missing indexed file")?
+                .used_lexical_fallback
+        );
+        assert_eq!(index.tests().len(), 1);
+        assert!(index.functions().iter().any(|function| function.name == "new"
+            && matches!(&function.impl_context, crate::analysis::facts::FunctionImplContext::Impl { self_type } if self_type == "Alpha")
+            && !function.source_role.is_evidence_role()));
+        let inventory = inventory_changed_test_classified_seams_at_with_config_node(
+            &root,
+            &RiprConfig::default(),
+            Path::new("src/lib.rs"),
+            Some("selected"),
+        )?;
+        assert_eq!(inventory.selected_test_count, 1);
+        assert_eq!(inventory.direct_call_names, ["new"]);
+        assert!(!inventory.classified.is_empty());
+        assert!(
+            inventory
+                .classified
+                .iter()
+                .all(|entry| entry.seam.owner() == "src/lib.rs::impl Alpha::new")
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn changed_test_inventory_exact_occurrence_parameter_inputs_preserved() -> Result<(), String> {
+        // Real rstest dependency/layout; the separate CLI qualification also compiles
+        // and executes these inputs with invocation counters. Index capture alone is
+        // not a claim that an arbitrary proc-macro harness executes its input.
+        for (label, input, body, expected) in [
+            (
+                "qualified",
+                "#[values(crate::owner(1))] x: i32",
+                "assert_eq!(x, 1);",
+                Some("src/lib.rs::owner"),
+            ),
+            (
+                "inherent",
+                "#[values(Alpha::new(1))] x: i32",
+                "assert_eq!(x, 1);",
+                Some("src/lib.rs::impl Alpha::new"),
+            ),
+            (
+                "multiline",
+                "#[values(crate::\nowner(1), crate::owner(2))] x: i32",
+                "assert!(x > 0);",
+                Some("src/lib.rs::owner"),
+            ),
+            (
+                "bare",
+                "#[values(owner(1))] x: i32",
+                "assert_eq!(x, 1);",
+                None,
+            ),
+            (
+                "mixed",
+                "#[values(crate::owner(1), foreign::owner(2))] x: i32",
+                "assert!(x > 0);",
+                None,
+            ),
+            (
+                "reverse",
+                "#[values(foreign::owner(2), crate::owner(1))] x: i32",
+                "assert!(x > 0);",
+                None,
+            ),
+            (
+                "nested",
+                "#[values(crate::owner(1), opaque!(crate::owner(2)))] x: i32",
+                "assert!(x > 0);",
+                None,
+            ),
+            (
+                "dormant",
+                "#[values({ fn dormant() { crate::owner(2); } crate::owner(1) })] x: i32",
+                "assert!(x > 0);",
+                None,
+            ),
+            (
+                "closure-parameter",
+                "",
+                "crate::owner(1); let _ = |#[values(crate::owner(2))] x: i32| x;",
+                None,
+            ),
+            (
+                "closure-parameter-reverse",
+                "",
+                "let _ = |#[values(crate::owner(2))] x: i32| x; crate::owner(1);",
+                None,
+            ),
+            (
+                "body-free",
+                "",
+                "assert_eq!(crate::owner(1), 1);",
+                Some("src/lib.rs::owner"),
+            ),
+            (
+                "body-inherent",
+                "",
+                "assert_eq!(Alpha::new(1), 1);",
+                Some("src/lib.rs::impl Alpha::new"),
+            ),
+        ] {
+            let root = make_tempdir(&format!("targeted-parameter-{label}"))?;
+            write_file(
+                &root.join("Cargo.toml"),
+                "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[dev-dependencies]\nrstest = { version = \"=0.27.0\", default-features = false }\n",
+            )?;
+            let attribute = if input.is_empty() {
+                "#[test]"
+            } else {
+                "#[rstest]"
+            };
+            write_file(
+                &root.join("src/lib.rs"),
+                &format!(
+                    r#"
+pub fn owner(x: i32) -> i32 {{ if x > 0 {{ x }} else {{ 0 }} }}
+pub struct Alpha;
+impl Alpha {{ pub fn new(x: i32) -> i32 {{ if x > 0 {{ x }} else {{ 0 }} }} }}
+#[cfg(test)] use rstest::rstest;
+#[cfg(test)] {attribute}
+fn selected({input}) {{ {body} }}
+"#
+                ),
+            )?;
+            let file = root.join("src/lib.rs");
+            let index = crate::analysis::facts::build_index(&root, std::slice::from_ref(&file))?;
+            assert!(
+                !index
+                    .files()
+                    .get(&file)
+                    .ok_or("missing indexed input")?
+                    .used_lexical_fallback,
+                "{label}: refusal must not be earned through parser fallback"
+            );
+            assert_eq!(
+                index.tests().len(),
+                1,
+                "{label}: selected test must be captured"
+            );
+            let result = inventory_changed_test_classified_seams_at_with_config_node(
+                &root,
+                &RiprConfig::default(),
+                Path::new("src/lib.rs"),
+                Some("selected"),
+            );
+            if let Some(owner) = expected {
+                let inventory = result.map_err(|error| format!("{label}: {error:?}"))?;
+                assert_eq!(inventory.selected_test_count, 1, "{label}");
+                assert!(!inventory.classified.is_empty(), "{label}");
+                assert!(
+                    inventory
+                        .classified
+                        .iter()
+                        .all(|entry| entry.seam.owner() == owner),
+                    "{label}"
+                );
+            } else {
+                assert!(
+                    matches!(
+                        result,
+                        Err(TargetedTestInventoryError::Selector {
+                            kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                            selected_test_count: 1,
+                            ..
+                        })
+                    ),
+                    "{label}: {result:?}"
+                );
+            }
+            std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_test_inventory_exact_occurrence_terminal_type_arguments() -> Result<(), String> {
+        let free = "pub fn owner<T>(x: i32) -> i32 { if x > 0 { x } else { 0 } }";
+        let inherent = "pub struct Alpha; impl Alpha { pub fn new<T>(x: i32) -> i32 { if x > 0 { x } else { 0 } } }";
+        let qualifier = "pub struct Alpha<T>(std::marker::PhantomData<T>); impl<T> Alpha<T> { pub fn new(x: i32) -> i32 { if x > 0 { x } else { 0 } } }";
+        for (label, declaration, setup, body, expected) in [
+            (
+                "bare",
+                free,
+                "",
+                "assert_eq!(owner::<u8>(1), 1);",
+                Some("src/lib.rs::owner"),
+            ),
+            (
+                "qualified",
+                free,
+                "",
+                "assert_eq!(crate::owner::<u8>(1), 1);",
+                Some("src/lib.rs::owner"),
+            ),
+            (
+                "multiline",
+                free,
+                "",
+                "assert_eq!(crate::\nowner::<u8>(1), 1);",
+                Some("src/lib.rs::owner"),
+            ),
+            (
+                "body",
+                free,
+                "",
+                "crate::owner::<u8>(1);",
+                Some("src/lib.rs::owner"),
+            ),
+            (
+                "inherent",
+                inherent,
+                "",
+                "assert_eq!(Alpha::new::<u8>(1), 1);",
+                Some("src/lib.rs::impl Alpha::new"),
+            ),
+            (
+                "generic-qualifier",
+                qualifier,
+                "",
+                "assert_eq!(Alpha::<u8>::new(1), 1);",
+                None,
+            ),
+            (
+                "mixed",
+                free,
+                "",
+                "crate::owner::<u8>(1); foreign::owner::<u8>(2);",
+                None,
+            ),
+            (
+                "reverse",
+                free,
+                "",
+                "foreign::owner::<u8>(2); crate::owner::<u8>(1);",
+                None,
+            ),
+            (
+                "raw",
+                free,
+                "",
+                "assert_eq!(crate::r#owner::<u8>(1), 1);",
+                None,
+            ),
+            ("receiver", inherent, "", "Alpha.new::<u8>(1);", None),
+            (
+                "opaque",
+                free,
+                "macro_rules! assert_eq { ($($t:tt)*) => { core::hint::black_box(()); }; }",
+                "assert_eq!(crate::owner::<u8>(1), 1);",
+                None,
+            ),
+        ] {
+            let root = make_tempdir(&format!("targeted-terminal-args-{label}"))?;
+            write_file(
+                &root.join("Cargo.toml"),
+                "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )?;
+            write_file(
+                &root.join("src/lib.rs"),
+                &format!("{declaration}\n{setup}\n#[test] fn selected() {{ {body} }}\n"),
+            )?;
+            let file = root.join("src/lib.rs");
+            let index = crate::analysis::facts::build_index(&root, std::slice::from_ref(&file))?;
+            assert!(
+                !index
+                    .files()
+                    .get(&file)
+                    .ok_or("missing source")?
+                    .used_lexical_fallback,
+                "{label}"
+            );
+            assert_eq!(index.tests().len(), 1, "{label}");
+            let target = if declaration == free { "owner" } else { "new" };
+            assert!(
+                index.tests()[0]
+                    .calls
+                    .iter()
+                    .any(|call| call.name == target),
+                "{label}: target call must be captured"
+            );
+            assert!(
+                index
+                    .functions()
+                    .iter()
+                    .any(|function| function.name == target
+                        && !function.source_role.is_evidence_role()),
+                "{label}: production target must be indexed"
+            );
+            let result = inventory_changed_test_classified_seams_at_with_config_node(
+                &root,
+                &RiprConfig::default(),
+                Path::new("src/lib.rs"),
+                Some("selected"),
+            );
+            if let Some(owner) = expected {
+                let inventory = result.map_err(|error| format!("{label}: {error:?}"))?;
+                assert_eq!(inventory.selected_test_count, 1, "{label}");
+                assert!(!inventory.classified.is_empty(), "{label}");
+                assert!(
+                    inventory
+                        .classified
+                        .iter()
+                        .all(|entry| entry.seam.owner() == owner),
+                    "{label}"
+                );
+                let source = &index.files().get(&file).ok_or("missing source")?.source;
+                let occurrences = super::super::classify::TargetedCallSyntax::new(&index)
+                    .occurrences(&index.tests()[0], true, |_, _| true);
+                assert!(!occurrences.is_empty(), "{label}");
+                for call in occurrences {
+                    assert_eq!(
+                        &source[call.range.clone().ok_or("unmapped terminal call")?],
+                        call.text,
+                        "{label}"
+                    );
+                    assert!(call.text.contains("::<u8>"), "{label}: {call:?}");
+                }
+            } else {
+                assert!(
+                    matches!(
+                        result,
+                        Err(TargetedTestInventoryError::Selector {
+                            kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                            selected_test_count: 1,
+                            ..
+                        })
+                    ),
+                    "{label}: {result:?}"
+                );
+            }
+            std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_test_inventory_exact_occurrence_trailing_comments() -> Result<(), String> {
+        for (label, input, body, expected) in [
+            (
+                "block",
+                "",
+                "assert_eq!(crate::owner(1), 1, /* π */);",
+                true,
+            ),
+            ("line", "", "assert_eq!(crate::owner(1), 1, // π\n);", true),
+            ("single", "", "assert!(crate::owner(1) > 0, /* π */);", true),
+            (
+                "no-comma",
+                "",
+                "assert_eq!(crate::owner(1), 1 /* , */);",
+                true,
+            ),
+            (
+                "nested",
+                "",
+                "assert_eq!(crate::owner(1), { let _ = (1,); 1 } /* , */);",
+                true,
+            ),
+            (
+                "nested-comma",
+                "",
+                "assert_eq!(crate::owner(1), (1), /* π */);",
+                true,
+            ),
+            (
+                "values-block",
+                "#[values(crate::owner(1), /* π */)] x: i32",
+                "assert_eq!(x, 1);",
+                true,
+            ),
+            (
+                "values-line",
+                "#[values(crate::owner(1), // π\n)] x: i32",
+                "assert_eq!(x, 1);",
+                true,
+            ),
+            (
+                "mixed",
+                "",
+                "assert_eq!(crate::owner(1), 1, /* π */); foreign::owner(2);",
+                false,
+            ),
+            (
+                "reverse",
+                "",
+                "foreign::owner(2); assert_eq!(crate::owner(1), 1, /* π */);",
+                false,
+            ),
+            (
+                "diagnostic",
+                "",
+                "assert_eq!(crate::owner(1), 1, \"{}\", crate::owner(2), /* π */);",
+                false,
+            ),
+            (
+                "values-opaque",
+                "#[values(opaque!(crate::owner(1)), /* π */)] x: i32",
+                "assert_eq!(x, 1);",
+                false,
+            ),
+        ] {
+            let root = make_tempdir(&format!("targeted-trailing-comments-{label}"))?;
+            write_file(
+                &root.join("Cargo.toml"),
+                "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[dev-dependencies]\nrstest = { version = \"=0.27.0\", default-features = false }\n",
+            )?;
+            let attribute = if input.is_empty() {
+                "#[test]"
+            } else {
+                "#[rstest]"
+            };
+            write_file(
+                &root.join("src/lib.rs"),
+                &format!(
+                    "pub fn owner(x: i32) -> i32 {{ if x > 0 {{ x }} else {{ 0 }} }}\n#[cfg(test)] use rstest::rstest;\n#[cfg(test)] {attribute}\nfn selected({input}) {{ {body} }}\n"
+                ),
+            )?;
+            let file = root.join("src/lib.rs");
+            let index = crate::analysis::facts::build_index(&root, std::slice::from_ref(&file))?;
+            assert!(
+                !index
+                    .files()
+                    .get(&file)
+                    .ok_or("missing source")?
+                    .used_lexical_fallback,
+                "{label}"
+            );
+            assert_eq!(index.tests().len(), 1, "{label}");
+            assert!(
+                index.tests()[0]
+                    .calls
+                    .iter()
+                    .any(|call| call.name == "owner"),
+                "{label}: target call must be captured"
+            );
+            assert!(
+                index
+                    .functions()
+                    .iter()
+                    .any(|function| function.name == "owner"
+                        && !function.source_role.is_evidence_role()),
+                "{label}: production target must be indexed"
+            );
+            let result = inventory_changed_test_classified_seams_at_with_config_node(
+                &root,
+                &RiprConfig::default(),
+                Path::new("src/lib.rs"),
+                Some("selected"),
+            );
+            if expected {
+                let inventory = result.map_err(|error| format!("{label}: {error:?}"))?;
+                assert_eq!(inventory.selected_test_count, 1, "{label}");
+                assert!(!inventory.classified.is_empty(), "{label}");
+                assert!(
+                    inventory
+                        .classified
+                        .iter()
+                        .all(|entry| entry.seam.owner() == "src/lib.rs::owner"),
+                    "{label}"
+                );
+                let source = &index.files().get(&file).ok_or("missing source")?.source;
+                let occurrences = super::super::classify::TargetedCallSyntax::new(&index)
+                    .occurrences(&index.tests()[0], true, |_, _| true);
+                let owners = occurrences
+                    .iter()
+                    .filter(|call| call.name == "owner")
+                    .collect::<Vec<_>>();
+                assert_eq!(owners.len(), 1, "{label}: {occurrences:?}");
+                let call = owners[0];
+                assert_eq!(
+                    &source[call.range.clone().ok_or("unmapped commented operand")?],
+                    "crate::owner(1)",
+                    "{label}"
+                );
+                assert_eq!(call.text, "crate::owner(1)", "{label}");
+            } else {
+                assert!(
+                    matches!(
+                        result,
+                        Err(TargetedTestInventoryError::Selector {
+                            kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                            selected_test_count: 1,
+                            ..
+                        })
+                    ),
+                    "{label}: {result:?}"
+                );
+            }
+            std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_test_inventory_exact_occurrence_parameter_offsets() -> Result<(), String> {
+        let root = make_tempdir("targeted-parameter-offsets")?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        write_file(
+            &root.join("src/lib.rs"),
+            r#"
+pub fn owner(x: i32) -> i32 { if x > 0 { x } else { 0 } }
+#[rstest]
+fn selected(#[values(/* π */ crate::owner(1), crate::owner(2), crate::
+owner(3))] x: i32) { assert!(x > 0); }
+"#,
+        )?;
+        let file = root.join("src/lib.rs");
+        let index = crate::analysis::facts::build_index(&root, std::slice::from_ref(&file))?;
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "selected")
+            .ok_or("missing test")?;
+        let calls = super::super::classify::TargetedCallSyntax::new(&index).occurrences(
+            test,
+            true,
+            |_, _| true,
+        );
+        let owners = calls
+            .iter()
+            .filter(|call| call.name == "owner")
+            .collect::<Vec<_>>();
+        assert_eq!(owners.len(), 3, "{calls:?}");
+        assert_eq!(owners[0].text, "crate::owner(1)");
+        assert_eq!(owners[1].text, "crate::owner(2)");
+        assert_eq!(owners[2].text, "crate::\nowner(3)");
+        assert_ne!(owners[0].range, owners[1].range);
+        let source = &index.files().get(&file).ok_or("missing source")?.source;
+        for call in owners {
+            assert_eq!(
+                &source[call.range.clone().ok_or("unmapped input")?],
+                call.text
+            );
+            assert!(matches!(
+                call.shape,
+                super::super::classify::TargetedCallShape::Path { .. }
+            ));
+        }
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn changed_test_inventory_exact_occurrence_rows_preserve_offsets() -> Result<(), String> {
+        let root = make_tempdir("targeted-occurrence-offsets")?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        write_file(
+            &root.join("src/lib.rs"),
+            r#"
+pub struct Alpha;
+impl Alpha { pub fn new(x: i32) -> i32 { if x > 0 { x } else { 0 } } }
+#[test]
+fn selected() {
+    let _label = "π"; assert_eq!(crate::Alpha::new(1), crate::Alpha::new(2));
+    assert!(crate::Alpha::
+        new(3) > 0,);
+    let left = Alpha::new(4); left.field.is_empty(); right.field.is_empty();
+}
+"#,
+        )?;
+        let file = root.join("src/lib.rs");
+        let index = crate::analysis::facts::build_index(&root, std::slice::from_ref(&file))?;
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "selected")
+            .ok_or("missing indexed test")?;
+        assert!(
+            !index
+                .files()
+                .get(&file)
+                .ok_or("missing indexed file")?
+                .used_lexical_fallback
+        );
+        let syntax = super::super::classify::OwnerPinSyntax::default();
+        let calls = super::super::classify::TargetedCallSyntax::new(&index).occurrences(
+            test,
+            syntax.targeted_source_provenance_is_admitted(test, &index),
+            |line, name| syntax.targeted_macro_binding_is_unambiguous(test, line, name, &index),
+        );
+        let new = calls
+            .iter()
+            .filter(|call| call.name == "new")
+            .collect::<Vec<_>>();
+        assert_eq!(new.len(), 4, "{calls:?}");
+        assert!(new.iter().all(|call| call.range.is_some()));
+        assert_eq!(new[0].text, "crate::Alpha::new(1)");
+        assert_eq!(new[1].text, "crate::Alpha::new(2)");
+        assert_ne!(new[0].range, new[1].range);
+        assert_eq!(new[2].text, "crate::Alpha::\n        new(3)");
+        let methods = calls
+            .iter()
+            .filter(|call| call.name == "is_empty")
+            .collect::<Vec<_>>();
+        assert_eq!(methods.len(), 2, "{calls:?}");
+        assert_ne!(methods[0].range, methods[1].range);
+        assert!(methods.iter().all(|call| matches!(
+            call.shape,
+            super::super::classify::TargetedCallShape::Unsupported
+        )));
+        for call in &calls {
+            let range = call.range.clone().ok_or("unexpected unproven row")?;
+            assert_eq!(
+                &index
+                    .files()
+                    .get(&file)
+                    .ok_or("missing indexed file")?
+                    .source[range],
+                call.text
+            );
+        }
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn changed_test_inventory_exact_occurrence_opaque_and_mixed_refusals() -> Result<(), String> {
+        for (label, setup, body) in [
+            ("mixed", "", "Alpha::new(1); foreign::Alpha::new(2);"),
+            ("reverse", "", "foreign::Alpha::new(2); Alpha::new(1);"),
+            ("opaque", "", "Alpha::new(1); opaque!(Alpha::new(2));"),
+            (
+                "opaque-reverse",
+                "",
+                "opaque!(Alpha::new(2)); Alpha::new(1);",
+            ),
+            (
+                "nested-opaque",
+                "",
+                "assert_eq!(Alpha::new(1), opaque!(Alpha::new(2)));",
+            ),
+            (
+                "format",
+                "",
+                "assert_eq!(Alpha::new(1), 1, \"{}\", Alpha::new(2));",
+            ),
+            (
+                "custom-assert",
+                "macro_rules! assert_eq { ($($t:tt)*) => { core::hint::black_box(()); } }",
+                "assert_eq!(Alpha::new(1), 1);",
+            ),
+            (
+                "imported-assert",
+                "use foreign::verify as assert_eq;",
+                "assert_eq!(Alpha::new(1), 1);",
+            ),
+            (
+                "operand-dormant",
+                "",
+                "assert_eq!({ fn dormant() { foreign::Alpha::new(1); } Alpha::new(2) }, 2);",
+            ),
+            ("malformed-arity", "", "assert_eq!(Alpha::new(1));"),
+            (
+                "dormant",
+                "",
+                "fn dormant() { foreign::Alpha::new(1); } Alpha::new(2);",
+            ),
+            (
+                "template",
+                "",
+                "macro_rules! dormant { () => { foreign::Alpha::new(1) }; } Alpha::new(2);",
+            ),
+            (
+                "multiline",
+                "",
+                "Alpha::new(1); foreign:: /* trivia */\n Alpha::new(2);",
+            ),
+            ("receiver-mixed", "", "Alpha::new(1); unknown.new();"),
+            ("receiver-reverse", "", "unknown.new(); Alpha::new(1);"),
+        ] {
+            let root = make_tempdir(&format!("targeted-occurrence-{label}"))?;
+            write_file(
+                &root.join("Cargo.toml"),
+                "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )?;
+            write_file(
+                &root.join("src/lib.rs"),
+                &format!(
+                    "pub struct Alpha;\nimpl Alpha {{ pub fn new(x: i32) -> i32 {{ if x > 0 {{ x }} else {{ 0 }} }} }}\n{setup}\n#[test]\nfn selected() {{ {body} }}\n"
+                ),
+            )?;
+            let file = root.join("src/lib.rs");
+            let index = crate::analysis::facts::build_index(&root, std::slice::from_ref(&file))?;
+            assert_eq!(index.tests().len(), 1, "{label}: setup missing test");
+            assert!(
+                index.tests()[0].calls.iter().any(|call| call.name == "new"),
+                "{label}: missing captured call"
+            );
+            assert!(
+                !index
+                    .files()
+                    .get(&file)
+                    .ok_or("missing indexed file")?
+                    .used_lexical_fallback,
+                "{label}: parser fallback"
+            );
+            let result = inventory_changed_test_classified_seams_at_with_config_node(
+                &root,
+                &RiprConfig::default(),
+                Path::new("src/lib.rs"),
+                Some("selected"),
+            );
+            std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+            assert!(
+                matches!(
+                    result,
+                    Err(TargetedTestInventoryError::Selector {
+                        kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                        selected_test_count: 1,
+                        ..
+                    })
+                ),
+                "{label}: {result:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_test_inventory_exact_occurrence_module_provenance() -> Result<(), String> {
+        for (label, declaration, admitted) in [
+            ("plain", "mod selected;", true),
+            (
+                "module-natvis",
+                "#[debugger_visualizer(natvis_file=\"visualizer.natvis\")] mod selected;",
+                true,
+            ),
+            (
+                "module-gdb",
+                "#[debugger_visualizer(gdb_script_file=\"visualizer.py\")] mod selected;",
+                true,
+            ),
+            (
+                "module-debug-active",
+                "#[cfg_attr(test,debugger_visualizer(natvis_file=\"visualizer.natvis\"))] mod selected;",
+                true,
+            ),
+            (
+                "module-debug-computed",
+                "#[debugger_visualizer(natvis_file=concat!(\"visualizer.natvis\"))] mod selected;",
+                false,
+            ),
+            (
+                "module-debug-disabled",
+                "#[debugger_visualizer(natvis_file=\"visualizer.natvis\")] #[cfg(any())] mod selected;",
+                false,
+            ),
+            ("test-cfg", "#[cfg(test)] mod selected;", true),
+            ("false-cfg", "#[cfg(any())] mod selected;", false),
+            ("lint", "#[allow(dead_code)] mod selected;", true),
+            (
+                "inert-cfg-attr",
+                "#[cfg_attr(test, allow(dead_code))] mod selected;",
+                true,
+            ),
+            (
+                "nested-inert-cfg-attr",
+                "#[cfg_attr(test, cfg_attr(test, allow(dead_code)))] mod selected;",
+                true,
+            ),
+            (
+                "inactive-opaque",
+                "#[cfg_attr(not(test), opaque_attr)] mod selected;",
+                true,
+            ),
+            (
+                "active-opaque",
+                "#[cfg_attr(test, opaque_attr)] mod selected;",
+                false,
+            ),
+            (
+                "qualified-lookalike",
+                "#[foreign::allow(dead_code)] mod selected;",
+                false,
+            ),
+            ("opaque", "#[opaque_attr] mod selected;", false),
+            (
+                "nested-active-opaque",
+                "#[cfg_attr(test, cfg_attr(test, opaque_attr))] mod selected;",
+                false,
+            ),
+            (
+                "nested-inactive-opaque",
+                "#[cfg_attr(test, cfg_attr(not(test), opaque_attr))] mod selected;",
+                true,
+            ),
+            (
+                "unknown-inert",
+                "#[cfg_attr(feature = \"maybe\", allow(dead_code))] mod selected;",
+                true,
+            ),
+            (
+                "unknown-opaque",
+                "#[cfg_attr(feature = \"maybe\", opaque_attr)] mod selected;",
+                false,
+            ),
+            ("include", "include!(\"selected.rs\");", false),
+        ] {
+            for (layout, call) in [
+                ("line", "crate::owner(1)"),
+                ("multiline", "crate::\nowner(1)"),
+            ] {
+                for shape in ["assertion", "body", "parameter"] {
+                    let case = format!("{label}/{layout}/{shape}");
+                    let root =
+                        make_tempdir(&format!("targeted-provenance-{label}-{layout}-{shape}"))?;
+                    write_file(
+                        &root.join("Cargo.toml"),
+                        "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+                    )?;
+                    write_file(
+                        &root.join("src/lib.rs"),
+                        &format!(
+                            "pub fn owner(x: i32) -> i32 {{ if x > 0 {{ x }} else {{ 0 }} }}\n{declaration}\n"
+                        ),
+                    )?;
+                    if shape == "parameter" {
+                        write_file(
+                            &root.join("Cargo.toml"),
+                            "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[dev-dependencies]\nrstest = { version = \"=0.27.0\", default-features = false }\n",
+                        )?;
+                    }
+                    if declaration.contains("debugger_visualizer") {
+                        write_file(
+                            &root.join("src/visualizer.natvis"),
+                            "<AutoVisualizer xmlns=\"http://schemas.microsoft.com/vstudio/debugger/natvis/2010\"/>\n",
+                        )?;
+                        write_file(&root.join("src/visualizer.py"), "# Metadata only.\n")?;
+                    }
+                    let file = root.join("src/selected.rs");
+                    let source = match shape {
+                        "body" => format!(
+                            "#[test]\nfn selected() {{ let value = {call}; assert_eq!(value, 1); }}\n"
+                        ),
+                        "parameter" => format!(
+                            "#[cfg(test)]\nuse rstest::rstest;\n#[cfg(test)]\n#[rstest]\nfn selected(#[values({call})] x: i32) {{ assert_eq!(x, 1); }}\n"
+                        ),
+                        _ => format!("#[test]\nfn selected() {{ assert_eq!({call}, 1); }}\n"),
+                    };
+                    write_file(&file, &source)?;
+                    let index = crate::analysis::facts::build_index(
+                        &root,
+                        &[root.join("src/lib.rs"), file.clone()],
+                    )?;
+                    assert_eq!(
+                        index.tests().len(),
+                        1,
+                        "{label}/{layout}/{shape}: missing test"
+                    );
+                    let test = &index.tests()[0];
+                    assert_eq!(test.file, file, "{case}: selected source");
+                    assert!(
+                        test.calls.iter().any(|call| call.name == "owner"),
+                        "{case}: missing captured call"
+                    );
+                    assert!(
+                        !index
+                            .files()
+                            .get(&file)
+                            .ok_or("missing indexed file")?
+                            .used_lexical_fallback,
+                        "{case}: lexical fallback"
+                    );
+                    assert!(
+                        index.functions().iter().any(|owner| owner.name == "owner"),
+                        "{case}: missing indexed owner"
+                    );
+                    let syntax = super::super::classify::OwnerPinSyntax::default();
+                    assert_eq!(
+                        syntax.targeted_source_provenance_is_admitted(test, &index),
+                        admitted,
+                        "{label}/{layout}/{shape}: provenance authority",
+                    );
+                    let result = inventory_changed_test_classified_seams_at_with_config_node(
+                        &root,
+                        &RiprConfig::default(),
+                        Path::new("src/selected.rs"),
+                        Some("selected"),
+                    );
+                    if admitted {
+                        let inventory = result
+                            .map_err(|error| format!("{label}/{layout}/{shape}: {error:?}"))?;
+                        assert!(
+                            !inventory.classified.is_empty(),
+                            "{label}/{layout}/{shape}: empty owner"
+                        );
+                        assert!(
+                            inventory
+                                .classified
+                                .iter()
+                                .all(|entry| entry.seam.owner() == "src/lib.rs::owner"),
+                            "{case}: wrong owner"
+                        );
+                    } else {
+                        assert!(
+                            matches!(
+                                result,
+                                Err(TargetedTestInventoryError::Selector {
+                                    kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                                    selected_test_count: 1,
+                                    ..
+                                })
+                            ),
+                            "{label}/{layout}/{shape}: {result:?}"
+                        );
+                    }
+                    std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Selector/index proof; active feature and no_main rows do not claim
+    /// compiler acceptance or libtest invocation. Runtime witnesses are separate.
+    #[test]
+    fn changed_test_inventory_exact_occurrence_crate_attributes() -> Result<(), String> {
+        for (label, attributes, admitted) in [
+            ("plain", "", true),
+            ("crate-name", "#![crate_name=\"occurrence\"]", true),
+            ("crate-name-raw", "#![crate_name=r#\"occurrence\"#]", true),
+            (
+                "crate-name-escaped",
+                "#![crate_name=\"occurr\\u{65}nce\"]",
+                true,
+            ),
+            ("crate-type-lib", "#![crate_type=\"lib\"]", true),
+            ("crate-type-rlib", "#![crate_type=\"rlib\"]", true),
+            ("crate-type-dylib", "#![crate_type=\"dylib\"]", true),
+            ("crate-type-cdylib", "#![crate_type=\"cdylib\"]", true),
+            ("crate-type-staticlib", "#![crate_type=\"staticlib\"]", true),
+            ("crate-type-bin", "#![crate_type=\"bin\"]", true),
+            (
+                "crate-type-proc-macro",
+                "#![crate_type=\"proc-macro\"]",
+                true,
+            ),
+            ("no-builtins", "#![no_builtins]", true),
+            ("active-no-builtins", "#![cfg_attr(test,no_builtins)]", true),
+            (
+                "unknown-no-builtins",
+                "#![cfg_attr(docsrs,no_builtins)]",
+                true,
+            ),
+            ("windows", "#![windows_subsystem=\"windows\"]", true),
+            ("console-raw", "#![windows_subsystem=r#\"console\"#]", true),
+            (
+                "active-windows",
+                "#![cfg_attr(test,windows_subsystem=\"windows\")]",
+                true,
+            ),
+            (
+                "natvis",
+                "#![debugger_visualizer(natvis_file=\"visualizer.natvis\")]",
+                true,
+            ),
+            (
+                "gdb",
+                "#![debugger_visualizer(gdb_script_file=\"visualizer.py\")]",
+                true,
+            ),
+            ("numeric-name", "#![crate_name=1]", false),
+            ("byte-name", "#![crate_name=b\"occurrence\"]", false),
+            (
+                "computed-name",
+                "#![crate_name=concat!(\"occurrence\")]",
+                false,
+            ),
+            ("empty-name", "#![crate_name=\"\"]", false),
+            ("invalid-name", "#![crate_name=\"not-a-crate\"]", false),
+            ("invalid-type", "#![crate_type=\"unknown\"]", false),
+            (
+                "invalid-windows",
+                "#![windows_subsystem=\"unknown\"]",
+                false,
+            ),
+            (
+                "qualified-metadata",
+                "#![foreign::crate_type=\"lib\"]",
+                false,
+            ),
+            ("raw-head-metadata", "#![r#crate_type=\"lib\"]", false),
+            (
+                "natvis-numeric",
+                "#![debugger_visualizer(natvis_file=1)]",
+                false,
+            ),
+            (
+                "natvis-computed",
+                "#![debugger_visualizer(natvis_file=concat!(\"visualizer.natvis\"))]",
+                false,
+            ),
+            (
+                "natvis-unknown-key",
+                "#![debugger_visualizer(other=\"visualizer.natvis\")]",
+                false,
+            ),
+            (
+                "natvis-mixed",
+                "#![debugger_visualizer(natvis_file=\"visualizer.natvis\",gdb_script_file=\"visualizer.py\")]",
+                false,
+            ),
+            ("unsafe-symbol", "#![unsafe(no_mangle)]", false),
+            (
+                "metadata-disabled",
+                "#![crate_name=\"occurrence\"]\n#![cfg(any())]",
+                false,
+            ),
+            (
+                "metadata-opaque",
+                "#![crate_type=\"lib\"]\n#![opaque_attr]",
+                false,
+            ),
+            (
+                "crate_name-active",
+                "#![cfg_attr(test,crate_name=\"occurrence\")]",
+                false,
+            ),
+            (
+                "crate_name-inactive",
+                "#![cfg_attr(not(test),crate_name=\"occurrence\")]",
+                false,
+            ),
+            (
+                "crate_name-nested-inactive",
+                "#![cfg_attr(not(test),cfg_attr(not(test),crate_name=\"occurrence\"))]",
+                false,
+            ),
+            (
+                "crate_type-active",
+                "#![cfg_attr(test,crate_type=\"lib\")]",
+                false,
+            ),
+            (
+                "crate_type-inactive",
+                "#![cfg_attr(not(test),crate_type=\"lib\")]",
+                false,
+            ),
+            (
+                "crate_type-nested-inactive",
+                "#![cfg_attr(not(test),cfg_attr(not(test),crate_type=\"lib\"))]",
+                false,
+            ),
+            ("recursion-limit", "#![recursion_limit = \"256\"]", true),
+            ("type-length-limit", "#![type_length_limit = \"256\"]", true),
+            ("no-std", "#![no_std]", true),
+            ("no-main-source-only", "#![no_main]", true),
+            ("feature-source-only", "#![feature(doc_cfg)]", true),
+            (
+                "active-recursion",
+                "#![cfg_attr(test, recursion_limit = \"256\")]",
+                true,
+            ),
+            ("active-no-std", "#![cfg_attr(test, no_std)]", true),
+            (
+                "unknown-recursion",
+                "#![cfg_attr(feature = \"maybe\", recursion_limit = \"256\")]",
+                true,
+            ),
+            (
+                "unknown-feature",
+                "#![cfg_attr(docsrs, feature(doc_cfg))]",
+                true,
+            ),
+            (
+                // Preservation does not bypass the inherited owner-file
+                // binding guard for nested cfg_attr payloads (#7082/#7104).
+                "nested-feature-owner-refusal",
+                "#![cfg_attr(test, cfg_attr(docsrs, feature(doc_cfg)))]",
+                false,
+            ),
+            (
+                "inactive-opaque",
+                "#![cfg_attr(not(test), opaque_attr)]",
+                true,
+            ),
+            ("false-cfg", "#![cfg(any())]", false),
+            ("unknown-cfg", "#![cfg(feature = \"maybe\")]", false),
+            ("active-opaque", "#![cfg_attr(test, opaque_attr)]", false),
+            ("unknown-opaque", "#![cfg_attr(docsrs, opaque_attr)]", false),
+            (
+                "qualified-lookalike",
+                "#![foreign::recursion_limit = \"256\"]",
+                false,
+            ),
+            (
+                "preserving-and-disabled",
+                "#![recursion_limit = \"256\"]\n#![cfg(any())]",
+                false,
+            ),
+            (
+                "preserving-and-opaque",
+                "#![no_std]\n#![opaque_attr]",
+                false,
+            ),
+            (
+                "unknown-mixed-exclusion",
+                "#![cfg_attr(docsrs, cfg(any()), feature(doc_cfg))]",
+                false,
+            ),
+            ("flag-arguments-source-only", "#![no_std()]", false),
+            (
+                "limit-computed-source-only",
+                "#![recursion_limit = concat!(\"256\")]",
+                false,
+            ),
+            (
+                "feature-literal-source-only",
+                "#![feature(\"doc_cfg\")]",
+                false,
+            ),
+        ] {
+            for layout in ["root", "file-backed", "included"] {
+                // Includes stay a separate source-composition refusal, both
+                // with and without the newly supported root metadata.
+                if layout == "included"
+                    && !matches!(
+                        label,
+                        "plain"
+                            | "recursion-limit"
+                            | "crate-name"
+                            | "crate-type-lib"
+                            | "no-builtins"
+                            | "windows"
+                            | "natvis"
+                    )
+                {
+                    continue;
+                }
+                for shape in ["assertion", "body", "parameter"] {
+                    let case = format!("{label}/{layout}/{shape}");
+                    let root = make_tempdir(&format!("targeted-crate-{label}-{layout}-{shape}"))?;
+                    write_file(
+                        &root.join("Cargo.toml"),
+                        "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[dev-dependencies]\nrstest = { version = \"=0.27.0\", default-features = false }\n",
+                    )?;
+                    if attributes.contains("debugger_visualizer") {
+                        write_file(
+                            &root.join("src/visualizer.natvis"),
+                            "<AutoVisualizer xmlns=\"http://schemas.microsoft.com/vstudio/debugger/natvis/2010\"/>\n",
+                        )?;
+                        write_file(
+                            &root.join("src/visualizer.py"),
+                            "# Metadata only; no debugger invocation.\n",
+                        )?;
+                    }
+                    let call = "crate::\nowner(1)";
+                    let selected = match shape {
+                        "body" => format!(
+                            "#[test]\nfn selected() {{ let value = {call}; assert_eq!(value, 1); }}\n"
+                        ),
+                        "parameter" => format!(
+                            "#[cfg(test)]\nuse rstest::rstest;\n#[cfg(test)]\n#[rstest]\nfn selected(#[values({call})] x: i32) {{ assert_eq!(x, 1); }}\n"
+                        ),
+                        _ => format!("#[test]\nfn selected() {{ assert_eq!({call}, 1); }}\n"),
+                    };
+                    let file = root.join(if layout == "root" {
+                        "src/lib.rs"
+                    } else {
+                        "src/selected.rs"
+                    });
+                    let declaration = match layout {
+                        "file-backed" => "mod selected;\n",
+                        "included" => "include!(\"selected.rs\");\n",
+                        _ => selected.as_str(),
+                    };
+                    write_file(
+                        &root.join("src/lib.rs"),
+                        &format!(
+                            "{attributes}\npub fn owner(x:i32)->i32 {{ if x>0 {{x}} else {{0}} }}\n{declaration}"
+                        ),
+                    )?;
+                    if layout != "root" {
+                        write_file(&file, &selected)?;
+                    }
+                    let files = if layout == "root" {
+                        vec![file.clone()]
+                    } else {
+                        vec![root.join("src/lib.rs"), file.clone()]
+                    };
+                    let index = crate::analysis::facts::build_index(&root, &files)?;
+                    assert_eq!(index.tests().len(), 1, "{case}: missing test");
+                    let test = &index.tests()[0];
+                    assert_eq!(test.file, file, "{case}: selected source");
+                    assert!(
+                        test.calls.iter().any(|call| call.name == "owner"),
+                        "{case}: missing captured call"
+                    );
+                    assert!(
+                        !index
+                            .files()
+                            .get(&file)
+                            .ok_or("missing indexed file")?
+                            .used_lexical_fallback,
+                        "{case}: lexical fallback"
+                    );
+                    assert!(
+                        index
+                            .functions()
+                            .iter()
+                            .any(|owner| owner.name == "owner"
+                                && !owner.source_role.is_evidence_role()),
+                        "{case}: missing production owner"
+                    );
+                    let relative = if layout == "root" {
+                        "src/lib.rs"
+                    } else {
+                        "src/selected.rs"
+                    };
+                    let result = inventory_changed_test_classified_seams_at_with_config_node(
+                        &root,
+                        &RiprConfig::default(),
+                        Path::new(relative),
+                        Some("selected"),
+                    );
+                    if admitted && layout != "included" {
+                        let inventory = result.map_err(|error| format!("{case}: {error:?}"))?;
+                        assert_eq!(inventory.selected_test_count, 1, "{case}: selected count");
+                        assert!(
+                            !inventory.classified.is_empty(),
+                            "{case}: empty owner seams"
+                        );
+                        assert!(
+                            inventory
+                                .classified
+                                .iter()
+                                .all(|entry| entry.seam.owner() == "src/lib.rs::owner"),
+                            "{case}: wrong owner"
+                        );
+                    } else {
+                        assert!(
+                            matches!(
+                                result,
+                                Err(TargetedTestInventoryError::Selector {
+                                    kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                                    selected_test_count: 1,
+                                    ..
+                                })
+                            ),
+                            "{case}: {result:?}"
+                        );
+                    }
+                    std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_test_inventory_qualified_assertion_roots() -> Result<(), String> {
+        let mut cases: Vec<(String, String, String, String, bool)> = Vec::new();
+        for root in ["std", "core"] {
+            for leaf in ["assert", "assert_eq", "assert_ne"] {
+                for spelling in [format!("{root}::{leaf}"), format!("::{root} :: {leaf}")] {
+                    let operands = match leaf {
+                        "assert" => "crate::\nowner(1) == 1",
+                        "assert_eq" => "crate::\nowner(1), 1",
+                        _ => "crate::\nowner(1), 2",
+                    };
+                    cases.push((
+                        spelling.clone(),
+                        String::new(),
+                        String::new(),
+                        format!("{spelling}!({operands});"),
+                        true,
+                    ));
+                }
+            }
+        }
+        for root in ["pretty_assertions", "similar_asserts"] {
+            for leaf in ["assert_eq", "assert_ne"] {
+                cases.push((
+                    format!("{root}-{leaf}"),
+                    String::new(),
+                    format!("[dev-dependencies]\n{root}=\"1\"\n"),
+                    format!(
+                        "{root}::{leaf}!(crate::\nowner(1), {});",
+                        if leaf == "assert_eq" { 1 } else { 2 }
+                    ),
+                    true,
+                ));
+            }
+        }
+        let discarded = "mod fake { macro_rules! assert_eq { ($($t:tt)*) => { () } } pub(crate) use assert_eq; }\n";
+        for (label, prefix, manifest, body, admitted) in [
+            (
+                "bare-shadow",
+                "macro_rules! assert_eq { ($($t:tt)*) => { () } }\n",
+                "",
+                "std::assert_eq!(crate::owner(1), 1);",
+                true,
+            ),
+            (
+                "module-root",
+                "mod std { macro_rules! assert_eq { ($($t:tt)*) => { () } } pub(crate) use assert_eq; }\n",
+                "",
+                "std::assert_eq!(crate::owner(1), 1);",
+                false,
+            ),
+            (
+                "import-root",
+                discarded,
+                "",
+                "use crate::fake as std; std::assert_eq!(crate::owner(1), 1);",
+                false,
+            ),
+            (
+                "glob-root",
+                discarded,
+                "",
+                "use crate::fake::*; std::assert_eq!(crate::owner(1), 1);",
+                false,
+            ),
+            (
+                "opaque-statement",
+                "mod fake { macro_rules! assert_eq { ($($t:tt)*) => { () } } pub(crate) use assert_eq; }\nmacro_rules! introduce { () => { use crate::fake as std; } }\n",
+                "",
+                "introduce!(); std::assert_eq!(crate::owner(1), 1);",
+                false,
+            ),
+            (
+                "qualified-opaque-statement",
+                "mod fake { macro_rules! assert_eq { ($($t:tt)*) => { () } } pub(crate) use assert_eq; }\n#[macro_export] macro_rules! introduce { () => { use crate::fake as std; } }\nmod pretty_assertions { pub(crate) use crate::introduce as assert_eq; }\n",
+                "[dev-dependencies]\npretty_assertions=\"1\"\n",
+                "pretty_assertions::assert_eq!(); std::assert_eq!(crate::owner(1), 1);",
+                false,
+            ),
+            (
+                "no-std-disabled-extern",
+                "#![no_std]\n#[cfg(any())] extern crate std;\n",
+                "",
+                "std::assert_eq!(crate::owner(1), 1);",
+                false,
+            ),
+            (
+                "no-std-opaque-extern",
+                "#![no_std]\n#[opaque] extern crate std;\n",
+                "",
+                "std::assert_eq!(crate::owner(1), 1);",
+                false,
+            ),
+            (
+                "no-std-unbound",
+                "#![no_std]\n",
+                "",
+                "std::assert_eq!(crate::owner(1), 1);",
+                false,
+            ),
+            (
+                "no-std-explicit",
+                "#![no_std]\nextern crate std;\n",
+                "",
+                "std::assert_eq!(crate::owner(1), 1);",
+                true,
+            ),
+            (
+                "no-std-core",
+                "#![no_std]\n",
+                "",
+                "core::assert_eq!(crate::owner(1), 1);",
+                true,
+            ),
+            (
+                "no-prelude",
+                "#![no_implicit_prelude]\nextern crate std;\n",
+                "",
+                "std::assert_eq!(crate::owner(1), 1);",
+                false,
+            ),
+            (
+                "std-package-alias",
+                "",
+                "[dependencies]\nstd={package=\"alternate\",path=\"alias\"}\n",
+                "std::assert_eq!(crate::owner(1), 1);",
+                false,
+            ),
+            (
+                "drop-in-missing",
+                "",
+                "",
+                "pretty_assertions::assert_eq!(crate::owner(1), 1);",
+                false,
+            ),
+            (
+                "drop-in-alias",
+                "",
+                "[dev-dependencies]\npretty_assertions={package=\"alternate\",path=\"alias\"}\n",
+                "pretty_assertions::assert_eq!(crate::owner(1), 1);",
+                false,
+            ),
+        ] {
+            cases.push((
+                label.into(),
+                prefix.into(),
+                manifest.into(),
+                body.into(),
+                admitted,
+            ));
+        }
+        for (label, attribute, admitted) in [
+            (
+                "mixed-inactive-no-prelude",
+                "#![cfg_attr(not(test), no_implicit_prelude, allow(dead_code))]",
+                true,
+            ),
+            (
+                "mixed-active-no-std",
+                "#![cfg_attr(test, no_std, allow(dead_code))]",
+                false,
+            ),
+            (
+                "mixed-unknown-no-std",
+                "#![cfg_attr(feature=\"maybe\", no_std, allow(dead_code))]",
+                false,
+            ),
+            (
+                "mixed-malformed-lint",
+                "#![cfg_attr(not(test), no_std, allow(dead_code +))]",
+                false,
+            ),
+            (
+                "mixed-computed-reason",
+                "#![cfg_attr(not(test), no_std, allow(dead_code, reason=concat!(\"why\")))]",
+                false,
+            ),
+            (
+                "mixed-opaque",
+                "#![cfg_attr(not(test), no_std, opaque_attr)]",
+                false,
+            ),
+            (
+                "unsupported-no-std-value",
+                "#![cfg_attr(not(test), no_std=\"opaque\")]",
+                false,
+            ),
+            (
+                "unsupported-no-std-list",
+                "#![cfg_attr(not(test), no_std(opaque))]",
+                false,
+            ),
+            (
+                "unsupported-no-std-path",
+                "#![cfg_attr(not(test), other::no_std)]",
+                false,
+            ),
+            (
+                "mixed-no-std",
+                "#![cfg_attr(not(test), no_std, allow(dead_code))]",
+                true,
+            ),
+            ("inactive-no-std", "#![cfg_attr(not(test), no_std)]", true),
+            ("active-cfg-no-std", "#![cfg_attr(test, no_std)]", false),
+            (
+                "unknown-no-std",
+                "#![cfg_attr(feature=\"maybe\", no_std)]",
+                false,
+            ),
+            (
+                "nested-no-std",
+                "#![cfg_attr(not(test), cfg_attr(not(test), no_std))]",
+                false,
+            ),
+            (
+                "inactive-no-prelude",
+                "#![cfg_attr(not(test), no_implicit_prelude)]",
+                true,
+            ),
+            (
+                "active-cfg-no-prelude",
+                "#![cfg_attr(test, no_implicit_prelude)]",
+                false,
+            ),
+            (
+                "unknown-no-prelude",
+                "#![cfg_attr(feature=\"maybe\", no_implicit_prelude)]",
+                false,
+            ),
+            (
+                "nested-no-prelude",
+                "#![cfg_attr(not(test), cfg_attr(not(test), no_implicit_prelude))]",
+                false,
+            ),
+        ] {
+            cases.push((
+                label.into(),
+                format!("{attribute}\n"),
+                String::new(),
+                "std::assert_eq!(crate::owner(1), 1);".into(),
+                admitted,
+            ));
+        }
+        for (label, prefix, dependencies, body, admitted) in cases {
+            let root = make_tempdir("qualified-assertion-root")?;
+            write_file(
+                &root.join("Cargo.toml"),
+                &format!(
+                    "[package]\nname=\"occurrence\"\nversion=\"0.1.0\"\nedition=\"2024\"\n{dependencies}"
+                ),
+            )?;
+            if dependencies.contains("path=") {
+                write_file(
+                    &root.join("alias/Cargo.toml"),
+                    "[package]\nname=\"alternate\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+                )?;
+                write_file(
+                    &root.join("alias/src/lib.rs"),
+                    "#[macro_export] macro_rules! assert_eq { ($($t:tt)*) => { () } }\n",
+                )?;
+            }
+            write_file(
+                &root.join("src/lib.rs"),
+                &format!(
+                    "{prefix}pub fn owner(x:i32)->i32 {{ if x>0 {{x}} else {{0}} }}\n#[test] fn selected() {{ {body} }}\n"
+                ),
+            )?;
+            let index = crate::analysis::facts::build_index(&root, &[root.join("src/lib.rs")])?;
+            assert_eq!(index.tests().len(), 1, "{label}: indexed test");
+            assert!(
+                index.tests()[0]
+                    .calls
+                    .iter()
+                    .any(|call| call.name == "owner"),
+                "{label}: captured call"
+            );
+            assert!(
+                index
+                    .files()
+                    .iter()
+                    .all(|(_, file)| !file.used_lexical_fallback),
+                "{label}: parser premise"
+            );
+            let candidates = inventory_changed_test_classified_seams_at_with_config_node(
+                &root,
+                &RiprConfig::default(),
+                Path::new("src/lib.rs"),
+                Some("selected"),
+            );
+            if admitted {
+                let candidates = candidates.map_err(|error| format!("{label}: {error:?}"))?;
+                assert_eq!(candidates.selected_test_count, 1, "{label}: selected test");
+                assert!(
+                    !candidates.classified.is_empty(),
+                    "{label}: nonempty owner seams"
+                );
+                assert!(
+                    candidates
+                        .classified
+                        .iter()
+                        .all(|entry| entry.seam.owner() == "src/lib.rs::owner"),
+                    "{label}: owner identity"
+                );
+            } else {
+                assert!(
+                    matches!(
+                        candidates,
+                        Err(TargetedTestInventoryError::Selector {
+                            kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                            selected_test_count: 1,
+                            ..
+                        })
+                    ),
+                    "{label}: {candidates:?}"
+                );
+            }
+            std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_test_inventory_exact_occurrence_no_implicit_prelude_binding() -> Result<(), String> {
+        for layout in ["root", "file-backed"] {
+            for rebound in [false, true] {
+                for shape in ["assertion", "body"] {
+                    let case = format!("{layout}/{rebound}/{shape}");
+                    let root =
+                        make_tempdir(&format!("targeted-prelude-{layout}-{rebound}-{shape}"))?;
+                    write_file(
+                        &root.join("Cargo.toml"),
+                        "[package]\nname=\"occurrence\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+                    )?;
+                    let imports = if rebound {
+                        "extern crate std as real_std;\nmod std { pub use crate::real_std::assert_eq; }\n"
+                    } else {
+                        "extern crate std;\n"
+                    };
+                    let call = "crate::\nowner(1)";
+                    let selected = if shape == "body" {
+                        format!(
+                            "#[test] fn selected() {{ let value={call}; std::assert_eq!(value,1); }}\n"
+                        )
+                    } else {
+                        format!("#[test] fn selected() {{ std::assert_eq!({call},1); }}\n")
+                    };
+                    let file = root.join(if layout == "root" {
+                        "src/lib.rs"
+                    } else {
+                        "src/selected.rs"
+                    });
+                    let declaration = if layout == "root" {
+                        selected.as_str()
+                    } else {
+                        "mod selected;\n"
+                    };
+                    write_file(
+                        &root.join("src/lib.rs"),
+                        &format!(
+                            "#![no_implicit_prelude]\n{imports}pub fn owner(x:i32)->i32 {{ if x>0 {{x}} else {{0}} }}\n{declaration}"
+                        ),
+                    )?;
+                    if layout != "root" {
+                        write_file(&file, &format!("use crate::std;\n{selected}"))?;
+                    }
+                    let files = if layout == "root" {
+                        vec![root.join("src/lib.rs")]
+                    } else {
+                        vec![root.join("src/lib.rs"), file.clone()]
+                    };
+                    let index = crate::analysis::facts::build_index(&root, &files)?;
+                    assert_eq!(index.tests().len(), 1, "{case}: missing indexed test");
+                    let test = &index.tests()[0];
+                    assert_eq!(test.file, file, "{case}: wrong source");
+                    assert!(
+                        test.calls.iter().any(|call| call.name == "owner"),
+                        "{case}: missing captured owner"
+                    );
+                    assert!(
+                        !index
+                            .files()
+                            .get(&file)
+                            .ok_or("missing indexed file")?
+                            .used_lexical_fallback,
+                        "{case}: lexical fallback"
+                    );
+                    assert!(
+                        index
+                            .functions()
+                            .iter()
+                            .any(|owner| owner.name == "owner"
+                                && !owner.source_role.is_evidence_role()),
+                        "{case}: missing production owner"
+                    );
+                    let syntax = super::super::classify::OwnerPinSyntax::default();
+                    assert!(
+                        syntax.targeted_source_provenance_is_admitted(test, &index),
+                        "{case}: preserving source refused"
+                    );
+                    assert!(
+                        !syntax.targeted_macro_binding_is_unambiguous(
+                            test,
+                            test.start_line,
+                            "assert_eq",
+                            &index
+                        ),
+                        "{case}: no-implicit-prelude binding refusal disappeared"
+                    );
+                    let relative = if layout == "root" {
+                        "src/lib.rs"
+                    } else {
+                        "src/selected.rs"
+                    };
+                    let result = inventory_changed_test_classified_seams_at_with_config_node(
+                        &root,
+                        &RiprConfig::default(),
+                        Path::new(relative),
+                        Some("selected"),
+                    );
+                    if shape == "body" {
+                        let inventory = result.map_err(|error| format!("{case}: {error:?}"))?;
+                        assert_eq!(inventory.selected_test_count, 1, "{case}: selected count");
+                        assert!(
+                            !inventory.classified.is_empty(),
+                            "{case}: empty direct owner"
+                        );
+                        assert!(
+                            inventory
+                                .classified
+                                .iter()
+                                .all(|entry| entry.seam.owner() == "src/lib.rs::owner"),
+                            "{case}: wrong owner"
+                        );
+                    } else {
+                        assert!(
+                            matches!(
+                                result,
+                                Err(TargetedTestInventoryError::Selector {
+                                    kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                                    selected_test_count: 1,
+                                    ..
+                                })
+                            ),
+                            "{case}: unproven prelude operand acquired authority: {result:?}"
+                        );
+                    }
+                    std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_test_inventory_exact_occurrence_enclosing_context() -> Result<(), String> {
+        for (label, prefix, suffix, admitted) in [
+            ("plain", "", "", true),
+            ("test-cfg", "#[cfg(test)] mod available {", "}", true),
+            ("false-cfg", "#[cfg(any())] mod unavailable {", "}", false),
+            ("lint", "#[allow(dead_code)] mod available {", "}", true),
+            (
+                "inert-cfg-attr",
+                "#[cfg_attr(test, allow(dead_code))] mod available {",
+                "}",
+                true,
+            ),
+            (
+                "inactive-opaque",
+                "#[cfg_attr(not(test), opaque_attr)] mod available {",
+                "}",
+                true,
+            ),
+            (
+                "active-opaque",
+                "#[cfg_attr(test, opaque_attr)] mod unavailable {",
+                "}",
+                false,
+            ),
+            (
+                "qualified-lookalike",
+                "#[foreign::allow(dead_code)] mod unavailable {",
+                "}",
+                false,
+            ),
+            ("opaque", "#[opaque_attr] mod unavailable {", "}", false),
+            (
+                "nested-active-opaque",
+                "#[cfg_attr(test, cfg_attr(test, opaque_attr))] mod unavailable {",
+                "}",
+                false,
+            ),
+            (
+                "nested-inactive-opaque",
+                "#[cfg_attr(test, cfg_attr(not(test), opaque_attr))] mod available {",
+                "}",
+                true,
+            ),
+            (
+                "unknown-inert",
+                "#[cfg_attr(feature = \"maybe\", allow(dead_code))] mod available {",
+                "}",
+                true,
+            ),
+            (
+                "unknown-opaque",
+                "#[cfg_attr(feature = \"maybe\", opaque_attr)] mod unavailable {",
+                "}",
+                false,
+            ),
+            ("dormant", "fn dormant() {", "}", false),
+        ] {
+            for shape in ["assertion", "body", "parameter"] {
+                let root = make_tempdir(&format!("targeted-context-{label}-{shape}"))?;
+                write_file(
+                    &root.join("Cargo.toml"),
+                    "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[dev-dependencies]\nrstest = { version = \"=0.27.0\", default-features = false }\n",
+                )?;
+                let call = "crate::\nowner(1)";
+                let selected = match shape {
+                    "body" => format!(
+                        "#[test]\nfn selected() {{ let value = {call}; assert_eq!(value, 1); }}"
+                    ),
+                    "parameter" => format!(
+                        "#[cfg(test)]\nuse rstest::rstest;\n#[cfg(test)]\n#[rstest]\nfn selected(#[values({call})] x: i32) {{ assert_eq!(x, 1); }}"
+                    ),
+                    _ => format!("#[test]\nfn selected() {{ assert_eq!({call}, 1); }}"),
+                };
+                let file = root.join("src/lib.rs");
+                write_file(
+                    &file,
+                    &format!(
+                        "pub fn owner(x:i32)->i32 {{ if x>0 {{x}} else {{0}} }}\n{prefix}\n{selected}\n{suffix}\n"
+                    ),
+                )?;
+                let index =
+                    crate::analysis::facts::build_index(&root, std::slice::from_ref(&file))?;
+                assert_eq!(index.tests().len(), 1, "{label}/{shape}: missing test");
+                assert!(
+                    index.tests()[0]
+                        .calls
+                        .iter()
+                        .any(|call| call.name == "owner")
+                );
+                assert!(
+                    !index
+                        .files()
+                        .get(&file)
+                        .ok_or("missing indexed file")?
+                        .used_lexical_fallback
+                );
+                assert!(index.functions().iter().any(|owner| owner.name == "owner"));
+                let result = inventory_changed_test_classified_seams_at_with_config_node(
+                    &root,
+                    &RiprConfig::default(),
+                    Path::new("src/lib.rs"),
+                    Some("selected"),
+                );
+                if admitted {
+                    let inventory =
+                        result.map_err(|error| format!("{label}/{shape}: {error:?}"))?;
+                    assert_eq!(inventory.selected_test_count, 1);
+                    assert!(!inventory.classified.is_empty());
+                    assert!(
+                        inventory
+                            .classified
+                            .iter()
+                            .all(|entry| entry.seam.owner() == "src/lib.rs::owner")
+                    );
+                } else {
+                    assert!(
+                        matches!(
+                            result,
+                            Err(TargetedTestInventoryError::Selector {
+                                kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                                selected_test_count: 1,
+                                ..
+                            })
+                        ),
+                        "{label}/{shape}: {result:?}"
+                    );
+                }
+                std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_test_inventory_exact_occurrence_known_empty_macro_stays_masked() -> Result<(), String>
+    {
+        let root = make_tempdir("targeted-occurrence-empty-macro")?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        let prefix = r#"
+pub struct Alpha;
+impl Alpha { pub fn new(x: i32) -> i32 { if x > 0 { x } else { 0 } } }
+macro_rules! noop { ($($ignored:tt)*) => {}; }
+"#;
+        for (body, admitted) in [
+            (
+                "noop!(foreign::Alpha::new(1)); assert_eq!(Alpha::new(2), 2);",
+                true,
+            ),
+            ("assert_eq!(Alpha::new(2), 2);", true),
+            // Source-only unresolved-qualifier control: removing the empty
+            // macro must not let the foreign occurrence borrow Alpha's owner.
+            ("assert_eq!(foreign::Alpha::new(1), 1);", false),
+        ] {
+            let file = root.join("src/lib.rs");
+            write_file(
+                &file,
+                &format!("{prefix}#[test] fn selected() {{ {body} }}\n"),
+            )?;
+            let index = crate::analysis::facts::build_index(&root, &[file])?;
+            assert_eq!(index.tests().len(), 1, "{body}: indexed test");
+            assert!(
+                index.tests()[0].calls.iter().any(|call| call.name == "new"),
+                "{body}: captured call"
+            );
+            assert!(
+                index
+                    .files()
+                    .iter()
+                    .all(|(_, file)| !file.used_lexical_fallback),
+                "{body}: parser premise"
+            );
+            let result = inventory_changed_test_classified_seams_at_with_config_node(
+                &root,
+                &RiprConfig::default(),
+                Path::new("src/lib.rs"),
+                Some("selected"),
+            );
+            if admitted {
+                let inventory = result?;
+                assert_eq!(inventory.selected_test_count, 1);
+                assert_eq!(inventory.direct_call_names, ["new"]);
+                assert!(!inventory.classified.is_empty(), "{body}");
+                assert!(
+                    inventory
+                        .classified
+                        .iter()
+                        .all(|entry| { entry.seam.owner() == "src/lib.rs::impl Alpha::new" }),
+                    "{body}"
+                );
+            } else {
+                assert!(
+                    matches!(
+                        result,
+                        Err(TargetedTestInventoryError::Selector {
+                            kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                            selected_test_count: 1,
+                            ..
+                        })
+                    ),
+                    "{body}: {result:?}"
+                );
+            }
+        }
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn changed_test_inventory_exact_occurrence_declaration_only_invalidation() -> Result<(), String>
+    {
+        let root = make_tempdir("targeted-occurrence-declaration-currentness")?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        let source = "pub struct Alpha;\nimpl Alpha { pub fn new(x: i32) -> i32 { if x > 0 { x } else { 0 } } }\n#[test]\nfn selected() { assert_eq!(Alpha::new(1), 1); }\n";
+        let file = root.join("src/lib.rs");
+        write_file(&file, source)?;
+        let select = || {
+            inventory_changed_test_classified_seams_at_with_config_node(
+                &root,
+                &RiprConfig::default(),
+                Path::new("src/lib.rs"),
+                Some("selected"),
+            )
+        };
+        let cold = select()?;
+        let warm = select()?;
+        assert!(!cold.classified.is_empty());
+        assert!(!warm.classified.is_empty());
+        assert_eq!(cold.selected_test_count, 1);
+        assert_eq!(warm.selected_test_count, 1);
+        assert_eq!(
+            cold.classified
+                .iter()
+                .map(|entry| entry.seam.id())
+                .collect::<Vec<_>>(),
+            warm.classified
+                .iter()
+                .map(|entry| entry.seam.id())
+                .collect::<Vec<_>>()
+        );
+        // Keep the test/call and impl body exact. A declaration-only alias
+        // change must not borrow a prior run's parser/binding decision.
+        write_file(
+            &file,
+            &source.replacen(
+                "pub struct Alpha;",
+                "pub struct Beta;\ntype Alpha = Beta;",
+                1,
+            ),
+        )?;
+        let result = select();
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        assert!(
+            matches!(
+                result,
+                Err(TargetedTestInventoryError::Selector {
+                    kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                    selected_test_count: 1,
+                    ..
+                })
+            ),
+            "{result:?}"
         );
         Ok(())
     }

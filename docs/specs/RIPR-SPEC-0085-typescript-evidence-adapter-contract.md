@@ -105,6 +105,20 @@ actionable  = the full repair-packet contract is satisfied
 everything else = a named limitation, never a partial/implied packet
 ```
 
+### Capped workspace read disclosure
+
+Every source refused by the per-file or aggregate byte cap contributes to
+read-limit disclosure, including refusals after the first aggregate-budget
+failure. Files that still fit the remaining budget remain eligible. Ordinary
+IO failures retain their separate channel.
+
+The existing shared disclosure samples the first eight refused paths in sorted
+order. More than eight refusals add one summary with the true total in
+`affected_items`; twelve refusals therefore produce eight paths and one
+summary with `affected_items: 12`. The limited outcome remains explicit and
+recovery names the configured read caps. This bounds emitted entries without
+changing read admission, cap defaults, or TypeScript's support tier (#7868).
+
 ### Reality baseline (what already exists)
 
 ```text
@@ -278,6 +292,17 @@ Cross-language states stay honest: `typescript_oracle_established`,
 `bridge_unknown`, `cross_language_oracle_visibility_unresolved`. A mention is
 not an observation; `bridge_unknown` is a *feature* (a named limitation),
 not a guess.
+
+### Package workspace markers
+
+Structural-marker hardening (#8126) narrows the former field-presence rule for
+package-discovery evidence: a top-level `package.json` `workspaces` field marks
+a workspace only when its value is an array or object, including Yarn object
+forms. Scalars (string, number, Boolean, or `null`) do not mark a workspace.
+The same predicate governs implicit CLI roots (RIPR-SPEC-0009). The existing
+pnpm marker, selected-root traversal boundary, nearest package root, and
+package-root fallback remain unchanged. This is structural recognition without
+member/glob/schema validation or package-manager execution.
 
 ## Required Evidence
 

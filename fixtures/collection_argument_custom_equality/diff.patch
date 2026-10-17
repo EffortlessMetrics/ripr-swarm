@@ -1,0 +1,11 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -9,7 +9,7 @@
+ }
+ pub struct Bag(pub Numbers);
+ pub fn add(v: &mut Numbers, x: u32) {
+-    v.push(x);
++    v.push(x * 1);
+ }
+ #[cfg(test)]
+ mod tests {

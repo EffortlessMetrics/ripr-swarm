@@ -1,0 +1,17 @@
+pub fn gold_tier(points: i64, other: i64) -> u8 {
+    if other > 0 && 100 <= points {
+        1
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_hundred_with_no_other_is_not_gold() {
+        assert_eq!(gold_tier(100, 0), 0);
+    }
+}

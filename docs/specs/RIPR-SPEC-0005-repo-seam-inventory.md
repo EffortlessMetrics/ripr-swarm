@@ -64,7 +64,9 @@ an operand, an argument, a receiver, a field or index base, an element, a
 `for` iterable, or a non-unit return through block tails, `if` branches and
 match arms) emits no `call_presence` seam: deleting it does not compile, so no
 mutant asks that question, and the consumer's predicate, return or error seam
-carries the behavior (#6677). Diff-scope `call_deletion` probes are unchanged.
+carries the behavior (#6677). Diff-scope `call_deletion` probes are unchanged,
+except that a bare local accumulator update (`count += f(x);`) is not one
+(RIPR-SPEC-0228, Problem).
 
 The seam inventory should be deterministic: two runs over the same source tree
 with the same analyzer version and configuration must produce the same seam IDs
@@ -86,11 +88,21 @@ retain precedence. Default exclusions remain unchanged.
 Skipped files do not emit seams or supply test-grip evidence. The corpus
 fingerprint covers the analyzed set, so toggling inclusion and editing included
 source invalidate the cache, while edits confined to excluded bytes do not.
+On Unix, the stat shortcut also binds each file's device and inode. Replacing
+a containing directory cannot reuse old facts merely because replacement files
+have the same paths, sizes and timestamps. Old cache entries remain intact.
 Repo-exposure discloses `generated_rust_source_skipped` without changing
 `run_status` to a truncated scan. Both generated patterns and handwritten-file
 inclusions are consumed config for its artifact input identity, including when
 diff adapter selection excludes Rust: the inventory producer remains Rust-only.
 A before/after pair with different inclusion policy is not comparable.
+
+Classified cache reuse binds the effective typed producer-consumed configuration
+through the same canonical identity as repo-exposure artifacts. Changing an oracle
+strength while retaining identical raw configuration text, including absent text,
+invalidates full, compact and count facts. Content-read, fingerprint-rebuilt and
+current-input export keys agree on that identity. Raw configuration text remains
+an additional conservative invalidator; parser file facts remain oracle-policy-independent.
 
 ### Stable Seam ID Rules
 
@@ -244,6 +256,17 @@ owner, activation remains unknown and the
 evidence record names `constructor_field_owner_ambiguous` with repair route
 `analysis/constructor-field-observation`. RIPR must not choose one owner or
 promote the seam from the ambiguous path.
+
+Snapshot syntax and a matching field spelling alone do not establish an Insta
+snapshot's expected bytes or bind the observed receiver to the constructor's
+returned field (#8120/#8121). Such a `field_construction` observation keeps
+discrimination weak rather than closing the seam, including when an expected
+file is absent, stale, or only a `.snap.new` exists. Inline expected text does
+not establish that another receiver's same-named field observes the owner.
+This bounded admission rule does not read or qualify committed snapshots;
+exact snapshot binding and projection remain separate work. Independent exact
+field assertions can still supply strong discrimination. The delivered
+expect-test equality-operand admission retains its existing behavior.
 
 A `field_construction` seam whose related test already activates the owner and
 weakly observes one constructed field on a parser-backed *direct* owner-result

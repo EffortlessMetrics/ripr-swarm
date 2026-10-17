@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "error_return",
   "test_shape": "assert_ne_err_variant",
-  "hard_case": "Measured defect: ripr reports exact_value / strong (the spec's 'today'); the spec adopts relational_check / weak (rule 1).",
+  "hard_case": "ripr once reported exact_value / strong (the spec's 'today') and later dropped the assert_ne! as a sibling-variant pin; the spec adopts relational_check / weak (rule 1), which reveal now gives an assert_ne! that excludes a sibling from the owner's own result.",
   "truth": {
     "state": "partially_discriminated",
     "method": "runtime_mutant_kill",

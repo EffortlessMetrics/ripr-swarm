@@ -1,6 +1,6 @@
 use super::check::check_with_progress;
 use super::progress::{AnalysisProgressScope, AnalysisProgressSink};
-use super::selector::select_finding;
+use super::selector::{FindingSelection, select_finding};
 use super::{CheckInput, OutputFormat};
 use crate::config::RiprConfig;
 use crate::output;
@@ -119,13 +119,22 @@ pub(crate) fn collect_context_with_config_worktree_and_progress(
         check_with_progress(input, config, AnalysisProgressScope::Diff, sink)?
     };
     match select_finding(&output.findings, selector) {
-        Some(finding) => Ok(output::json::render_context_packet_with_explain_command(
-            finding,
-            max_related_tests,
-            Some(navigation.explain_command(&finding.id)),
-            &output.root,
-        )),
-        None => Err(crate::core_error::CoreError::selector_miss(
+        FindingSelection::Unique(finding) => {
+            Ok(output::json::render_context_packet_with_explain_command(
+                finding,
+                max_related_tests,
+                Some(navigation.explain_command(&finding.id)),
+                &output.root,
+            ))
+        }
+        FindingSelection::Ambiguous(candidates) => Err(
+            crate::core_error::CoreError::selector_miss(super::explain::ambiguous_finding_match(
+                selector,
+                &candidates,
+                &navigation.list_command(),
+            )),
+        ),
+        FindingSelection::NoMatch => Err(crate::core_error::CoreError::selector_miss(
             super::explain::no_finding_matched_fresh_run(
                 selector,
                 &navigation.list_command(),
@@ -158,6 +167,7 @@ pub(crate) fn collect_context_from_artifact(
     config: &RiprConfig,
     artifact_path: &Path,
     asserted_base: Option<&str>,
+    mode_explicit: bool,
 ) -> Result<String, crate::core_error::CoreError> {
     let findings = super::check_artifact::load_findings_for_reuse_core(
         artifact_path,
@@ -167,17 +177,26 @@ pub(crate) fn collect_context_from_artifact(
     )?;
     // As in `explain --from`, the navigation names the artifact: replaying
     // it keeps the verified identity without re-running the pipeline.
-    let navigation = super::finding_navigation(&input, Some(artifact_path), false);
+    // An explicit Draft must survive replay over a non-Draft repo default,
+    // just as it does on the fresh context and artifact explain routes.
+    let navigation = super::finding_navigation(&input, Some(artifact_path), mode_explicit);
     match select_finding(&findings, selector) {
-        Some(finding) => Ok(output::json::render_context_packet_with_explain_command(
-            finding,
-            max_related_tests,
-            Some(navigation.explain_command(&finding.id)),
-            // The artifact records the analyzed root; the packet location
-            // renders against it like every fresh route (#5996).
-            input.root.as_path(),
-        )),
-        None => Err(crate::core_error::CoreError::selector_miss(
+        FindingSelection::Unique(finding) => {
+            Ok(output::json::render_context_packet_with_explain_command(
+                finding,
+                max_related_tests,
+                Some(navigation.explain_command(&finding.id)),
+                // The artifact records the analyzed root; the packet location
+                // renders against it like every fresh route (#5996).
+                input.root.as_path(),
+            ))
+        }
+        FindingSelection::Ambiguous(candidates) => {
+            Err(crate::core_error::CoreError::selector_miss(
+                super::explain::ambiguous_finding_match(selector, &candidates, "ripr check --json"),
+            ))
+        }
+        FindingSelection::NoMatch => Err(crate::core_error::CoreError::selector_miss(
             super::explain::no_finding_matched(selector, "ripr check --json"),
         )),
     }
@@ -250,6 +269,116 @@ mod tests {
             return Err(format!("explain command must replay --diff: {command}"));
         }
         Ok(())
+    }
+
+    fn fixture_diff_input(name: &str) -> CheckInput {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("fixtures")
+            .join(name);
+        CheckInput {
+            root: fixture.join("input"),
+            diff_file: Some(fixture.join("diff.patch")),
+            mode: Mode::Draft,
+            ..CheckInput::default()
+        }
+    }
+
+    fn context_fixture(name: &str, selector: &str) -> Result<String, String> {
+        let mut input = fixture_diff_input(name);
+        let config = crate::config::load_for_root(&input.root)?;
+        crate::config::apply_to_check_input(
+            &mut input,
+            &config,
+            crate::config::CheckInputExplicit::default(),
+        );
+        collect_context_with_config(input, selector, 2, &config)
+    }
+
+    /// #8166 Slice B: the shared-location selector that `explain` refuses
+    /// must refuse identically here, as the usage-class selector miss
+    /// (prose-only, exit 2 at the CLI), naming both candidates.
+    #[test]
+    fn context_shared_location_refuses_as_ambiguous_naming_candidates() {
+        let result = context_fixture("collection_argument_plain", "src/lib.rs:3");
+        let message = result
+            .err()
+            .unwrap_or_else(|| "ambiguous location must refuse, not render".to_string());
+        assert!(
+            message.contains("matched 2 findings"),
+            "ambiguous refusal must name the match count: {message}"
+        );
+        assert!(
+            message.contains("probe:src_lib.rs:call_deletion:1f64eda5"),
+            "ambiguous refusal must name the first candidate: {message}"
+        );
+        assert!(
+            message.contains("probe:src_lib.rs:side_effect:3ceb2918"),
+            "ambiguous refusal must name the second candidate: {message}"
+        );
+    }
+
+    /// #8166 Slice B: ambiguity stays in the selector-miss family so the
+    /// CLI keeps it prose-only instead of writing a refusal envelope.
+    #[test]
+    fn context_ambiguous_selector_is_typed_as_selector_miss() -> Result<(), String> {
+        let mut input = fixture_diff_input("collection_argument_plain");
+        let config = crate::config::load_for_root(&input.root)?;
+        crate::config::apply_to_check_input(
+            &mut input,
+            &config,
+            crate::config::CheckInputExplicit::default(),
+        );
+        let error = collect_context_with_config_and_worktree(
+            input,
+            "src/lib.rs:3",
+            2,
+            &config,
+            false,
+            false,
+        )
+        .err()
+        .ok_or_else(|| "ambiguous location must refuse, not render".to_string())?;
+        if error.is_selector_miss() {
+            Ok(())
+        } else {
+            Err(format!(
+                "ambiguous selector must stay usage-class selector-miss: {error}"
+            ))
+        }
+    }
+
+    /// #8166 Slice B: a unique canonical gap identity resolves exactly the
+    /// finding that carries it.
+    #[test]
+    fn context_gap_identity_resolves_its_unique_finding() -> Result<(), String> {
+        let rendered = context_fixture(
+            "collection_argument_plain",
+            "gap:rust:src/lib.rs:add:call_deletion:call_deletion:v.push_x*1",
+        )?;
+        let packet: serde_json::Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse packet: {err}"))?;
+        if packet["probe"]["id"].as_str() == Some("probe:src_lib.rs:call_deletion:1f64eda5") {
+            Ok(())
+        } else {
+            Err(format!("gap selector resolved another finding: {rendered}"))
+        }
+    }
+
+    /// #8166 Slice B: zero matches still refuse with the no-match message,
+    /// including a 16-hex seam-shaped selector.
+    #[test]
+    fn context_unmatched_and_seam_shaped_selectors_refuse_as_no_match() {
+        for selector in ["probe:not-a-real-id", "0123456789abcdef"] {
+            let result = context_fixture("collection_argument_plain", selector);
+            let message = result
+                .err()
+                .unwrap_or_else(|| format!("unmatched selector {selector} must refuse"));
+            assert!(
+                message.contains(&format!("no finding matched {selector:?}")),
+                "zero-match refusal must keep the no-match message for {selector}: {message}"
+            );
+        }
     }
 
     #[test]

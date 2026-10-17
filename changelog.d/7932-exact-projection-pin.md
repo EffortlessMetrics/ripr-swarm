@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A projection that keeps a scalar owner's value now pins the owner: `assert_eq!(ceiling(2).min(100), 82)`, `assert_eq!(muffle(2) * 1, 78)` and `assert_eq!(vec![pile(2)][0], 86)` read `exposed` instead of an unrevealed gap. A bound that can clamp to the expected value, a projection that loses the value, a non-literal or `_`-led number, and chained projections still refuse (#7932).

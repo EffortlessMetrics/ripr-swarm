@@ -224,7 +224,11 @@ test may not need.
    against `return`: the rule does not apply.
 10. `throw new RangeError("limit " + max)` against
     `throw new RangeError("limit ")` with `toThrow("limit ")`: the rule
-    does not apply (error seam); the ladder's `exposed` stands.
+    does not apply (error seam). The change is message-only under
+    RIPR-SPEC-0243 rule 4, and `toThrow("limit ")` matches both `limit 5`
+    and `limit `, so the finding reads `weakly_exposed` (it read `exposed`
+    before the 2026-10-14 rule 4 amendment; corpus case
+    `jest-spec0248-throw-message-term`).
 
 ## Test Mapping
 

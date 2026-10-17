@@ -1,0 +1,61 @@
+{
+  "case_id": "jest-mined-tobeinstanceof-error-twice",
+  "subject_id": "authored-ts-jest-mined",
+  "diff": "cases/jest-mined-tobeinstanceof-error-twice.diff",
+  "anchor": {
+    "file": "src/errorsBroad.ts",
+    "line": 5
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate",
+  "test_shape": "jest_tobeinstanceof_base_error_twice",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9.3; mutants hand-applied to the anchor line (the set StrykerJS 10 listed for the same line in `jest-mined-tobeinstanceof`), each run with the test command on the whole package",
+    "mutants": [
+      {
+        "replacement": "if (true) {",
+        "mutated_line": "if (true) {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 403 returns a NotFound, but every class here extends Error"
+      },
+      {
+        "replacement": "if (false) {",
+        "mutated_line": "if (false) {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 404 returns a Forbidden, but every class here extends Error"
+      },
+      {
+        "replacement": "if (404 !== status) {",
+        "mutated_line": "if (404 !== status) {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: both statuses take the other branch, but every class here extends Error"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0249's problem change with both pins on the base class: `expect(errorForBroad(404)).toBeInstanceOf(Error)` and `expect(errorForBroad(403)).toBeInstanceOf(Error)`. `NotFound` and `Forbidden` both extend `Error`, so no mutant of the comparison fails the test. RIPR-SPEC-0249 example 4: not `exposed`. ripr reports `weakly_exposed` with relational_check / weak, matching the spec and the truth.",
+  "labeling_observation": {
+    "ripr_commit": "9073928",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0249#4"
+  ]
+}

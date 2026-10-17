@@ -38,8 +38,9 @@ pub(crate) enum PilotCurrentChange {
         /// out by design (build scripts, `xtask/`, roots outside `src`),
         /// root-relative and slash separated (#6944).
         diff_only: Vec<(String, DiffOnlySource)>,
-        /// Coverage recorded by a successful changed-file supplement; absent
-        /// when classification failed or did not run.
+        /// Shared source-admission observation for the changed Rust files,
+        /// independent of whether supplemental classification ran or succeeded.
+        /// Absent when no source-admission observation was requested.
         absent_file_limitations: Option<Vec<AnalysisLimitation>>,
     },
     /// The default diff loaded and is empty: there is no current change.
@@ -126,6 +127,14 @@ impl PilotCurrentChange {
     /// its own when the inventory seam limit cut it (#6943). Empty without a
     /// change.
     pub(crate) fn changed_rust_files(&self) -> Vec<PathBuf> {
+        self.changed_files()
+            .into_iter()
+            .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+            .collect()
+    }
+
+    /// All decoded diff paths, including non-Rust vendor checksum markers.
+    pub(crate) fn changed_files(&self) -> Vec<PathBuf> {
         let Self::Changed { lines, .. } = self else {
             return Vec::new();
         };
@@ -133,7 +142,6 @@ impl PilotCurrentChange {
         // raw path bytes, so decode them back to the on-disk spelling.
         lines
             .keys()
-            .filter(|path| path.ends_with(".rs"))
             .map(|path| crate::analysis::decode_stable_path_text(path))
             .collect()
     }
@@ -237,7 +245,7 @@ impl PilotCurrentChange {
         self
     }
 
-    /// Replace the supplement's recorded coverage, including an empty recovery.
+    /// Replace the recorded source admission, including an empty recovery.
     pub(crate) fn with_absent_file_limitations(
         mut self,
         limitations: Option<Vec<AnalysisLimitation>>,
@@ -252,7 +260,7 @@ impl PilotCurrentChange {
         self
     }
 
-    /// Canonical absent-file disclosures, or no successful supplement record.
+    /// Canonical absent-file disclosures, or no source-admission observation.
     pub(crate) fn absent_file_limitations(&self) -> Option<&[AnalysisLimitation]> {
         match self {
             Self::Changed {
@@ -309,7 +317,7 @@ impl PilotCurrentChange {
     }
 
     /// Whether a changed new-side line falls inside the seam's source span
-    /// (its display line through the last line of its expression text).
+    /// (parser-owned match-head lines, otherwise the expression-text span).
     pub(crate) fn touches(&self, entry: &ClassifiedSeam) -> bool {
         self.touches_seam(&entry.seam)
     }
@@ -325,8 +333,13 @@ impl PilotCurrentChange {
         let Some(changed) = lines.get(&normalized(relative)) else {
             return false;
         };
-        let start = seam.display_line();
-        let end = start + seam.expression().lines().count().saturating_sub(1);
+        let (start, end) = seam.source_lines().unwrap_or_else(|| {
+            let start = seam.display_line();
+            (
+                start,
+                start + seam.expression().lines().count().saturating_sub(1),
+            )
+        });
         changed.range(start..=end).next().is_some()
     }
 }

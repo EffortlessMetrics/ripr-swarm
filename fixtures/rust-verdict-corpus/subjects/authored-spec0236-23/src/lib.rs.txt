@@ -1,0 +1,13 @@
+fn tier(total: u64) -> u64 {
+    if total >= 100 { 20 } else { 0 }
+}
+
+macro_rules! priced {
+    ($total:expr) => {
+        tier($total)
+    };
+}
+
+pub fn run(total: u64) -> u64 {
+    priced!(total)
+}

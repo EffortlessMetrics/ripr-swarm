@@ -21,10 +21,10 @@ mod typescript;
 pub(crate) use diagnostic::ConfigDiagnostic;
 #[cfg(test)]
 use diagnostic::ConfigLocationStatus;
-/// Test-only: lets output-layer unit tests construct an enabled-language set
-/// directly, because `load_for_root` intentionally refuses preview languages
-/// a feature-less binary cannot analyze.
-#[cfg(test)]
+/// `LanguagesConfig` is crate-visible beyond tests since #7386: the analysis
+/// pipeline and check entry points thread the per-language config (including
+/// `handwritten_files`) into diff-mode discovery, so production paths name the
+/// type, not only output-layer unit tests.
 pub(crate) use model::LanguagesConfig;
 use model::{BunUbProfileConfig, FindingSeverityConfig, ProfilesConfig, SeamSeverityConfig};
 pub use model::{
@@ -33,23 +33,27 @@ pub use model::{
     TestHarnessKind, TestHarnessRegistration, TypescriptConfig,
 };
 pub(crate) use model::{PERL_EXECUTABLE_OPT_IN_ENV, RustLanguageConfig};
+
 #[cfg(test)]
 pub(crate) use python::{PYTHON_EXCLUDED_DIRS, PYTHON_VENDOR_DIR};
 pub(crate) use python::{
-    PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, detect_python_project,
-    is_detectable_excluded_python_path, is_detectable_generated_python_path,
-    is_detectable_python_source_name, is_python_dir_pruned_from_repo_discovery,
-    is_python_excluded_dir_everywhere, python_project_marker_name, python_source_dir_marker_name,
+    PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, declared_python_handwritten_under,
+    detect_python_project, is_declared_handwritten_python_path, is_detectable_excluded_python_path,
+    is_detectable_generated_python_path, is_detectable_python_source_name,
+    is_python_dir_pruned_from_repo_discovery, is_python_excluded_dir_everywhere,
+    python_project_marker_name, python_source_dir_marker_name,
     source_dir_contains_detectable_python,
 };
 pub(crate) use toolchain_file::{repository_toolchain_path_pin, toolchain_path_pin_refusal};
 #[cfg(feature = "lang-typescript")]
 pub(crate) use typescript::{
+    declared_typescript_handwritten_under, is_declared_handwritten_typescript_path,
     is_detectable_excluded_typescript_path, is_detectable_generated_typescript_path,
     is_typescript_dir_pruned_from_discovery,
 };
 
 pub(crate) const CONFIG_FILE_NAME: &str = "ripr.toml";
+
 pub(crate) const DEFAULT_CONTEXT_RELATED_TESTS: usize = 5;
 pub(crate) const DEFAULT_LSP_SEAM_DIAGNOSTICS: bool = true;
 const DEFAULT_SUPPRESSIONS_PATH: &str = ".ripr/suppressions.toml";
@@ -189,6 +193,15 @@ fn discover_config_path(root: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Structural package workspace marker shared by CLI roots and TypeScript
+/// package discovery. Arrays and objects (including Yarn's object form) mark
+/// workspaces; scalars do not. This does not validate members, globs, or schemas.
+pub(crate) fn package_json_declares_workspace(manifest: &serde_json::Value) -> bool {
+    manifest
+        .get("workspaces")
+        .is_some_and(|workspaces| workspaces.is_array() || workspaces.is_object())
+}
+
 fn is_repository_boundary(directory: &Path) -> bool {
     // The directory entry bounds repository policy even when its target is
     // missing or cyclic. Following it would admit an enclosing repo's config.
@@ -214,11 +227,38 @@ pub(crate) fn load_for_root(root: &Path) -> Result<RiprConfig, String> {
         return default_config_for_root(root);
     };
     let text = crate::bounded_input::read_to_string(&path)
-        .map_err(|err| format!("read {} failed: {err}", path.display()))?;
-    let mut config = parse_config(&text).map_err(|err| format!("{}: {err}", path.display()))?;
+        .map_err(|err| config_load_read_error_for_host(&path, &err, cfg!(windows)))?;
+    let mut config = parse_config(&text)
+        .map_err(|err| config_load_parse_error_for_host(&path, &err, cfg!(windows)))?;
+    // Identity stays the discovered canonical path: symlink equality and
+    // `source_path` consumers compare filesystem identity, not the display
+    // spelling (#7652).
     config.source_path = Some(path);
     config.source_text = Some(text);
     Ok(config)
+}
+
+/// User-facing config path for load errors (#7652). Discovery and
+/// `source_path` keep the canonical form; only the diagnostic interpolates
+/// through the shared renderer so a Windows drive-letter verbatim prefix
+/// does not leak into stderr or the JSON refusal `message`.
+fn config_load_error_path_for_host(path: &Path, windows: bool) -> String {
+    crate::output::path::human_path_text(&path.to_string_lossy(), windows)
+}
+
+fn config_load_parse_error_for_host(path: &Path, err: &str, windows: bool) -> String {
+    format!("{}: {err}", config_load_error_path_for_host(path, windows))
+}
+
+fn config_load_read_error_for_host(
+    path: &Path,
+    err: &impl std::fmt::Display,
+    windows: bool,
+) -> String {
+    format!(
+        "read {} failed: {err}",
+        config_load_error_path_for_host(path, windows)
+    )
 }
 
 /// Whether config discovery would find a `ripr.toml` entry for this root
@@ -488,6 +528,33 @@ pub(crate) fn config_error_summary(error: &str) -> String {
     }
 }
 
+/// Human doctor lines for a config load error. Compact is the source-free
+/// summary. Verbose adds remaining parser-reason lines (unknown field,
+/// unclosed table, allowlisted misplaced-key hint) and never the TOML
+/// source excerpt.
+pub(crate) fn config_error_display_lines(error: &str, verbose: bool) -> Vec<String> {
+    let summary = config_error_summary(error);
+    let mut lines = vec![summary.clone()];
+    if !verbose {
+        return lines;
+    }
+    for line in error.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        if is_toml_source_excerpt_line(line) {
+            continue;
+        }
+        if summary.contains(line) || lines.iter().any(|existing| existing.contains(line)) {
+            continue;
+        }
+        lines.push(line.to_string());
+    }
+    lines
+}
+
+fn is_toml_source_excerpt_line(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed == "|" || trimmed.starts_with('|') || line.contains(" | ")
+}
+
 #[cfg(test)]
 pub(crate) fn tests_only_parse(text: &str) -> Result<RiprConfig, String> {
     parse_config(text)
@@ -606,8 +673,33 @@ impl RiprConfig {
                         parse_generated_file_patterns(&patterns)?;
                 }
                 if let Some(paths) = rust.handwritten_files {
-                    config.languages.rust.handwritten_files = parse_handwritten_files(&paths)?;
+                    config.languages.rust.handwritten_files = parse_handwritten_files(
+                        &paths,
+                        "languages.rust.handwritten_files",
+                        "a Rust `.rs` file",
+                        |extension| extension == "rs",
+                    )?;
                 }
+            }
+            if let Some(python) = languages.python
+                && let Some(paths) = python.handwritten_files
+            {
+                config.languages.python.handwritten_files = parse_handwritten_files(
+                    &paths,
+                    "languages.python.handwritten_files",
+                    "a Python `.py` file",
+                    |extension| extension == "py",
+                )?;
+            }
+            if let Some(typescript) = languages.typescript
+                && let Some(paths) = typescript.handwritten_files
+            {
+                config.languages.typescript.handwritten_files = parse_handwritten_files(
+                    &paths,
+                    "languages.typescript.handwritten_files",
+                    "a TypeScript/JavaScript source file (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs` or `.cjs`)",
+                    crate::analysis::is_ts_js_source_extension,
+                )?;
             }
         }
         if let Some(profiles) = raw.profiles {
@@ -626,8 +718,28 @@ impl RiprConfig {
             if perl.timeout_ms == Some(0) {
                 return Err("perl.timeout_ms must be at least 1 millisecond; remove the key for the default (30000)".to_string().into());
             }
+            // #7669: `[perl].producer` is a closed managed-mode selector.
+            // Reuse `is_managed_perl_producer` so a typo cannot pass
+            // `ripr config validate` and then silently skip managed mode.
+            let producer = match perl.producer {
+                Some(value) => {
+                    let name = value.get_ref();
+                    if !crate::app::is_managed_perl_producer(name) {
+                        return Err(Box::new(ConfigDiagnostic::at_value(
+                            format!(
+                                "perl.producer `{name}` is not supported; expected perl-ripr-facts, perllsp, or perl-lsp"
+                            ),
+                            "perl.producer",
+                            value.span(),
+                            text,
+                        )));
+                    }
+                    Some(name.clone())
+                }
+                None => None,
+            };
             config.perl = PerlConfig {
-                producer: perl.producer,
+                producer,
                 executable: perl.executable.map(PathBuf::from),
                 timeout_ms: perl.timeout_ms.unwrap_or(30_000),
                 // Repository config: ripr creates, writes and renames files
@@ -700,8 +812,12 @@ fn parse_generated_file_patterns(values: &[String]) -> Result<Vec<String>, Strin
     Ok(parsed)
 }
 
-fn parse_handwritten_files(values: &[String]) -> Result<Vec<String>, String> {
-    let field = "languages.rust.handwritten_files";
+fn parse_handwritten_files(
+    values: &[String],
+    field: &str,
+    extension_desc: &str,
+    extension_ok: impl Fn(&str) -> bool,
+) -> Result<Vec<String>, String> {
     let mut parsed = Vec::with_capacity(values.len());
     for value in values {
         if value.chars().any(char::is_control) {
@@ -713,8 +829,12 @@ fn parse_handwritten_files(values: &[String]) -> Result<Vec<String>, String> {
             ));
         }
         let path = parse_relative_path(field, value)?;
-        if path.extension().is_none_or(|extension| extension != "rs") {
-            return Err(format!("{field} must identify a Rust `.rs` file"));
+        if path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_none_or(|extension| !extension_ok(extension))
+        {
+            return Err(format!("{field} must identify {extension_desc}"));
         }
         let normalized = path.to_string_lossy().replace('\\', "/");
         if parsed.contains(&normalized) {
@@ -788,6 +908,8 @@ struct RawTypescriptConfig {
 struct RawLanguagesConfig {
     enabled: Option<Vec<String>>,
     rust: Option<RawRustLanguageConfig>,
+    python: Option<RawPythonLanguageConfig>,
+    typescript: Option<RawTypescriptLanguageConfig>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -799,8 +921,20 @@ struct RawRustLanguageConfig {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+struct RawPythonLanguageConfig {
+    handwritten_files: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawTypescriptLanguageConfig {
+    handwritten_files: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct RawPerlConfig {
-    producer: Option<String>,
+    producer: Option<toml::Spanned<String>>,
     executable: Option<String>,
     timeout_ms: Option<u64>,
     cache_dir: Option<String>,
@@ -1117,6 +1251,12 @@ fn parse_severity(field: &str, value: &str, allow_off: bool) -> Result<ConfigSev
 }
 
 fn parse_relative_path(field: &str, value: &str) -> Result<PathBuf, String> {
+    // TOML permits escaped NULs, but filesystem paths cannot contain them.
+    // Reject them here instead of validating a path that later looks absent
+    // (Path::exists) or fails to open. Do not echo the control byte.
+    if value.contains('\0') {
+        return Err(format!("{field} must not contain NUL characters"));
+    }
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return Err(format!("{field} must not be empty"));

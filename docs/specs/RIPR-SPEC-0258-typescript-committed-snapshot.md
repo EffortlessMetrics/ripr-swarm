@@ -1,0 +1,261 @@
+# RIPR-SPEC-0258: TypeScript committed snapshot entry
+
+Status: proposed
+
+Owner: product / analysis
+
+Created: 2026-10-13
+
+Linked proposal:
+
+- None yet
+
+Linked ADRs:
+
+- None yet
+
+Linked plan:
+
+- None yet
+
+Linked issues:
+
+- #6654 (TypeScript corpus cases scored false after RIPR-SPEC-0243)
+
+Linked PRs:
+
+- #6686 (TypeScript verdict corpus)
+
+Support-tier impact:
+
+- No tier change. TypeScript stays Preview.
+- Claim boundaries remain governed by
+  [support tiers](../status/SUPPORT_TIERS.md).
+
+Policy impact:
+
+- Register this spec in `policy/doc-artifacts.toml` and
+  `.ripr/traceability.toml`.
+- No schema version bump. No new oracle kind, strength, class, relation
+  reason or limitation name.
+- Rust is not changed.
+
+## Problem
+
+The TypeScript verdict corpus reads `jest-spec0234-ex03` as a false gap:
+
+```ts
+// src/priceEx03.ts
+export function priceEx03(amount: number): number {
+  if (amount > 100) {
+    return amount - 10;   // before
+    return amount - 20;   // after
+  }
+  return amount;
+}
+
+// test/priceEx03.test.ts
+test("priceEx03", () => {
+  expect(priceEx03(150)).toMatchSnapshot();
+});
+
+// test/__snapshots__/priceEx03.test.ts.snap
+exports[`priceEx03 1`] = `140`;
+```
+
+RIPR-SPEC-0243 reads every `toMatchSnapshot()` as `snapshot` / medium with
+`typescript_snapshot_discriminator_unresolved`, and RIPR-SPEC-0247 rule 3
+promotes only a literal inline snapshot. The finding stays
+`weakly_exposed`, although Jest compares `130` with the committed `140` and
+fails.
+
+## Behavior
+
+**Rule 1. A committed entry the assertion compares with pins the value.**
+`expect(...).toMatchSnapshot()` with no argument, or under Jest with one
+hint argument (rule 2), reads `snapshot` /
+strong, without `typescript_snapshot_discriminator_unresolved`, when the
+runner's entry for it can be named and is committed:
+
+- the snapshot file is `__snapshots__/<test file name>.snap` beside the
+  test file, read under the per-file read cap, and its first line starts
+  with `// Jest Snapshot v1` or `// Vitest Snapshot v1`;
+- no `package.json`, `jest.config.*`, `vitest.config.*`, `vite.config.*`
+  or `vitest.workspace.*` in the test file's directory or any ancestor up
+  to the root mentions `snapshotResolver`, `resolveSnapshotPath`,
+  `snapshotEnvironment`, `updateSnapshot`, `--update`, ` -u` or `"-u"`, no
+  runner config holds an `update` key (`update:`, `update :`,
+  `"update":`), and each such file reads; a moved file or a run that
+  rewrites snapshots no longer fails on a changed value;
+- the header agrees with the runner those files name: a Vitest header
+  needs a `vite*` config or a mention of `vitest`, and a Jest header needs
+  neither. The header names the runner that wrote the file, and the other
+  runner keys titles with its own separator;
+- the file holds no `.concurrent` test, which may record a snapshot under
+  another test's title;
+- in a committed-history run (the default diff), neither the snapshot
+  file nor any `package.json` or runner config in those directories differs
+  from `HEAD` (edited, deleted, untracked or ignored): the test file is read
+  at `HEAD`, so its entry must be the one `HEAD` holds;
+- every snapshot matcher call in the test file sits in a test body (text
+  `Snapshot`, optional whitespace, `(`; counting inline snapshots, which
+  advance the same counter),
+  so no hook or helper advances the counter;
+- the test body holds exactly one such call, and this assertion is its
+  only `toMatchSnapshot`, with no argument or with the rule 2 hint;
+- no other test's describe titles and title join to the same key, or to a
+  `<titles>` that the key extends with `: ` under Jest or ` > ` under
+  Vitest, since that test's call may carry a hint that makes the same key
+  and would share the counter;
+- no title holds `` ` ``, `\`, `$`, a line break or nothing, which the file
+  escapes or the runner formats;
+- the file holds the entry `<titles> 1` exactly once, at the start of a
+  line as the runner writes it, and no `<titles> 2`,
+  where `<titles>` joins the describe titles and the test title with a
+  space for Jest and with ` > ` for Vitest, followed under rule 2 by
+  `: <hint>`. A second entry means the assertion ran more than once when
+  the file was written.
+
+**Rule 2. A Jest hint names its entry.** Jest's
+`toMatchSnapshot(hint)` records its entry under `<titles>: <hint>
+<counter>`, with the counter kept per hinted name (jest-snapshot 30.2.0
+builds the name as `` `${currentTestName}: ${hint}` `` when the hint is
+non-empty and counts per that name in `SnapshotState.match`). A call reads under rule
+1 with that key when the file's header is `// Jest Snapshot v1` and its
+one argument is a single- or double-quoted string literal, followed by
+`)` after optional whitespace, that is not empty (Jest drops an empty
+hint) and holds no `` ` ``, `$`, `\` or line break, so its source text is
+its value and the file writes it unescaped. The body must name
+`toMatchSnapshot` once, so the hint read is the credited call's even when a
+string or comment also names the matcher. A template, an identifier, a
+concatenation, a comment before the literal, a second argument, and every
+Vitest hint keep the RIPR-SPEC-0243 reading.
+
+A matcher with a property-matcher argument, any other hint, `.not`, an inline
+snapshot without a literal and every refused shape keep their
+RIPR-SPEC-0243 / RIPR-SPEC-0247 reading. The class still follows the
+RIPR-SPEC-0243 ladder, including the observation guard.
+
+### Decisions
+
+1. **Read the committed file.** The runner compares the serialized value
+   with the committed entry and fails on any difference (`--ci` also fails
+   on a missing entry), so the entry is as much a discriminator as a
+   literal inline snapshot. This reverses the RIPR-SPEC-0247 rule 3 choice
+   to keep a committed file medium because its content is not in the test
+   diff: whether a reviewer reads the expected text does not change
+   whether the test fails. Rejected: keep medium, which leaves a
+   discriminated case false actionable and asks for a test the user
+   already wrote.
+2. **Name the entry, or refuse.** Only an entry the reader can name from
+   the test file reads strong. Rejected: credit any entry under the test's
+   title, which credits an assertion a hook's or another call's entry
+   satisfies.
+
+### Known limits
+
+- The snapshot file and configs are read from the working tree. A
+  committed-history run refuses when one differs from `HEAD`; a
+  `--worktree` run reads the working tree throughout.
+- A test registered from a template title (`%s`, `%#`, a non-literal
+  describe title) has no matching entry and stays medium. A `test.each`
+  with one row and a literal title runs once and can read strong.
+- A runner config passed by path (`--config config/jest.js`) or kept above
+  the analysis root is not read.
+- A stale entry (one that no longer matches the base behavior) already
+  fails the test; the reader does not compare entry and behavior.
+
+## Required Evidence
+
+- On the TypeScript verdict corpus, `jest-spec0234-ex03` moves from `gap`
+  to `credited` and no other row moves.
+- `cargo xtask goldens check` reports no drift.
+
+## Non-Goals
+
+- No reading of the entry's value.
+- No change to inline snapshots, `toThrowErrorMatchingSnapshot` or
+  `toMatchFileSnapshot`.
+- No change to Rust, Python or other languages.
+
+## Acceptance Examples
+
+1. The corpus case: `snapshot` / strong, `exposed`.
+2. The same test under `describe("price")` with entry `price priceEx03 1`
+   (Jest) or `price > priceEx03 1` (Vitest): strong. A Vitest file keyed
+   with a space: medium.
+3. No snapshot file, an entry for another test, an unknown header, a
+   second entry `priceEx03 2`, or the entry only inside a comment:
+   medium.
+4. A second snapshot call in the body (inline included), a snapshot call
+   in an `afterEach` hook, two tests titled `priceEx03`, tests
+   `a b` / `c` and `a` / `b c` (both keyed `a b c`), a `test.concurrent`,
+   or an empty title or one holding `` ` ``, `$` or `\`: medium. A Jest
+   hint `toMatchSnapshot("cap")` (or `'cap'`) in test `priceSnapHint`
+   with the entry `priceSnapHint: cap 1`: strong. The same call against
+   only `priceSnapHint 1`, `priceSnapHint: cape 1` or
+   `priceSnapHint cap 1`, or with a second entry `priceSnapHint: cap 2`;
+   a template, identifier, concatenated, empty or `$`- or `\`-holding
+   hint; a second test titled `priceSnapHint` or `priceSnapHint: cap`;
+   a string naming `toMatchSnapshot` beside the call; or a Vitest file:
+   medium. Under Vitest, `describe("price")` / `test("cap")` beside a
+   top-level `test("price")` reads medium, as both may key `price > cap`.
+5. A `snapshotResolver` or `updateSnapshot` in `jest.config.js`, a
+   `resolveSnapshotPath`, `update: true` or `update : true` in
+   `vitest.config.ts`, a `snapshotEnvironment` or `"update": true` there,
+   the same in `vite.config.ts` or `vitest.workspace.ts`, `jest -u`,
+   `jest --updateSnapshot`, `vitest --update` or `["-u"]` in a
+   `package.json` at the root or in the test directory, a
+   `vitest.config.ts` beside a Jest-headered file, or a Vitest-headered
+   file with only a Jest `package.json`: medium. A `jest --ci` script, a
+   `package.json` script named `update`, or a plain `vitest.config.ts`
+   beside a Vitest-headered file: strong.
+6. In a committed-history run, an edited or untracked snapshot file, or an
+   edited `package.json` or runner config in the test's directory or an
+   ancestor: medium. A `toMatchSnapshot ()` call with a space before `(`
+   counts as a snapshot call.
+
+## Test Mapping
+
+- `crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs`:
+  `committed_jest_snapshot_entry_reads_strong` pins example 1;
+  `committed_snapshot_keys_join_describe_titles_per_runner` pins example 2;
+  `snapshot_without_its_committed_entry_stays_medium` pins example 3;
+  `snapshot_whose_counter_cannot_be_named_stays_medium`,
+  `committed_jest_hint_entry_reads_strong`,
+  `hinted_snapshot_without_its_exact_entry_stays_medium` and
+  `hinted_snapshot_sharing_its_counter_stays_medium` pin example 4;
+  `snapshot_location_or_update_override_stays_medium` pins example 5;
+  `snapshot_input_differing_from_head_stays_medium` pins example 6.
+- `crates/ripr/src/analysis/committed_source/tests.rs`:
+  `porcelain_parser_records_unrouted_snapshot_inputs` and
+  `snapshot_inputs_differ_only_in_their_own_directory` pin the
+  committed-history record example 6 reads.
+- `fixtures/typescript-verdict-corpus` labels each example with runtime
+  truth: `jest-spec0234-ex03` (example 1) and
+  `jest-spec0258-ex02-describe-title` (example 2) read `credited`;
+  `jest-spec0258-ex03-no-snapshot-file` (example 3) and
+  `jest-spec0258-ex05-update-script` (example 5) read `gap`, as their
+  runs let the edit pass; `jest-spec0258-ex04-hint` (example 4) reads
+  `credited`; and
+  `jest-spec0258-ex06-spaced-call` (example 6's spaced call) reads
+  `credited`.
+
+## Implementation Mapping
+
+- `crates/ripr/src/analysis/language/typescript/committed_snapshot.rs`:
+  `promote_committed_snapshots`, `committed_snapshot_file`,
+  `runner_configs`, `joined_title`, `snapshot_key`, `literal_hint`,
+  `snapshot_calls` and `mentions_update_key`.
+- `crates/ripr/src/analysis/committed_source.rs`: the committed-history
+  probe records snapshot inputs that differ from `HEAD`;
+  `snapshot_inputs_differ_in` answers for one directory.
+- `crates/ripr/src/analysis/language/router.rs`: `snapshot_input` names
+  the files.
+- `crates/ripr/src/analysis/language/typescript/mod.rs`: calls the
+  promotion once per extracted test file.
+
+## Metrics
+
+- `typescript_committed_snapshot_mismatch`: acceptance examples whose
+  observed reading differs from this spec. Target: zero.
