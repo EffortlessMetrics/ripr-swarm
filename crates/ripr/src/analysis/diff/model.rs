@@ -772,9 +772,10 @@ mod tests {
 
     #[test]
     fn lines_look_alike_rejects_lines_above_the_token_cap() {
-        // These 257/258-token lines would look alike without the token cap.
-        let old: String = (0..257).map(|n| format!("a{n}+")).collect();
-        let new = format!("{old}extra");
+        // These distinct 257-token lines would look alike without the token cap.
+        let shared: String = (0..256).map(|n| format!("a{n}+")).collect();
+        let old = format!("{shared}old");
+        let new = format!("{shared}fresh");
         assert!(!lines_look_alike(&old, &new));
     }
 
