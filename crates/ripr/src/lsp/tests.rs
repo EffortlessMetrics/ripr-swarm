@@ -8660,6 +8660,12 @@ fn diagnostic_for_finding_follows_editor_lines_when_file_uses_bare_cr() -> Resul
             diagnostic.range.start.line
         ));
     }
+    if diagnostic.range.end.line != 2 {
+        return Err(format!(
+            "expected a single-line range ending on line 2, got {}",
+            diagnostic.range.end.line
+        ));
+    }
     if diagnostic.range.start.character != 11 || diagnostic.range.end.character != 17 {
         return Err(format!(
             "expected characters 11..17, got {}..{}",
@@ -8673,6 +8679,22 @@ fn diagnostic_for_finding_follows_editor_lines_when_file_uses_bare_cr() -> Resul
 fn saved_editor_line_counts_bare_crs_on_earlier_analyzer_lines() {
     assert_eq!(
         super::diagnostics::saved_editor_line("a\rb\nc\n", 1, "c"),
+        Some((2, "c".to_string()))
+    );
+}
+
+#[test]
+fn saved_editor_line_falls_back_to_the_first_editor_line_when_expression_is_empty_or_absent() {
+    let contents = "a\rb\rc\nd\n";
+    for expression in ["", "missing"] {
+        assert_eq!(
+            super::diagnostics::saved_editor_line(contents, 0, expression),
+            Some((0, "a".to_string())),
+            "expression {expression:?}"
+        );
+    }
+    assert_eq!(
+        super::diagnostics::saved_editor_line(contents, 0, "c"),
         Some((2, "c".to_string()))
     );
 }
