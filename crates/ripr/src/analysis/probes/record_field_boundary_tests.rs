@@ -5,7 +5,7 @@ use super::classify::parser_probe_shapes_for_changed_line;
 use super::diff::probes_for_file;
 use crate::analysis::diff::{ChangedFile, ChangedLine};
 use crate::analysis::rust_index::{ProbeShapeKind, RustIndex};
-use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+use crate::analysis::syntax::{LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter};
 use crate::domain::{Probe, ProbeFamily};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -349,5 +349,197 @@ fn an_unchanged_call_beside_an_operator_still_reads_unchanged() -> Result<(), St
         .map(|shape| shape.text)
         .collect::<Vec<_>>();
     assert_eq!(calls, vec!["g(b)"], "{calls:?}");
+    Ok(())
+}
+
+/// #8450: a literally empty `fn` body elsewhere in the file must not widen
+/// a later field-construction probe to the whole changed line. The parser
+/// shape is the field initializer; the whole-line array is the lexical
+/// fallback that hides the element pin.
+fn rows_source_with_prefix(prefix: &str) -> String {
+    format!(
+        "pub struct Row {{
+    pub total: u32,
+}}
+{prefix}
+pub fn rows(a: u32, b: u32) -> [Row; 2] {{
+    [Row {{ total: 0 }}, Row {{ total: a + b + 0 }}]
+}}
+"
+    )
+}
+
+fn field_line_of(source: &str) -> Result<usize, String> {
+    source
+        .lines()
+        .position(|line| line.contains("a + b + 0"))
+        .map(|index| index + 1)
+        .ok_or_else(|| format!("fixture lost the changed field line: {source}"))
+}
+
+fn field_construction_debug(source: &str) -> Result<(Vec<String>, String), String> {
+    let path = PathBuf::from("src/lib.rs");
+    let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+    if facts.used_lexical_fallback {
+        return Err(format!(
+            "parser must keep this source; lexical fallback would force the whole line: {source}"
+        ));
+    }
+    let rows = facts
+        .functions
+        .iter()
+        .find(|function| function.name == "rows")
+        .ok_or_else(|| format!("rows was not summarized: {source}"))?;
+    if !rows.body.as_str().contains("total: a + b + 0") {
+        return Err(format!(
+            "rows body lost the field initializer: {:?}",
+            rows.body.as_str()
+        ));
+    }
+    let line = field_line_of(source)?;
+    let shapes: Vec<String> = facts
+        .probe_shapes
+        .iter()
+        .filter(|shape| shape.kind == ProbeShapeKind::FieldConstruction)
+        .map(|shape| {
+            format!(
+                "{}:{}..{} {:?}",
+                shape.start_line, shape.start_byte, shape.end_byte, shape.text
+            )
+        })
+        .collect();
+    let functions: Vec<String> = facts
+        .functions
+        .iter()
+        .map(|function| {
+            format!(
+                "{} {}..{}",
+                function.name, function.start_line, function.end_line
+            )
+        })
+        .collect();
+    let probes = probes_at(source, line)?;
+    let expressions = field_construction_expressions(&probes)
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    let debug = format!("functions={functions:?} shapes={shapes:?} probes={probes:?}");
+    Ok((expressions, debug))
+}
+
+fn assert_field_initializer(label: &str, source: &str) -> Result<(), String> {
+    let (expressions, debug) = field_construction_debug(source)?;
+    if !expressions
+        .iter()
+        .any(|expression| expression == "total: a + b + 0")
+    {
+        return Err(format!(
+            "{label} must keep the field initializer, got {expressions:?} ({debug})"
+        ));
+    }
+    if expressions
+        .iter()
+        .any(|expression| expression.contains("[Row"))
+    {
+        return Err(format!(
+            "{label} must not fall back to the whole array line, got {expressions:?} ({debug})"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn an_empty_fn_body_elsewhere_still_probes_the_field_initializer() -> Result<(), String> {
+    // The reported defect used `fn drop(&mut self) {}` before `rows`. These
+    // siblings pin that any empty `fn` body in the file keeps the initializer,
+    // including the one-line impl form and a compact `{}` with no spaces.
+    for (label, prefix) in [
+        (
+            "multiline empty Drop",
+            "impl Drop for Row {\n    fn drop(&mut self) {}\n}\n",
+        ),
+        (
+            "one-line empty Drop",
+            "impl Drop for Row { fn drop(&mut self) {} }\n",
+        ),
+        (
+            "compact empty Drop",
+            "impl Drop for Row { fn drop(&mut self){} }\n",
+        ),
+        (
+            "comment-only Drop",
+            "impl Drop for Row {\n    fn drop(&mut self) { /* no-op */ }\n}\n",
+        ),
+        (
+            "statement Drop",
+            "impl Drop for Row {\n    fn drop(&mut self) {\n        let _ = ();\n    }\n}\n",
+        ),
+        ("free empty fn", "fn helper() {}\n"),
+        ("compact free empty fn", "fn helper(){}\n"),
+        ("spaced empty fn", "fn helper() { }\n"),
+        (
+            "empty trait default",
+            "trait Hook {\n    fn hook(&mut self) {}\n}\n",
+        ),
+    ] {
+        assert_field_initializer(label, &rows_source_with_prefix(prefix))?;
+    }
+    let crlf = rows_source_with_prefix("fn helper() {}\n").replace('\n', "\r\n");
+    assert_field_initializer("CRLF empty fn", &crlf)?;
+    let after = format!(
+        "{}fn later() {{}}\n",
+        rows_source_with_prefix("fn helper() {}\n")
+    );
+    assert_field_initializer("empty fn after rows", &after)?;
+    Ok(())
+}
+
+/// Without parser field shapes the same line is the whole array. This is
+/// the degraded reading #8450 described; an empty `fn` body must not force
+/// that fallback.
+#[test]
+fn lexical_fallback_names_the_whole_array_line() -> Result<(), String> {
+    let source = rows_source_with_prefix("fn helper() {}\n");
+    let path = PathBuf::from("src/lib.rs");
+    let facts = LexicalRustSyntaxAdapter.summarize_file(&path, &source)?;
+    if !facts.used_lexical_fallback || !facts.probe_shapes.is_empty() {
+        return Err(format!(
+            "lexical adapter must disclose empty parser shapes, got fallback={} shapes={}",
+            facts.used_lexical_fallback,
+            facts.probe_shapes.len()
+        ));
+    }
+    let line = field_line_of(&source)?;
+    let text = source
+        .lines()
+        .nth(line.saturating_sub(1))
+        .ok_or("fixture has no field line")?
+        .to_string();
+    let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+        files: BTreeMap::from([(path.clone(), facts)]),
+        ..Default::default()
+    });
+    let probes = probes_for_file(
+        Path::new("."),
+        &ChangedFile {
+            path,
+            added_lines: vec![ChangedLine {
+                line,
+                new_side_line: line,
+                text,
+            }],
+            removed_lines: Vec::new(),
+        },
+        &index,
+    );
+    let expressions = field_construction_expressions(&probes);
+    if !expressions
+        .iter()
+        .any(|expression| expression.contains("[Row"))
+    {
+        return Err(format!(
+            "lexical fallback must name the whole array line so the parser pin is not vacuous: {expressions:?}"
+        ));
+    }
     Ok(())
 }

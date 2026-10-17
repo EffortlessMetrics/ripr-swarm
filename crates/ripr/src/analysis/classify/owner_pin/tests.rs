@@ -2134,6 +2134,27 @@ fn only_a_plain_assert_eq_against_an_owner_free_value_pins() {
 }
 
 #[test]
+fn a_non_plain_drop_on_the_returned_type_lends_no_pin() {
+    // #8480: dropping the receiver while unwinding from a failed
+    // assertion may exit 0 before the failure is reported.
+    let lib = |drop_body: &str| {
+        format!(
+            "#[derive(Debug, PartialEq)]\npub struct Cfg {{\n    pub n: u32,\n}}\n\nimpl Drop for Cfg {{\n    fn drop(&mut self) {{{drop_body}\n    }}\n}}\n\npub fn make(x: u32) -> Cfg {{\n    Cfg {{ n: x * 3 }}\n}}\n"
+        )
+    };
+    let tests = "use demo::make;\nuse demo::Cfg;\n\n#[test]\nfn makes() {\n    assert_eq!(make(4), Cfg { n: 12 });\n}\n";
+    let admitted = |drop_body: &str| {
+        let index = index(&[(LIB, &lib(drop_body)), (TESTS, tests)]);
+        let pin = establish(&index, "make", "Cfg { n: x * 3 }");
+        assert!(pin.is_some(), "the struct owner must establish a pin");
+        pin.map(|pin| admitted_texts(&index, &pin).len())
+            .unwrap_or_default()
+    };
+    assert_eq!(admitted("\n        std::process::exit(0);"), 0);
+    assert_eq!(admitted(""), 1);
+}
+
+#[test]
 fn a_test_written_expected_file_lends_no_weight_pin() {
     // #8097: the test rewrites its expected file from the owner before
     // comparing, inline or through a plain (annotated) binding.

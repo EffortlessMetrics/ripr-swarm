@@ -1849,6 +1849,7 @@ impl RustAdapter {
         enabled_languages: &[LanguageId],
         rust_config: &crate::config::RustLanguageConfig,
     ) -> Result<LanguageDiffResult, String> {
+        let _syntax_memo = crate::analysis::syntax::run_memo::enter();
         // Exclude conventional generated surfaces before hard line limits and
         // partial-diff budgeting so machine output cannot consume the budget
         // that protects actionable source analysis.
@@ -2135,6 +2136,12 @@ impl RustAdapter {
         let mut related_test_candidate_index = None;
         let property_macro_mentions =
             oracles::PropertyMacroMentionIndex::new(&index, &options.root);
+        // #8387: tests this diff adds or changes lead their relation tier.
+        // Ranking only; nothing is admitted or lifted.
+        let diff_touched = classify::DiffTouchedTests::from_changed_files(
+            &analyzable_changed_files,
+            index.tests().iter(),
+        );
         let transitive_reach = classify::TransitiveReachIndex::new(&index);
 
         let rust_changed_for_presence = analyzable_changed_files
@@ -2301,6 +2308,7 @@ impl RustAdapter {
                             .with_withheld_macro_bindings(std::mem::take(
                                 &mut withheld_macro_bindings,
                             ))
+                            .with_diff_touched(diff_touched.clone())
                     });
                 let mut finding = classifier::classify_probe_with_candidate_index(
                     &probe,
@@ -2710,6 +2718,7 @@ impl RustAdapter {
         oracle_policy: &OraclePolicy,
         rust_config: &crate::config::RustLanguageConfig,
     ) -> Result<LanguageRepoResult, String> {
+        let _syntax_memo = crate::analysis::syntax::run_memo::enter();
         let rust_files = workspace::discover_rust_files(&options.root)?;
         let generated_sources = GeneratedRustSources::for_repo(&options.root, rust_config);
         let skipped_files = rust_files
