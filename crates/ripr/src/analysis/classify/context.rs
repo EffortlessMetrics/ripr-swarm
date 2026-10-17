@@ -152,11 +152,12 @@ impl<'a> ProbeContext<'a> {
         callee: &str,
     ) -> bool {
         let names = self.own_crate_names(file, callee);
-        match self.file_use_statements {
-            Some(memo) => memo.imports_foreign_callee_name(file, source, callee, &names),
-            None => FileUseStatements::default()
-                .imports_foreign_callee_name(file, source, callee, &names),
-        }
+        let local = FileUseStatements::default();
+        let memo = self.file_use_statements.unwrap_or(&local);
+        // #7985: a macro in the test file that may define an item of the
+        // name rebinds it just as a foreign import does.
+        memo.imports_foreign_callee_name(file, source, callee, &names)
+            || memo.macro_may_define_callee_name(file, source, callee)
     }
 
     /// Crate names whose imports bind the owner for a test in `file`: the

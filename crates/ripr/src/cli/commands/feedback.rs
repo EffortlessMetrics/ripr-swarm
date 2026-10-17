@@ -32,6 +32,7 @@ fn run_record(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let (options, json) = parse_record_options(args)?;
+    crate::atomic_file::ensure_default_output_contained(&options.root)?;
     let recorded = record_feedback(&options)?;
     if json {
         print!("{}", record_result_json(&recorded)?);
@@ -55,6 +56,7 @@ fn run_export(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let (options, json, out) = parse_export_options(args)?;
+    crate::atomic_file::ensure_default_output_contained(&options.root)?;
     let (rendered, _) = export_feedback_join(&options)?;
     if let Some(path) = out {
         crate::atomic_file::write(&path, rendered.as_bytes(), "usefulness-feedback join")?;
@@ -356,6 +358,27 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
+    }
+
+    // #7781: feedback export refuses a checked-in `target` link that escapes
+    // the workspace before it reads or writes anything under it.
+    #[cfg(unix)]
+    #[test]
+    fn export_refuses_target_symlink_escaping_the_workspace() -> Result<(), String> {
+        if std::env::var("RIPR_CACHE_DIR").is_ok_and(|value| !value.trim().is_empty()) {
+            return Ok(());
+        }
+        let base = unique_root("hostile-target")?;
+        let ws = base.join("ws");
+        let outside = base.join("outside");
+        fs::create_dir_all(&ws).map_err(|e| e.to_string())?;
+        fs::create_dir_all(&outside).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&outside, ws.join("target")).map_err(|e| e.to_string())?;
+        let result = run_export(&args(&["--root", &ws.display().to_string()]));
+        let _ = fs::remove_dir_all(&base);
+        let error = result.err().ok_or("hostile target link must be refused")?;
+        assert!(error.contains("RIPR_CACHE_DIR"), "{error}");
+        Ok(())
     }
 
     #[test]

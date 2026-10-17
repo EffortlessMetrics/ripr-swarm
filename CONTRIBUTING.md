@@ -8,8 +8,11 @@ traceability without reconstructing intent from chat history.
 
 1. Install [`rustup`](https://rustup.rs/) if you don't already have it.
    `rust-toolchain.toml` pins the exact toolchain version and its
-   `rustfmt` and `clippy` components; `rustup` picks it up automatically
-   the first time you run a `cargo` command in this repo.
+   `rustfmt` and `clippy` components with the minimal installation profile;
+   `rustup` picks it up automatically the first time you run a `cargo` command
+   in this repo. The optional prebuilt Rust HTML documentation is not installed.
+   `cargo doc` still generates package documentation. For offline standard-library
+   documentation, run `rustup component add rust-docs` from this repo while online.
 2. Clone the repo:
 
    ```bash

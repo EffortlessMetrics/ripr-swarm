@@ -4315,6 +4315,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 true,
                 None,
                 candidates,
+                &crate::analysis::classify::transitive_reach::TransitiveReachIndex::new(&index),
                 None,
             )
         };

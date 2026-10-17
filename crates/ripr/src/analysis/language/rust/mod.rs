@@ -20,6 +20,7 @@ pub(crate) mod oracles;
 mod probe_shape;
 pub(crate) mod probes;
 
+pub(crate) use probe_shape::producer_gap_names_seam_shape;
 pub(crate) use probes::{changed_let_binding, mask_rust_comments_and_strings};
 
 use super::super::probes as analysis_probes;
@@ -2314,6 +2315,7 @@ impl RustAdapter {
                     workspace_index_complete,
                     dependency_edges.as_ref(),
                     related_test_candidate_index,
+                    &transitive_reach,
                     propagation_origin.as_ref(),
                 );
                 finding.language = Some(LanguageId::Rust);
@@ -2835,6 +2837,7 @@ impl RustAdapter {
                     true,
                     Some(&dependency_edges),
                     related_test_candidate_index,
+                    &transitive_reach,
                     None,
                 );
                 finding.language = Some(LanguageId::Rust);
@@ -4633,6 +4636,61 @@ mod tests {
             None,
             "a root-package owner must keep the full selection"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_skips_direct_cfg_helpers_and_keeps_production_controls() -> Result<(), String>
+    {
+        let root = temp_root("direct-cfg-helper-role")?;
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/data/source-role-corpus/cases/direct_cfg_helpers/src/lib.rs"
+        ));
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='direct-cfg-role'\nversion='0.1.0'\nedition='2021'\n",
+        )?;
+        write(&root.join("src/lib.rs"), source)?;
+        let added = source
+            .lines()
+            .map(|line| format!("+{line}\n"))
+            .collect::<String>();
+        let patch = format!(
+            "diff --git a/src/lib.rs b/src/lib.rs\nnew file mode 100644\n--- /dev/null\n+++ b/src/lib.rs\n@@ -0,0 +1,{} @@\n{added}",
+            source.lines().count()
+        );
+        let changed = diff::parse_unified_diff(&patch);
+        let result = RustAdapter.analyze_diff(
+            &diff_options(root, AnalysisMode::Draft),
+            &OraclePolicy::default(),
+            &changed,
+        )?;
+        for name in [
+            "production_lease",
+            "alternative_control",
+            "nontest_control",
+            "lookalike_control",
+        ] {
+            assert!(
+                result.findings.iter().any(|finding| finding
+                    .probe
+                    .owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.0.ends_with(&format!("::{name}")))),
+                "production control missing: {name}"
+            );
+        }
+        for name in ["standalone_helper", "conjunct_helper", "inline_helper"] {
+            assert!(
+                result.findings.iter().all(|finding| finding
+                    .probe
+                    .owner
+                    .as_ref()
+                    .is_none_or(|owner| !owner.0.ends_with(&format!("::{name}")))),
+                "test-only helper leaked into production findings: {name}"
+            );
+        }
         Ok(())
     }
 

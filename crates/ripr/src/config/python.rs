@@ -163,8 +163,20 @@ pub(crate) fn source_dir_contains_detectable_python(root: &Path, marker: &str) -
 }
 
 fn canonical_marker_name<'a>(candidates: &[&'a str], name: &str) -> Option<&'a str> {
+    canonical_marker_name_on(
+        candidates,
+        name,
+        crate::output::path::host_paths_case_insensitive(),
+    )
+}
+
+fn canonical_marker_name_on<'a>(
+    candidates: &[&'a str],
+    name: &str,
+    case_insensitive: bool,
+) -> Option<&'a str> {
     candidates.iter().copied().find(|candidate| {
-        if cfg!(windows) {
+        if case_insensitive {
             candidate.eq_ignore_ascii_case(name)
         } else {
             *candidate == name
@@ -253,6 +265,26 @@ pub(crate) fn is_detectable_generated_python_path(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn marker_names_follow_explicit_host_case_rule() {
+        assert_eq!(
+            canonical_marker_name_on(PYTHON_SOURCE_DIR_MARKERS, "SRC", true),
+            Some("src")
+        );
+        assert_eq!(
+            canonical_marker_name_on(PYTHON_SOURCE_DIR_MARKERS, "SRC", false),
+            None
+        );
+        assert_eq!(
+            canonical_marker_name_on(PYTHON_SOURCE_DIR_MARKERS, "src", false),
+            Some("src")
+        );
+        assert_eq!(
+            canonical_marker_name_on(PYTHON_SOURCE_DIR_MARKERS, "other", true),
+            None
+        );
+    }
 
     fn unique_test_root(label: &str) -> std::path::PathBuf {
         let stamp = std::time::SystemTime::now()

@@ -349,7 +349,7 @@ fn event_commit_bindings_are_exact_and_history_is_available() -> TestResult {
             .lines()
             .any(|line| line == "          fetch-depth: 0")
     );
-    assert!(detector.lines().any(|line| line == "    if: github.event_name != 'pull_request' || contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action)"));
+    assert!(detector.lines().any(|line| line == "    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')))"));
     assert!(
         !detector
             .lines()
@@ -358,6 +358,105 @@ fn event_commit_bindings_are_exact_and_history_is_available() -> TestResult {
     );
     verify_guarded_rust_only_steps(detector)?;
     Ok(())
+}
+
+/// Every merge-ready-gated lane admits a pull request only through an explicit
+/// `labeled` event for `merge-ready`; no gated `if:` re-admits opened,
+/// synchronize or reopened events while the label is still attached.
+#[test]
+fn gated_lanes_admit_pull_requests_only_on_the_merge_ready_labeled_event() {
+    const GATED: [(&str, &str); 12] = [
+        ("ci.yml", include_str!("../../../.github/workflows/ci.yml")),
+        (
+            "coverage.yml",
+            include_str!("../../../.github/workflows/coverage.yml"),
+        ),
+        (
+            "future-clippy.yml",
+            include_str!("../../../.github/workflows/future-clippy.yml"),
+        ),
+        (
+            "macos-advisory.yml",
+            include_str!("../../../.github/workflows/macos-advisory.yml"),
+        ),
+        (
+            "npm-launcher.yml",
+            include_str!("../../../.github/workflows/npm-launcher.yml"),
+        ),
+        (
+            "pilot-ranking.yml",
+            include_str!("../../../.github/workflows/pilot-ranking.yml"),
+        ),
+        (
+            "printed-command-paste.yml",
+            include_str!("../../../.github/workflows/printed-command-paste.yml"),
+        ),
+        (
+            "public-proof.yml",
+            include_str!("../../../.github/workflows/public-proof.yml"),
+        ),
+        (
+            "security.yml",
+            include_str!("../../../.github/workflows/security.yml"),
+        ),
+        (
+            "test-analytics.yml",
+            include_str!("../../../.github/workflows/test-analytics.yml"),
+        ),
+        (
+            "windows-advisory.yml",
+            include_str!("../../../.github/workflows/windows-advisory.yml"),
+        ),
+        (
+            "zed-extension.yml",
+            include_str!("../../../.github/workflows/zed-extension.yml"),
+        ),
+    ];
+    const EXPLICIT: &str =
+        "github.event.action == 'labeled' && github.event.label.name == 'merge-ready'";
+    for (name, source) in GATED {
+        let gated_ifs: Vec<&str> = source
+            .lines()
+            .filter(|line| line.trim_start().starts_with("if:") && line.contains("'merge-ready'"))
+            .collect();
+        assert!(!gated_ifs.is_empty(), "{name} has no merge-ready guard");
+        if source.contains("\nconcurrency:\n") {
+            const REQUEST: &str = "github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready'";
+            let prefix = match name {
+                "pilot-ranking.yml" => "pilot-ranking",
+                "public-proof.yml" => "public-proof",
+                _ => "${{ github.workflow }}",
+            };
+            let cancels_non_pr = matches!(name, "pilot-ranking.yml" | "public-proof.yml");
+            let expected_group = format!(
+                "  group: {prefix}-${{{{ github.event.pull_request.number || github.ref }}}}-${{{{ (github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run' }}}}"
+            );
+            let expected_cancel = if cancels_non_pr {
+                format!(
+                    "  cancel-in-progress: ${{{{ ({REQUEST}) || github.event_name != 'pull_request' }}}}"
+                )
+            } else {
+                format!("  cancel-in-progress: ${{{{ ({REQUEST}) }}}}")
+            };
+            assert!(
+                source.lines().any(|line| line == expected_group),
+                "{name}: group must give non-request pull_request events a unique group"
+            );
+            assert!(
+                source.lines().any(|line| line == expected_cancel),
+                "{name}: only a merge-ready request may cancel pull_request runs"
+            );
+        }
+        for line in gated_ifs {
+            assert!(line.contains(EXPLICIT), "{name}: {line}");
+            for event in ["opened", "synchronize", "reopened", "ready_for_review"] {
+                assert!(
+                    !line.contains(&format!("'{event}'")),
+                    "{name} re-admits {event}: {line}"
+                );
+            }
+        }
+    }
 }
 
 #[test]
