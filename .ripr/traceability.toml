@@ -15954,6 +15954,7 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::the_workspace_site_is_the_first_rebinding_in_path_order_else_the_first_site",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_refusal_site_lookup_matches_the_replaced_scan_for_every_name_and_root",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::refusal_site_lookups_pay_at_most_two_full_index_passes",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::seam_walk_pays_at_most_two_full_index_passes",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::name_only_relations_stop_crediting_beside_a_reach_bearing_one",
   "crates/ripr/src/analysis/classifier/evidence.rs::tests::preferred_refusal_note_puts_a_non_limit_owner_call_first",
   "crates/ripr/src/analysis/classifier/finding.rs::tests::refused_assertion_next_step_offers_a_static_limit_only_for_a_limit_refusal",

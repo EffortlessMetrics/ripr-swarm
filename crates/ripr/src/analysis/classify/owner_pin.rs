@@ -82,7 +82,7 @@ use rayon::prelude::*;
 use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// The owner-side half of the pin, established once per probe.
 pub(in crate::analysis) struct OwnerReturnPin {
@@ -200,7 +200,9 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     path_memo: RefCell<PathCallMemo>,
     /// #7097: per-file module scopes (direct `use`s and value-taking
     /// items), parsed once per run; `None` when the file does not parse.
-    file_scopes: RefCell<BTreeMap<PathBuf, Option<Rc<FileScopes>>>>,
+    /// `Arc` so the run-scoped instance stays `Send` behind the seam
+    /// walk's shared `Mutex` (#8282); the table is immutable once built.
+    file_scopes: RefCell<BTreeMap<PathBuf, Option<Arc<FileScopes>>>>,
     /// #7097: bare-call binding verdicts per [`BareCallKey`].
     bare_call_memo: RefCell<BTreeMap<BareCallKey, bool>>,
     /// #7097: out-of-line module children per (parent file, `mod` name):
@@ -925,7 +927,7 @@ impl OwnerPinSyntax {
     /// paid, bounded at two (the ambiguity pass plus at most one
     /// completion) however many (name, test root) refusals follow.
     #[cfg(test)]
-    fn workspace_scan_passes(&self) -> u32 {
+    pub(in crate::analysis) fn workspace_scan_passes(&self) -> u32 {
         self.workspace_scan_passes.get()
     }
 
@@ -7396,8 +7398,8 @@ impl OwnerPinSyntax {
     }
 
     /// #7097: `file`'s scope table, parsed once per run and shared:
-    /// lookups clone the `Rc`, never the table (#7176 review).
-    fn file_scopes(&self, index: &RustIndex, file: &Path) -> Option<Rc<FileScopes>> {
+    /// lookups clone the `Arc`, never the table (#7176 review).
+    fn file_scopes(&self, index: &RustIndex, file: &Path) -> Option<Arc<FileScopes>> {
         if let Some(known) = self.file_scopes.borrow().get(file) {
             return known.clone();
         }
@@ -7405,7 +7407,7 @@ impl OwnerPinSyntax {
             .files()
             .get(file)
             .and_then(|facts| build_file_scopes(&facts.source))
-            .map(Rc::new);
+            .map(Arc::new);
         self.file_scopes
             .borrow_mut()
             .insert(file.to_path_buf(), scopes.clone());
