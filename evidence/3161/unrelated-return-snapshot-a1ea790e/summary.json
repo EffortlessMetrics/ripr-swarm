@@ -1,0 +1,267 @@
+{
+  "disposition": "verified_current_at_exact_source",
+  "source_sha": "a1ea790e923ae6036efdd9457ffc16ea2ad93348",
+  "source_tree": "222b76a36698684ee8d896de0b869e0335450468",
+  "cli_sha256": "bd9348e3ecd9eeafcca1df3c04fc84f8bb56c490538e997b0139cdd8410f0d5e",
+  "cli_features": [
+    "lang-rust"
+  ],
+  "native_complete": {
+    "cases": 9,
+    "native_passed": 7,
+    "native_failed": 2,
+    "native_ignored": 0
+  },
+  "native_library_versions": {
+    "insta": "1.49.0",
+    "serde": "1.0.229"
+  },
+  "lock_sha256": "95fd76d034c38ef40ab8d31a951fd0d858b9cccbbbe19b3e97b3a4a5a9e8303e",
+  "latest_main_checked": "60a22c66851e8f5f6d932361c8e6cd758b9efd48",
+  "latest_main_execution_claim": false,
+  "main_delta_paths": [
+    ".ripr/traceability.toml",
+    "changelog.d/8166-explain-context-selector.md",
+    "crates/ripr/src/app/context.rs",
+    "crates/ripr/src/app/explain.rs",
+    "crates/ripr/src/app/selector.rs",
+    "crates/ripr/tests/cli_smoke.rs",
+    "docs/specs/RIPR-SPEC-0003-agent-context.md"
+  ],
+  "rows": [
+    {
+      "case": "direct-0",
+      "native_exit": 0,
+      "native_pass": 1,
+      "native_fail": 0,
+      "seam_id": "24935dea1e835db2",
+      "grip_class": "strongly_gripped",
+      "evidence": {
+        "reach": "yes",
+        "activate": "yes",
+        "propagate": "yes",
+        "observe": "yes",
+        "discriminate": "yes"
+      },
+      "gap_state": "already_observed",
+      "recommended_repair": "No new RIPR action; current static evidence already observes this seam.",
+      "diff_findings": null,
+      "fixture_head": "59f4c92919567f3cf3e3911eb0f9e6d93cf2ec7b",
+      "source_sha256": "ea6c3b551b36f951f913b19ad25e533ad091d30330914a36eac80cfde49a6661",
+      "committed_snapshot_sha256": {
+        "src/snapshots/snapshot_return_audit__tests__snapshot_count.snap": "cc0dfb0a8ad86d80df6705e6a371a892f8828a9ab4061a84c08ce359822b50d6"
+      },
+      "snapshot_new_files": []
+    },
+    {
+      "case": "direct-1",
+      "native_exit": 101,
+      "native_pass": 0,
+      "native_fail": 1,
+      "seam_id": "24935dea1e835db2",
+      "grip_class": "strongly_gripped",
+      "evidence": {
+        "reach": "yes",
+        "activate": "yes",
+        "propagate": "yes",
+        "observe": "yes",
+        "discriminate": "yes"
+      },
+      "gap_state": "already_observed",
+      "recommended_repair": "No new RIPR action; current static evidence already observes this seam.",
+      "diff_findings": [
+        [
+          "return_value",
+          "weakly_exposed"
+        ]
+      ],
+      "fixture_head": "631cf3adffbe9137cedb22a4cd3d5b2fc8f42484",
+      "source_sha256": "ca832ce2777ddef3568024360ad923dd02872c49e7943e8a70b5d51c97d1a85d",
+      "committed_snapshot_sha256": {
+        "src/snapshots/snapshot_return_audit__tests__snapshot_count.snap": "cc0dfb0a8ad86d80df6705e6a371a892f8828a9ab4061a84c08ce359822b50d6"
+      },
+      "snapshot_new_files": []
+    },
+    {
+      "case": "unrelated-0",
+      "native_exit": 0,
+      "native_pass": 1,
+      "native_fail": 0,
+      "seam_id": "24935dea1e835db2",
+      "grip_class": "strongly_gripped",
+      "evidence": {
+        "reach": "yes",
+        "activate": "yes",
+        "propagate": "yes",
+        "observe": "yes",
+        "discriminate": "yes"
+      },
+      "gap_state": "already_observed",
+      "recommended_repair": "No new RIPR action; current static evidence already observes this seam.",
+      "diff_findings": null,
+      "fixture_head": "2e2ab6e22b0153c9befb6466db1d83a12d34e75d",
+      "source_sha256": "c89d502804301384d96b42c9c4583282ee64f7b9606f6e7b2569a9b43295efe1",
+      "committed_snapshot_sha256": {
+        "src/snapshots/snapshot_return_audit__tests__snapshot_count.snap": "71fd19509d4d90bd1edfaa91b82b4f75a9be5114078c441009b7623217e7ccec"
+      },
+      "snapshot_new_files": []
+    },
+    {
+      "case": "unrelated-1",
+      "native_exit": 0,
+      "native_pass": 1,
+      "native_fail": 0,
+      "seam_id": "24935dea1e835db2",
+      "grip_class": "strongly_gripped",
+      "evidence": {
+        "reach": "yes",
+        "activate": "yes",
+        "propagate": "yes",
+        "observe": "yes",
+        "discriminate": "yes"
+      },
+      "gap_state": "already_observed",
+      "recommended_repair": "No new RIPR action; current static evidence already observes this seam.",
+      "diff_findings": [
+        [
+          "return_value",
+          "weakly_exposed"
+        ]
+      ],
+      "fixture_head": "b8d385b83f461e29c23cd2d8100b21c6958766e0",
+      "source_sha256": "fa8bb06d76edafe7de38daa2f319eee47554ddd06bc09346eed6a67f07c83c0e",
+      "committed_snapshot_sha256": {
+        "src/snapshots/snapshot_return_audit__tests__snapshot_count.snap": "71fd19509d4d90bd1edfaa91b82b4f75a9be5114078c441009b7623217e7ccec"
+      },
+      "snapshot_new_files": []
+    },
+    {
+      "case": "none-0",
+      "native_exit": 0,
+      "native_pass": 1,
+      "native_fail": 0,
+      "seam_id": "24935dea1e835db2",
+      "grip_class": "reachable_unrevealed",
+      "evidence": {
+        "reach": "yes",
+        "activate": "yes",
+        "propagate": "unknown",
+        "observe": "no",
+        "discriminate": "no"
+      },
+      "gap_state": "static_limitation",
+      "recommended_repair": "Inspect static limitation `propagation_static_unknown` via `analysis/static-limitation-taxonomy`.",
+      "diff_findings": null,
+      "fixture_head": "4907e99a11e0efb550d18b6e1d7d94a32f81c2de",
+      "source_sha256": "2c03e2ab15ad5c950fa844c8af72036504d2cf6defdcde11dfa7c4e5c87e70de",
+      "committed_snapshot_sha256": {},
+      "snapshot_new_files": []
+    },
+    {
+      "case": "none-1",
+      "native_exit": 0,
+      "native_pass": 1,
+      "native_fail": 0,
+      "seam_id": "24935dea1e835db2",
+      "grip_class": "reachable_unrevealed",
+      "evidence": {
+        "reach": "yes",
+        "activate": "yes",
+        "propagate": "unknown",
+        "observe": "no",
+        "discriminate": "no"
+      },
+      "gap_state": "static_limitation",
+      "recommended_repair": "Inspect static limitation `propagation_static_unknown` via `analysis/static-limitation-taxonomy`.",
+      "diff_findings": [
+        [
+          "return_value",
+          "reachable_unrevealed"
+        ]
+      ],
+      "fixture_head": "2049a246ee5972707ff088e44b33a0f6e7e78347",
+      "source_sha256": "d5a35c56255ace8c0abb4b9a1b46bc8b5fc2806739d109159ca77fbe12fdff74",
+      "committed_snapshot_sha256": {},
+      "snapshot_new_files": []
+    },
+    {
+      "case": "literal-0",
+      "native_exit": 0,
+      "native_pass": 1,
+      "native_fail": 0,
+      "seam_id": "24935dea1e835db2",
+      "grip_class": "strongly_gripped",
+      "evidence": {
+        "reach": "yes",
+        "activate": "yes",
+        "propagate": "yes",
+        "observe": "yes",
+        "discriminate": "yes"
+      },
+      "gap_state": "already_observed",
+      "recommended_repair": "No new RIPR action; current static evidence already observes this seam.",
+      "diff_findings": null,
+      "fixture_head": "0ffb46d4fd8eba0b4d284fc67b19f1b2d0ded20f",
+      "source_sha256": "0749e102008e1a1fa5c654e58e15a6872f340661f99d3914413f39ebbf309cf0",
+      "committed_snapshot_sha256": {},
+      "snapshot_new_files": []
+    },
+    {
+      "case": "literal-1",
+      "native_exit": 101,
+      "native_pass": 0,
+      "native_fail": 1,
+      "seam_id": "24935dea1e835db2",
+      "grip_class": "strongly_gripped",
+      "evidence": {
+        "reach": "yes",
+        "activate": "yes",
+        "propagate": "yes",
+        "observe": "yes",
+        "discriminate": "yes"
+      },
+      "gap_state": "already_observed",
+      "recommended_repair": "No new RIPR action; current static evidence already observes this seam.",
+      "diff_findings": [
+        [
+          "return_value",
+          "exposed"
+        ]
+      ],
+      "fixture_head": "590090f8a3237a2308ca8fc56fc9d73d244fb029",
+      "source_sha256": "30bc4487dd548efc3bacfc100293565bef9f7177be99b079cea9c43bd310a67e",
+      "committed_snapshot_sha256": {},
+      "snapshot_new_files": []
+    },
+    {
+      "case": "unrelated-removed-1",
+      "native_exit": 0,
+      "native_pass": 1,
+      "native_fail": 0,
+      "seam_id": "24935dea1e835db2",
+      "grip_class": "reachable_unrevealed",
+      "evidence": {
+        "reach": "yes",
+        "activate": "yes",
+        "propagate": "unknown",
+        "observe": "no",
+        "discriminate": "no"
+      },
+      "gap_state": "static_limitation",
+      "recommended_repair": "Inspect static limitation `propagation_static_unknown` via `analysis/static-limitation-taxonomy`.",
+      "diff_findings": null,
+      "fixture_head": "dcfd6cab521f09de18a6dfca4f044d89bb2c12c4",
+      "source_sha256": "f585ad7dddcf737b5938798ce8986753096ac0be5b727f1cc33d78cc46061ac0",
+      "committed_snapshot_sha256": {
+        "src/snapshots/snapshot_return_audit__tests__snapshot_count.snap": "71fd19509d4d90bd1edfaa91b82b4f75a9be5114078c441009b7623217e7ccec"
+      },
+      "snapshot_new_files": []
+    }
+  ],
+  "limits": [
+    "No product source changes or PR",
+    "No full/default-feature/hosted/package/install/platform/release qualification",
+    "Prior artifact/protection denials not retried; /root/.cargo/bin discovery denied and not retried",
+    "Initial absent /usr/bin/time attempt is an instrument failure before Cargo, not a source red"
+  ]
+}
