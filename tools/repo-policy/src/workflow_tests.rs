@@ -1161,6 +1161,8 @@ fn staged_self_hosted_conditions_reject_missing_status_and_header_decoys() -> Re
         routed_rust_job_condition(decoy, "rust-cx43").as_deref(),
         Some("false")
     );
+    Ok(())
+}
 
 #[test]
 fn advisory_review_prepares_locked_fixture_before_sensors() -> Result<(), String> {
