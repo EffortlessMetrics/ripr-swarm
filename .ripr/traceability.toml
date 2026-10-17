@@ -8080,6 +8080,12 @@ id = "RIPR-SPEC-0107"
 name = "ErrorPath requires a variant-observing oracle"
 spec = "docs/specs/RIPR-SPEC-0107-error-path-requires-variant-observing-oracle.md"
 tests = [
+  "crates/ripr/tests/error_path_exact_oracle.rs::literal_hex_callee_error_does_not_prescribe_an_already_existing_test",
+  "crates/ripr/tests/error_path_exact_oracle.rs::explicit_missing_error_arm_keeps_its_prescription",
+  "crates/ripr/tests/error_path_exact_oracle.rs::modeled_question_mark_error_keeps_its_missing_variant",
+  "crates/ripr/tests/error_path_exact_oracle.rs::opaque_error_conversion_retains_its_existing_limit",
+  "crates/ripr/tests/error_path_exact_oracle.rs::direct_odd_length_error_keeps_its_exact_discriminator",
+  "crates/ripr/tests/error_path_exact_oracle.rs::success_only_checks_keep_the_missing_error_arm_gap",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::error_path_broad_oracle_only_downgrades_discriminate_to_weak",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::error_path_sibling_exact_value_oracle_downgrades_discriminate_to_weak",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::error_path_exact_variant_oracle_keeps_discriminate_yes",
@@ -8094,6 +8100,8 @@ fixtures = [
 code = [
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/classifier.rs",
+  "crates/ripr/src/analysis/classifier/evidence.rs",
+  "crates/ripr/src/analysis/classify/decision.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0107-error-path-requires-variant-observing-oracle.md",

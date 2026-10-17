@@ -42,7 +42,7 @@
   },
   "reasoning": "OR zero preserves every high-nibble byte. The full pinned default-feature suite passes before and after this rewrite; the two compiled wrong-write/removal controls fail test::test_encode_to_slice at its literal caller-buffer equality. These executed controls label the selected mutants discriminated, with credited as the ideal verdict. ripr instead reports static_unknown: it has no probe/propagation model for this indexed mutable-chunk assignment and does not establish the public-wrapper test path. The observed limited verdict is an acceptable abstention, not static proof that the writes are observed. Full-checkout and retained-excerpt anchor evidence is identical.",
   "labeling_observation": {
-    "ripr_commit": "7adb0d66e386f4ad3148cc2b4a981e0f07bcbece",
+    "ripr_commit": "7df7aa5a1cc3b1c57998d5df3488f3e55c04097e",
     "full_checkout_verdict": "limited",
     "full_checkout_classifications": [
       "static_unknown"

@@ -281,6 +281,12 @@ so `has_token_match=true` clears `observation_unverified`.
 | `error_path_is_not_effect_family` | Control C â€” mock cannot clear error seam |
 | `given_broad_is_err_assertion_when_error_variant_changes_then_oracle_is_weak` | Integration â€” classifier confirms observation_unverified (updated) |
 | Fixture `error_path_sibling_oracle_fake_clean` | End-to-end repro â€” binary output confirmed |
+| `error_path_exact_oracle::literal_hex_callee_error_does_not_prescribe_an_already_existing_test` | Retained real callee error is unresolved; caller-buffer credit remains |
+| `error_path_exact_oracle::explicit_missing_error_arm_keeps_its_prescription` | A concrete missing error variant remains a test gap |
+| `error_path_exact_oracle::modeled_question_mark_error_keeps_its_missing_variant` | A modeled `ok_or` error keeps its missing variant |
+| `error_path_exact_oracle::opaque_error_conversion_retains_its_existing_limit` | Wrapper conversion retains its existing limitation |
+| `error_path_exact_oracle::direct_odd_length_error_keeps_its_exact_discriminator` | Direct matching error variant remains exposed |
+| `error_path_exact_oracle::success_only_checks_keep_the_missing_error_arm_gap` | A success-only exact assertion does not trigger abstention |
 
 ## Non-Goals
 
@@ -293,7 +299,7 @@ so `has_token_match=true` clears `observation_unverified`.
 - Does NOT affect Python/TypeScript adapters (different code paths).
   Python's error-path gate is RIPR-SPEC-0238 rule 6.
 - Static-language clean: output uses `exposed`, `weakly_exposed`,
-  `observation_unverified` only â€” all allowed vocabulary.
+  `propagation_unknown` and `observation_unverified` â€” all allowed vocabulary.
 
 ## Golden Drift (re-blessed fixtures)
 
@@ -355,6 +361,8 @@ seam was wrongfully downgraded.
 | Control C â€” is_effect_family unit test | `crates/ripr/src/analysis/classify/reveal.rs::tests` |
 | Control A â€” repro fixture | `fixtures/error_path_sibling_oracle_fake_clean/` |
 | Update classifier.rs integration test | `crates/ripr/src/analysis/classifier.rs::tests` |
+| Unresolved callee error sink abstention | `crates/ripr/src/analysis/classifier/evidence.rs` |
+| Existing error oracle limitation wording | `crates/ripr/src/analysis/classify/decision.rs` |
 | Spec registration | `policy/doc-artifacts.toml`, `docs/specs/README.md` |
 | Traceability | `.ripr/traceability.toml` |
 
@@ -378,6 +386,27 @@ variant-observing oracle.
 RIPR-SPEC-0238 (2026-10-04) states the Python error-path gate as rule 6:
 `exposed` needs one `exact_error_variant` assertion that itself credits a
 sink-alignment branch. This spec's Rust rules do not apply to Python.
+
+### Unresolved callee error sinks
+
+The retained rust-hex decoding assignment exposes a different boundary:
+`val(...)?` has no statically identified error value, and its fallback
+`ErrorVariant` sink merely echoes the changed expression. When discrimination
+is `observation_unverified`, no concrete activation discriminator is missing,
+and a reach-establishing related test already has an admitted strong
+`ExactErrorVariant` oracle, that echo cannot establish either error propagation
+or a missing error test. The evidence owner marks the sink and propagation
+unknown, removes the fallback propagation witness, and uses the existing
+inspection guidance. Missing evidence describes the unresolved connection to
+the existing oracle instead of claiming that no exact error assertion exists.
+
+This is `propagation_unknown`, never new oracle credit. Concrete missing
+variants or inputs, success-only tests, modeled error sinks and boxed wrapper
+conversions retain their own decisions. The literal retained-source regression
+and five controls in `crates/ripr/tests/error_path_exact_oracle.rs` pin those
+boundaries. The decoding case also retains its separate exposed caller-buffer
+finding. Native wrong-byte, removed-write and wrong-error controls label the
+case's runtime truth; they do not resolve this static propagation limitation.
 
 ## Metrics
 

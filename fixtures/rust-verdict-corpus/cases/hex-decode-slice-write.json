@@ -9,7 +9,7 @@
     "file": "src/lib.rs",
     "line": 332
   },
-  "hard_case": "The same assignment produces a credited call-effect probe and an error-path gap. The rewrite changes only the byte-value expression, retaining val(...)? error propagation; full-checkout and retained-excerpt anchor findings match exactly.",
+  "hard_case": "The same assignment produces a credited call-effect probe and an unresolved callee error-path limit. The rewrite changes only the byte-value expression, retaining val(...)? error propagation; full-checkout and retained-excerpt anchor findings match exactly.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",
@@ -47,13 +47,13 @@
       "silent"
     ]
   },
-  "reasoning": "XOR zero preserves every decoded byte and the val(...)? error path. The full pinned default-feature suite passes before and after this rewrite. It rejects both wrong/missing buffer writes at test::test_decode_to_slice and the wrong propagated error variant at test::test_invalid_char (also test::test_from_hex_whitespace). These executed controls label the selected mutants discriminated; they do not establish general mutation adequacy. At the anchor ripr reports exposed for call_deletion but weakly_exposed for error_path, with advice to add an exact error-arm test. The corpus gap-over-credit precedence therefore records false_actionable, rather than replacing the observed gap with credited. The existing error assertions reject a wrong variant through the public decoding path, so the error-test recommendation is not justified by these runtime results.",
+  "reasoning": "XOR zero preserves every decoded byte and the val(...)? error path. The full pinned default-feature suite passes before and after this rewrite. It rejects both wrong-byte and removed-write controls at the literal caller-buffer equality, and a wrong-error control at the existing exact InvalidHexCharacter character/index assertions. These finite executed controls label the selected mutants discriminated, with credited as the ideal verdict. At the earlier labeling base 7adb0d66e386f4ad3148cc2b4a981e0f07bcbece, an error-path gap overrode the exposed call-effect finding and made the row false_actionable. The repaired analyzer retains that call-effect credit and reports propagation_unknown for the callee error: its fallback sink only echoed the fallible expression, and it cannot statically connect the existing exact error oracle. Credit outranks this limit in the corpus projection, yielding credited/ideal; the error oracle itself receives no new static credit. Full-checkout and retained-excerpt anchor evidence is identical.",
   "labeling_observation": {
-    "ripr_commit": "7adb0d66e386f4ad3148cc2b4a981e0f07bcbece",
-    "full_checkout_verdict": "gap",
+    "ripr_commit": "7df7aa5a1cc3b1c57998d5df3488f3e55c04097e",
+    "full_checkout_verdict": "credited",
     "full_checkout_classifications": [
       "exposed",
-      "weakly_exposed"
+      "propagation_unknown"
     ],
     "excerpt_parity": "matched"
   }

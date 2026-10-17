@@ -48,9 +48,11 @@ checkout (for an authored crate, the whole stored crate).
 
 The two `hex-*-slice-write` cases reuse the retained rust-hex pin to cover
 loop-mediated caller-buffer assignments, without retaining more upstream
-files. Their runtime controls reject wrong or missing writes. The decoding
-case records a false actionable error-path finding alongside call-effect
-credit; the encoding case records an acceptable `static_unknown` abstention.
+files. Their runtime controls reject wrong or missing writes, and the decoding
+case also rejects a wrong error variant using existing payload assertions.
+Decoding retains call-effect credit alongside an unresolved error-propagation
+limit (RIPR-SPEC-0107), replacing the earlier false actionable error-path gap;
+encoding records an acceptable `static_unknown` abstention.
 Runtime test failures do not establish static alias or propagation evidence.
 
 ## Layout
