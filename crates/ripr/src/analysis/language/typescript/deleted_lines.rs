@@ -48,10 +48,8 @@ pub(super) fn deleted_line_findings(
         .filter_map(|(added_line, removed)| {
             let group = headers.group_of.get(&removed.line)?;
             let added = code_only(added_text.get(added_line)?);
-            let same_owner = opens_an_owner(&added)
-                && owner_name(&added).is_some()
-                && owner_name(&added) == headers.text.get(group).and_then(|text| owner_name(text));
-            same_owner.then_some(*group)
+            let removed_header = headers.text.get(group).map(String::as_str)?;
+            same_live_owner(&added, removed_header).then_some(*group)
         })
         .collect();
     let enclosures = enclosures(&runs, &headers, &re_headed);
@@ -455,18 +453,11 @@ fn identifier_len(text: &str) -> usize {
 /// or an `if` block is not an owner.
 pub(super) fn opens_an_owner(text: &str) -> bool {
     let code = code_only(text);
-    let mut rest = code.trim();
-    'strip: loop {
-        for modifier in MODIFIERS {
-            if let Some(after) = rest.strip_prefix(modifier)
-                && after.starts_with(char::is_whitespace)
-            {
-                rest = after.trim_start();
-                continue 'strip;
-            }
-        }
-        break;
-    }
+    let trimmed = code.trim();
+    // `export default (x) => {` has no binding name; after modifiers it is
+    // only an arrow, which `binds_a_function` would refuse (#7705).
+    let export_default = trimmed.starts_with("export default");
+    let rest = strip_leading_modifiers(trimmed);
     let function_keyword = rest
         .strip_prefix("function")
         .is_some_and(|after| after.starts_with([' ', '*', '(']));
@@ -474,6 +465,9 @@ pub(super) fn opens_an_owner(text: &str) -> bool {
         return true;
     }
     if binds_a_function(rest) {
+        return true;
+    }
+    if export_default && starts_an_arrow(rest) {
         return true;
     }
     // A method header: a name, its parameters (which may hold a function
@@ -535,7 +529,8 @@ fn starts_a_function(text: &str) -> bool {
 
 /// The first `=` outside brackets that is not part of `=>`, `==`, `<=`,
 /// `>=` or `!=`: a parameter default (`(opts = {}) =>`) is not the binding's
-/// value.
+/// value. Angle brackets count so a type-parameter default (`<T = string>`)
+/// is not the binding's value either (#7705).
 fn plain_assignment(text: &str) -> Option<usize> {
     let bytes = text.as_bytes();
     let mut depth: usize = 0;
@@ -543,11 +538,16 @@ fn plain_assignment(text: &str) -> Option<usize> {
         match bytes[at] {
             b'(' | b'[' | b'{' => depth += 1,
             b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            // `<=` is not a type-parameter list.
+            b'<' if bytes.get(at + 1) != Some(&b'=') => depth += 1,
+            // `=>` and `>=` are not a list close.
+            b'>' if at > 0 && bytes[at - 1] == b'=' => {}
+            b'>' => depth = depth.saturating_sub(1),
             _ => {}
         }
         depth == 0
             && bytes[at] == b'='
-            && !matches!(bytes.get(at + 1), Some(b'=' | b'>'))
+            && !matches!(bytes.get(at + 1), Some(&b'=' | &b'>'))
             && !(at > 0 && matches!(bytes[at - 1], b'=' | b'!' | b'<' | b'>'))
     })
 }
@@ -613,20 +613,11 @@ fn closing_angle(text: &str) -> Option<usize> {
 }
 
 /// The name an owner header declares: `function name`, `class Name`, a
-/// method's name or a binding's name.
+/// method's name or a binding's name. Anonymous default exports
+/// (`export default function (`, `export default class {`,
+/// `export default (x) => {`) have none (#7705).
 fn owner_name(code: &str) -> Option<String> {
-    let mut rest = code.trim();
-    'strip: loop {
-        for modifier in MODIFIERS {
-            if let Some(after) = rest.strip_prefix(modifier)
-                && after.starts_with(char::is_whitespace)
-            {
-                rest = after.trim_start();
-                continue 'strip;
-            }
-        }
-        break;
-    }
+    let rest = strip_leading_modifiers(code.trim());
     let rest = ["function", "class ", "const ", "let ", "var "]
         .iter()
         .find_map(|keyword| rest.strip_prefix(keyword))
@@ -635,4 +626,40 @@ fn owner_name(code: &str) -> Option<String> {
     let rest = rest.strip_prefix('*').unwrap_or(rest).trim_start();
     let name_end = identifier_len(rest);
     (name_end > 0).then(|| rest[..name_end].to_string())
+}
+
+/// An added header keeps the owner a removed header opened when they name
+/// the same function, method or binding, or when both are anonymous
+/// (`export default function (` replaced by another nameless default).
+fn same_live_owner(added: &str, removed: &str) -> bool {
+    if !opens_an_owner(added) {
+        return false;
+    }
+    match (owner_name(added), owner_name(removed)) {
+        (Some(added_name), Some(removed_name)) => added_name == removed_name,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+/// Keywords and `get`/`set` accessors that may precede an owner header.
+/// `get =` / `set =` is a field named `get`/`set`, not an accessor (#7705).
+fn strip_leading_modifiers(text: &str) -> &str {
+    let mut rest = text;
+    'strip: loop {
+        for modifier in MODIFIERS {
+            if let Some(after) = rest.strip_prefix(modifier)
+                && after.starts_with(char::is_whitespace)
+            {
+                let trimmed = after.trim_start();
+                if matches!(*modifier, "get" | "set") && trimmed.starts_with('=') {
+                    return rest;
+                }
+                rest = trimmed;
+                continue 'strip;
+            }
+        }
+        break;
+    }
+    rest
 }

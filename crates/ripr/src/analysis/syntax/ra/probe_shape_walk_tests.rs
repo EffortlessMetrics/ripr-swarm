@@ -1,7 +1,7 @@
 //! Frozen nine-walk oracle from main 14afcde1c; do not optimize this oracle.
 use super::*;
 
-fn reference_probe_shapes(
+pub(super) fn reference_probe_shapes(
     function: &ast::Fn,
     text: &str,
     source: &Arc<str>,
