@@ -612,7 +612,8 @@ fn packet_to_findings_with_currentness(
         let sink_aligned_evidence = sink_aligned_observation(&related_evidence, change, packet);
         // #8352: a `partial` packet may simply not have emitted the relation
         // that would link a test to this change, and `file_proximity` is
-        // co-location, not a link. With no change-linked relation, neither
+        // co-location, not a link. With no relation other than
+        // `file_proximity`, neither
         // "no static path" nor "reachable but unrevealed" is an assessed
         // result, so the class is unknown rather than a coverage claim.
         let partial_without_change_link = packet.packet_status == PacketStatus::Partial

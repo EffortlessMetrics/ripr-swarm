@@ -3137,8 +3137,10 @@ fn partial_packet_without_change_linked_relations_is_static_unknown() -> Result<
         for relation in relations.iter_mut() {
             relation["relation_kind"] = serde_json::json!("file_proximity");
         }
-        partial_packet_with_relations(packet["relations"].clone())?
+        packet["packet_status"] = serde_json::json!("partial");
+        serde_json::to_string(&packet).map_err(|error| format!("serialize: {error}"))?
     };
+
     for (label, text) in [
         ("file_proximity only", proximity_only),
         (

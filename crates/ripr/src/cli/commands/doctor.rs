@@ -1952,7 +1952,7 @@ fn perl_not_enabled_line(
     }
     let exporter = crate::domain::PERL_FACT_EXPORTER;
     let on_path = match preview {
-        Some(preview) if preview.canonical_exporter_on_path => "is on PATH",
+        Some(p) if p.canonical_exporter_on_path => "is on PATH",
         Some(_) => "is NOT on PATH",
         None => "PATH state unknown",
     };
