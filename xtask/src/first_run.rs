@@ -1384,6 +1384,15 @@ mod tests {
     }
 
     #[test]
+    fn the_workflow_size_predicate_recognises_exactly_what_the_producer_emits() {
+        assert!(is_workflow_size_flag(&workflow_size_flag(2374)));
+        assert!(!is_workflow_size_flag("12.5s, over the 10s budget"));
+        assert!(!is_workflow_size_flag(
+            "900 stdout lines, over the 400-line read budget"
+        ));
+    }
+
+    #[test]
     fn a_long_source_compiling_workflow_is_friction_but_a_checksummed_prebuilt_one_is_not() {
         let init = step("init_ci", 0, "Wrote ./ripr.toml\n", "", 0.1);
         let compiled = format!(
