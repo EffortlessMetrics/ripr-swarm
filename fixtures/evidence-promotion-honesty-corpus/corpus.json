@@ -2812,6 +2812,102 @@
       ]
     },
     {
+      "id": "py_local_owner_stand_ins_not_the_imported_owner",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_local_owner_stand_ins",
+      "vector": "function_scope_or_module_level_rebind_of_the_owner_name_is_not_the_imported_owner",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "py_local_owner_stand_in_control_real_import_keeps_credit",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_local_owner_stand_in_control",
+      "vector": "real_import_and_helper_local_shadow_keep_owner_credit",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "py_wrong_receiver_assertion_not_owner_identity",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_wrong_receiver_assertion",
+      "vector": "asserted_method_call_on_a_receiver_not_bound_to_the_owner_class",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "py_bound_receiver_assertion_control_keeps_credit",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_bound_receiver_assertion",
+      "vector": "asserted_method_call_on_a_receiver_bound_to_the_owner_class",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
       "id": "py_unittest_list_equal_effectful_argument",
       "language": "python",
       "tier": "pure",

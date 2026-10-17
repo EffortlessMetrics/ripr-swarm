@@ -4821,7 +4821,11 @@ mod tests {
         // #8247: `python_cross_test_import_alias` withholds the owner credit an
         // alias borrowed from another test's import, so its asserting test
         // observes a different function and adds one orthogonal card.
-        if (direct, no_strong, orthogonal, family_selection) != (5, 27, 14, 1) {
+        // #8247: `python_local_owner_stand_ins` and
+        // `python_wrong_receiver_assertion` each withhold owner credit from an
+        // assertion on a different object and add one orthogonal card; the
+        // two controls stay exposed and carry no card.
+        if (direct, no_strong, orthogonal, family_selection) != (5, 27, 16, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

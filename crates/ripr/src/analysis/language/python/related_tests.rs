@@ -1647,6 +1647,71 @@ pub(super) fn owner_method_bound_locals(
     locals
 }
 
+/// Whether the assertion text calls `.method(` only on receivers that are not
+/// statically bound to the owner class (#8247). The relation-level evidence
+/// ([`strong_test_calls_owner_method_on_bound_receiver`]) reads the whole test
+/// body, so a test that calls the owner on `c = Cart()` and asserts a different
+/// object's `.total(...)` borrows the owner's identity. An assertion with no
+/// `.method(` call (it reads a result local, say) is not judged here.
+pub(super) fn assertion_calls_method_only_on_foreign_receiver(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    class: &str,
+    method: &str,
+    assertion_text: &str,
+) -> bool {
+    let needle = format!(".{method}(");
+    let class_locals = owner_class_locals(test, owner, class);
+    let bound_locals = owner_method_bound_locals(test, owner, class, method);
+    let mut saw_call = false;
+    for (dot, _) in assertion_text.match_indices(&needle) {
+        if line_prefix_looks_like_comment_or_string(assertion_text, dot) {
+            continue;
+        }
+        saw_call = true;
+        let before = assertion_text[..dot].trim_end();
+        let receiver = if before.ends_with(')') {
+            inline_construct_callee(before)
+        } else {
+            let start = before
+                .rfind(|ch: char| !(is_python_identifier_char(ch) || ch == '.'))
+                .map_or(0, |idx| idx + 1);
+            Some(&before[start..])
+        };
+        let bound = receiver.is_some_and(|receiver| {
+            class_locals.iter().any(|local| local == receiver)
+                || bound_locals.iter().any(|local| local == receiver)
+        });
+        if bound {
+            return false;
+        }
+    }
+    saw_call
+}
+
+/// The callee name of the trailing call in `before` (`Cart(...)` -> `Cart`,
+/// `pkg.Cart(...)` -> `pkg.Cart`), or None when the parentheses do not balance.
+fn inline_construct_callee(before: &str) -> Option<&str> {
+    let mut depth = 0i32;
+    for (idx, ch) in before.char_indices().rev() {
+        match ch {
+            ')' => depth += 1,
+            '(' => {
+                depth -= 1;
+                if depth == 0 {
+                    let head = &before[..idx];
+                    let start = head
+                        .rfind(|ch: char| !(is_python_identifier_char(ch) || ch == '.'))
+                        .map_or(0, |found| found + 1);
+                    return Some(&head[start..]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Relation-layer receiver-identity evidence for a method/classmethod owner: a
 /// strong observing test calls the owner's method on a receiver statically bound
 /// to the owner class (see [`body_calls_method_on_owner_bound_receiver`]). This
