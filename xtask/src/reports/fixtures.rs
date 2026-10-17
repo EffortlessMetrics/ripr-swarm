@@ -2372,6 +2372,8 @@ mod tests {
             "crates/ripr/src/domain/classification.rs",
             "fixtures/rust_map_overwrite_count/expected/human.txt",
             "docs/OUTPUT_SCHEMA.md",
+            "policy/output_contracts.txt",
+            "crates/ripr/src/lsp.rs",
         ] {
             let changed = paths(&["README.md", path]);
             assert_eq!(super::golden_staleness_trigger(&changed), Some(path));
