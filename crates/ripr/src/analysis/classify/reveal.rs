@@ -3857,6 +3857,9 @@ pub(in crate::analysis) fn file_imports_foreign_callee_name(
     crate_names: &std::collections::BTreeSet<String>,
 ) -> bool {
     use_statements_import_foreign_callee_name(&file_use_statements(source), callee, crate_names)
+        // #7985: a macro that may define an item of the name rebinds it as
+        // an import does, for every direct caller of this shared gate.
+        || super::macro_item_names::macro_may_define_item_named(source, callee)
 }
 
 /// The crate-identifier form of a manifest name: hyphens normalize to
@@ -3879,9 +3882,31 @@ fn crate_identifier(name: &str) -> String {
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct FileUseStatements {
     by_file: std::cell::RefCell<std::collections::BTreeMap<std::path::PathBuf, Vec<String>>>,
+    /// #7985: per file and name, whether a macro invocation may define an
+    /// item of that name.
+    macro_defined:
+        std::cell::RefCell<std::collections::BTreeMap<(std::path::PathBuf, String), bool>>,
 }
 
 impl FileUseStatements {
+    /// #7985: whether a macro in `source` may define an item named
+    /// `callee`, which makes a bare call of the name ambiguous exactly as a
+    /// foreign import does. Scanned once per file and name.
+    pub(in crate::analysis) fn macro_may_define_callee_name(
+        &self,
+        file: &std::path::Path,
+        source: &str,
+        callee: &str,
+    ) -> bool {
+        let key = (file.to_path_buf(), callee.to_string());
+        if let Some(known) = self.macro_defined.borrow().get(&key) {
+            return *known;
+        }
+        let defined = super::macro_item_names::macro_may_define_item_named(source, callee);
+        self.macro_defined.borrow_mut().insert(key, defined);
+        defined
+    }
+
     /// `use_statements_import_foreign_callee_name` over `source`'s statements,
     /// scanning `source` only on the first query for `file`. Every caller
     /// must pass the indexed source that `file` resolves to.
@@ -8456,6 +8481,25 @@ return Err(\"typed pin\".into());
             file_imports_foreign_callee_name(import, "expect_response", &foreign_names),
             "a foreign first segment must still defeat"
         );
+    }
+
+    /// #7985: the shared gate (also read by the owner-pin callers) treats a
+    /// macro that may define the name as a rebind; an unrelated macro is not.
+    #[test]
+    fn macro_defined_same_name_is_a_foreign_rebind_for_every_gate_caller() {
+        let crate_names = std::collections::BTreeSet::new();
+        let defines = "macro_rules! fake {\n    () => { fn expect_response() {} };\n}\nfake!();\n";
+        assert!(file_imports_foreign_callee_name(
+            defines,
+            "expect_response",
+            &crate_names
+        ));
+        let unrelated = defines.replace("fn expect_response", "fn other_name");
+        assert!(!file_imports_foreign_callee_name(
+            &unrelated,
+            "expect_response",
+            &crate_names
+        ));
     }
 
     /// #3731 review (G1): the cross-package same-name defeat threads

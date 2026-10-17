@@ -18,6 +18,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const CACHE_DIR_ENV: &str = "RIPR_CACHE_DIR";
+/// The interrupted children are terminated at arbitrary points, including while an
+/// instrumented process writes its coverage profile at exit. A terminated writer
+/// leaves a truncated `.profraw` that makes `llvm-profdata merge` fail the whole
+/// coverage run (#4978), so these children discard their profile. This keeps
+/// these two tests from producing truncated profiles; other kill sites remain.
+const TERMINATED_CHILD_PROFILE_ENV: &str = "LLVM_PROFILE_FILE";
+const TERMINATED_CHILD_PROFILE: &str = "/dev/null";
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 const LIB_RS: &str = "pub fn discount(price: u32, qty: u32) -> u32 {\n    if qty >= 10 { price * qty * 9 / 10 } else { price * qty }\n}\n";
@@ -261,6 +268,7 @@ fn terminated_runs_leave_a_cache_every_later_run_agrees_with() -> Result<(), Str
             .command("ge12.diff", &[])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
+            .env(TERMINATED_CHILD_PROFILE_ENV, TERMINATED_CHILD_PROFILE)
             .spawn()
             .map_err(|error| format!("spawn ripr check: {error}"))?;
         std::thread::sleep(Duration::from_micros(delay_micros));
@@ -321,6 +329,7 @@ fn interrupted_artifact_write_keeps_the_previous_artifact_or_a_complete_new_one(
             .command("ge11.diff", &["--write-artifact", &artifact_arg])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
+            .env(TERMINATED_CHILD_PROFILE_ENV, TERMINATED_CHILD_PROFILE)
             .spawn()
             .map_err(|error| format!("spawn ripr check: {error}"))?;
         std::thread::sleep(Duration::from_micros(delay_micros));

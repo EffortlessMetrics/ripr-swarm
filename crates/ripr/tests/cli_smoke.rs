@@ -65,6 +65,14 @@ mod next_action;
 #[path = "cli_smoke/output_leaf_identity.rs"]
 mod output_leaf_identity;
 #[cfg(all(
+    unix,
+    feature = "lang-rust",
+    feature = "lang-python",
+    feature = "lang-typescript"
+))]
+#[path = "cli_smoke/parse_failure_path_outcome.rs"]
+mod parse_failure_path_outcome;
+#[cfg(all(
     feature = "lang-rust",
     any(feature = "lang-python", feature = "lang-typescript")
 ))]

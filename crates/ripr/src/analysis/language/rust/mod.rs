@@ -4633,6 +4633,61 @@ mod tests {
     }
 
     #[test]
+    fn diff_analysis_skips_direct_cfg_helpers_and_keeps_production_controls() -> Result<(), String>
+    {
+        let root = temp_root("direct-cfg-helper-role")?;
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/data/source-role-corpus/cases/direct_cfg_helpers/src/lib.rs"
+        ));
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='direct-cfg-role'\nversion='0.1.0'\nedition='2021'\n",
+        )?;
+        write(&root.join("src/lib.rs"), source)?;
+        let added = source
+            .lines()
+            .map(|line| format!("+{line}\n"))
+            .collect::<String>();
+        let patch = format!(
+            "diff --git a/src/lib.rs b/src/lib.rs\nnew file mode 100644\n--- /dev/null\n+++ b/src/lib.rs\n@@ -0,0 +1,{} @@\n{added}",
+            source.lines().count()
+        );
+        let changed = diff::parse_unified_diff(&patch);
+        let result = RustAdapter.analyze_diff(
+            &diff_options(root, AnalysisMode::Draft),
+            &OraclePolicy::default(),
+            &changed,
+        )?;
+        for name in [
+            "production_lease",
+            "alternative_control",
+            "nontest_control",
+            "lookalike_control",
+        ] {
+            assert!(
+                result.findings.iter().any(|finding| finding
+                    .probe
+                    .owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.0.ends_with(&format!("::{name}")))),
+                "production control missing: {name}"
+            );
+        }
+        for name in ["standalone_helper", "conjunct_helper", "inline_helper"] {
+            assert!(
+                result.findings.iter().all(|finding| finding
+                    .probe
+                    .owner
+                    .as_ref()
+                    .is_none_or(|owner| !owner.0.ends_with(&format!("::{name}")))),
+                "test-only helper leaked into production findings: {name}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn diff_analysis_skips_inline_cfg_test_helpers_but_keeps_production_controls()
     -> Result<(), String> {
         let root = temp_root("inline-cfg-test-second-role")?;
