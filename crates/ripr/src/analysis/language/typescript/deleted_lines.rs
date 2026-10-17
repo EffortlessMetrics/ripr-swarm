@@ -225,8 +225,8 @@ struct RemovedHeaders {
 /// destructured first line (`save({` / `id,` / `}) {`), or an Allman brace
 /// on its own line. Open parentheses and type-argument lists join until
 /// they close; a `{` inside still-open parens is a parameter object, not
-/// the body, unless the previous line opened a callback with `=> {`
-/// (#7705).
+/// the body (#7705). Default-parameter callbacks opened with `=> {` stay
+/// on the later brace/comment slice, not this wrap-join.
 fn removed_owner_headers(runs: &[Vec<RemovedCode<'_>>]) -> RemovedHeaders {
     owner_headers_from_code_runs(
         runs.iter()
@@ -267,12 +267,8 @@ fn owner_headers_from_code_runs<'a>(
         let mut paren_depth: isize = 0;
         let mut angle_depth: isize = 0;
         for (line, code) in run {
-            let last_opened_callback = group
-                .last()
-                .is_some_and(|(_, last)| last.trim_end().ends_with("=> {"));
-            let continues = !group.is_empty()
-                && !last_opened_callback
-                && (paren_depth > 0 || angle_depth > 0 || code.trim() == "{");
+            let continues =
+                !group.is_empty() && (paren_depth > 0 || angle_depth > 0 || code.trim() == "{");
             if !continues {
                 close_header_group(&group, &mut headers);
                 group.clear();
