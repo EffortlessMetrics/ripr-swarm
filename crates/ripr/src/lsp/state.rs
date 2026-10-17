@@ -2303,7 +2303,14 @@ mod tests {
         );
         assert!(refused.is_err());
         // Lines past the final terminator do not exist.
-        assert!(edit("ab\r", 2, 0).is_err());
+        assert_eq!(
+            edit("ab\r", 2, 0),
+            Err("edit at 2:0 of \"ab\\r\" was refused".to_string())
+        );
+        // An empty final line after CRLF, and mixed terminators in one buffer.
+        assert_eq!(edit("ab\r\n", 1, 0)?, "ab\r\nX");
+        assert_eq!(edit("a\nb\rc\r\nd", 3, 1)?, "a\nb\rc\r\ndX");
+        assert_eq!(edit("a\nb\rc\r\nd", 2, 0)?, "a\nb\rXc\r\nd");
         Ok(())
     }
 
