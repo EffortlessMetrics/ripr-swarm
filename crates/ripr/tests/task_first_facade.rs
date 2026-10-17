@@ -485,6 +485,47 @@ fn repair_explicit_policy_omitted_gap_and_seam_refuse_without_attempt_or_lock() 
 /// #7882: display narration must never feed stable text back into identity.
 /// Both percent spellings exist, so an accidental codec substitution selects
 /// a real, wrong repository instead of merely producing a missing-path error.
+/// #8166: the `Canonical gap:` line `ripr check` prints for a Rust finding is
+/// the producer gap ID, not the seam-derived `gap:<hash>`. It must start the
+/// same attempt as the seam ID, and only for the seam it names.
+#[test]
+fn repair_accepts_the_producer_gap_id_check_prints() -> Result<(), String> {
+    let fixture = Fixture::two_seam("facade-producer-gap")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    // Wrong discriminator: names no seam, starts nothing.
+    let wrong = run_ripr(
+        root,
+        &[
+            "repair",
+            "gap:rust:src/lib.rs:shipping_fee:predicate_boundary:predicate:items==other",
+            "--root",
+            &root_arg,
+        ],
+    )?;
+    assert_exit(&wrong, 3, "repair with a producer gap naming no seam");
+    assert!(
+        attempt_ids(root).is_empty(),
+        "an unmatched producer gap must create no attempt"
+    );
+    // The second function's producer gap selects the second seam, not the
+    // first match.
+    let repair = run_ripr(
+        root,
+        &[
+            "repair",
+            "gap:rust:src/lib.rs:shipping_fee:predicate_boundary:predicate:items==free_threshold",
+            "--root",
+            &root_arg,
+        ],
+    )?;
+    assert_exit(&repair, 0, "repair with a producer gap ID");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1, "exactly one attempt must be created");
+    assert_eq!(read_manifest(root, &ids[0])?["seam_id"], SECOND_SEAM);
+    Ok(())
+}
+
 #[test]
 fn repair_human_paths_preserve_percent_root_identity() -> Result<(), String> {
     repair_human_path_identity_journey("repo 100%", "repo 100%25")
