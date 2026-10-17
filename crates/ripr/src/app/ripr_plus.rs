@@ -357,7 +357,9 @@ Current inputs contain exposure or ledger evidence only. They do not establish
 complete test-efficiency measurement or bind that evidence to current candidate
 bytes. Known actionable counts remain informational; complete unresolved debt
 and candidate authority remain indeterminate, so --check cannot pass from these
-inputs. This command does not scan a repository or turn raw seams into debt.
+inputs. No ripr command produces the missing inputs yet (tracked in #7222), so
+these receipts stay indeterminate by design. This command does not scan a
+repository or turn raw seams into debt.
 ";
 
 /// The supported legacy inputs have no complete test-quality/current-candidate
@@ -400,7 +402,7 @@ pub(crate) fn qualify_legacy_receipt(mut receipt: Value) -> Result<Value, String
         .as_array_mut()
         .ok_or_else(|| "RIPR+ receipt warnings must be an array".to_string())?;
     let warning = json!(
-        "Exposure/ledger counts alone do not establish complete RIPR+ zero. Test-efficiency measurement, current-candidate binding and blocked/unsupported scope disposition are not established; inspect the source evidence and do not use this receipt as a zero gate."
+        "Exposure/ledger counts alone do not establish complete RIPR+ zero. Test-efficiency measurement, current-candidate binding and blocked/unsupported scope disposition are not established, and no ripr command produces those inputs yet (tracked in #7222), so this receipt stays indeterminate by design. Do not use it as a zero gate."
     );
     if !warnings.contains(&warning) {
         warnings.push(warning);
@@ -1078,6 +1080,39 @@ mod tests {
         assert_eq!(receipt["source_artifact"], "summary.json");
         assert_eq!(receipt["reason_counts"]["missing_discriminator"], 2);
         assert_eq!(receipt["top_files"][0]["file"], "src/pricing.rs");
+        Ok(())
+    }
+
+    /// The indeterminate receipt must disclose that no producer exists for its
+    /// missing evidence, not imply the reader skipped a step (#7375).
+    #[test]
+    fn indeterminate_warning_names_no_producer_instead_of_a_dead_end() -> Result<(), String> {
+        let receipt = qualify_legacy_receipt(json!({ "status": "warn" }))?;
+        assert_eq!(receipt["status"], "indeterminate");
+        let warnings = receipt["warnings"].as_array().ok_or("warnings array")?;
+        let warning = warnings
+            .iter()
+            .filter_map(Value::as_str)
+            .find(|text| text.contains("do not establish complete RIPR+ zero"))
+            .ok_or("missing the incomplete-evidence warning")?;
+        assert!(
+            warning.contains("no ripr command produces those inputs yet"),
+            "{warning}"
+        );
+        assert!(warning.contains("#7222"), "{warning}");
+        assert!(
+            !warning.contains("inspect the source evidence"),
+            "{warning}"
+        );
+        // Every named cause is still listed machine-readably.
+        assert_eq!(
+            receipt["incomplete_evidence"],
+            json!([
+                "complete_test_efficiency_measurement",
+                "current_candidate_binding",
+                "blocked_and_unsupported_scope_disposition"
+            ])
+        );
         Ok(())
     }
 
