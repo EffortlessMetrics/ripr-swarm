@@ -30,7 +30,6 @@ Evidence
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches returned value: x * 3 (line 2)
-  - related test tests/render.rs:2 renders uses smoke smoke only oracle: std::fs::write("tests/w.txt", written_expected::render(4).to_string()).unwrap(); misses: assertion too weak to tell the old behavior from the new
   - related test tests/render.rs:2 renders uses strong exact value oracle: assert_eq!(written_expected::render(4), std::fs::read_to_string("tests/w.txt").unwrap().trim().parse::<i32>().unwrap()); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source function argument value x = 4 at line 3
   - source assertion argument value "tests/w.txt" at line 4
