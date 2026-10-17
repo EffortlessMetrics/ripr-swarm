@@ -7434,6 +7434,8 @@ id = "RIPR-SPEC-0094"
 name = "observation_unverified guard generalization"
 spec = "docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md"
 tests = [
+  "crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_graph_is_shared_across_changed_arms_cold_and_warm",
+  "crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_graph_rebuilds_after_a_same_path_helper_edit",
   "crates/ripr/src/analysis/facts/cfg_predicates/tests.rs::plain_test_gate_excludes_conditional_attribute_expansion",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::field_projected_collection_repo_seam_retains_indexed_target",
   "crates/ripr/src/analysis/classify/propagation_witness/collection_argument.rs::tests::field_argument_observer_retains_withheld_macro_authority",
