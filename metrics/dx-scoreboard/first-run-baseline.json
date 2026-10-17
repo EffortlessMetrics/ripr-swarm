@@ -1,6 +1,6 @@
 {
-  "analyzer_version": "",
-  "binary": "",
+  "analyzer_version": "ripr 0.10.0",
+  "binary": "cargo install ripr --locked",
   "boards": [
     {
       "counts": {
