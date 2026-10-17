@@ -875,6 +875,40 @@ fn deleted_body_under_a_wrapped_header_with_a_comparison_keeps_its_owner() -> Re
     Ok(())
 }
 
+/// A comparison `>` on the same line as `Promise<` must not cancel that
+/// type-open, or the wrapped `Result` / `> {` close is lost and the body
+/// line is dropped.
+#[test]
+fn deleted_body_under_a_header_with_a_comparison_then_a_type_list_keeps_its_owner()
+-> Result<(), String> {
+    let findings = analyze(
+        "comparison-then-type-list",
+        &[
+            " export class Cart {",
+            "-  save(limit = a > b): Promise<",
+            "-    string",
+            "-  > {",
+            "-    audit(limit);",
+            "+  save(limit = a > b): Promise<",
+            "+    string | number",
+            "+  > {",
+            "     return Promise.resolve(limit);",
+            "   }",
+            " }",
+        ],
+    )?;
+    let base = base_side(&findings);
+    assert_eq!(base, vec![record(2, "save")], "{findings:?}");
+    assert!(
+        findings
+            .iter()
+            .filter(|finding| finding.source_currentness.is_base_side())
+            .all(|finding| !finding.is_candidate_actionable()),
+        "base-side records must stay non-actionable: {findings:?}"
+    );
+    Ok(())
+}
+
 /// A line deleted from the body of a kept block comment is not code.
 #[test]
 fn deleted_comment_body_line_records_nothing() -> Result<(), String> {

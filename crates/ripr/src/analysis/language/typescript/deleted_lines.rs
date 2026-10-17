@@ -467,25 +467,34 @@ fn paren_delta(code: &str) -> isize {
 
 /// Opened minus closed type-argument angles on this line. Comparisons
 /// (`a < b`) and arrows (`=>`, `>=`, `<=`) are not type lists: a type
-/// opener sits immediately after an identifier, `)`, `]` or `>`. `>=`
-/// does not emit a close. A later `> {` may report -1 so it can close
-/// `Promise<` from the previous line; the grouping accumulator never
-/// lets angle depth go below zero, so `a > b` cannot cancel an open `(`
-/// (#7705).
+/// opener sits immediately after an identifier, `)`, `]` or `>`. An
+/// unmatched `>` is ignored once this line has opened a type list, so
+/// `a > b): Promise<` cannot cancel that `<`. Unmatched closes on a line
+/// with no type-open (`> {`) still report -1 so they can close `Promise<`
+/// from the previous line. The grouping accumulator never lets angle
+/// depth go below zero, so `a > b` cannot cancel an open `(` (#7705).
 fn type_angle_delta(code: &str) -> isize {
     let bytes = code.as_bytes();
     let mut depth: isize = 0;
+    let mut unmatched_close: isize = 0;
+    let mut saw_type_open = false;
     for at in 0..bytes.len() {
         match bytes[at] {
             b'<' if bytes.get(at + 1) != Some(&b'=') && is_type_open_angle(bytes, at) => {
                 depth += 1;
+                saw_type_open = true;
             }
             b'>' if bytes.get(at + 1) == Some(&b'=') || (at > 0 && bytes[at - 1] == b'=') => {}
-            b'>' => depth -= 1,
+            b'>' if depth > 0 => depth -= 1,
+            b'>' => unmatched_close += 1,
             _ => {}
         }
     }
-    depth
+    if saw_type_open {
+        depth
+    } else {
+        depth - unmatched_close
+    }
 }
 
 fn is_type_open_angle(bytes: &[u8], at: usize) -> bool {
