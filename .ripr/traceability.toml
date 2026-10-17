@@ -14502,6 +14502,41 @@ metrics = [
 ]
 
 
+
+[[behavior]]
+id = "RIPR-SPEC-0271"
+name = "Execution-wave planning partitions the selected candidate set over explicit resources"
+spec = "docs/specs/RIPR-SPEC-0271-wave-planning-selected-work-basis.md"
+tests = [
+  "xtask/src/work_wave_identity.rs::tests::work_wave_identity_committed_corpus_six_scenarios_hold",
+  "xtask/src/work_wave_identity.rs::tests::work_wave_identity_disjoint_cross_campaign_waves_pass",
+  "xtask/src/work_wave_identity.rs::tests::work_wave_identity_retired_active_goal_resource_fails_closed",
+  "xtask/src/work_wave_identity.rs::tests::work_wave_identity_stale_basis_and_unassigned_candidate_fail",
+  "xtask/src/work_wave_identity.rs::tests::work_wave_identity_resource_conflicts_fail_with_exact_routes",
+  "xtask/src/work_wave_identity.rs::tests::work_wave_identity_plan_schema_has_no_singleton_fields",
+  "xtask/src/work_wave_identity.rs::tests::work_wave_identity_embedded_selection_reuses_shared_laws",
+  "xtask/src/work_wave_identity.rs::tests::work_wave_identity_human_and_json_projections_agree",
+  "xtask/src/work_wave_identity.rs::tests::work_wave_identity_deterministic_output",
+  "xtask/src/work_wave_identity.rs::tests::work_wave_identity_corpus_loader_fails_closed",
+  "xtask/src/work_wave_identity.rs::tests::work_wave_identity_provenance_fails_closed",
+  "xtask/src/work_wave_identity.rs::tests::work_wave_identity_committed_provenance_covers_every_corpus_byte",
+  "xtask/src/work_wave_identity.rs::tests::work_wave_identity_command_mutate_nothing_mutation_negative",
+]
+fixtures = [
+  "fixtures/work_wave_identity",
+]
+code = [
+  "xtask/src/work_wave_identity.rs",
+  "xtask/src/command.rs",
+  "xtask/src/dispatch.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0271-wave-planning-selected-work-basis.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
 [[behavior]]
 id = "RIPR-SPEC-0270"
 name = "Durable claims bind one selected item and the exact portfolio basis"

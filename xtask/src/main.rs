@@ -68,6 +68,7 @@ mod work_claim_identity;
 mod work_portfolio;
 mod work_result_identity;
 mod work_selection_identity;
+mod work_wave_identity;
 pub(crate) use types::*;
 mod reports;
 mod ripr_swarm;

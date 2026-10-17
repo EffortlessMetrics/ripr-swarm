@@ -180,6 +180,7 @@ pub(crate) enum XtaskCommand {
     WorkSelectionCheck(Vec<String>),
     WorkResultCheck(Vec<String>),
     WorkClaimCheck(Vec<String>),
+    WorkWaveCheck(Vec<String>),
     Unknown(String),
 }
 
@@ -392,6 +393,13 @@ impl XtaskCommand {
                     Some("check") => Self::WorkClaimCheck(rest[2..].to_vec()),
                     _ => Self::Unknown(format!(
                         "work claim {}",
+                        rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
+                    )),
+                },
+                Some("wave") => match rest.get(1).map(|arg| arg.as_str()) {
+                    Some("check") => Self::WorkWaveCheck(rest[2..].to_vec()),
+                    _ => Self::Unknown(format!(
+                        "work wave {}",
                         rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
                     )),
                 },
@@ -2392,6 +2400,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Validates committed WorkClaimV1 rows against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR B, RIPR-SPEC-0270, consuming #1635/#1647); every claim binds one selected issue/action and the exact portfolio basis, a stale basis requires reconcile (never release or takeover), one worktree cannot serve two selections and one selection cannot be double-claimed, legacy active-goal/current-work-item refs stay read-only with no authority, and no GitHub, branch, worktree, claim, spec, campaign or source state is touched.",
+        ),
+        command_entry(
+            "work wave check [--corpus <dir>] [--json]",
+            "report_only",
+            "target/ripr/reports/work-wave-check.{json,md}",
+            false,
+            false,
+            "Validates committed WorkWavePlanV1 rows against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR B, RIPR-SPEC-0271, consuming #1634); every plan consumes the complete selected candidate set and partitions it into waves over explicit resources (campaign-record:<id>, portfolio-schema, spec-ledger, output-contract:<id>, issue:<n>, pr:<n>, worktree:<path>), the retired generic active-goal resource fails closed, exclusive resources shared across waves and waves above declared writer capacity fail with exact reconcile routes, disjoint cross-campaign waves are admitted, and no GitHub, branch, worktree, claim, spec, campaign or source state is touched.",
         ),
     ]
 }
