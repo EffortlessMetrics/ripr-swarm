@@ -17,6 +17,17 @@
 //! - an item-position invocation of any macro mentions the name in its
 //!   arguments (`emit!(suit_color)`).
 //!
+//! The answer rides the shared same-name gate: both
+//! `ProbeContext::test_file_imports_foreign_callee_name` (memoized) and
+//! `reveal::file_imports_foreign_callee_name` (helper-hop, owner-pin and
+//! activation callers) consult it.
+//!
+//! Known limit: an invocation nested inside another `macro_rules!`
+//! definition's body (a macro that expands to `fake!();`) is not read as an
+//! invocation, so a definition reached only that way is not seen. The
+//! defining macro's own file is the only scope read; a macro defined in
+//! another file or crate is read only through an invocation's arguments.
+//!
 //! An expression macro that merely calls the name (`assert_eq!(f(..))`) and
 //! a macro that defines other names rebind nothing. An unparsable file that
 //! holds a `macro_rules!` is undecided and answers that it may rebind.
