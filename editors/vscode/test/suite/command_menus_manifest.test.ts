@@ -230,12 +230,19 @@ suite('Command Menus Manifest', () => {
       (manifest.contributes?.commands ?? []).map((entry) => entry.command)
     );
     const referenced = [
-      ...(manifest.contributes?.menus?.['editor/context'] ?? []).map((entry) => entry.command),
+      ...(manifest.contributes?.menus?.['editor/context'] ?? []).filter((entry) => !entry.submenu).map((entry) => entry.command),
       ...(manifest.contributes?.menus?.['ripr.editorContext'] ?? []).map((entry) => entry.command),
       ...(manifest.contributes?.keybindings ?? []).map((entry) => entry.command)
     ];
     for (const command of referenced) {
       assert.ok(command && contributed.has(command), `menu/keybinding references unregistered command ${command}`);
+    }
+    // Submenu entries carry no command; they must point at a contributed submenu instead.
+    const contributedSubmenus = new Set((manifest.contributes?.submenus ?? []).map((entry) => entry.id));
+    for (const entry of manifest.contributes?.menus?.['editor/context'] ?? []) {
+      if (entry.submenu) {
+        assert.ok(contributedSubmenus.has(entry.submenu), `editor/context references unregistered submenu ${entry.submenu}`);
+      }
     }
   });
 });
