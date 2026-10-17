@@ -467,7 +467,8 @@ pub(crate) struct CachedSeamLimitInfo {
 /// no standalone `1.79` is reusable. Old entries keep that field's gap.
 /// `1.81`: direct test-required helpers no longer seed production seams (#3213).
 /// `1.82`: name unsupported parameter-field match selectors without changing proof (#8479).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.82";
+/// `1.83`: check-helper argument pins (RIPR-SPEC-0197, RIPR-SPEC-0231 example 12).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.83";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -595,7 +596,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.82";
 /// returned-element field pins as full `1.80`.
 /// `0.87`: direct test-required helper source roles (#3213).
 /// `0.88`: same field-selector limitation metadata as full `1.82` (#8479).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.88";
+/// `0.89`: same check-helper argument pins as full `1.83`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.89";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -725,7 +727,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.88";
 /// returned-element field pins as full `1.80`.
 /// `0.87`: direct test-required helper source roles (#3213).
 /// `0.88`: same field-selector limitation metadata as full `1.82` (#8479).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.88";
+/// `0.89`: same check-helper argument pins as full `1.83`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.89";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4511,7 +4514,8 @@ mod tests {
         // and returned-element field pins (RIPR-SPEC-0225 decision 9); no
         // standalone 1.79 is reusable.
         // 1.81 -> 1.82: field-selector limitation metadata (#8479).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.82");
+        // 1.82 -> 1.83: check-helper argument pins (RIPR-SPEC-0197).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.83");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4585,8 +4589,8 @@ mod tests {
         // 0.84 -> 0.85: same early error-variant pins as full 1.79 (#7063).
         // 0.85 -> 0.86: same composed golden-file, early error-variant and
         // returned-element field pins as full 1.80.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.88");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.88");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.89");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.89");
     }
 
     #[test]
@@ -5762,11 +5766,15 @@ mod tests {
                             // #8479: even copied old field-selector entries must miss.
                             ("schema_version", if compact { "0.87" } else { "1.81" }),
                             ("sharded_cache_schema_version", "0.87"),
+                            // Entries without check-helper argument pins must miss.
+                            ("schema_version", if compact { "0.88" } else { "1.82" }),
+                            ("sharded_cache_schema_version", "0.88"),
                         ]
                     } else {
                         vec![
                             ("schema_version", previous_outer),
                             ("schema_version", if compact { "0.87" } else { "1.81" }),
+                            ("schema_version", if compact { "0.88" } else { "1.82" }),
                         ]
                     };
                     for (field, previous) in previous_generations {
