@@ -36,7 +36,7 @@ fn continuity_findings(caller: &str, producer: &str) -> Vec<&'static str> {
         .and_then(|jobs| block(jobs, "rust-github", 2))
         .unwrap_or("");
     for required in [
-        "    needs: [route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]\n",
+        "    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]\n",
         "    uses: ./.github/workflows/rust-gates.yml\n",
         "      use-scratch: false\n",
     ] {
@@ -54,7 +54,7 @@ fn continuity_findings(caller: &str, producer: &str) -> Vec<&'static str> {
     });
     if guard.as_deref()
         != Some(
-            "!cancelled() && needs.detect-docs-only.result == 'success' && needs.detect-docs-only.outputs.docs_only != 'true' && (needs.route.outputs.router_target == 'github' || (needs.route.outputs.router_target == 'cx43' && needs.rust-cx43.outputs.scratch_status == 'tempfail') || (needs.route.outputs.router_target == 'cpx42' && needs.rust-cpx42.outputs.scratch_status == 'tempfail') || (needs.route.outputs.router_target == 'cx53' && needs.rust-cx53.outputs.scratch_status == 'tempfail'))",
+            "!cancelled() && needs.admission.result == 'success' && needs.detect-docs-only.result == 'success' && needs.detect-docs-only.outputs.docs_only != 'true' && (needs.route.outputs.router_target == 'github' || (needs.route.outputs.router_target == 'cx43' && needs.rust-cx43.outputs.scratch_status == 'tempfail') || (needs.route.outputs.router_target == 'cpx42' && needs.rust-cpx42.outputs.scratch_status == 'tempfail') || (needs.route.outputs.router_target == 'cx53' && needs.rust-cx53.outputs.scratch_status == 'tempfail'))",
         )
     {
         findings.push("hosted job eligibility changed; requalify the main writer opportunity");
@@ -183,11 +183,12 @@ fn disabled_hosted_job_or_filtered_push_is_not_writer_continuity() {
 #[test]
 fn missing_caller_dependencies_cannot_supply_guard_outputs() {
     for needs in [
-        "needs: [detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]",
-        "needs: [route, rust-cx43, rust-cpx42, rust-cx53]",
+        "needs: [admission, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]",
+        "needs: [admission, route, rust-cx43, rust-cpx42, rust-cx53]",
+        "needs: [route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]",
     ] {
         let changed = CALLER.replace(
-            "needs: [route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]",
+            "needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]",
             needs,
         );
         assert_ne!(changed, CALLER);
