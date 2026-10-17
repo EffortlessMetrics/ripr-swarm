@@ -568,7 +568,8 @@ fn declares_constant(text: &str, name: &str) -> bool {
             .any(|window| matches!(window, ["static", "mut", declared] if *declared == name))
 }
 
-/// Whether `text` reads `name` as a whole identifier: not a field access, and
+/// Whether `text` reads `name` as a whole identifier: not a field access (a
+/// range `0..CAP` is a read), and
 /// not behind a path other than `Self::`, `self::`, `crate::` or `super::`
 /// (another module's or type's item of the same spelling).
 fn names_identifier(text: &str, name: &str) -> bool {
@@ -580,7 +581,7 @@ fn names_identifier(text: &str, name: &str) -> bool {
         {
             return false;
         }
-        if before.ends_with('.') {
+        if before.ends_with('.') && !before.ends_with("..") {
             return false;
         }
         match before.strip_suffix("::") {
@@ -997,6 +998,9 @@ mod tests {
         assert!(!names_identifier("other::CAP", "CAP"));
         assert!(!names_identifier("a::b::CAP", "CAP"));
         assert!(!names_identifier("self.CAP", "CAP"));
+        assert!(names_identifier("for i in 0..CAP {", "CAP"));
+        assert!(names_identifier("for i in 0..=CAP {", "CAP"));
+        assert!(names_identifier("&buf[..CAP]", "CAP"));
     }
 
     #[test]
