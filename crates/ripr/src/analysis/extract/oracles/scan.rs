@@ -2505,6 +2505,17 @@ fn uncompared_unwrap_err_facts_opening_on_line(
     offset: usize,
     start_line: usize,
 ) -> Option<(Vec<OracleFact>, usize, Option<String>)> {
+    // Cheap textual gate: only rows whose bounded wrapped window mentions
+    // an error-side unwrap can yield a fact, so skip the join and delimiter
+    // scans for every other statement start.
+    let window_mentions_err_unwrap = body
+        .lines()
+        .skip(offset)
+        .take(UNWRAP_ERR_JOIN_LIMIT)
+        .any(|row| row.contains("unwrap_err") || row.contains("expect_err"));
+    if !window_mentions_err_unwrap {
+        return None;
+    }
     let (first, extra_lines, first_suffix) = take_semicolon_terminated_statement(body, offset)?;
     let suffix_line = offset.saturating_add(extra_lines);
     let mut statements = vec![(first, offset)];
