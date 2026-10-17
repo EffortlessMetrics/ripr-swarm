@@ -2,22 +2,22 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/match_arm_tuple_terminal_generated_constructor/input
 
-Summary: 2 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 probes (0 exposed, 2 weak, 0 unrevealed, 0 no path); 2 of 2 findings unsuppressed
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s).
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
 
 Start here:
-  State: a test gap to inspect or repair (top_gap)
-  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
+  State: a test gap to inspect or repair
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/work_queue.rs:30
-  Static exposure: weak (weakly_exposed, warning, confidence 0.92)
+  Static exposure: weak (severity: warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:rust:src/work_queue.rs:terminalize_proof:match_arm:match_arm:true_false
   Changed behavior: (true, false) =>
   Missing discriminator: No strong discriminator was detected
   Related test (1 of 4 matched rows): tests/projection.rs:4 terminal_projection_0 (ripr could not confirm that this assertion observes the changed behavior)
-  Next step: Strengthen the related assertion so it discriminates the changed behavior.
+  Next step: Strengthen the related assertion so it discriminates the changed behavior
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     - reach yes: Related tests appear to reach terminalize_proof: terminal_projection_0
     - infection yes: Reachable tests can plausibly activate this changed behavior
@@ -31,6 +31,6 @@ Write a test for it:
 
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - fixtures/match_arm_tuple_terminal_generated_constructor/input/src/work_queue.rs:30 (weakly_exposed)
+    - ./src/work_queue.rs:30 (weak)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
