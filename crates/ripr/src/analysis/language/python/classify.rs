@@ -382,16 +382,21 @@ pub(super) fn classify_change_for_owner(
     // A changed relational predicate (`qty > on_hand` -> `qty >= on_hand`) only
     // behaves differently when its operands are equal, so a strong exact-value
     // oracle that calls the owner away from that boundary still passes after
-    // the change. Mirror the Rust activation rule: once a strong related test
-    // calls the owner with literal arguments, `exposed` requires one of those
-    // calls to bind both operands to equal values. Unresolved operands
-    // (attributes, computed expressions) never count as observed, so this fails
-    // closed to `weakly_exposed` and names the missing `left == right`
-    // boundary. With no literal owner inputs at all the gate cannot see the
-    // activation either way; that case keeps the oracle verdict and carries a
-    // named `boundary_activation_unresolved` limitation instead.
+    // the change. The same fail-closed rule covers an equality-to-equality
+    // constant change (`n == 11` -> `n == 10`): input 20 takes the else branch
+    // both ways. `!=` and `is` stay outside the gate. Mirror the Rust
+    // activation rule: once a strong related test calls the owner with literal
+    // arguments, `exposed` requires one of those calls to bind both operands
+    // to equal values (or, for `==` -> `==`, either compared literal).
+    // Unresolved operands never count as observed, so this fails closed to
+    // `weakly_exposed` and names the missing `left == right` boundary. With no
+    // literal owner inputs at all the gate cannot see the activation either
+    // way; that case keeps the oracle verdict and carries a named
+    // `boundary_activation_unresolved` limitation instead.
     let boundary = (static_limit.is_none() && matches!(family, ProbeFamily::Predicate))
-        .then(|| python_boundary_evidence(line_text, owner, &related_candidates, &focus))
+        .then(|| {
+            python_boundary_evidence(line_text, old_line_text, owner, &related_candidates, &focus)
+        })
         .flatten();
     let boundary_gap = boundary
         .as_ref()
