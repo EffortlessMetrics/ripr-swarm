@@ -29041,6 +29041,54 @@ fn check_rejects_invalid_ripr_git_timeout_env() -> Result<(), String> {
     Ok(())
 }
 
+/// #5369: the `ripr check` wall-clock budget fails closed on a malformed
+/// value, naming the flag or variable, and an explicit `--timeout` wins over
+/// the environment so the bad env value is not read.
+#[test]
+fn check_rejects_invalid_check_timeout_flag_and_env() -> Result<(), String> {
+    let workspace = unique_external_workspace("check-timeout-env")?;
+    std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
+    let root = workspace
+        .to_str()
+        .ok_or("workspace path is not valid UTF-8")?;
+
+    let flag = run_ripr(&["check", "--root", root, "--timeout", "soon"]);
+    let stderr = String::from_utf8_lossy(&flag.stderr);
+    if flag.status.code() != Some(2)
+        || !stderr.contains("--timeout requires a non-negative integer (seconds); got \"soon\"")
+    {
+        return Err(format!(
+            "bad --timeout should exit 2 naming the flag, got {:?}; stderr: {stderr}",
+            flag.status.code()
+        ));
+    }
+
+    let env = run_ripr_with_env(&["check", "--root", root], &[("RIPR_CHECK_TIMEOUT", "abc")]);
+    let stderr = String::from_utf8_lossy(&env.stderr);
+    if env.status.code() != Some(2)
+        || !stderr
+            .contains("RIPR_CHECK_TIMEOUT requires a non-negative integer (seconds); got \"abc\"")
+    {
+        return Err(format!(
+            "bad RIPR_CHECK_TIMEOUT should exit 2 naming the variable, got {:?}; stderr: {stderr}",
+            env.status.code()
+        ));
+    }
+
+    let explicit = run_ripr_with_env(
+        &["check", "--root", root, "--timeout", "5"],
+        &[("RIPR_CHECK_TIMEOUT", "abc")],
+    );
+    let stderr = String::from_utf8_lossy(&explicit.stderr);
+    if stderr.contains("RIPR_CHECK_TIMEOUT") {
+        return Err(format!(
+            "--timeout should take precedence over the env var: {stderr}"
+        ));
+    }
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
 /// A report write cut short by the process dying (here the file-size limit
 /// terminates it, the same outcome as Ctrl-C or a cancelled CI step mid-write) must
 /// leave the previous complete report in place, not a truncated one (#4542).
