@@ -6,10 +6,6 @@
 //! a cache. The archive-boundary contract (#7685) remains independent.
 const CALLER: &str = include_str!("../../../.github/workflows/routed-rust.yml");
 const PRODUCER: &str = include_str!("../../../.github/workflows/rust-gates.yml");
-const LEGACY_HOSTED_NEEDS: &str =
-    "    needs: [route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]\n";
-const STAGED_HOSTED_NEEDS: &str =
-    "    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]\n";
 
 fn block<'a>(source: &'a str, name: &str, indent: usize) -> Option<&'a str> {
     let marker = format!("{}{name}:", " ".repeat(indent));
@@ -29,24 +25,6 @@ fn block<'a>(source: &'a str, name: &str, indent: usize) -> Option<&'a str> {
     }
     Some(tail)
 }
-// The staged PR path may skip admission on retained main/manual qualification.
-// Pin the reviewed status override rather than treating a restored trigger as
-// reachability through a PR-only prerequisite. This is still source-shape proof.
-const STAGED_PREREQUISITE_GUARD: &str = "!cancelled() && ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && needs.admission.result == 'success' && needs.admission.outputs.execute == 'true'))";
-
-fn folded_guard(job: &str) -> Option<String> {
-    let header = job.split("    steps:\n").next().unwrap_or("");
-    let mut lines = header.lines();
-    lines.find(|line| *line == "    if: >-")?;
-    Some(
-        lines
-            .take_while(|line| line.starts_with("      "))
-            .map(str::trim)
-            .collect::<Vec<_>>()
-            .join(" "),
-    )
-}
-
 fn continuity_findings(caller: &str, producer: &str) -> Vec<&'static str> {
     let mut findings = Vec::new();
     let events = block(caller, "on", 0).unwrap_or("");
@@ -54,43 +32,11 @@ fn continuity_findings(caller: &str, producer: &str) -> Vec<&'static str> {
     if push.map(str::trim) != Some("branches: [main, master]") {
         findings.push("main-only hosted cache loses its automatic writer opportunity; reconcile #7827 before retirement");
     }
-    let jobs = block(caller, "jobs", 0).unwrap_or("");
-    let admission = block(jobs, "admission", 2);
-    for prerequisite in ["route", "detect-docs-only"] {
-        let job = block(jobs, prerequisite, 2).unwrap_or("");
-        let header = job.split("    steps:\n").next().unwrap_or("");
-        let reviewed = if let Some(admission) = admission {
-            admission
-                .split("    steps:\n")
-                .next()
-                .unwrap_or("")
-                .contains("    if: github.event_name == 'pull_request'\n")
-                && header.contains("    needs: [admission]\n")
-                && folded_guard(job).as_deref() == Some(STAGED_PREREQUISITE_GUARD)
-        } else {
-            !job.is_empty()
-                && !header
-                    .lines()
-                    .any(|line| line.starts_with("    if:") || line.starts_with("    needs:"))
-        };
-        if !reviewed {
-            findings.push("main writer prerequisite admission changed; restored triggers alone are not continuity");
-        }
-    }
-    let hosted = block(jobs, "rust-github", 2).unwrap_or("");
-    let expected_needs = if admission.is_some() {
-        STAGED_HOSTED_NEEDS
-    } else {
-        LEGACY_HOSTED_NEEDS
-    };
-    let dependency_lines = hosted
-        .lines()
-        .filter(|line| line.starts_with("    needs:"))
-        .collect::<Vec<_>>();
-    if dependency_lines != [expected_needs.trim_end()] {
-        findings.push("hosted caller/cache producer binding changed; requalify writer eligibility");
-    }
+    let hosted = block(caller, "jobs", 0)
+        .and_then(|jobs| block(jobs, "rust-github", 2))
+        .unwrap_or("");
     for required in [
+        "    needs: [route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]\n",
         "    uses: ./.github/workflows/rust-gates.yml\n",
         "      use-scratch: false\n",
     ] {
@@ -99,13 +45,18 @@ fn continuity_findings(caller: &str, producer: &str) -> Vec<&'static str> {
                 .push("hosted caller/cache producer binding changed; requalify writer eligibility");
         }
     }
-    let guard = folded_guard(hosted);
-    let expected_guard = if admission.is_some() {
-        "!cancelled() && needs.route.result == 'success' && needs.detect-docs-only.result == 'success' && needs.detect-docs-only.outputs.docs_only != 'true' && (needs.route.outputs.router_target == 'github' || (needs.route.outputs.router_target == 'cx43' && needs.rust-cx43.outputs.scratch_status == 'tempfail') || (needs.route.outputs.router_target == 'cpx42' && needs.rust-cpx42.outputs.scratch_status == 'tempfail') || (needs.route.outputs.router_target == 'cx53' && needs.rust-cx53.outputs.scratch_status == 'tempfail'))"
-    } else {
-        "!cancelled() && needs.detect-docs-only.result == 'success' && needs.detect-docs-only.outputs.docs_only != 'true' && (needs.route.outputs.router_target == 'github' || (needs.route.outputs.router_target == 'cx43' && needs.rust-cx43.outputs.scratch_status == 'tempfail') || (needs.route.outputs.router_target == 'cpx42' && needs.rust-cpx42.outputs.scratch_status == 'tempfail') || (needs.route.outputs.router_target == 'cx53' && needs.rust-cx53.outputs.scratch_status == 'tempfail'))"
-    };
-    if guard.as_deref() != Some(expected_guard) {
+    let guard = hosted.split_once("    if: >-\n").map(|(_, tail)| {
+        tail.lines()
+            .take_while(|line| line.starts_with("      "))
+            .map(str::trim)
+            .collect::<Vec<_>>()
+            .join(" ")
+    });
+    if guard.as_deref()
+        != Some(
+            "!cancelled() && needs.detect-docs-only.result == 'success' && needs.detect-docs-only.outputs.docs_only != 'true' && (needs.route.outputs.router_target == 'github' || (needs.route.outputs.router_target == 'cx43' && needs.rust-cx43.outputs.scratch_status == 'tempfail') || (needs.route.outputs.router_target == 'cpx42' && needs.rust-cpx42.outputs.scratch_status == 'tempfail') || (needs.route.outputs.router_target == 'cx53' && needs.rust-cx53.outputs.scratch_status == 'tempfail'))",
+        )
+    {
         findings.push("hosted job eligibility changed; requalify the main writer opportunity");
     }
     let producer_job = block(producer, "jobs", 0)
@@ -164,13 +115,7 @@ fn retiring_main_push_is_not_cache_continuity() {
     // Dispatch still exists, but an available manual run is not an automatic
     // lifecycle and a pre-merge ref cannot satisfy the producer's save guard.
     assert!(retired.contains("  workflow_dispatch:"));
-    let pr_event = block(block(CALLER, "on", 0).unwrap_or(""), "pull_request", 2).unwrap_or("");
-    assert!(!pr_event.is_empty(), "control must retain a real PR event");
-    assert_eq!(
-        block(block(&retired, "on", 0).unwrap_or(""), "pull_request", 2),
-        Some(pr_event),
-        "removing main push must leave the actual PR request unchanged"
-    );
+    assert!(retired.contains("types: [ready_for_review]"));
 }
 
 #[test]
@@ -237,44 +182,16 @@ fn disabled_hosted_job_or_filtered_push_is_not_writer_continuity() {
 
 #[test]
 fn missing_caller_dependencies_cannot_supply_guard_outputs() {
-    let jobs = block(CALLER, "jobs", 0).unwrap_or("");
-    let staged = block(jobs, "admission", 2).is_some();
-    let hosted = block(jobs, "rust-github", 2).unwrap_or("");
-    let expected_needs = if staged {
-        STAGED_HOSTED_NEEDS
-    } else {
-        LEGACY_HOSTED_NEEDS
-    };
-    assert!(
-        hosted.contains(expected_needs),
-        "control must bind the actual profile"
-    );
-    let dependencies = [
-        "admission",
-        "route",
-        "detect-docs-only",
-        "rust-cx43",
-        "rust-cpx42",
-        "rust-cx53",
-    ];
-    for missing in dependencies
-        .into_iter()
-        .filter(|name| staged || *name != "admission")
-    {
-        let retained = dependencies
-            .into_iter()
-            .filter(|name| (staged || *name != "admission") && *name != missing)
-            .collect::<Vec<_>>()
-            .join(", ");
-        let changed_hosted = hosted.replace(expected_needs, &format!("    needs: [{retained}]\n"));
-        let changed = CALLER.replace(hosted, &changed_hosted);
-        assert_ne!(changed, CALLER, "must remove {missing} from the hosted job");
-        assert!(
-            continuity_findings(&changed, PRODUCER)
-                .iter()
-                .any(|finding| finding.contains("binding changed")),
-            "missing {missing} must fail the binding check"
+    for needs in [
+        "needs: [detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]",
+        "needs: [route, rust-cx43, rust-cpx42, rust-cx53]",
+    ] {
+        let changed = CALLER.replace(
+            "needs: [route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]",
+            needs,
         );
+        assert_ne!(changed, CALLER);
+        assert!(!continuity_findings(&changed, PRODUCER).is_empty());
     }
 }
 
@@ -286,59 +203,5 @@ fn disabled_producer_or_additional_cache_is_not_writer_continuity() {
     ] {
         assert_ne!(changed, PRODUCER);
         assert!(!continuity_findings(CALLER, &changed).is_empty());
-    }
-}
-
-#[test]
-fn declared_triggers_do_not_bypass_pr_only_prerequisites() {
-    let jobs = block(CALLER, "jobs", 0).unwrap_or("");
-    assert!(!jobs.is_empty());
-    for prerequisite in ["route", "detect-docs-only"] {
-        let job = block(jobs, prerequisite, 2).unwrap_or("");
-        assert!(!job.is_empty());
-        let mut in_guard = false;
-        let ungated = job
-            .lines()
-            .filter(|line| {
-                if line.starts_with("    if:") {
-                    in_guard = true;
-                    return false;
-                }
-                if in_guard && line.starts_with("      ") {
-                    return false;
-                }
-                in_guard = false;
-                !line.starts_with("    needs:")
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        let blocked = format!(
-            "    needs: [admission]\n    if: needs.admission.outputs.execute == 'true'\n{ungated}\n"
-        );
-        let mut changed = CALLER.replace(job, &blocked);
-        if block(jobs, "admission", 2).is_none() {
-            changed = changed.replacen(
-                "jobs:\n",
-                "jobs:\n  admission:\n    if: github.event_name == 'pull_request'\n    runs-on: ubuntu-latest\n    outputs:\n      execute: ${{ steps.admit.outputs.execute }}\n    steps:\n      - id: admit\n        run: echo execute=true >> $GITHUB_OUTPUT\n",
-                1,
-            );
-        }
-        if block(block(&changed, "on", 0).unwrap_or(""), "push", 2).is_none() {
-            changed = changed.replacen(
-                "on:\n",
-                "on:\n  push:\n    branches: [main, master]\n  workflow_dispatch:\n",
-                1,
-            );
-        }
-        assert_ne!(changed, CALLER);
-        assert_eq!(
-            block(block(&changed, "on", 0).unwrap_or(""), "push", 2).map(str::trim),
-            Some("branches: [main, master]")
-        );
-        assert!(
-            continuity_findings(&changed, PRODUCER)
-                .iter()
-                .any(|finding| finding.contains("prerequisite admission changed"))
-        );
     }
 }

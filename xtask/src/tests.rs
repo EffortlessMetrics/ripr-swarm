@@ -78,7 +78,7 @@ use super::{
     GENERATED_CI_FRONT_PANEL_REPAIR, GENERATED_CI_PACKET_INDEX_REPAIR, GhPrStatusPullRequest,
     GhPrStatusReview, Lane1EvidenceAuditRepoExposureGeneration,
     Lane1EvidenceAuditRepoExposureOutcome, LocalContextAllow, LocalMarkdownTarget,
-    LspCockpitFixture, MarkdownLink, PYTHON_REAL_REPO_EVAL_REQUIRED_CASES,
+    LspCockpitFixture, LspCockpitReport, MarkdownLink, PYTHON_REAL_REPO_EVAL_REQUIRED_CASES,
     PYTHON_REAL_REPO_EVAL_REQUIRED_NO_ACTION_CASES,
     PYTHON_REAL_REPO_EVAL_REQUIRED_STATIC_LIMIT_CASES, PrTriageCheck, PrTriageFinding,
     PrTriagePullRequest, REAL_REPAIR_ATTEMPTS_CORPUS, REAL_REPAIR_ATTEMPTS_REQUIRED_CASES,
@@ -11248,193 +11248,224 @@ jobs = ["Ripr Rust Small Result", "Ripr Rust Small on CX53"]
 }
 
 #[test]
-fn routed_rust_merge_ready_event_matrix_withholds_unrequested_context() -> Result<(), String> {
+fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
     let workflow = include_str!("../../.github/workflows/routed-rust.yml");
-    assert!(
-        routed_rust_ready_event_contract_violations(workflow).is_empty(),
-        "the unchanged caller must satisfy the admission contract"
-    );
-    let replace_once = |source: &str, before: &str, after: &str| {
-        assert_eq!(
-            source.matches(before).count(),
-            1,
-            "unique mutation anchor: {before}"
-        );
-        let changed = source.replacen(before, after, 1);
-        assert_ne!(changed, source, "mutation must engage: {before}");
-        changed
-    };
-    let rejected = |changed: &str, diagnostic: &str| {
-        let violations = routed_rust_ready_event_contract_violations(changed);
-        assert!(
-            violations
-                .iter()
-                .any(|violation| violation.contains(diagnostic)),
-            "expected {diagnostic:?}, got {violations:?}"
-        );
-    };
-
-    for action in [
-        "ready_for_review",
-        "opened",
-        "reopened",
-        "synchronize",
-        "unlabeled",
-        "edited",
-    ] {
-        assert_eq!(
-            routed_rust_event_route(workflow, "pull_request", Some(action), Some("merge-ready")),
-            RoutedRustEventRoute::WorkflowNotTriggered,
-            "only a fresh labeled event requests PR qualification: {action}"
-        );
-    }
-    for label in [Some("merge-ready"), Some("MeRgE-ReAdY")] {
-        assert_eq!(
-            routed_rust_event_route(workflow, "pull_request", Some("labeled"), label),
+    let cases = [
+        (
+            "pull_request",
+            Some("ready_for_review"),
+            None,
             RoutedRustEventRoute::LaunchFullGate,
-            "explicit request label={label:?}"
-        );
-    }
-    for label in [
-        None,
-        Some("full-ci"),
-        Some("windows-ci"),
-        Some("merge-ready-extra"),
-    ] {
-        assert_eq!(
-            routed_rust_event_route(workflow, "pull_request", Some("labeled"), label),
-            RoutedRustEventRoute::BookkeepingOnly,
-            "unrelated labels must not earn required context: {label:?}"
-        );
-    }
-    // This helper models PR admission only. Main/manual execution deliberately
-    // bypasses that job; hosted_cache_continuity/native_admission separately
-    // enforce its full prerequisite, Rust, cache-writer and result contract.
-    for event in ["push", "workflow_dispatch"] {
-        assert_eq!(
-            routed_rust_event_route(workflow, event, None, None),
+        ),
+        (
+            "pull_request",
+            Some("opened"),
+            None,
             RoutedRustEventRoute::WorkflowNotTriggered,
-            "{event} must not fabricate PR admission"
+        ),
+        (
+            "pull_request",
+            Some("reopened"),
+            None,
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
+        (
+            "pull_request",
+            Some("synchronize"),
+            None,
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
+        (
+            "pull_request",
+            Some("labeled"),
+            Some("full-ci"),
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
+        (
+            "pull_request",
+            Some("labeled"),
+            Some("windows-ci"),
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
+        (
+            "pull_request",
+            Some("unlabeled"),
+            Some("full-ci"),
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
+        ("push", None, None, RoutedRustEventRoute::LaunchFullGate),
+        (
+            "workflow_dispatch",
+            None,
+            None,
+            RoutedRustEventRoute::LaunchFullGate,
+        ),
+    ];
+    for (event_name, action, label, expected) in cases {
+        let actual = routed_rust_event_route(workflow, event_name, action, label);
+        assert_eq!(
+            actual, expected,
+            "event={event_name} action={action:?} label={label:?}"
         );
     }
-    assert!(workflow.contains("  push:\n    branches: [main, master]\n  workflow_dispatch:"));
-    assert!(workflow.contains("  admission:\n    if: github.event_name == 'pull_request'\n"));
 
-    for activity in [
-        "ready_for_review",
-        "synchronize",
-        "edited",
-        "opened",
-        "reopened",
-        "unlabeled",
-    ] {
-        let changed = replace_once(
-            workflow,
-            "    types: [labeled]",
-            &format!("    types: [labeled, {activity}]"),
-        );
-        rejected(&changed, "must be exactly");
-        rejected(&changed, activity);
-    }
-    let dropped_request = replace_once(
-        workflow,
-        "    types: [labeled]",
+    let draft_resurrected = workflow.replace(
+        "    types: [ready_for_review]",
+        "    types: [ready_for_review, synchronize]",
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&draft_resurrected)
+            .iter()
+            .any(|violation| {
+                violation.contains("must be exactly") && violation.contains("synchronize")
+            }),
+        "re-admitting synchronize must fail the Ready-only contract: {:?}",
+        routed_rust_ready_event_contract_violations(&draft_resurrected)
+    );
+
+    let label_resurrected = workflow.replace(
+        "    types: [ready_for_review]",
+        "    types: [ready_for_review, labeled]",
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&label_resurrected)
+            .iter()
+            .any(|violation| {
+                violation.contains("must be exactly") && violation.contains("labeled")
+            }),
+        "re-admitting label events must fail the Ready-only contract: {:?}",
+        routed_rust_ready_event_contract_violations(&label_resurrected)
+    );
+
+    let edited_resurrected = workflow.replace(
+        "    types: [ready_for_review]",
+        "    types: [ready_for_review, edited]",
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&edited_resurrected)
+            .iter()
+            .any(|violation| {
+                violation.contains("must be exactly") && violation.contains("edited")
+            }),
+        "re-admitting the edited activity type must fail the Ready-only contract: {:?}",
+        routed_rust_ready_event_contract_violations(&edited_resurrected)
+    );
+
+    let ready_dropped = workflow.replace(
+        "    types: [ready_for_review]",
         "    types: [opened, synchronize, reopened]",
     );
-    rejected(&dropped_request, "must be exactly");
-    let missing_types = replace_once(workflow, "    types: [labeled]\n", "");
-    rejected(&missing_types, "inline pull_request types array");
+    assert!(
+        routed_rust_ready_event_contract_violations(&ready_dropped)
+            .iter()
+            .any(|violation| violation.contains("must be exactly")),
+        "dropping the Ready transition must fail closed: {:?}",
+        routed_rust_ready_event_contract_violations(&ready_dropped)
+    );
 
-    let cancellation_enabled = replace_once(
-        workflow,
+    let missing_types = workflow.replace("    types: [ready_for_review]\n", "");
+    assert!(
+        routed_rust_ready_event_contract_violations(&missing_types)
+            .iter()
+            .any(|violation| violation.contains("inline pull_request types array")),
+        "removing types must fail closed: {:?}",
+        routed_rust_ready_event_contract_violations(&missing_types)
+    );
+
+    let cancellation_disabled = workflow.replace(
+        "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
         "  cancel-in-progress: false",
-        "  cancel-in-progress: true",
-    );
-    rejected(&cancellation_enabled, "cancel-in-progress: false");
-    let group = workflow
-        .lines()
-        .find(|line| line.starts_with("  group:"))
-        .ok_or("missing concurrency group")?;
-    let shared_group = replace_once(
-        workflow,
-        group,
-        "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}",
-    );
-    rejected(
-        &shared_group,
-        "must isolate qualification and per-run metadata concurrency",
-    );
-    let unqualified_main_manual = replace_once(
-        workflow,
-        "format('{0}-{1}-{2}', github.workflow, github.ref, github.event_name)",
-        "format('{0}-{1}', github.workflow, github.ref)",
-    );
-    rejected(
-        &unqualified_main_manual,
-        "must isolate qualification and per-run metadata concurrency",
-    );
-
-    let hosted = workflow
-        .split_once("\n  rust-github:\n")
-        .ok_or("missing hosted job")?
-        .1
-        .split_once("\n  docs-gate:\n")
-        .ok_or("missing next job")?
-        .0;
-    for condition in ["      always() &&", "      Always () &&"] {
-        let changed_hosted = replace_once(hosted, "      !cancelled() &&", condition);
-        let changed = replace_once(workflow, hosted, &changed_hosted);
-        rejected(
-            &changed,
-            "implementation job `rust-github` must not use `always()`",
-        );
-    }
-    let cleanup_comment_hosted = replace_once(
-        hosted,
-        "    uses: ./.github/workflows/rust-gates.yml\n",
-        "    uses: ./.github/workflows/rust-gates.yml\n    # cleanup may use always()\n",
-    );
-    let cleanup_comment = replace_once(workflow, hosted, &cleanup_comment_hosted);
-    assert_eq!(
-        replace_once(&cleanup_comment, "    # cleanup may use always()\n", ""),
-        workflow,
-        "the permitted-comment control must preserve every other workflow byte"
     );
     assert!(
-        routed_rust_ready_event_contract_violations(&cleanup_comment).is_empty(),
-        "always() outside a job condition is permitted"
-    );
-    let draft_guard = replace_once(
-        workflow,
-        "  admission:\n    if: github.event_name == 'pull_request'",
-        "  admission:\n    if: github.event_name == 'pull_request' && github.event.pull_request.draft != true",
-    );
-    rejected(
-        &draft_guard,
-        "must not gate jobs on `github.event.pull_request.draft`",
+        routed_rust_ready_event_contract_violations(&cancellation_disabled)
+            .iter()
+            .any(|violation| violation.contains("cancel-in-progress")),
+        "disabling Ready-run cancellation must fail: {:?}",
+        routed_rust_ready_event_contract_violations(&cancellation_disabled)
     );
 
-    let result_name = workflow
-        .split_once("\n  result:\n")
-        .ok_or("missing result job")?
-        .1
-        .lines()
-        .find(|line| line.starts_with("    name:"))
-        .ok_or("missing result name")?;
-    for name in ["Ripr Rust Small Result", "Ripr Rust Small Draft Result"] {
-        let changed = replace_once(workflow, result_name, &format!("    name: {name}"));
-        rejected(&changed, "must post event-bound");
-    }
-    let pseudo_result = replace_once(
-        workflow,
-        result_name,
-        "    name: Ripr Rust Small Ignored Label Event",
+    let uncancellable_fallback = workflow.replace("      !cancelled() &&", "      always() &&");
+    assert_ne!(
+        uncancellable_fallback, workflow,
+        "fixture must actually swap the hosted fallback condition"
     );
-    rejected(
-        &pseudo_result,
-        "retired `Ripr Rust Small Ignored Label Event`",
+    assert!(
+        routed_rust_ready_event_contract_violations(&uncancellable_fallback)
+            .iter()
+            .any(|violation| violation.contains("`rust-github`") && violation.contains("always()")),
+        "a job-level always() on an implementation job must fail: it survives Ready-run cancellation: {:?}",
+        routed_rust_ready_event_contract_violations(&uncancellable_fallback)
     );
-    Ok(())
+
+    let spaced_uppercase = workflow.replace("      !cancelled() &&", "      Always () &&");
+    assert!(
+        routed_rust_ready_event_contract_violations(&spaced_uppercase)
+            .iter()
+            .any(|violation| violation.contains("`rust-github`")),
+        "expression names are case-insensitive and may carry spaces: {:?}",
+        routed_rust_ready_event_contract_violations(&spaced_uppercase)
+    );
+
+    let step_level_cleanup = workflow.replace(
+        "    uses: ./.github/workflows/rust-gates.yml\n    with:\n      runner-config: '\"ubuntu-latest\"'",
+        "    uses: ./.github/workflows/rust-gates.yml\n    # cleanup may use always()\n    with:\n      runner-config: '\"ubuntu-latest\"'",
+    );
+    assert_ne!(step_level_cleanup, workflow, "fixture must add the comment");
+    assert!(
+        !routed_rust_ready_event_contract_violations(&step_level_cleanup)
+            .iter()
+            .any(|violation| violation.contains("must not use `always()`")),
+        "always() outside the job condition must not be rejected: {:?}",
+        routed_rust_ready_event_contract_violations(&step_level_cleanup)
+    );
+
+    let shared_group = workflow.replace(
+        "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}",
+        "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}",
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&shared_group)
+            .iter()
+            .any(|violation| violation.contains("event-qualified concurrency group")),
+        "sharing the push/manual concurrency group must fail: {:?}",
+        routed_rust_ready_event_contract_violations(&shared_group)
+    );
+
+    let draft_guard = workflow.replace(
+        "    name: Route Ripr Rust Small",
+        "    if: github.event.pull_request.draft != true\n    name: Route Ripr Rust Small",
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&draft_guard)
+            .iter()
+            .any(|violation| violation.contains("github.event.pull_request.draft")),
+        "a draft job guard must fail; a skipped required job reports success: {:?}",
+        routed_rust_ready_event_contract_violations(&draft_guard)
+    );
+
+    let pseudo_result = workflow.replace(
+        "    name: Ripr Rust Small Result",
+        "    name: ${{ github.event_name == 'pull_request' && 'Ripr Rust Small Ignored Label Event' || 'Ripr Rust Small Result' }}",
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&pseudo_result)
+            .iter()
+            .any(|violation| violation.contains("Ignored Label Event")),
+        "resurrecting the ignored-label pseudo-result must fail: {:?}",
+        routed_rust_ready_event_contract_violations(&pseudo_result)
+    );
+
+    let renamed_result = workflow.replace(
+        "    name: Ripr Rust Small Result",
+        "    name: Ripr Rust Small Draft Result",
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&renamed_result)
+            .iter()
+            .any(|violation| violation.contains("must post the static")),
+        "renaming the required result context must fail: {:?}",
+        routed_rust_ready_event_contract_violations(&renamed_result)
+    );
 }
 
 #[test]
@@ -30561,73 +30592,6 @@ fn xtask_run_helpers_report_success_failure_and_optional_output() -> Result<(), 
 
 #[test]
 fn policy_checker_facade_runs_current_repo_checks() -> Result<(), String> {
-    #[cfg(all(unix, not(target_os = "linux")))]
-    {
-        // Preserve the original owner on Unix platforms without the qualified
-        // session capture. Do not introduce a partial containment boundary.
-        policy_checker_facade_checks_in_repo_cwd()
-    }
-    #[cfg(not(all(unix, not(target_os = "linux"))))]
-    policy_checker_facade_in_subprocess()
-}
-
-#[cfg(not(all(unix, not(target_os = "linux"))))]
-fn policy_checker_facade_in_subprocess() -> Result<(), String> {
-    const CHILD_ENV: &str = "RIPR_XTASK_POLICY_FACADE_CHILD";
-    const COMPLETED: &str = "policy facade child checks completed";
-    const TEST: &str = "tests::policy_checker_facade_runs_current_repo_checks";
-    match std::env::var_os(CHILD_ENV) {
-        Some(value) if value == "1" => {
-            #[cfg(target_os = "linux")]
-            crate::run::enter_test_session()?;
-            policy_checker_facade_checks_in_repo_cwd()?;
-            eprintln!("{COMPLETED}");
-            return Ok(());
-        }
-        Some(value) => return Err(format!("invalid policy facade child marker: {value:?}")),
-        None => {}
-    }
-    // Keep the real checks in a fresh process: its CWD writer cannot convoy
-    // aggregate peers while file policy performs its real Cargo inventories.
-    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
-    #[cfg(target_os = "linux")]
-    let capture = crate::run::capture_isolated_test;
-    #[cfg(not(target_os = "linux"))]
-    let capture = crate::run::capture_output_measured;
-    let output = capture(
-        &exe.to_string_lossy(),
-        &[
-            TEST.to_string(),
-            "--exact".to_string(),
-            "--nocapture".to_string(),
-        ],
-        Some(&repo_root()?),
-        &[(CHILD_ENV, "1")],
-        crate::run::tool_build_timeout()?,
-        "isolated policy facade checks",
-    )?
-    .output;
-    let diagnostic = format!(
-        "policy facade child status={:?}, timed_out={}, stdout={}, stderr={}",
-        output.status, output.timed_out, output.stdout, output.stderr
-    );
-    if output.timed_out
-        || !output.status.is_some_and(|status| status.success())
-        || !output.stdout.lines().any(|line| line == "running 1 test")
-        || !output
-            .stdout
-            .lines()
-            .any(|line| line.starts_with("test result: ok. 1 passed; 0 failed; 0 ignored;"))
-        || !output.stdout.contains(&format!("test {TEST} ... "))
-        || !output.stderr.lines().any(|line| line == COMPLETED)
-    {
-        return Err(diagnostic);
-    }
-    eprintln!("{diagnostic}");
-    Ok(())
-}
-
-fn policy_checker_facade_checks_in_repo_cwd() -> Result<(), String> {
     with_repo_cwd(|| {
         check_static_language()?;
         check_no_panic_family()?;
@@ -50179,81 +50143,9 @@ fn editor_lsp_workflow_fixture_pins_saved_workspace_loop() -> Result<(), String>
 }
 
 #[test]
-fn preview_editor_workflow_fixtures_do_not_wait_for_cwd() -> Result<(), String> {
-    const CHILD_ENV: &str = "RIPR_XTASK_PREVIEW_CWD_CHILD";
-    const COMPLETED: &str = "preview CWD child assertions completed";
-    match std::env::var_os(CHILD_ENV) {
-        Some(value) if value == "1" => {
-            preview_fixture_assertions_with_cwd_writer()?;
-            eprintln!("{COMPLETED}");
-            return Ok(());
-        }
-        Some(value) => return Err(format!("invalid preview CWD child marker: {value:?}")),
-        None => {}
-    }
-    // Only the isolated child acquires the CWD writer: aggregate peers may
-    // already hold it across their own Cargo work before our timers can start.
-    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
-    let output = crate::run::capture_output_measured(
-        &exe.to_string_lossy(),
-        &[
-            "tests::preview_editor_workflow_fixtures_do_not_wait_for_cwd".to_string(),
-            "--exact".to_string(),
-            "--nocapture".to_string(),
-        ],
-        Some(&repo_root()?),
-        &[(CHILD_ENV, "1")],
-        Duration::from_secs(20),
-        "isolated preview CWD regression",
-    )?
-    .output;
-    let diagnostic = format!(
-        "preview CWD child status={:?}, timed_out={}, stdout={}, stderr={}",
-        output.status, output.timed_out, output.stdout, output.stderr
-    );
-    if output.timed_out
-        || !output.status.is_some_and(|status| status.success())
-        || !output.stdout.contains("running 1 test")
-        || !output.stdout.contains("1 passed; 0 failed; 0 ignored;")
-        || !output.stderr.lines().any(|line| line == COMPLETED)
-    {
-        return Err(diagnostic);
-    }
-    eprintln!("{diagnostic}");
-    Ok(())
-}
-
-fn preview_fixture_assertions_with_cwd_writer() -> Result<(), String> {
-    let (started, completed, worker) = with_temp_cwd("preview-independent-cwd", |_root| {
-        let (start_tx, start_rx) = std::sync::mpsc::channel();
-        let (done_tx, done_rx) = std::sync::mpsc::channel();
-        let worker = std::thread::spawn(move || {
-            let _ = start_tx.send(());
-            let _ = done_tx.send(preview_editor_workflow_fixtures_pin_preview_boundaries());
-        });
-        let started = start_rx.recv_timeout(Duration::from_secs(2));
-        let completed = done_rx.recv_timeout(Duration::from_secs(2));
-        (started, completed, worker)
-    });
-    // Restore the cwd and release its writer before joining, including timeout
-    // and panic paths: the old guarded implementation must fail without hanging.
-    worker.join().map_err(|panic_payload| {
-        let message = panic_payload
-            .downcast_ref::<&str>()
-            .copied()
-            .or_else(|| panic_payload.downcast_ref::<String>().map(String::as_str))
-            .unwrap_or("non-string panic payload");
-        format!("preview fixture assertion thread panicked: {message}")
-    })?;
-    started.map_err(|error| format!("preview fixture assertion thread did not start: {error}"))?;
-    completed.map_err(|error| {
-        format!("preview fixture assertions waited for the process-wide CWD guard: {error}")
-    })?
-}
-
-#[test]
 fn preview_editor_workflow_fixtures_pin_preview_boundaries() -> Result<(), String> {
-    let python = preview_lsp_fixture("python_missing_import_graph_limit")?;
+    let report = with_repo_cwd(build_lsp_cockpit_report)?;
+    let python = lsp_fixture(&report, "python_missing_import_graph_limit")?;
     assert_eq!(python.diagnostic_count, 1);
     assert_eq!(python.finding_diagnostic_count, 1);
     assert_eq!(python.seam_diagnostic_count, 0);
@@ -50270,7 +50162,7 @@ fn preview_editor_workflow_fixtures_pin_preview_boundaries() -> Result<(), Strin
         "missing_import_graph",
     )?;
 
-    let typescript = preview_lsp_fixture("typescript_mocked_module_limit")?;
+    let typescript = lsp_fixture(&report, "typescript_mocked_module_limit")?;
     assert_eq!(typescript.diagnostic_count, 1);
     assert_eq!(typescript.finding_diagnostic_count, 1);
     assert_eq!(typescript.seam_diagnostic_count, 0);
@@ -50287,7 +50179,7 @@ fn preview_editor_workflow_fixtures_pin_preview_boundaries() -> Result<(), Strin
         "mocked_module",
     )?;
 
-    let disabled = preview_lsp_fixture("python_disabled")?;
+    let disabled = lsp_fixture(&report, "python_disabled")?;
     assert_eq!(disabled.diagnostic_count, 0);
     assert_eq!(disabled.finding_diagnostic_count, 0);
     assert_eq!(disabled.seam_diagnostic_count, 0);
@@ -50320,14 +50212,15 @@ fn lsp_cockpit_report_json_and_markdown_are_structured() -> Result<(), String> {
     Ok(())
 }
 
-fn preview_lsp_fixture(name: &str) -> Result<LspCockpitFixture, String> {
-    let fixture = repo_root()?.join("fixtures").join(name);
-    crate::lsp_cockpit_fixture_report(name, &fixture)?.ok_or_else(|| {
-        format!(
-            "expected LSP cockpit fixture `{name}` at {}",
-            fixture.display()
-        )
-    })
+fn lsp_fixture<'a>(
+    report: &'a LspCockpitReport,
+    name: &str,
+) -> Result<&'a LspCockpitFixture, String> {
+    report
+        .fixtures
+        .iter()
+        .find(|fixture| fixture.fixture == name)
+        .ok_or_else(|| format!("expected `{name}` LSP cockpit fixture"))
 }
 
 fn assert_preview_lsp_fixture(

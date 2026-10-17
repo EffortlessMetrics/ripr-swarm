@@ -6,17 +6,20 @@
 //! gate policy must consume the resulting artifact rather than infer
 //! causality from paths or line proximity.
 
-use super::pr_evidence::{phase_observation, relay_analysis_trace, timed_phase};
 use super::write_parented_file;
-use crate::run::{capture_output_with_timeout, run_output_owned};
+use crate::run::{
+    capture_output_with_timeout, run_output_owned, run_output_owned_with_timeout,
+    tool_build_timeout,
+};
 use ripr::domain::{
     AttributionBasis, CanonicalEvidenceState, ComparisonConfidence, ComparisonCoverage,
     DeltaAttribution, GapState, OracleStrength, compare_fixture_delta,
 };
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub(crate) const CANONICAL_DELTA_JSON: &str = "target/ripr/pr/canonical-delta.json";
@@ -29,19 +32,15 @@ pub(crate) fn write_canonical_delta(
     head: &str,
     changed_files: &[String],
     root: &str,
-    binary: Result<&str, &str>,
-    child_env: &[(&str, &str)],
 ) -> Result<(), String> {
-    let artifact = build_canonical_delta(repo, base, head, changed_files, root, binary, child_env);
+    let artifact = build_canonical_delta(repo, base, head, changed_files, root);
     let rendered = serde_json::to_string_pretty(&artifact)
         .map_err(|err| format!("serialize canonical delta: {err}"))?;
-    timed_phase("canonical_write", || {
-        write_parented_file(
-            &repo.join(CANONICAL_DELTA_JSON),
-            CANONICAL_DELTA_JSON,
-            format!("{rendered}\n"),
-        )
-    })?;
+    write_parented_file(
+        &repo.join(CANONICAL_DELTA_JSON),
+        CANONICAL_DELTA_JSON,
+        format!("{rendered}\n"),
+    )?;
     println!("Wrote {CANONICAL_DELTA_JSON}");
     Ok(())
 }
@@ -52,9 +51,8 @@ fn build_canonical_delta(
     head: &str,
     changed_files: &[String],
     root: &str,
-    binary: Result<&str, &str>,
-    child_env: &[(&str, &str)],
 ) -> Value {
+    let binary = resolve_ripr_binary(repo);
     let changed_files = changed_files
         .iter()
         .map(|path| normalize_path(path))
@@ -62,8 +60,8 @@ fn build_canonical_delta(
 
     let (base_snapshot, head_snapshot) = match binary {
         Ok(binary) => (
-            observed_snapshot(repo, base, "base", binary, root, child_env),
-            observed_snapshot(repo, head, "head", binary, root, child_env),
+            materialize_snapshot(repo, base, "base", &binary, root),
+            materialize_snapshot(repo, head, "head", &binary, root),
         ),
         Err(err) => (
             Snapshot::unavailable(format!("RIPR binary unavailable: {err}")),
@@ -71,34 +69,46 @@ fn build_canonical_delta(
         ),
     };
 
-    let start = std::time::Instant::now();
-    let comparison = compare_snapshots(base, head, &base_snapshot, &head_snapshot, &changed_files);
-    eprintln!(
-        "{}",
-        phase_observation("canonical_compare", start.elapsed(), true)
-    );
-    comparison
+    compare_snapshots(base, head, &base_snapshot, &head_snapshot, &changed_files)
 }
 
-fn observed_snapshot(
-    repo: &Path,
-    revision: &str,
-    label: &str,
-    binary: &str,
-    root: &str,
-    child_env: &[(&str, &str)],
-) -> Snapshot {
-    let start = std::time::Instant::now();
-    let snapshot = materialize_snapshot(repo, revision, label, binary, root, child_env);
-    eprintln!(
-        "{}",
-        json!({"pr_evidence_phase": format!("canonical_{label}_snapshot"),
-        "elapsed_ms": start.elapsed().as_millis(), "revision": revision,
-        "available": snapshot.available, "status": snapshot.status, "items": snapshot.items.len(),
-        "unknown_items": snapshot.unknown_items, "limitations_count": snapshot.limitations.len(),
-        "limitations": snapshot.limitations.iter().take(3).map(|reason| reason.chars().take(256).collect::<String>()).collect::<Vec<_>>()})
-    );
-    snapshot
+fn resolve_ripr_binary(repo: &Path) -> Result<String, String> {
+    if let Ok(binary) = env::var("RIPR_BIN") {
+        if binary.trim().is_empty() {
+            return Err("RIPR_BIN is set but empty".to_string());
+        }
+        return Ok(binary);
+    }
+
+    let build_args = vec![
+        "build".to_string(),
+        "--manifest-path".to_string(),
+        repo.join("Cargo.toml").display().to_string(),
+        "-p".to_string(),
+        "ripr".to_string(),
+        "--quiet".to_string(),
+    ];
+    run_output_owned_with_timeout(
+        "cargo",
+        &build_args,
+        tool_build_timeout()?,
+        "cargo build of the ripr binary for the canonical PR delta",
+    )?;
+
+    let cwd = env::current_dir().map_err(|err| format!("resolve current directory: {err}"))?;
+    let target_dir = match env::var_os("CARGO_TARGET_DIR") {
+        Some(value) if !value.is_empty() => {
+            let value = PathBuf::from(value);
+            if value.is_absolute() {
+                value
+            } else {
+                cwd.join(value)
+            }
+        }
+        _ => repo.join("target"),
+    };
+    let name = if cfg!(windows) { "ripr.exe" } else { "ripr" };
+    Ok(target_dir.join("debug").join(name).display().to_string())
 }
 
 fn materialize_snapshot(
@@ -107,7 +117,6 @@ fn materialize_snapshot(
     label: &str,
     binary: &str,
     root: &str,
-    child_env: &[(&str, &str)],
 ) -> Snapshot {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -129,10 +138,8 @@ fn materialize_snapshot(
     ];
 
     let result = (|| {
-        timed_phase(&format!("canonical_{label}_materialize"), || {
-            run_output_owned("git", &worktree_args)
-                .map_err(|err| format!("materialize {label} revision {revision}: {err}"))
-        })?;
+        run_output_owned("git", &worktree_args)
+            .map_err(|err| format!("materialize {label} revision {revision}: {err}"))?;
         let args = vec![
             "pilot".to_string(),
             "--root".to_string(),
@@ -146,53 +153,43 @@ fn materialize_snapshot(
             "--timeout-ms".to_string(),
             SNAPSHOT_TIMEOUT.as_millis().to_string(),
         ];
-        let mut snapshot_env = child_env.to_vec();
-        snapshot_env.extend([
-            ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "0"),
-            ("RIPR_PILOT_SEAM_BUDGET", "0"),
-        ]);
-        timed_phase(&format!("canonical_{label}_analysis"), || {
-            let output = capture_output_with_timeout(
-                binary,
-                &args,
-                &snapshot_env,
-                SNAPSHOT_TIMEOUT,
-                "canonical repo exposure snapshot",
-            )?;
-            relay_analysis_trace(&output.stderr);
-            if output.timed_out {
-                return Err(format!("{label} snapshot timed out"));
-            }
-            if output.status.is_none_or(|status| !status.success()) {
-                return Err(format!(
-                    "{label} snapshot failed\nstdout:\n{}\nstderr:\n{}",
-                    output.stdout.trim(),
-                    output.stderr.trim()
-                ));
-            }
-            Ok(())
-        })?;
-        timed_phase(&format!("canonical_{label}_read_and_parse"), || {
-            let path = output_dir.join("repo-exposure.json");
-            let text = fs::read_to_string(&path)
-                .map_err(|err| format!("read {label} snapshot {}: {err}", path.display()))?;
-            parse_snapshot(&text, label)
-        })
+        let output = capture_output_with_timeout(
+            binary,
+            &args,
+            &[
+                ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "0"),
+                ("RIPR_PILOT_SEAM_BUDGET", "0"),
+            ],
+            SNAPSHOT_TIMEOUT,
+            "canonical repo exposure snapshot",
+        )?;
+        if output.timed_out {
+            return Err(format!("{label} snapshot timed out"));
+        }
+        if output.status.is_none_or(|status| !status.success()) {
+            return Err(format!(
+                "{label} snapshot failed\nstdout:\n{}\nstderr:\n{}",
+                output.stdout.trim(),
+                output.stderr.trim()
+            ));
+        }
+        let path = output_dir.join("repo-exposure.json");
+        let text = fs::read_to_string(&path)
+            .map_err(|err| format!("read {label} snapshot {}: {err}", path.display()))?;
+        parse_snapshot(&text, label)
     })();
 
-    let cleanup = timed_phase(&format!("canonical_{label}_cleanup"), || {
-        run_output_owned(
-            "git",
-            &[
-                "-C".to_string(),
-                repo.display().to_string(),
-                "worktree".to_string(),
-                "remove".to_string(),
-                "--force".to_string(),
-                worktree.display().to_string(),
-            ],
-        )
-    });
+    let cleanup = run_output_owned(
+        "git",
+        &[
+            "-C".to_string(),
+            repo.display().to_string(),
+            "worktree".to_string(),
+            "remove".to_string(),
+            "--force".to_string(),
+            worktree.display().to_string(),
+        ],
+    );
     let _ = fs::remove_dir_all(&snapshot_dir);
 
     match (result, cleanup) {

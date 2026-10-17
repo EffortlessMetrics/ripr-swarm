@@ -88,11 +88,7 @@ fn shell(name: &str) -> TestResult<String> {
 }
 
 fn shell_from(workflow: &str, name: &str) -> TestResult<String> {
-    shell_from_job(workflow, "applicability", name)
-}
-
-fn shell_from_job(workflow: &str, job_name: &str, name: &str) -> TestResult<String> {
-    let source = job(workflow, job_name)?;
+    let source = job(workflow, "applicability")?;
     let (_, tail) = source
         .split_once(&format!("      - name: {name}\n"))
         .ok_or("step exists")?;
@@ -539,8 +535,6 @@ fn runnable_with_status(
         return Ok(false);
     }
     let translated = expression
-        .replace("!contains(toJSON(inputs), '\"subject_sha\"')", "1 == 1")
-        .replace("contains(toJSON(inputs), '\"subject_sha\"')", "1 == 0")
         .replace("always()", "1 == 1")
         .replace("!cancelled()", if cancelled { "1 == 0" } else { "1 == 1" })
         .replace("github.event_name", &format!("'{event}'"))
@@ -574,7 +568,7 @@ fn actual_job_conditions_cover_skip_failures_and_both_dispatch_routes() -> TestR
     let applicability = job(WORKFLOW, "applicability")?;
     let pair_job = job(WORKFLOW, "mcp-evidence-pair")?;
     let consume = job(WORKFLOW, "consume")?;
-    assert!(consume.contains("    needs: [build-wheel, source-contract]"));
+    assert!(consume.contains("    needs: build-wheel"));
     assert!(consume.contains("client: [pip, uv]"));
     assert!(consumer_runnable(
         &fixture, WORKFLOW, "failure", "success", false
@@ -728,7 +722,7 @@ fn actual_job_conditions_cover_skip_failures_and_both_dispatch_routes() -> TestR
     assert!(!failed.status.success());
     assert!(output.is_empty());
     assert!(
-        job(WORKFLOW, "applicability")?.contains("        if: ${{ always() && !cancelled() && !contains(toJSON(inputs), '\"subject_sha\"') }}")
+        job(WORKFLOW, "applicability")?.contains("        if: ${{ always() && !cancelled() }}")
     );
     Ok(())
 }
@@ -741,35 +735,13 @@ fn consumer_runnable(
     build: &str,
     cancelled: bool,
 ) -> TestResult<bool> {
-    consumer_runnable_with_contract(
-        fixture,
-        workflow,
-        applicability,
-        build,
-        "success",
-        cancelled,
-    )
-}
-
-fn consumer_runnable_with_contract(
-    fixture: &Fixture,
-    workflow: &str,
-    applicability: &str,
-    build: &str,
-    contract: &str,
-    cancelled: bool,
-) -> TestResult<bool> {
     let consume = job(workflow, "consume")?;
     let expression = condition(&consume).unwrap_or("1 == 1");
     let status_function = expression.contains("always()") || expression.contains("cancelled()");
-    if !status_function
-        && (applicability != "success" || build != "success" || contract != "success")
-    {
+    if !status_function && (applicability != "success" || build != "success") {
         return Ok(false);
     }
-    let expression = expression
-        .replace("needs.build-wheel.result", &format!("'{build}'"))
-        .replace("needs.source-contract.result", &format!("'{contract}'"));
+    let expression = expression.replace("needs.build-wheel.result", &format!("'{build}'"));
     runnable_with_status(
         fixture,
         &expression,
@@ -896,7 +868,8 @@ fn consumers_survive_failed_ancestor_but_require_successful_build() -> TestResul
             "app={app}, build={build}, cancelled={cancelled}"
         );
     }
-    let guard = "    if: ${{ always() && !cancelled() && needs.build-wheel.result == 'success' && needs.source-contract.result == 'success' }}\n";
+    let guard =
+        "    if: ${{ always() && !cancelled() && needs.build-wheel.result == 'success' }}\n";
     let removed = WORKFLOW.replace(guard, "");
     assert_ne!(removed, WORKFLOW);
     assert!(!consumer_runnable(
@@ -1064,452 +1037,5 @@ fn inspection_and_policy_failures_do_not_become_legacy_admission() -> TestResult
         qualification_chain(&fixture, "failure", "true", ("pull_request", false, false))?,
         (true, true)
     );
-    Ok(())
-}
-
-/// Replay the complete early production guard, with actual Git objects and payload fields.
-fn exact_subject(fixture: &Fixture, inputs: &serde_json::Value) -> TestResult<(Output, String)> {
-    exact_subject_from(fixture, inputs, WORKFLOW)
-}
-
-fn exact_subject_from(
-    fixture: &Fixture,
-    inputs: &serde_json::Value,
-    workflow: &str,
-) -> TestResult<(Output, String)> {
-    let path = fixture.0.join(".git/exact-output");
-    fs::write(&path, "")?;
-    let mut command = fixture.command("bash")?;
-    command
-        .args([
-            "-e",
-            "-o",
-            "pipefail",
-            "-c",
-            &shell_from(
-                workflow,
-                "Verify callable exact subject before policy or product execution",
-            )?,
-        ])
-        .env("CALL_INPUTS", inputs.to_string())
-        .env("GITHUB_REPOSITORY", "EffortlessMetrics/ripr-swarm")
-        .env("GITHUB_WORKFLOW_SHA", "a".repeat(40))
-        .env("GITHUB_RUN_ID", "123")
-        .env("GITHUB_RUN_ATTEMPT", "2")
-        .env("GITHUB_OUTPUT", &path);
-    for (field, variable) in [
-        ("proof_profile", "PROOF_PROFILE"),
-        ("request_id", "ADMITTED_REQUEST"),
-        ("head_sha", "ADMITTED_HEAD"),
-        ("base_sha", "ADMITTED_BASE"),
-        ("subject_sha", "ADMITTED_SUBJECT"),
-        ("subject_tree", "ADMITTED_TREE"),
-        ("workflow_generation", "ADMITTED_GENERATION"),
-    ] {
-        command.env(variable, inputs[field].as_str().unwrap_or(""));
-    }
-    let output = command.output()?;
-    Ok((output, fs::read_to_string(path)?))
-}
-
-fn integration_inputs(fixture: &Fixture) -> TestResult<serde_json::Value> {
-    let base = fixture.git(&["rev-parse", "HEAD"])?;
-    let head = fixture.change("Cargo.toml", "# integration payload control\n")?;
-    let tree = fixture.git(&["rev-parse", "HEAD^{tree}"])?;
-    let subject = fixture.git(&[
-        "commit-tree",
-        &tree,
-        "-p",
-        &base,
-        "-p",
-        &head,
-        "-m",
-        "integration",
-    ])?;
-    fixture.git(&["checkout", "--detach", &subject])?;
-    Ok(
-        serde_json::json!({"proof_profile":"qualification", "request_id":"123-2",
-        "base_sha":base, "head_sha":head, "subject_sha":subject, "subject_tree":tree,
-        "workflow_generation":"a".repeat(40)}),
-    )
-}
-
-#[test]
-fn callable_guard_rejects_wrong_empty_and_stale_payloads_before_expensive_work() -> TestResult {
-    let fixture = Fixture::new()?;
-    let valid = integration_inputs(&fixture)?;
-    let (result, output) = exact_subject(&fixture, &valid)?;
-    assert!(result.status.success(), "{result:?}");
-    assert_eq!(output, "qualify=true\n");
-    for field in [
-        "proof_profile",
-        "request_id",
-        "base_sha",
-        "head_sha",
-        "subject_sha",
-        "subject_tree",
-        "workflow_generation",
-    ] {
-        for bad in ["", "main", &"0".repeat(40), "$(touch injected)"] {
-            let mut payload = valid.clone();
-            payload[field] = bad.into();
-            let (result, output) = exact_subject(&fixture, &payload)?;
-            assert!(
-                !result.status.success(),
-                "accepted {field}={bad}: {result:?}"
-            );
-            assert!(output.is_empty());
-        }
-    }
-    let empty = serde_json::json!({"subject_sha":""});
-    assert!(!exact_subject(&fixture, &empty)?.0.status.success());
-    let mut stale_attempt = valid.clone();
-    stale_attempt["request_id"] = "123-1".into();
-    assert!(!exact_subject(&fixture, &stale_attempt)?.0.status.success());
-    let (legacy, output) = exact_subject(&fixture, &serde_json::json!({}))?;
-    assert!(legacy.status.success());
-    assert!(output.is_empty());
-    assert!(
-        exact_subject(&fixture, &serde_json::Value::Null)?
-            .0
-            .status
-            .success()
-    );
-    let removed = WORKFLOW.replace(
-        "              test \"${tree}\" = \"${ADMITTED_TREE}\"\n",
-        "",
-    );
-    assert_ne!(removed, WORKFLOW);
-    let mut wrong_tree = valid.clone();
-    wrong_tree["subject_tree"] = "0".repeat(40).into();
-    assert!(
-        exact_subject_from(&fixture, &wrong_tree, &removed)?
-            .0
-            .status
-            .success(),
-        "tree-check removal must expose the wrong-tree false success"
-    );
-    let mut diagnostic = valid.clone();
-    diagnostic["proof_profile"] = "diagnostic".into();
-    diagnostic["subject_sha"] = valid["head_sha"].clone();
-    fixture.git(&[
-        "checkout",
-        "--detach",
-        diagnostic["head_sha"].as_str().ok_or("head")?,
-    ])?;
-    assert_eq!(exact_subject(&fixture, &diagnostic)?.1, "qualify=true\n");
-    assert!(
-        !exact_subject(&fixture, &valid)?.0.status.success(),
-        "stale checkout must fail"
-    );
-    // The separate build checkout must not credit matching stdout from failed Git.
-    let expected = diagnostic["head_sha"].as_str().ok_or("diagnostic head")?;
-    fixture.write_shim("git", &format!("printf '%s\\n' {expected:?}; exit 9\n"))?;
-    fixture.write_shim(
-        "cargo",
-        "printf '%s\\n' '{\"packages\":[{\"name\":\"ripr\",\"version\":\"0.11.0\"}]}'\n",
-    )?;
-    let run_binding = |workflow: &str| -> TestResult<(Output, String)> {
-        let output = fixture.0.join(".git/bind-output");
-        let environment = fixture.0.join(".git/bind-env");
-        fs::write(&output, "")?;
-        fs::write(&environment, "")?;
-        let result = fixture
-            .command("bash")?
-            .args([
-                "-e",
-                "-o",
-                "pipefail",
-                "-c",
-                &shell_from_job(
-                    workflow,
-                    "build-wheel",
-                    "Bind exact source candidate and native version",
-                )?,
-            ])
-            .env("CANDIDATE_SHA", expected)
-            .env("GITHUB_REPOSITORY", "EffortlessMetrics/ripr-swarm")
-            .env("GITHUB_OUTPUT", &output)
-            .env("GITHUB_ENV", &environment)
-            .output()?;
-        Ok((result, fs::read_to_string(output)?))
-    };
-    let (failed_probe, output) = run_binding(WORKFLOW)?;
-    assert_eq!(failed_probe.status.code(), Some(9));
-    assert!(output.is_empty());
-    let masked = WORKFLOW.replace(
-        "          checkout_head=\"$(git rev-parse HEAD)\"\n          test \"${checkout_head}\" = \"${CANDIDATE_SHA,,}\"",
-        "          test \"$(git rev-parse HEAD)\" = \"${CANDIDATE_SHA,,}\"",
-    );
-    assert_ne!(masked, WORKFLOW);
-    let (false_success, output) = run_binding(&masked)?;
-    assert!(false_success.status.success(), "{false_success:?}");
-    assert_eq!(output, "native_version=0.11.0\n");
-    Ok(())
-}
-
-#[test]
-fn callable_graph_uses_exact_subject_and_cannot_turn_guard_failure_into_skip() -> TestResult {
-    let fixture = Fixture::new()?;
-    let build = job(WORKFLOW, "build-wheel")?;
-    let expression = condition(&build)?
-        .replace("!contains(toJSON(inputs), '\"subject_sha\"')", "1 == 0")
-        .replace("contains(toJSON(inputs), '\"subject_sha\"')", "1 == 1");
-    for event in ["pull_request", "workflow_dispatch", "push", "schedule"] {
-        for result in ["failure", "skipped", "cancelled"] {
-            assert!(!runnable(
-                &fixture,
-                &expression,
-                event,
-                false,
-                result,
-                "",
-                true
-            )?);
-        }
-        assert!(runnable(
-            &fixture,
-            &expression,
-            event,
-            false,
-            "success",
-            "true",
-            true
-        )?);
-    }
-    let app = job(WORKFLOW, "applicability")?;
-    assert!(
-        app.find("Verify callable exact subject").ok_or("guard")?
-            < app.find("dtolnay/rust-toolchain").ok_or("toolchain")?
-    );
-    assert!(app.contains("!contains(toJSON(inputs), '\"subject_sha\"')"));
-    assert!(WORKFLOW.contains("CANDIDATE_SHA: ${{ inputs.subject_sha || github.event.pull_request.head.sha || github.sha }}"));
-    assert!(app.contains("fetch-depth: 0"));
-    assert!(WORKFLOW.contains("  workflow_call:\n"));
-    assert!(WORKFLOW.contains("  contents: read\n"));
-    assert!(!WORKFLOW.contains("secrets: inherit"));
-    for (job_name, minutes) in [("applicability", 3), ("build-wheel", 12), ("consume", 5)] {
-        assert!(job(WORKFLOW, job_name)?.contains(&format!("&& {minutes} ||")));
-    }
-    let removed = expression.replace(
-        "(1 == 0 || needs.applicability.result == 'success') && ",
-        "",
-    );
-    assert_ne!(removed, expression);
-    assert!(
-        runnable(
-            &fixture,
-            &removed,
-            "pull_request",
-            false,
-            "failure",
-            "",
-            true
-        )?,
-        "removed guard must demonstrate expensive fallback"
-    );
-    Ok(())
-}
-
-#[test]
-fn package_contract_runs_in_parallel_but_remains_required_for_consumers() -> TestResult {
-    let fixture = Fixture::new()?;
-    let contract = job(WORKFLOW, "source-contract")?;
-    let build = job(WORKFLOW, "build-wheel")?;
-    let consume = job(WORKFLOW, "consume")?;
-    // Same selector/guard authority, independent producers: neither awaits the other.
-    assert!(contract.contains("    needs: applicability"));
-    assert!(build.contains("    needs: applicability"));
-    assert_eq!(condition(&contract)?, condition(&build)?);
-    assert!(!build.contains("needs.source-contract"));
-    assert!(!contract.contains("needs.build-wheel"));
-    assert!(consume.contains("needs: [build-wheel, source-contract]"));
-    assert!(contract.contains("&& 8 || 20"));
-    assert!(build.contains("&& 12 || 20"));
-    let shell = shell_from_job(
-        WORKFLOW,
-        "source-contract",
-        "Validate package source contract",
-    )?;
-    assert_eq!(
-        shell.trim(),
-        "set -euo pipefail\ncargo xtask check-release-targets\ncargo test -p xtask --locked policy::distribution::tests -- --nocapture"
-    );
-    assert!(!build.contains("cargo xtask check-release-targets"));
-    assert!(!build.contains("policy::distribution::tests"));
-    assert!(contract.contains("ref: ${{ env.CANDIDATE_SHA }}"));
-    assert!(contract.contains("persist-credentials: false"));
-    assert!(!contract.contains("continue-on-error:"));
-    for app in ["success", "failure", "skipped"] {
-        for status in ["success", "failure", "cancelled", "skipped"] {
-            assert_eq!(
-                consumer_runnable_with_contract(&fixture, WORKFLOW, app, "success", status, false)?,
-                status == "success",
-                "package contract {status} after applicability {app}"
-            );
-        }
-    }
-    let removed = WORKFLOW.replace(" && needs.source-contract.result == 'success'", "");
-    assert_ne!(removed, WORKFLOW);
-    assert!(
-        consumer_runnable_with_contract(
-            &fixture, &removed, "success", "success", "failure", false
-        )?,
-        "removing the contract-result guard must expose false consumer admission"
-    );
-    // Replay the retained production shell. A failed first command cannot be masked
-    // by a successful test command, and both commands must run in the positive case.
-    let calls = fixture.0.join("package-calls");
-    fixture.write_shim(
-        "cargo",
-        &format!(
-            r#"printf '%s\n' "$*" >> '{}'
-if test "$*" = 'xtask check-release-targets'; then exit 7; fi
-"#,
-            calls.display()
-        ),
-    )?;
-    let failed = fixture.command("bash")?.args(["-c", &shell]).output()?;
-    assert_eq!(failed.status.code(), Some(7));
-    assert_eq!(fs::read_to_string(&calls)?, "xtask check-release-targets\n");
-    fs::remove_file(&calls)?;
-    fixture.write_shim(
-        "cargo",
-        &format!(
-            r#"printf '%s\n' "$*" >> '{}'
-"#,
-            calls.display()
-        ),
-    )?;
-    assert!(
-        fixture
-            .command("bash")?
-            .args(["-c", &shell])
-            .status()?
-            .success()
-    );
-    assert_eq!(
-        fs::read_to_string(&calls)?,
-        "xtask check-release-targets\ntest -p xtask --locked policy::distribution::tests -- --nocapture\n"
-    );
-    Ok(())
-}
-
-#[test]
-fn parallel_contract_binds_its_checkout_and_propagates_failed_git() -> TestResult {
-    let fixture = Fixture::new()?;
-    let head = fixture.git(&["rev-parse", "HEAD"])?;
-    let shell = shell_from_job(
-        WORKFLOW,
-        "source-contract",
-        "Bind exact package source candidate",
-    )?;
-    let run = |candidate: &str| -> TestResult<Output> {
-        Ok(fixture
-            .command("bash")?
-            .args(["-c", &shell])
-            .env("GITHUB_REPOSITORY", "EffortlessMetrics/ripr-swarm")
-            .env("CANDIDATE_SHA", candidate)
-            .output()?)
-    };
-    assert!(run(head.trim())?.status.success());
-    assert!(!run(&"0".repeat(40))?.status.success());
-    fixture.write_shim(
-        "git",
-        &format!("printf '%s\\n' {:?}; exit 9\n", head.trim()),
-    )?;
-    assert_eq!(run(head.trim())?.status.code(), Some(9));
-    Ok(())
-}
-
-fn canonical_wheel_codegen(source: &str) -> TestResult<bool> {
-    let Some((_, section)) = source.split_once("[tool.maturin]\n") else {
-        return Ok(false);
-    };
-    let section = section.split("\n[").next().ok_or("maturin section")?;
-    let values = section
-        .lines()
-        .filter_map(|line| {
-            let (key, value) = line.trim().split_once('=')?;
-            (key.trim() == "config").then_some(value.trim())
-        })
-        .collect::<Vec<_>>();
-    if values.len() != 1 {
-        return Ok(false);
-    }
-    let config: Vec<String> = serde_json::from_str(values[0])?;
-    Ok(config == ["profile.release.codegen-units=4"])
-}
-
-#[test]
-fn wheel_codegen_recipe_and_native_release_profile_are_preserved() -> TestResult {
-    let manifest = include_str!("../../../packaging/python/pyproject.toml");
-    assert!(
-        canonical_wheel_codegen(manifest)?,
-        "all wheel producers need the same explicit codegen recipe"
-    );
-    for wrong in [
-        manifest.replace(
-            "profile.release.codegen-units=4",
-            "profile.release.codegen-units=1",
-        ),
-        manifest.replace(
-            "profile.release.codegen-units=4",
-            "profile.release.lto=false",
-        ),
-        manifest.replace(
-            "profile.release.codegen-units=4",
-            "profile.release.opt-level=1",
-        ),
-        manifest.replace("config = [", "# config = ["),
-        manifest.replace("[tool.maturin]", "[tool.maturin.generate-ci]"),
-    ] {
-        assert_ne!(wrong, manifest);
-        assert!(!canonical_wheel_codegen(&wrong)?);
-    }
-    let cargo = include_str!("../../../Cargo.toml");
-    let release = cargo
-        .split_once("[profile.release]\n")
-        .ok_or("release profile")?
-        .1
-        .split("\n[")
-        .next()
-        .ok_or("release body")?;
-    let native_quality = |source: &str| {
-        ["lto = \"thin\"", "strip = true", "codegen-units = 16"]
-            .into_iter()
-            .all(|retained| source.lines().any(|line| line == retained))
-            && source
-                .lines()
-                .filter_map(|line| line.trim().split_once('='))
-                .all(|(key, value)| key.trim() != "opt-level" || value.trim() == "3")
-    };
-    assert!(native_quality(release));
-    assert!(!native_quality(&format!("{release}\nopt-level = 1\n")));
-    for retained in ["lto = \"thin\"", "strip = true", "codegen-units = 16"] {
-        let removed = release.replace(retained, "");
-        assert_ne!(removed, release);
-        assert!(!native_quality(&removed));
-    }
-    for (expected, wrong) in [
-        ("lto = \"thin\"", "lto = false"),
-        ("strip = true", "strip = false"),
-        ("codegen-units = 16", "codegen-units = 1"),
-    ] {
-        let changed = release.replace(expected, wrong);
-        assert_ne!(changed, release);
-        assert!(!native_quality(&changed));
-    }
-    let build = shell_from_job(
-        WORKFLOW,
-        "build-wheel",
-        "Build wheel without a compatibility-floor claim",
-    )?;
-    assert!(build.contains("--release"));
-    assert!(
-        !build.contains("CARGO_PROFILE_RELEASE_"),
-        "the workflow must use the canonical package recipe"
-    );
-    assert!(!job(WORKFLOW, "mcp-evidence-pair")?.contains("CARGO_PROFILE_RELEASE_"));
     Ok(())
 }

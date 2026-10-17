@@ -2905,8 +2905,7 @@ fn best_oracle(
             best_kind = oracle.kind.clone();
             best_contradiction = contradiction.clone();
         }
-        if seam.kind() == SeamKind::FieldConstruction
-            && oracle_discriminates_seam_in_test(seam, oracle, test, owner_fn, index, pin_syntax)
+        if oracle_discriminates_seam_in_test(seam, oracle, test, owner_fn, index, pin_syntax)
             && strength.rank() > best_matching_strength.rank()
         {
             best_matching_strength = strength;

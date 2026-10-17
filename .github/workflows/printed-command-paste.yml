@@ -1,29 +1,6 @@
 name: Printed Command Paste
 
 on:
-  workflow_call:
-    inputs:
-      proof_profile:
-        type: string
-        required: true
-      request_id:
-        type: string
-        required: true
-      head_sha:
-        type: string
-        required: true
-      base_sha:
-        type: string
-        required: true
-      subject_sha:
-        type: string
-        required: true
-      subject_tree:
-        type: string
-        required: true
-      workflow_generation:
-        type: string
-        required: true
   schedule:
     - cron: "43 5 * * *"
   pull_request:
@@ -45,8 +22,8 @@ permissions:
 # (opened, synchronize, reopened, other labels) gets a unique group: its jobs
 # are skipped and it can neither cancel nor replace a pending merge-ready run.
 concurrency:
-  group: printed-command-paste-${{ inputs.request_id || github.event.pull_request.number || github.ref }}-${{ inputs.subject_sha || ((github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run') }}
-  cancel-in-progress: ${{ !contains(toJSON(inputs), '"subject_sha"') && (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ (github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run' }}
+  cancel-in-progress: ${{ (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') }}
 
 # Every command ripr prints, pasted into every shell a user has (#5188, #5232,
 # #5247, #5269 each fixed one surface by hand).
@@ -74,16 +51,13 @@ concurrency:
 # Triggers: a nightly standing signal, pull requests that touch the code that
 # prints commands or the harness itself, and manual dispatch. The cost is one
 # test target per platform, built from the shared dependency cache.
-# The callable route is staged for #4987: keep the PR trigger until the parent
-# integrates an admitted caller and fail-closed result aggregation. Inputs bind
-# the source; the trusted caller alone owns review/admission authorization.
 
 jobs:
   paste:
     name: paste-${{ matrix.os }}
-    if: contains(toJSON(inputs), '"subject_sha"') || github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))
+    if: github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -97,45 +71,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.subject_sha || github.sha }}
-          persist-credentials: false
-          fetch-depth: 0
-
-      - name: Verify exact source before product execution
-        shell: bash
-        env:
-          CALLED: ${{ contains(toJSON(inputs), '"subject_sha"') }}
-          PROFILE: ${{ inputs.proof_profile }}
-          REQUEST: ${{ inputs.request_id }}
-          HEAD_SHA: ${{ inputs.head_sha }}
-          BASE_SHA: ${{ inputs.base_sha }}
-          SUBJECT: ${{ inputs.subject_sha || github.sha }}
-          TREE: ${{ inputs.subject_tree }}
-          GENERATION: ${{ inputs.workflow_generation }}
-        run: |
-          set -euo pipefail
-          fail() { echo "$1" >&2; exit 1; }
-          [[ "$SUBJECT" =~ ^[0-9a-f]{40}$ ]] || fail 'Malformed source identity'
-          actual=$(git rev-parse HEAD)
-          [[ "$actual" == "$SUBJECT" ]] || fail 'Wrong source checkout'
-          if [[ "$CALLED" == true ]]; then
-            [[ "$PROFILE" == qualification ]] || fail 'Unknown admitted profile'
-            [[ "$REQUEST" =~ ^[0-9]+-[0-9]+$ ]] || fail 'Malformed request identity'
-            for value in "$HEAD_SHA" "$BASE_SHA" "$TREE" "$GENERATION"; do
-              [[ "$value" =~ ^[0-9a-f]{40}$ ]] || fail 'Malformed admission identity'
-            done
-            [[ "$GITHUB_WORKFLOW_SHA" == "$GENERATION" ]] || fail 'Wrong workflow generation'
-            actual_tree=$(git rev-parse 'HEAD^{tree}')
-            [[ "$actual_tree" == "$TREE" ]] || fail 'Wrong integration tree'
-            parents=$(git show -s --format=%P HEAD)
-            [[ "$parents" == "$BASE_SHA $HEAD_SHA" ]] || fail 'Wrong integration parents'
-          else
-            case "$GITHUB_EVENT_NAME" in
-              pull_request|schedule|workflow_dispatch) ;;
-              *) fail 'Unsupported standalone event' ;;
-            esac
-          fi
 
       - uses: dtolnay/rust-toolchain@1.95
 

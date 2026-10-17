@@ -1,6 +1,6 @@
 ---
 name: finish-pr
-description: Publish or resume one PR, require substantive exact-head review, address current review and CI evidence, perform the protected merge when ready, and reconcile after merge. Use when a coherent candidate exists or a PR already owns the claim.
+description: Publish or resume one PR, require substantive exact-head review, address current review and CI evidence, arm merge when ready, and reconcile after merge. Use when a coherent candidate exists or a PR already owns the claim.
 ---
 
 # Useful result
@@ -23,9 +23,9 @@ The selected PR has an exact current head, a current `review-pr` disposition, al
 
 `finish-pr` owns publication, remote review/CI repair, merge, and reconciliation. It does not silently manufacture the substantive review pass.
 
-A committed candidate with `REVIEW_INCOMPLETE` may enter so the procedure can publish the PR and obtain remote evidence. Independent source review and applicable warm local proof may establish `SOURCE_REVIEW_READY` while hosted qualification remains missing; they do not establish final `REVIEW_READY`. Select the candidate intended to land before requesting expensive qualification. Before merging, the exact published PR head must have a current `REVIEW_READY` result from `review-pr`, actual required proof and a separate final integration and product judgment. When the head changes materially, re-enter `review-pr` for affected currentness dimensions. Do not use a merge queue or auto-merge.
+A committed candidate with `REVIEW_INCOMPLETE` may enter so the procedure can publish the PR and obtain remote evidence. Before arming auto-merge or merging, the exact published PR head must have a current `REVIEW_READY` result from `review-pr`. When the head changes materially, re-enter `review-pr` for affected currentness dimensions.
 
-Routine publication and convergence inside the selected repository claim—push ordinary branch, open/update PR, reply to review, repair CI, resolve addressed threads, request qualification for the selected candidate, use protected expected-head squash merge, and clean lane-created state—do not require another owner approval. Separate authorization remains required for force-push/shared-history rewriting, settings/rulesets/secrets, public tags/releases/publication/signing/credentials, durable-evidence deletion, or work outside the selected goal.
+Routine publication and convergence inside the selected repository claim—push ordinary branch, open/update PR, reply to review, repair CI, resolve addressed threads, arm normal auto-merge, use protected squash merge, and clean lane-created state—do not require another owner approval. Separate authorization remains required for force-push/shared-history rewriting, settings/rulesets/secrets, public tags/releases/publication/signing/credentials, durable-evidence deletion, or work outside the selected goal.
 
 # Procedure
 
@@ -61,14 +61,14 @@ change settings to obtain a merge.
 8. Refresh only proof and review dimensions affected by the repair, then obtain a new or amended `review-pr` disposition for the exact head.
 9. Distinguish candidate-head proof from integration proof:
    - the PR head is the implementation/review subject;
-   - current `main` and any actual prerequisite composition are the integration basis;
+   - current `main` or queued predecessors are the integration basis;
    - the ordinary squash result is the combined-tree subject.
 10. Do not update a behind-only branch. Unrelated movement on `main` is normal and does not require restacking, force-pushing, or rerunning unaffected proof. Reconcile only an actual conflict, explicit stack change, material prerequisite change, failed combined-tree proof, or exact-base policy that applies to this candidate.
 11. Before spending time on conflict repair, re-run the claim-identity search. When upstream or another PR already delivered the same claim, stop, compare for unique residuals, record the winning implementation, and close or disposition the duplicate rather than resolving a dead candidate.
-12. Select the candidate intended to land for this objective; alternative Drafts may continue cheap development and review without each requesting expensive qualification. Apply the shared [Draft to Ready handoff](../../../docs/PR_AUTOMATION.md#draft-to-ready-handoff), retaining its PR-native continuation record. Publish the exact-subject warm proof and current `SOURCE_REVIEW_READY` disposition with their evidence before requesting qualification. Ready is a UI state, not the request. Use the actual accepted interface: add `merge-ready` to the reviewed non-Draft head for one selected late CI wave. A proposed label rename is not an installed interface. Read back existing exact-subject runs before submission and preserve a queued or running request; a push or material finding returns through a joined repair wave, not a duplicate request. Selection is per objective, not a global one-PR queue.
+12. Apply the shared [Draft to Ready handoff](../../../docs/PR_AUTOMATION.md#draft-to-ready-handoff), retaining its PR-native continuation record. Only then request required hosted qualification for the exact head. A push or material finding returns through that same Draft repair wave, not an immediate re-toggle.
 13. Do not infer review from an empty thread list, reviewer quota/unavailability, or green required checks. Do not infer a human approval requirement from `mergeStateStatus: BLOCKED`; identify the exact rule and evidence source first. Query both authorities, since classic branch protection and repository rulesets can disagree.
-14. Keep the accountable owner warm through a normal bounded CI wait, inspection of actual results and the final decision. Do not tightly poll unchanged state or create a resident polling worker. A real interruption, exhausted window or unavailable capability returns an exact `PR_IN_FLIGHT` continuation with request/run/attempt, tested subject, remaining evidence and the useful wake event. Do not abandon an ordinary in-window finish merely because hosted proof was pending; independent work may continue where capacity permits.
-15. After complete qualification, inspect actual native results and refresh affected review, unresolved threads, required checks, protections and current integration inputs. Make the separate current-repository and product-vision judgment now; qualification success alone is not that decision. When the exact published head has `REVIEW_READY`, all genuine conditions are satisfied and delegated merge authority applies, the same accountable owner performs the normal protected expected-head squash without inventing another human approval. A failed judgment keeps the PR unmerged while preserving factual test results. No auto-merge or native merge queue. Exact history-preserving source-integration transactions are a separate controlled path and follow their governing issue instead of this rule.
+14. When GitHub owns the next transition, return an in-flight result instead of polling unchanged state. Auto-merge may be armed only for the exact published head with `REVIEW_READY` and current required proof. The parent goal may advance another independent claim while this PR waits.
+15. Merge ordinary `ripr-swarm` development PRs with the repository's protected squash method. Exact history-preserving source-integration transactions are a separate controlled path and follow their governing issue instead of this rule.
 16. After merge, verify `main`, update issue acceptance, parent state, generated evidence, and any residual work. A merged PR means implementation landed; it does not by itself complete the parent issue, release phase, or high-level goal.
 17. After deliberate closure or supersession, record the winning candidate and preserved residual work.
 18. Close out every lane-created worktree and generated resource using [bounded storage closeout](../../../docs/PR_AUTOMATION.md#bounded-local-storage-and-proof-retention). Return each exact resource as released, retained with a concrete consumer/evidence reason, or awaiting owner verification. Preserve required proof and unique work; use the already-authorized recoverable handling for confirmed inactive residue instead of leaving every previous executable expanded indefinitely. A terminal PR disposition alone is not resource-release evidence.
@@ -97,29 +97,26 @@ The root selects the smallest useful repair route and one writer per candidate:
 
 Record the exact parent/head, child-only delta, writer, proof basis, and landing
 route for a stack. Parent/child CI is stack-local evidence, not protected-main
-acceptance. Never merge a child into an unprotected feature branch to bypass
+acceptance. Never arm child auto-merge into an unprotected feature branch to bypass
 that boundary. A contiguous independently safe, reviewed, and proved prefix may
 land normally; do not flatten every stack into a giant PR. Preserve unique work
 and findings across squash, retarget, and incorporation, and close only the
 acceptance actually satisfied by the landed result.
 
-A new material finding withdraws readiness even on an unchanged head. Contain any
-existing pending merge authority; if inherited auto-merge is already armed, disarm
-it through the available authorized GitHub operation and verify the readback before
-resolving the blocking thread. This recovery grants no authority to arm it again.
-An unavailable or failed disarm is an integration-control blocker; do not claim the
-merge is contained. After repair, refresh affected proof and cumulative review
-before another qualification request or final merge decision. Old green, an
-unrelated later comment, or a completed agent run cannot restore readiness.
+A new material finding withdraws readiness even on an unchanged head. If auto-merge
+is armed, disarm it through the available authorized GitHub operation and verify the
+readback before resolving the blocking thread. An unavailable or failed disarm is
+an integration-control blocker; do not claim the merge is contained. After repair,
+affected proof and cumulative rereview must restore `REVIEW_READY` before arming.
+Old green, an unrelated later comment, or a completed agent run cannot restore it.
 
 Keep disjoint work moving. For the selected claim, usable repair/proof work outranks
 passive waiting; genuine remote waits name their owner and decision-changing event
 without an idle polling worker. Batch related findings into one repair wave, preserve
 unaffected review, and do not force branch churn or a global intake freeze. These
 instructions govern agent decisions; they do not install branch protection.
-Draft/Ready are UI states, not qualification admission. The explicit merge-ready
-label request observes current source readiness; final REVIEW_READY and the
-vision/current-state decision follow green proof before any merge authority.
+The existing Draft -> Ready proof trigger remains in force; being Ready for
+hosted qualification is not REVIEW_READY or permission to arm auto-merge.
 
 # Release-scope law
 
@@ -135,6 +132,7 @@ Quota, unavailable, skipped, failed, or stale review-provider output is missing 
 
 - `PR_MERGED`
 - `PR_IN_FLIGHT`
+- `AUTO_MERGE_ARMED`
 - `WAITING_REQUIRED_CHECKS`
 - `WAITING_EXTERNAL_REVIEW`
 - `WAITING_INTEGRATION_PROOF`

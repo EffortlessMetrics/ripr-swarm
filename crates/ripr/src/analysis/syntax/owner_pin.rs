@@ -7,8 +7,6 @@
 //! calls eagerly (#6482); see [`local_helper_assertions`].
 
 mod fallible_check;
-#[cfg(test)]
-mod json_authority_tests;
 mod literal_json;
 use literal_json::{
     json_namespace_rebound, literal_json_import_visible_among, literal_json_tokens,
@@ -3330,7 +3328,7 @@ fn has_escape(
             // Macro operands are opaque to AST descendant walks. Refuse
             // hidden exits and nested expansion, but not boolean negation.
             if call.token_tree().is_some_and(|tree| {
-                opaque_macro_operand_with_json(&tree, || trusted.contains(&"json") && json_visible)
+                opaque_macro_operand_with_json(&tree, trusted.contains(&"json") && json_visible)
             }) {
                 return Some(AssertionContextRefusal::MacroOperandExit(path));
             }
@@ -3357,16 +3355,10 @@ fn has_escape(
 }
 
 fn opaque_macro_operand(tree: &ast::TokenTree) -> bool {
-    opaque_macro_operand_with_json(tree, || false)
+    opaque_macro_operand_with_json(tree, false)
 }
 
-fn opaque_macro_operand_with_json(
-    tree: &ast::TokenTree,
-    mut literal_json: impl FnMut() -> bool,
-) -> bool {
-    // Import visibility walks the enclosing file. Only a plain nested json!
-    // needs that authority, shared by this invocation's operands only.
-    let mut json_authority = None;
+fn opaque_macro_operand_with_json(tree: &ast::TokenTree, literal_json: bool) -> bool {
     let tokens = operand_tokens(tree);
     tokens.iter().any(|token| {
         matches!(
@@ -3374,9 +3366,7 @@ fn opaque_macro_operand_with_json(
             "return" | "break" | "continue" | "yield" | "?"
         )
     }) || nested_invocations(&tokens).any(|(name, plain)| {
-        !(plain
-            && (NESTED_EXPANSIONS.contains(&name)
-                || name == "json" && *json_authority.get_or_insert_with(&mut literal_json)))
+        !(plain && (NESTED_EXPANSIONS.contains(&name) || name == "json" && literal_json))
     }) || tokens.windows(3).enumerate().any(|(at, window)| {
         window[0].text() == "json"
             && window[1].text() == "!"

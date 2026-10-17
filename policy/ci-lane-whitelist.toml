@@ -81,7 +81,7 @@ jobs = ["Ripr Rust Small Result"]
 commands = ["cargo fmt --check", "cargo check --workspace --all-targets", "cargo check -p ripr --all-targets --all-features", "cargo clippy --workspace --all-targets -- -D warnings", "cargo nextest run --workspace --profile ci", "cargo test --workspace --doc", "cargo xtask precommit", "cargo xtask ci-policy", "cargo xtask check-evidence-promotion-honesty", "cargo xtask check-agent-skills", "cargo xtask check-dependencies", "cargo xtask check-process-policy", "cargo xtask check-network-policy", "cargo xtask goldens check", "cargo xtask fixtures"]
 estimated_lem = 12
 artifact_families = ["ripr-evidence"]
-description = "Explicit merge-ready result on actual requests only; unrelated labels emit a non-required context. Existing trusted Rust route and Windows subset evidence aggregate."
+description = "Swarm Rust Small result gate routed through CX53, CX43, or GitHub-hosted fallback."
 
 [[lane]]
 id = "msrv"
@@ -311,7 +311,7 @@ jobs = ["windows-advisory", "windows-advisory-subset"]
 commands = ["cargo test --workspace", "cargo test -p ripr --lib lsp::gap_artifacts", "cargo test -p ripr --lib analysis::workspace::cargo_input_identity::tests", "cargo test -p ripr --test cli_smoke unusable_cache_directory_is_reported_once_per_build", "cargo clippy -p ripr --all-targets -- -D warnings"]
 estimated_lem = 30
 artifact_families = []
-description = "Advisory Windows lane (#2393): runs the suite twice on windows-latest and summarizes per-test verdicts. The extracted subset runs from explicit merge-ready qualification; this wrapper retains subset schedule/manual diagnostics only. Test outcomes are advisory; missing or zero-subject evidence fails the job. Promotion to required is gated on #2430 and on stability across repeated runs."
+description = "Advisory Windows lane (#2393): runs the suite twice on windows-latest and summarizes per-test verdicts. Since #4938 a merge-ready subset job (windows-advisory-subset) also runs a fast gap_artifacts/Cargo-home-identity/cache-warning/Windows-clippy filter when `merge-ready` is applied to a PR (the explicit labeled event), advisory under the same contract. Test outcomes are advisory; missing or zero-subject evidence fails the job. Promotion to required is gated on #2430 and on stability across repeated runs."
 
 [[lane]]
 id = "macos-advisory"
@@ -422,13 +422,3 @@ commands = []
 estimated_lem = 30
 artifact_families = ["release-readiness"]
 description = "Full installed-product and release readiness proof."
-
-[[lane]]
-id = "windows-subset-qualification"
-posture = "advisory"
-workflow = ".github/workflows/windows-subset-qualification.yml"
-jobs = ["windows-advisory-subset"]
-commands = []
-estimated_lem = 5
-artifact_families = []
-description = "Reusable native Windows subset: test outcomes advisory, source/status/log/receipt and nonempty execution evidence mandatory. Called after merge-ready admission or explicit standalone diagnostics."

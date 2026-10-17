@@ -349,195 +349,15 @@ fn event_commit_bindings_are_exact_and_history_is_available() -> TestResult {
             .lines()
             .any(|line| line == "          fetch-depth: 0")
     );
+    assert!(detector.lines().any(|line| line == "    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')))"));
     assert!(
-        detector
-            .contains("    needs: source-identity\n    if: >-\n      always() && !cancelled() &&")
-    );
-    assert!(detector.contains("(!contains(toJSON(inputs), '\"subject_sha\"') && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))))"));
-    assert!(
-        detector.contains("          ref: ${{ inputs.subject_sha || github.sha }}"),
-        "legacy checkout retains the event integration commit; calls use the admitted subject"
+        !detector
+            .lines()
+            .any(|line| line.trim_start().starts_with("ref:")),
+        "checkout retains the synthetic integration commit"
     );
     verify_guarded_rust_only_steps(detector)?;
     Ok(())
-}
-
-const GATED: [(&str, &str); 12] = [
-    ("ci.yml", include_str!("../../../.github/workflows/ci.yml")),
-    (
-        "coverage.yml",
-        include_str!("../../../.github/workflows/coverage.yml"),
-    ),
-    (
-        "future-clippy.yml",
-        include_str!("../../../.github/workflows/future-clippy.yml"),
-    ),
-    (
-        "macos-advisory.yml",
-        include_str!("../../../.github/workflows/macos-advisory.yml"),
-    ),
-    (
-        "npm-launcher.yml",
-        include_str!("../../../.github/workflows/npm-launcher.yml"),
-    ),
-    (
-        "pilot-ranking.yml",
-        include_str!("../../../.github/workflows/pilot-ranking.yml"),
-    ),
-    (
-        "printed-command-paste.yml",
-        include_str!("../../../.github/workflows/printed-command-paste.yml"),
-    ),
-    (
-        "public-proof.yml",
-        include_str!("../../../.github/workflows/public-proof.yml"),
-    ),
-    (
-        "security.yml",
-        include_str!("../../../.github/workflows/security.yml"),
-    ),
-    (
-        "test-analytics.yml",
-        include_str!("../../../.github/workflows/test-analytics.yml"),
-    ),
-    (
-        "windows-advisory.yml",
-        include_str!("../../../.github/workflows/windows-advisory.yml"),
-    ),
-    (
-        "zed-extension.yml",
-        include_str!("../../../.github/workflows/zed-extension.yml"),
-    ),
-];
-
-fn gated_jobs(workflow: &str) -> &[&str] {
-    match workflow {
-        "ci.yml" => &["release-proof", "rust-only-features", "msrv", "vscode"],
-        "coverage.yml" => &["coverage"],
-        "future-clippy.yml" => &["future-clippy"],
-        "macos-advisory.yml" => &["macos-advisory"],
-        "npm-launcher.yml" => &["launcher"],
-        "pilot-ranking.yml" => &["ranking"],
-        "printed-command-paste.yml" => &["paste"],
-        "public-proof.yml" => &["drift"],
-        "security.yml" => &["cargo-deny", "dependency-review"],
-        "test-analytics.yml" => &["rust-tests"],
-        "windows-advisory.yml" => &["windows-advisory"],
-        "zed-extension.yml" => &["zed-extension"],
-        _ => &[],
-    }
-}
-
-fn named_job<'a>(source: &'a str, name: &str) -> &'a str {
-    let marker = format!("\n  {name}:\n");
-    let tail = source.split_once(&marker).map_or("", |(_, tail)| tail);
-    assert!(!tail.is_empty(), "named job must exist: {name}");
-    let end = tail
-        .match_indices('\n')
-        .find_map(|(offset, _)| {
-            let next = &tail[offset + 1..];
-            (next.starts_with("  ") && !next.starts_with("   ") && !next.starts_with("  #"))
-                .then_some(offset)
-        })
-        .unwrap_or(tail.len());
-    &tail[..end]
-}
-
-fn job_condition(source: &str, name: &str) -> Option<String> {
-    let mut lines = named_job(source, name).lines().peekable();
-    let mut condition = None;
-    while let Some(line) = lines.next() {
-        if let Some(value) = line.strip_prefix("    if:") {
-            assert!(condition.is_none(), "duplicate job condition: {name}");
-            let value = value.trim();
-            condition = Some(if matches!(value, ">" | ">-" | "|" | "|-") {
-                let mut folded = Vec::new();
-                while let Some(line) = lines.next_if(|line| line.starts_with("      ")) {
-                    folded.push(line.trim());
-                }
-                folded.join(" ")
-            } else {
-                value.to_string()
-            });
-        }
-    }
-    condition
-}
-
-fn verify_job_admission(workflow: &str, source: &str) {
-    const EXPLICIT: &str =
-        "github.event.action == 'labeled' && github.event.label.name == 'merge-ready'";
-    let jobs = gated_jobs(workflow);
-    assert!(!jobs.is_empty(), "unknown gated workflow: {workflow}");
-    for name in jobs {
-        let condition = job_condition(source, name).unwrap_or_default();
-        assert!(
-            !condition.is_empty(),
-            "named job admission is mandatory: {name}"
-        );
-        assert!(
-            condition.contains(EXPLICIT),
-            "{workflow}/{name}: {condition}"
-        );
-        for event in ["opened", "synchronize", "reopened", "ready_for_review"] {
-            assert!(
-                !condition.contains(&format!("'{event}'")),
-                "{workflow}/{name} re-admits {event}"
-            );
-        }
-    }
-}
-
-fn without_job_condition(source: &str, name: &str) -> String {
-    let block = named_job(source, name);
-    let mut lines = block.split_inclusive('\n').peekable();
-    let mut removed = String::new();
-    while let Some(line) = lines.next() {
-        if let Some(value) = line.strip_prefix("    if:") {
-            removed.push_str(line);
-            if matches!(value.trim(), ">" | ">-" | "|" | "|-") {
-                while let Some(line) = lines.next_if(|line| line.starts_with("      ")) {
-                    removed.push_str(line);
-                }
-            }
-        }
-    }
-    assert!(
-        !removed.is_empty(),
-        "guard removal must change source: {name}"
-    );
-    let changed_block = block.replacen(&removed, "", 1);
-    source.replacen(block, &changed_block, 1)
-}
-
-#[test]
-fn each_named_job_guard_removal_is_rejected_with_concurrency_unchanged() {
-    for (workflow, source) in GATED {
-        verify_job_admission(workflow, source);
-        for name in gated_jobs(workflow) {
-            let mutant = without_job_condition(source, name);
-            assert!(job_condition(&mutant, name).is_none());
-            for line in source.lines().filter(|line| {
-                line.starts_with("  group:") || line.starts_with("  cancel-in-progress:")
-            }) {
-                assert!(mutant.lines().any(|retained| retained == line));
-            }
-            assert!(
-                std::panic::catch_unwind(|| verify_job_admission(workflow, &mutant)).is_err(),
-                "missing named job guard must reject: {workflow}/{name}"
-            );
-        }
-    }
-}
-
-#[test]
-fn named_job_conditions_handle_folding_and_ignore_step_or_neighbor_conditions() {
-    let source = "jobs:\n  first:\n    if: >-\n      explicit &&\n      fresh\n    steps:\n      - if: step_only\n  second:\n    steps:\n      - if: unrelated\n";
-    assert_eq!(
-        job_condition(source, "first").as_deref(),
-        Some("explicit && fresh")
-    );
-    assert!(job_condition(source, "second").is_none());
 }
 
 /// Every merge-ready-gated lane admits a pull request only through an explicit
@@ -545,34 +365,66 @@ fn named_job_conditions_handle_folding_and_ignore_step_or_neighbor_conditions() 
 /// synchronize or reopened events while the label is still attached.
 #[test]
 fn gated_lanes_admit_pull_requests_only_on_the_merge_ready_labeled_event() {
+    const GATED: [(&str, &str); 12] = [
+        ("ci.yml", include_str!("../../../.github/workflows/ci.yml")),
+        (
+            "coverage.yml",
+            include_str!("../../../.github/workflows/coverage.yml"),
+        ),
+        (
+            "future-clippy.yml",
+            include_str!("../../../.github/workflows/future-clippy.yml"),
+        ),
+        (
+            "macos-advisory.yml",
+            include_str!("../../../.github/workflows/macos-advisory.yml"),
+        ),
+        (
+            "npm-launcher.yml",
+            include_str!("../../../.github/workflows/npm-launcher.yml"),
+        ),
+        (
+            "pilot-ranking.yml",
+            include_str!("../../../.github/workflows/pilot-ranking.yml"),
+        ),
+        (
+            "printed-command-paste.yml",
+            include_str!("../../../.github/workflows/printed-command-paste.yml"),
+        ),
+        (
+            "public-proof.yml",
+            include_str!("../../../.github/workflows/public-proof.yml"),
+        ),
+        (
+            "security.yml",
+            include_str!("../../../.github/workflows/security.yml"),
+        ),
+        (
+            "test-analytics.yml",
+            include_str!("../../../.github/workflows/test-analytics.yml"),
+        ),
+        (
+            "windows-advisory.yml",
+            include_str!("../../../.github/workflows/windows-advisory.yml"),
+        ),
+        (
+            "zed-extension.yml",
+            include_str!("../../../.github/workflows/zed-extension.yml"),
+        ),
+    ];
     for (name, source) in GATED {
-        verify_job_admission(name, source);
         if source.contains("\nconcurrency:\n") {
             const REQUEST: &str = "github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready'";
-            // Staged callable leaves key the group by admitted request/subject
-            // first; direct events fall through to the merge-ready group rule.
-            let callable_leaf = matches!(name, "ci.yml" | "printed-command-paste.yml");
             let prefix = match name {
                 "pilot-ranking.yml" => "pilot-ranking",
                 "public-proof.yml" => "public-proof",
-                "printed-command-paste.yml" => "printed-command-paste",
                 _ => "${{ github.workflow }}",
             };
             let cancels_non_pr = matches!(name, "pilot-ranking.yml" | "public-proof.yml");
-            let expected_group = if callable_leaf {
-                format!(
-                    "  group: {prefix}-${{{{ inputs.request_id || github.event.pull_request.number || github.ref }}}}-${{{{ inputs.subject_sha || ((github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run') }}}}"
-                )
-            } else {
-                format!(
-                    "  group: {prefix}-${{{{ github.event.pull_request.number || github.ref }}}}-${{{{ (github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run' }}}}"
-                )
-            };
-            let expected_cancel = if callable_leaf {
-                format!(
-                    "  cancel-in-progress: ${{{{ !contains(toJSON(inputs), '\"subject_sha\"') && ({REQUEST}) }}}}"
-                )
-            } else if cancels_non_pr {
+            let expected_group = format!(
+                "  group: {prefix}-${{{{ github.event.pull_request.number || github.ref }}}}-${{{{ (github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run' }}}}"
+            );
+            let expected_cancel = if cancels_non_pr {
                 format!(
                     "  cancel-in-progress: ${{{{ ({REQUEST}) || github.event_name != 'pull_request' }}}}"
                 )
@@ -588,19 +440,18 @@ fn gated_lanes_admit_pull_requests_only_on_the_merge_ready_labeled_event() {
                 "{name}: only a merge-ready request may cancel pull_request runs"
             );
         }
-        let violations = job_guard_violations(name, source);
+        let violations = job_guard_violations(source);
         assert!(violations.is_empty(), "{name}: {violations:?}");
     }
 }
 
-/// Enumerate every job, including those after column-zero comments. Ordinary
-/// jobs require explicit request admission; callable and diagnostic jobs retain
-/// their exact separate authority. Folded conditions belong to their named job.
-fn job_guard_violations(workflow: &str, source: &str) -> Vec<String> {
+/// Every job under `jobs:` must carry a single-line `if:` admitting only the
+/// explicit merge-ready `labeled` event. Returns one message per violation.
+fn job_guard_violations(source: &str) -> Vec<String> {
     const EXPLICIT: &str =
         "github.event.action == 'labeled' && github.event.label.name == 'merge-ready'";
     let mut violations = Vec::new();
-    let mut guarded = Vec::new();
+    let mut guarded: Vec<(&str, bool)> = Vec::new();
     let mut in_jobs = false;
     for line in source.lines() {
         if line == "jobs:" {
@@ -624,40 +475,29 @@ fn job_guard_violations(workflow: &str, source: &str) -> Vec<String> {
                     .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
             })
         {
-            guarded.push(key);
+            guarded.push((key, false));
+        } else if line.starts_with("    if:") && !guarded.is_empty() {
+            if !(line.contains("'merge-ready'") && line.contains(EXPLICIT)) {
+                violations.push(format!(
+                    "guard must admit only the explicit merge-ready event: {line}"
+                ));
+            }
+            for event in ["opened", "synchronize", "reopened", "ready_for_review"] {
+                if line.contains(&format!("'{event}'")) {
+                    violations.push(format!("re-admits {event}: {line}"));
+                }
+            }
+            if let Some(entry) = guarded.last_mut() {
+                entry.1 = true;
+            }
         }
     }
     if guarded.is_empty() {
         violations.push("declares no jobs".to_string());
     }
-    for job in guarded {
-        let condition = job_condition(source, job).unwrap_or_default();
-        let exact = match (workflow, job) {
-            ("ci.yml", "source-identity") => Some("contains(toJSON(inputs), '\"subject_sha\"')"),
-            ("ci.yml", "ci-result") => {
-                Some("always() && contains(toJSON(inputs), '\"subject_sha\"')")
-            }
-            ("windows-advisory.yml", "windows-advisory-subset") => {
-                Some("github.event_name != 'pull_request'")
-            }
-            _ => None,
-        };
-        if let Some(expected) = exact {
-            if condition != expected {
-                violations.push(format!(
-                    "job `{job}` changed its exact authority: {condition}"
-                ));
-            }
-        } else if !condition.contains(EXPLICIT) {
-            violations.push(format!(
-                "job `{job}` has no explicit merge-ready guard: {condition}"
-            ));
-        } else {
-            for event in ["opened", "synchronize", "reopened", "ready_for_review"] {
-                if condition.contains(&format!("'{event}'")) {
-                    violations.push(format!("job `{job}` re-admits {event}: {condition}"));
-                }
-            }
+    for (job, has_guard) in guarded {
+        if !has_guard {
+            violations.push(format!("job `{job}` has no single-line merge-ready guard"));
         }
     }
     violations
@@ -667,49 +507,19 @@ fn job_guard_violations(workflow: &str, source: &str) -> Vec<String> {
 fn job_guard_scanner_rejects_unguarded_jobs_even_after_column_zero_comments() {
     const GUARD: &str = "    if: github.event_name != 'pull_request' || (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')";
     let guarded = format!("jobs:\n  first:\n{GUARD}\n    runs-on: x\n");
-    assert!(job_guard_violations("fixture", &guarded).is_empty());
+    assert!(job_guard_violations(&guarded).is_empty());
 
     let unguarded = "jobs:\n  first:\n    runs-on: x\n";
-    assert_eq!(job_guard_violations("fixture", unguarded).len(), 1);
+    assert_eq!(job_guard_violations(unguarded).len(), 1);
 
     let after_comment =
         format!("jobs:\n  first:\n{GUARD}\n# a column-zero comment\n  second:\n    runs-on: x\n");
-    let violations = job_guard_violations("fixture", &after_comment);
+    let violations = job_guard_violations(&after_comment);
     assert_eq!(violations.len(), 1, "{violations:?}");
     assert!(violations[0].contains("`second`"), "{violations:?}");
 
     let readmits = "jobs:\n  first:\n    if: github.event.action == 'opened' || (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')\n";
-    assert_eq!(job_guard_violations("fixture", readmits).len(), 1);
-}
-
-#[test]
-fn callable_and_diagnostic_job_authorities_are_exact_and_unknown_jobs_are_checked() {
-    for (workflow, job) in [
-        ("ci.yml", "source-identity"),
-        ("ci.yml", "ci-result"),
-        ("windows-advisory.yml", "windows-advisory-subset"),
-    ] {
-        let source = GATED
-            .iter()
-            .find(|(name, _)| *name == workflow)
-            .map_or("", |(_, source)| *source);
-        assert!(!source.is_empty());
-        assert!(job_guard_violations(workflow, source).is_empty());
-        let removed = without_job_condition(source, job);
-        assert!(!job_guard_violations(workflow, &removed).is_empty());
-        let condition = job_condition(source, job).unwrap_or_default();
-        assert!(!condition.is_empty());
-        let block = named_job(source, job);
-        let broadened = source.replacen(block, &block.replacen(&condition, "true", 1), 1);
-        assert_ne!(broadened, source);
-        assert!(!job_guard_violations(workflow, &broadened).is_empty());
-    }
-    let unknown = format!("{WORKFLOW}\n# keep enumerating\n  surprise:\n    runs-on: fixture\n");
-    assert!(
-        job_guard_violations("ci.yml", &unknown)
-            .iter()
-            .any(|error| error.contains("`surprise`"))
-    );
+    assert_eq!(job_guard_violations(readmits).len(), 1);
 }
 
 #[test]

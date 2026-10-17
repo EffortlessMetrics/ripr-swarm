@@ -43,82 +43,62 @@ reading raw logs.
 
 ## Draft to Ready handoff
 
-Draft and Ready are review/UI states. Neither opening, pushing nor marking Ready
-requests `Ripr Rust Small Result`. Keep frequent Draft pushes and warm author
-proof; obtain independent source review and repair known material findings.
+Publish a coherent candidate as Draft. The delivery owner completes this order
+before spending the Ready-triggered `Ripr Rust Small Result` qualification:
 
-The explicit qualification request is adding `merge-ready` to a non-Draft PR.
-Before submission, bind H, current base B and the actual integration subject T;
-read native runs for the exact subject and preserve a queued/running request.
-Do not remove/re-add the label to refresh slow work. Native concurrency preserves
-running work but another identical request can replace an existing pending run;
-it is not exactly-once admission. Pending duplicates and completed requests without qualified same-attempt producer
-receipts refuse without replacement. Failed proof requires repair or an explicitly
-justified native retry; adding the label again is not that authorization.
+1. Bind the exact candidate head and integration basis. Complete independent
+   substantive review through `review-pr`, disposition every known finding, and
+   compose accepted repairs into that candidate while Draft.
+2. Run applicable, available local proof on the composed head and refresh affected review.
+   Follow changed expectations into their consumers: corpus rows can change a
+   scoreboard's literal tuple; shared rendering can have a Rust-only mock beyond
+   passing Python/card tests. Check the relevant test placement, private imports,
+   targets and feature selection. Preserve independent literal oracles and
+   meaningful negative controls; derive expected values from the contract, not
+   from the implementation being tested. This selects focused proof, not every
+   possible test or a duplicate of the hosted matrix.
+3. Reconcile actual conflicts, changed prerequisites and affected combined-tree
+   proof. Unrelated main movement alone needs no branch update or repeated proof.
+   If an applicable required gate has a known deterministic failure on this
+   basis, keep Draft, link the existing repair and its owner, and name the event
+   that permits resumption. Do not repeat that failure on each dependent PR,
+   duplicate its repair, or bless baseline failures. After the prerequisite lands,
+   verify the resulting basis and refresh only affected proof and review.
+   Before Ready, inspect GitHub's PR merge ref through an available permitted
+   Git/API read. Record its commit, parents and tree against the reviewed head,
+   basis and material prerequisites; local `merge-tree` proof does not establish
+   that remote subject. Judge differences for applicability, without behind-only
+   restacking. A stale subject missing a material prerequisite keeps Draft until
+   its owner corrects the source ancestry or remote ref state and the changed
+   subject is verified. A landing notification alone is not that verification.
+   If the ref cannot be queried, retain the exact read limit and leave the hosted
+   subject unestablished. An existing authorized, credibly expected-green route
+   may obtain that evidence; do not spend known-red qualification to discover
+   whether its prerequisite reached the hosted subject.
+4. Read back the live PR head, reviews, threads and workflow runs. Mark Ready
+   only for the unchanged, reviewed and composed candidate when green is
+   reasonably expected, with no unresolved material finding or known applicable
+   gate blocker. If local execution is genuinely unavailable, follow the existing
+   [local and hosted proof route](agent-context/validation.md#local-and-hosted-proof):
+   record the unavailable dimension and reason, completed available checks, and
+   existing authorized narrow hosted qualification that will establish it.
+   `REVIEW_INCOMPLETE` may retain that evidence gap and Ready-triggered proof;
+   unavailable proof is not a pass. It cannot excuse an executable but unrun
+   applicable local check, unfinished review or repair, a known-red test, or
+   missing claim-essential native proof. Ready requests qualification;
+   `REVIEW_READY` and required proof still govern merge under `finish-pr`.
 
-A current COMMENT review can record `SOURCE_REVIEW_READY` when independent source
-review and applicable local proof are complete and only admitted hosted evidence
-remains. Include exact H, surfaces, findings, dispositions and remaining proof.
-This marker is an attestation, not proof of reviewer independence or CI success;
-its GitHub author need not differ from the PR author when reporting a genuinely
-independent reviewer. Current native approvals are also observed. Quota notices,
-failed-to-review, skipped sensors, silence and naked LGTM cannot replace the
-substantive review-of-record. The trusted request owner verifies its adequacy.
-No new GitHub approval count is required.
+After Ready, inspect the actual job checkout commit, parents and tree against
+the reviewed candidate and basis. A run's head SHA or a pre-Ready ref observation
+does not guarantee the checkout. If a material mismatch appears, retain the
+actual run/subject, return to Draft and resume only after the changed prerequisite
+or subject is verified; do not relabel that run as proof for the local tree or
+repeat Ready toggles to refresh it.
 
-The COMMENT parser recognizes a direct positive declaration at the start of the
-first nonblank line (`SOURCE_REVIEW_READY` or `REVIEW_READY`, optionally followed
-by an explanation), or a standalone `disposition: SOURCE_REVIEW_READY` /
-`disposition: REVIEW_READY` field at column zero. Quoted, indented-code and fenced
-examples are not declarations. An explicit conflicting disposition field refuses.
-A source-ready declaration may separately report overall `REVIEW_INCOMPLETE`
-while qualification remains outstanding. Both admission and the final refresh,
-including diagnostics, use the same parser.
-
-This is a partial #8157 interpretation mitigation. It does not authenticate a
-publisher or validate proof references. The latest-comment reducer and native
-approval route remain unchanged: an ordinary later COMMENT can erase marker
-evidence, and an existing native approval can bypass a later negative COMMENT.
-The versioned current-disposition, publisher, withdrawal and proof-custody repair
-remains open under #8157/#4985/#4834. This parser does not classify arbitrary
-narrative contradictions or establish readiness by itself.
-
-Admission reads live open/non-Draft/label state, H/B/T, mergeability, current
-reviews and paginated unresolved threads without executing candidate code. The
-result refreshes the same readiness after selected proof; failed/missing/stale
-admission or selected evidence cannot emit required success. Ordinary unrelated
-labels use a distinct non-required name and per-run metadata concurrency.
-
-The staged v2 subject binds repository and PR object IDs, destination repository
-and fully qualified ref, H, live B, actual GitHub merge G, tree, complete ordered
-parents `[B,H]`, and workflow generation. Stored PR/event base metadata S is
-provenance only. The PR's live base ref and the independently named destination
-must both resolve to the same Commit B. Bounded REST refresh must establish
-mergeable=true before candidate reliance; missing, partial, malformed or changed
-identities refuse. Fresh observations bracket review/thread checks and repeat
-before the final required result. These observations do not exclude ABA changes
-or establish a transaction with check publication or merge.
-
-The docs selector, separate docs producer and Rust producer each pin and verify
-the admitted G/tree/parents before substantive execution. PR diff evidence and
-the advisory proof route consume the verified B/H rather than event S/H.
-Explicit legacy profiles preserve push/manual behavior.
-
-A successful v2 admission marker discovers identity; it does not prove producer
-execution. Successful prior-result reuse is currently unavailable because exact
-same-attempt callable MSRV/VSCode producer-step receipt identities have not been
-qualified. Pending or matching ineligible completed origins refuse without
-replacement. A reused-success aggregate with skipped children cannot supply
-origin proof, and no recursive origin chain is followed. Qualification and
-source-stage corrections do not activate the caller or retire existing triggers.
-
-After qualification is green, refresh `review-pr` on exact H and current
-integration inputs, then make the final vision/current-state decision. Only a
-current `REVIEW_READY`, actual required proof and applicable server protections
-permit protected expected-head squash merge. There is no native merge queue.
-Separate base reads and check publication/merge are not atomic base guards;
-changed B requires an affected-proof disposition. Read back landed M against T,
-without launching another full suite merely because a merge happened.
+A new head or material finding returns the candidate to Draft for one joined
+repair/proof/review wave before another Ready transition. Preserve unaffected
+evidence. Do not re-toggle an unchanged head with a queued or running required
+run: the toggle cancels it. Retain its run link and yield the remote wait.
 
 ### PR-native continuation record
 
