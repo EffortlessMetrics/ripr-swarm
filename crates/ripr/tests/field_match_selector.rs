@@ -350,7 +350,7 @@ fn a_direct_record_sibling_names_the_missing_arm_and_wrong_calls_never_credit_it
             if case == 0 {
                 assert!(arm.activation.missing_discriminators.iter().any(|missing| missing.value == "Some(ms)"), "{}", arm.id);
                 assert!(arm.static_limit_kind.is_none(),
-                    "a proven sibling input is a real gap, not an unresolved field value");
+                    "an established sibling input is a real gap, not an unresolved field value");
                 assert!(arm.canonical_gap.is_some(),
                     "the supported missing-arm discriminator must retain its repair identity");
             }

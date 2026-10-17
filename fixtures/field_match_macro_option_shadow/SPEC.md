@@ -21,5 +21,5 @@ admission. Ordinary unshadowed standard equality assertions remain supported.
 
 ## Must Not
 
-Promote an unselected arm by assuming a prelude constructor survived an opaque
+Promote an unselected arm by assuming a prelude constructor remained after an opaque
 statement expansion, or treat a rendered golden as independent semantic proof.
