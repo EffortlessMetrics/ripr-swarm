@@ -2822,18 +2822,22 @@ mod tests {
         let mut test = test_summary_calling("order_discount", "order_discount(10)");
         test.start_line = 10;
         test.end_line = 14;
-        let shadow = "macro_rules! fake {\n    () => { fn order_discount(_: u32) -> u32 { 5 } };\n}\nfake!();\n";
-        test.body = format!("{shadow}fn t() {{\n    assert_eq!(order_discount(10), 5);\n}}").into();
+        // The macro names the fn through its `$n:ident` binder, so neither
+        // `fn order_discount` nor a `let` appears in the body: only the
+        // macro rule can shadow the call, not the lexical body scan.
+        let shadow = "macro_rules! make {\n    ($n:ident) => { fn $n(_: u32) -> u32 { 5 } };\n}\nmake!(order_discount);\n";
+        let tail = "fn t() {\n    assert_eq!(order_discount(10), 5);\n}";
+        test.body = format!("{shadow}{tail}").into();
         assert!(idx.files().get(&test.file).is_none(), "fallback path only");
         assert!(test_call_is_shadowed(&idx, &test, "order_discount", 11));
-        // Control: a macro defining another name leaves the shared gate
-        // closed (the lexical body scan is a separate authority).
-        let unrelated = test.body.replace("fn order_discount", "fn other_name");
-        assert!(!super::super::reveal::file_imports_foreign_callee_name(
-            &unrelated,
-            "order_discount",
-            &idx.package_names
-        ));
+        // Control: the same macro defining another name leaves the call
+        // unshadowed through the same entry point.
+        test.body = format!(
+            "{}{tail}",
+            shadow.replace("make!(order_discount)", "make!(other_name)")
+        )
+        .into();
+        assert!(!test_call_is_shadowed(&idx, &test, "order_discount", 11));
     }
 
     // #6780 review round 3: the abstention applies only when every
