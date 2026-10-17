@@ -2,6 +2,7 @@ name: Security
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main, master]
 
@@ -11,6 +12,7 @@ permissions:
 jobs:
   cargo-deny:
     name: cargo-deny
+    if: github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && ((github.event.action == 'labeled' && github.event.label.name == 'merge-ready') || contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action)))
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -24,7 +26,7 @@ jobs:
 
   dependency-review:
     name: dependency-review
-    if: github.event_name == 'pull_request'
+    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && ((github.event.action == 'labeled' && github.event.label.name == 'merge-ready') || contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action)))) && (github.event_name == 'pull_request')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

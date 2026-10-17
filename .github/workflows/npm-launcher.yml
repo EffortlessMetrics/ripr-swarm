@@ -2,6 +2,7 @@ name: npm Launcher
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
     paths:
       - "packaging/npm/launcher/**"
       - "policy/distribution.toml"
@@ -29,6 +30,7 @@ permissions:
 jobs:
   launcher:
     name: script-free launcher contract / Node ${{ matrix.node-version }}
+    if: github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && ((github.event.action == 'labeled' && github.event.label.name == 'merge-ready') || contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action)))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:

@@ -17,7 +17,7 @@ on:
   schedule:
     - cron: "29 6 * * *"
   pull_request:
-    types: [opened, ready_for_review]
+    types: [opened, synchronize, reopened, labeled]
     paths:
       - "crates/ripr/src/output/pilot/**"
       - "crates/ripr/src/output/path.rs"
@@ -48,11 +48,11 @@ permissions:
 
 concurrency:
   group: pilot-ranking-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event.action != 'labeled' || github.event.label.name == 'merge-ready' }}
 
 jobs:
   ranking:
-    if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft)
+    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && ((github.event.action == 'labeled' && github.event.label.name == 'merge-ready') || contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action)))) && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

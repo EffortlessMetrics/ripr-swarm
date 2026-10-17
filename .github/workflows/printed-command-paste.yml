@@ -4,7 +4,7 @@ on:
   schedule:
     - cron: "43 5 * * *"
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, labeled]
     paths:
       - "crates/ripr/src/**"
       - "crates/ripr/tests/printed_command_paste.rs"
@@ -19,7 +19,7 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'merge-ready') }}
 
 # Every command ripr prints, pasted into every shell a user has (#5188, #5232,
 # #5247, #5269 each fixed one surface by hand).
@@ -51,6 +51,7 @@ concurrency:
 jobs:
   paste:
     name: paste-${{ matrix.os }}
+    if: github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && ((github.event.action == 'labeled' && github.event.label.name == 'merge-ready') || contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action)))
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:

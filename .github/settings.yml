@@ -42,6 +42,9 @@ branches:
       restrictions: null
 
 labels:
+  - name: merge-ready
+    color: "0e8a16"
+    description: Start pull-request CI. Add last; CI does not run on Draft or Ready.
   - name: full-ci
     color: "5319e7"
     description: Run required, advisory, and release-like CI lanes.

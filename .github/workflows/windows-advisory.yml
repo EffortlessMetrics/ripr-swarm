@@ -81,11 +81,7 @@ concurrency:
 jobs:
   windows-advisory:
     name: windows-advisory
-    if: |
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch' ||
-      contains(github.event.pull_request.labels.*.name, 'windows-ci') ||
-      contains(github.event.pull_request.labels.*.name, 'full-ci')
+    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && ((github.event.action == 'labeled' && github.event.label.name == 'merge-ready') || contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action)))) && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'windows-ci') || contains(github.event.pull_request.labels.*.name, 'full-ci'))
     runs-on: windows-latest
     timeout-minutes: 90
 
@@ -299,6 +295,7 @@ jobs:
   # audit responsibility (docs/CI.md, Advisory Windows Lane).
   windows-advisory-subset:
     name: windows-advisory-subset
+    if: github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && ((github.event.action == 'labeled' && github.event.label.name == 'merge-ready') || contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action)))
     runs-on: windows-latest
     timeout-minutes: 45
     env:

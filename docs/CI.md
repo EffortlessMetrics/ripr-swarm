@@ -38,6 +38,27 @@ workflow shell with the production policy binary and real Git histories, and
 exercise the checked-in job predicates and dependency wiring; they do not claim
 hosted Actions or wheel qualification.
 
+## Merge-ready label flow
+
+Pull-request CI does not run on Draft or plain Ready. Agents and authors prove
+the change locally ([validation](agent-context/validation.md#local-and-hosted-proof)),
+publish a Draft, and add the `merge-ready` label last. Adding `merge-ready`
+starts the non-required lanes once; each later push to a labeled PR reruns
+them. Removing the label stops further runs.
+
+- Auxiliary labels (`full-ci`, `windows-ci`, `vscode`, `coverage`,
+  `clippy-future`, `release-check`) still select extra lanes, but only together
+  with `merge-ready`. Add them first; adding one after `merge-ready` takes
+  effect at the next push.
+- Gated: `ci.yml` jobs, `coverage`, `test-analytics`, `future-clippy`,
+  `windows-advisory` (both jobs), `security`, `printed-command-paste`,
+  `npm-launcher`, `zed-extension`, `pilot-ranking` and `public-proof`. Push,
+  schedule and manual runs are unchanged.
+- Not changed here: the required `Ripr Rust Small Result` (still requested by
+  `ready_for_review`), `ub-review` (its triggers are pinned by
+  `pr_readiness_workflow_contract`), the Python wheel workflow, and
+  `source-of-truth`. Their cutover is tracked under #4984.
+
 ## Verification Economics Policy
 
 CI is a product surface. A contributor should be able to tell what ran, why it
@@ -304,6 +325,7 @@ implement and validate the lane-selection logic.
 
 | Label | Effect |
 | --- | --- |
+| `merge-ready` | Start pull-request CI for the non-required lanes. Pull-request CI does not run on Draft or plain Ready. Applied to a labeled PR, every later push reruns the lanes. Add auxiliary labels (`full-ci`, `windows-ci`, ...) first, then `merge-ready`; they have no effect without it. Does not change the required `Ripr Rust Small Result` (#4984). |
 | `full-ci` | Run required, advisory, and release-like lanes. Demotes `ripr-waive` for this PR. Expected to cost more. For Routed Rust Small, read at the next Draft -> Ready transition. |
 | `release-check` | Run the currently wired release-surface proof without opting into every `full-ci` lane: package list, publish dry-run, unlocked install resolution, and release-readiness. |
 | `vscode` | Run editor extension lanes even when no editor path changed. |
@@ -356,9 +378,9 @@ and single-platform CI was the root cause enabling both.
   false-confidence condition it exists to prevent.
 - **Selection.** A daily schedule for standing signal, `workflow_dispatch`, and
   pull requests labeled `windows-ci` or `full-ci`.
-- **Always-on subset (#4938).** Every subscribed `pull_request` action
-  (`opened`, `synchronize`, `reopened`, `labeled`; `unlabeled` stays omitted
-  per #4380) also runs `windows-advisory-subset`, a fast advisory Windows job
+- **Merge-ready subset (#4938).** Every subscribed `pull_request` action on a
+  PR labeled `merge-ready` (`opened`, `synchronize`, `reopened`, or `labeled`
+  with that label) also runs `windows-advisory-subset`, a fast advisory Windows job
   (`lsp::gap_artifacts` and Cargo-home identity lib tests, the #4918 cache-warning smoke, and
   `cargo clippy -p ripr --all-targets`) under the same advisory contract as
   the lane. It does not gate merges; #4337, #4918, and #4921 were each caught
@@ -745,10 +767,12 @@ feature set (#2400, #3128) on Linux:
 cargo test -p ripr --locked --no-default-features --features lang-rust --no-fail-fast
 ```
 
-It runs on every push to `main` or `master`, on manual dispatch, and on pull
-request `opened`, `synchronize`, and `reopened` events whose diff touches
+It runs on every push to `main` or `master`, on manual dispatch, and on
+`merge-ready` pull request `opened`, `synchronize`, `reopened` and `labeled`
+events whose diff touches
 `crates/`, `fixtures/`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain*`, or
-`.cargo/`. Label events and other pull requests skip the compile. It is not
+`.cargo/`. Other label events, unlabeled pull requests and other pull requests
+skip the compile. It is not
 a required check. The Windows advisory lane runs the same command on Windows.
 The selector compares the immutable pull-request event base and head commits,
 not the synthetic merge checkout, so unrelated main-branch Rust changes do not

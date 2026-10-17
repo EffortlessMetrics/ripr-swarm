@@ -18,7 +18,7 @@ on:
   schedule:
     - cron: "41 7 * * *"
   pull_request:
-    types: [opened, ready_for_review]
+    types: [opened, synchronize, reopened, labeled]
     paths:
       - "metrics/dx-scoreboard/baseline.json"
       - "benchmarks/rust_corpus/manifest.json"
@@ -32,11 +32,11 @@ permissions:
 
 concurrency:
   group: public-proof-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event.action != 'labeled' || github.event.label.name == 'merge-ready' }}
 
 jobs:
   drift:
-    if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft)
+    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && ((github.event.action == 'labeled' && github.event.label.name == 'merge-ready') || contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action)))) && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft))
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

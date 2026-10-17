@@ -36,11 +36,7 @@ concurrency:
 jobs:
   future-clippy:
     name: future-clippy
-    if: |
-      github.event_name == 'push' ||
-      github.event_name == 'workflow_dispatch' ||
-      contains(github.event.pull_request.labels.*.name, 'clippy-future') ||
-      contains(github.event.pull_request.labels.*.name, 'full-ci')
+    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && ((github.event.action == 'labeled' && github.event.label.name == 'merge-ready') || contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action)))) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'clippy-future') || contains(github.event.pull_request.labels.*.name, 'full-ci'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
