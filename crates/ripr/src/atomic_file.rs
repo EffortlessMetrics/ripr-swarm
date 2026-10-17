@@ -12,6 +12,16 @@ static TEMP_FILE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::Ato
 /// choose where cache and workflow artifacts are written. Links that stay
 /// inside the workspace, and an explicit `RIPR_CACHE_DIR`, are unaffected.
 pub(crate) fn ensure_default_output_contained(root: &Path) -> Result<(), String> {
+    ensure_default_output_contained_with(root, std::env::var("RIPR_CACHE_DIR").ok().as_deref())
+}
+
+fn ensure_default_output_contained_with(
+    root: &Path,
+    cache_dir_env: Option<&str>,
+) -> Result<(), String> {
+    if cache_dir_env.is_some_and(|value| !value.trim().is_empty()) {
+        return Ok(());
+    }
     let Ok(canonical_root) = root.canonicalize() else {
         return Ok(());
     };
@@ -29,8 +39,9 @@ pub(crate) fn ensure_default_output_contained(root: &Path) -> Result<(), String>
         };
         if escapes {
             return Err(format!(
-                "refusing to write ripr output: {} is a symlink that resolves outside the workspace {}; \
-                 replace it with a real directory, or set RIPR_CACHE_DIR to an explicit cache location",
+                "refusing to write ripr output: {} is a symlink that resolves outside the workspace {}. \\
+                 A repository can check in such a link to redirect where ripr writes. Either replace it with a real directory, \\
+                 or choose the location yourself, for example: RIPR_CACHE_DIR=/var/cache/ripr ripr check",
                 path.display(),
                 root.display()
             ));
@@ -376,7 +387,7 @@ fn publish_staged(
 mod tests {
     use super::{
         CreateNewError, STALE_TEMP_GRACE, TEMP_FILE_SEQUENCE, create_new,
-        ensure_default_output_contained, is_stranded_temp_name, sweep_stale_temp_files, write,
+        ensure_default_output_contained_with, is_stranded_temp_name, sweep_stale_temp_files, write,
         write_cache,
     };
     use std::path::{Path, PathBuf};
@@ -810,25 +821,27 @@ mod tests {
         std::fs::create_dir_all(&ws).map_err(|e| e.to_string())?;
         std::fs::create_dir_all(&outside).map_err(|e| e.to_string())?;
         // Control: no target at all, and a real target directory, pass.
-        ensure_default_output_contained(&ws)?;
+        ensure_default_output_contained_with(&ws, None)?;
         std::fs::create_dir_all(ws.join("target/ripr")).map_err(|e| e.to_string())?;
-        ensure_default_output_contained(&ws)?;
+        ensure_default_output_contained_with(&ws, None)?;
         // In-workspace alias passes.
         std::fs::remove_dir_all(ws.join("target")).map_err(|e| e.to_string())?;
         std::fs::create_dir_all(ws.join("real-target")).map_err(|e| e.to_string())?;
         std::os::unix::fs::symlink(ws.join("real-target"), ws.join("target"))
             .map_err(|e| e.to_string())?;
-        ensure_default_output_contained(&ws)?;
+        ensure_default_output_contained_with(&ws, None)?;
         // Escaping `target` and escaping `target/ripr` both refuse.
         std::fs::remove_file(ws.join("target")).map_err(|e| e.to_string())?;
         std::os::unix::fs::symlink(&outside, ws.join("target")).map_err(|e| e.to_string())?;
-        let escaped = ensure_default_output_contained(&ws);
+        let escaped = ensure_default_output_contained_with(&ws, None);
         std::fs::remove_file(ws.join("target")).map_err(|e| e.to_string())?;
         std::fs::create_dir_all(ws.join("target")).map_err(|e| e.to_string())?;
         std::os::unix::fs::symlink(&outside, ws.join("target/ripr")).map_err(|e| e.to_string())?;
-        let escaped_ripr = ensure_default_output_contained(&ws);
+        let escaped_ripr = ensure_default_output_contained_with(&ws, None);
         let _ = std::fs::remove_dir_all(&base);
-        assert!(escaped.is_err_and(|e| e.contains("RIPR_CACHE_DIR")));
+        // An explicit RIPR_CACHE_DIR is the opt-in and passes the guard.
+        ensure_default_output_contained_with(&ws, Some("/var/cache/ripr"))?;
+        assert!(escaped.is_err_and(|e| e.contains("RIPR_CACHE_DIR=/var/cache/ripr")));
         assert!(escaped_ripr.is_err());
         Ok(())
     }
