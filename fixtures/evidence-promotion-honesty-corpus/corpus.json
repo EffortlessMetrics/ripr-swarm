@@ -9472,6 +9472,51 @@
       "assertions": [
         { "type": "expected_class", "class": "exposed" }
       ]
+    },
+    {
+      "id": "rust_test_written_expected_file",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_test_written_expected_file",
+      "vector": "expected_operand_read_from_file_the_test_writes",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_test_written_expected_file_bound",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_test_written_expected_file_bound",
+      "vector": "expected_operand_bound_from_file_the_test_writes",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_committed_golden_expected_file",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_committed_golden_expected_file",
+      "vector": "expected_operand_read_from_committed_golden_file",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" },
+        { "type": "maximum_class", "class": "exposed" }
+      ]
     }
   ]
 }

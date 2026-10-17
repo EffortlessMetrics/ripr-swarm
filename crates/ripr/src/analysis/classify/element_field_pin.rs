@@ -1167,6 +1167,7 @@ mod tests {
             "[Row { total: a }, Row { total: a + b + 0 }]",
             "[Row { total: 7 }, Row { total: a + b + 0 }]",
             "[Row { total }, Row { total: a + b + 0 }]",
+            "[Row { total: (-33) }, Row { total: a + b + 0 }]",
         ] {
             let indexed = "        let rows = rows(30, 3);\n        assert_eq!(rows[1].total, 33);";
             if pinned(array, "#[test]", indexed)? != Some(true) {
