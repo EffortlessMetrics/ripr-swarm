@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Validate RIPR 0.11 hard-cut admission before expensive PR qualification.
+"""Validate the temporary RIPR 0.11 hard-cut freeze before qualification.
 
-The checked-in packet is inert while ``state`` is ``inactive``. During the
-short hard-cut window, ``active`` binds the current main SHA/tree and an exact
-PR/head allowlist. ``candidate_pinned`` releases rolling development without
-retargeting the immutable candidate.
+The checked-in packet is inert while ``state`` is ``inactive``. After all
+selected product PRs land, a packet-only control commit changes it to ``active``
+and binds the exact product cut SHA/tree in that commit's sole first parent.
+While active, ordinary PR qualification is refused. A packet-only control PR may
+move the state to a successor generation or ``candidate_pinned``; no product PR
+can self-admit by editing its checkout copy of the packet because the action
+reads the packet from the exact base commit.
 
-This is a cheap policy/currentness predicate. It does not decide release
-scope, qualify product behavior, or authorize merge/publication.
+This is a cheap policy/currentness predicate. It does not select scope, qualify
+product behavior, authorize merge, or create the immutable candidate ref.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from typing import Any
 SCHEMA_VERSION = "1"
 KIND = "ripr_release_cut_admission"
 RELEASE = "0.11.0"
+PACKET_PATH = "docs/release-candidates/0.11.0-hard-cut-admission.json"
 STATES = {"inactive", "active", "candidate_pinned"}
 DENIED_DISPOSITIONS = {
     "accepted_defer_with_non_claim",
@@ -87,18 +91,15 @@ def validate_packet(packet: Any) -> dict[str, Any]:
     observed = packet["observed_main"]
     if not isinstance(observed, dict) or set(observed) != {"sha", "tree"}:
         raise PacketError("observed_main must contain exactly sha and tree")
-    observed_sha = _sha(observed["sha"], "observed_main.sha", optional=state != "active")
-    observed_tree = _sha(
-        observed["tree"], "observed_main.tree", optional=state != "active"
-    )
-    if state == "active" and (observed_sha is None or observed_tree is None):
-        raise PacketError("active packet requires observed main SHA and tree")
+    bound = state in {"active", "candidate_pinned"}
+    observed_sha = _sha(observed["sha"], "observed_main.sha", optional=not bound)
+    observed_tree = _sha(observed["tree"], "observed_main.tree", optional=not bound)
+    if bound and (observed_sha is None or observed_tree is None):
+        raise PacketError(f"{state} packet requires the exact product cut SHA/tree")
 
     rows = packet["admitted"]
     if not isinstance(rows, list):
         raise PacketError("admitted must be an array")
-    if state == "active" and not rows:
-        raise PacketError("active packet requires at least one admitted PR/head row")
     seen_prs: set[int] = set()
     normalized: list[dict[str, Any]] = []
     row_fields = {
@@ -174,16 +175,44 @@ def validate_packet(packet: Any) -> dict[str, Any]:
     }
 
 
+def _commit_identity(commit: Any, label: str) -> tuple[str, str, list[str]]:
+    if not isinstance(commit, dict):
+        raise PacketError(f"{label} must be a Git commit object")
+    sha = _sha(commit.get("sha"), f"{label}.sha")
+    tree = _sha(((commit.get("tree") or {}).get("sha")), f"{label}.tree")
+    parents = commit.get("parents")
+    if not isinstance(parents, list):
+        raise PacketError(f"{label}.parents must be an array")
+    parent_shas = [
+        _sha((parent or {}).get("sha"), f"{label}.parents[{index}].sha")
+        for index, parent in enumerate(parents)
+    ]
+    return sha, tree, [parent for parent in parent_shas if parent is not None]
+
+
+def _changed_paths(pr_files: Any) -> list[str]:
+    if not isinstance(pr_files, list):
+        raise PacketError("PR files must be an array")
+    paths: list[str] = []
+    for index, item in enumerate(pr_files):
+        if not isinstance(item, dict) or not isinstance(item.get("filename"), str):
+            raise PacketError(f"PR files[{index}] lacks filename")
+        paths.append(item["filename"])
+    return sorted(set(paths))
+
+
 def decide(
     packet: dict[str, Any],
     *,
     pr_number: int,
     expected_head: str,
     actual_head: str,
-    base_sha: str,
-    base_tree: str,
+    base_commit: dict[str, Any],
+    cut_commit: dict[str, Any] | None,
+    pr_files: list[dict[str, Any]],
 ) -> dict[str, Any]:
     state = packet["state"]
+    base_sha, base_tree, base_parents = _commit_identity(base_commit, "base_commit")
     result = {
         "status": "admitted",
         "reason": "cut_inactive",
@@ -202,27 +231,27 @@ def decide(
 
     if actual_head != expected_head:
         return {**result, "status": "refused", "reason": "cut_candidate_head_moved"}
-    if packet["observed_main"]["sha"] != base_sha:
-        return {**result, "status": "refused", "reason": "cut_main_sha_moved"}
-    if packet["observed_main"]["tree"] != base_tree:
-        return {**result, "status": "refused", "reason": "cut_main_tree_moved"}
+    if cut_commit is None:
+        return {**result, "status": "refused", "reason": "cut_commit_missing"}
+    cut_sha, cut_tree, _ = _commit_identity(cut_commit, "cut_commit")
+    if packet["observed_main"]["sha"] != cut_sha:
+        return {**result, "status": "refused", "reason": "cut_sha_mismatch"}
+    if packet["observed_main"]["tree"] != cut_tree:
+        return {**result, "status": "refused", "reason": "cut_tree_mismatch"}
+    # The active packet lives in one reviewed control commit immediately after
+    # the product cut. Any further main movement makes its first parent differ.
+    if not base_parents or base_parents[0] != cut_sha:
+        return {**result, "status": "refused", "reason": "cut_main_moved"}
 
-    row = next((item for item in packet["admitted"] if item["pr"] == pr_number), None)
-    if row is None:
-        return {**result, "status": "refused", "reason": "cut_pr_not_admitted"}
-    if row["head_sha"] != actual_head:
-        return {**result, "status": "refused", "reason": "cut_admitted_head_moved"}
-    result.update(
-        reason="cut_exact_pr_head_admitted",
-        disposition=row["disposition"],
-        owner_issue=row["owner_issue"],
-        release_effect=row["release_effect"],
-    )
-    return result
+    paths = _changed_paths(pr_files)
+    if paths == [PACKET_PATH]:
+        result["reason"] = "cut_packet_control_update"
+        return result
+    return {**result, "status": "refused", "reason": "cut_frozen"}
 
 
 def fixture_packet(state: str = "inactive") -> dict[str, Any]:
-    active = state == "active"
+    bound = state in {"active", "candidate_pinned"}
     return {
         "schema_version": SCHEMA_VERSION,
         "kind": KIND,
@@ -232,25 +261,33 @@ def fixture_packet(state: str = "inactive") -> dict[str, Any]:
         "controller_issue": 5114,
         "selection_issue": 2766,
         "observed_main": {
-            "sha": "b" * 40 if active else None,
-            "tree": "c" * 40 if active else None,
+            "sha": "b" * 40 if bound else None,
+            "tree": "c" * 40 if bound else None,
         },
         "admitted": [
             {
-                "pr": 10,
-                "head_sha": "a" * 40,
+                "pr": 9,
+                "head_sha": "9" * 40,
                 "admission": "admitted",
                 "disposition": "release_required_product",
                 "owner_issue": 99,
-                "release_effect": "repairs a selected candidate defect",
+                "release_effect": "landed before the final cut",
                 "proof_refs": ["#99"],
             }
         ]
-        if active
+        if bound
         else [],
         "non_claims": [
             "Admission is not product qualification or merge authority."
         ],
+    }
+
+
+def fixture_commit(sha: str, tree: str, parents: list[str]) -> dict[str, Any]:
+    return {
+        "sha": sha,
+        "tree": {"sha": tree},
+        "parents": [{"sha": parent} for parent in parents],
     }
 
 
@@ -260,24 +297,47 @@ def self_test() -> None:
             "pr_number": 10,
             "expected_head": "a" * 40,
             "actual_head": "a" * 40,
-            "base_sha": "b" * 40,
-            "base_tree": "c" * 40,
+            "base_commit": fixture_commit("d" * 40, "e" * 40, ["b" * 40]),
+            "cut_commit": fixture_commit("b" * 40, "c" * 40, ["1" * 40]),
+            "pr_files": [{"filename": "src/lib.rs"}],
         }
         values.update(overrides)
         return decide(validate_packet(packet), **values)
 
     assert result(fixture_packet())["reason"] == "cut_inactive"
-    assert result(fixture_packet("candidate_pinned"))["reason"] == "cut_candidate_pinned"
-    active = fixture_packet("active")
-    assert result(active)["reason"] == "cut_exact_pr_head_admitted"
-    assert result(active, pr_number=11)["reason"] == "cut_pr_not_admitted"
-    assert result(active, actual_head="d" * 40)["reason"] == "cut_candidate_head_moved"
     assert (
-        result(active, expected_head="d" * 40, actual_head="d" * 40)["reason"]
-        == "cut_admitted_head_moved"
+        result(fixture_packet("candidate_pinned"))["reason"]
+        == "cut_candidate_pinned"
     )
-    assert result(active, base_sha="d" * 40)["reason"] == "cut_main_sha_moved"
-    assert result(active, base_tree="d" * 40)["reason"] == "cut_main_tree_moved"
+    active = fixture_packet("active")
+    assert result(active)["reason"] == "cut_frozen"
+    assert (
+        result(active, pr_files=[{"filename": PACKET_PATH}])["reason"]
+        == "cut_packet_control_update"
+    )
+    assert result(active, actual_head="f" * 40)["reason"] == "cut_candidate_head_moved"
+    assert result(active, cut_commit=None)["reason"] == "cut_commit_missing"
+    assert (
+        result(active, cut_commit=fixture_commit("f" * 40, "c" * 40, []))[
+            "reason"
+        ]
+        == "cut_sha_mismatch"
+    )
+    assert (
+        result(active, cut_commit=fixture_commit("b" * 40, "f" * 40, []))[
+            "reason"
+        ]
+        == "cut_tree_mismatch"
+    )
+    moved = fixture_commit("d" * 40, "e" * 40, ["f" * 40])
+    assert result(active, base_commit=moved)["reason"] == "cut_main_moved"
+    assert (
+        result(
+            active,
+            pr_files=[{"filename": PACKET_PATH}, {"filename": "src/lib.rs"}],
+        )["reason"]
+        == "cut_frozen"
+    )
 
     duplicate = fixture_packet("active")
     duplicate["admitted"].append(dict(duplicate["admitted"][0]))
@@ -297,16 +357,7 @@ def self_test() -> None:
     else:
         raise AssertionError("deferred row must fail")
 
-    empty = fixture_packet("active")
-    empty["admitted"] = []
-    try:
-        validate_packet(empty)
-    except PacketError as error:
-        assert "at least one" in str(error)
-    else:
-        raise AssertionError("empty active set must fail")
-
-    print("release-cut-admission self-test: 11 controls passed")
+    print("release-cut-admission self-test: 12 controls passed")
 
 
 def load_json(path: Path, label: str) -> Any:
@@ -321,38 +372,43 @@ def main() -> int:
     parser.add_argument("--packet", type=Path)
     parser.add_argument("--current", type=Path)
     parser.add_argument("--base-commit", type=Path)
+    parser.add_argument("--cut-commit", type=Path)
+    parser.add_argument("--pr-files", type=Path)
     parser.add_argument("--expected-head")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
         self_test()
         return 0
-    if not all((args.packet, args.current, args.base_commit, args.expected_head)):
+    if not all(
+        (args.packet, args.current, args.base_commit, args.pr_files, args.expected_head)
+    ):
         parser.error(
-            "--packet, --current, --base-commit and --expected-head are required"
+            "--packet, --current, --base-commit, --pr-files and --expected-head are required"
         )
 
     try:
         packet = validate_packet(load_json(args.packet, "packet"))
         current = load_json(args.current, "PR snapshot")
         base_commit = load_json(args.base_commit, "base commit")
+        cut_commit = (
+            load_json(args.cut_commit, "cut commit") if args.cut_commit else None
+        )
+        pr_files = load_json(args.pr_files, "PR files")
         pr_number = current.get("number")
         actual_head = ((current.get("head") or {}).get("sha") or "")
-        base_sha = ((current.get("base") or {}).get("sha") or "")
-        base_tree = ((base_commit.get("tree") or {}).get("sha") or "")
         if not isinstance(pr_number, int) or pr_number < 1:
             raise PacketError("PR snapshot lacks a positive number")
         _sha(args.expected_head, "expected head")
         _sha(actual_head, "actual head")
-        _sha(base_sha, "base SHA")
-        _sha(base_tree, "base tree")
         result = decide(
             packet,
             pr_number=pr_number,
             expected_head=args.expected_head,
             actual_head=actual_head,
-            base_sha=base_sha,
-            base_tree=base_tree,
+            base_commit=base_commit,
+            cut_commit=cut_commit,
+            pr_files=pr_files,
         )
     except PacketError as error:
         result = {
