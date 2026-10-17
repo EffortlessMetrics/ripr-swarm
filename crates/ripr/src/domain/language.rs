@@ -391,6 +391,10 @@ pub enum StaticLimitKind {
     /// same-owner equality predicate. Classification remains `static_unknown`;
     /// this is a named limitation, not a coverage or repair claim.
     RustValuePropagationUnresolved,
+    /// A plain owner-parameter field selects a changed tail match, but the
+    /// analyzer cannot establish its invocation value or whether an assertion
+    /// observes that invocation's return. Metadata only: classification and all proof legs remain.
+    RustFieldMatchSelectorUnresolved,
     /// An integration test invokes a Cargo-built binary, but ripr does not
     /// yet map that binary target back to the changed owner. The
     /// classification stays `no_static_path`; this is a named limitation,
@@ -474,6 +478,9 @@ impl StaticLimitKind {
                 "rust_macro_wrapped_assertion_unresolved"
             }
             StaticLimitKind::RustValuePropagationUnresolved => "rust_value_propagation_unresolved",
+            StaticLimitKind::RustFieldMatchSelectorUnresolved => {
+                "rust_field_match_selector_unresolved"
+            }
             StaticLimitKind::RustSubprocessBinaryReachUnresolved => {
                 "rust_subprocess_binary_reach_unresolved"
             }
@@ -563,6 +570,11 @@ impl StaticLimitKind {
                 "A changed Rust value binding uses a bounded string or character operation, but \
                  ripr cannot carry that value into the same-owner equality predicate. This is a \
                  named analyzer limitation, not a coverage or repair claim."
+            }
+            StaticLimitKind::RustFieldMatchSelectorUnresolved => {
+                "A plain owner-parameter field selects this match, but ripr cannot align its value \
+                 at the owner invocation or establish whether an assertion observes that invocation's return. This names an analyzer \
+                 limitation without changing classification or claiming coverage."
             }
             StaticLimitKind::RustSubprocessBinaryReachUnresolved => {
                 "An integration test invokes a Cargo-built binary, but ripr cannot yet map that \
@@ -932,6 +944,7 @@ mod tests {
             StaticLimitKind::RustMacroWrappedTestCallUnresolved,
             StaticLimitKind::RustMacroWrappedAssertionUnresolved,
             StaticLimitKind::RustValuePropagationUnresolved,
+            StaticLimitKind::RustFieldMatchSelectorUnresolved,
             StaticLimitKind::RustSubprocessBinaryReachUnresolved,
             StaticLimitKind::WrapperErrorBindingUnresolved,
             StaticLimitKind::PythonTransitiveReachUnresolved,

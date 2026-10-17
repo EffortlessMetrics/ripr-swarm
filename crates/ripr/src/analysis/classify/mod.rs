@@ -6,6 +6,7 @@ mod call_identity;
 mod changed_span;
 mod context;
 mod decision;
+mod diff_touched;
 mod effect_carrier;
 mod element_field_pin;
 mod flow;
@@ -34,7 +35,7 @@ pub(in crate::analysis) use activation::{
     comparison_operands, computed_input_parameters, literal_operand_value, local_boundary,
     signature_parameters,
 };
-pub(in crate::analysis) use arm_selection::ArmSelector;
+pub(in crate::analysis) use arm_selection::{ArmSelector, unresolved_parameter_field_selector};
 pub(in crate::analysis) use boundary_pairing::{
     WrapperEntryPairing, has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
 };
@@ -51,6 +52,7 @@ pub(in crate::analysis) use decision::{
     classify, confidence_score, ensure_unknown_stop_reason, exact_oracle_gap_next_step,
     missing_evidence, recommended_next_step, stop_reasons,
 };
+pub(in crate::analysis) use diff_touched::DiffTouchedTests;
 pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
 pub(in crate::analysis) use element_field_pin::observes_returned_element_field;
 pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence_with_witness};

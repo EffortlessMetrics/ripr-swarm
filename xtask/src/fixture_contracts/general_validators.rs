@@ -1963,7 +1963,13 @@ pub(crate) fn validate_issue_lifecycle_real_rows_corpus(
     violations: &mut Vec<String>,
 ) -> Result<(), String> {
     let root = Path::new("fixtures/issue_lifecycle_real_rows");
-    for required in ["SPEC.md", "corpus.json", "provenance.json", "controls.json"] {
+    for required in [
+        "SPEC.md",
+        "corpus.json",
+        "provenance.json",
+        "controls.json",
+        "fresh_root_reconstruction.json",
+    ] {
         let path = root.join(required);
         if !path.exists() {
             violations.push(format!(
@@ -2016,6 +2022,20 @@ pub(crate) fn validate_issue_lifecycle_real_rows_corpus(
         crate::issue_lifecycle_real_rows::verify_real_rows_bindings(root, &corpus, &provenance)
     {
         violations.push(format!("issue lifecycle real rows binding failed: {error}"));
+    }
+    match crate::issue_lifecycle_real_rows::load_fresh_root_receipt() {
+        Ok(receipt) => {
+            if let Err(error) = crate::issue_lifecycle_real_rows::verify_fresh_root_receipt(
+                &corpus,
+                &provenance,
+                &receipt,
+            ) {
+                violations.push(format!(
+                    "issue lifecycle fresh-root reconstruction receipt failed: {error}"
+                ));
+            }
+        }
+        Err(error) => violations.push(error),
     }
     Ok(())
 }

@@ -1343,12 +1343,44 @@ impl DocumentState {
     }
 }
 
+/// Byte extent of one line, excluding its terminator.
+///
+/// The protocol ends a line at `\n`, `\r\n` or a bare `\r`; the client
+/// counts lines the same way, so a buffer using bare CR terminators (or
+/// ending in one) must be addressable. A line past the last terminator is
+/// the empty or partial final line.
+fn document_line_extent(text: &str, target_line: usize) -> Option<(usize, usize)> {
+    let bytes = text.as_bytes();
+    let mut line = 0usize;
+    let mut line_start = 0usize;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let terminator_len = match bytes[index] {
+            b'\n' => 1,
+            b'\r' if bytes.get(index + 1) == Some(&b'\n') => 2,
+            b'\r' => 1,
+            _ => 0,
+        };
+        if terminator_len == 0 {
+            index += 1;
+            continue;
+        }
+        if line == target_line {
+            return Some((line_start, index));
+        }
+        line += 1;
+        index += terminator_len;
+        line_start = index;
+    }
+    (line == target_line).then_some((line_start, bytes.len()))
+}
+
 /// Convert one LSP position to a UTF-8 byte offset in the retained buffer.
 ///
 /// LSP incremental ranges are expressed in the session's negotiated position
-/// encoding, while Rust string edits require UTF-8 byte boundaries. Lines are
-/// split on LF and a CR immediately before LF is excluded from the line's
-/// character span, matching the protocol's CRLF semantics.
+/// encoding, while Rust string edits require UTF-8 byte boundaries. Lines end
+/// at `\n`, `\r\n` or a bare `\r`, and the terminator is excluded from the
+/// line's character span, matching the protocol's line semantics.
 fn document_position_byte_offset(
     text: &str,
     position: Position,
@@ -1357,16 +1389,8 @@ fn document_position_byte_offset(
     let target_line = usize::try_from(position.line).ok()?;
     let target_units = usize::try_from(position.character).ok()?;
 
-    let mut line_start = 0usize;
-    for _ in 0..target_line {
-        let newline = text.get(line_start..)?.find('\n')?;
-        line_start = line_start.checked_add(newline)?.checked_add(1)?;
-    }
-
-    let remainder = text.get(line_start..)?;
-    let raw_line_end = remainder.find('\n').unwrap_or(remainder.len());
-    let raw_line = remainder.get(..raw_line_end)?;
-    let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
+    let (line_start, line_end) = document_line_extent(text, target_line)?;
+    let line = text.get(line_start..line_end)?;
 
     let relative = if *encoding == PositionEncodingKind::UTF8 {
         if target_units > line.len() || !line.is_char_boundary(target_units) {
@@ -2236,6 +2260,64 @@ mod tests {
                 return Err(format!("wrong result for encoding {encoding:?}: {text:?}"));
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn incremental_positions_follow_lf_crlf_and_bare_cr_line_terminators() -> Result<(), String> {
+        let edit = |text: &str, line: u32, character: u32| -> Result<String, String> {
+            let mut buffer = text.to_string();
+            let position = Position { line, character };
+            apply_document_content_changes(
+                &mut buffer,
+                vec![TextDocumentContentChangeEvent {
+                    range: Some(tower_lsp_server::ls_types::Range {
+                        start: position,
+                        end: position,
+                    }),
+                    range_length: None,
+                    text: "X".to_string(),
+                }],
+                &PositionEncodingKind::UTF16,
+            )
+            .map_err(|()| format!("edit at {line}:{character} of {text:?} was refused"))?;
+            Ok(buffer)
+        };
+        // CRLF control: the CR stays outside the span, line 1 starts after LF.
+        assert_eq!(edit("ab\r\ncd", 0, 2)?, "abX\r\ncd");
+        assert_eq!(edit("ab\r\ncd", 1, 0)?, "ab\r\nXcd");
+        // A bare CR ends a line, mid-buffer and at the end of the buffer.
+        assert_eq!(edit("ab\rcd", 1, 1)?, "ab\rcXd");
+        assert_eq!(edit("ab\r", 1, 0)?, "ab\rX");
+        assert_eq!(edit("ab\r", 0, 2)?, "abX\r");
+        // A CR is not addressable as a character of its line.
+        let mut buffer = "ab\r".to_string();
+        let beyond = Position {
+            line: 0,
+            character: 3,
+        };
+        let refused = apply_document_content_changes(
+            &mut buffer,
+            vec![TextDocumentContentChangeEvent {
+                range: Some(tower_lsp_server::ls_types::Range {
+                    start: beyond,
+                    end: beyond,
+                }),
+                range_length: None,
+                text: "X".to_string(),
+            }],
+            &PositionEncodingKind::UTF16,
+        );
+        assert!(refused.is_err());
+        // Lines past the final terminator do not exist.
+        assert_eq!(
+            edit("ab\r", 2, 0),
+            Err("edit at 2:0 of \"ab\\r\" was refused".to_string())
+        );
+        // An empty final line after CRLF, and mixed terminators in one buffer.
+        assert_eq!(edit("ab\r\n", 1, 0)?, "ab\r\nX");
+        assert_eq!(edit("a\nb\rc\r\nd", 3, 1)?, "a\nb\rc\r\ndX");
+        assert_eq!(edit("a\nb\rc\r\nd", 2, 0)?, "a\nb\rXc\r\nd");
         Ok(())
     }
 

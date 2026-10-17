@@ -728,6 +728,32 @@ fn check_routes_a_changed_constant_past_strings_comments_and_tests() -> Result<(
     Ok(())
 }
 
+/// A test consumer before the production consumer is skipped by its
+/// attribute, a char literal holding a quote does not turn the next string
+/// into code, and a `CAP` string literal is still not a consumer.
+#[test]
+fn check_routes_a_changed_constant_past_attributes_and_char_literals() -> Result<(), String> {
+    const LIB: &str = "//! caps\nconst CAP: u64 = 5_000;\n\nfn quote(c: char) -> bool {\n    c == '\"'\n}\n\npub fn label() -> &'static str {\n    \"uses CAP here\"\n}\n\n#[tokio::test]\nasync fn cap_is_positive() {\n    assert!(CAP > 0);\n}\n\npub fn billed(units: u64) -> u64 {\n    units.min(CAP) * 2\n}\n";
+    let stdout =
+        check_for_changed_line_two(LIB, "const CAP: u64 = 10_000;", "const CAP: u64 = 5_000;")?;
+    assert!(
+        stdout.contains("--at src/lib.rs:18 --kind return_value"),
+        "the route names `billed`: {stdout}"
+    );
+    Ok(())
+}
+
+/// The same name declared again (here a const generic) cannot be told from
+/// the changed constant by spelling, so no route is printed.
+#[test]
+fn check_prints_no_route_when_the_constant_name_is_declared_twice() -> Result<(), String> {
+    const LIB: &str = "//! caps\nconst N: usize = 4;\n\npub fn width<const N: usize>(a: [u8; N]) -> usize {\n    N * 2\n}\n";
+    let stdout = check_for_changed_line_two(LIB, "const N: usize = 8;", "const N: usize = 4;")?;
+    assert!(!stdout.contains("Write a test for it:"), "{stdout}");
+    assert!(!stdout.contains("No test stub here"), "{stdout}");
+    Ok(())
+}
+
 /// A constant nothing in the file consumes has no function to stub, so
 /// `check` prints no route for it.
 #[test]

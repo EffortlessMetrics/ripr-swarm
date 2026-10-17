@@ -689,3 +689,25 @@ changed unknown-option parser arm to out-of-line tests. The adversarial fixture
 the evidence-promotion honesty corpus. Qualified assertion macros, fallible
 `ensure!`, dependency identity and helper-result propagation remain outside this
 bounded change.
+
+## Named field-selector boundary (#8479)
+
+A plain parameter field in a statement-free tail match is outside the credited
+whole-parameter selector rules. A candidate-current weak finding with reach
+`yes`, discrimination `weak`, and a strong oracle in a directly calling test
+may name `rust_field_match_selector_unresolved`. The whole match header and
+unique direct-arm start lines qualify. Guarded, nested, computed, local or
+ambiguous same-line shapes do not. This metadata preserves every class, proof
+leg and missing discriminator; it proves neither Option identity nor that a
+particular invocation feeds the assertion. Guidance first asks to inspect that
+alignment and only then repair a demonstrated observation gap. Existing typed
+limitations, including FFI/binding exposure, take precedence. Cached classified findings must be invalidated;
+file facts and output wire versions do not change.
+
+The preserved identities are finding/probe IDs; preserved counts are raw class
+counts. Existing #5268 rules withhold the canonical repair-gap projection when a
+typed limitation is present. MCP repair readiness and derived gate routes may
+therefore refuse these rows as analyzer uncertainty. This is not exposure,
+resolved test debt, or evidence that a consumer's strict qualification passed.
+The supported direct-parameter genuine-gap case retains its canonical identity
+and missing discriminator.
