@@ -21,7 +21,8 @@ const CACHE_DIR_ENV: &str = "RIPR_CACHE_DIR";
 /// The interrupted children are terminated at arbitrary points, including while an
 /// instrumented process writes its coverage profile at exit. A terminated writer
 /// leaves a truncated `.profraw` that makes `llvm-profdata merge` fail the whole
-/// coverage run (#4978), so these children discard their profile.
+/// coverage run (#4978), so these children discard their profile. This keeps
+/// these two tests from producing truncated profiles; other kill sites remain.
 const TERMINATED_CHILD_PROFILE_ENV: &str = "LLVM_PROFILE_FILE";
 const TERMINATED_CHILD_PROFILE: &str = "/dev/null";
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
