@@ -620,7 +620,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "lang-rust")]
-    fn field_selector_metadata_preserves_facts_and_refuses_stale_or_prior_limits() {
+    fn field_selector_metadata_preserves_facts_and_refuses_stale_or_prior_limits()
+    -> Result<(), String> {
         use crate::domain::{RelationReason, SourceCurrentness};
         let body = "fn charge(lease: &Lease) -> u64 {\n match lease.elapsed {\n Some(ms) => ms,\n None => 600,\n }\n}";
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
@@ -637,14 +638,14 @@ mod tests {
         original.related_tests[0].oracle = Some("assert_eq!(charge(&lease), 1)".to_string());
         original.recommended_next_step = Some("old advice".to_string());
         let probe = original.probe.clone();
-        let before = serde_json::to_value(&original).unwrap();
+        let before = serde_json::to_value(&original).map_err(|err| err.to_string())?;
         let mut named = original.clone();
         super::apply_rust_field_match_selector_limit(&mut named, &probe, &index);
         assert_eq!(
             named.static_limit_kind,
             Some(StaticLimitKind::RustFieldMatchSelectorUnresolved)
         );
-        let mut after = serde_json::to_value(&named).unwrap();
+        let mut after = serde_json::to_value(&named).map_err(|err| err.to_string())?;
         for key in ["static_limit_kind", "evidence", "recommended_next_step"] {
             after[key] = before[key].clone();
         }
@@ -660,14 +661,15 @@ mod tests {
                 2 => refused.related_tests[0].relation_reason = Some(RelationReason::SameTestFile),
                 _ => refused.related_tests[0].oracle_strength = OracleStrength::Weak,
             }
-            let before = serde_json::to_value(&refused).unwrap();
+            let before = serde_json::to_value(&refused).map_err(|err| err.to_string())?;
             super::apply_rust_field_match_selector_limit(&mut refused, &probe, &index);
             assert_eq!(
-                serde_json::to_value(&refused).unwrap(),
+                serde_json::to_value(&refused).map_err(|err| err.to_string())?,
                 before,
                 "refusal mode {mode}"
             );
         }
+        Ok(())
     }
 
     #[test]
