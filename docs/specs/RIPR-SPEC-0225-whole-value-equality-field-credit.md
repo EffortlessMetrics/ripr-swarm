@@ -342,8 +342,9 @@ rejected alternative. Any can be reversed later without touching the rest.
      gives no credit), and no token of its body, macro arguments included,
      is `return`, `break`, `continue` or `?`, and it declares no item;
    - the pinning assertion is the test's first statement (or its tail),
-     preceded at most by a plain immutable `let` of the owner call that the
-     whole test body binds nowhere else, so nothing can rebind the receiver,
+     preceded at most by a plain immutable `let` of the owner call and, for the
+     element alias below, the alias `let`, that the whole test body binds
+     nowhere else, so nothing can rebind the receiver,
      exit or settle the test before it runs;
    - the receiver is that binding or a direct call of the owner by name (or
      `super::`, `crate::`), the call's arguments are literals or paths, and
@@ -359,7 +360,8 @@ rejected alternative. Any can be reversed later without touching the rest.
      the oracle scan models refuses it);
    - it is `assert_eq!(recv[k].f, literal)`, in either order, with `k` an
      integer literal, or the same read through one alias the test binds
-     right after the receiver: `let r = &recv[k];` then
+     right after the receiver (or as the first statement when `recv` is a
+     direct owner call): `let r = &recv[k];` then
      `assert_eq!(r.f, literal)` (a plain immutable binding, a shared borrow
      at the probed element's literal index of the receiver or a direct owner
      call, named neither like the owner nor like the receiver, and bound
