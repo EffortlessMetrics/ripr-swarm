@@ -105,7 +105,23 @@ fn field_match_selector_names_all_three_rows_without_credit_or_wire_shape_change
     );
     let json: serde_json::Value = serde_json::from_str(&ripr::output::json::render(&output))?;
     assert_eq!(json["schema_version"], "0.2");
+    assert_eq!(json["summary"]["weakly_exposed"], 3);
+    assert_eq!(
+        weak.iter()
+            .map(|finding| finding.id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "probe:src_lib.rs:match_arm:931816b8",
+            "probe:src_lib.rs:match_arm:afe43b21",
+            "probe:src_lib.rs:match_arm:23efc786",
+        ]
+    );
     for finding in weak {
+        assert_eq!(finding.id, finding.probe.id.0);
+        assert!(
+            finding.canonical_gap.is_none(),
+            "#5268: a typed limitation must withhold automatic repair-gap projection"
+        );
         assert_eq!(
             finding.static_limit_kind.map(|kind| kind.as_str()),
             Some("rust_field_match_selector_unresolved"),
@@ -223,6 +239,10 @@ fn a_direct_parameter_match_keeps_its_genuine_unselected_arm_gap()
     for arm in arms {
         assert_ne!(arm.class, ExposureClass::Exposed);
         assert!(arm.static_limit_kind.is_none());
+        assert!(
+            arm.canonical_gap.is_some(),
+            "the genuine direct-parameter gap retains its repair identity"
+        );
         assert!(
             !arm.activation.missing_discriminators.is_empty(),
             "the real unselected-arm discriminator must remain actionable"

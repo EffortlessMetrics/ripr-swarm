@@ -686,3 +686,11 @@ particular invocation feeds the assertion. Guidance first asks to inspect that
 alignment and only then repair a demonstrated observation gap. Existing typed
 limitations take precedence. Cached classified findings must be invalidated;
 file facts and output wire versions do not change.
+
+The preserved identities are finding/probe IDs; preserved counts are raw class
+counts. Existing #5268 rules withhold the canonical repair-gap projection when a
+typed limitation is present. MCP repair readiness and derived gate routes may
+therefore refuse these rows as analyzer uncertainty. This is not exposure,
+resolved test debt, or evidence that a consumer's strict qualification passed.
+The supported direct-parameter genuine-gap case retains its canonical identity
+and missing discriminator.
