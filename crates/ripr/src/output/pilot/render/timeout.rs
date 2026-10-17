@@ -111,7 +111,7 @@ pub(crate) fn render_pilot_timeout_summary_json(context: PilotSummaryContext<'_>
     out.push_str("  \"next\": {\n");
     out.push_str(&format!(
         "    \"retry_command\": \"{}\"\n",
-        json_escape(&commands.retry)
+        json_escape(&format!("{} --format json", commands.retry))
     ));
     out.push_str("  }\n");
     out.push_str("}\n");

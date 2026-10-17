@@ -78,6 +78,9 @@ mod parse_failure_path_outcome;
 ))]
 #[path = "cli_smoke/partial_preview_disclosure.rs"]
 mod partial_preview_disclosure;
+#[cfg(all(unix, feature = "lang-rust"))]
+#[path = "cli_smoke/pilot_timeout_retry.rs"]
+mod pilot_timeout_retry;
 #[cfg(all(feature = "lang-rust", feature = "lang-python"))]
 #[path = "cli_smoke/portable_diff_paths.rs"]
 mod portable_diff_paths;
@@ -101,12 +104,18 @@ mod repair_orderfile;
 #[path = "cli_smoke/rerun_ledger_recovery.rs"]
 mod rerun_ledger_recovery;
 #[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/retained_evidence_guidance.rs"]
+mod retained_evidence_guidance;
+#[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/same_line_owner_tail.rs"]
 mod same_line_owner_tail;
 #[path = "cli_smoke/sample_output.rs"]
 mod sample_output;
 #[path = "cli_smoke/shell_words.rs"]
 mod shell_words;
+#[cfg(all(unix, feature = "lang-rust"))]
+#[path = "cli_smoke/snapshot_recovery.rs"]
+mod snapshot_recovery;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/source_unicode.rs"]
 mod source_unicode;
