@@ -14907,6 +14907,8 @@ tests = [
   "crates/ripr/src/analysis/classify/activation.rs::field_reads_count_only_on_the_owner_result",
   "crates/ripr/src/analysis/classify/element_field_pin.rs::tests::a_test_pinning_the_probed_element_observes_its_field",
   "crates/ripr/src/analysis/classify/element_field_pin.rs::tests::a_sibling_field_that_may_exit_before_the_assertion_observes_nothing",
+  "crates/ripr/src/analysis/classify/element_field_pin.rs::tests::a_drop_impl_with_a_body_is_not_plain",
+  "crates/ripr/tests/returned_element_field_pin.rs::a_non_plain_drop_on_the_element_type_keeps_the_gap",
   "crates/ripr/src/analysis/classify/element_field_pin.rs::tests::a_membership_another_element_may_satisfy_observes_nothing",
   "crates/ripr/src/analysis/classify/element_field_pin.rs::tests::a_test_that_does_not_pin_the_element_alone_observes_nothing",
   "crates/ripr/src/analysis/classify/element_field_pin.rs::tests::an_owner_that_is_not_one_array_of_one_struct_is_not_read",
@@ -14935,6 +14937,14 @@ tests = [
   "crates/ripr/tests/variant_field_pattern.rs::a_test_side_build_or_input_stays_unconfirmed",
 ]
 fixtures = [
+  "fixtures/rust_array_element_drop_exit",
+  "fixtures/rust_array_element_drop_plain",
+  "fixtures/rust_array_element_drop_exit/expected/check.json",
+  "fixtures/rust_array_element_drop_exit/expected/human.txt",
+  "fixtures/rust_array_element_drop_exit/expected/human-full.txt",
+  "fixtures/rust_array_element_drop_plain/expected/check.json",
+  "fixtures/rust_array_element_drop_plain/expected/human.txt",
+  "fixtures/rust_array_element_drop_plain/expected/human-full.txt",
   "fixtures/rust_array_sibling_exit_field",
   "fixtures/rust_array_sibling_plain_field",
   "fixtures/rust_array_sibling_exit_field/expected/check.json",

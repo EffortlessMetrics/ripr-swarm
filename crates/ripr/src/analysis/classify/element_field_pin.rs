@@ -67,6 +67,11 @@ trait PinAuthority {
     /// array or its iterator through a trait or macro, so the membership
     /// test may iterate something other than the returned elements.
     fn may_redefine_iteration(&self) -> bool;
+    /// The element type has no `Drop` impl in the workspace whose body is
+    /// non-empty, so dropping the receiver while unwinding from a failed
+    /// assertion cannot leave the process before the failure is reported
+    /// (#8084).
+    fn drop_is_plain(&self, type_name: &str) -> bool;
 }
 
 struct SharedAuthority<'a> {
@@ -119,6 +124,15 @@ impl PinAuthority for SharedAuthority<'_> {
         !self
             .syntax
             .iteration_closed(|| iteration_is_closed(self.index))
+    }
+
+    fn drop_is_plain(&self, type_name: &str) -> bool {
+        // The closed workspace premise is shared with the field-integer
+        // gate: a macro may generate a `Drop` impl no source scan can see.
+        if self.may_redefine_iteration() {
+            return false;
+        }
+        drop_is_plain(self.index, type_name)
     }
 }
 
@@ -351,6 +365,11 @@ fn observes_with(
     let Some(integer) = authority.field_integer(&array.type_name, &array.field) else {
         return false;
     };
+    // A non-plain `Drop` on the element type runs while unwinding from a
+    // failed assertion and may exit 0 before the failure is reported.
+    if !authority.drop_is_plain(&array.type_name) {
+        return false;
+    }
     let source = test.body.as_str();
     let Some(parse) = parse_clean_source_file(source) else {
         return false;
@@ -457,6 +476,56 @@ fn observes_with(
         integer,
         authority,
     ) && authority.admits_line(line)
+}
+
+/// Whether no `Drop` impl for `type_name` in the indexed workspace has a
+/// non-empty body. An unparseable source fails closed: its impls are
+/// invisible to this scan.
+fn drop_is_plain(index: &RustIndex, type_name: &str) -> bool {
+    index
+        .files()
+        .iter()
+        .all(|(_, facts)| drop_is_plain_in_source(&facts.source, type_name))
+}
+
+fn drop_is_plain_in_source(source: &str, type_name: &str) -> bool {
+    let Some(parse) = parse_clean_source_file(source) else {
+        return false;
+    };
+    parse.tree().syntax().descendants().all(|node| {
+        let Some(imp) = ast::Impl::cast(node) else {
+            return true;
+        };
+        let is_drop = imp.trait_().is_some_and(|path| {
+            squeeze(&path.syntax().text().to_string())
+                .rsplit("::")
+                .next()
+                .is_some_and(|last| last == "Drop" || last.starts_with("Drop<"))
+        });
+        let is_type = imp.self_ty().is_some_and(|ty| {
+            let text = squeeze(&ty.syntax().text().to_string());
+            let last = text.rsplit("::").next().unwrap_or(&text);
+            last.split('<').next().unwrap_or(last) == type_name
+        });
+        if !is_drop || !is_type {
+            return true;
+        }
+        imp.assoc_item_list().is_some_and(|list| {
+            list.assoc_items().all(|item| {
+                let ast::AssocItem::Fn(function) = item else {
+                    return true;
+                };
+                if function.name().is_none_or(|name| name.text() != "drop") {
+                    return true;
+                }
+                function.body().is_some_and(|body| {
+                    body.stmt_list().is_some_and(|statements| {
+                        statements.statements().next().is_none() && statements.tail_expr().is_none()
+                    })
+                })
+            })
+        })
+    })
 }
 
 /// The owner's whole body is one array of struct literals, and the probe
@@ -1024,6 +1093,7 @@ mod tests {
         reaches: bool,
         integer: bool,
         redefines: bool,
+        drop_plain: bool,
         prefixes: std::cell::RefCell<Vec<Option<String>>>,
         fields: std::cell::RefCell<Vec<(String, String)>>,
     }
@@ -1035,6 +1105,7 @@ mod tests {
                 reaches: true,
                 integer: true,
                 redefines: false,
+                drop_plain: true,
                 prefixes: std::cell::RefCell::default(),
                 fields: std::cell::RefCell::default(),
             }
@@ -1057,6 +1128,9 @@ mod tests {
         }
         fn may_redefine_iteration(&self) -> bool {
             self.redefines
+        }
+        fn drop_is_plain(&self, _: &str) -> bool {
+            self.drop_plain
         }
     }
 
@@ -1498,6 +1572,13 @@ mod tests {
                     ..Stub::admitting(&|_| true)
                 },
             ),
+            (
+                "the element's Drop",
+                Stub {
+                    drop_plain: false,
+                    ..Stub::admitting(&|_| true)
+                },
+            ),
         ] {
             if observes_with(&probe(), owner, test, &stub) {
                 return Err(format!("{label} refused, still pinned"));
@@ -1533,6 +1614,37 @@ mod tests {
             return Err(format!("asked {:?}", redefined.prefixes.borrow()));
         }
         Ok(())
+    }
+
+    #[test]
+    fn a_drop_impl_with_a_body_is_not_plain() {
+        let plain = |source: &str| drop_is_plain_in_source(source, "Row");
+        for (source, expected) in [
+            ("pub struct Row { pub total: u32 }", true),
+            ("impl Drop for Row { fn drop(&mut self) {} }", true),
+            (
+                "impl Drop for Row { fn drop(&mut self) { std::process::exit(0); } }",
+                false,
+            ),
+            (
+                "impl Drop for Row { fn drop(&mut self) { let _ = self.total; } }",
+                false,
+            ),
+            (
+                "impl Drop for Other { fn drop(&mut self) { std::process::exit(0); } }",
+                true,
+            ),
+            (
+                "impl std::ops::Drop for Row { fn drop(&mut self) { panic!() } }",
+                false,
+            ),
+            (
+                "pub struct Row {\n    pub total: u32,\n}\n\nimpl Drop for Row {\n    fn drop(&mut self) {\n    }\n}\n\npub fn rows(a: u32, b: u32) -> [Row; 2] {\n    [Row { total: 0 }, Row { total: a + b }]\n}",
+                true,
+            ),
+        ] {
+            assert_eq!(plain(source), expected, "{source}");
+        }
     }
 
     /// A multi-byte character before a path root is read whole, not
