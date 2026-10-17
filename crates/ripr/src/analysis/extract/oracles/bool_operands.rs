@@ -647,11 +647,24 @@ fn arithmetic_over_test(side: &str) -> bool {
     if terms.len() < 2 {
         return false;
     }
-    let literal = |term: &str| literal_spelling_value(term.trim()).is_some();
+    let literal = |term: &str| {
+        let term = unwrap_parentheses(term.trim());
+        literal_spelling_value(term).is_some()
+            || (term.starts_with(|c: char| c.is_ascii_digit())
+                && term
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.')))
+    };
+    let Some(test) = terms
+        .iter()
+        .position(|term| bool_preserving_operand(term).is_some_and(is_bool_test))
+    else {
+        return false;
+    };
     terms
         .iter()
-        .any(|term| bool_preserving_operand(term).is_some_and(is_bool_test))
-        && terms.iter().any(|term| !literal(term))
+        .enumerate()
+        .any(|(index, term)| index != test && !literal(term))
 }
 
 /// The terms of `text` split at its binary `+ - * / %` operators outside any

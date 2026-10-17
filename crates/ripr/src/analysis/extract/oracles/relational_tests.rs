@@ -1255,6 +1255,14 @@ fn arithmetic_over_a_cast_test_does_not_pin_the_test() -> Result<(), String> {
     ] {
         require_classification(text, &weak)?;
     }
+    // A cast test beside only literals can still pin the test.
+    let pinned = (OracleKind::ExactErrorVariant, OracleStrength::Strong);
+    for text in [
+        "assert_eq!((r == Err(E::Bad)) as u32 + 1, 2);",
+        "assert_eq!(1 + (r == Err(E::Bad)) as u32, 2);",
+    ] {
+        require_classification(text, &pinned)?;
+    }
     // Controls: arithmetic with no test, a call that merely contains a
     // comparison, and a value cast keep their readings.
     for text in [

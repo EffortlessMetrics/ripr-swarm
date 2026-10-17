@@ -317,7 +317,8 @@ Two pattern terms are used below.
    (`assert_eq!(Some(r == Err(E::Bad)), Some(expected))`; #8101). Arithmetic
    over an integer-cast test and another non-literal term caps too, whatever
    it is compared with (`assert_eq!(k * (r == Err(E::Bad)) as u32, n)`;
-   #8101). Such a comparison asserted by a
+   #8101); beside only literals it still pins
+   (`assert_eq!((r == Err(E::Bad)) as u32 + 1, 2)`). Such a comparison asserted by a
    boolean literal caps the same way (`assert_eq!((r == Err(E::Bad)) as u8
    == 0, true)`, `assert_eq!((r == Err(E::Bad)) == flag, true)`), and a
    path call to `not` negates like `!` (`assert_eq!(Not::not(r ==
