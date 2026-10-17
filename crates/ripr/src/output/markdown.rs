@@ -429,7 +429,11 @@ const POWERSHELL_RESTORE_ENCODING: &str =
 ///   is invalid or semantically different (PR #3625 review, devin BUG).
 /// - PowerShell single quotes are also literal inside, but its doubling idiom
 ///   differs: bash closes, escapes, and reopens (`'\''`) where PowerShell
-///   doubles in place (`''`), so every occurrence is rewritten.
+///   doubles in place (`''`). That rewrite applies only outside double-quoted
+///   regions. Inside double quotes the same four characters are literal data:
+///   a Windows console-form path whose component boundary is `'\''` (an
+///   apostrophe-ending name followed by a name that starts with apostrophes)
+///   must keep the separator (#8260).
 /// - bash `>` redirection becomes a .NET write with BOM-free UTF-8, so Windows
 ///   PowerShell 5.1 does not produce a UTF-16 or BOM-prefixed file that JSON
 ///   consumers would reject. The target is rendered as a PowerShell string
@@ -488,7 +492,7 @@ fn powershell_command_lifted(command: &str, windows_form: bool) -> Option<String
     if has_unsupported_shell_syntax_for(command, false, windows_form) {
         return None;
     }
-    let command = command.replace("'\\''", "''");
+    let command = rewrite_bash_apostrophe_escapes(command);
     let command = powershell_safe_quotes(&command)?;
     if let Some(index) = powershell_redirect_offset(&command) {
         let invocation = invoke_quoted_program(command[..index].trim_end());
@@ -676,6 +680,39 @@ fn restore_control_arguments(line: String, lifted: &[String]) -> Option<String> 
         line = line.replacen(&placeholder, expression, 1);
     }
     Some(line)
+}
+
+/// Rewrite bash's close-escape-reopen apostrophe idiom (`'\''`) to PowerShell's
+/// doubled quote (`''`), only outside double-quoted regions.
+///
+/// A global replace also matches the same four characters inside a Windows
+/// console-form double-quoted path and drops the separator between an
+/// apostrophe-ending component and the next name (#8260). Bash-form
+/// double-quoted backslashes already withhold before this rewrite runs.
+fn rewrite_bash_apostrophe_escapes(command: &str) -> String {
+    let chars: Vec<char> = command.chars().collect();
+    let mut out = String::with_capacity(command.len());
+    let mut in_double_quote = false;
+    let mut index = 0;
+    while index < chars.len() {
+        if !in_double_quote
+            && chars[index] == '\''
+            && chars.get(index + 1) == Some(&'\\')
+            && chars.get(index + 2) == Some(&'\'')
+            && chars.get(index + 3) == Some(&'\'')
+        {
+            out.push_str("''");
+            index += 4;
+            continue;
+        }
+        let ch = chars[index];
+        if ch == '"' {
+            in_double_quote = !in_double_quote;
+        }
+        out.push(ch);
+        index += 1;
+    }
+    out
 }
 
 /// PowerShell's tokenizer treats U+2018-U+201B as single-quote characters and
@@ -1489,6 +1526,97 @@ mod tests {
             false,
             true
         ));
+        Ok(())
+    }
+
+    /// #8260: the public Windows quoting producer (`shell_arg_for(..., true)`)
+    /// double-quotes a path whose component boundary is apostrophe, separator,
+    /// apostrophes (`stores\repo'\''child` = `stores` / `repo'` / `''child`).
+    /// A global `'\\''` → `''` rewrite before translation dropped that
+    /// separator. Host is passed explicitly so Linux CI covers the Windows form.
+    #[test]
+    fn powershell_command_preserves_windows_quoted_separator_adjacent_to_apostrophes()
+    -> Result<(), String> {
+        use crate::agent::loop_commands::shell_arg_for;
+
+        let path = format!("stores{}repo'{}''child", '\\', '\\');
+        let quoted = shell_arg_for(&path, true);
+        assert_eq!(quoted, format!("\"{path}\""));
+        if !quoted.contains("'\\''") {
+            return Err(format!(
+                "public Windows producer must emit the four-character sequence the translator rewrote globally: {quoted}"
+            ));
+        }
+
+        let command = format!(
+            "ripr agent repair --root . --store {quoted} --seam-id from-receipt --phase before"
+        );
+        let translated = powershell_command_for(&command, true)
+            .ok_or_else(|| format!("Windows console form must stay translatable: {command}"))?;
+        if !translated.contains(&path) {
+            return Err(format!(
+                "original store path including the separator must survive translation: {translated}"
+            ));
+        }
+        let dropped = format!("stores{}repo''child", '\\');
+        if translated.contains(&dropped) {
+            return Err(format!(
+                "unconditional '\\'' rewrite dropped the directory separator: {translated}"
+            ));
+        }
+
+        let apostrophe_only = shell_arg_for("it's", true);
+        assert_eq!(apostrophe_only, "\"it's\"");
+        let apostrophe_translated =
+            powershell_command_for(&format!("ripr x --store {apostrophe_only}"), true)
+                .ok_or_else(|| "apostrophe-only Windows form must stay translatable".to_string())?;
+        if !apostrophe_translated.contains("it's") {
+            return Err(format!(
+                "apostrophe-only path must survive translation: {apostrophe_translated}"
+            ));
+        }
+
+        let separator_only = format!("stores{}repo{}child", '\\', '\\');
+        let separator_quoted = shell_arg_for(&separator_only, true);
+        assert_eq!(separator_quoted, format!("\"{separator_only}\""));
+        let separator_translated =
+            powershell_command_for(&format!("ripr x --store {separator_quoted}"), true)
+                .ok_or_else(|| "separator-only Windows form must stay translatable".to_string())?;
+        if !separator_translated.contains(&separator_only) {
+            return Err(format!(
+                "separator-only path must survive translation: {separator_translated}"
+            ));
+        }
+
+        // Windows still emits the Bash close-escape-reopen form for `$`
+        // values; that conversion must keep working.
+        let dollar = shell_arg_for("it's $100", true);
+        assert_eq!(dollar, "'it'\\''s $100'");
+        assert_eq!(
+            powershell_command_for(&format!("ripr x --store {dollar}"), true).as_deref(),
+            Some("ripr x --store 'it''s $100'")
+        );
+
+        // Mixed: convert the Bash idiom outside quotes and keep the Windows
+        // double-quoted separator.
+        let mixed = format!("ripr x --gap {dollar} --store {quoted}");
+        let mixed_translated = powershell_command_for(&mixed, true)
+            .ok_or_else(|| format!("mixed Windows form must stay translatable: {mixed}"))?;
+        if !mixed_translated.contains("'it''s $100'") {
+            return Err(format!(
+                "Bash apostrophe idiom must still convert outside double quotes: {mixed_translated}"
+            ));
+        }
+        if !mixed_translated.contains(&path) {
+            return Err(format!(
+                "mixed command dropped the Windows store path: {mixed_translated}"
+            ));
+        }
+        if mixed_translated.contains(&dropped) {
+            return Err(format!(
+                "mixed command dropped the directory separator: {mixed_translated}"
+            ));
+        }
         Ok(())
     }
 
