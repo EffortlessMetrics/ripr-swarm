@@ -75,6 +75,9 @@ pub(crate) struct CompactGripContext<'a> {
     unresolved_reach: Mutex<BTreeMap<String, Option<String>>>,
     /// Built on first use; see [`Self::unseen_reach_names`].
     unseen_reach_names: OnceLock<crate::analysis::classify::UnseenReachNames>,
+    /// Identifies this context to the per-thread owner-pin syntax slots
+    /// (#8282); see [`PinSyntaxLease`].
+    pin_syntax_id: u64,
     /// One shared record per distinct related-test grip (#5341, #5362).
     /// Seams relate to the same tests over and over: on ripr-swarm 10,000
     /// seams hold 1.28M related-test entries but only about 15k distinct
@@ -229,6 +232,45 @@ fn count_functions_by_name(index: &RustIndex) -> BTreeMap<String, usize> {
         *counts.entry(function.name.clone()).or_default() += 1;
     }
     counts
+}
+
+static NEXT_PIN_SYNTAX_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+thread_local! {
+    /// The owner-pin syntax a worker thread last used, tagged with its context.
+    static THREAD_PIN_SYNTAX: std::cell::Cell<
+        Option<(u64, crate::analysis::classify::OwnerPinSyntax)>,
+    > = const { std::cell::Cell::new(None) };
+}
+
+/// One worker thread's [`OwnerPinSyntax`](crate::analysis::classify::OwnerPinSyntax)
+/// for one seam's evidence (#8282).
+///
+/// The syntax caches are not `Sync`, so rayon workers cannot share one, and a
+/// fresh instance per seam re-paid its first full-index pass for every seam
+/// (O(seams) passes; `repo-exposure-json` never converged on ripr-swarm). A
+/// thread keeps its instance across seams of the same context, so first
+/// passes are bounded by worker count, not seam count.
+pub(in crate::analysis::test_grip_evidence) struct PinSyntaxLease {
+    id: u64,
+    syntax: crate::analysis::classify::OwnerPinSyntax,
+}
+
+impl std::ops::Deref for PinSyntaxLease {
+    type Target = crate::analysis::classify::OwnerPinSyntax;
+
+    fn deref(&self) -> &Self::Target {
+        &self.syntax
+    }
+}
+
+impl Drop for PinSyntaxLease {
+    fn drop(&mut self) {
+        let syntax = std::mem::take(&mut self.syntax);
+        let id = self.id;
+        // `try_with`: the slot is gone during thread teardown; drop then.
+        let _ = THREAD_PIN_SYNTAX.try_with(|slot| slot.set(Some((id, syntax))));
+    }
 }
 
 impl<'a> CompactGripContext<'a> {
@@ -601,8 +643,22 @@ impl<'a> CompactGripContext<'a> {
             type_mentions: OnceLock::new(),
             unresolved_reach: Mutex::new(BTreeMap::new()),
             unseen_reach_names: OnceLock::new(),
+            pin_syntax_id: NEXT_PIN_SYNTAX_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             shared_grips: Mutex::new(SharedGrips::default()),
         })
+    }
+
+    /// Lease this worker thread's owner-pin syntax cache for one seam; it is
+    /// kept for the thread's next seam when the lease drops (#8282).
+    pub(in crate::analysis::test_grip_evidence) fn lease_pin_syntax(&self) -> PinSyntaxLease {
+        let syntax = THREAD_PIN_SYNTAX.with(|slot| match slot.take() {
+            Some((id, syntax)) if id == self.pin_syntax_id => syntax,
+            _ => Default::default(),
+        });
+        PinSyntaxLease {
+            id: self.pin_syntax_id,
+            syntax,
+        }
     }
 
     /// Identifier mentions by tests and test-reached production code, for
@@ -3742,6 +3798,41 @@ mod tests {
     use super::*;
     use crate::analysis::facts::{FileFacts, FunctionFact, FunctionSourceRole, RustIndex};
     use crate::domain::SymbolId;
+
+    /// #8282: the repo seam walk used a fresh `OwnerPinSyntax` per seam, so
+    /// every seam re-paid the first full-index pass. A worker thread keeps one
+    /// instance across the seams of a context, and never lends it to another
+    /// context's index.
+    #[test]
+    fn pin_syntax_is_reused_across_seams_of_one_context_only() {
+        let index = RustIndex::default();
+        let context = CompactGripContext::new(&index);
+        {
+            let first = context.lease_pin_syntax();
+            assert_eq!(
+                first.workspace_scan_passes(),
+                0,
+                "a new context starts cold"
+            );
+            first.pay_ambiguity_pass(&index);
+            assert_eq!(first.workspace_scan_passes(), 1);
+        }
+        let second = context.lease_pin_syntax();
+        assert_eq!(
+            second.workspace_scan_passes(),
+            1,
+            "the next seam must inherit the pass the previous seam paid"
+        );
+        drop(second);
+
+        let other_index = RustIndex::default();
+        let other = CompactGripContext::new(&other_index);
+        assert_eq!(
+            other.lease_pin_syntax().workspace_scan_passes(),
+            0,
+            "another context's index must not inherit this context's cache"
+        );
+    }
 
     #[test]
     fn cfg_all_test_role_blocks_same_file_shadow_credit() {

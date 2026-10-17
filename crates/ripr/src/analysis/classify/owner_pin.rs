@@ -925,8 +925,14 @@ impl OwnerPinSyntax {
     /// paid, bounded at two (the ambiguity pass plus at most one
     /// completion) however many (name, test root) refusals follow.
     #[cfg(test)]
-    fn workspace_scan_passes(&self) -> u32 {
+    pub(in crate::analysis) fn workspace_scan_passes(&self) -> u32 {
         self.workspace_scan_passes.get()
+    }
+
+    /// #8282 test witness: pay the ambiguity pass now, as a refusal would.
+    #[cfg(test)]
+    pub(in crate::analysis) fn pay_ambiguity_pass(&self, index: &RustIndex) {
+        let _ = self.trusted_macro_ambiguities(index);
     }
 
     /// File composition authority shared by assertion admission and targeted

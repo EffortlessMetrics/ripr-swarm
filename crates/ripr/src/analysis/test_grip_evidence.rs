@@ -352,7 +352,7 @@ fn evidence_for_seam_with_context(
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
     let (activate, observed_values, missing_discriminators) =
         activate_evidence(seam, &related_indexed, context, owner_fn);
-    let pin_syntax = crate::analysis::classify::OwnerPinSyntax::default();
+    let pin_syntax = context.lease_pin_syntax();
     let propagate = propagate_evidence(seam, &related, owner_fn, context.index, &pin_syntax);
     let observe = observe_evidence(&related);
     let discriminate = discriminate_evidence(seam, &related, owner_fn, context.index, &pin_syntax);
@@ -436,7 +436,7 @@ pub(crate) fn compact_evidence_for_seam(
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
     let (activate, missing_discriminators) =
         compact_activate_evidence(seam, &related_indexed, context, owner_fn);
-    let pin_syntax = crate::analysis::classify::OwnerPinSyntax::default();
+    let pin_syntax = context.lease_pin_syntax();
     let propagate = propagate_evidence(seam, &related, owner_fn, context.index, &pin_syntax);
     let observe = observe_evidence(&related);
     let discriminate = discriminate_evidence(seam, &related, owner_fn, context.index, &pin_syntax);
