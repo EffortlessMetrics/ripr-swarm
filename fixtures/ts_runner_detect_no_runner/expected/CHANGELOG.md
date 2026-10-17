@@ -333,3 +333,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_runner_detect_no_runner (16)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless ts_runner_detect_no_runner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

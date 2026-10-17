@@ -140,7 +140,9 @@ jobs:
         if: contains(toJSON(inputs), '"subject_sha"') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')
         run: |
           cargo package -p ripr --no-verify
-          package_version="$(cargo pkgid -p ripr | sed 's/.*#//')"
+          package_id="$(cargo pkgid -p ripr)"
+          package_version="${package_id##*#}"
+          test -n "$package_version"
           tar xzf "target/package/ripr-$package_version.crate" -C "$RUNNER_TEMP"
           cd "$RUNNER_TEMP/ripr-$package_version"
           rm Cargo.lock
