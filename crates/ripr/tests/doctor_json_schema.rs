@@ -508,6 +508,11 @@ fn published_doctor_schema_rejects_documents_the_schema_forbids() -> Result<(), 
         serde_json::json!({"tracked": {"warning": "w"}});
     assert_rejected("tracked without its count", &countless_tracked, &schema)?;
 
+    let mut zero_tracked = base.clone();
+    zero_tracked["cache"]["tracked_artifacts"] =
+        serde_json::json!({"tracked": {"count": 0, "warning": "! none"}});
+    assert_rejected("tracked with a zero count", &zero_tracked, &schema)?;
+
     let mut populated_tracked = base.clone();
     populated_tracked["cache"]["tracked_artifacts"] =
         serde_json::json!({"tracked": {"count": 3, "warning": "! 3 tracked"}});

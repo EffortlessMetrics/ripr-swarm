@@ -3867,6 +3867,21 @@ mod tests {
             }
             other => return Err(format!("expected Tracked, got {other:?}")),
         }
+        // A second tracked entry is counted and named in the warning text.
+        std::fs::write(root.join("target").join("ripr").join("second.json"), "{}")
+            .map_err(|error| error.to_string())?;
+        crate::git::run_git(&root, &["add", "-f", "--", "target/ripr/second.json"])
+            .map_err(|error| error.to_string())?;
+        match ripr_tracked_artifacts(&root) {
+            DoctorTrackedArtifacts::Tracked { count, warning } => {
+                assert_eq!(count, 2);
+                assert!(
+                    warning.starts_with("! 2 ripr artifact file(s)"),
+                    "{warning}"
+                );
+            }
+            other => return Err(format!("expected Tracked, got {other:?}")),
+        }
         let _ = std::fs::remove_dir_all(&root);
 
         // Not a repository: the probe is not a verdict.
