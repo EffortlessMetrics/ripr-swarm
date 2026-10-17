@@ -349,9 +349,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   try {
     await startServerOnce(controller);
   } catch (error) {
-    // The controller already surfaced the failure in the status bar and a
-    // warning; rejecting activation would only add a generic "Activating
-    // extension failed" toast on top.
+    // A handshake failure is already surfaced by the controller (status bar
+    // and a warning), and rejecting activation would only add a generic
+    // "Activating extension failed" toast. Other start failures are logged
+    // here and stay visible in the output channel.
     output.appendLine(`ripr server start during activation failed: ${String(error)}`);
   }
 }
