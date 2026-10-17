@@ -20,8 +20,8 @@ pub enum ProbeFamily {
 
 impl ProbeFamily {
     /// Families `ripr check` resolves a stub route for: the stub producer
-    /// either writes a test or names why it cannot, so the finding never
-    /// ends in silence. `static_unknown` has no seam to resolve.
+    /// either writes a test or names why it cannot. `static_unknown` has no
+    /// seam to resolve.
     pub(crate) fn offers_stub_route(&self) -> bool {
         !matches!(self, ProbeFamily::StaticUnknown)
     }
