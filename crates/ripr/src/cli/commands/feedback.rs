@@ -360,6 +360,27 @@ mod tests {
         values.iter().map(|value| value.to_string()).collect()
     }
 
+    // #7781: feedback export refuses a checked-in `target` link that escapes
+    // the workspace before it reads or writes anything under it.
+    #[cfg(unix)]
+    #[test]
+    fn export_refuses_target_symlink_escaping_the_workspace() -> Result<(), String> {
+        if std::env::var("RIPR_CACHE_DIR").is_ok_and(|value| !value.trim().is_empty()) {
+            return Ok(());
+        }
+        let base = unique_root("hostile-target")?;
+        let ws = base.join("ws");
+        let outside = base.join("outside");
+        fs::create_dir_all(&ws).map_err(|e| e.to_string())?;
+        fs::create_dir_all(&outside).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&outside, ws.join("target")).map_err(|e| e.to_string())?;
+        let result = run_export(&args(&["--root", &ws.display().to_string()]));
+        let _ = fs::remove_dir_all(&base);
+        let error = result.err().ok_or("hostile target link must be refused")?;
+        assert!(error.contains("RIPR_CACHE_DIR"), "{error}");
+        Ok(())
+    }
+
     #[test]
     fn public_cli_records_idempotently_and_rejects_file_line_identity() -> Result<(), String> {
         let root = unique_root("cli-record")?;
