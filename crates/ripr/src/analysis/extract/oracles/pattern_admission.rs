@@ -169,6 +169,7 @@ enum ItemKind {
 
 /// The classification a whole-pattern assertion earns from its pattern, or
 /// `None` when the pattern pins a value and the ordinary chain decides.
+#[cfg(test)]
 pub(super) fn pattern_assertion_classification(line: &str) -> Option<OracleClassification> {
     pattern_assertion_classification_in(line, &LocalDecls::default())
 }
