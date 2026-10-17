@@ -184,6 +184,7 @@ pub(crate) enum XtaskCommand {
     WorkContextCheck(Vec<String>),
     WorkSynthesisCheck(Vec<String>),
     WorkBurndownCheck(Vec<String>),
+    WorkIntakeCheck(Vec<String>),
     Unknown(String),
 }
 
@@ -424,6 +425,13 @@ impl XtaskCommand {
                     Some("check") => Self::WorkBurndownCheck(rest[2..].to_vec()),
                     _ => Self::Unknown(format!(
                         "work burndown {}",
+                        rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
+                    )),
+                },
+                Some("intake") => match rest.get(1).map(|arg| arg.as_str()) {
+                    Some("check") => Self::WorkIntakeCheck(rest[2..].to_vec()),
+                    _ => Self::Unknown(format!(
+                        "work intake {}",
                         rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
                     )),
                 },
@@ -2456,6 +2464,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Validates committed WorkBurnDownV1 rows against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR B, RIPR-SPEC-0274, consuming #1648); every burn-down binds the repository, portfolio-snapshot identity, basis head and the selected-work identity it tracks, completion derives from issue/spec acceptance, implementation slices, PRs and exact-head review/proof rows, a complete burn-down over an open or stale evidence row fails because campaign and work-item records are context only and cannot override current evidence, a wrong current main, an unknown campaign record or an empty evidence set fails with exact recompile/reconcile routes, and no GitHub, branch, worktree, claim, spec, campaign or source state is touched.",
+        ),
+        command_entry(
+            "work intake check [--corpus <dir>] [--json]",
+            "report_only",
+            "target/ripr/reports/work-intake-check.{json,md}",
+            false,
+            false,
+            "Validates committed WorkIntakeV1 rows against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR B, RIPR-SPEC-0275, consuming #1644); every intake binds the repository, portfolio-snapshot identity, basis head, current main and one issue the captured portfolio records, campaign placement and relevant campaigns must be recorded campaigns but an out-of-campaign issue may still qualify because placement stays a later root/planning decision, open overlapping PRs and claims stay visible before any mutation, and an empty contract set, an unknown issue, a wrong repository or a legacy authority attempt fails with exact recompile/reconcile routes.",
         ),
     ]
 }

@@ -14715,6 +14715,40 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0275"
+name = "Issue intake binds the selected-work portfolio basis"
+spec = "docs/specs/RIPR-SPEC-0275-issue-intake-selected-work-basis.md"
+tests = [
+  "xtask/src/work_intake_identity.rs::tests::work_intake_identity_committed_corpus_five_scenarios_hold",
+  "xtask/src/work_intake_identity.rs::tests::work_intake_identity_in_campaign_qualified_passes",
+  "xtask/src/work_intake_identity.rs::tests::work_intake_identity_out_of_campaign_still_qualifies",
+  "xtask/src/work_intake_identity.rs::tests::work_intake_identity_overlap_visible_and_single_agent",
+  "xtask/src/work_intake_identity.rs::tests::work_intake_identity_legacy_and_wrong_inputs_fail",
+  "xtask/src/work_intake_identity.rs::tests::work_intake_identity_intake_schema_has_no_singleton_fields",
+  "xtask/src/work_intake_identity.rs::tests::work_intake_identity_human_and_json_projections_agree",
+  "xtask/src/work_intake_identity.rs::tests::work_intake_identity_deterministic_output",
+  "xtask/src/work_intake_identity.rs::tests::work_intake_identity_corpus_loader_fails_closed",
+  "xtask/src/work_intake_identity.rs::tests::work_intake_identity_committed_provenance_covers_every_corpus_byte",
+  "xtask/src/work_intake_identity.rs::tests::work_intake_identity_intakes_bind_recorded_issues",
+  "xtask/src/work_intake_identity.rs::tests::work_intake_identity_command_mutate_nothing_mutation_negative",
+]
+fixtures = [
+  "fixtures/work_intake_identity",
+]
+code = [
+  "xtask/src/work_intake_identity.rs",
+  "xtask/src/work_selection_identity.rs",
+  "xtask/src/command.rs",
+  "xtask/src/dispatch.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0275-issue-intake-selected-work-basis.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0244"
 name = "Shared selected-work identity schemas and legacy compatibility"
 spec = "docs/specs/RIPR-SPEC-0244-selected-work-identity.md"
