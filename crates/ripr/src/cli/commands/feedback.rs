@@ -32,6 +32,7 @@ fn run_record(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let (options, json) = parse_record_options(args)?;
+    crate::atomic_file::ensure_default_output_contained(&options.root)?;
     let recorded = record_feedback(&options)?;
     if json {
         print!("{}", record_result_json(&recorded)?);
@@ -55,6 +56,7 @@ fn run_export(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let (options, json, out) = parse_export_options(args)?;
+    crate::atomic_file::ensure_default_output_contained(&options.root)?;
     let (rendered, _) = export_feedback_join(&options)?;
     if let Some(path) = out {
         crate::atomic_file::write(&path, rendered.as_bytes(), "usefulness-feedback join")?;
