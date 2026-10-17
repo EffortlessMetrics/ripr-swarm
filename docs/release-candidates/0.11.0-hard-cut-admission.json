@@ -1,0 +1,20 @@
+{
+  "schema_version": "1",
+  "kind": "ripr_release_cut_admission",
+  "release": "0.11.0",
+  "state": "inactive",
+  "generation": "pre-cut-unselected",
+  "controller_issue": 5114,
+  "selection_issue": 2766,
+  "observed_main": {
+    "sha": null,
+    "tree": null
+  },
+  "admitted": [],
+  "non_claims": [
+    "The inactive template does not restrict ordinary development or select a release candidate.",
+    "An admitted PR/head is eligible to request qualification only; it is not qualified, approved, merged, or published.",
+    "Activation requires a separately reviewed #5114/#2766 packet with the exact current main SHA/tree and finite PR/head set.",
+    "After #1609 pins the immutable candidate, candidate_pinned releases rolling development without retargeting that candidate."
+  ]
+}
