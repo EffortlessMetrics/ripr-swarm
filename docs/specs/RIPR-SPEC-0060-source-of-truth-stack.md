@@ -30,10 +30,20 @@ Policy impact:
   implementation plan, and the closeout. This closeout does not change CI lane,
   lint, file, package, no-panic, release, or branch-protection policy.
 
+Amendment (2026-10, #1706 PR D): the active-goal provisions of this spec are
+retired. The `.ripr/goals/` scheduler and `cargo xtask check-goals` were
+deleted in #1701 PR 3, so the active-goal manifest rows, the active-goal
+shape/parsing validation requirements, and the `check-goals` evidence line
+below are a historical record of the accepted 2026 contract, not current
+behavior. Live work selection now comes from GitHub issues, PRs, checks, and
+the local worktree, and the selected-work/portfolio-basis contract lives in
+RIPR-SPEC-0244. The document-artifact and support-tier provisions remain live.
+
 Required evidence:
 
 - `cargo xtask check-doc-artifacts`
-- `cargo xtask check-goals`
+- `cargo xtask check-goals` (retired with the `.ripr/goals/` scheduler in
+  #1701; retained here as the historical evidence list only)
 - `cargo xtask check-support-tiers`
 - `cargo xtask repo-contract-report`
 - `cargo xtask check-doc-index`
