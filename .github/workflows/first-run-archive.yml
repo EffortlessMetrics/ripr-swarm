@@ -66,6 +66,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Walk the first-run path with the released archive
+        shell: bash
         env:
           VERSION: ${{ inputs.version || '0.10.0' }}
         run: cargo xtask first-run --install-archive "$VERSION"
