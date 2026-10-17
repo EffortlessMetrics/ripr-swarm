@@ -16355,6 +16355,16 @@ Header-only exclusions require available worktree bytes or an active
 committed-source overlay; pilot creates no new overlay and does not establish
 the header of a sparse missing file.
 
+Pilot's initial inventory, current-change supplement and diff-only follow-up
+selection use that same loaded change's generated-source context. The corpus is
+selected before indexing evidence or counting seams, so restoring only a vendor
+Rust file while its changed checksum remains sparse does not admit its seams or
+evidence. Ordinary repo exposure keeps its disk-based population and cache
+identity. Pilot recomputes contextual skip guidance and population comparability
+on every run/cache hit; it omits `artifact` identity whenever its selected source
+or evidence inputs differ from ordinary repo exposure. Identical selected bytes
+may still share a cache entry across marker disappearance and restoration.
+
 The terminal and Markdown "Inspected" block names each absent path, the
 `changed_file_absent_from_worktree` category, and the producer's recovery
 guidance, even when `top_recommendation_in_change` is true for a present file.
