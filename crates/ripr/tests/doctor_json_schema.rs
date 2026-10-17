@@ -500,7 +500,11 @@ fn published_doctor_schema_rejects_documents_the_schema_forbids() -> Result<(), 
     // arm stays legal.
     let mut unlisted_tracked = base.clone();
     unlisted_tracked["cache"]["tracked_artifacts"] = Value::String("ignored".to_string());
-    assert_rejected("unlisted tracked-artifacts verdict", &unlisted_tracked, &schema)?;
+    assert_rejected(
+        "unlisted tracked-artifacts verdict",
+        &unlisted_tracked,
+        &schema,
+    )?;
 
     let mut countless_tracked = base.clone();
     countless_tracked["cache"]["tracked_artifacts"] =
@@ -515,9 +519,8 @@ fn published_doctor_schema_rejects_documents_the_schema_forbids() -> Result<(), 
     let mut populated_tracked = base.clone();
     populated_tracked["cache"]["tracked_artifacts"] =
         serde_json::json!({"tracked": {"count": 2, "warning": "! run git rm --cached"}});
-    check(&populated_tracked, &schema, &schema, "doctor").map_err(|error| {
-        format!("a populated tracked-artifacts must stay legal: {error}")
-    })?;
+    check(&populated_tracked, &schema, &schema, "doctor")
+        .map_err(|error| format!("a populated tracked-artifacts must stay legal: {error}"))?;
 
     let mut wrong_test_surface_type = base.clone();
     wrong_test_surface_type["test_surfaces"] = Value::String("rust".to_string());
