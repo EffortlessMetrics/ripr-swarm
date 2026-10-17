@@ -357,3 +357,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — propagate_swallowed_ok (15)
+
+Reason:
+RIPR-SPEC-0122: re-bless for #8412 stub route/refusal now printed for every probe family (call_deletion, field_construction, side_effect); drift is solely the inserted stub-route line, no classification or count change
+
+Command:
+`cargo xtask goldens bless propagate_swallowed_ok --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

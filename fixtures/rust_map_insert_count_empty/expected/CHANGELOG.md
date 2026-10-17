@@ -37,3 +37,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_map_insert_count_empty (4)
+
+Reason:
+RIPR-SPEC-0122: re-bless for #8412 stub route/refusal now printed for every probe family (call_deletion, field_construction, side_effect); drift is solely the inserted stub-route line, no classification or count change
+
+Command:
+`cargo xtask goldens bless rust_map_insert_count_empty --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

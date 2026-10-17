@@ -220,3 +220,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — enum_variant_declaration_not_call (19)
+
+Reason:
+RIPR-SPEC-0122: re-bless for #8412 stub route/refusal now printed for every probe family (call_deletion, field_construction, side_effect); drift is solely the inserted stub-route line, no classification or count change
+
+Command:
+`cargo xtask goldens bless enum_variant_declaration_not_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
