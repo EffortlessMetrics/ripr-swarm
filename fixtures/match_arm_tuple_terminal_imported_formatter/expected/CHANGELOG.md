@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — match_arm_tuple_terminal_imported_formatter (3)
+
+Reason:
+RIPR-SPEC-0093: re-bless human summary line with the base-side evidence suffix (stale after #7836 merged)
+
+Command:
+`cargo xtask goldens bless match_arm_tuple_terminal_imported_formatter --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
