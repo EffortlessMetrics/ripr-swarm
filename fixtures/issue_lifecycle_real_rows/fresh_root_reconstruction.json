@@ -1,0 +1,109 @@
+{
+  "schema_version": "issue_lifecycle_fresh_root_reconstruction.v1",
+  "issue": 4932,
+  "spec": "RIPR-SPEC-0278",
+  "reconstructed_by": "fresh-root delivery agent on worktree C:\\Code\\Kimi\\Rust\\ripr-swarm-l4932b with no prior chat context; every conclusion reached from committed artifacts plus read-only live verification only",
+  "reconstructed_at": "2026-10-17T12:45:46Z",
+  "branch": "test/4932-fresh-root-reconstruction",
+  "base_main": "c36a62a6901de4e715002b9bf3c35b81e5e37a15",
+  "commands": {
+    "offline_reconstruction": [
+      "cargo build -p xtask --bins --tests",
+      "cargo xtask issue-lifecycle-scorecard --captured fixtures/issue_lifecycle_real_rows/corpus.json",
+      "cargo xtask issue-lifecycle-scorecard --captured fixtures/issue_lifecycle_attempts/corpus.json",
+      "cargo test -p xtask --bin xtask issue_lifecycle"
+    ],
+    "live_verification": [
+      "gh issue view 7795 --repo EffortlessMetrics/ripr-swarm --json number,title,state,closedAt,labels",
+      "gh pr view 8285 --repo EffortlessMetrics/ripr-swarm --json number,title,state,mergedAt,mergeCommit,headRefOid",
+      "gh issue view 1706 --repo EffortlessMetrics/ripr-swarm --json number,title,state,labels",
+      "gh pr view 8325 --repo EffortlessMetrics/ripr-swarm --json number,title,state,mergedAt,mergeCommit",
+      "gh pr checks 8285 --repo EffortlessMetrics/ripr-swarm",
+      "gh issue view 1706 --repo EffortlessMetrics/ripr-swarm --json body (unchecked acceptance row count)",
+      "gh api repos/EffortlessMetrics/ripr-swarm/branches/main --jq .commit.sha",
+      "gh api repos/EffortlessMetrics/ripr-swarm/compare/f3fa41d265e1fb51f280d6d8d5f0c4967c362025...main",
+      "gh api repos/EffortlessMetrics/ripr-swarm/compare/70d053fb7b4a32c5855fb62cf30249e91752f3be...main"
+    ]
+  },
+  "live_facts": {
+    "issue_7795": {
+      "state": "CLOSED",
+      "closed_at": "2026-10-17T02:05:12Z"
+    },
+    "pr_8285": {
+      "state": "MERGED",
+      "merged_at": "2026-10-17T02:05:11Z",
+      "merge_commit": "f3fa41d265e1fb51f280d6d8d5f0c4967c362025",
+      "head": "1b4a5f651b1bac1b7bf789858ad1e591ca8061be",
+      "checks": "all checks pass on the merged head"
+    },
+    "issue_1706": {
+      "state": "OPEN",
+      "labels": [
+        "status/needs-work"
+      ],
+      "unchecked_acceptance_rows": 10
+    },
+    "pr_8325": {
+      "state": "MERGED",
+      "merged_at": "2026-10-17T06:06:21Z",
+      "merge_commit": "70d053fb7b4a32c5855fb62cf30249e91752f3be"
+    },
+    "main_head_at_reconstruction": "d38c0cfb7fc8b6829e7a775541513ce9e58703f9",
+    "row_a_merge_ancestry": {
+      "merge_base": "f3fa41d265e1fb51f280d6d8d5f0c4967c362025",
+      "behind_by": 0,
+      "ahead_by": 110
+    },
+    "row_b_merge_ancestry": {
+      "merge_base": "70d053fb7b4a32c5855fb62cf30249e91752f3be",
+      "behind_by": 0,
+      "ahead_by": 73
+    }
+  },
+  "reconstructed_dispositions": [
+    {
+      "lifecycle_id": "lifecycle-real-7795-8285-closeout",
+      "observation_key": "issue-lifecycle:EffortlessMetrics/ripr-swarm#7795",
+      "issue": "EffortlessMetrics/ripr-swarm#7795",
+      "pr": "pr:EffortlessMetrics/ripr-swarm#8285",
+      "merge_commit": "gh-merge-commit:f3fa41d265e1fb51f280d6d8d5f0c4967c362025",
+      "corpus_disposition": "completed",
+      "reconstructed_disposition": "completed",
+      "matches_corpus": true
+    },
+    {
+      "lifecycle_id": "lifecycle-real-8325-1706-pending-closeout",
+      "observation_key": "issue-lifecycle:EffortlessMetrics/ripr-swarm#1706:pr-8325",
+      "issue": "EffortlessMetrics/ripr-swarm#1706",
+      "pr": "pr:EffortlessMetrics/ripr-swarm#8325",
+      "merge_commit": "gh-merge-commit:70d053fb7b4a32c5855fb62cf30249e91752f3be",
+      "corpus_disposition": "merged_pending_closeout",
+      "reconstructed_disposition": "merged_pending_closeout",
+      "matches_corpus": true
+    }
+  ],
+  "drift_checks": [
+    {
+      "subject": "issue #1706 state",
+      "observed": "OPEN with ten unchecked acceptance rows and no closeout",
+      "if_drifted": "if #1706 had been closed with its acceptance rows covered and a current-head receipt bound, Row B would no longer assess as merged_pending_closeout; the reconstruction would record a disposition disagreement and this receipt would reject the match instead of fabricating agreement"
+    },
+    {
+      "subject": "issue #7795 state",
+      "observed": "CLOSED at 2026-10-17T02:05:12Z",
+      "if_drifted": "if #7795 had reopened, Row A's completed closeout would disagree with live state and the reconstruction would reject instead of matching the corpus"
+    },
+    {
+      "subject": "merge commit ancestry on main",
+      "observed": "both recorded merge commits are the merge base of the current main head comparison with behind_by 0",
+      "if_drifted": "if either merge commit had left main ancestry, Row A's current-head verification would be stale and Row A would reconstruct as stale rather than completed"
+    },
+    {
+      "subject": "PR merge identities",
+      "observed": "PR #8285 and PR #8325 are MERGED with exactly the merge commits recorded in the corpus",
+      "if_drifted": "a reopened PR or a different merge commit would break the recorded merge identity binding and the reconstruction would reject"
+    }
+  ],
+  "result": "reconstruction_matches_committed_corpus_no_drift"
+}
