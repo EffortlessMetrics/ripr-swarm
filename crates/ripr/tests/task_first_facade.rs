@@ -117,6 +117,29 @@ fn populate_two_seam_fixture(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Populate a committed workspace whose one function holds two boundary
+/// seams with the same file, owner, kind and expression, so the producer gap
+/// ID cannot tell them apart.
+fn populate_duplicate_expression_fixture(root: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn tiered(amount: i32, threshold: i32) -> i32 {\n    let base = if amount >= threshold {\n        10\n    } else {\n        0\n    };\n    let bonus = if amount >= threshold {\n        5\n    } else {\n        0\n    };\n    base + bonus\n}\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        "use boundary_gap_fixture::tiered;\n\n#[test]\nfn below_threshold_pays_nothing() {\n    assert_eq!(tiered(50, 100), 0);\n}\n\n#[test]\nfn far_above_threshold_pays() {\n    assert_eq!(tiered(10_000, 100), 15);\n}\n",
+    )
+    .map_err(|e| e.to_string())?;
+    init_repo(root)?;
+    run_git(root, &["add", "Cargo.toml", "src", "tests"])?;
+    git_commit(root, "duplicate-expression fixture source")?;
+    Ok(())
+}
+
 /// Populate a committed workspace with no actionable seam: an empty
 /// library. Takes the root instead of minting it so the [`Fixture`]
 /// guard owns the directory before any fallible step can leak it.
@@ -692,6 +715,78 @@ fn check_drill_down_omits_repair_when_seam_inventory_is_truncated() -> Result<()
 }
 
 /// #7882: display narration must never feed stable text back into identity.
+/// #8166: the `Canonical gap:` line `ripr check` prints for a Rust finding is
+/// the producer gap ID, not the seam-derived `gap:<hash>`. It must start the
+/// same attempt as the seam ID, and only for the seam it names.
+#[test]
+fn repair_accepts_the_producer_gap_id_check_prints() -> Result<(), String> {
+    let fixture = Fixture::two_seam("facade-producer-gap")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    // Wrong discriminator: names no seam, starts nothing.
+    let wrong = run_ripr(
+        root,
+        &[
+            "repair",
+            "gap:rust:src/lib.rs:shipping_fee:predicate_boundary:predicate:items==other",
+            "--root",
+            &root_arg,
+        ],
+    )?;
+    assert_exit(&wrong, 3, "repair with a producer gap naming no seam");
+    assert!(
+        attempt_ids(root).is_empty(),
+        "an unmatched producer gap must create no attempt"
+    );
+    // The second function's producer gap selects the second seam, not the
+    // first match.
+    let repair = run_ripr(
+        root,
+        &[
+            "repair",
+            "gap:rust:src/lib.rs:shipping_fee:predicate_boundary:predicate:items==free_threshold",
+            "--root",
+            &root_arg,
+        ],
+    )?;
+    assert_exit(&repair, 0, "repair with a producer gap ID");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1, "exactly one attempt must be created");
+    assert_eq!(read_manifest(root, &ids[0])?["seam_id"], SECOND_SEAM);
+    Ok(())
+}
+
+/// #8166: two seams that share file, owner, kind and expression make the
+/// producer gap ID ambiguous. It must refuse with the bounded list and start
+/// nothing, never pick the first match.
+#[test]
+fn repair_refuses_a_producer_gap_id_that_names_several_seams() -> Result<(), String> {
+    let fixture = Fixture::dir("facade-producer-gap-ambiguous")?;
+    let root = &fixture.root;
+    populate_duplicate_expression_fixture(root)?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let repair = run_ripr(
+        root,
+        &[
+            "repair",
+            "gap:rust:src/lib.rs:tiered:predicate_boundary:predicate:amount==threshold",
+            "--root",
+            &root_arg,
+        ],
+    )?;
+    assert_exit(&repair, 3, "repair with an ambiguous producer gap ID");
+    let stderr = String::from_utf8_lossy(&repair.stderr);
+    assert!(
+        stderr.contains("names 2 seams; select one explicitly"),
+        "expected the ambiguous refusal, got: {stderr}"
+    );
+    assert!(
+        attempt_ids(root).is_empty(),
+        "an ambiguous producer gap must create no attempt"
+    );
+    Ok(())
+}
+
 /// Both percent spellings exist, so an accidental codec substitution selects
 /// a real, wrong repository instead of merely producing a missing-path error.
 #[test]

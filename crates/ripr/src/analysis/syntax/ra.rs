@@ -2263,6 +2263,30 @@ fn extract_parser_oracles(
         });
     }
 
+    for call in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::CallExpr::cast)
+        .filter(is_result_expect_err_ufcs)
+    {
+        if !uncompared_unwrap_err_statement(&call, text) {
+            continue;
+        }
+        let range = call.syntax().text_range();
+        let call_text = slice_text(text, range.start(), range.end())
+            .trim()
+            .trim_end_matches(';')
+            .to_string();
+        assertions.push(OracleFact {
+            line: line_index.line(range.start()),
+            kind: OracleKind::BroadError,
+            strength: OracleStrength::Weak,
+            observed_tokens: extract_identifier_tokens(&call_text),
+            text: call_text,
+            ok_value_observed: None,
+        });
+    }
+
     // #6578: an expect-test comparison (`expect![[..]].assert_eq(actual)`)
     // is a method call on the macro's value, which the macro walk above never
     // sees. Its whole expression is the oracle, graded `snapshot` / medium
@@ -2380,12 +2404,13 @@ fn extract_parser_oracles(
     assertions
 }
 
-/// Whether this `unwrap_err()` call is the whole value of a statement that
-/// never compares it (RIPR-SPEC-0227 decision 2): the statement text and the
-/// rest of the enclosing block go through `uncompared_unwrap_err`, so both
-/// adapters admit the same shapes.
-fn uncompared_unwrap_err_statement(method_call: &ast::MethodCallExpr, text: &str) -> bool {
-    let Some(statement) = method_call.syntax().parent() else {
+/// Whether this `unwrap_err()` / `expect_err(..)` call is the whole value of
+/// a statement that never compares it (RIPR-SPEC-0227 decision 2): the
+/// statement text and the rest of the enclosing block go through
+/// `uncompared_unwrap_err`, so both adapters admit the same shapes. Method
+/// calls and UFCS `Result::expect_err(<call>, <msg>)` share this gate.
+fn uncompared_unwrap_err_statement(expr: &impl AstNode, text: &str) -> bool {
+    let Some(statement) = expr.syntax().parent() else {
         return false;
     };
     if ast::LetStmt::cast(statement.clone()).is_none()
@@ -2400,9 +2425,27 @@ fn uncompared_unwrap_err_statement(method_call: &ast::MethodCallExpr, text: &str
         .map_or(range.end(), |block| block.text_range().end());
     let rest = slice_text(text, range.end(), block_end);
     crate::analysis::extract::uncompared_unwrap_err(&statement_text, &rest).is_some_and(|value| {
-        let call = method_call.syntax().text().to_string();
+        let call = expr.syntax().text().to_string();
         value.split_whitespace().eq(call.split_whitespace())
     })
+}
+
+fn is_result_expect_err_ufcs(call: &ast::CallExpr) -> bool {
+    let Some(ast::Expr::PathExpr(path_expr)) = call.expr() else {
+        return false;
+    };
+    let Some(path) = path_expr.path() else {
+        return false;
+    };
+    let Some(name) = path.segment().and_then(|segment| segment.name_ref()) else {
+        return false;
+    };
+    name.text() == "expect_err"
+        && path
+            .qualifier()
+            .and_then(|qualifier| qualifier.segment())
+            .and_then(|segment| segment.name_ref())
+            .is_some_and(|qualifier| qualifier.text() == "Result")
 }
 
 /// Token-local leaf form of [`is_assertion_macro`] for scanners that see

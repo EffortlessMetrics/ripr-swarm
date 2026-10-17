@@ -121,6 +121,25 @@ pub(crate) fn goldens_impl(args: &[String]) -> Result<(), String> {
 }
 
 pub(crate) fn goldens_check() -> Result<(), String> {
+    match golden_check_run()? {
+        GoldenCheckRun::Clean => Ok(()),
+        GoldenCheckRun::Failed { message, .. } => Err(message),
+    }
+}
+
+/// What a `goldens check` run established, before the caller decides how to
+/// treat violations.
+enum GoldenCheckRun {
+    Clean,
+    Failed {
+        /// The console repair card `goldens check` prints.
+        message: String,
+        /// The raw violations behind the card.
+        violations: Vec<String>,
+    },
+}
+
+fn golden_check_run() -> Result<GoldenCheckRun, String> {
     let run_set = collect_golden_runs()?;
     // One provenance snapshot backs both the drift report and the console
     // failure card, so the two always name the same build (#7401).
@@ -129,14 +148,73 @@ pub(crate) fn goldens_check() -> Result<(), String> {
     let body = goldens_check_report_body(&run_set.fixtures, &run_set.runs, &run_set.violations);
     write_report("goldens.md", &body)?;
     if run_set.violations.is_empty() {
-        Ok(())
+        Ok(GoldenCheckRun::Clean)
     } else {
-        Err(goldens_check_failure_message(
-            &entries,
-            &run_set.violations,
-            &provenance,
-        ))
+        let message = goldens_check_failure_message(&entries, &run_set.violations, &provenance);
+        Ok(GoldenCheckRun::Failed {
+            message,
+            violations: run_set.violations,
+        })
     }
+}
+
+/// Start of the violation `preparation::preparation_error` produces when a
+/// fixture's locked dependencies cannot be prepared in this environment.
+const FIXTURE_PREPARATION_FAILURE_PREFIX: &str = "fixture dependency preparation failed";
+
+/// What `goldens check` established when run from `precommit`.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum PrecommitGoldens {
+    /// Every fixture ran and matched its goldens.
+    Verified,
+    /// No fixture drifted, but some could not be compared because their locked
+    /// dependencies are unavailable here. This is an environment gap, not
+    /// drift and not a pass: hosted CI still owns those fixtures.
+    EnvironmentGap(Vec<String>),
+}
+
+/// Run `goldens check` for `precommit`. Real drift or any other fixture error
+/// fails; fixture-dependency preparation failures alone are reported as an
+/// environment gap so a sandbox without the dependency cache is neither told
+/// to bless availability drift nor shown a false pass.
+pub(crate) fn goldens_check_for_precommit() -> Result<PrecommitGoldens, String> {
+    match golden_check_run()? {
+        GoldenCheckRun::Clean => Ok(PrecommitGoldens::Verified),
+        GoldenCheckRun::Failed {
+            message,
+            violations,
+        } => classify_precommit_goldens(&violations).ok_or(message),
+    }
+}
+
+/// `Some(EnvironmentGap)` only when every violation is a preparation failure;
+/// `None` (a real failure) when any violation is drift or another error.
+fn classify_precommit_goldens(violations: &[String]) -> Option<PrecommitGoldens> {
+    let is_gap = |violation: &String| violation.starts_with(FIXTURE_PREPARATION_FAILURE_PREFIX);
+    if violations.is_empty() || !violations.iter().all(is_gap) {
+        return None;
+    }
+    Some(PrecommitGoldens::EnvironmentGap(
+        violations
+            .iter()
+            .map(|violation| violation.lines().next().unwrap_or(violation).to_string())
+            .collect(),
+    ))
+}
+
+fn is_fixture_expectation_path(path: &str) -> bool {
+    path.starts_with("fixtures/") && path.contains("/expected/")
+}
+
+/// The first changed path that can make a golden stale: output-surface code
+/// (the renderers and domain vocabulary every golden is produced from) or a
+/// fixture expectation itself. Analysis-only, docs-only and test-only diffs
+/// do not pay for the fixture run.
+pub(crate) fn golden_staleness_trigger(changed: &[String]) -> Option<&str> {
+    changed
+        .iter()
+        .map(String::as_str)
+        .find(|path| crate::is_output_surface_path(path) || is_fixture_expectation_path(path))
 }
 
 /// Run the assistant-loop-health corpus contract used by `goldens check`.
@@ -2308,6 +2386,58 @@ fn fixtures_new(name: &str) -> Result<(), String> {
 }
 #[cfg(test)]
 mod tests {
+
+    // #8421: the precommit goldens trigger and gap classification.
+
+    #[test]
+    fn staleness_trigger_names_output_surface_and_golden_paths_only() {
+        let paths = |items: &[&str]| items.iter().map(|p| p.to_string()).collect::<Vec<_>>();
+        for path in [
+            "crates/ripr/src/output/human/triage.rs",
+            "crates/ripr/src/domain/classification.rs",
+            "fixtures/rust_map_overwrite_count/expected/human.txt",
+            "docs/OUTPUT_SCHEMA.md",
+            "policy/output_contracts.txt",
+            "crates/ripr/src/lsp.rs",
+        ] {
+            let changed = paths(&["README.md", path]);
+            assert_eq!(super::golden_staleness_trigger(&changed), Some(path));
+        }
+        for path in [
+            "crates/ripr/src/analysis/probe.rs",
+            "docs/ROADMAP.md",
+            "docs/golden-guide.md",
+            "xtask/src/main.rs",
+            "fixtures/rust_map_overwrite_count/input/src/lib.rs",
+        ] {
+            let changed = paths(&[path]);
+            assert_eq!(super::golden_staleness_trigger(&changed), None, "{path}");
+        }
+        assert_eq!(super::golden_staleness_trigger(&[]), None);
+    }
+
+    #[test]
+    fn precommit_goldens_treat_only_preparation_failures_as_an_environment_gap() {
+        let gap = "fixture dependency preparation failed for owner_return_pin_fallible_literal\nenvironment: X\nerror".to_string();
+        let drift = "drift for fixture `rust_map_overwrite_count` [human.txt]".to_string();
+        let other = "fixture contract violation".to_string();
+
+        assert_eq!(
+            super::classify_precommit_goldens(std::slice::from_ref(&gap)),
+            Some(super::PrecommitGoldens::EnvironmentGap(vec![
+                "fixture dependency preparation failed for owner_return_pin_fallible_literal"
+                    .to_string()
+            ]))
+        );
+        // Drift alongside a gap is still a failure: the gap must not hide it.
+        assert_eq!(
+            super::classify_precommit_goldens(&[gap.clone(), drift.clone()]),
+            None
+        );
+        assert_eq!(super::classify_precommit_goldens(&[drift]), None);
+        assert_eq!(super::classify_precommit_goldens(&[gap, other]), None);
+        assert_eq!(super::classify_precommit_goldens(&[]), None);
+    }
     #[test]
     fn spec_line_placeholder_is_not_a_real_spec_id() {
         // #7399: the scaffold placeholder must not satisfy the fixture gate.

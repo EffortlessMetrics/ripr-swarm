@@ -349,4 +349,91 @@ mod tests {
         assert_eq!(disclosure.classification, None);
         assert!(disclosure.warnings.is_empty());
     }
+
+    /// #6712: `.cargo/config.toml` redirects `TMPDIR` at `<workspace>/target`,
+    /// which is absent in a fresh worktree whose build output lives elsewhere.
+    fn scratch_crate(label: &str, source: &str) -> Result<std::path::PathBuf, String> {
+        let parent = std::env::temp_dir();
+        std::fs::create_dir_all(&parent).map_err(|error| error.to_string())?;
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let root = parent.join(format!(
+            "ripr-agent-stub-at-{label}-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            format!("[package]\nname = \"{label}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"),
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
+        Ok(root)
+    }
+
+    fn stub_at(root: &std::path::Path, at: &str, kind: &str) -> Result<(), CommandError> {
+        let selector = TestStubSelector::parse_at(at)
+            .and_then(|selector| selector.with_kind(kind))
+            .map_err(CommandError::Failure)?;
+        run_agent_stub(AgentStubOptions {
+            root: root.to_path_buf(),
+            selector,
+            write: false,
+            json: false,
+        })
+    }
+
+    /// Same fixture as `at_kind_stub_discloses_a_strongly_gripped_inventory_class`
+    /// in `app/test_stub.rs`: the comparison on line 2 is already pinned. Line 3
+    /// is the function's closing brace, so `--at` substitutes. The #8364 test
+    /// covers `return_value` through `resolve_test_stub`; this one is the CLI
+    /// adapter and a different family (`predicate`).
+    const GRIPPED_PREDICATE: &str = "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn at_boundary_clamps() {\n        assert_eq!(clamp_to(100), 100);\n        assert_eq!(clamp_to(99), 99);\n        assert_eq!(clamp_to(500), 100);\n    }\n}\n";
+
+    const ASYNC_PREDICATE: &str =
+        "pub async fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n";
+
+    /// #8444 item 3: an off-line `--at` whose nearest gap is stubbable still
+    /// returns a ready stub through the CLI adapter, not a selector miss.
+    /// Rendered warning *order* is pinned by `crates/ripr/tests/agent_stub_at_disclosure.rs`
+    /// because this command writes the note with `println!`.
+    #[test]
+    fn off_line_predicate_at_on_a_gripped_gap_stays_ready() -> Result<(), String> {
+        let root = scratch_crate("gripped-predicate", GRIPPED_PREDICATE)?;
+        let result = stub_at(&root, "src/lib.rs:3", "predicate");
+        let _ = std::fs::remove_dir_all(&root);
+        result.map_err(|error| {
+            format!("off-line --at must still stub the nearest predicate: {error}")
+        })
+    }
+
+    /// #8444 item 3: an off-line `--at` whose nearest gap then refuses is a
+    /// post-resolution refusal for that seam, not `seam_not_found`. The
+    /// substitution note is not in this `Decision` string (human stdout stays
+    /// empty on refusal); the JSON envelope pin lives in
+    /// `crates/ripr/tests/agent_stub_at_disclosure.rs`.
+    #[test]
+    fn off_line_at_that_ends_in_a_refusal_names_the_nearest_seam() -> Result<(), String> {
+        let root = scratch_crate("async-predicate", ASYNC_PREDICATE)?;
+        let result = stub_at(&root, "src/lib.rs:3", "predicate");
+        let _ = std::fs::remove_dir_all(&root);
+        let Err(CommandError::Decision(message)) = result else {
+            return Err(format!(
+                "substituted async owner must be a post-resolution refusal, got {result:?}"
+            ));
+        };
+        if !message.contains("no test stub for seam") || !message.contains("owner_async") {
+            return Err(format!(
+                "refusal must name the nearest seam's producer reason, got {message}"
+            ));
+        }
+        if message.contains("no predicate seam ripr can stub is in the function") {
+            return Err(format!(
+                "off-line --at must not fall through to a selector miss: {message}"
+            ));
+        }
+        Ok(())
+    }
 }

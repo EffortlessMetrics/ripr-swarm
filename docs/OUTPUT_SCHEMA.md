@@ -13034,6 +13034,27 @@ pass/fail authority. See
 reviewer, developer, maintainer, and coding-agent workflow over the generated
 panel.
 
+## GitHub PR Status Review Subjects
+
+The advisory `cargo xtask gh-pr-status --pr <number>` JSON report keeps
+`schema_version: "0.1"` and adds `head_commit`, the observed full PR head SHA.
+Each entry in `reviews` retains `author` and `state` and adds `commit`, the
+original review commit SHA, plus `currentness`: `current_head`, `stale_for_head`,
+or `subject_unavailable`. Missing identities are empty strings in JSON and
+`unknown` in Markdown. Malformed or ambiguous identities remain unavailable.
+
+The live collector requests `headRefOid`, `latestReviews`, and `reviews` from
+GitHub CLI. It joins the latest summaries to full review subjects by exact
+author, submission time, and state; an absent or ambiguous join supplies no
+commit identity. For an `APPROVED` aggregate, no latest approval of the exact
+head means `safe_next_action: "wait"`, with an explanatory warning. Original
+stale reviews stay visible; they are not silently attributed to the new head.
+
+This attribution is advisory. It does not establish substantive or independent
+review, required approval counts, protection satisfaction, integration proof,
+or permission to merge. The retained current-head control preserves the
+existing advisory action; the command performs no PR mutation.
+
 ## Report Packet Index
 
 RIPR-SPEC-0024 defines the report packet index contract. The index is the

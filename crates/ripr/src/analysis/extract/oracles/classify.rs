@@ -1812,6 +1812,33 @@ fn ok_literal() {
                 "(check(300)).expect_err(\"too long\");",
                 vec![(BroadError, Weak)],
             ),
+            // Optional whitespace between `expect_err` and `(` is still
+            // `Result::expect_err`, not mockall's `expect_err` (#7979).
+            (
+                "expect_err_spaced",
+                "check(300).expect_err ( \"too long\" );",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_ufcs",
+                "Result::expect_err(check(300), \"too long\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_ufcs_spaced",
+                "Result::expect_err (check(300), \"too long\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_ufcs_error_mapped",
+                "Result::expect_err(check(300).map_err(Wrap), \"too long\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_ufcs_fallback_error",
+                "Result::expect_err(check(300).and(Err(E::Other)), \"too long\");",
+                vec![],
+            ),
             (
                 "expect_err_compared_binding",
                 "let e = check(300).expect_err(\"too long\");\n    assert_eq!(e, E::TooLong);",
@@ -1844,6 +1871,19 @@ fn ok_literal() {
                 "mock.expect_err();",
                 vec![(MockExpectation, Medium)],
             ),
+            // `expect_err` at byte 0 is not `.expect_err` / `Result::expect_err`;
+            // the matcher must not subtract before that check (debug overflow
+            // on GitHub Hosted ripr-pr).
+            (
+                "mock_expectation_for_err_method_at_line_start",
+                "expect_err();",
+                vec![(MockExpectation, Medium)],
+            ),
+            (
+                "mock_expectation_message_at_line_start",
+                "expect_err(\"too long\");",
+                vec![(MockExpectation, Medium)],
+            ),
             (
                 "mock_expectation_for_err_method_configured",
                 "mock.expect_err().returning(|| ());",
@@ -1859,6 +1899,11 @@ fn ok_literal() {
             (
                 "mock_expectation_for_err_method_spaced",
                 "MockFoo::new().expect_err( );",
+                vec![(MockExpectation, Medium)],
+            ),
+            (
+                "mock_expectation_for_err_method_space_before_paren",
+                "MockFoo::new().expect_err ();",
                 vec![(MockExpectation, Medium)],
             ),
             // A comment is not an argument.
