@@ -19,7 +19,8 @@ has macOS and Windows archives:
 v=0.10.0; t=x86_64-unknown-linux-gnu; f=ripr-server-v$v-$t.tar.gz
 b=https://github.com/EffortlessMetrics/ripr/releases/download/v$v
 curl -fsSLO $b/$f && curl -fsSLO $b/$f.sha256
-echo "$(cat $f.sha256)  $f" | sha256sum -c - && tar xzf $f   # puts ./ripr here; move it onto your PATH
+echo "$(cat $f.sha256)  $f" | sha256sum -c - && tar xzf $f \
+  && export PATH="$PWD:$PATH"   # ./ripr is now first on PATH for this shell
 ```
 
 Or install the published CLI with Cargo, which compiles from source:
