@@ -69,6 +69,51 @@
     "source_subject": { "$ref": "#/$defs/source_subject" },
     "canonical_next_action": { "$ref": "#/$defs/canonical_next_action" }
   },
+  "allOf": [
+    {
+      "$comment": "Finding totals describe the analysis. Rendering always retains the first finding, but a budget may omit later findings.",
+      "if": { "required": ["analysis_outcome"] },
+      "then": {
+        "if": {
+          "properties": {
+            "analysis_outcome": {
+              "properties": {
+                "outcome": { "properties": { "counts": { "properties": { "finding_count": { "const": 0 } } } } }
+              }
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "summary": { "properties": { "findings": { "const": 0 } } },
+            "findings": { "maxItems": 0 }
+          }
+        },
+        "else": {
+          "properties": {
+            "summary": { "properties": { "findings": { "minimum": 1 } } },
+            "findings": { "minItems": 1 }
+          }
+        }
+      }
+    },
+    {
+      "if": { "required": ["analysis_outcome"] },
+      "then": {
+        "if": {
+          "properties": {
+            "analysis_outcome": {
+              "properties": {
+                "outcome": { "properties": { "counts": { "properties": { "probe_count": { "const": 0 } } } } }
+              }
+            }
+          }
+        },
+        "then": { "properties": { "summary": { "properties": { "probes": { "const": 0 } } } } },
+        "else": { "properties": { "summary": { "properties": { "probes": { "minimum": 1 } } } } }
+      }
+    }
+  ],
   "$defs": {
     "nullable_string": { "type": ["string", "null"] },
     "canonical_next_action": {
@@ -196,7 +241,22 @@
       "properties": {
         "analysis_complete": { "type": "boolean" },
         "outcome": { "$ref": "#/$defs/analysis_outcome" }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "properties": {
+                  "kind": { "enum": ["no_scope", "no_changed_lines", "no_behavioral_candidates", "complete_no_findings", "complete_with_findings"] }
+                }
+              }
+            }
+          },
+          "then": { "properties": { "analysis_complete": { "const": true } } },
+          "else": { "properties": { "analysis_complete": { "const": false } } }
+        }
+      ]
     },
     "analysis_outcome": {
       "type": "object",
@@ -230,7 +290,79 @@
           "items": { "$ref": "#/$defs/analysis_limitation" }
         },
         "claim_boundary": { "type": "string", "minLength": 1 }
-      }
+      },
+      "allOf": [
+        {
+          "$comment": "Mirror validate_outcome: EOL-only churn may accompany a complete outcome; other states require a limitation.",
+          "if": { "properties": { "kind": { "enum": ["no_scope", "no_changed_lines", "no_behavioral_candidates", "complete_no_findings", "complete_with_findings"] } } },
+          "then": { "properties": { "limitations": { "items": { "properties": { "kind": { "const": "eol_only_churn" } } } } } },
+          "else": { "properties": { "limitations": { "minItems": 1 } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "no_scope" } } },
+          "then": {
+            "properties": {
+              "counts": {
+                "properties": {
+                  "changed_file_count": { "const": 0 },
+                  "changed_line_count": { "const": 0 },
+                  "candidate_line_count": { "const": 0 },
+                  "probe_count": { "const": 0 },
+                  "finding_count": { "const": 0 }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "no_changed_lines" } } },
+          "then": {
+            "properties": {
+              "counts": {
+                "properties": {
+                  "changed_line_count": { "const": 0 },
+                  "candidate_line_count": { "const": 0 },
+                  "probe_count": { "const": 0 },
+                  "finding_count": { "const": 0 }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "no_behavioral_candidates" } } },
+          "then": {
+            "properties": {
+              "counts": {
+                "properties": {
+                  "changed_line_count": { "minimum": 1 },
+                  "candidate_line_count": { "const": 0 },
+                  "probe_count": { "const": 0 },
+                  "finding_count": { "const": 0 }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "complete_no_findings" } } },
+          "then": {
+            "properties": {
+              "counts": {
+                "properties": { "finding_count": { "const": 0 } },
+                "anyOf": [
+                  { "properties": { "candidate_line_count": { "minimum": 1 } } },
+                  { "properties": { "probe_count": { "minimum": 1 } } }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "complete_with_findings" } } },
+          "then": { "properties": { "counts": { "properties": { "finding_count": { "minimum": 1 } } } } }
+        }
+      ]
     },
     "analysis_identity": {
       "type": "object",

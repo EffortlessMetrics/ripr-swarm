@@ -2955,3 +2955,7 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "verification_contracts/check_outcome_tests.rs"]
+mod check_outcome_tests;
