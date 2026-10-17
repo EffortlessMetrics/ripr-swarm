@@ -2133,6 +2133,36 @@ fn only_a_plain_assert_eq_against_an_owner_free_value_pins() {
 }
 
 #[test]
+fn a_test_written_expected_file_lends_no_weight_pin() {
+    // #8097: the test rewrites its expected file from the owner before
+    // comparing, inline or through a plain (annotated) binding.
+    for body in [
+        "    std::fs::write(\"w.txt\", weight(4).to_string()).unwrap();\n    assert_eq!(weight(4), std::fs::read_to_string(\"w.txt\").unwrap().parse::<u32>().unwrap());",
+        "    std::fs::write(\"w.txt\", weight(4).to_string()).unwrap();\n    let want: String = std::fs::read_to_string(\"w.txt\").unwrap();\n    assert_eq!(weight(4), want.parse::<u32>().unwrap());",
+        "    std::fs::write(\"w.txt\", weight(4).to_string()).unwrap();\n    let want = std::fs::read_to_string(\"w.txt\").unwrap();\n    let got = want;\n    assert_eq!(weight(4), got.parse::<u32>().unwrap());",
+    ] {
+        let tests = format!("use demo::weight;\n\n#[test]\nfn weighs() {{\n{body}\n}}\n");
+        assert!(weight_admitted(&tests).is_empty(), "{body}");
+    }
+    // A committed golden read with no writer still pins, and assigning a
+    // file read into a *field* does not bind the plain local of the same
+    // name.
+    let tests = "use demo::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), std::fs::read_to_string(\"w.txt\").unwrap().parse::<u32>().unwrap());\n}\n";
+    assert_eq!(
+        weight_admitted(tests),
+        vec![
+            "assert_eq!(weight(4), std::fs::read_to_string(\"w.txt\").unwrap().parse::<u32>().unwrap());"
+                .to_string()
+        ]
+    );
+    let tests = "use demo::weight;\n\n#[test]\nfn weighs() {\n    std::fs::write(\"w.txt\", \"x\").unwrap();\n    let want = 12;\n    holder.want = std::fs::read_to_string(\"w.txt\").unwrap().parse::<u32>().unwrap();\n    assert_eq!(weight(4), want);\n}\n";
+    assert_eq!(
+        weight_admitted(tests),
+        vec!["assert_eq!(weight(4), want);".to_string()]
+    );
+}
+
+#[test]
 fn a_constant_initialized_through_the_owner_is_not_an_independent_expected_value() {
     let test = |items: &str| {
         format!(
@@ -3107,6 +3137,7 @@ fn a_cfg_gated_owner_is_not_reached_by_a_bare_call() {
         let chain = SourceRoleProvenance {
             edges: vec![module_edge(LIB, "src/scale.rs", "scale", line, false)],
             earliest_unresolved_reason: None,
+            ..Default::default()
         };
         let ix = index_with_provenance(&files, &[("src/scale.rs", chain)]);
         let owner = ix.functions().iter().find(|function| {
@@ -3197,6 +3228,7 @@ fn an_ancestor_file_a_cfg_may_drop_gates_the_owner() {
         let chain = |edges: Vec<SourceRoleProvenanceEdge>| SourceRoleProvenance {
             edges,
             earliest_unresolved_reason: None,
+            ..Default::default()
         };
         let ix = index_with_provenance(
             &files,
@@ -3652,6 +3684,7 @@ fn an_out_of_line_super_glob_pins_past_the_declaring_parent() {
                 SourceRoleProvenance {
                     edges: vec![module_edge(LIB, "src/scale.rs", "scale", 1, false)],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
             (
@@ -3665,6 +3698,7 @@ fn an_out_of_line_super_glob_pins_past_the_declaring_parent() {
                         true,
                     )],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
         ],
@@ -3693,6 +3727,7 @@ fn an_out_of_line_super_use_pins_past_the_declaring_parent() {
                 SourceRoleProvenance {
                     edges: vec![module_edge(LIB, "src/scale.rs", "scale", 1, false)],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
             (
@@ -3706,6 +3741,7 @@ fn an_out_of_line_super_use_pins_past_the_declaring_parent() {
                         true,
                     )],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
         ],
@@ -3735,6 +3771,7 @@ fn an_out_of_line_super_glob_refuses_past_a_parent_twin() {
                 SourceRoleProvenance {
                     edges: vec![module_edge(LIB, "src/scale.rs", "scale", 1, false)],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
             (
@@ -3748,6 +3785,7 @@ fn an_out_of_line_super_glob_refuses_past_a_parent_twin() {
                         true,
                     )],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
         ],
@@ -6503,6 +6541,7 @@ fn an_out_of_line_parent_module_shadow_of_the_receiver_refuses_the_pin() {
                 SourceRoleProvenance {
                     edges: vec![module_edge(LIB, HELPERS, "helpers", 12, true)],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
             (
@@ -6513,6 +6552,7 @@ fn an_out_of_line_parent_module_shadow_of_the_receiver_refuses_the_pin() {
                         module_edge(HELPERS, CHILD, "stack_tests", 5, false),
                     ],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
         ],
@@ -6546,6 +6586,7 @@ fn an_out_of_line_test_without_a_parent_shadow_keeps_its_pin() {
                 SourceRoleProvenance {
                     edges: vec![module_edge(LIB, HELPERS, "helpers", 12, true)],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
             (
@@ -6556,6 +6597,7 @@ fn an_out_of_line_test_without_a_parent_shadow_keeps_its_pin() {
                         module_edge(HELPERS, CHILD, "stack_tests", 1, false),
                     ],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
         ],
@@ -6585,6 +6627,7 @@ fn a_parent_root_rename_of_the_receiver_refuses_the_pin() {
                     SourceRoleProvenance {
                         edges: vec![module_edge(LIB, HELPERS, "helpers", 12, true)],
                         earliest_unresolved_reason: None,
+                        ..Default::default()
                     },
                 ),
                 (
@@ -6595,6 +6638,7 @@ fn a_parent_root_rename_of_the_receiver_refuses_the_pin() {
                             module_edge(HELPERS, CHILD, "stack_tests", 3, false),
                         ],
                         earliest_unresolved_reason: None,
+                        ..Default::default()
                     },
                 ),
             ],
@@ -6629,6 +6673,7 @@ fn a_parent_root_plain_import_of_the_receiver_keeps_its_pin() {
                 SourceRoleProvenance {
                     edges: vec![module_edge(LIB, HELPERS, "helpers", 12, true)],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
             (
@@ -6639,6 +6684,7 @@ fn a_parent_root_plain_import_of_the_receiver_keeps_its_pin() {
                         module_edge(HELPERS, CHILD, "stack_tests", 3, false),
                     ],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
         ],
@@ -6676,6 +6722,7 @@ mod stack_tests;
                 SourceRoleProvenance {
                     edges: vec![module_edge(LIB, HELPERS, "helpers", 1, false)],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
             (
@@ -6686,6 +6733,7 @@ mod stack_tests;
                         module_edge(HELPERS, CHILD, "stack_tests", 12, true),
                     ],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
         ],
