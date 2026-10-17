@@ -26,9 +26,6 @@ mod build_commit_record;
 mod check_artifact_stdin;
 #[path = "cli_smoke/closed_stderr.rs"]
 mod closed_stderr;
-#[cfg(feature = "lang-rust")]
-#[path = "cli_smoke/verify_execute_root.rs"]
-mod verify_execute_root;
 #[path = "common/mod.rs"]
 mod common;
 #[cfg(feature = "lang-rust")]
@@ -125,6 +122,9 @@ mod unsupported_check_exit;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unsupported_diff_exit.rs"]
 mod unsupported_diff_exit;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/verify_execute_root.rs"]
+mod verify_execute_root;
 #[cfg(unix)]
 #[path = "cli_smoke/workflow_directory.rs"]
 mod workflow_directory;
