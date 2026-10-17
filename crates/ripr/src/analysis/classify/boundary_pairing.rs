@@ -3583,6 +3583,7 @@ mod tests {
             );
             let activation = ActivationEvidence {
                 observed_values: vec![ValueFact {
+                    source_file: None,
                     line: 3,
                     text: format!("{call_line} | element x = 0 of xs"),
                     value: "x == 0".to_string(),
