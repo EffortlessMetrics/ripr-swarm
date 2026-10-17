@@ -1539,6 +1539,54 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_archive_install_reports_unavailable_with_no_executable_identity()
+    -> Result<(), String> {
+        let out =
+            std::env::temp_dir().join(format!("first-run-failed-archive-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&out);
+        fs::create_dir_all(&out).map_err(|err| err.to_string())?;
+        let options = Options {
+            ripr: "ripr".into(),
+            out: out.clone(),
+            install_published: false,
+            install_archive: Some("0.10.0".into()),
+        };
+        let failed = StepResult {
+            exit: Some(1),
+            stderr: "checksum mismatch\n".into(),
+            ..step(archive::STEP, 0, "", "", 1.25)
+        };
+        finish(
+            &options,
+            &out,
+            "unavailable",
+            vec![failed],
+            Vec::new(),
+            None,
+        )?;
+        let report: Value = serde_json::from_str(
+            &fs::read_to_string(out.join("first-run.json")).map_err(|err| err.to_string())?,
+        )
+        .map_err(|err| err.to_string())?;
+        assert_eq!(report["ripr"], "unavailable");
+        assert_eq!(report["install"]["route"], "released_archive");
+        assert_eq!(report["install"]["failed"], true);
+        for key in ["archive_sha256", "asset", "executable", "target"] {
+            assert!(
+                report["install"].get(key).is_none(),
+                "{key} leaked into a failed install"
+            );
+        }
+        assert_eq!(report["cases"], json!([]));
+        assert_eq!(report["setup"][0]["step"], "install_archive");
+        assert_eq!(report["setup"][0]["exit"], 1);
+        assert_eq!(report["setup"][0]["secs"], 1.25);
+        assert_eq!(report["setup"][0]["stderr_log"], ARCHIVE_STDERR_LOG);
+        let _ = fs::remove_dir_all(&out);
+        Ok(())
+    }
+
+    #[test]
     fn unknown_arguments_name_the_usage() {
         let err = parse_options(&["--bogus".to_string()])
             .err()
