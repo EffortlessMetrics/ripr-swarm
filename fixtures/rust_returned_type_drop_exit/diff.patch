@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -10,7 +10,7 @@ impl Drop for Cfg {
+ }
+ 
+ pub fn make(x: u32) -> Cfg {
+-    Cfg { n: x * 2 }
++    Cfg { n: x * 3 }
+ }
+ 
+ #[cfg(test)]

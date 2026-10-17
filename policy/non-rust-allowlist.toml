@@ -767,6 +767,15 @@ classification = "fixture"
 reason = "Fixture-backed base/head attribution rules for canonical evidence comparison."
 covered_by = ["cargo test -p ripr --test causal_delta_fixture", "cargo xtask check-file-policy"]
 
+[[allow]]
+glob = "crates/ripr/tests/data/uncertain-delivery/receipt.json"
+kind = "assertion_helper_fixture"
+owner = "analysis/test-helpers"
+surface = "fixtures"
+classification = "fixture"
+reason = "Version-pinned #4478/#7818 comparison receipt and exact diff consumed by the public API helper witness."
+covered_by = ["cargo test -p ripr --test uncertain_delivery_helper", "cargo xtask check-file-policy"]
+
 # ---------------------------------------------------------------------------
 # Portable consumer (Python stdlib packet transport)
 # ---------------------------------------------------------------------------

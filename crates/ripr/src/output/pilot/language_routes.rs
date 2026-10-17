@@ -129,9 +129,12 @@ impl PilotLanguageRoutes {
     ) -> Self {
         let mut routes = Vec::new();
         for language in ROUTED_LANGUAGE_ORDER {
+            // Discovery routes the whole TS/JS family to `TypeScript`; pilot
+            // splits the JavaScript-family files back out so a JS-only
+            // repository gets the documented `javascript` route (#4908).
             let file_count = discovered
                 .iter()
-                .filter(|(found, _)| found == language)
+                .filter(|(found, path)| pilot_route_language(*found, path) == *language)
                 .count();
             if file_count == 0 {
                 continue;
@@ -227,6 +230,21 @@ impl PilotLanguageRoutes {
             }
         }
         commands
+    }
+}
+
+/// The pilot route a discovered file belongs to.
+fn pilot_route_language(discovered: LanguageId, path: &Path) -> LanguageId {
+    let javascript_family = discovered == LanguageId::TypeScript
+        && path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .and_then(crate::analysis::ts_js_source_kind)
+            == Some(crate::analysis::TsJsSourceKind::JavaScript);
+    if javascript_family {
+        LanguageId::JavaScript
+    } else {
+        discovered
     }
 }
 

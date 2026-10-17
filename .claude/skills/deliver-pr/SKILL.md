@@ -40,11 +40,11 @@ One coherent claim has one current candidate, current proof and review for the a
 6. If proof is absent or self-confirming, use `prepare-proof` and continue.
 7. Build or repair the one current candidate with `build-candidate` and materialize an exact committed head.
 8. Run `review-pr` on that exact head. Before publication, retain unavailable remote checks, artifacts, and external review as `REVIEW_INCOMPLETE`; do not convert them to pass.
-9. Use `finish-pr` to publish or resume the exact candidate when no equivalent PR already exists. Committing, pushing an ordinary branch, opening or updating the PR, and repairing it are routine delivery inside the selected claim; do not pause for owner permission.
+9. Use `finish-pr` to publish or resume the exact candidate when no equivalent PR already exists. Committing, pushing an ordinary branch, opening or updating the PR, and repairing it are routine delivery inside the selected claim; do not pause for owner permission. Immediately before pushing to a candidate branch, re-read the PR head (`gh pr view --json headRefOid` or equivalent) and compare it with the expected candidate SHA; see Candidate law for an externally advanced head.
 10. Immediately before publication, before resolving a conflict, and before replacing a supposedly stale candidate, repeat the claim-identity search against current `main`, open PRs, and recently merged PRs. If equivalent work landed, stop conflict repair, preserve any unique residual, and close or disposition the duplicate instead of manufacturing a rival PR.
 11. Re-enter `review-pr` on the exact published PR head after remote evidence is available. A green check set, empty thread list, or unavailable reviewer does not establish substantive review.
-12. Route `REPAIR_REQUIRED` back through the same candidate, then refresh only the affected proof and review dimensions.
-13. Only a current `REVIEW_READY` PR head may enter `finish-pr` merge convergence. Explicit incomplete or blocking review states remain draft or durably in flight.
+12. Route `REPAIR_REQUIRED` back through the same candidate, then refresh only the affected proof and review dimensions. Before repairing a PR gate failure, reproduce the failing signal on current `origin/main` and record the classification (`inherited`, `candidate`, or `not established`) in the PR body or owned comment; do not repair before that classification exists, and run `cargo xtask ci-policy` locally for gate-relevant repairs instead of spending a hosted cycle. Local `precommit` is not equivalent to `ci-policy` coverage.
+13. Immediately before entering `finish-pr` merge convergence, re-read the PR head (`gh pr view --json headRefOid` or equivalent) and compare it with the reviewed candidate SHA. Only a current `REVIEW_READY` PR head may enter `finish-pr` merge convergence; a head that differs from the reviewed SHA does not enter merge convergence without re-verification. Explicit incomplete or blocking review states remain draft or durably in flight.
 14. After merge or deliberate closure, verify current `main`, update delivered versus remaining acceptance, update parents, and release the candidate worktree.
 
 # Continuation handoff
@@ -76,6 +76,7 @@ for changes to these boundaries; scenario decisions do not establish real delive
 - A status helper's `BEHIND` observation requests integration judgment, not branch movement. Identify a material reason under the next rule before updating; retain Draft or running-check waits and reuse unaffected proof. Follow the recommendation into per-PR packets and board findings/dispositions so another projection cannot turn the observation into branch-update authority.
 - Rebase or update only for an actual content conflict, changed explicit prerequisite, material combined-tree failure, or repository policy that explicitly applies to this candidate.
 - Before repairing a conflict, first determine whether the conflicting upstream change already satisfies or supersedes the claim.
+- If the published head was externally advanced past the expected candidate SHA, adopt the advanced head as the candidate of record only after diff verification: inspect the new commits and diff and refresh the affected review dimensions. Never force-push over an externally advanced head, and never merge a SHA that differs from the reviewed head without re-verification. This creates no reservation, lease, lock, or sibling-monitoring surface.
 
 # Merge law
 
@@ -97,6 +98,7 @@ Track currentness by dimension rather than treating every SHA change as total in
 - test oracle;
 - public claim;
 - generated relationships;
+- golden drift inherited from a main change;
 - conflict resolution;
 - integration basis;
 - candidate head identity.

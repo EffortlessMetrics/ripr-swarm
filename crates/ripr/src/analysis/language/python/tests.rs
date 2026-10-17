@@ -1750,6 +1750,59 @@ fn genuine_alias_local_import_and_unrelated_helper_keep_owner_credit() -> Result
     Ok(())
 }
 
+fn classify_shop_fee_across(test_files: &[(&str, &str)]) -> Result<crate::domain::Finding, String> {
+    let owners = extract_owners(Path::new("src/shop.py"), SHOP_FEE_SOURCE);
+    let tests: Vec<_> = test_files
+        .iter()
+        .flat_map(|(path, source)| extract_tests(Path::new(path), source))
+        .collect();
+    classify_change_with_old(
+        Path::new("src/shop.py"),
+        4,
+        SHOP_FEE_NEW_LINE,
+        Some(SHOP_FEE_OLD_LINE),
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "changed shop.fee return should classify".to_string())
+}
+
+#[test]
+fn another_tests_owner_alias_does_not_credit_a_different_function() -> Result<(), String> {
+    // #8247: `quote` is `src.fixed.fixed` in the asserting test; an unrelated,
+    // uncalling test that imports the owner as `quote` must not make that
+    // assertion observe `fee`.
+    const ASSERTING: (&str, &str) = (
+        "tests/test_shop.py",
+        "from src.shop import fee as real_fee\nfrom src.fixed import fixed as quote\n\n\ndef test_fee_return():\n    real_fee(10)\n    assert quote(10) == 30\n",
+    );
+    const DONOR: (&str, &str) = (
+        "tests/test_catalog.py",
+        "def test_catalog_binding():\n    from src.shop import fee as quote\n    assert 1 == 1\n",
+    );
+    let borrowed = classify_shop_fee_across(&[ASSERTING, DONOR])?;
+    assert_shop_fee_withholds_stand_in_credit(&borrowed, "alias borrowed from another test");
+
+    // The donor changes nothing when its alias is renamed.
+    let renamed_donor = (
+        DONOR.0,
+        "def test_catalog_binding():\n    from src.shop import fee as donor_fee\n    assert 1 == 1\n",
+    );
+    let control = classify_shop_fee_across(&[ASSERTING, renamed_donor])?;
+    assert_shop_fee_withholds_stand_in_credit(&control, "renamed donor control");
+
+    // Positive: the asserting test's own alias still observes the owner.
+    let own = classify_shop_fee_across(&[
+        (
+            "tests/test_shop.py",
+            "from src.shop import fee as quote\n\n\ndef test_fee_return():\n    assert quote(10) == 30\n",
+        ),
+        DONOR,
+    ])?;
+    assert_shop_fee_exposed(&own);
+    Ok(())
+}
+
 const AUTH_SOURCE: &str = "class TokenValidator:\n    def __init__(self, valid):\n        self._valid = valid\n\n    def validate(self, token):\n        return token.strip() in self._valid\n";
 const AUTH_CHANGED_LINE: &str = "        return token.strip() in self._valid";
 

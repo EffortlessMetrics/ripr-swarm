@@ -3820,7 +3820,7 @@ fn expected_side_calls_owner(body_text: &str, observed: &str, owner_name: &str) 
 
 /// Byte offset of the matching close parenthesis within `inner` (which
 /// excludes the opening paren), string-aware; `None` when unbalanced.
-fn balanced_close_offset(inner: &str) -> Option<usize> {
+pub(super) fn balanced_close_offset(inner: &str) -> Option<usize> {
     let mut depth = 0usize;
     let mut quote: Option<char> = None;
     let mut escaped = false;

@@ -2841,6 +2841,7 @@ mod tests {
                 requires_test: true,
             }],
             earliest_unresolved_reason: None,
+            ..Default::default()
         };
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             files: BTreeMap::from([
@@ -2884,6 +2885,7 @@ mod tests {
                     requires_test: true,
                 }],
                 earliest_unresolved_reason: Some("rust_module_context_conflict".to_string()),
+                ..Default::default()
             },
             SourceRoleProvenance {
                 edges: vec![SourceRoleProvenanceEdge {
@@ -2895,6 +2897,7 @@ mod tests {
                     requires_test: false,
                 }],
                 earliest_unresolved_reason: None,
+                ..Default::default()
             },
         ] {
             let mut conservative_index = index.clone();
