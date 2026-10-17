@@ -1,0 +1,377 @@
+{
+ "schema_version": "work_intake_identity_corpus.v1",
+ "repository": "EffortlessMetrics/ripr-swarm",
+ "selection_policy": "explicit-root-selection",
+ "selection_policy_version": "v1",
+ "scenarios": [
+  {
+   "id": "intake-01-in-campaign-qualified-passes",
+   "title": "An issue recorded in one campaign qualifies with placement and contracts",
+   "captured": "work_portfolio/corpus",
+   "cases": [
+    {
+     "intake": {
+      "intake_id": "intake:issue:9105",
+      "repository": "EffortlessMetrics/ripr-swarm",
+      "portfolio_snapshot": "work-portfolio:sha256:f13413b564d05b401866a5194c6f8265fd03c890597a904648c5c332b3b92005",
+      "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "current_main_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "issue_number": 9105,
+      "qualification": "qualified",
+      "campaign_placement": "campaign-rust-repair",
+      "relevant_campaigns": [
+       "campaign-rust-repair"
+      ],
+      "open_overlaps": [
+       "issue:9106"
+      ],
+      "accepted_contracts": [
+       "RIPR-SPEC-0202",
+       "REQ-dup-family"
+      ],
+      "single_agent": false,
+      "derived_from": [
+       "fixtures/work_portfolio/corpus/issues.json"
+      ],
+      "legacy_active_goal_ref": null,
+      "legacy_current_work_item_ref": null
+     },
+     "expect": "pass",
+     "expect_violations": []
+    }
+   ]
+  },
+  {
+   "id": "intake-02-out-of-campaign-still-qualifies",
+   "title": "An issue outside every campaign may still qualify; placement stays a later decision",
+   "captured": "work_selection_identity/captured/standalone",
+   "cases": [
+    {
+     "intake": {
+      "intake_id": "intake:issue:9106:standalone",
+      "repository": "EffortlessMetrics/ripr-swarm",
+      "portfolio_snapshot": "work-portfolio:sha256:06c8d9fa8eb6feee4e6d2815b56dd8567d39460be40134e158d691a7c8bc2715",
+      "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "current_main_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "issue_number": 9106,
+      "qualification": "qualified",
+      "campaign_placement": null,
+      "relevant_campaigns": [],
+      "open_overlaps": [],
+      "accepted_contracts": [
+       "RIPR-SPEC-0202",
+       "REQ-dup-family"
+      ],
+      "single_agent": false,
+      "derived_from": [
+       "fixtures/work_selection_identity/captured/standalone/issues.json"
+      ],
+      "legacy_active_goal_ref": null,
+      "legacy_current_work_item_ref": null
+     },
+     "expect": "pass",
+     "expect_violations": []
+    }
+   ]
+  },
+  {
+   "id": "intake-03-pr-repair-intake-overlap-visible",
+   "title": "An intake for review/repair of an existing open PR keeps the overlap visible",
+   "captured": "work_portfolio/corpus",
+   "cases": [
+    {
+     "intake": {
+      "intake_id": "intake:issue:9101:repair",
+      "repository": "EffortlessMetrics/ripr-swarm",
+      "portfolio_snapshot": "work-portfolio:sha256:f13413b564d05b401866a5194c6f8265fd03c890597a904648c5c332b3b92005",
+      "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "current_main_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "issue_number": 9101,
+      "qualification": "qualified",
+      "campaign_placement": "campaign-rust-repair",
+      "relevant_campaigns": [
+       "campaign-rust-repair"
+      ],
+      "open_overlaps": [
+       "pr:8801",
+       "claim-9101"
+      ],
+      "accepted_contracts": [
+       "RIPR-SPEC-0200"
+      ],
+      "single_agent": false,
+      "derived_from": [
+       "fixtures/work_portfolio/corpus/issues.json"
+      ],
+      "legacy_active_goal_ref": null,
+      "legacy_current_work_item_ref": null
+     },
+     "expect": "pass",
+     "expect_violations": []
+    }
+   ]
+  },
+  {
+   "id": "intake-04-narrow-single-agent-intake-passes",
+   "title": "A narrow one-file issue stays single-agent despite other active campaigns",
+   "captured": "work_portfolio/corpus",
+   "cases": [
+    {
+     "intake": {
+      "intake_id": "intake:issue:9202:narrow",
+      "repository": "EffortlessMetrics/ripr-swarm",
+      "portfolio_snapshot": "work-portfolio:sha256:f13413b564d05b401866a5194c6f8265fd03c890597a904648c5c332b3b92005",
+      "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "current_main_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "issue_number": 9202,
+      "qualification": "qualified",
+      "campaign_placement": "campaign-editor-ux",
+      "relevant_campaigns": [
+       "campaign-editor-ux"
+      ],
+      "open_overlaps": [],
+      "accepted_contracts": [
+       "RIPR-SPEC-0207",
+       "REQ-editor-badges"
+      ],
+      "single_agent": true,
+      "derived_from": [
+       "fixtures/work_portfolio/corpus/issues.json"
+      ],
+      "legacy_active_goal_ref": null,
+      "legacy_current_work_item_ref": null
+     },
+     "expect": "pass",
+     "expect_violations": []
+    }
+   ]
+  },
+  {
+   "id": "intake-05-legacy-and-wrong-inputs-fail",
+   "title": "A legacy authority attempt, an unknown placement, an unknown campaign, an empty contract set, an unknown issue and a wrong repository fail visibly",
+   "captured": "work_portfolio/corpus",
+   "cases": [
+    {
+     "intake": {
+      "intake_id": "intake:issue:9105:legacy-unknown",
+      "repository": "EffortlessMetrics/ripr-swarm",
+      "portfolio_snapshot": "work-portfolio:sha256:f13413b564d05b401866a5194c6f8265fd03c890597a904648c5c332b3b92005",
+      "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "current_main_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "issue_number": 9105,
+      "qualification": "qualified",
+      "campaign_placement": "campaign-rust-repair",
+      "relevant_campaigns": [
+       "campaign-rust-repair"
+      ],
+      "open_overlaps": [],
+      "accepted_contracts": [
+       "RIPR-SPEC-0202"
+      ],
+      "single_agent": false,
+      "derived_from": [
+       "fixtures/work_portfolio/corpus/issues.json"
+      ],
+      "legacy_active_goal_ref": "campaign-unknown",
+      "legacy_current_work_item_ref": null
+     },
+     "expect": "fail",
+     "expect_violations": [
+      {
+       "law": "legacy_compatibility",
+       "route": "reconcile_selection"
+      }
+     ]
+    },
+    {
+     "intake": {
+      "intake_id": "intake:issue:9105:unknown-placement",
+      "repository": "EffortlessMetrics/ripr-swarm",
+      "portfolio_snapshot": "work-portfolio:sha256:f13413b564d05b401866a5194c6f8265fd03c890597a904648c5c332b3b92005",
+      "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "current_main_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "issue_number": 9105,
+      "qualification": "qualified",
+      "campaign_placement": "campaign-unknown",
+      "relevant_campaigns": [
+       "campaign-rust-repair"
+      ],
+      "open_overlaps": [],
+      "accepted_contracts": [
+       "RIPR-SPEC-0202"
+      ],
+      "single_agent": false,
+      "derived_from": [
+       "fixtures/work_portfolio/corpus/issues.json"
+      ],
+      "legacy_active_goal_ref": null,
+      "legacy_current_work_item_ref": null
+     },
+     "expect": "fail",
+     "expect_violations": [
+      {
+       "law": "campaign_ref_identity",
+       "route": "reconcile_selection"
+      }
+     ]
+    },
+    {
+     "intake": {
+      "intake_id": "intake:issue:9105:unknown-relevant",
+      "repository": "EffortlessMetrics/ripr-swarm",
+      "portfolio_snapshot": "work-portfolio:sha256:f13413b564d05b401866a5194c6f8265fd03c890597a904648c5c332b3b92005",
+      "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "current_main_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "issue_number": 9105,
+      "qualification": "qualified",
+      "campaign_placement": "campaign-rust-repair",
+      "relevant_campaigns": [
+       "campaign-unknown"
+      ],
+      "open_overlaps": [],
+      "accepted_contracts": [
+       "RIPR-SPEC-0202"
+      ],
+      "single_agent": false,
+      "derived_from": [
+       "fixtures/work_portfolio/corpus/issues.json"
+      ],
+      "legacy_active_goal_ref": null,
+      "legacy_current_work_item_ref": null
+     },
+     "expect": "fail",
+     "expect_violations": [
+      {
+       "law": "campaign_ref_identity",
+       "route": "reconcile_selection"
+      }
+     ]
+    },
+    {
+     "intake": {
+      "intake_id": "intake:issue:9105:no-contracts",
+      "repository": "EffortlessMetrics/ripr-swarm",
+      "portfolio_snapshot": "work-portfolio:sha256:f13413b564d05b401866a5194c6f8265fd03c890597a904648c5c332b3b92005",
+      "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "current_main_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "issue_number": 9105,
+      "qualification": "needs_triage",
+      "campaign_placement": "campaign-rust-repair",
+      "relevant_campaigns": [
+       "campaign-rust-repair"
+      ],
+      "open_overlaps": [],
+      "accepted_contracts": [],
+      "single_agent": false,
+      "derived_from": [
+       "fixtures/work_portfolio/corpus/issues.json"
+      ],
+      "legacy_active_goal_ref": null,
+      "legacy_current_work_item_ref": null
+     },
+     "expect": "fail",
+     "expect_violations": [
+      {
+       "law": "subject_identity",
+       "route": "reconcile_selection"
+      }
+     ]
+    },
+    {
+     "intake": {
+      "intake_id": "intake:issue:9999:unknown",
+      "repository": "EffortlessMetrics/ripr-swarm",
+      "portfolio_snapshot": "work-portfolio:sha256:f13413b564d05b401866a5194c6f8265fd03c890597a904648c5c332b3b92005",
+      "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "current_main_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "issue_number": 9999,
+      "qualification": "needs_triage",
+      "campaign_placement": null,
+      "relevant_campaigns": [],
+      "open_overlaps": [],
+      "accepted_contracts": [
+       "RIPR-SPEC-0202"
+      ],
+      "single_agent": false,
+      "derived_from": [
+       "fixtures/work_portfolio/corpus/issues.json"
+      ],
+      "legacy_active_goal_ref": null,
+      "legacy_current_work_item_ref": null
+     },
+     "expect": "fail",
+     "expect_violations": [
+      {
+       "law": "subject_identity",
+       "route": "reconcile_selection"
+      }
+     ]
+    },
+    {
+     "intake": {
+      "intake_id": "intake:issue:9105:wrong-repo",
+      "repository": "OtherOrg/other-repo",
+      "portfolio_snapshot": "work-portfolio:sha256:f13413b564d05b401866a5194c6f8265fd03c890597a904648c5c332b3b92005",
+      "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "current_main_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "issue_number": 9105,
+      "qualification": "qualified",
+      "campaign_placement": "campaign-rust-repair",
+      "relevant_campaigns": [
+       "campaign-rust-repair"
+      ],
+      "open_overlaps": [],
+      "accepted_contracts": [
+       "RIPR-SPEC-0202"
+      ],
+      "single_agent": false,
+      "derived_from": [
+       "fixtures/work_portfolio/corpus/issues.json"
+      ],
+      "legacy_active_goal_ref": null,
+      "legacy_current_work_item_ref": null
+     },
+     "expect": "fail",
+     "expect_violations": [
+      {
+       "law": "repository_identity",
+       "route": "recompile_basis"
+      }
+     ]
+    },
+    {
+     "intake": {
+      "intake_id": "intake:issue:9105:wrong-main",
+      "repository": "EffortlessMetrics/ripr-swarm",
+      "portfolio_snapshot": "work-portfolio:sha256:f13413b564d05b401866a5194c6f8265fd03c890597a904648c5c332b3b92005",
+      "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "current_main_sha": "3333333333333333333333333333333333333333",
+      "issue_number": 9105,
+      "qualification": "qualified",
+      "campaign_placement": "campaign-rust-repair",
+      "relevant_campaigns": [
+       "campaign-rust-repair"
+      ],
+      "open_overlaps": [],
+      "accepted_contracts": [
+       "RIPR-SPEC-0202"
+      ],
+      "single_agent": false,
+      "derived_from": [
+       "fixtures/work_portfolio/corpus/issues.json"
+      ],
+      "legacy_active_goal_ref": null,
+      "legacy_current_work_item_ref": null
+     },
+     "expect": "fail",
+     "expect_violations": [
+      {
+       "law": "basis_identity",
+       "route": "recompile_basis"
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

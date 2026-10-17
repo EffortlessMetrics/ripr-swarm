@@ -1,0 +1,12 @@
+{
+ "schema_version": "work_synthesis_identity_provenance.v1",
+ "repository": "EffortlessMetrics/ripr-swarm",
+ "captured_at": "2026-10-09T12:00:00Z",
+ "capture_method": "authored root-synthesis corpus for the RIPR-SPEC-0273 selected-work synthesis law checker against the committed RIPR-SPEC-0244 selection corpus",
+ "files": [
+  {
+   "path": "corpus.json",
+   "sha256": "f8732df841ff80ddffaeecf3ce356930ddb572f3dcfdee0c1b8f9fe4afdd27c2"
+  }
+ ]
+}

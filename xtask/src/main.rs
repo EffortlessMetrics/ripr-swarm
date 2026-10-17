@@ -64,8 +64,17 @@ mod python_judged_panel_report;
 mod repo_readiness;
 mod schema_pattern;
 mod types;
+mod work_adapter_identity;
+mod work_burndown_identity;
+mod work_claim_identity;
+mod work_context_identity;
+mod work_intake_identity;
+mod work_plan_identity;
 mod work_portfolio;
+mod work_result_identity;
 mod work_selection_identity;
+mod work_synthesis_identity;
+mod work_wave_identity;
 pub(crate) use types::*;
 mod reports;
 mod ripr_swarm;
@@ -21154,9 +21163,9 @@ fn local_context_line_findings(line: &str) -> Vec<(String, String)> {
     }
 
     let lower = line.to_ascii_lowercase();
-    for (marker, problem) in local_context_markers() {
-        if lower.contains(&marker.to_ascii_lowercase()) {
-            findings.insert((marker, problem));
+    for (marker, marker_lower, problem) in local_context_marker_table() {
+        if lower.contains(marker_lower.as_str()) {
+            findings.insert((marker.clone(), problem.clone()));
         }
     }
 
@@ -21203,6 +21212,21 @@ fn local_context_line_findings(line: &str) -> Vec<(String, String)> {
     findings.into_iter().collect()
 }
 
+/// Markers with their lowercase needles, built once: the per-line scan runs
+/// over every tracked line and must not reallocate the table.
+fn local_context_marker_table() -> &'static [(String, String, String)] {
+    static TABLE: std::sync::OnceLock<Vec<(String, String, String)>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        local_context_markers()
+            .into_iter()
+            .map(|(marker, problem)| {
+                let lowered = marker.to_ascii_lowercase();
+                (marker, lowered, problem)
+            })
+            .collect()
+    })
+}
+
 fn local_context_markers() -> Vec<(String, String)> {
     vec![
         (
@@ -21242,8 +21266,13 @@ fn suspicious_runtime_file_names() -> Vec<String> {
 }
 
 fn windows_absolute_path_tokens(line: &str) -> Vec<String> {
-    let bytes = line.as_bytes();
     let mut tokens = Vec::new();
+    // Every match needs a drive-letter colon; the std search is far cheaper
+    // than the byte loop below on the many lines that have none.
+    if !line.contains(':') {
+        return tokens;
+    }
+    let bytes = line.as_bytes();
     let mut index = 0;
     while index + 2 < bytes.len() {
         let token_boundary = index == 0 || is_local_context_token_delimiter(bytes[index - 1]);
@@ -21332,6 +21361,9 @@ fn recorded_on_pattern() -> &'static str {
 
 fn file_reference_tokens(line: &str) -> Vec<String> {
     let mut tokens = Vec::new();
+    if !line.contains("file_") && !line.contains("turn") {
+        return tokens;
+    }
     let bytes = line.as_bytes();
     let mut index = 0;
     while index < bytes.len() {

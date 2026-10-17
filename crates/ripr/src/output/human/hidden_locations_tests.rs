@@ -29,14 +29,11 @@ fn assert_locations(root: PathBuf, currentness: SourceCurrentness) {
     assert!(rendered.contains("\nHidden:\n"), "{rendered}");
     for index in usize::from(selected)..3 {
         assert!(
-            rendered.contains(&format!(
-                "    - ./src/f{index}.rs:{} (weakly_exposed)\n",
-                7 + index
-            )),
+            rendered.contains(&format!("    - ./src/f{index}.rs:{} (weak)\n", 7 + index)),
             "{rendered}"
         );
     }
-    assert!(rendered.contains("Summary: 3 probe(s)"), "{rendered}");
+    assert!(rendered.contains("Summary: 3 probes ("), "{rendered}");
     assert_eq!(
         rendered.matches("    - ./src/").count(),
         3 - usize::from(selected)
@@ -113,11 +110,14 @@ fn outside_parent_escape_and_unrooted_paths_keep_their_spelling() -> std::io::Re
     let mut output = bounded_output_with_findings(findings);
     output.root = root;
     let rendered = render(&output);
-    assert!(rendered.contains("(no_actionable_gap)"), "{rendered}");
+    assert!(
+        rendered.contains("State: no gap selected for repair"),
+        "{rendered}"
+    );
     for file in files {
         assert!(
             rendered.contains(&format!(
-                "    - {}:7 (weakly_exposed)\n",
+                "    - {}:7 (weak)\n",
                 crate::output::path::display_path(&file)
             )),
             "{rendered}"
@@ -136,7 +136,7 @@ fn path_encoding_and_terminal_escaping_are_preserved() {
     output.root = root;
     let rendered = render(&output);
     assert!(
-        rendered.contains("    - ./src/percent%25name\\u{1b}.rs:7 (weakly_exposed)\n"),
+        rendered.contains("    - ./src/percent%25name\\u{1b}.rs:7 (weak)\n"),
         "{rendered}"
     );
     assert!(!rendered.contains('\u{1b}'), "{rendered}");
@@ -164,11 +164,11 @@ fn location_change_keeps_the_twenty_row_cap_and_continuation() {
     );
     assert_eq!(rendered.matches("    - ./src/").count(), 20, "{rendered}");
     assert!(
-        rendered.contains("    - ./src/f00.rs:1 (weakly_exposed)\n"),
+        rendered.contains("    - ./src/f00.rs:1 (weak)\n"),
         "{rendered}"
     );
     assert!(
-        rendered.contains("    - ./src/f19.rs:20 (weakly_exposed)\n"),
+        rendered.contains("    - ./src/f19.rs:20 (weak)\n"),
         "{rendered}"
     );
     assert!(!rendered.contains("    - ./src/f20.rs:"), "{rendered}");
