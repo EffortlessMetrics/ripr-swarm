@@ -3318,10 +3318,59 @@ fn has_json_flag(args: &[String], usage: &str) -> Result<bool, String> {
     Ok(json)
 }
 
+/// Where the compiled input came from. Rendered only in the human Markdown
+/// header so a reader can tell fixture bytes from live capture; it is not
+/// part of any DTO, JSON body or portable identity digest.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct WorkCaptureNoticeV1 {
+    pub dir: String,
+    pub captured_at: String,
+    pub default_branch_sha: String,
+    pub committed_fixture: bool,
+}
+
+/// True when `root` resolves under the workspace `fixtures/` tree, so the
+/// committed default corpus is named as such however it was spelled.
+fn is_committed_fixture_dir(root: &Path) -> bool {
+    let fixtures = workspace_path("fixtures");
+    match (root.canonicalize(), fixtures.canonicalize()) {
+        (Ok(root), Ok(fixtures)) => root.starts_with(fixtures),
+        _ => root.starts_with(&fixtures),
+    }
+}
+
+fn capture_notice_markdown(notice: &WorkCaptureNoticeV1) -> String {
+    let mut body = String::new();
+    if notice.committed_fixture {
+        body.push_str(
+            "> **Committed fixture corpus, not live state.** Candidates, issue and PR \
+             numbers below are synthetic and may not exist on GitHub. Pass `--captured <dir>` \
+             with a live capture to rank real work.\n\n",
+        );
+    }
+    body.push_str(&format!("- captured from: `{}`\n", notice.dir));
+    body.push_str(&format!(
+        "- captured at: `{}` @ `{}` (compare with the current default branch head; the \
+         input is not refreshed)\n",
+        notice.captured_at, notice.default_branch_sha
+    ));
+    body
+}
+
+/// Insert the capture notice directly under the document title, leaving the
+/// DTO-derived renderers and their JSON twins untouched.
+fn with_capture_notice(markdown: &str, notice: &WorkCaptureNoticeV1) -> String {
+    let notice_body = capture_notice_markdown(notice);
+    match markdown.split_once("\n\n") {
+        Some((title, rest)) => format!("{title}\n\n{notice_body}{rest}"),
+        None => format!("{markdown}\n\n{notice_body}"),
+    }
+}
+
 fn load_and_compile(
     dir: &str,
     captured_dir: Option<&str>,
-) -> Result<WorkPortfolioSnapshotV1, String> {
+) -> Result<(WorkPortfolioSnapshotV1, WorkCaptureNoticeV1), String> {
     // A user-supplied `--captured` directory is cwd-relative (absolute paths
     // honored as-is); only when it does not exist relative to the cwd does
     // it fall back to the workspace root, which keeps the documented default
@@ -3333,7 +3382,14 @@ fn load_and_compile(
         workspace_path(dir)
     };
     let captured = load_work_captured_dir(&root)?;
-    compile_work_portfolio(&captured, captured_dir)
+    let notice = WorkCaptureNoticeV1 {
+        dir: dir.to_string(),
+        captured_at: captured.manifest.captured_at.clone(),
+        default_branch_sha: captured.manifest.default_branch_sha.clone(),
+        committed_fixture: is_committed_fixture_dir(&root),
+    };
+    let snapshot = compile_work_portfolio(&captured, captured_dir)?;
+    Ok((snapshot, notice))
 }
 
 /// `cargo xtask work portfolio [--captured <dir>] [--json]` (#1704,
@@ -3345,14 +3401,15 @@ pub(crate) fn work_portfolio_command(args: &[String]) -> Result<(), String> {
     const USAGE: &str = "usage: cargo xtask work portfolio [--captured <dir>] [--json]";
     let (dir, explicit_captured, rest) = split_captured_arg(args, USAGE)?;
     let json = has_json_flag(&rest, USAGE)?;
-    let snapshot = load_and_compile(&dir, explicit_captured.as_deref())?;
+    let (snapshot, notice) = load_and_compile(&dir, explicit_captured.as_deref())?;
     let json_body = work_portfolio_json(&snapshot)?;
     crate::write_report("work-portfolio.json", &json_body)?;
-    crate::write_report("work-portfolio.md", &work_portfolio_markdown(&snapshot))?;
+    let markdown = with_capture_notice(&work_portfolio_markdown(&snapshot), &notice);
+    crate::write_report("work-portfolio.md", &markdown)?;
     if json {
         print!("{json_body}");
     } else {
-        print!("{}", work_portfolio_markdown(&snapshot));
+        print!("{markdown}");
     }
     Ok(())
 }
@@ -3407,7 +3464,7 @@ pub(crate) fn work_candidates_command(args: &[String]) -> Result<(), String> {
             other => return Err(format!("unknown argument `{other}`\n{USAGE}")),
         }
     }
-    let snapshot = load_and_compile(&dir, explicit_captured.as_deref())?;
+    let (snapshot, notice) = load_and_compile(&dir, explicit_captured.as_deref())?;
     let view = build_candidates_view(
         &snapshot,
         campaign.as_deref(),
@@ -3417,11 +3474,12 @@ pub(crate) fn work_candidates_command(args: &[String]) -> Result<(), String> {
     )?;
     let json_body = work_portfolio_json(&view)?;
     crate::write_report("work-candidates.json", &json_body)?;
-    crate::write_report("work-candidates.md", &work_candidates_markdown(&view))?;
+    let markdown = with_capture_notice(&work_candidates_markdown(&view), &notice);
+    crate::write_report("work-candidates.md", &markdown)?;
     if json {
         print!("{json_body}");
     } else {
-        print!("{}", work_candidates_markdown(&view));
+        print!("{markdown}");
     }
     Ok(())
 }
@@ -3457,15 +3515,16 @@ pub(crate) fn work_explain_command(args: &[String]) -> Result<(), String> {
     let Some(candidate) = candidate else {
         return Err(format!("missing required --candidate <id>\n{USAGE}"));
     };
-    let snapshot = load_and_compile(&dir, explicit_captured.as_deref())?;
+    let (snapshot, notice) = load_and_compile(&dir, explicit_captured.as_deref())?;
     let view = build_explain_view(&snapshot, &candidate)?;
     let json_body = work_portfolio_json(&view)?;
     crate::write_report("work-explain.json", &json_body)?;
-    crate::write_report("work-explain.md", &work_explain_markdown(&view))?;
+    let markdown = with_capture_notice(&work_explain_markdown(&view), &notice);
+    crate::write_report("work-explain.md", &markdown)?;
     if json {
         print!("{json_body}");
     } else {
-        print!("{}", work_explain_markdown(&view));
+        print!("{markdown}");
     }
     Ok(())
 }
@@ -4726,6 +4785,63 @@ mod tests {
             return Err(format!(
                 "unknown-candidate error must list the stable ids, got: {error}"
             ));
+        }
+        Ok(())
+    }
+
+    /// The default corpus is synthetic fixture input: the human header must
+    /// say so, name the capture date and branch sha, and sit under the title.
+    #[test]
+    fn capture_notice_names_fixture_corpus_date_and_sha_under_the_title() -> Result<(), String> {
+        let (snapshot, notice) = load_and_compile(DEFAULT_WORK_CAPTURED_DIR, None)?;
+        if !notice.committed_fixture {
+            return Err("the default corpus must be detected as a committed fixture".to_string());
+        }
+        let markdown = with_capture_notice(
+            &work_candidates_markdown(&build_candidates_view(&snapshot, None, None, 3, None)?),
+            &notice,
+        );
+        let mut lines = markdown.lines();
+        if lines.next() != Some("# Work candidates") {
+            return Err(format!("title must stay first: {markdown}"));
+        }
+        for needle in [
+            "Committed fixture corpus, not live state",
+            "captured from: `fixtures/work_portfolio/corpus`",
+            "captured at: `2026-10-05T12:00:00Z` @ `7cb64d60c9dd0dda59586e6b72dcdf150296a26f`",
+            "- portfolio identity:",
+        ] {
+            if !markdown.contains(needle) {
+                return Err(format!("capture notice lost `{needle}`: {markdown}"));
+            }
+        }
+        // The notice is Markdown-only: JSON and the portable identity are
+        // byte-identical with or without it.
+        if work_portfolio_json(&snapshot)?.contains("Committed fixture") {
+            return Err("the capture notice must not enter the JSON body".to_string());
+        }
+        Ok(())
+    }
+
+    /// A directory outside `fixtures/` is a live capture: no fixture banner,
+    /// but the capture date still prints.
+    #[test]
+    fn capture_notice_omits_fixture_banner_for_non_fixture_directories() -> Result<(), String> {
+        let notice = WorkCaptureNoticeV1 {
+            dir: "/tmp/live".to_string(),
+            captured_at: "2026-10-17T00:00:00Z".to_string(),
+            default_branch_sha: "abc123".to_string(),
+            committed_fixture: false,
+        };
+        let markdown = with_capture_notice("# Work portfolio\n\n- repository: `x`\n", &notice);
+        if markdown.contains("fixture") || !markdown.contains("2026-10-17T00:00:00Z") {
+            return Err(format!("unexpected live-capture notice: {markdown}"));
+        }
+        if !markdown.starts_with("# Work portfolio\n\n- captured from: `/tmp/live`") {
+            return Err(format!("notice must sit under the title: {markdown}"));
+        }
+        if is_committed_fixture_dir(Path::new("/tmp/live")) {
+            return Err("an unrelated directory is not the committed fixture tree".to_string());
         }
         Ok(())
     }
