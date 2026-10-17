@@ -62,3 +62,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_returned_error_drop_exit (6)
+
+Reason:
+RIPR-SPEC-0197: input_identity hash only; fixtures were blessed from a CRLF working tree on Windows, re-blessed from LF so the hash matches any eol=lf checkout
+
+Command:
+`cargo xtask goldens bless rust_returned_error_drop_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
