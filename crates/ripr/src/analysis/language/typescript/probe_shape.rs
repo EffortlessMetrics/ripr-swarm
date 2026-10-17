@@ -383,7 +383,13 @@ fn return_ternary_condition(leading: &str) -> Option<&str> {
     // is unmatched inside the condition. A balanced `(a > b) ? x : y` keeps
     // its parens.
     let condition = match condition.strip_prefix('(') {
-        Some(inner) if inner.matches('(').count() == inner.matches(')').count() => inner.trim(),
+        // A quote may hold a paren, so counting is only trusted without one.
+        Some(inner)
+            if !inner.contains(['"', '\'', '`'])
+                && inner.matches('(').count() == inner.matches(')').count() =>
+        {
+            inner.trim()
+        }
         _ => condition,
     };
     (!condition.is_empty()).then_some(condition)
@@ -397,32 +403,42 @@ fn returned_expression(leading: &str) -> Option<&str> {
     if let Some(expression) = leading.strip_prefix("return ") {
         return Some(expression.trim_start());
     }
-    let declaration = ["export ", "const ", "let ", "var "]
+    // `[export ](const|let|var) name[: Type] = <initializer>`: the first ` = `
+    // must close a plain declaration head, not a destructuring or parameter
+    // default (`const { f = (x) => ... } = o`, `function g(cb = x => ...)`).
+    let declaration = leading.strip_prefix("export ").unwrap_or(leading);
+    let declaration = ["const ", "let ", "var "]
         .iter()
-        .any(|prefix| leading.starts_with(prefix));
-    if !declaration {
+        .find_map(|keyword| declaration.strip_prefix(keyword))?;
+    let (head, initializer) = declaration.split_once(" = ")?;
+    if head.contains(['(', '{', '[', ',']) {
         return None;
     }
-    let (head, body) = leading.split_once(" => ")?;
-    // The arrow must be the declaration's own initializer: `(params)` with an
-    // optional return type, or one bare parameter. A call in front of the
-    // arrow (`rows.map((row) => ...)`) leaves a paren open or a `.` in it.
-    let (_, initializer) = head.split_once(" = ")?;
     let initializer = initializer.trim_start();
     let initializer = initializer.strip_prefix("async ").unwrap_or(initializer);
-    let own_arrow = if initializer.starts_with('(') {
-        initializer.matches('(').count() == initializer.matches(')').count()
+    // The arrow is the declaration's own initializer: `(params)[: Type]` or
+    // one bare parameter, with nothing (a call, a ternary) in front of it.
+    let (parameters, body) = initializer.split_once(" => ")?;
+    let own_arrow = if parameters.starts_with('(') {
+        parameters.matches('(').count() == parameters.matches(')').count()
+            && !parameters.contains(" ? ")
     } else {
-        !initializer.is_empty()
-            && initializer
+        !parameters.is_empty()
+            && parameters
                 .chars()
                 .all(|ch| ch.is_alphanumeric() || matches!(ch, '_' | '$'))
     };
     if !own_arrow {
         return None;
     }
+    // A block body returns nothing here, and a curried arrow's body is
+    // another function, not the conditional.
     let body = body.trim_start();
-    (!body.starts_with('{')).then_some(body)
+    let curried = body
+        .split_once(" ? ")
+        .map_or(body, |(before, _)| before)
+        .contains(" => ");
+    (!body.starts_with('{') && !curried).then_some(body)
 }
 
 pub(crate) fn typescript_return_value_discriminator(line_text: &str) -> Option<String> {

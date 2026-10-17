@@ -5883,6 +5883,11 @@ fn classify_probe_shape_reads_a_declared_arrow_and_paren_ternary_as_its_conditio
         "const totals = rows.map((row) => row.total > 100 ? 1 : 2);",
         "export const tax = (total: number) => { return total > 100 ? 1 : 2; };",
         "export const ready = (total: number) => total > 100;",
+        "const { fmt = (x) => x > 1 ? 'a' : 'b' } = opts;",
+        "export function f(cb = (x) => x > 1 ? 1 : 2) {",
+        "export function g(cb = x => x > 1 ? 1 : 2) {",
+        "const f = (a) => (b) => b > 1 ? a : b;",
+        "const x = (a) ? n => n > 1 ? 1 : 2 : d;",
     ] {
         assert_eq!(typescript_boundary_discriminator(line), None, "{line}");
     }
