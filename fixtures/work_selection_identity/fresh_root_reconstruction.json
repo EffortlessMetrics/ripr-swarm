@@ -1,0 +1,169 @@
+{
+  "schema_version": "work_identity_fresh_root_reconstruction.v1",
+  "issue": 1706,
+  "spec": "RIPR-SPEC-0244",
+  "reconstructed_by": "fresh-root delivery agent (Kimi Work subagent) on a Windows Git Bash worktree of branch feat/1706-pr-d-docs-compat, launched with no prior chat context; every conclusion reached from committed artifacts plus the ten offline check commands only",
+  "reconstructed_at": "2026-10-17T15:44:23Z",
+  "branch": "feat/1706-pr-d-docs-compat",
+  "base_main": "3b52493cb83092eb152304c09d4c3be56e21d725",
+  "commands": {
+    "offline_reconstruction": [
+      "cargo xtask work selection check --json",
+      "cargo xtask work result check --json",
+      "cargo xtask work claim check --json",
+      "cargo xtask work wave check --json",
+      "cargo xtask work context check --json",
+      "cargo xtask work synthesis check --json",
+      "cargo xtask work burndown check --json",
+      "cargo xtask work intake check --json",
+      "cargo xtask work plan check --json",
+      "cargo xtask work adapter check --json",
+      "cargo test -p xtask --bin xtask work_selection_identity_fresh_root_receipt"
+    ]
+  },
+  "domains": [
+    {
+      "domain": "selection",
+      "spec": "RIPR-SPEC-0244",
+      "command": "cargo xtask work selection check",
+      "corpus": "fixtures/work_selection_identity",
+      "corpus_sha256": "d42aeb4663faf3806fbe3d4098d2a79bcc5ad13df0d9a0d4dfc6c94335ab01d5",
+      "provenance_sha256": "710b528b1261e2fc577719febd1ebaeba925d3df6e9b55a9d4e21fb6d9a93f92",
+      "scenarios": 12,
+      "cases": 20,
+      "failed": 0,
+      "pass_state": "passing"
+    },
+    {
+      "domain": "result",
+      "spec": "RIPR-SPEC-0269",
+      "command": "cargo xtask work result check",
+      "corpus": "fixtures/work_result_identity",
+      "corpus_sha256": "75946cdc1131654578c987e68a8fb807c99faaedf81824578ab9f358aca98daf",
+      "provenance_sha256": "e4a7dfce2fa1bd51348c9aa25ff5a9d41a7637e0b93ccb2ec66f66e69850e3ca",
+      "scenarios": 5,
+      "cases": 14,
+      "failed": 0,
+      "pass_state": "passing"
+    },
+    {
+      "domain": "claim",
+      "spec": "RIPR-SPEC-0270",
+      "command": "cargo xtask work claim check",
+      "corpus": "fixtures/work_claim_identity",
+      "corpus_sha256": "8a21a852bae84ac9c6806ae0d18cd394daa70f18d23c56f77f96b5371a053618",
+      "provenance_sha256": "73787d5dd51e97a678cdaf707caef09bd21d05b29e710f014601504d7ca16979",
+      "scenarios": 5,
+      "cases": 11,
+      "failed": 0,
+      "pass_state": "passing"
+    },
+    {
+      "domain": "wave",
+      "spec": "RIPR-SPEC-0271",
+      "command": "cargo xtask work wave check",
+      "corpus": "fixtures/work_wave_identity",
+      "corpus_sha256": "1643abdb1e3ca9fa20f58aff4a5f66f421eb5f21a132e55f8a4d54734c3f6b97",
+      "provenance_sha256": "4ab7297502f976fd919397709aa9a5bd3c02b70b73cd785fc1666d6b8e21a353",
+      "scenarios": 6,
+      "cases": 7,
+      "failed": 0,
+      "pass_state": "passing"
+    },
+    {
+      "domain": "context",
+      "spec": "RIPR-SPEC-0272",
+      "command": "cargo xtask work context check",
+      "corpus": "fixtures/work_context_identity",
+      "corpus_sha256": "7f8433d32f738bb223845898e2bb20a23560f1b8e25af3178b905c6ef4863625",
+      "provenance_sha256": "4b7a730be5ac27e084bbab0f7528adf7289646d148b6940a20f49a440baa00b9",
+      "scenarios": 6,
+      "cases": 11,
+      "failed": 0,
+      "pass_state": "passing"
+    },
+    {
+      "domain": "synthesis",
+      "spec": "RIPR-SPEC-0273",
+      "command": "cargo xtask work synthesis check",
+      "corpus": "fixtures/work_synthesis_identity",
+      "corpus_sha256": "f8732df841ff80ddffaeecf3ce356930ddb572f3dcfdee0c1b8f9fe4afdd27c2",
+      "provenance_sha256": "757a0f5f4293636f464beab1dfb6994778414c1db7d564a211c4663ac787f3ce",
+      "scenarios": 5,
+      "cases": 9,
+      "failed": 0,
+      "pass_state": "passing"
+    },
+    {
+      "domain": "burndown",
+      "spec": "RIPR-SPEC-0274",
+      "command": "cargo xtask work burndown check",
+      "corpus": "fixtures/work_burndown_identity",
+      "corpus_sha256": "54265f3414b950c6942bd736ed325a4f0d9ae7fb6348b399e683a5090d6d03de",
+      "provenance_sha256": "fb2a8fc7a15bd017e4c3ec5d753130fb872b47752689079545200ec49a83193a",
+      "scenarios": 5,
+      "cases": 9,
+      "failed": 0,
+      "pass_state": "passing"
+    },
+    {
+      "domain": "intake",
+      "spec": "RIPR-SPEC-0275",
+      "command": "cargo xtask work intake check",
+      "corpus": "fixtures/work_intake_identity",
+      "corpus_sha256": "6203d4d82ed42185769cdc4866d4aa8dba2e2f39b69a5a405a34547d76be9045",
+      "provenance_sha256": "dfecfc21276c55719ef810f2486f3743265f46dad5ecbe89dbc321fccb14bcf2",
+      "scenarios": 5,
+      "cases": 11,
+      "failed": 0,
+      "pass_state": "passing"
+    },
+    {
+      "domain": "plan",
+      "spec": "RIPR-SPEC-0276",
+      "command": "cargo xtask work plan check",
+      "corpus": "fixtures/work_plan_identity",
+      "corpus_sha256": "db286eec69b91bb20061d2ffadacef9cfb8e67a745479d627ba5b1486af09a49",
+      "provenance_sha256": "db3cc30059119daa43ecdd631bf53508f7e4a0d5668b602d3a1d902eeaf56c52",
+      "scenarios": 5,
+      "cases": 10,
+      "failed": 0,
+      "pass_state": "passing"
+    },
+    {
+      "domain": "adapter",
+      "spec": "RIPR-SPEC-0277",
+      "command": "cargo xtask work adapter check",
+      "corpus": "fixtures/work_adapter_identity",
+      "corpus_sha256": "4c8034748392352e17996f0dc843471d6ebb2c9d577eed5f34837dabb6c13052",
+      "provenance_sha256": "b2214e4827497fcec9d7df7b0a4f4537c54abb6aadb2a1b6d63b3acec52b33ba",
+      "scenarios": 5,
+      "cases": 10,
+      "failed": 0,
+      "pass_state": "passing"
+    }
+  ],
+  "drift_checks": [
+    {
+      "subject": "selection corpus bytes",
+      "observed": "corpus.json and provenance.json recompute to the recorded SHA-256 digests over LF bytes",
+      "if_drifted": "if a selection corpus byte changed, the digest binding rejects the receipt instead of fabricating agreement; the corpus change must land with an intentionally re-authored receipt"
+    },
+    {
+      "subject": "nine PR B consumer corpora",
+      "observed": "each consumer corpus.json and provenance.json recompute to the recorded SHA-256 digests over LF bytes",
+      "if_drifted": "if any consumer corpus changed, the reconstruction rejects and names the drifted domain rather than matching a stale receipt"
+    },
+    {
+      "subject": "observed pass state",
+      "observed": "all ten domain checks re-ran offline from committed artifacts alone with zero failing cases: 59 cases across 12+5+5+6+6+5+5+5+5+5 scenarios",
+      "if_drifted": "if any domain check regressed, the fresh-process reconstruction would record failing cases and the receipt test would reject the `passing` pin"
+    },
+    {
+      "subject": "no singleton authority",
+      "observed": "no domain command reads `.ripr/goals/`, chat history or any repository-wide current campaign; legacy active-goal/current-work-item refs resolve read-only as historical campaign references (RIPR-SPEC-0244 legacy compatibility)",
+      "if_drifted": "if a check silently promoted a legacy ref or a singleton field into authority, the pinned negative cases (reject_legacy_authority, retired-resource and no-singleton fields) would fail"
+    }
+  ],
+  "result": "all_ten_domains_reconstruct_from_committed_artifacts_no_chat_history"
+}
