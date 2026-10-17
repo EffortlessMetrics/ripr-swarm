@@ -2586,14 +2586,14 @@ fn builtin_property_owner_is_not_decorator_indirection() -> Result<(), String> {
     // related attribute-read test must not hide behind decorator_indirection.
     // If this classifies `no_static_path`, the attribute-read relation is
     // missing and that reach work is out of this claim.
-    let source = "class C:\n    @property\n    def v(self):\n        return 2\n";
-    let owners = extract_owners(Path::new("src/c.py"), source);
+    let source = "class Holder:\n    @property\n    def v(self):\n        return 2\n";
+    let owners = extract_owners(Path::new("src/holder.py"), source);
     let tests = extract_tests(
-        Path::new("tests/test_c.py"),
-        "from src.c import C\n\n\ndef test_v():\n    assert C().v == 2\n",
+        Path::new("tests/test_holder.py"),
+        "from src.holder import Holder\n\n\ndef test_v():\n    assert Holder().v == 2\n",
     );
     let Some(finding) = classify_change_with_old(
-        Path::new("src/c.py"),
+        Path::new("src/holder.py"),
         4,
         "        return 2",
         Some("        return 1"),
@@ -2639,14 +2639,14 @@ fn builtin_property_owner_is_not_decorator_indirection() -> Result<(), String> {
 
 #[test]
 fn rebound_property_owner_keeps_decorator_indirection() -> Result<(), String> {
-    let source = "from helpers import property\n\nclass C:\n    @property\n    def v(self):\n        return 2\n";
-    let owners = extract_owners(Path::new("src/c.py"), source);
+    let source = "from helpers import property\n\nclass Holder:\n    @property\n    def v(self):\n        return 2\n";
+    let owners = extract_owners(Path::new("src/holder.py"), source);
     let tests = extract_tests(
-        Path::new("tests/test_c.py"),
-        "from src.c import C\n\n\ndef test_v():\n    assert C().v == 2\n",
+        Path::new("tests/test_holder.py"),
+        "from src.holder import Holder\n\n\ndef test_v():\n    assert Holder().v == 2\n",
     );
     let Some(finding) = classify_change_with_old(
-        Path::new("src/c.py"),
+        Path::new("src/holder.py"),
         6,
         "        return 2",
         Some("        return 1"),
