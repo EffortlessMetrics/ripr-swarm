@@ -87,7 +87,10 @@ fn name_is_direct_owner_result(
     let mut depth = 0usize;
     let mut statement_depth = 0usize;
     let mut statement = String::new();
-    for (offset, line) in test.body.lines().enumerate() {
+    // Literals and comments are blanked over the whole body first: a `}` or
+    // `;` on its own line inside a multi-line string is not code.
+    let body = blank_literals_and_comments(&test.body);
+    for (offset, line) in body.lines().enumerate() {
         if test.start_line + offset >= oracle_line {
             break;
         }
@@ -131,6 +134,97 @@ fn name_is_direct_owner_result(
         statement.clear();
     }
     scope.last().is_some_and(|(_, owner_bound)| *owner_bound)
+}
+
+/// `text` with string, raw-string, char and comment content removed. Every
+/// newline is kept so line offsets still match the original source.
+fn blank_literals_and_comments(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut at = 0;
+    while at < chars.len() {
+        let ch = chars[at];
+        let next = chars.get(at + 1).copied();
+        if ch == '/' && next == Some('/') {
+            while at < chars.len() && chars[at] != '\n' {
+                at += 1;
+            }
+            continue;
+        }
+        if ch == '/' && next == Some('*') {
+            at += 2;
+            while at < chars.len() && !(chars[at] == '*' && chars.get(at + 1) == Some(&'/')) {
+                if chars[at] == '\n' {
+                    out.push('\n');
+                }
+                at += 1;
+            }
+            at = (at + 2).min(chars.len());
+            continue;
+        }
+        let word_start =
+            at == 0 || !(chars[at - 1].is_ascii_alphanumeric() || chars[at - 1] == '_');
+        if ch == 'r' && word_start {
+            let mut quote = at + 1;
+            while chars.get(quote) == Some(&'#') {
+                quote += 1;
+            }
+            if chars.get(quote) == Some(&'"') {
+                let hashes = quote - at - 1;
+                at = quote + 1;
+                while at < chars.len() {
+                    if chars[at] == '"' && (1..=hashes).all(|n| chars.get(at + n) == Some(&'#')) {
+                        at += 1 + hashes;
+                        break;
+                    }
+                    if chars[at] == '\n' {
+                        out.push('\n');
+                    }
+                    at += 1;
+                }
+                continue;
+            }
+        }
+        if ch == '"' {
+            at += 1;
+            while at < chars.len() {
+                match chars[at] {
+                    '\\' => {
+                        if chars.get(at + 1) == Some(&'\n') {
+                            out.push('\n');
+                        }
+                        at += 2;
+                        continue;
+                    }
+                    '"' => {
+                        at += 1;
+                        break;
+                    }
+                    '\n' => out.push('\n'),
+                    _ => {}
+                }
+                at += 1;
+            }
+            continue;
+        }
+        if ch == '\'' {
+            if next == Some('\\') {
+                at += 2;
+                while at < chars.len() && chars[at] != '\'' {
+                    at += 1;
+                }
+                at += 1;
+                continue;
+            }
+            if chars.get(at + 2) == Some(&'\'') {
+                at += 3;
+                continue;
+            }
+        }
+        out.push(ch);
+        at += 1;
+    }
+    out
 }
 
 enum BindingVerdict {
@@ -286,7 +380,10 @@ fn contains_word(text: &str, word: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{assignment_target, initializer_is_owner_call, statement_binding_verdict};
+    use super::{
+        assignment_target, blank_literals_and_comments, initializer_is_owner_call,
+        statement_binding_verdict,
+    };
 
     #[test]
     fn reads_and_comparisons_are_not_assignments() {
@@ -352,5 +449,20 @@ mod tests {
         ] {
             assert!(!initializer_is_owner_call(other, "make_count"), "{other}");
         }
+    }
+
+    #[test]
+    fn literals_and_comments_are_blanked_across_lines_keeping_newlines() {
+        let source =
+            "a;\nlet n = \"x\n}\n\";\nlet r = r#\"{\n}\"#; // \"q\nlet c = '\"'; /* {\n} */ b;";
+        let blanked = blank_literals_and_comments(source);
+        assert_eq!(blanked.matches('\n').count(), source.matches('\n').count());
+        assert!(
+            !blanked.contains('{') && !blanked.contains('}'),
+            "{blanked}"
+        );
+        assert!(
+            blanked.contains("let n =") && blanked.contains("let c =") && blanked.contains("b;")
+        );
     }
 }
