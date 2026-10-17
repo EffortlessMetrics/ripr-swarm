@@ -29494,6 +29494,15 @@ fn check_ancestor_and_empty_base_advice_is_not_about_remotes()
         !stderr.contains("remote"),
         "a remote cannot supply an ancestor revision: {stderr}"
     );
+    // A missing anchor is the missing ref itself; only a resolvable anchor
+    // makes the offset the problem.
+    let missing_anchor = run_ripr(&["check", "--root", &root_arg, "--base", "nosuchbranch~1"]);
+    assert_eq!(missing_anchor.status.code(), Some(2), "{missing_anchor:?}");
+    let stderr = String::from_utf8_lossy(&missing_anchor.stderr);
+    assert!(
+        !stderr.contains("history is shorter"),
+        "an unresolved anchor must keep the fetch advice: {stderr}"
+    );
     let empty = run_ripr(&["check", "--root", &root_arg, "--base", ""]);
     assert_eq!(empty.status.code(), Some(2), "{empty:?}");
     let stderr = String::from_utf8_lossy(&empty.stderr);

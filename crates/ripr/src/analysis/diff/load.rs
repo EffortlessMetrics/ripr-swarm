@@ -1314,7 +1314,10 @@ fn missing_ref_repair(root: &Path, missing_ref: &str, git_timeout: Option<Durati
          --unshallow` (in GitHub Actions, set `fetch-depth: 0` on actions/checkout)"
             .to_string();
     }
-    if is_ancestor_revision(missing_ref) {
+    if ancestor_anchor(missing_ref).is_some_and(|anchor| {
+        git_ref_output(root, &format!("{anchor}^{{commit}}"), git_timeout)
+            .is_some_and(|output| output.status.success())
+    }) {
         return format!(
             "`{missing_ref}` is relative to a commit, so fetching cannot supply it: this \
              repository's history is shorter than that. Run `git log --oneline` to see how \
@@ -1342,11 +1345,14 @@ fn missing_ref_repair(root: &Path, missing_ref: &str, git_timeout: Option<Durati
     }
 }
 
-/// A revision spelled relative to another commit (`HEAD~5`, `main^2`): an
-/// unresolved one means the history is too short, which a remote cannot fix.
-fn is_ancestor_revision(missing_ref: &str) -> bool {
-    !missing_ref.contains('/')
-        && (missing_ref.contains('~') || missing_ref.contains('^') || missing_ref.contains("@{"))
+/// The anchor of a revision spelled relative to another commit (`HEAD` in
+/// `HEAD~5`, `origin/main` in `origin/main^`). The caller must still confirm
+/// the anchor resolves: when it does, the offset overshoots a short history,
+/// which a fetch cannot fix; when it does not, the anchor itself is the
+/// missing ref. Reflog and upstream forms (`@{...}`) are not offsets.
+fn ancestor_anchor(missing_ref: &str) -> Option<&str> {
+    let anchor = &missing_ref[..missing_ref.find(['~', '^'])?];
+    (!anchor.is_empty() && !anchor.contains("@{")).then_some(anchor)
 }
 
 /// Advice for a remote-qualified missing ref (`origin/main`). The qualifier
@@ -3238,19 +3244,28 @@ mod tests {
     }
 
     #[test]
-    fn ancestor_revisions_are_not_remote_fetch_problems() {
-        for relative in ["HEAD~1", "HEAD~5", "main^", "main~2", "HEAD@{1}"] {
-            assert!(is_ancestor_revision(relative), "{relative}");
+    fn ancestor_anchor_extracts_the_revision_a_suffix_is_relative_to() {
+        for (relative, anchor) in [
+            ("HEAD~1", "HEAD"),
+            ("main^", "main"),
+            ("main~2", "main"),
+            ("origin/main~3", "origin/main"),
+            ("feature/x^2", "feature/x"),
+        ] {
+            assert_eq!(ancestor_anchor(relative), Some(anchor), "{relative}");
         }
-        // Named refs, hashes and remote-qualified refs keep the remote advice.
-        for named in [
+        // Plain refs, hashes, reflog/upstream forms and anchorless suffixes
+        // keep the existing advice.
+        for other in [
             "main",
             "origin/main",
-            "refs/heads/x",
             "abc1234",
-            "origin/a~b",
+            "HEAD@{1}",
+            "@{u}",
+            "~2",
+            "^HEAD",
         ] {
-            assert!(!is_ancestor_revision(named), "{named}");
+            assert_eq!(ancestor_anchor(other), None, "{other}");
         }
     }
 
