@@ -63,9 +63,9 @@ always-on disclosure in section 4 still fires.
 Original rationale (kept for history):
 
 Add `[typescript] resolve_tsconfig_paths = false` to the ripr config model.
-The feature is opt-in because tsconfig path resolution without running the
-TypeScript compiler is inherently approximative and honesty-risky. Default
-OFF preserves the existing conservative behavior.
+The feature was originally opt-in because tsconfig path resolution without running the
+TypeScript compiler is inherently approximative and honesty-risky. The original default
+OFF preserved the existing conservative behavior; the amendment above flips it to ON.
 
 ### 2. Single-hop alias loader (`tsconfig.rs`)
 
@@ -349,7 +349,7 @@ result:    class: exposed
 ### After (`resolve_tsconfig_paths = false`, disclosure emitted)
 
 ```
-resolve_tsconfig_paths = false  (default)
+resolve_tsconfig_paths = false  (explicit opt-out)
 result:    class: no_static_path  (unchanged)
            evidence includes: typescript_limitation: typescript_path_alias_unresolved
 ```

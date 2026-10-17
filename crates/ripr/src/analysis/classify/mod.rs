@@ -12,6 +12,7 @@ mod flow;
 mod gap_admission;
 mod helper_transfer;
 mod infection;
+mod macro_item_names;
 mod match_transfer;
 mod operand_pin;
 mod owner_pin;
@@ -65,7 +66,7 @@ pub(in crate::analysis) use helper_transfer::{
     hop_reach_keeps_weak_oracle_gap, resolve_chain, returned_ledger,
     returned_ledger_caller_is_observed, selected_inherent_calls,
 };
-pub(in crate::analysis) use infection::infection_evidence_with_boundary_input;
+pub(in crate::analysis) use infection::infection_evidence_for_owner;
 pub(in crate::analysis) use operand_pin::operand_only_pin;
 pub(in crate::analysis) use owner_pin::{
     AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, direct_call_name,
@@ -77,7 +78,7 @@ pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_rec
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
 pub(in crate::analysis) use propagation_witness::{
     PropagationWitnessV1, assertion_observes_collection_argument,
-    assertion_observes_direct_collection, current_path_witness_with,
+    assertion_observes_direct_collection_for_probe, current_path_witness_with,
     direct_collection_mutation_receiver, field_assignment_target,
     mutexed_assertion_observes_collection_argument, owner_may_exit_before_line,
     retain_returned_ledger, returned_ledger_witness,
