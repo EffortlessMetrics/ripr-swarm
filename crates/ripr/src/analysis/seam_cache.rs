@@ -4504,7 +4504,8 @@ mod tests {
         // 1.79 -> 1.80: compose golden-file pins, early error-variant pins
         // and returned-element field pins (RIPR-SPEC-0225 decision 9); no
         // standalone 1.79 is reusable.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.81");
+        // 1.81 -> 1.82: field-selector limitation metadata (#8479).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.82");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4578,8 +4579,8 @@ mod tests {
         // 0.84 -> 0.85: same early error-variant pins as full 1.79 (#7063).
         // 0.85 -> 0.86: same composed golden-file, early error-variant and
         // returned-element field pins as full 1.80.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.87");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.87");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.88");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.88");
     }
 
     #[test]
@@ -5752,9 +5753,15 @@ mod tests {
                         vec![
                             ("schema_version", previous_outer),
                             ("sharded_cache_schema_version", "0.21"),
+                            // #8479: even copied old field-selector entries must miss.
+                            ("schema_version", if compact { "0.87" } else { "1.81" }),
+                            ("sharded_cache_schema_version", "0.87"),
                         ]
                     } else {
-                        vec![("schema_version", previous_outer)]
+                        vec![
+                            ("schema_version", previous_outer),
+                            ("schema_version", if compact { "0.87" } else { "1.81" }),
+                        ]
                     };
                     for (field, previous) in previous_generations {
                         let mut value: serde_json::Value = serde_json::from_slice(&invalid_bytes)
@@ -5773,7 +5780,7 @@ mod tests {
                             CacheLoad::Miss
                         ) {
                             return Err(format!(
-                                "unsigned nesting generation must miss: compact={compact} sharded={sharded} field={field}"
+                                "previous classified generation must miss: compact={compact} sharded={sharded} field={field}"
                             ));
                         }
                     }

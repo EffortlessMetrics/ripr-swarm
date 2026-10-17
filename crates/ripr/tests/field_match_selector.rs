@@ -164,17 +164,26 @@ fn field_match_selector_never_borrows_an_unrelated_or_overwritten_observation()
         "        lease.settled_elapsed_ms = Some(1001);\n",
         "        assert_eq!(charge(&lease), 2);",
     );
-    for body in [
+    for (case, body) in [
         "        let mut lease = fixture();\n        lease.timeout_sec = 1001;\n        assert_eq!(charge(&lease), 1001);",
         "        let mut changed = fixture();\n        changed.settled_elapsed_ms = Some(1001);\n        let sibling = fixture();\n        assert_eq!(charge(&sibling), 600);",
         "        let lease = fixture();\n        let _ = charge(&lease);\n        let value: Option<u32> = None;\n        assert_eq!(value, None);",
         "        let mut lease = fixture();\n        let result = charge(&lease);\n        lease.settled_elapsed_ms = Some(1001);\n        assert_eq!(result, 600);",
         "        let mut lease = fixture();\n        lease.settled_elapsed_ms = Some(1001);\n        let result = charge(&lease);\n        let result = 600;\n        assert_eq!(result, 600);",
-    ] {
+    ].into_iter().enumerate() {
         assert!(SOURCE.contains(original));
         let fixture = Fixture::new(&SOURCE.replace(original, body), DIFF)?;
         let output = fixture.check()?;
         assert_eq!(output.findings.len(), 4, "{body}");
+        let named = output.findings.iter().filter(|finding| finding.static_limit_kind == Some(ripr::domain::StaticLimitKind::RustFieldMatchSelectorUnresolved)).collect::<Vec<_>>();
+        if case == 2 {
+            assert_eq!(named.len(), 3, "unrelated strong assertion must exercise conditional guidance");
+        }
+        for finding in named {
+            let advice = finding.recommended_next_step.as_deref().ok_or("missing inspection guidance")?;
+            assert!(advice.contains("whether a related assertion observes that call's returned value"));
+            assert!(!advice.contains("and its returned-value assertion"));
+        }
         assert!(
             output
                 .findings

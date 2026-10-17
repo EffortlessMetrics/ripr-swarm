@@ -392,8 +392,8 @@ pub enum StaticLimitKind {
     /// this is a named limitation, not a coverage or repair claim.
     RustValuePropagationUnresolved,
     /// A plain owner-parameter field selects a changed tail match, but the
-    /// analyzer cannot align its invocation value with the returned-value
-    /// assertion. Metadata only: classification and all proof legs remain.
+    /// analyzer cannot establish its invocation value or whether an assertion
+    /// observes that invocation's return. Metadata only: classification and all proof legs remain.
     RustFieldMatchSelectorUnresolved,
     /// An integration test invokes a Cargo-built binary, but ripr does not
     /// yet map that binary target back to the changed owner. The
@@ -560,7 +560,7 @@ impl StaticLimitKind {
             }
             StaticLimitKind::RustFieldMatchSelectorUnresolved => {
                 "A plain owner-parameter field selects this match, but ripr cannot align its value \
-                 at the owner invocation with the returned-value assertion. This names an analyzer \
+                 at the owner invocation or establish whether an assertion observes that invocation's return. This names an analyzer \
                  limitation without changing classification or claiming coverage."
             }
             StaticLimitKind::RustSubprocessBinaryReachUnresolved => {

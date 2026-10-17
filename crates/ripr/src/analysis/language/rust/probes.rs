@@ -51,12 +51,12 @@ pub(super) fn apply_rust_field_match_selector_limit(
     finding.static_limit_kind = Some(StaticLimitKind::RustFieldMatchSelectorUnresolved);
     finding.evidence.extend([
         format!("limitation_last_established_edge: owner parameter field `{selector}` is the changed tail match selector"),
-        format!("limitation_first_unresolved_edge: `{selector}` value at the owner invocation and alignment with the same returned-value assertion"),
+        format!("limitation_first_unresolved_edge: `{selector}` value at the owner invocation and whether a related assertion observes that invocation's returned value"),
         "limitation_analyzer_route: analysis/rust-field-match-selector".to_string(),
         "limitation_non_claim: named analyzer limitation only; no coverage, test adequacy, gap absence, or same-invocation proof".to_string(),
     ]);
     finding.recommended_next_step = Some(format!(
-        "Inspect `{selector}` at the existing owner call and its returned-value assertion; add or strengthen a test only if that inspection identifies a missing observation."
+        "Inspect `{selector}` at the existing owner call and whether a related assertion observes that call's returned value; add or strengthen a test only if that inspection identifies a missing observation."
     ));
 }
 
