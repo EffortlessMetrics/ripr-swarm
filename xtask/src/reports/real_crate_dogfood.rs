@@ -580,16 +580,30 @@ mod tests {
         validate_manifest(&manifest)
     }
 
+    fn rejected<T>(result: Result<T, String>, what: &str) -> Result<(), String> {
+        match result {
+            Ok(_) => Err(format!("{what} should have been rejected")),
+            Err(_) => Ok(()),
+        }
+    }
+
     #[test]
-    fn validation_rejects_short_revisions_and_repeated_ids() {
+    fn validation_rejects_short_revisions_and_repeated_ids() -> Result<(), String> {
         let good = "a".repeat(40);
-        assert!(validate_manifest(&manifest(vec![case("a-1", &good)])).is_ok());
-        assert!(validate_manifest(&manifest(vec![case("a-1", "abc1234")])).is_err());
-        assert!(
-            validate_manifest(&manifest(vec![case("a-1", &good), case("a-1", &good)])).is_err()
-        );
-        assert!(validate_manifest(&manifest(vec![case("A B", &good)])).is_err());
-        assert!(validate_manifest(&manifest(vec![])).is_err());
+        validate_manifest(&manifest(vec![case("a-1", &good)]))?;
+        rejected(
+            validate_manifest(&manifest(vec![case("a-1", "abc1234")])),
+            "a short revision",
+        )?;
+        rejected(
+            validate_manifest(&manifest(vec![case("a-1", &good), case("a-1", &good)])),
+            "a repeated id",
+        )?;
+        rejected(
+            validate_manifest(&manifest(vec![case("A B", &good)])),
+            "a non-canonical id",
+        )?;
+        rejected(validate_manifest(&manifest(vec![])), "an empty manifest")
     }
 
     #[test]
@@ -619,11 +633,14 @@ mod tests {
     }
 
     #[test]
-    fn fetch_requires_network_opt_in_and_run_requires_a_binary() {
-        assert!(parse_options("fetch", &[]).is_err());
-        assert!(parse_options("fetch", &["--allow-network".to_string()]).is_ok());
-        assert!(parse_options("run", &[]).is_err());
-        assert!(parse_options("run", &["--ripr".to_string(), "x".to_string()]).is_ok());
-        assert!(parse_options("check", &["--bogus".to_string()]).is_err());
+    fn fetch_requires_network_opt_in_and_run_requires_a_binary() -> Result<(), String> {
+        rejected(parse_options("fetch", &[]), "fetch without --allow-network")?;
+        parse_options("fetch", &["--allow-network".to_string()])?;
+        rejected(parse_options("run", &[]), "run without --ripr")?;
+        parse_options("run", &["--ripr".to_string(), "x".to_string()])?;
+        rejected(
+            parse_options("check", &["--bogus".to_string()]),
+            "an unknown flag",
+        )
     }
 }
