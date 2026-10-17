@@ -35,10 +35,11 @@ fn ensure_default_output_contained_with(
     })?;
     // Compare resolved locations rather than asking `is_symlink`, so NTFS
     // junctions and other aliases are judged by where they actually land.
-    for relative in ["target", "target/ripr", "target/ripr/cache"] {
+    for relative in ["target", "target/ripr", "target/ripr/cache", "target/ripr/reports"] {
         let path = root.join(relative);
-        if std::fs::symlink_metadata(&path).is_err() {
-            continue;
+        match std::fs::symlink_metadata(&path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            _ => {}
         }
         let problem = match path.canonicalize() {
             Ok(canonical) if canonical.starts_with(&canonical_root) => continue,
