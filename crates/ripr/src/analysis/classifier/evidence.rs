@@ -86,7 +86,11 @@ fn return_ledger_limit(
 }
 
 impl ClassifiedProbeEvidence {
-    pub(in crate::analysis) fn gather(context: &ProbeContext<'_>, reveal_expression: &str) -> Self {
+    pub(in crate::analysis) fn gather(
+        context: &ProbeContext<'_>,
+        reveal_expression: &str,
+        proximity_reach: &TransitiveReachIndex<'_>,
+    ) -> Self {
         let test_summaries = context.related_test_summaries();
         let fallback_pin_syntax = OwnerPinSyntax::default();
         let pin_syntax = context.owner_pin_syntax.unwrap_or(&fallback_pin_syntax);
@@ -483,9 +487,9 @@ impl ClassifiedProbeEvidence {
             )
         });
         let package_defeats_by_file = FileDefeatMemo::default();
-        // Built lazily: only a match arm beside an owner-calling test asks
-        // whether a same-file test may run the owner (#6297).
-        let proximity_reach = TransitiveReachIndex::new(context.index);
+        // The run-level graph is lazy and shared with reach-limit disclosure
+        // (#6778). Keep this owner walk local to the probe; unused proximity
+        // gates still do not build the graph.
         let owner_reach = std::cell::OnceCell::new();
         let owner_locals = context
             .owner_fn
@@ -1524,6 +1528,7 @@ mod tests {
         ClassifiedProbeEvidence::gather(
             &context,
             "if trimmed != Some(expected_id.trim()).as_str() {",
+            &crate::analysis::classify::TransitiveReachIndex::new(context.index),
         )
     }
 
@@ -1667,7 +1672,11 @@ mod tests {
         };
         let index = RustIndex::default();
         let context = ProbeContext::new(&probe, Some(&owner), Vec::new(), false, &index, true);
-        let evidence = ClassifiedProbeEvidence::gather(&context, "amount");
+        let evidence = ClassifiedProbeEvidence::gather(
+            &context,
+            "amount",
+            &crate::analysis::classify::TransitiveReachIndex::new(context.index),
+        );
         let Some(diagnostic) = evidence.propagation_witness() else {
             return Err("gather discarded the producer witness".to_string());
         };
@@ -1714,7 +1723,11 @@ mod tests {
         };
         let index = RustIndex::default();
         let context = ProbeContext::new(&probe, Some(&owner), Vec::new(), false, &index, true);
-        let mut evidence = ClassifiedProbeEvidence::gather(&context, "amount");
+        let mut evidence = ClassifiedProbeEvidence::gather(
+            &context,
+            "amount",
+            &crate::analysis::classify::TransitiveReachIndex::new(context.index),
+        );
         let Some(PropagationWitnessDiagnostic::Valid(witness)) =
             evidence.propagation_witness.as_mut()
         else {
@@ -2077,7 +2090,11 @@ mod tests {
             true,
         )
         .with_helper_chain(Some(chain));
-        let evidence = ClassifiedProbeEvidence::gather(&context, &probe.expression);
+        let evidence = ClassifiedProbeEvidence::gather(
+            &context,
+            &probe.expression,
+            &crate::analysis::classify::TransitiveReachIndex::new(context.index),
+        );
         let diagnostic = evidence
             .propagation_witness()
             .ok_or("missing retained witness")?;

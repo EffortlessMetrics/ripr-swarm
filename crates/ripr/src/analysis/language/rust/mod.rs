@@ -2308,6 +2308,7 @@ impl RustAdapter {
                     workspace_index_complete,
                     dependency_edges.as_ref(),
                     related_test_candidate_index,
+                    &transitive_reach,
                     propagation_origin.as_ref(),
                 );
                 finding.language = Some(LanguageId::Rust);
@@ -2829,6 +2830,7 @@ impl RustAdapter {
                     true,
                     Some(&dependency_edges),
                     related_test_candidate_index,
+                    &transitive_reach,
                     None,
                 );
                 finding.language = Some(LanguageId::Rust);

@@ -371,8 +371,8 @@ impl TypeScriptAdapter {
                 all_owners.extend(extract_owners(relative, source));
             }
         }
-        // Build tsconfig.json alias map when opt-in flag is enabled (RIPR-SPEC-0099).
-        // fail-closed: None when flag is off, when tsconfig is absent, when extends/
+        // Build tsconfig.json alias map unless explicitly opted out (RIPR-SPEC-0099).
+        // fail-closed: None when the flag is explicitly set false, when tsconfig is absent, when extends/
         // references are present, or when any other parse/resolution failure occurs.
         // A capped-read size limit on the config itself is surfaced below as a
         // named limitation rather than failing silently closed.
@@ -380,8 +380,8 @@ impl TypeScriptAdapter {
             if options.resolve_tsconfig_paths {
                 load_alias_map_with_read_error(&options.root)
             } else {
-                // Flag off: no gap — the MapUnavailable cause carries the
-                // honest "enable the flag" advice for this path (#4106-B).
+                // Flag explicitly false: no gap — the MapUnavailable cause carries the
+                // honest "set the flag back to true" advice for this path (#4106-B).
                 (None, None, None)
             };
         // In-workspace package names resolve whether or not the tsconfig
