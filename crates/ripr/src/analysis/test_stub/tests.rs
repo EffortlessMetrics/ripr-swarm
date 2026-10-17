@@ -1470,6 +1470,8 @@ fn returns_unit_recognizes_unit_and_unit_results_only() {
         "Result<(), Error>",
         "io::Result<()>",
         "Result<(), Vec<u8>>",
+        "Result<(), HashMap<K, V>>",
+        "Result<(), (A, B)>",
     ] {
         assert!(returns_unit(unit), "{unit}");
     }
@@ -1479,6 +1481,8 @@ fn returns_unit_recognizes_unit_and_unit_results_only() {
         "Result<u8, ()>",
         "Result<(u8, u8), E>",
         "Vec<()>",
+        "Result<HashMap<K, V>, E>",
+        "Result<Vec<()>, E>",
     ] {
         assert!(!returns_unit(value), "{value}");
     }
