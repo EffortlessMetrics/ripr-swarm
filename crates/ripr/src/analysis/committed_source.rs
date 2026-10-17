@@ -298,6 +298,7 @@ pub(crate) fn snapshot_inputs_differ_in(root: &Path, directory: &Path) -> bool {
 /// path, `Ok(None)` for a dirty path with no content at `HEAD`, and the
 /// working-tree bytes otherwise.
 pub(crate) fn read_source_bytes(root: &Path, relative: &Path) -> std::io::Result<Option<Vec<u8>>> {
+    crate::analysis::input_boundary::observe_module_read(root, &root.join(relative), false);
     match lookup(root, relative) {
         CommittedSourceRead::Worktree => std::fs::read(root.join(relative)).map(Some),
         CommittedSourceRead::Committed(bytes) => Ok(Some(bytes)),

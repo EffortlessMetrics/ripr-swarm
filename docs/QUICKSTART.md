@@ -66,11 +66,22 @@ For another installation method or a pinned server, see
 
 ## CLI First Hour
 
-From a Rust repository on a branch with committed changes:
+From a Rust repository with a change to inspect:
 
 ```bash
 ripr check
 ```
+
+In this development build, `check` uses uncommitted tracked edits when present,
+otherwise committed history against the default base. On a clean checkout of
+the base branch, edit a tracked source file and run `ripr check` again. For a new
+file, first use `git add -N PATH` so it enters the tracked diff. See
+[Choose the change](#choose-the-change) for explicit diff selection.
+
+Use `ripr doctor` to diagnose setup if analysis cannot complete; it is not a
+required first step. To explore a clean repository without making a change,
+use the separate [repository exploration](#explore-the-repository) path,
+`ripr pilot --root .`.
 
 No `ripr.toml` is required. The development CLI prints a summary and a bounded
 `Start here:` section with a finding, a no-action result, or the limitation
@@ -126,8 +137,9 @@ ripr check --base REF
 ```
 
 On an unchanged base branch, an empty diff is expected. To analyze a saved patch,
-use `ripr check --diff PATH`, replacing `PATH` with your patch file. Details and
-options are available in `ripr help check`.
+use `ripr check --diff PATH`, replacing `PATH` with your patch file. The common
+options are in `ripr help check`; `ripr help check --all` lists every option,
+output format, and environment variable.
 
 ### Explore the repository
 

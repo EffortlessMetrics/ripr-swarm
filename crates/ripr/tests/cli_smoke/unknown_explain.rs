@@ -212,7 +212,7 @@ fn unknown_explain_repair_preserves_decidable_recipes() -> TestResult {
             (
                 "all_no_path_disclosure",
                 "no_static_path",
-                "call `apply_fee` and assert on its result",
+                "call `apply_fee(amount: i32, fee: i32) -> i32` and assert on its result",
             ),
         ] {
             let root = fixture(name, &scratch)?;

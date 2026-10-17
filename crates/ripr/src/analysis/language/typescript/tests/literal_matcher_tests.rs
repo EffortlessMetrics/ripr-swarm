@@ -174,6 +174,8 @@ fn mock_payload_on_a_test_file_factory_mock_is_credited() {
         "function makeDb(): Db & { write: jest.Mock } {\n  return { write: jest.fn() };\n}",
         "const makeDb = () => ({ write: jest.fn(), read: jest.fn() });",
         "const makeDb = () => {\n  return { write: vi.fn() };\n};",
+        // A space before `()` is the same call (#8138).
+        "function makeDb() {\n  return { write: jest.fn () };\n}",
     ] {
         let source = file(factory, pin);
         let tests = extract_tests(Path::new("test/save.test.ts"), &source);
@@ -342,8 +344,102 @@ fn mock_payload_on_a_test_file_factory_mock_is_credited() {
             ),
         ),
         ("second-use", file(factory, &format!("{pin}\n  other(db);"))),
+        // The test's own call on the mock could satisfy the pin (#8140).
+        (
+            "own-member-call",
+            file(
+                factory,
+                "  const db = makeDb();\n  save(db, 1);\n  db.write(2);\n  expect(db.write).toHaveBeenCalledWith(2);",
+            ),
+        ),
     ] {
         assert_eq!(credited(&source), Ok(false), "{label}");
+    }
+}
+
+/// #8138: the mock binding must be exactly a fresh mock. A trailing
+/// operator or member can bind another object, a named or `function`
+/// implementation can record the asserted call through `this`, and a line
+/// break does not end a statement whose next line continues it.
+#[test]
+fn mock_payload_binding_must_be_exactly_a_fresh_mock() {
+    let facts = MockCallFacts::read(
+        "  db.write(v + 2);",
+        Some("function save(db: Db, v: number) {\n  db.write(v + 2);\n}"),
+        "save",
+        &params(&["db", "v"]),
+    );
+    let db_payload = called_with("db.write", "2");
+    for test in [
+        "const db = { write: jest.fn() }; save(db, 1);",
+        "const db = { write: jest.fn((v) => v) }; save(db, 1);",
+        "const db = { write: jest.fn(() => 2) }; save(db, 1);",
+        "const db = { write: jest.fn(async (v) => v) }; save(db, 1);",
+        "const db = { write: jest.fn(v => v) }; save(db, 1);",
+        // A space before the call's `(` is the same call.
+        "const db = { write: jest.fn () }; save(db, 1);",
+        "const db = { write: jest.fn ((v) => v) }; save(db, 1);",
+        // A `)` inside a string in the implementation is masked, so the
+        // call closes at its real parenthesis (#8148 review).
+        "const db = { write: jest.fn(() => \")\") }; save(db, 1);",
+        "const db = { write: vi.fn<(v: number) => void>() };\nsave(db, 1);",
+    ] {
+        assert!(facts.credits(&db_payload, test), "{test}");
+    }
+    for test in [
+        "const db = { write: jest.fn() && pre.write }; save(db, 1);",
+        "const db = { write: jest.fn(recordTwo) }; save(db, 1);",
+        "const db = { write: jest.fn(function (v) { this.write(2); }) }; save(db, 1);",
+        // A call or a conditional wrapping an arrow can evaluate to a named
+        // implementation (#8148 review); the arrow token inside it is not
+        // the implementation. A comma expression or a helper call that
+        // receives an arrow and returns a named function behaves the same.
+        "const db = { write: jest.fn((() => recordTwo)()) }; save(db, 1);",
+        "const db = { write: jest.fn(ready ? (v) => v : recordTwo) }; save(db, 1);",
+        "const db = { write: jest.fn((() => 0, recordTwo)) }; save(db, 1);",
+        "const db = { write: jest.fn(choose(() => 0)) }; save(db, 1);",
+        "const db = { write: jest.fn(), inner: pre }.inner; save(db, 1);",
+        "const db = { write: jest.fn() }\n  && pre;\nsave(db, 1);",
+        "const db = { write: jest.fn().mockName(\"w\") }; save(db, 1);",
+    ] {
+        assert!(!facts.credits(&db_payload, test), "{test}");
+    }
+
+    let send = |binding: &str| {
+        format!("{binding}\nannounce(7, send);\nexpect(send).toHaveBeenCalledWith(\"order 7\");")
+    };
+    for binding in [
+        "const send = jest.fn();",
+        "const send = jest.fn((m: string) => m);",
+        "const send = jest.fn(async (m: string) => m);",
+        // A space before the call's `(` is the same call.
+        "const send = jest.fn ();",
+        "const send = vi.fn<(m: string) => void>();",
+        // A line break before a new statement ends it.
+        "const send = jest.fn()",
+    ] {
+        assert!(
+            notify_facts(Some(NOTIFY_OWNER)).credits(&order_payload(), &send(binding)),
+            "{binding}"
+        );
+    }
+    for binding in [
+        "const send = jest.fn() && pre;",
+        "const send = jest.fn()\n  && pre;",
+        "const send = jest.fn()\n  .bind(pre);",
+        "const send = jest.fn()\n  instanceof Function;",
+        "const send = jest.fn()\n  (pre);",
+        "const send = jest.fn(record);",
+        "const send = jest.fn(function () {});",
+        // A wrapping call or conditional can hand back a named
+        // implementation (#8148 review).
+        "const send = jest.fn((() => recordTwo)());",
+        "const send = jest.fn(ready ? (m) => m : recordTwo);",
+    ] {
+        assert!(
+            !notify_facts(Some(NOTIFY_OWNER)).credits(&order_payload(), &send(binding)),
+            "{binding}"
+        );
     }
 }
 

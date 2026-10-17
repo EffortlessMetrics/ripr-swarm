@@ -409,3 +409,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_constructor_field_wrong_field_observer (20)
+
+Reason:
+RIPR-SPEC-0001: output contract changed - 7798 collapse tautological unknown-sink flow row when sink text restates the kind label
+
+Command:
+`cargo xtask goldens bless rust_constructor_field_wrong_field_observer --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

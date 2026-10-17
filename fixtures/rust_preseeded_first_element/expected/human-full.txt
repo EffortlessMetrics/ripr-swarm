@@ -1,0 +1,63 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_preseeded_first_element/input
+
+Summary: 2 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+
+Shared evidence and guidance
+  E1 [findings 1, 2]: reach yes: Related tests appear to reach record: first_element_is_the_preseeded_one
+  E2 [findings 1, 2]: infection yes: Reachable tests can plausibly activate this changed behavior
+  E3 [findings 1, 2]: propagation yes: Changed behavior appears to influence state write: self.log.push(x * 1)
+  E4 [findings 1, 2]: observation yes: A related test observes a value or effect near the changed behavior
+  E5 [findings 1, 2]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  E6 [findings 1, 2]: local flow reaches state write: self.log.push(x * 1) (line 11)
+  E7 [findings 1, 2]: related test src/lib.rs:20 first_element_is_the_preseeded_one uses strong exact value oracle: assert_eq!(ledger.log.first(), Some(&9)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  E8 [findings 1, 2]: source function argument value x = 7 at line 22
+  E9 [findings 1, 2]: source assertion argument value 9 at line 23
+
+Finding 1: WARNING ./src/lib.rs:11
+  id: probe:src_lib.rs:call_deletion:c581181e
+Changed
+  before: self.log.push(x)
+  after:  self.log.push(x * 1)
+Probe
+  family: call_deletion
+  delta:  effect
+  owner:  src/lib.rs::impl Ledger::record
+  canonical gap: gap:rust:src/lib.rs:impl Ledger::record:call_deletion:call_deletion:self.log.push_x*1
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+Evidence
+  shared evidence: E1, E2, E3, E4, E5, E6, E7, E8, E9
+Weakness
+  - No strong discriminator was detected
+Next step
+  - Strengthen the related assertion so it discriminates the changed behavior
+Drill in:
+  ripr explain --root <cwd>/fixtures/rust_preseeded_first_element/input --diff <cwd>/fixtures/rust_preseeded_first_element/diff.patch --mode fast probe:src_lib.rs:call_deletion:c581181e
+  ripr context --root <cwd>/fixtures/rust_preseeded_first_element/input --diff <cwd>/fixtures/rust_preseeded_first_element/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:c581181e
+
+Finding 2: WARNING ./src/lib.rs:11
+  id: probe:src_lib.rs:side_effect:368e1964
+Changed
+  before: self.log.push(x)
+  after:  self.log.push(x * 1)
+Probe
+  family: side_effect
+  delta:  effect
+  owner:  src/lib.rs::impl Ledger::record
+  canonical gap: gap:rust:src/lib.rs:impl Ledger::record:side_effect:side_effect:self.log.push_x*1
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+Evidence
+  shared evidence: E1, E2, E3, E4, E5, E6, E7, E8, E9
+Weakness
+  - No strong discriminator was detected
+Next step
+  - Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect
+Drill in:
+  ripr explain --root <cwd>/fixtures/rust_preseeded_first_element/input --diff <cwd>/fixtures/rust_preseeded_first_element/diff.patch --mode fast probe:src_lib.rs:side_effect:368e1964
+  ripr context --root <cwd>/fixtures/rust_preseeded_first_element/input --diff <cwd>/fixtures/rust_preseeded_first_element/diff.patch --mode fast --at probe:src_lib.rs:side_effect:368e1964

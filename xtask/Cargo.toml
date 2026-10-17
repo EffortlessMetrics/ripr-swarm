@@ -7,6 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+home = "=0.5.12"
 num-bigint = "0.4"
 repo-policy = { path = "../tools/repo-policy" }
 ripr = { path = "../crates/ripr" }
@@ -18,7 +19,7 @@ sha2 = "0.10"
 toml = "1"
 flate2 = "1"
 tar = "0.4"
-zip = { version = "8", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [lints]
 workspace = true
