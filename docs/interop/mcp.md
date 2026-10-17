@@ -70,8 +70,10 @@ either client completes the flow (tracked in #3092), so treat them as
 configuration, not a support claim.
 
 An agent edits the worktree, but `ripr_refresh` analyzes only the committed
-default-branch diff. Commit (a throwaway local commit is enough) before
-`ripr_refresh`, or use `ripr check --worktree --format json` outside MCP.
+default-branch diff. Commit your edits on a branch that is ahead of the
+default branch before `ripr_refresh` (a commit on the default branch itself
+leaves an empty diff), or use `ripr check --worktree --format json` outside
+MCP.
 
 ## Progressive flow
 
