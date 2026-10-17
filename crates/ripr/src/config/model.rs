@@ -383,7 +383,8 @@ impl SuppressionsConfig {
 
 /// `[typescript]` opt-in configuration for the TypeScript preview adapter.
 ///
-/// All options default to `false` / off. This section may be absent from
+/// `resolve_tsconfig_paths` defaults to `true`; any other option added here
+/// defaults to `false` / off. This section may be absent from
 /// `ripr.toml`; absence is equivalent to `TypescriptConfig::default()`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TypescriptConfig {

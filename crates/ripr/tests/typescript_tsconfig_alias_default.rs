@@ -77,7 +77,7 @@ fn aliased_test_is_related_without_any_typescript_config() -> Result<(), String>
     if !json.contains("\"language\": \"typescript\"") {
         return Err(format!("typescript adapter must have run: {json}"));
     }
-    if json.contains("\"classification\": \"no_static_path\"") {
+    if !json.contains("\"classification\": \"exposed\"") {
         return Err(format!("aliased test must be credited by default: {json}"));
     }
     if !json.contains("test/pricing.test.ts") {
@@ -94,6 +94,9 @@ fn explicit_false_leaves_aliased_test_unresolved() -> Result<(), String> {
     let json = subject.json()?;
     if !json.contains("\"classification\": \"no_static_path\"") {
         return Err(format!("explicit false must stay unresolved: {json}"));
+    }
+    if !json.contains("typescript_path_alias_unresolved") {
+        return Err(format!("unresolved alias must stay disclosed: {json}"));
     }
     Ok(())
 }
