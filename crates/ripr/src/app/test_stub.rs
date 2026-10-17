@@ -21,7 +21,7 @@ use crate::analysis::test_stub::{
 use crate::analysis::{ClassifiedSeam, RepoSeam};
 use crate::app::CheckOutput;
 use crate::config::RiprConfig;
-use crate::domain::{ExposureClass, Finding, ProbeFamily};
+use crate::domain::{ExposureClass, Finding};
 use std::path::{Path, PathBuf};
 
 /// Which gap the caller means.
@@ -291,13 +291,7 @@ pub(crate) fn stub_route_location(
 ) -> Option<(String, usize, &'static str)> {
     let location = &finding.probe.location.file;
     let eligible = finding.class != ExposureClass::Exposed
-        && matches!(
-            finding.probe.family,
-            ProbeFamily::Predicate
-                | ProbeFamily::ReturnValue
-                | ProbeFamily::ErrorPath
-                | ProbeFamily::MatchArm
-        )
+        && finding.probe.family.offers_stub_route()
         && location.extension().and_then(|ext| ext.to_str()) == Some("rs");
     if !eligible {
         return None;
