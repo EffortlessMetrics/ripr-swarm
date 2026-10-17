@@ -16,7 +16,7 @@ Updated:
 ## Pending — one_hop_field_projection_discarded (2)
 
 Reason:
-RIPR-SPEC-0122: plain-language bounded rendering already landed on main (#8165); stale golden refresh
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
 
 Command:
 `cargo xtask goldens bless one_hop_field_projection_discarded --reason "..."`

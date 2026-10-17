@@ -664,27 +664,11 @@ Point RIPR_CACHE_DIR at a writable directory.",
                 lines.push(format!(
                     "- Safe next action: {error}; restore access or select a lossless root alias, then rerun doctor."
                 ));
-            } else if !passed && matches!(first, output::doctor::DoctorFirstCommand::MissingRoot) {
-                lines.push(
-                    "- Safe next action: fix the selected root first (see below); no check command can run until it exists"
-                        .to_string(),
-                );
-            } else if !passed && matches!(first, output::doctor::DoctorFirstCommand::InvalidConfig)
+            } else if let Some(line) =
+                output::doctor::safe_next_action_recovery_line(report, first, root)
+                    .filter(|_| !passed)
             {
-                lines.push(
-                    "- Safe next action: correct `ripr.toml` so it loads; no check command can run until it does"
-                        .to_string(),
-                );
-            } else if !passed
-                && matches!(
-                    first,
-                    output::doctor::DoctorFirstCommand::FailedPrerequisites
-                )
-            {
-                lines.push(
-                    "- Safe next action: fix the `!` checks above; no check command can run until they pass"
-                        .to_string(),
-                );
+                lines.push(line.to_string());
             }
             lines.extend(first.recommendation_lines_for(root));
             if matches!(first, output::doctor::DoctorFirstCommand::Worktree) {
@@ -933,27 +917,11 @@ fn doctor_start_here_lines(
                 // The missing-root recommendation is a recovery action, not a
                 // runnable command (#5252 item 3): sending the reader to "run"
                 // it would prescribe the failure doctor just diagnosed.
-                if matches!(first, output::doctor::DoctorFirstCommand::MissingRoot) {
-                    lines.push(
-                        "- Safe next action: fix the selected root first (see below); no check command can run until it exists"
-                            .to_string(),
-                    );
-                } else if matches!(first, output::doctor::DoctorFirstCommand::InvalidConfig) {
-                    lines.push(
-                        "- Safe next action: correct `ripr.toml` so it loads; no check command can run until it does"
-                            .to_string(),
-                    );
-                } else if matches!(first, output::doctor::DoctorFirstCommand::FailedPrerequisites) {
-                    lines.push(
-                        "- Safe next action: fix the `!` checks above; no check command can run until they pass"
-                            .to_string(),
-                    );
-                } else {
-                    lines.push(
-                        "- Safe next action: run the recommended first command below; it produces the evidence the packet is composed from"
-                            .to_string(),
-                    );
-                }
+                lines.push(
+                    output::doctor::safe_next_action_recovery_line(report, first, root)
+                        .unwrap_or(output::doctor::SAFE_NEXT_ACTION_RUN_FIRST_LINE)
+                        .to_string(),
+                );
             }
             Err(error) => lines.push(format!(
                 "- Safe next action: {error}; restore access or select a lossless root alias, then rerun doctor."
@@ -1924,6 +1892,12 @@ fn path_command_candidates(
         } else {
             format!(".{}", ext.to_ascii_lowercase())
         };
+        // `CreateProcessW` (what process spawning uses) launches only these
+        // suffixes directly; interpreter-only entries such as `.PS1`, `.VBS`
+        // or `.JS` would be chosen first and then fail to start (#5351).
+        if !matches!(ext.as_str(), ".com" | ".exe" | ".bat" | ".cmd") {
+            continue;
+        }
         let candidate = dir.join(format!("{name}{ext}"));
         if !candidates.contains(&candidate) {
             candidates.push(candidate);
@@ -4533,6 +4507,34 @@ mod tests {
             bare_only,
             Some(bare),
             "extensionless PATH prove remains a fallback: {bare_only:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn path_command_in_windows_skips_interpreter_only_pathext() -> Result<(), String> {
+        // Customized PATHEXT lists `.PS1` ahead of `.EXE`; `perllsp.ps1` cannot
+        // be spawned directly, so the working `perllsp.exe` must win (#5351).
+        let path_dir = PathBuf::from("bin");
+        let ps1 = path_dir.join("perllsp.ps1");
+        let exe = path_dir.join("perllsp.exe");
+        let path = joined_path(&[path_dir.to_str().ok_or("path dir utf-8")?])?;
+        let pathext = Some(".PS1;.VBS;.JS;.COM;.EXE;.BAT;.CMD");
+        let found = path_command_in("perllsp", &path, pathext, true, &|candidate| {
+            candidate == ps1.as_path() || candidate == exe.as_path()
+        });
+        assert_eq!(found, Some(exe), "perllsp.exe must beat .ps1: {found:?}");
+        let ps1_only = path_command_in("perllsp", &path, pathext, true, &|candidate| {
+            candidate == ps1.as_path()
+        });
+        assert_eq!(
+            ps1_only, None,
+            "interpreter-only script is not launchable: {ps1_only:?}"
+        );
+        let candidates = path_command_candidates(&path_dir, "perllsp", pathext, true);
+        assert!(
+            !candidates.contains(&ps1),
+            "candidates must exclude .ps1: {candidates:?}"
         );
         Ok(())
     }

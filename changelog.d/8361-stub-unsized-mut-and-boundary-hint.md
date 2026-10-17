@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr agent stub` no longer writes an uncompilable test for a `&mut dyn Trait`, `&mut [T]` or `&mut str` parameter: the stub binds a `Box<dyn Trait>`, `Vec<T>` or `String` stand-in and passes it as `&mut`. For a relational boundary (`<`, `<=`, `>`, `>=`) whose operands ripr cannot fill, the fill-in labels now ask for equal operands, the only inputs that separate the operator from its neighbor, instead of inputs satisfying the changed comparison itself (#8361).

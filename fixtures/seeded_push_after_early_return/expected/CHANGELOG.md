@@ -41,7 +41,7 @@ Updated:
 ## Pending — seeded_push_after_early_return (4)
 
 Reason:
-RIPR-SPEC-0122: plain-language bounded rendering already landed on main (#8165); stale golden refresh
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
 
 Command:
 `cargo xtask goldens bless seeded_push_after_early_return --reason "..."`

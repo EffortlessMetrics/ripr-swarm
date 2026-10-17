@@ -28,7 +28,7 @@ Updated:
 ## Pending — rust_map_insert_count_empty (3)
 
 Reason:
-RIPR-SPEC-0122: plain-language bounded rendering already landed on main (#8165); stale golden refresh
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
 
 Command:
 `cargo xtask goldens bless rust_map_insert_count_empty --reason "..."`
