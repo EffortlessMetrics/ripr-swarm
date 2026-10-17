@@ -62,8 +62,8 @@
       "bytes": 3237
      },
      {
-      "identity": "snapshot:row-a-current-head.json:sha256:9737b6a14153149bf31e17830c0990addeaaeff5808f46a61d22c9648a714fab",
-      "bytes": 1370440
+      "identity": "snapshot:row-a-current-head.json:sha256:9a2ea6df941a36cb626b27dd8ce7eaed548db9867d1794bda27dee88afafba20",
+      "bytes": 174
      }
     ],
     "missing_evidence_questions": []
@@ -131,7 +131,7 @@
      "the independent exact-head review receipt lives outside GitHub in the producer workspace; it is named by the issue and PR text but not re-verifiable via gh",
      "current-head verification is a capture-time observation at main b038650091ca6183e252e459b91c4aff35eef701 on 2026-10-17; later main movement is not tracked by this row"
     ],
-    "current_head_verification": "snapshot:row-a-current-head.json:sha256:9737b6a14153149bf31e17830c0990addeaaeff5808f46a61d22c9648a714fab"
+    "current_head_verification": "snapshot:row-a-current-head.json:sha256:9a2ea6df941a36cb626b27dd8ce7eaed548db9867d1794bda27dee88afafba20"
    },
    "limitations": [
     "no formal durable or local claim record was filed for the published lane; claim identities unknown",
@@ -144,7 +144,7 @@
     "counts this one journey only and claims no broad lifecycle accuracy",
     "does not establish that merge alone closes an issue; this closeout is bound to acceptance coverage plus current-head proof"
    ],
-   "row_digest": "1c340bfd95e8d95109c4fa7b9d9a831a244dbe0301c9d2f8cf60653c2d81fbcc"
+   "row_digest": "2dd62ce7a3d741c10e1bcd227bb4acbbfdc2880d478a75f43568c40d62b4c6a2"
   },
   {
    "schema_version": "issue_lifecycle_attempt.v1",
@@ -199,8 +199,8 @@
       "bytes": 588
      },
      {
-      "identity": "snapshot:row-b-pr-8325.json:sha256:a68a6ea69d424e9aad19d20a6e7b0a266cfcfad2b01504990ce1d32ce440b24d",
-      "bytes": 19285
+      "identity": "snapshot:row-b-pr-8325.json:sha256:cc8c9738829e8dfa8e30adfbec5d8e52633af637b7bc5e69932740df75cb1b3b",
+      "bytes": 505
      }
     ],
     "missing_evidence_questions": []
@@ -294,7 +294,7 @@
     "demonstrates that merge is not closeout for this lane; does not judge the PR B implementation quality",
     "does not cover the PR C and PR D residual slices of issue #1706"
    ],
-   "row_digest": "c93b4396e3fb5a70538e0a9452bcda910996e8544e5870b9a444dd8364e027c6"
+   "row_digest": "c03f70b53ae06ae0ebe806084b231d0354de1dd27b23e72ea904b50e4c5d820d"
   }
  ]
 }

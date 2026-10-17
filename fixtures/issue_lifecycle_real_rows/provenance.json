@@ -3,7 +3,7 @@
  "repository": "EffortlessMetrics/ripr-swarm",
  "captured_at": "2026-10-17T02:27:00Z",
  "base_main": "b038650091ca6183e252e459b91c4aff35eef701",
- "capture_method": "read-only gh capture (issue view, issue comments, issue labels, pr view, pr reviews, compare); zero GitHub mutation",
+ "capture_method": "read-only gh capture (issue view, issue comments, issue labels, pr view, pr reviews, compare); zero GitHub mutation; the compare receipt and the PR #8325 receipt are jq-reduced to context-clean receipts (base/head SHAs and merge facts only) so no third-party commit payload or PR body prose enters the fixture",
  "digest_normalization": "all sha256 digests and byte counts are computed over LF-normalized bytes, matching the LF bytes git stores per .gitattributes `* text=auto eol=lf`",
  "verification_commands": [
   "gh issue view 7795 --repo EffortlessMetrics/ripr-swarm --json number,title,state,closedAt,labels",
@@ -22,8 +22,8 @@
  "snapshots": [
   {
    "file": "row-a-current-head.json",
-   "sha256_lf": "9737b6a14153149bf31e17830c0990addeaaeff5808f46a61d22c9648a714fab",
-   "bytes_lf": 1370440
+   "sha256_lf": "9a2ea6df941a36cb626b27dd8ce7eaed548db9867d1794bda27dee88afafba20",
+   "bytes_lf": 174
   },
   {
    "file": "row-a-issue-7795-comments.json",
@@ -67,8 +67,8 @@
   },
   {
    "file": "row-b-pr-8325.json",
-   "sha256_lf": "a68a6ea69d424e9aad19d20a6e7b0a266cfcfad2b01504990ce1d32ce440b24d",
-   "bytes_lf": 19285
+   "sha256_lf": "cc8c9738829e8dfa8e30adfbec5d8e52633af637b7bc5e69932740df75cb1b3b",
+   "bytes_lf": 505
   }
  ],
  "rows": [
@@ -76,7 +76,7 @@
    "lifecycle_id": "lifecycle-real-7795-8285-closeout",
    "observation_key": "issue-lifecycle:EffortlessMetrics/ripr-swarm#7795",
    "synthetic": false,
-   "row_digest": "1c340bfd95e8d95109c4fa7b9d9a831a244dbe0301c9d2f8cf60653c2d81fbcc",
+   "row_digest": "2dd62ce7a3d741c10e1bcd227bb4acbbfdc2880d478a75f43568c40d62b4c6a2",
    "issue": "EffortlessMetrics/ripr-swarm#7795",
    "pr": "pr:EffortlessMetrics/ripr-swarm#8285",
    "merge_commit": "gh-merge-commit:f3fa41d265e1fb51f280d6d8d5f0c4967c362025",
@@ -86,7 +86,7 @@
    "lifecycle_id": "lifecycle-real-8325-1706-pending-closeout",
    "observation_key": "issue-lifecycle:EffortlessMetrics/ripr-swarm#1706:pr-8325",
    "synthetic": false,
-   "row_digest": "c93b4396e3fb5a70538e0a9452bcda910996e8544e5870b9a444dd8364e027c6",
+   "row_digest": "c03f70b53ae06ae0ebe806084b231d0354de1dd27b23e72ea904b50e4c5d820d",
    "issue": "EffortlessMetrics/ripr-swarm#1706",
    "pr": "pr:EffortlessMetrics/ripr-swarm#8325",
    "merge_commit": "gh-merge-commit:70d053fb7b4a32c5855fb62cf30249e91752f3be",

@@ -12,7 +12,11 @@ CONTROL proving that merge alone cannot close. Both rows are real
 (`synthetic: false`) and every bound identity was verified against GitHub
 (`EffortlessMetrics/ripr-swarm`) with read-only `gh` commands at capture
 time 2026-10-17; the exact commands are recorded in `provenance.json` and
-the raw captures are committed under `snapshots/`.
+the captures are committed under `snapshots/`. The compare receipt and the
+PR #8325 receipt are jq-reduced to context-clean receipts (base/head SHAs
+and merge facts only): no third-party commit payload or PR body prose
+enters the fixture, and `check-local-context` stays clean without
+allowlisting real machine state.
 
 Row A binds the complete journey of issue #7795 (mixed-quote rename
 disclosure): issue snapshot -> PR #8285 -> green checks on head
