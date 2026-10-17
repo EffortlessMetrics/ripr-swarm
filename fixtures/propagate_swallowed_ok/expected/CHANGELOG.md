@@ -345,3 +345,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — propagate_swallowed_ok (14)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless propagate_swallowed_ok --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -550,3 +550,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_unittest_basic (17)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless python_unittest_basic --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

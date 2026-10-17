@@ -42,16 +42,21 @@ pub(super) fn deleted_line_findings(
         .collect();
     // Removed headers an added header of the same name replaced: the owner
     // they open lives on. A header replaced by a differently named one is a
-    // different owner, and its deleted body is not the new owner's.
+    // different owner, and its deleted body is not the new owner's. Added
+    // headers use the same wrap grouping as removed ones, so a Prettier
+    // split (`save(` / `id: string,` / `) {`) still matches (#7705).
+    let added_headers = added_owner_headers(changed);
     let re_headed: BTreeSet<usize> = counterparts
         .iter()
         .filter_map(|(added_line, removed)| {
             let group = headers.group_of.get(&removed.line)?;
-            let added = code_only(added_text.get(added_line)?);
-            let same_owner = opens_an_owner(&added)
-                && owner_name(&added).is_some()
-                && owner_name(&added) == headers.text.get(group).and_then(|text| owner_name(text));
-            same_owner.then_some(*group)
+            let removed_header = headers.text.get(group).map(String::as_str)?;
+            let added = if let Some(added_group) = added_headers.group_of.get(added_line) {
+                added_headers.text.get(added_group)?.clone()
+            } else {
+                code_only(added_text.get(added_line)?)
+            };
+            same_live_owner(&added, removed_header).then_some(*group)
         })
         .collect();
     let enclosures = enclosures(&runs, &headers, &re_headed);
@@ -216,45 +221,89 @@ struct RemovedHeaders {
 
 /// Every removed line that is part of an owner header. A header can span
 /// lines: a parameter list Prettier wraps (`save(` / `id: string,` /
-/// `) {`) or an Allman brace on its own line. The lines of an open
-/// parenthesis join until it closes, unless a line opens a block first, as
-/// a callback passed to a call does.
+/// `) {`), a wrapped return type (`): Promise<` / `Result` / `> {`), a
+/// destructured first line (`save({` / `id,` / `}) {`), or an Allman brace
+/// on its own line. Open parentheses and type-argument lists join until
+/// they close; a `{` inside still-open parens is a parameter object, not
+/// the body (#7705). A line that ends in `=> {` is a callback body: join
+/// stops so a nested deleted header is not swallowed. Unspaced `length<3`
+/// is a comparison, not a type list; unspaced `value<cap` vs `Promise<T`
+/// stays on the later lexer slice.
 fn removed_owner_headers(runs: &[Vec<RemovedCode<'_>>]) -> RemovedHeaders {
+    owner_headers_from_code_runs(
+        runs.iter()
+            .map(|run| run.iter().map(|line| (line.line.line, line.code.as_str()))),
+    )
+}
+
+/// Added owner headers grouped the same way as removed ones, so a wrapped
+/// replacement still counts as the same live owner (#7705).
+fn added_owner_headers(changed: &ChangedFile) -> RemovedHeaders {
+    let mut by_line: Vec<&ChangedLine> = changed.added_lines.iter().collect();
+    by_line.sort_by_key(|line| line.line);
+    let mut runs: Vec<Vec<(usize, String)>> = Vec::new();
+    for line in by_line {
+        let continues = runs
+            .last()
+            .and_then(|run| run.last())
+            .is_some_and(|(last_line, _)| *last_line + 1 == line.line);
+        if !continues {
+            runs.push(Vec::new());
+        }
+        if let Some(run) = runs.last_mut() {
+            run.push((line.line, code_only(&line.text)));
+        }
+    }
+    owner_headers_from_code_runs(
+        runs.iter()
+            .map(|run| run.iter().map(|(line, code)| (*line, code.as_str()))),
+    )
+}
+
+fn owner_headers_from_code_runs<'a>(
+    runs: impl IntoIterator<Item = impl IntoIterator<Item = (usize, &'a str)>>,
+) -> RemovedHeaders {
     let mut headers = RemovedHeaders::default();
     for run in runs {
-        let mut group: Vec<&RemovedCode<'_>> = Vec::new();
-        let mut depth: isize = 0;
-        for line in run {
-            let continues = group.last().is_some_and(|last| {
-                (depth > 0 && !last.code.trim_end().ends_with('{')) || line.code.trim() == "{"
-            });
+        let mut group: Vec<(usize, &'a str)> = Vec::new();
+        let mut paren_depth: isize = 0;
+        let mut angle_depth: isize = 0;
+        for (line, code) in run {
+            let last_opened_callback = group
+                .last()
+                .is_some_and(|(_, prev)| line_opens_a_callback_body(prev));
+            let continues = !group.is_empty()
+                && !last_opened_callback
+                && (paren_depth > 0 || angle_depth > 0 || code.trim() == "{");
             if !continues {
                 close_header_group(&group, &mut headers);
                 group.clear();
-                depth = 0;
+                paren_depth = 0;
+                angle_depth = 0;
             }
-            depth += paren_delta(&line.code);
-            group.push(line);
+            paren_depth += paren_delta(code);
+            angle_depth += type_angle_delta(code, angle_depth);
+            group.push((line, code));
         }
         close_header_group(&group, &mut headers);
     }
     headers
 }
 
-fn close_header_group(group: &[&RemovedCode<'_>], headers: &mut RemovedHeaders) {
-    let Some(first) = group.first() else {
+fn close_header_group(group: &[(usize, &str)], headers: &mut RemovedHeaders) {
+    let Some((first, _)) = group.first() else {
         return;
     };
     let joined = group
         .iter()
-        .map(|line| line.code.trim())
+        .map(|(_, code)| code.trim())
         .collect::<Vec<_>>()
         .join(" ");
     if opens_an_owner(&joined) {
-        for line in group {
-            headers.group_of.insert(line.line.line, first.line.line);
+        for (line, _) in group {
+            headers.group_of.insert(*line, *first);
         }
-        headers.text.insert(first.line.line, joined);
+        headers.text.insert(*first, joined);
     }
 }
 
@@ -419,6 +468,51 @@ fn paren_delta(code: &str) -> isize {
     })
 }
 
+/// Opened minus closed type-argument angles on this line, given the
+/// still-open type lists from earlier header lines. Comparisons (`a < b`,
+/// unspaced `length<3`) and arrows (`=>`, `>=`, `<=`) are not type lists:
+/// a type opener sits immediately after an identifier, `)`, `]` or `>`,
+/// and not before a digit. A `>` only closes when a type list is already
+/// open, so `a > b` cannot cancel an open `(` and `> | Array<` can close
+/// `Promise<` then open the next list (#7705).
+fn type_angle_delta(code: &str, incoming: isize) -> isize {
+    let bytes = code.as_bytes();
+    let mut depth = incoming;
+    for at in 0..bytes.len() {
+        match bytes[at] {
+            b'<' if bytes.get(at + 1) != Some(&b'=')
+                && !matches!(bytes.get(at + 1), Some(b'0'..=b'9'))
+                && is_type_open_angle(bytes, at) =>
+            {
+                depth += 1;
+            }
+            b'>' if bytes.get(at + 1) == Some(&b'=') || (at > 0 && bytes[at - 1] == b'=') => {}
+            b'>' if depth > 0 => depth -= 1,
+            _ => {}
+        }
+    }
+    depth - incoming
+}
+
+fn is_type_open_angle(bytes: &[u8], at: usize) -> bool {
+    let Some(prev) = at.checked_sub(1).and_then(|i| bytes.get(i).copied()) else {
+        return false;
+    };
+    prev.is_ascii_alphanumeric() || matches!(prev, b'_' | b'$' | b')' | b']' | b'>')
+}
+
+/// A `{` that closes `=>` is a callback body, not a destructured parameter
+/// (`save({`). Wrap-join stops there so a nested deleted header inside the
+/// callback is not swallowed (#7705). Default-parameter callback *body
+/// retention* stays on the later brace slice.
+fn line_opens_a_callback_body(code: &str) -> bool {
+    let trimmed = code.trim_end();
+    let Some(before_brace) = trimmed.strip_suffix('{') else {
+        return false;
+    };
+    before_brace.trim_end().ends_with("=>")
+}
+
 /// Keywords that open a block with a parenthesised head but no owner.
 const CONTROL_KEYWORDS: &[&str] = &[
     "if", "for", "while", "switch", "catch", "with", "return", "await", "new", "typeof", "super",
@@ -455,18 +549,11 @@ fn identifier_len(text: &str) -> usize {
 /// or an `if` block is not an owner.
 pub(super) fn opens_an_owner(text: &str) -> bool {
     let code = code_only(text);
-    let mut rest = code.trim();
-    'strip: loop {
-        for modifier in MODIFIERS {
-            if let Some(after) = rest.strip_prefix(modifier)
-                && after.starts_with(char::is_whitespace)
-            {
-                rest = after.trim_start();
-                continue 'strip;
-            }
-        }
-        break;
-    }
+    let trimmed = code.trim();
+    // `export default (x) => {` has no binding name; after modifiers it is
+    // only an arrow, which `binds_a_function` would refuse (#7705).
+    let export_default = trimmed.starts_with("export default");
+    let rest = strip_leading_modifiers(trimmed);
     let function_keyword = rest
         .strip_prefix("function")
         .is_some_and(|after| after.starts_with([' ', '*', '(']));
@@ -474,6 +561,9 @@ pub(super) fn opens_an_owner(text: &str) -> bool {
         return true;
     }
     if binds_a_function(rest) {
+        return true;
+    }
+    if export_default && starts_an_arrow(rest) {
         return true;
     }
     // A method header: a name, its parameters (which may hold a function
@@ -535,7 +625,8 @@ fn starts_a_function(text: &str) -> bool {
 
 /// The first `=` outside brackets that is not part of `=>`, `==`, `<=`,
 /// `>=` or `!=`: a parameter default (`(opts = {}) =>`) is not the binding's
-/// value.
+/// value. Angle brackets count so a type-parameter default (`<T = string>`)
+/// is not the binding's value either (#7705).
 fn plain_assignment(text: &str) -> Option<usize> {
     let bytes = text.as_bytes();
     let mut depth: usize = 0;
@@ -543,11 +634,16 @@ fn plain_assignment(text: &str) -> Option<usize> {
         match bytes[at] {
             b'(' | b'[' | b'{' => depth += 1,
             b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            // `<=` is not a type-parameter list.
+            b'<' if bytes.get(at + 1) != Some(&b'=') => depth += 1,
+            // `=>` and `>=` are not a list close.
+            b'>' if at > 0 && bytes[at - 1] == b'=' => {}
+            b'>' => depth = depth.saturating_sub(1),
             _ => {}
         }
         depth == 0
             && bytes[at] == b'='
-            && !matches!(bytes.get(at + 1), Some(b'=' | b'>'))
+            && !matches!(bytes.get(at + 1), Some(&b'=' | &b'>'))
             && !(at > 0 && matches!(bytes[at - 1], b'=' | b'!' | b'<' | b'>'))
     })
 }
@@ -613,20 +709,11 @@ fn closing_angle(text: &str) -> Option<usize> {
 }
 
 /// The name an owner header declares: `function name`, `class Name`, a
-/// method's name or a binding's name.
+/// method's name or a binding's name. Anonymous default exports
+/// (`export default function (`, `export default class {`,
+/// `export default (x) => {`) have none (#7705).
 fn owner_name(code: &str) -> Option<String> {
-    let mut rest = code.trim();
-    'strip: loop {
-        for modifier in MODIFIERS {
-            if let Some(after) = rest.strip_prefix(modifier)
-                && after.starts_with(char::is_whitespace)
-            {
-                rest = after.trim_start();
-                continue 'strip;
-            }
-        }
-        break;
-    }
+    let rest = strip_leading_modifiers(code.trim());
     let rest = ["function", "class ", "const ", "let ", "var "]
         .iter()
         .find_map(|keyword| rest.strip_prefix(keyword))
@@ -635,4 +722,40 @@ fn owner_name(code: &str) -> Option<String> {
     let rest = rest.strip_prefix('*').unwrap_or(rest).trim_start();
     let name_end = identifier_len(rest);
     (name_end > 0).then(|| rest[..name_end].to_string())
+}
+
+/// An added header keeps the owner a removed header opened when they name
+/// the same function, method or binding, or when both are anonymous
+/// (`export default function (` replaced by another nameless default).
+fn same_live_owner(added: &str, removed: &str) -> bool {
+    if !opens_an_owner(added) {
+        return false;
+    }
+    match (owner_name(added), owner_name(removed)) {
+        (Some(added_name), Some(removed_name)) => added_name == removed_name,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+/// Keywords and `get`/`set` accessors that may precede an owner header.
+/// `get =` / `set =` is a field named `get`/`set`, not an accessor (#7705).
+fn strip_leading_modifiers(text: &str) -> &str {
+    let mut rest = text;
+    'strip: loop {
+        for modifier in MODIFIERS {
+            if let Some(after) = rest.strip_prefix(modifier)
+                && after.starts_with(char::is_whitespace)
+            {
+                let trimmed = after.trim_start();
+                if matches!(*modifier, "get" | "set") && trimmed.starts_with('=') {
+                    return rest;
+                }
+                rest = trimmed;
+                continue 'strip;
+            }
+        }
+        break;
+    }
+    rest
 }

@@ -9,6 +9,7 @@ pub(crate) struct InitOptions {
     pub(crate) dry_run: bool,
     pub(crate) force: bool,
     pub(crate) ci: Option<InitCi>,
+    pub(crate) mcp: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum InitCi {
