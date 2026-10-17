@@ -3776,6 +3776,34 @@ mod tests {
     }
 
     #[test]
+    fn cache_detail_lines_render_the_tracked_artifact_warning_only_when_tracked() {
+        use output::doctor::{DoctorArtifactIgnore, DoctorArtifactTracking, DoctorCacheStatus};
+        let status = |artifact_tracking| DoctorCacheStatus {
+            cache_dir: "cache".to_string(),
+            relocated_by_env: false,
+            size_bytes: 0,
+            size_display: "0 B".to_string(),
+            artifact_ignore: DoctorArtifactIgnore::Ignored,
+            artifact_tracking,
+        };
+        let warning = "! git tracks 2 file(s) under target/ripr".to_string();
+        let tracked = cache_detail_lines(&status(DoctorArtifactTracking::Tracked {
+            warning: warning.clone(),
+        }));
+        assert!(tracked.contains(&warning), "{tracked:?}");
+        for quiet in [
+            DoctorArtifactTracking::NotTracked,
+            DoctorArtifactTracking::NotChecked,
+        ] {
+            let lines = cache_detail_lines(&status(quiet));
+            assert!(
+                lines.iter().all(|line| !line.contains("git tracks")),
+                "{lines:?}"
+            );
+        }
+    }
+
+    #[test]
     fn ripr_artifact_tracking_names_the_untrack_repair() -> Result<(), String> {
         use output::doctor::DoctorArtifactTracking;
         let root = unique_command_test_dir("artifact-tracked");
