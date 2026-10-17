@@ -27,7 +27,7 @@ v=0.10.0; case "$(uname -s)-$(uname -m)" in
 f=ripr-server-v$v-$t.tar.gz
 b=https://github.com/EffortlessMetrics/ripr/releases/download/v$v
 curl -fsSLO $b/$f && curl -fsSLO $b/$f.sha256
-echo "$(cat $f.sha256)  $f" | { sha256sum -c - 2>/dev/null || shasum -a 256 -c -; } \
+echo "$(cat $f.sha256)  $f" | { sha256sum -c - || shasum -a 256 -c -; } \
   && tar xzf $f && export PATH="$PWD:$PATH"   # ./ripr is now first on PATH for this shell
 ```
 
