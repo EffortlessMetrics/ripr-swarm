@@ -4,8 +4,8 @@ root: fixtures/match_arm_shadowed_assert/input
 
 Summary: 1 probe(s), 0 exposed, 0 weakly_exposed, 1 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
 
 WARNING ./src/lib.rs:61
   id: probe:src_lib.rs:match_arm:ea5b4163
@@ -38,7 +38,7 @@ Weakness
   - No strong discriminator was detected
 
 Next step
-  Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.
+  Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value
 Drill in:
   ripr explain --root <cwd>/fixtures/match_arm_shadowed_assert/input --diff <cwd>/fixtures/match_arm_shadowed_assert/diff.patch --mode fast probe:src_lib.rs:match_arm:ea5b4163
   ripr context --root <cwd>/fixtures/match_arm_shadowed_assert/input --diff <cwd>/fixtures/match_arm_shadowed_assert/diff.patch --mode fast --at probe:src_lib.rs:match_arm:ea5b4163

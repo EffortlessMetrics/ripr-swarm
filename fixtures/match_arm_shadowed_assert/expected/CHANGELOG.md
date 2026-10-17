@@ -25,3 +25,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — match_arm_shadowed_assert (3)
+
+Reason:
+RIPR-SPEC-0229: re-bless PR-owned MatchArm shadowed-assert fixture human output against current main plain-language renderer (#8165); classification unchanged
+
+Command:
+`cargo xtask goldens bless match_arm_shadowed_assert --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
