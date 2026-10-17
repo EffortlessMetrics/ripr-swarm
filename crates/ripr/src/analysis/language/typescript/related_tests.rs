@@ -1173,8 +1173,9 @@ pub(crate) fn receiver_names_for_constructor_calls(
     receiver_names
 }
 
-/// `line` without a trailing `// comment` (a `//` outside any quote that is
-/// not part of a `://` URL scheme). Quote tracking is per line, so a quote
+/// `line` without a trailing `// comment` (a `//` outside any quote). An
+/// unquoted `a://b` is stripped too, which can only withhold credit. Quote
+/// tracking is per line, so a quote
 /// opened earlier on a multi-line template leaves the text untouched: the
 /// result only ever drops text, which can withhold credit but not grant it.
 fn strip_trailing_line_comment(line: &str) -> &str {
