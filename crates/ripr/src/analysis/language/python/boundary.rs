@@ -155,10 +155,8 @@ pub(super) fn python_boundary_evidence(
     let condition = predicate_condition(line_text);
     let relational = relational_operators(&condition);
     let (operators, old_equality_operands) = if relational.is_empty() {
-        match equality_predicate_gate(&condition, old_line_text) {
-            Some((operators, old_operands)) => (operators, old_operands),
-            None => return None,
-        }
+        let gate = equality_predicate_gate(&condition, old_line_text)?;
+        (gate.operators, gate.old_operands)
     } else {
         (relational, None)
     };
@@ -469,12 +467,14 @@ fn relational_operators(text: &str) -> Vec<(usize, usize)> {
     operators
 }
 
+struct EqualityGate {
+    operators: Vec<(usize, usize)>,
+    old_operands: Option<(String, String)>,
+}
+
 /// `==` -> `==` only. Mixed old forms (`!=`, `is`, relational) stay outside
 /// the gate so complementary mutations keep today's verdict.
-fn equality_predicate_gate(
-    condition: &str,
-    old_line_text: Option<&str>,
-) -> Option<(Vec<(usize, usize)>, Option<(String, String)>)> {
+fn equality_predicate_gate(condition: &str, old_line_text: Option<&str>) -> Option<EqualityGate> {
     if contains_ungated_identity_or_inequality(condition) {
         return None;
     }
@@ -483,7 +483,10 @@ fn equality_predicate_gate(
         return None;
     }
     let Some(old) = old_line_text else {
-        return Some((operators, None));
+        return Some(EqualityGate {
+            operators,
+            old_operands: None,
+        });
     };
     let old_condition = predicate_condition(old);
     if contains_ungated_identity_or_inequality(&old_condition)
@@ -496,7 +499,10 @@ fn equality_predicate_gate(
         return None;
     };
     let old_operands = simple_comparison_operands(&old_condition, *start, *len);
-    Some((operators, old_operands))
+    Some(EqualityGate {
+        operators,
+        old_operands,
+    })
 }
 
 /// Byte offset and length of every `==` comparison outside string literals.
