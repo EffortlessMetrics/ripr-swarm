@@ -7077,16 +7077,37 @@ fn expected_reads_written_file(
     let masked = mask_comments_and_strings(&test.body);
     let statements: Vec<&str> = masked.split(';').collect();
     let binding_rhs = |statement: &str, ident: &str| -> Option<String> {
-        // A `let` binding may sit behind a block opener fragment.
+        // A `let` binding may sit behind a block opener fragment; a bare
+        // assignment may sit behind a block opener too.
         let rest = match statement.find("let ") {
             Some(at) => {
                 let rest = statement[at + 4..].trim_start();
-                rest.strip_prefix("mut ").unwrap_or(rest)
+                rest.strip_prefix("mut ").unwrap_or(rest).to_string()
             }
-            None => statement.trim_start(),
+            None => {
+                let at = statement.match_indices(ident).find_map(|(at, _)| {
+                    let before_ok = at == 0
+                        || !statement[..at]
+                            .chars()
+                            .next_back()
+                            .is_some_and(|c| c.is_alphanumeric() || c == '_');
+                    before_ok.then_some(at)
+                })?;
+                statement[at..].to_string()
+            }
         };
         let after = rest.trim_start().strip_prefix(ident)?;
         let boundary = after.trim_start();
+        // Skip an optional `: Type` annotation before the `=`.
+        let boundary = if let Some(annotated) = boundary.strip_prefix(':') {
+            let eq = annotated.find('=')?;
+            if annotated[eq..].starts_with("==") {
+                return None;
+            }
+            &annotated[eq..]
+        } else {
+            boundary
+        };
         if !boundary.starts_with('=') || boundary.starts_with("==") {
             return None;
         }
