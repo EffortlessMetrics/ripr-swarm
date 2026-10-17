@@ -131,6 +131,7 @@ fn direct_owner_result_snapshots_keep_their_grade() -> Result<(), String> {
         strong(&format!("let actual = make_count(2);\n        {assertion}"))?;
     }
     strong("let actual = make_count(2); insta::assert_json_snapshot!(actual);")?;
+    strong("let actual=make_count(2);insta::assert_json_snapshot!(actual);")?;
     strong(
         "use insta::assert_snapshot;\n        let actual = make_count(2);\n        assert_snapshot!(actual, @\"2\");",
     )?;
@@ -174,6 +175,7 @@ fn snapshot_names_and_expected_text_cannot_supply_the_subject() -> Result<(), St
 #[test]
 fn changed_or_escaped_result_bindings_cannot_supply_snapshot_credit() -> Result<(), String> {
     for body in [
+        "let actual=2usize;insta::assert_json_snapshot!(actual);let actual=make_count(2);",
         "let actual = make_count(2);\n        let actual = 2usize;\n        insta::assert_json_snapshot!(actual);",
         "let mut actual = make_count(2);\n        actual = 2;\n        insta::assert_json_snapshot!(actual);",
         "let mut actual = make_count(2);\n        let _ = &mut actual;\n        insta::assert_json_snapshot!(actual);",

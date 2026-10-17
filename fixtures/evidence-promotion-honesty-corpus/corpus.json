@@ -9422,6 +9422,38 @@
         { "type": "maximum_class", "class": "weakly_exposed" },
         { "type": "expected_oracle", "kind": "mock_expectation", "strength": "medium" }
       ]
+    },
+    {
+      "id": "rust_return_snapshot_unrelated_subject_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-return-snapshot-unrelated-subject.json",
+      "vector": "snapshot_category_requires_the_direct_free_owner_return_subject",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::make_count",
+          "expression": "count + 0",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
+      "id": "rust_return_snapshot_direct_subject_positive_control",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-return-snapshot-direct-subject.json",
+      "vector": "snapshot_category_requires_the_direct_free_owner_return_subject",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::make_count",
+          "expression": "count + 0",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        }
+      ]
     }
   ]
 }

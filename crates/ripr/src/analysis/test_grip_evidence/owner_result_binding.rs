@@ -616,7 +616,7 @@ fn binding_invalidated_before_offset(
     assertion_cutoff: ra_ap_syntax::TextSize,
 ) -> bool {
     let start = binding.range_end;
-    if start >= assertion_cutoff {
+    if start > assertion_cutoff {
         return true;
     }
     for node in function.syntax().descendants() {
