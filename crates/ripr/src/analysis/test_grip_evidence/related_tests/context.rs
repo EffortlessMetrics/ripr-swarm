@@ -39,6 +39,7 @@ pub(crate) struct CompactGripContext<'a> {
     /// `index.functions` per seam.
     function_name_counts: BTreeMap<String, usize>,
     name_module_candidates: NameModuleCandidateIndex,
+    inherent_helper_reach: Mutex<BTreeMap<(usize, String), bool>>,
     owner_named_cache: Mutex<BTreeMap<String, Vec<usize>>>,
     same_module_cache: Mutex<BTreeMap<String, Vec<usize>>>,
     pub(in crate::analysis::test_grip_evidence) source_digest_cache:
@@ -621,6 +622,7 @@ impl<'a> CompactGripContext<'a> {
             tests_by_import_token,
             function_name_counts,
             name_module_candidates,
+            inherent_helper_reach: Mutex::new(BTreeMap::new()),
             owner_named_cache: Mutex::new(BTreeMap::new()),
             same_module_cache: Mutex::new(BTreeMap::new()),
             source_digest_cache: Mutex::new(BTreeMap::new()),
@@ -636,6 +638,39 @@ impl<'a> CompactGripContext<'a> {
             shared_grips: Mutex::new(SharedGrips::default()),
             pin_syntax: Mutex::new(crate::analysis::classify::OwnerPinSyntax::default()),
         })
+    }
+
+    /// The name graph is candidate evidence, not the receiver authority for
+    /// its last hop. Check the bounded same-file chain against executable
+    /// receiver syntax, including an inherent method used as the entry.
+    /// Unsupported cross-file/parameter/field flow remains unestablished.
+    pub(in crate::analysis::test_grip_evidence) fn inherent_helper_reaches_owner(
+        &self,
+        test_index: usize,
+        owner_id: &str,
+    ) -> bool {
+        let key = (test_index, owner_id.to_owned());
+        if let Some(answer) = memo(&self.inherent_helper_reach).get(&key) {
+            return *answer;
+        }
+        let owner = self
+            .index
+            .functions()
+            .iter()
+            .find(|owner| owner.id.0 == owner_id);
+        let answer = owner.is_some_and(|owner| {
+            self.tests.get(test_index).is_some_and(|test| {
+                inherent_helper_path_reaches_owner(
+                    test.test,
+                    owner,
+                    self.index,
+                    HELPER_OWNER_CALL_GRAPH_MAX_HOPS,
+                    &mut BTreeSet::new(),
+                )
+            })
+        });
+        memo(&self.inherent_helper_reach).insert(key, answer);
+        answer
     }
 
     /// Identifier mentions by tests and test-reached production code, for
@@ -1590,14 +1625,18 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
             .calls
             .iter()
             .filter(|call| {
-                (helper_name_carries_owner_token(&helper_name_lower, &call.name)
-                    || helper_directly_delegates_to_specific_owner(
-                        function,
-                        call,
-                        local_function_names,
-                        external_owner_names,
-                        allow_fanout_wrappers,
-                    ))
+                // Inspect the complete function for a same-name executable
+                // call: the declaration may span multiple captured lines.
+                (call.name != function.name
+                    || call_text_contains_named_call(&function.body, &call.name))
+                    && (helper_name_carries_owner_token(&helper_name_lower, &call.name)
+                        || helper_directly_delegates_to_specific_owner(
+                            function,
+                            call,
+                            local_function_names,
+                            external_owner_names,
+                            allow_fanout_wrappers,
+                        ))
                     && call_text_contains_named_call(&call.text, &call.name)
             })
             .map(|call| call.name.clone())
@@ -3256,7 +3295,12 @@ pub(in crate::analysis::test_grip_evidence) fn call_text_contains_named_call(
     text: &str,
     name: &str,
 ) -> bool {
+    let text = strip_comments_and_strings(text);
     text.match_indices(name).any(|(start, _)| {
+        let prefix = text[..start].trim_end();
+        if trailing_rust_identifier(prefix) == "fn" {
+            return false;
+        }
         let before = text[..start].chars().next_back();
         if before.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
             return false;
@@ -3977,4 +4021,67 @@ pub(in crate::analysis::test_grip_evidence) fn crate_root_file_key(path: &Path) 
     let text = path.to_str()?.replace('\\', "/");
     let text = text.trim_start_matches("./");
     (!text.is_empty()).then(|| text.to_string())
+}
+
+fn inherent_helper_path_reaches_owner(
+    caller: &TestSummary,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+    remaining: usize,
+    visited: &mut BTreeSet<(PathBuf, usize, String)>,
+) -> bool {
+    if remaining == 0 {
+        return false;
+    }
+    let Some(facts) = index.files().get(&caller.file) else {
+        return false;
+    };
+    for helper in facts.functions.iter().filter(|helper| {
+        caller.calls.iter().any(|call| call.name == helper.name)
+            && !facts.tests.iter().any(|test| {
+                test.file == helper.file
+                    && test.start_line == helper.start_line
+                    && test.name == helper.name
+            })
+    }) {
+        if visited.contains(&(helper.file.clone(), helper.start_line, helper.name.clone())) {
+            continue;
+        }
+        // A resolved async call constructs a future; this bounded traversal
+        // does not establish polling. Refuse its body at every helper hop,
+        // while keeping synchronous helpers with dormant async blocks eligible.
+        if crate::analysis::classify::function_declaration_is_async(helper, index) != Some(false) {
+            continue;
+        }
+        let entry_resolves = if requires_inherent_receiver_identity(helper) {
+            inherent_owner_call_resolves(caller, helper, index)
+        } else {
+            free_helper_call_resolves(caller, helper, index)
+        };
+        if !entry_resolves {
+            continue;
+        }
+        visited.insert((helper.file.clone(), helper.start_line, helper.name.clone()));
+        // A call view of the helper, not an assertion or test-evidence claim.
+        let body = TestSummary {
+            name: helper.name.clone(),
+            file: helper.file.clone(),
+            start_line: helper.start_line,
+            end_line: helper.end_line,
+            body: helper.body.clone(),
+            calls: helper.calls.clone(),
+            assertions: Vec::new(),
+            literals: Vec::new(),
+            attrs: helper.attrs.clone(),
+            nested_fn_names: helper.nested_fn_names.clone(),
+            let_bindings: helper.let_bindings.clone(),
+        };
+        if inherent_owner_call_resolves(&body, owner, index)
+            || inherent_helper_path_reaches_owner(&body, owner, index, remaining - 1, visited)
+        {
+            return true;
+        }
+        visited.remove(&(helper.file.clone(), helper.start_line, helper.name.clone()));
+    }
+    false
 }
