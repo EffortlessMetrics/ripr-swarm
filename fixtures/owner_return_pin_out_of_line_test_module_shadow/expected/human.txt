@@ -28,6 +28,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/owner_return_pin_out_of_line_test_module_shadow/input --diff <cwd>/fixtures/owner_return_pin_out_of_line_test_module_shadow/diff.patch --mode fast probe:src_lib.rs:field_construction:721bb1ba
   ripr context --root <cwd>/fixtures/owner_return_pin_out_of_line_test_module_shadow/input --diff <cwd>/fixtures/owner_return_pin_out_of_line_test_module_shadow/diff.patch --mode fast --at probe:src_lib.rs:field_construction:721bb1ba
+No test stub here: the owner's tests live in an out-of-line `mod tests;` file
 
 More:
   Full evidence: rerun with --format human-full
