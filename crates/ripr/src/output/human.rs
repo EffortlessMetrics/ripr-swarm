@@ -136,11 +136,14 @@ fn render_no_scope_note(output: &CheckOutput) -> String {
              The compared base was `{base}`; an empty result here means no behavior changed against it.\n",
         )
     } else {
-        "\nNote: no analysis scope was provided — `ripr check` is diff-first. \
-         Run `ripr check --base BASE` with BASE set to an existing ref to analyze your changes, or \
-         `ripr check --root . --format repo-exposure-md` for a full-repo scan. \
-         An empty result here does NOT mean your changed behavior is covered.\n"
-            .to_string()
+        format!(
+            "\nNote: no analysis scope was provided — `ripr check` is diff-first. \
+             Run `{}` with BASE set to an existing ref to analyze your changes, or \
+             `{}` for whole-repository exploration. \
+             An empty result here does NOT mean your changed behavior is covered.\n",
+            crate::domain::NO_SCOPE_BASE_COMMAND,
+            crate::domain::WHOLE_REPO_PILOT_COMMAND,
+        )
     }
 }
 
@@ -2931,7 +2934,10 @@ mod tests {
 
         assert!(rendered.contains("Start here:"));
         assert!(rendered.contains("State: nothing in scope"));
-        assert!(rendered.contains("provide an analysis scope"));
+        // The triage line names the canonical pair (domain::next_action):
+        // a concrete diff scope or whole-repository pilot exploration.
+        assert!(rendered.contains("`ripr check --base BASE`"));
+        assert!(rendered.contains("`ripr pilot --root .`"));
         assert!(rendered.contains("No diff-derived static exposure probes found."));
     }
 
@@ -6468,11 +6474,12 @@ mod tests {
             rendered.contains("does NOT mean your changed behavior is covered"),
             "expected honesty note; got:\n{rendered}"
         );
-        // Bug 2 regression guard: the recommended full-repo-scan command must be
-        // --format repo-exposure-md, not --mode fast (which is a speed tier).
+        // Canonical whole-repo route (domain::next_action): guidance names
+        // `ripr pilot --root .`, the docs-canonical exploration route — not
+        // --mode fast (a speed tier) and not the repo-exposure check format.
         assert!(
-            rendered.contains("--format repo-exposure-md"),
-            "expected --format repo-exposure-md in guidance; got:\n{rendered}"
+            rendered.contains("`ripr pilot --root .`"),
+            "expected pilot guidance; got:\n{rendered}"
         );
         assert!(
             !rendered.contains("--mode fast"),
@@ -6560,10 +6567,11 @@ mod tests {
     }
 
     #[test]
-    fn guidance_recommends_format_repo_exposure_md_not_mode_fast() {
-        // Bug 2 regression guard: the human guidance string must recommend
-        // --format repo-exposure-md for a full-repo scan, NOT --mode fast.
-        // --mode is a speed tier on the diff path; it does NOT provide scope.
+    fn guidance_recommends_pilot_not_mode_fast() {
+        // Canonical whole-repo route (domain::next_action): the human
+        // guidance must recommend `ripr pilot --root .` for whole-repository
+        // exploration, NOT --mode fast (a speed tier on the diff path, which
+        // does NOT provide scope) and not the repo-exposure check format.
         let output = CheckOutput {
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
@@ -6588,8 +6596,8 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("--format repo-exposure-md"),
-            "guidance must recommend --format repo-exposure-md for full-repo scan; got:\n{rendered}"
+            rendered.contains("`ripr pilot --root .`"),
+            "guidance must recommend pilot for whole-repository exploration; got:\n{rendered}"
         );
         assert!(
             !rendered.contains("--mode fast"),
