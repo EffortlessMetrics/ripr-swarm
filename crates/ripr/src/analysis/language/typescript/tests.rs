@@ -9902,7 +9902,7 @@ fn unresolved_alias_import_names_the_import_in_no_reach_text() -> Result<(), Str
     assert!(
         missing.starts_with(
             "Test `discounts` imports `applyDiscount` through non-relative specifier `@/owner`, which ripr did not resolve"
-        ) && missing.contains("`[typescript] resolve_tsconfig_paths` is unset or false"),
+        ) && missing.contains("`[typescript] resolve_tsconfig_paths` is false"),
         "missing must name the import and the typed cause, got: {missing}"
     );
     assert!(

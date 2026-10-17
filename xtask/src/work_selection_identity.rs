@@ -482,7 +482,7 @@ pub(crate) struct WorkSelectionCheckViewV1 {
 // Basis construction and the identity law engine. Pure and read-only.
 // ---------------------------------------------------------------------------
 
-fn build_portfolio_basis(
+pub(crate) fn build_portfolio_basis(
     snapshot: &WorkPortfolioSnapshotV1,
     selection_policy: &str,
     selection_policy_version: &str,
@@ -646,9 +646,9 @@ fn live_overlaps_captured(
     overlaps
 }
 
-struct CaseEvaluation {
-    violations: Vec<WorkSelectionLawViolationV1>,
-    migration_posture: Vec<String>,
+pub(crate) struct CaseEvaluation {
+    pub(crate) violations: Vec<WorkSelectionLawViolationV1>,
+    pub(crate) migration_posture: Vec<String>,
 }
 
 fn violation(
@@ -664,7 +664,7 @@ fn violation(
 /// campaign-member issues; standalone subjects resolve from captured
 /// sources). Laws run in a fixed order; each wrong identity is reported once
 /// with its exact recompile/reconcile route.
-fn check_packet(
+pub(crate) fn check_packet(
     packet: &SelectedWorkIdentityV1,
     basis: &PortfolioBasisV1,
     snapshot: &WorkPortfolioSnapshotV1,
@@ -1346,7 +1346,7 @@ fn acceptance_state(
 // Corpus runner and projections.
 // ---------------------------------------------------------------------------
 
-fn corpus_root(corpus_dir: &str) -> std::path::PathBuf {
+pub(crate) fn corpus_root(corpus_dir: &str) -> std::path::PathBuf {
     // A user-supplied `--corpus` directory is cwd-relative (absolute paths
     // honored as-is); only when it does not exist relative to the cwd does
     // it fall back to the workspace root, which keeps the documented default
@@ -1365,7 +1365,10 @@ fn corpus_root(corpus_dir: &str) -> std::path::PathBuf {
 /// repository `fixtures/` root (the committed corpus mixes both). Paths must
 /// be plain relative paths on every host platform: absolute paths, `..` or
 /// backslash segments fail closed instead of escaping the fixture boundary.
-fn resolve_scenario_captured(corpus_root: &Path, captured: &str) -> Result<PathBuf, String> {
+pub(crate) fn resolve_scenario_captured(
+    corpus_root: &Path,
+    captured: &str,
+) -> Result<PathBuf, String> {
     let path = Path::new(captured);
     if captured.trim().is_empty() || path.is_absolute() || captured.contains('\\') {
         return Err(format!(
@@ -1536,7 +1539,7 @@ pub(crate) fn work_selection_check_json(view: &WorkSelectionCheckViewV1) -> Resu
 /// Render a serde-enum value by its stable wire name, never the Rust `Debug`
 /// spelling, so the human Markdown projection matches the JSON wire forms
 /// exactly and cannot drift from the corpus vocabulary.
-fn selection_wire_name<T: Serialize>(value: &T) -> String {
+pub(crate) fn selection_wire_name<T: Serialize>(value: &T) -> String {
     serde_json::to_value(value)
         .ok()
         .and_then(|value| value.as_str().map(str::to_string))
