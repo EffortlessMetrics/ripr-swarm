@@ -181,6 +181,7 @@ pub(crate) enum XtaskCommand {
     WorkResultCheck(Vec<String>),
     WorkClaimCheck(Vec<String>),
     WorkWaveCheck(Vec<String>),
+    WorkContextCheck(Vec<String>),
     Unknown(String),
 }
 
@@ -400,6 +401,13 @@ impl XtaskCommand {
                     Some("check") => Self::WorkWaveCheck(rest[2..].to_vec()),
                     _ => Self::Unknown(format!(
                         "work wave {}",
+                        rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
+                    )),
+                },
+                Some("context") => match rest.get(1).map(|arg| arg.as_str()) {
+                    Some("check") => Self::WorkContextCheck(rest[2..].to_vec()),
+                    _ => Self::Unknown(format!(
+                        "work context {}",
                         rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
                     )),
                 },
@@ -2408,6 +2416,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Validates committed WorkWavePlanV1 rows against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR B, RIPR-SPEC-0271, consuming #1634); every plan consumes the complete selected candidate set and partitions it into waves over explicit resources (campaign-record:<id>, portfolio-schema, spec-ledger, output-contract:<id>, issue:<n>, pr:<n>, worktree:<path>), the retired generic active-goal resource fails closed, exclusive resources shared across waves and waves above declared writer capacity fail with exact reconcile routes, disjoint cross-campaign waves are admitted, and no GitHub, branch, worktree, claim, spec, campaign or source state is touched.",
+        ),
+        command_entry(
+            "work context check [--corpus <dir>] [--json]",
+            "report_only",
+            "target/ripr/reports/work-context-check.{json,md}",
+            false,
+            false,
+            "Validates committed WorkContextPacketV1 rows against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR B, RIPR-SPEC-0272, consuming #1632); every packet binds the repository, portfolio-snapshot identity, basis head and the selected-work identity it compiles context for, every carried context/overflow reference must stay relevant to the bound selection (campaign references are context, never permission), a selected-work-only packet with overflow, an evidence-free packet, an unresolvable legacy active-goal ref, a wrong repository or a stale basis fails with exact recompile/reconcile routes, and no GitHub, branch, worktree, claim, spec, campaign or source state is touched.",
         ),
     ]
 }

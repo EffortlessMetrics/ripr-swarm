@@ -270,6 +270,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::WorkWaveCheck(args) => {
             super::work_wave_identity::work_wave_check_command(&args)
         }
+        XtaskCommand::WorkContextCheck(args) => {
+            super::work_context_identity::work_context_check_command(&args)
+        }
         XtaskCommand::Help(args) => print_help_route(&args),
         XtaskCommand::Unknown(command) if matches!(command.as_str(), "--help" | "-h") => {
             front_door::print()

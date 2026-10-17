@@ -14606,6 +14606,42 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0272"
+name = "Context/work-item packets bind the selected-work portfolio basis"
+spec = "docs/specs/RIPR-SPEC-0272-context-packets-selected-work-basis.md"
+tests = [
+  "xtask/src/work_context_identity.rs::tests::work_context_identity_committed_corpus_six_scenarios_hold",
+  "xtask/src/work_context_identity.rs::tests::work_context_identity_valid_packets_bind_their_selections",
+  "xtask/src/work_context_identity.rs::tests::work_context_identity_campaign_refs_are_context_not_permission",
+  "xtask/src/work_context_identity.rs::tests::work_context_identity_legacy_refs_read_only_no_authority",
+  "xtask/src/work_context_identity.rs::tests::work_context_identity_irrelevant_refs_and_unbounded_scope_fail",
+  "xtask/src/work_context_identity.rs::tests::work_context_identity_wrong_repository_and_stale_basis_fail",
+  "xtask/src/work_context_identity.rs::tests::work_context_identity_embedded_selection_reuses_shared_laws",
+  "xtask/src/work_context_identity.rs::tests::work_context_identity_packet_schema_has_no_singleton_fields",
+  "xtask/src/work_context_identity.rs::tests::work_context_identity_human_and_json_projections_agree",
+  "xtask/src/work_context_identity.rs::tests::work_context_identity_deterministic_output",
+  "xtask/src/work_context_identity.rs::tests::work_context_identity_corpus_loader_fails_closed",
+  "xtask/src/work_context_identity.rs::tests::work_context_identity_committed_provenance_covers_every_corpus_byte",
+  "xtask/src/work_context_identity.rs::tests::work_context_identity_scope_is_a_closed_bounded_vocabulary",
+  "xtask/src/work_context_identity.rs::tests::work_context_identity_command_mutate_nothing_mutation_negative",
+]
+fixtures = [
+  "fixtures/work_context_identity",
+]
+code = [
+  "xtask/src/work_context_identity.rs",
+  "xtask/src/work_selection_identity.rs",
+  "xtask/src/command.rs",
+  "xtask/src/dispatch.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0272-context-packets-selected-work-basis.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0244"
 name = "Shared selected-work identity schemas and legacy compatibility"
 spec = "docs/specs/RIPR-SPEC-0244-selected-work-identity.md"

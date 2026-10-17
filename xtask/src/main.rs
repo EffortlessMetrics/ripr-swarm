@@ -65,6 +65,7 @@ mod repo_readiness;
 mod schema_pattern;
 mod types;
 mod work_claim_identity;
+mod work_context_identity;
 mod work_portfolio;
 mod work_result_identity;
 mod work_selection_identity;
