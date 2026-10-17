@@ -118,6 +118,22 @@ fn compare(text: &str) -> Result<ModuleItemScopes, String> {
         "fixture must produce FileFacts: {current:?}"
     );
     assert_eq!(current, reference, "complete FileFacts changed");
+    let reference_shapes = super::probe_shape_walk_tests::reference_probe_shapes;
+    let shapes_only = summarize_file_with_probe_shapes(path, text, reference_shapes);
+    let both_original = summarize_file_with_collectors(
+        path,
+        text,
+        original_module_item_scopes_in,
+        reference_shapes,
+    );
+    assert_eq!(
+        current, shapes_only,
+        "probe-shape composition changed FileFacts"
+    );
+    assert_eq!(
+        current, both_original,
+        "combined frozen oracles changed FileFacts"
+    );
     assert_eq!(
         actual, expected,
         "all module scope fields before name filtering"
@@ -281,6 +297,53 @@ fn module_scope_walk_refusal_parity() {
                 original_module_item_scopes_in
             )
         );
+        assert_eq!(
+            summarize_file_with_parser(Path::new("src/lib.rs"), text),
+            summarize_file_with_collectors(
+                Path::new("src/lib.rs"),
+                text,
+                original_module_item_scopes_in,
+                super::probe_shape_walk_tests::reference_probe_shapes,
+            )
+        );
         assert!(module_item_scopes(text).is_none());
     }
+}
+
+#[test]
+fn module_scope_walk_combined_injection_reaches_both_collectors() -> Result<(), String> {
+    let text = "fn leaf() {} fn outer() { leaf(); if true { leaf(); } }";
+    let scope_calls = std::cell::Cell::new(0);
+    let shape_calls = std::cell::Cell::new(0);
+    let actual = summarize_file_with_collectors(
+        Path::new("src/fixture.rs"),
+        text,
+        |source, lines| {
+            scope_calls.set(scope_calls.get() + 1);
+            original_module_item_scopes_in(source, lines)
+        },
+        |function, text, source, lines| {
+            shape_calls.set(shape_calls.get() + 1);
+            super::probe_shape_walk_tests::reference_probe_shapes(function, text, source, lines)
+        },
+    )?;
+    assert_eq!(
+        scope_calls.get(),
+        1,
+        "file collector injection must execute"
+    );
+    assert_eq!(
+        shape_calls.get(),
+        2,
+        "each function must use the shape injection"
+    );
+    assert!(
+        !actual.probe_shapes.is_empty(),
+        "nonempty probe-shape subjects"
+    );
+    assert_eq!(
+        actual,
+        summarize_file_with_parser(Path::new("src/fixture.rs"), text)?
+    );
+    Ok(())
 }

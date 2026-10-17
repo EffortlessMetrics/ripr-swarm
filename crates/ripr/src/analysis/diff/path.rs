@@ -55,13 +55,12 @@ pub(super) fn is_new_path_marker(raw: &str) -> bool {
     let trimmed = marker.trim_end_matches('\r');
     let quoted = trimmed.starts_with('"');
     match parse_diff_path_token(marker) {
-        // An unquoted path containing whitespace is implausible as a diff
-        // path (git C-quotes such paths): without this gate, hunk payload
-        // lines like `--- token` / `+++ token with spaces` could be misread
-        // as a file-section boundary. Mirrors the plausibility contract of
-        // parse_old_path_marker. Quoted paths may legitimately contain
-        // spaces.
-        Some(path) => quoted || path.is_plausible(),
+        // Git leaves spaces unquoted and adds a tab after the path; plain
+        // diff producers also use tabs before timestamps. Without either
+        // quoting or that delimiter, whitespace can be hunk payload rather
+        // than a path. Mirrors parse_old_path_marker; declared hunk spans
+        // still take precedence over every marker pair in the stream parser.
+        Some(path) => quoted || marker.contains('\t') || path.is_plausible(),
         None => false,
     }
 }
@@ -147,9 +146,12 @@ pub(super) fn parse_old_path_marker(raw: &str) -> bool {
     if path.is_dev_null() {
         return true;
     }
-    // Quoted Git paths can contain whitespace. Keep the same boundary
-    // admission as the new marker; confinement still owns path acceptance.
-    marker.starts_with('"') || path.without_side_prefix("a/").is_plausible()
+    // Quoting or a path/metadata tab delimiter admits whitespace. Keep the
+    // same boundary admission as the new marker; confinement still owns
+    // path acceptance.
+    marker.starts_with('"')
+        || marker.contains('\t')
+        || path.without_side_prefix("a/").is_plausible()
 }
 
 /// Extract and confine the old path from a `--- <path>` marker, symmetrically
@@ -229,8 +231,8 @@ impl DecodedPath {
     }
 
     /// Whether the decoded token is plausible as an unquoted diff path:
-    /// non-empty and free of whitespace (git C-quotes paths containing
-    /// whitespace, so an unquoted token with spaces is likely hunk payload).
+    /// non-empty and free of whitespace. Without quoting or a tab delimiter,
+    /// a token with spaces is ambiguous with hunk payload.
     fn is_plausible(&self) -> bool {
         match self {
             DecodedPath::Text(text) => !text.is_empty() && !text.chars().any(char::is_whitespace),
@@ -397,9 +399,75 @@ where
     u8::try_from(value).unwrap_or(0)
 }
 
+/// Whether a repository-relative diff path names one of ripr's own artifact
+/// roots — `target/ripr/...` (#7663). Python `.gitignore` templates do not
+/// cover `target/`, so a routine `git add -A` can commit ripr's reports and
+/// caches; once committed, the next analysis would count ripr's own output
+/// as changed user scope. Tool artifacts are not user source at any position
+/// of the diff, so the pipeline excludes them from changed-scope accounting
+/// even when tracked. Matching anchors at the repository-relative start: a
+/// hand-written `target/ripr` directory at any other depth is not an
+/// artifact path. Separator handling is the platform's own (`components()`):
+/// on Windows both `/` and `\` forms match; on Unix only the `/` form does,
+/// because a backslash there is an ordinary filename character.
+pub(crate) fn is_ripr_artifact_path(path: &Path) -> bool {
+    // Platform-native component semantics decide the separator family:
+    // Windows `components()` splits on both `/` and `\`, so a native
+    // backslash spelling matches there; Unix `components()` splits on `/`
+    // only, so a Unix path whose directory literally contains a backslash
+    // (`target\ripr/user.rs`) stays one component and is NOT an artifact
+    // path — the two spellings name different directories on that family.
+    // Git always spells diff paths with `/`, so no cross-family input
+    // reaches the predicate on Unix.
+    let mut components = path.components();
+    let head = components.next().and_then(|part| match part {
+        Component::Normal(name) => name.to_str(),
+        _ => None,
+    });
+    let second = components.next().and_then(|part| match part {
+        Component::Normal(name) => name.to_str(),
+        _ => None,
+    });
+    matches!(head, Some("target")) && matches!(second, Some("ripr"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn is_ripr_artifact_path_matches_the_artifact_root_only() {
+        assert!(is_ripr_artifact_path(Path::new("target/ripr/cache/x.json")));
+        assert!(is_ripr_artifact_path(Path::new(
+            "target/ripr/pilot/pilot-summary.md"
+        )));
+        assert!(is_ripr_artifact_path(Path::new("target/ripr")));
+        assert!(!is_ripr_artifact_path(Path::new("target/other/x.json")));
+        assert!(!is_ripr_artifact_path(Path::new("src/target/ripr/x.json")));
+        assert!(!is_ripr_artifact_path(Path::new("target.rs")));
+        assert!(!is_ripr_artifact_path(Path::new("targeted/ripr/x.json")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn is_ripr_artifact_path_matches_the_native_backslash_form() {
+        // Windows components() splits on both separator families, so a
+        // native backslash spelling from platform APIs matches there.
+        assert!(is_ripr_artifact_path(Path::new(
+            "target\\ripr\\reports\\gap.json"
+        )));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn is_ripr_artifact_path_keeps_a_literal_backslash_directory_name() {
+        // Unix treats backslash as an ordinary filename character: a
+        // directory literally named `target\ripr` is NOT ripr's artifact
+        // root, and a hand-written file under it must not be classified as
+        // a tool artifact (#8257 review).
+        assert!(!is_ripr_artifact_path(Path::new("target\\ripr/user.rs")));
+        assert!(!is_ripr_artifact_path(Path::new("target\\ripr")));
+    }
 
     #[test]
     fn named_c_control_escapes_keep_native_path_identity() {
@@ -502,6 +570,61 @@ mod tests {
         assert_eq!(file.added_lines[0].text, "++ \"b/src/byte\\v.rs\"");
         assert_eq!(file.removed_lines[1].text, "before second");
         assert_eq!(file.added_lines[1].text, "after second");
+    }
+
+    #[test]
+    fn tab_delimited_plain_headers_keep_paths_and_line_coordinates() -> Result<(), String> {
+        use super::super::parse::{
+            parse_unified_diff_with_limit, parse_unified_diff_with_metadata,
+        };
+
+        for metadata in ["", "2026-10-16 00:00:00 +0000"] {
+            let input = format!(
+                "--- a/src/a.rs\n+++ b/src/a.rs\n@@ -2 +3 @@\n-before a\n+after a\n\
+                 --- a/src/b space.rs\t{metadata}\n+++ b/src/b space.rs\t{metadata}\n@@ -5 +7 @@\n-before b\n+after b\n"
+            );
+            let parsed = parse_unified_diff_with_metadata(&input);
+            assert!(parsed.limitations.is_empty(), "{:?}", parsed.limitations);
+            assert_eq!(parsed.truncated_file_sections, 0);
+            for files in [
+                parsed.changed_files,
+                parse_unified_diff_with_limit(&input, 2)?,
+            ] {
+                assert_eq!(files.len(), 2, "{files:?}");
+                for (file, path, old, new, before, after) in [
+                    (&files[0], "src/a.rs", 2, 3, "before a", "after a"),
+                    (&files[1], "src/b space.rs", 5, 7, "before b", "after b"),
+                ] {
+                    assert_eq!(file.path, Path::new(path));
+                    assert_eq!(file.removed_lines.len(), 1);
+                    assert_eq!(file.added_lines.len(), 1);
+                    assert_eq!(file.removed_lines[0].line, old);
+                    assert_eq!(file.removed_lines[0].new_side_line, new);
+                    assert_eq!(file.removed_lines[0].text, before);
+                    assert_eq!(file.added_lines[0].line, new);
+                    assert_eq!(file.added_lines[0].new_side_line, new);
+                    assert_eq!(file.added_lines[0].text, after);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn tab_delimited_header_pair_inside_declared_hunk_stays_source() {
+        use super::super::parse::parse_unified_diff_with_metadata;
+
+        let patch = "--- a/src/a.rs\n+++ b/src/a.rs\n@@ -2,2 +3,2 @@\n--- a/src/b space.rs\t\n+++ b/src/b space.rs\t\n-before\n+after\n";
+        let parsed = parse_unified_diff_with_metadata(patch);
+        assert!(parsed.limitations.is_empty());
+        let files = parsed.changed_files;
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, Path::new("src/a.rs"));
+        assert_eq!(files[0].removed_lines.len(), 2);
+        assert_eq!(files[0].added_lines.len(), 2);
+        assert_eq!(files[0].removed_lines[0].text, "-- a/src/b space.rs\t");
+        assert_eq!(files[0].added_lines[0].text, "++ b/src/b space.rs\t");
+        assert_eq!(files[0].added_lines[1].line, 4);
     }
 
     #[test]

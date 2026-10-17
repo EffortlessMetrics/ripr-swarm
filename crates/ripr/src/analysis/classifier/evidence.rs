@@ -11,9 +11,9 @@ use crate::analysis::classify::{
     getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
     helper_pins_owner_call, infection_evidence_with_boundary_input, local_flow_sinks,
     method_cannot_store, observes_returned_element_field, operand_only_pin,
-    oracle_crediting_relations, owner_may_be_reached_unseen, owner_touches_field_only_at,
-    package_prefix, parameter_rebound, propagation_evidence_with_witness, reach_evidence,
-    reveal_outcome, same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
+    oracle_crediting_relations, owner_touches_field_only_at, package_prefix, parameter_rebound,
+    propagation_evidence_with_witness, reach_evidence, reveal_outcome,
+    same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
     unconditional_owner_insert_field,
 };
 use crate::analysis::extract::mask_comments_and_strings;
@@ -114,7 +114,7 @@ impl ClassifiedProbeEvidence {
         let reach = reach_evidence(&context.related_tests, context.owner_fn, || {
             context
                 .owner_fn
-                .is_none_or(|owner| owner_may_be_reached_unseen(owner, context.index))
+                .is_none_or(|owner| context.owner_may_be_reached_unseen(owner))
         });
         let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
         let returned_ledger = match (context.owner_fn, context.helper_chain.as_ref()) {
@@ -193,6 +193,20 @@ impl ClassifiedProbeEvidence {
                 }
             }
             PropagationWitnessDiagnostic::from_witness(witness)
+        });
+        let field_projection = propagation_witness.as_ref().and_then(|diagnostic| {
+            let PropagationWitnessDiagnostic::Valid(witness) = diagnostic else {
+                return None;
+            };
+            crate::analysis::classify::field_projection_receipt(context, pin_syntax, witness)
+        });
+        let propagation_witness = propagation_witness.map(|diagnostic| match diagnostic {
+            PropagationWitnessDiagnostic::Valid(mut witness) => {
+                witness.field_projection = field_projection.clone();
+                witness.semantic_digest = witness.compute_semantic_digest();
+                PropagationWitnessDiagnostic::from_witness(witness)
+            }
+            other => other,
         });
         let mut gathered = activation_and_boundary_input(
             context.probe,
@@ -357,6 +371,7 @@ impl ClassifiedProbeEvidence {
                         )
                     } else {
                         !chain_forwards_to_observed_hops(&owner.name, chain, &context.related_tests)
+                            && field_projection.is_none()
                     } =>
             {
                 if let Some(ledger) = returned_ledger.as_ref().filter(|ledger| {
@@ -574,7 +589,9 @@ impl ClassifiedProbeEvidence {
             })
         };
         let owner_pin_admits = |test: &TestSummary, assertion: &OracleFact| {
-            fallible_checks
+            field_projection.as_ref().is_some_and(|receipt| {
+                receipt.valid_for(context.probe) && receipt.admits(test, assertion)
+            }) || fallible_checks
                 .iter()
                 .any(|receipt| receipt.valid_for(context.probe) && receipt.admits(test, assertion))
                 || owner_return_pin.as_ref().is_some_and(|pin| {
@@ -865,7 +882,7 @@ impl ClassifiedProbeEvidence {
         let reach_ruled_out = reach.state == StageState::No
             && context
                 .owner_fn
-                .is_some_and(|owner| !owner_may_be_reached_unseen(owner, context.index));
+                .is_some_and(|owner| !context.owner_may_be_reached_unseen(owner));
         // A weak stage is replaced too: with no reaching test, an
         // unconfirmed oracle (#5830 withholds confirmation from tokens that
         // only coincide with the owner's) is no discriminator at all.

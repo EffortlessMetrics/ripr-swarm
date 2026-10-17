@@ -142,6 +142,16 @@ const ITERATION_METHODS: &[&str] = &["iter", "into_iter", "any"];
 /// local or inherent function, none of which a method call on an array or a
 /// slice iterator can reach.
 fn iteration_is_closed(index: &RustIndex) -> bool {
+    closed_field_workspace(index, ITERATION_METHODS)
+}
+
+/// Shared primitive-field closure premise. Scalar field projection does not
+/// invoke iteration methods; the existing array observer keeps its method list.
+pub(super) fn field_workspace_is_closed(index: &RustIndex) -> bool {
+    closed_field_workspace(index, &[])
+}
+
+fn closed_field_workspace(index: &RustIndex, methods: &[&str]) -> bool {
     if !index.non_utf8_sources.is_empty()
         || !index.include_limitations.is_empty()
         || !index
@@ -169,7 +179,7 @@ fn iteration_is_closed(index: &RustIndex) -> bool {
             return false;
         };
         let tree = parse.tree();
-        let mut written = [0usize; 3];
+        let mut written = vec![0usize; methods.len()];
         let mut tokens = tree
             .syntax()
             .descendants_with_tokens()
@@ -183,7 +193,7 @@ fn iteration_is_closed(index: &RustIndex) -> bool {
                 Some(next) if next.kind() == SyntaxKind::DOLLAR => return false,
                 Some(next) => {
                     let text = next.text().trim_start_matches("r#");
-                    if let Some(slot) = ITERATION_METHODS.iter().position(|name| *name == text) {
+                    if let Some(slot) = methods.iter().position(|name| *name == text) {
                         written[slot] += 1;
                     }
                 }
@@ -206,7 +216,7 @@ fn iteration_is_closed(index: &RustIndex) -> bool {
                 })
                 .count()
         };
-        if ITERATION_METHODS
+        if methods
             .iter()
             .zip(written)
             .any(|(name, count)| count > harmless(name))
