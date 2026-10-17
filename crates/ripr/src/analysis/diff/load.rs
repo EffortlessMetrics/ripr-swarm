@@ -504,6 +504,13 @@ pub(crate) fn resolve_effective_base_core_with_commit(
              did not run). Pass `--base <ref>` for a ref this repository has."
         )));
     }
+    if explicit.trim().is_empty() {
+        return Err(CoreError::base_unresolvable(
+            "the base is empty (the analysis did not run). Pass `--base <ref>` with a branch, \
+             tag or commit hash, or omit `--base` to use the default base."
+                .to_string(),
+        ));
+    }
     let commit = format!("{explicit}^{{commit}}");
     match git_ref_output(root, &commit, git_timeout) {
         Some(output) if !output.status.success() => {
@@ -1310,6 +1317,16 @@ fn missing_ref_repair(root: &Path, missing_ref: &str, git_timeout: Option<Durati
          --unshallow` (in GitHub Actions, set `fetch-depth: 0` on actions/checkout)"
             .to_string();
     }
+    if ancestor_anchor(missing_ref).is_some_and(|anchor| {
+        git_ref_output(root, &format!("{anchor}^{{commit}}"), git_timeout)
+            .is_some_and(|output| output.status.success())
+    }) {
+        return format!(
+            "`{missing_ref}` is relative to a commit, so fetching cannot supply it: this \
+             repository's history is shorter than that. Run `git log --oneline` to see how \
+             many commits it has and use a smaller offset"
+        );
+    }
     let remotes = configured_remotes(root, git_timeout);
     if let Some(advice) = qualified_remote_advice(missing_ref, remotes.as_deref()) {
         return advice;
@@ -1329,6 +1346,16 @@ fn missing_ref_repair(root: &Path, missing_ref: &str, git_timeout: Option<Durati
             "Fetch the ref (for example `git fetch`)".to_string()
         }
     }
+}
+
+/// The anchor of a revision spelled relative to another commit (`HEAD` in
+/// `HEAD~5`, `origin/main` in `origin/main^`). The caller must still confirm
+/// the anchor resolves: when it does, the offset overshoots a short history,
+/// which a fetch cannot fix; when it does not, the anchor itself is the
+/// missing ref. Reflog and upstream forms (`@{...}`) are not offsets.
+fn ancestor_anchor(missing_ref: &str) -> Option<&str> {
+    let anchor = &missing_ref[..missing_ref.find(['~', '^'])?];
+    (!anchor.is_empty() && !anchor.contains("@{")).then_some(anchor)
 }
 
 /// Advice for a remote-qualified missing ref (`origin/main`). The qualifier
@@ -3223,6 +3250,32 @@ mod tests {
 
         ignore_remove_dir_all(&dir);
         Ok(())
+    }
+
+    #[test]
+    fn ancestor_anchor_extracts_the_revision_a_suffix_is_relative_to() {
+        for (relative, anchor) in [
+            ("HEAD~1", "HEAD"),
+            ("main^", "main"),
+            ("main~2", "main"),
+            ("origin/main~3", "origin/main"),
+            ("feature/x^2", "feature/x"),
+        ] {
+            assert_eq!(ancestor_anchor(relative), Some(anchor), "{relative}");
+        }
+        // Plain refs, hashes, reflog/upstream forms and anchorless suffixes
+        // keep the existing advice.
+        for other in [
+            "main",
+            "origin/main",
+            "abc1234",
+            "HEAD@{1}",
+            "@{u}",
+            "~2",
+            "^HEAD",
+        ] {
+            assert_eq!(ancestor_anchor(other), None, "{other}");
+        }
     }
 
     #[test]

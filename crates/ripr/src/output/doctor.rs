@@ -913,6 +913,15 @@ pub(crate) struct DoctorReport {
     /// project (additive in schema `0.4`).
     #[serde(default)]
     pub(crate) perl_preview: Option<DoctorPerlPreview>,
+    /// The canonical next action for a precise recovery (additive, no
+    /// `schema_version` bump, #6986). Produced by
+    /// [`canonical_next_action_for_doctor`], the same decision the human
+    /// `- Safe next action:` line follows; omitted when the first-command
+    /// state names a runnable command rather than a recovery, and for a
+    /// non-analysis profile. The command adapter fills it, so core evaluation
+    /// leaves it unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) canonical_next_action: Option<CanonicalNextActionV1>,
 }
 
 impl DoctorReport {
@@ -938,6 +947,24 @@ impl DoctorReport {
             cache: None,
             test_surfaces: Vec::new(),
             perl_preview: None,
+            canonical_next_action: None,
+        }
+    }
+
+    /// Attach the canonical doctor decision for the analysis profile, so the
+    /// machine document carries the decision the human Safe-next-action line
+    /// already follows instead of a second inference. A recovery-free state, a
+    /// non-analysis profile, or a projection that cannot be built leaves the
+    /// field absent. Recovery states never depend on the dirty-worktree probe,
+    /// which only chooses between two runnable commands.
+    pub(crate) fn attach_canonical_next_action(&mut self, root: &Path) {
+        self.canonical_next_action = None;
+        if self.profile != DoctorProfile::Analysis {
+            return;
+        }
+        let first = DoctorFirstCommand::resolve_for_report(self, || false);
+        if let Ok(action) = canonical_next_action_for_doctor(self, first, root) {
+            self.canonical_next_action = action;
         }
     }
 
@@ -5649,6 +5676,95 @@ mod tests {
                 "descendant {pid} outlived the doctor probe timeout"
             ));
         }
+        Ok(())
+    }
+
+    /// Control 9 (human/JSON agreement from one DTO, #6986): for each recovery
+    /// state the human `- Safe next action:` line and the JSON document's
+    /// `canonical_next_action.stop.check_name` come from the same decision,
+    /// and a runnable first command omits the JSON member and the line alike.
+    #[test]
+    fn doctor_json_action_and_human_line_agree_for_each_recovery_state() -> Result<(), String> {
+        let root = Path::new(".");
+        let base = |failing: &'static str| {
+            let mut report = DoctorReport::new(".");
+            for name in ["root_directory", "tool_git", "git_repository"] {
+                if name != failing {
+                    report.add_check(name, DoctorStatus::Pass, None);
+                }
+            }
+            if failing != "root_directory" {
+                if failing != "cargo_toml" {
+                    report.add_check("cargo_toml", DoctorStatus::Pass, None);
+                }
+                if failing != "config" {
+                    report.add_check("config", DoctorStatus::Pass, None);
+                }
+            }
+            report.add_check(failing, DoctorStatus::Fail, Some("bad".to_string()));
+            report
+        };
+        let cases = [
+            (
+                "root_directory",
+                "- Safe next action: fix the selected root first (see below); no check command can run until it exists",
+            ),
+            (
+                "config",
+                "- Safe next action: correct `ripr.toml` so it loads; no check command can run until it does",
+            ),
+            (
+                "cargo_toml",
+                "- Safe next action: fix the `!` checks above; no check command can run until they pass",
+            ),
+        ];
+        for (failing, expected_line) in cases {
+            let mut report = base(failing);
+            report.attach_canonical_next_action(root);
+            let first = DoctorFirstCommand::resolve_for_report(&report, || false);
+            let line = safe_next_action_recovery_line(&report, first, root)
+                .ok_or_else(|| format!("{failing}: recovery state must render a line"))?;
+            assert_eq!(line, expected_line, "{failing}");
+            let parsed: serde_json::Value = serde_json::from_str(&report.render_json()?)
+                .map_err(|e| format!("invalid JSON: {e}"))?;
+            let action = &parsed["canonical_next_action"];
+            assert_eq!(action["schema_version"], "canonical_next_action.v1");
+            assert_eq!(action["stop"]["kind"], "doctor_recovery", "{failing}");
+            assert_eq!(action["stop"]["check_name"], failing, "{failing}");
+            assert!(
+                action["command"].is_null(),
+                "{failing}: no runnable command"
+            );
+            // The JSON member is the exact DTO the line family was chosen from.
+            let from_report = report
+                .canonical_next_action
+                .clone()
+                .ok_or_else(|| format!("{failing}: attached action"))?;
+            let recomputed = canonical_next_action_for_doctor(&report, first, root)?
+                .ok_or_else(|| format!("{failing}: recomputed action"))?;
+            assert_eq!(from_report, recomputed, "{failing}");
+        }
+
+        // Negative control: a runnable state omits the member and the line.
+        let mut healthy = DoctorReport::new(".");
+        for name in ["root_directory", "tool_git", "git_repository"] {
+            healthy.add_check(name, DoctorStatus::Pass, None);
+        }
+        healthy.attach_canonical_next_action(root);
+        let first = DoctorFirstCommand::resolve_for_report(&healthy, || false);
+        assert_eq!(safe_next_action_recovery_line(&healthy, first, root), None);
+        let parsed: serde_json::Value = serde_json::from_str(&healthy.render_json()?)
+            .map_err(|e| format!("invalid JSON: {e}"))?;
+        assert!(
+            parsed.get("canonical_next_action").is_none(),
+            "a runnable first command must not name a recovery action: {parsed}"
+        );
+
+        // A non-analysis profile never claims the analysis recovery.
+        let mut source_build = base("config");
+        source_build.profile = DoctorProfile::SourceBuild;
+        source_build.attach_canonical_next_action(root);
+        assert!(source_build.canonical_next_action.is_none());
         Ok(())
     }
 

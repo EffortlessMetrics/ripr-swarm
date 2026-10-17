@@ -1,3 +1,12 @@
+//! Related-test selection: which tests plausibly exercise a probe's owner.
+//!
+//! [`RelatedTestCandidateIndex`] is a deterministic prefilter over the Rust
+//! test set (call names, assertion tokens, trigrams). It only narrows
+//! candidates; every selected test still passes the relation, package, shadow
+//! and confidence checks in this file, and queries the bounded indexes cannot
+//! represent safely fall back to the full test set. Cross-package relations consume
+//! path-dependency adjacency owned by `analysis/workspace`.
+
 use super::super::rust_index::{
     FunctionSummary, RustIndex, TestSummary, extract_identifier_tokens,
 };
@@ -5446,6 +5455,7 @@ mod tests {
                     ),
                 ],
                 earliest_unresolved_reason: None,
+                ..Default::default()
             },
         );
         let probe = probe("src/lib.rs", "String::new()");
@@ -5617,6 +5627,7 @@ mod tests {
                     ),
                 ],
                 earliest_unresolved_reason: None,
+                ..Default::default()
             },
         );
         let probe = probe("src/lib.rs", "String::new()");
@@ -5698,6 +5709,7 @@ mod tests {
                     false,
                 )],
                 earliest_unresolved_reason: None,
+                ..Default::default()
             },
         );
         with_source_provenance(
@@ -5716,6 +5728,7 @@ mod tests {
                     ),
                 ],
                 earliest_unresolved_reason: None,
+                ..Default::default()
             },
         );
         let probe = probe("src/impls.rs", "String::new()");
@@ -5927,6 +5940,7 @@ mod tests {
                 ),
             ],
             earliest_unresolved_reason: None,
+            ..Default::default()
         }
     }
 
@@ -5968,6 +5982,7 @@ mod tests {
                     ),
                 ],
                 earliest_unresolved_reason: None,
+                ..Default::default()
             },
         );
         assert_eq!(reason, RelationReason::DirectOwnerCall);
@@ -5998,6 +6013,7 @@ mod tests {
                         ),
                     ],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             );
             assert_eq!(
@@ -6028,6 +6044,7 @@ mod tests {
                     ),
                 ],
                 earliest_unresolved_reason: None,
+                ..Default::default()
             },
         );
         assert_eq!(reason, RelationReason::DirectOwnerCall);
@@ -6122,6 +6139,7 @@ mod tests {
                 SourceRoleProvenance {
                     edges: vec![],
                     earliest_unresolved_reason: Some("rust_module_ambiguous_parent".to_string()),
+                    ..Default::default()
                 },
             ),
             (
@@ -6138,6 +6156,7 @@ mod tests {
                         requires_test: false,
                     }],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
             (
@@ -6153,6 +6172,7 @@ mod tests {
                         false,
                     )],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
             (
@@ -6168,6 +6188,7 @@ mod tests {
                         false,
                     )],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
         ];

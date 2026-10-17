@@ -230,11 +230,11 @@ fn analysis_pending_blocked_root_names_its_own_recovery_route() -> Result<(), St
     let report = document_report(&harness, &uri, None)?;
     assert_eq!(
         result_id(&report)?,
-        "ripr:analysis-pending:select_root_and_restart"
+        "ripr:analysis-pending:use_single_workspace_root_and_restart"
     );
     assert_pending_marker_with_recovery(
         &report["items"],
-        "select_root_and_restart",
+        "use_single_workspace_root_and_restart",
         "Select a single workspace root",
     )?;
 
@@ -249,7 +249,7 @@ fn analysis_pending_blocked_root_names_its_own_recovery_route() -> Result<(), St
     let restored = document_report(
         &harness,
         &uri,
-        Some("ripr:analysis-pending:select_root_and_restart".to_string()),
+        Some("ripr:analysis-pending:use_single_workspace_root_and_restart".to_string()),
     )?;
     assert_eq!(restored["kind"], "full");
     assert_eq!(result_id(&restored)?, ANALYSIS_PENDING_RESULT_ID);

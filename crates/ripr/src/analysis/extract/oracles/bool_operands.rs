@@ -592,9 +592,8 @@ fn conjunct_states_relation(conjunct: &str) -> bool {
 /// other side may be `false`, so the test may be asserted false: like a
 /// `matches!` compared with a non-literal, it fails closed.
 fn compares_test_with_non_literal(line: &str) -> bool {
-    let literal = |side: &str| literal_spelling_value(&mask_comments_and_strings(side)).is_some();
     let comparison = assertion_comparison(line);
-    let (mut left, mut right): (&str, &str) = match &comparison {
+    let (left, right): (&str, &str) = match &comparison {
         Some(AssertionComparison::Operands { left, right, .. }) => (left, right),
         Some(AssertionComparison::Condition(condition)) => {
             let Some(sides) = whole_comparison_sides(condition) else {
@@ -604,6 +603,12 @@ fn compares_test_with_non_literal(line: &str) -> bool {
         }
         None => return false,
     };
+    sides_compare_test_with_non_literal(left, right)
+}
+
+/// `compares_test_with_non_literal` for the two sides of one comparison.
+fn sides_compare_test_with_non_literal<'a>(mut left: &'a str, mut right: &'a str) -> bool {
+    let literal = |side: &str| literal_spelling_value(&mask_comments_and_strings(side)).is_some();
     // A literal side asserts the other side's comparison, so that
     // comparison is read in turn (`assert_eq!((r == Err(E::Bad)) as u8 == 0,
     // true)`; review of #8110).
@@ -614,6 +619,16 @@ fn compares_test_with_non_literal(line: &str) -> bool {
         if let Some(inner) = shared_constructor_arguments(left, right) {
             (left, right) = inner;
             continue;
+        }
+        // Two sequences of the same length are equal when every element
+        // pair is, so each pair is read on its own
+        // (`vec![r == Err(E::Bad)]` against `vec![expected]`; #8101).
+        if let (Some(left), Some(right)) = (sequence_elements(left), sequence_elements(right)) {
+            return left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(&right)
+                    .any(|(left, right)| sides_compare_test_with_non_literal(left, right));
         }
         let other = match (literal(left), literal(right)) {
             (false, false) => {
@@ -635,6 +650,16 @@ fn compares_test_with_non_literal(line: &str) -> bool {
         };
         (left, right) = sides;
     }
+}
+
+/// The elements of `side` when it is one array or `vec!` literal
+/// (`[a, b]`, `vec![a, b]`).
+fn sequence_elements(side: &str) -> Option<Vec<String>> {
+    let side = side.trim();
+    let array = side.strip_prefix("vec!").map_or(side, str::trim_start);
+    let contents = super::arguments::delimited_contents_at(array, 0)
+        .filter(|contents| array.starts_with('[') && contents.len() + 2 == array.len())?;
+    Some(super::arguments::split_top_level_commas(&contents))
 }
 
 /// Whether `side` is arithmetic over an integer-cast test and another
