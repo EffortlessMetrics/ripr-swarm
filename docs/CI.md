@@ -49,9 +49,12 @@ publish a Draft, and add the `merge-ready` label last. Adding `merge-ready`
 starts the non-required lanes once for the head it was applied to. A later push
 to a labeled PR does not rerun them: re-apply the label (remove it, then add it
 again) once the new head is ready to qualify. Removing the label does not cancel
-runs already in flight. A push cancels a still-running gated run for the older
-head (the skipped `synchronize` run joins the same concurrency group), which is
-intended: the stale head is superseded and the label is re-applied for the new one.
+runs already in flight. Only a `merge-ready` labeled request shares a concurrency
+group, so re-applying the label supersedes the older run for that PR; a push or any
+other label event runs in its own group, skips its jobs, and neither cancels nor
+replaces a pending request. A push therefore does not cancel the older head's
+run: re-apply the label for the new head and let the older run finish or be
+superseded.
 
 - Auxiliary labels (`full-ci`, `windows-ci`, `vscode`, `coverage`,
   `clippy-future`, `release-check`) still select extra lanes, but only together

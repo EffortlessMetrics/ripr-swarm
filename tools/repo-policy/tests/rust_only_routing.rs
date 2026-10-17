@@ -420,6 +420,24 @@ fn gated_lanes_admit_pull_requests_only_on_the_merge_ready_labeled_event() {
             .filter(|line| line.trim_start().starts_with("if:") && line.contains("'merge-ready'"))
             .collect();
         assert!(!gated_ifs.is_empty(), "{name} has no merge-ready guard");
+        if source.contains("\nconcurrency:\n") {
+            let group = source
+                .lines()
+                .find(|line| line.trim_start().starts_with("group:"))
+                .unwrap_or_default();
+            assert!(
+                group.contains("github.run_id") && group.contains("'merge-ready'"),
+                "{name}: non-request pull_request events must get a unique group: {group}"
+            );
+            let cancel = source
+                .lines()
+                .find(|line| line.trim_start().starts_with("cancel-in-progress:"))
+                .unwrap_or_default();
+            assert!(
+                cancel.contains("github.event.label.name == 'merge-ready'"),
+                "{name}: only a merge-ready request may cancel in-flight runs: {cancel}"
+            );
+        }
         for line in gated_ifs {
             assert!(line.contains(EXPLICIT), "{name}: {line}");
             for event in ["opened", "synchronize", "reopened", "ready_for_review"] {
