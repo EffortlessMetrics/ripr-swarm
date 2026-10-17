@@ -182,6 +182,7 @@ pub(crate) enum XtaskCommand {
     WorkClaimCheck(Vec<String>),
     WorkWaveCheck(Vec<String>),
     WorkContextCheck(Vec<String>),
+    WorkSynthesisCheck(Vec<String>),
     Unknown(String),
 }
 
@@ -408,6 +409,13 @@ impl XtaskCommand {
                     Some("check") => Self::WorkContextCheck(rest[2..].to_vec()),
                     _ => Self::Unknown(format!(
                         "work context {}",
+                        rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
+                    )),
+                },
+                Some("synthesis") => match rest.get(1).map(|arg| arg.as_str()) {
+                    Some("check") => Self::WorkSynthesisCheck(rest[2..].to_vec()),
+                    _ => Self::Unknown(format!(
+                        "work synthesis {}",
                         rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
                     )),
                 },
@@ -2424,6 +2432,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Validates committed WorkContextPacketV1 rows against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR B, RIPR-SPEC-0272, consuming #1632); every packet binds the repository, portfolio-snapshot identity, basis head and the selected-work identity it compiles context for, every carried context/overflow reference must stay relevant to the bound selection (campaign references are context, never permission), a selected-work-only packet with overflow, an evidence-free packet, an unresolvable legacy active-goal ref, a wrong repository or a stale basis fails with exact recompile/reconcile routes, and no GitHub, branch, worktree, claim, spec, campaign or source state is touched.",
+        ),
+        command_entry(
+            "work synthesis check [--corpus <dir>] [--json]",
+            "report_only",
+            "target/ripr/reports/work-synthesis-check.{json,md}",
+            false,
+            false,
+            "Validates committed WorkSynthesisV1 rows against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR B, RIPR-SPEC-0273, consuming #1636); every synthesis binds the repository, portfolio-snapshot identity, basis head and the selected-work identity it reports on, the reported transition must match the selected action, every uncovered or contradicted acceptance row must be named in the contradictions list, a reported campaign ref outside the bound selection's campaign refs is a silent switch that fails, the schema has no field that could create another selected issue, and no GitHub, branch, worktree, claim, spec, campaign or source state is touched.",
         ),
     ]
 }

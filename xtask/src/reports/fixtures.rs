@@ -464,6 +464,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "work_claim_identity"
                     | "work_wave_identity"
                     | "work_context_identity"
+                    | "work_synthesis_identity"
                     | "typescript-bun-ub-calibration"
                     | "typescript-preview-false-actionable-audit"
                     | "typescript-preview-repair-loop"
