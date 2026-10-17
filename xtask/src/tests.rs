@@ -3,6 +3,7 @@
 //! body moved verbatim; test names and module path (`crate::tests`) are
 //! unchanged.
 
+mod build_feature_reuse;
 mod discarded_matcher_honesty;
 mod fixture_cache;
 #[path = "precommit_source_oracle.rs"]
@@ -8888,6 +8889,9 @@ fn non_rust_programming_policy_requires_retention_rule() {
             .is_some()
     );
     assert!(non_rust_programming_retention_reason("scripts/check.py").is_none());
+    assert!(non_rust_programming_retention_reason(".ci/contabo-product.sh").is_some());
+    assert!(non_rust_programming_retention_reason(".ci/contabo-result.sh").is_some());
+    assert!(non_rust_programming_retention_reason(".ci/arbitrary.sh").is_none());
     assert!(
         non_rust_programming_retention_reason("tools/python/portable-ripr-consumer/run.py")
             .is_some()
