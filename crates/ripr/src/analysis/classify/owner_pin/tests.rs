@@ -3107,6 +3107,7 @@ fn a_cfg_gated_owner_is_not_reached_by_a_bare_call() {
         let chain = SourceRoleProvenance {
             edges: vec![module_edge(LIB, "src/scale.rs", "scale", line, false)],
             earliest_unresolved_reason: None,
+            ..Default::default()
         };
         let ix = index_with_provenance(&files, &[("src/scale.rs", chain)]);
         let owner = ix.functions().iter().find(|function| {
@@ -3197,6 +3198,7 @@ fn an_ancestor_file_a_cfg_may_drop_gates_the_owner() {
         let chain = |edges: Vec<SourceRoleProvenanceEdge>| SourceRoleProvenance {
             edges,
             earliest_unresolved_reason: None,
+            ..Default::default()
         };
         let ix = index_with_provenance(
             &files,
@@ -3652,6 +3654,7 @@ fn an_out_of_line_super_glob_pins_past_the_declaring_parent() {
                 SourceRoleProvenance {
                     edges: vec![module_edge(LIB, "src/scale.rs", "scale", 1, false)],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
             (
@@ -3665,6 +3668,7 @@ fn an_out_of_line_super_glob_pins_past_the_declaring_parent() {
                         true,
                     )],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
         ],
@@ -3693,6 +3697,7 @@ fn an_out_of_line_super_use_pins_past_the_declaring_parent() {
                 SourceRoleProvenance {
                     edges: vec![module_edge(LIB, "src/scale.rs", "scale", 1, false)],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
             (
@@ -3706,6 +3711,7 @@ fn an_out_of_line_super_use_pins_past_the_declaring_parent() {
                         true,
                     )],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
         ],
@@ -3735,6 +3741,7 @@ fn an_out_of_line_super_glob_refuses_past_a_parent_twin() {
                 SourceRoleProvenance {
                     edges: vec![module_edge(LIB, "src/scale.rs", "scale", 1, false)],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
             (
@@ -3748,6 +3755,7 @@ fn an_out_of_line_super_glob_refuses_past_a_parent_twin() {
                         true,
                     )],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
         ],
@@ -6503,6 +6511,7 @@ fn an_out_of_line_parent_module_shadow_of_the_receiver_refuses_the_pin() {
                 SourceRoleProvenance {
                     edges: vec![module_edge(LIB, HELPERS, "helpers", 12, true)],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
             (
@@ -6513,6 +6522,7 @@ fn an_out_of_line_parent_module_shadow_of_the_receiver_refuses_the_pin() {
                         module_edge(HELPERS, CHILD, "stack_tests", 5, false),
                     ],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
         ],
@@ -6546,6 +6556,7 @@ fn an_out_of_line_test_without_a_parent_shadow_keeps_its_pin() {
                 SourceRoleProvenance {
                     edges: vec![module_edge(LIB, HELPERS, "helpers", 12, true)],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
             (
@@ -6556,6 +6567,7 @@ fn an_out_of_line_test_without_a_parent_shadow_keeps_its_pin() {
                         module_edge(HELPERS, CHILD, "stack_tests", 1, false),
                     ],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
         ],
@@ -6585,6 +6597,7 @@ fn a_parent_root_rename_of_the_receiver_refuses_the_pin() {
                     SourceRoleProvenance {
                         edges: vec![module_edge(LIB, HELPERS, "helpers", 12, true)],
                         earliest_unresolved_reason: None,
+                        ..Default::default()
                     },
                 ),
                 (
@@ -6595,6 +6608,7 @@ fn a_parent_root_rename_of_the_receiver_refuses_the_pin() {
                             module_edge(HELPERS, CHILD, "stack_tests", 3, false),
                         ],
                         earliest_unresolved_reason: None,
+                        ..Default::default()
                     },
                 ),
             ],
@@ -6629,6 +6643,7 @@ fn a_parent_root_plain_import_of_the_receiver_keeps_its_pin() {
                 SourceRoleProvenance {
                     edges: vec![module_edge(LIB, HELPERS, "helpers", 12, true)],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
             (
@@ -6639,6 +6654,7 @@ fn a_parent_root_plain_import_of_the_receiver_keeps_its_pin() {
                         module_edge(HELPERS, CHILD, "stack_tests", 3, false),
                     ],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
         ],
@@ -6676,6 +6692,7 @@ mod stack_tests;
                 SourceRoleProvenance {
                     edges: vec![module_edge(LIB, HELPERS, "helpers", 1, false)],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
             (
@@ -6686,6 +6703,7 @@ mod stack_tests;
                         module_edge(HELPERS, CHILD, "stack_tests", 12, true),
                     ],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
         ],
