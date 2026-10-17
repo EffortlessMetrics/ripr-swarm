@@ -84,6 +84,12 @@ impl Fixture {
         Ok(fixture)
     }
 
+    pub(super) fn suppression_policy(&self, text: &str) -> Result<PathBuf, std::io::Error> {
+        let path = self.scratch.join("suppression-policy.toml");
+        std::fs::write(&path, text)?;
+        Ok(path)
+    }
+
     pub(super) fn run(&self, extra: &[&str]) -> Result<Output, Box<dyn std::error::Error>> {
         let started = Instant::now();
         let mut command = probe_command(env!("CARGO_BIN_EXE_ripr"));

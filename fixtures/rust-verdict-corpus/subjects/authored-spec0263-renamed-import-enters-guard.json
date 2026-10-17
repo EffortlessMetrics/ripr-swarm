@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-spec0263-renamed-import-enters-guard",
+  "origin": "authored",
+  "version_label": "authored 2026-10-14 for RIPR-SPEC-0263 acceptance example 6 (a guarded push a test enters only through a renamed import)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "9dadb9c19c5fcbb2ce20f2963c6c7680e077685b3dbf1113bdd227cfd3b95e43"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "f1e4e4cb2bd2b801a237a478c64ae497840cd81977165a0d3f00c66c60ab8220"
+    }
+  ]
+}

@@ -5,7 +5,11 @@ use ra_ap_syntax::{
     AstNode, SourceFile, TextSize,
     ast::{self, HasAttrs, HasGenericArgs, HasGenericParams, HasName},
 };
+mod probe_shapes;
 mod property_macros;
+use probe_shapes::extract_parser_probe_shapes;
+#[cfg(test)]
+mod probe_shape_walk_tests;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -475,6 +479,14 @@ impl RustSyntaxAdapter for RaRustSyntaxAdapter {
 }
 
 pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, String> {
+    summarize_file_with_probe_shapes(path, text, extract_parser_probe_shapes)
+}
+
+fn summarize_file_with_probe_shapes(
+    path: &Path,
+    text: &str,
+    extract_probe_shapes: impl Fn(&ast::Fn, &str, &Arc<str>, &LineIndex) -> Vec<ProbeShapeFact>,
+) -> Result<FileFacts, String> {
     if let Some(reason) = rust_nesting_refusal(text) {
         return Err(reason);
     }
@@ -525,8 +537,7 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
         let calls = extract_call_facts(&call_body, start_line);
         let returns = extract_return_facts(&body, start_line);
         let literals = extract_literal_facts(&body, start_line);
-        let probe_shapes =
-            extract_parser_probe_shapes(&function, text, &shared_source, &line_index);
+        let probe_shapes = extract_probe_shapes(&function, text, &shared_source, &line_index);
         // A plain helper inside an inline `#[cfg(test)]` module is test
         // infrastructure even when it has no `#[test]` attribute. Classify
         // that role at the producer boundary so diff probes, seam inventory,
@@ -1291,269 +1302,6 @@ fn enclosed_by_nested_fn_like(node: &ra_ap_syntax::SyntaxNode, body: &ast::Block
         })
 }
 
-fn extract_parser_probe_shapes(
-    function: &ast::Fn,
-    text: &str,
-    source: &Arc<str>,
-    line_index: &LineIndex,
-) -> Vec<ProbeShapeFact> {
-    let mut shapes = Vec::new();
-    push_unsafe_boundary_probe_shapes(&mut shapes, function, source, line_index);
-
-    for if_expr in function
-        .syntax()
-        .descendants()
-        .filter_map(ast::IfExpr::cast)
-    {
-        if let Some(condition) = if_expr.condition() {
-            push_probe_shape(
-                &mut shapes,
-                line_index,
-                text,
-                source,
-                ProbeShapeKind::Predicate,
-                condition.syntax().text_range().start(),
-                condition.syntax().text_range().end(),
-            );
-        }
-    }
-
-    for while_expr in function
-        .syntax()
-        .descendants()
-        .filter_map(ast::WhileExpr::cast)
-    {
-        if let Some(condition) = while_expr.condition() {
-            push_probe_shape(
-                &mut shapes,
-                line_index,
-                text,
-                source,
-                ProbeShapeKind::Predicate,
-                condition.syntax().text_range().start(),
-                condition.syntax().text_range().end(),
-            );
-        }
-    }
-
-    for bin_expr in function
-        .syntax()
-        .descendants()
-        .filter_map(ast::BinExpr::cast)
-    {
-        if bin_expr
-            .op_token()
-            .is_some_and(|token| is_predicate_operator(token.text()))
-        {
-            push_probe_shape(
-                &mut shapes,
-                line_index,
-                text,
-                source,
-                ProbeShapeKind::Predicate,
-                bin_expr.syntax().text_range().start(),
-                bin_expr.syntax().text_range().end(),
-            );
-        }
-    }
-
-    let body = function.body();
-    for return_expr in function
-        .syntax()
-        .descendants()
-        .filter_map(ast::ReturnExpr::cast)
-    {
-        let range = return_expr.syntax().text_range();
-        push_probe_shape(
-            &mut shapes,
-            line_index,
-            text,
-            source,
-            ProbeShapeKind::ReturnValue,
-            range.start(),
-            range.end(),
-        );
-        let return_text = slice_text(text, range.start(), range.end());
-        // #6904: a `return` inside a closure, `async` block or nested `fn`
-        // leaves that body, not the owner. Share the `direct_calls` filter.
-        if has_error_path_text(&return_text)
-            && !body
-                .as_ref()
-                .is_some_and(|body| enclosed_by_nested_fn_like(return_expr.syntax(), body))
-        {
-            push_probe_shape(
-                &mut shapes,
-                line_index,
-                text,
-                source,
-                ProbeShapeKind::ErrorPath,
-                range.start(),
-                range.end(),
-            );
-        }
-    }
-
-    if let Some(tail_expr) = body.as_ref().and_then(|body| body.tail_expr()) {
-        let range = tail_expr.syntax().text_range();
-        let tail_text = slice_text(text, range.start(), range.end());
-        if is_tail_return_value_text(&tail_text) {
-            push_probe_shape(
-                &mut shapes,
-                line_index,
-                text,
-                source,
-                ProbeShapeKind::ReturnValue,
-                range.start(),
-                range.end(),
-            );
-            if has_error_path_text(&tail_text) {
-                push_probe_shape(
-                    &mut shapes,
-                    line_index,
-                    text,
-                    source,
-                    ProbeShapeKind::ErrorPath,
-                    range.start(),
-                    range.end(),
-                );
-            }
-        }
-    }
-
-    for call_expr in function
-        .syntax()
-        .descendants()
-        .filter_map(ast::CallExpr::cast)
-    {
-        let range = call_expr.syntax().text_range();
-        let call_text = slice_text(text, range.start(), range.end());
-        push_call_deletion_probe_shape(&mut shapes, line_index, text, source, call_expr.syntax());
-        if has_return_value_text(&call_text) && !call_is_argument(&call_expr) {
-            push_probe_shape(
-                &mut shapes,
-                line_index,
-                text,
-                source,
-                ProbeShapeKind::ReturnValue,
-                range.start(),
-                range.end(),
-            );
-        }
-        if has_error_path_text(&call_text) {
-            push_probe_shape(
-                &mut shapes,
-                line_index,
-                text,
-                source,
-                ProbeShapeKind::ErrorPath,
-                range.start(),
-                range.end(),
-            );
-        }
-    }
-
-    for method_call in function
-        .syntax()
-        .descendants()
-        .filter_map(ast::MethodCallExpr::cast)
-    {
-        let range = method_call.syntax().text_range();
-        let method_text = slice_text(text, range.start(), range.end());
-        push_call_deletion_probe_shape(&mut shapes, line_index, text, source, method_call.syntax());
-        if method_call
-            .name_ref()
-            .is_some_and(|name| is_effect_call_name(&name.syntax().text().to_string()))
-            || has_effect_text(&method_text)
-        {
-            push_probe_shape(
-                &mut shapes,
-                line_index,
-                text,
-                source,
-                ProbeShapeKind::SideEffect,
-                range.start(),
-                range.end(),
-            );
-        }
-    }
-
-    for field in function
-        .syntax()
-        .descendants()
-        .filter_map(ast::RecordExprField::cast)
-    {
-        let range = field.syntax().text_range();
-        push_probe_shape(
-            &mut shapes,
-            line_index,
-            text,
-            source,
-            ProbeShapeKind::FieldConstruction,
-            range.start(),
-            range.end(),
-        );
-    }
-
-    for match_expr in function
-        .syntax()
-        .descendants()
-        .filter_map(ast::MatchExpr::cast)
-    {
-        if let Some(token) = match_expr.match_token() {
-            let snippet = match_expr_probe_text(
-                text,
-                match_expr.expr().map(|expr| expr.syntax().text_range()),
-                match_expr.syntax().text_range(),
-            );
-            push_probe_shape_with_text(
-                &mut shapes,
-                line_index,
-                ProbeShapeKind::MatchArm,
-                token.text_range().start(),
-                token.text_range().end(),
-                link_shape_text(source, token.text_range().start(), snippet),
-            );
-        }
-    }
-
-    for arm in function
-        .syntax()
-        .descendants()
-        .filter_map(ast::MatchArm::cast)
-    {
-        if let Some(token) = arm.fat_arrow_token() {
-            let snippet = match_arm_probe_text(
-                text,
-                arm.syntax().text_range().start(),
-                token.text_range().start(),
-            );
-            push_probe_shape_with_text(
-                &mut shapes,
-                line_index,
-                ProbeShapeKind::MatchArm,
-                token.text_range().start(),
-                token.text_range().end(),
-                link_shape_text(source, token.text_range().start(), snippet),
-            );
-        }
-    }
-
-    shapes.sort_by(|a, b| {
-        a.start_line
-            .cmp(&b.start_line)
-            .then(a.end_line.cmp(&b.end_line))
-            .then(a.kind.as_str().cmp(b.kind.as_str()))
-            .then(a.text.cmp(&b.text))
-    });
-    shapes.dedup_by(|a, b| {
-        a.start_line == b.start_line
-            && a.end_line == b.end_line
-            && a.kind == b.kind
-            && a.text == b.text
-    });
-    shapes
-}
-
 fn push_unsafe_boundary_probe_shapes(
     shapes: &mut Vec<ProbeShapeFact>,
     function: &ast::Fn,
@@ -1576,6 +1324,7 @@ fn push_unsafe_boundary_probe_shapes(
                 unsafe_token.text_range().start(),
                 format!("unsafe fn {name}"),
             ),
+            None,
         );
     }
 
@@ -1598,7 +1347,103 @@ fn push_unsafe_boundary_probe_shapes(
                 unsafe_token.text_range().start(),
                 "unsafe block".to_string(),
             ),
+            None,
         );
+    }
+}
+
+/// RIPR-SPEC-0228: the field path after `self` written by an assignment or
+/// compound assignment (`count` for `self.count += 1`, `child.count` for
+/// `self.child.count = 0`). Any other place (a local, `*p`, an index, a
+/// field of a call result or of another binding) gives `None`, and so does
+/// an assignment that spans lines (a changed continuation line would carry
+/// only part of it) or whose right-hand side contains, at any depth, a call,
+/// method call, macro, closure, `?` or `.await`, or a choice between values
+/// (`if`, `match`, a comparison or `&&`/`||`): those keep their
+/// `call_deletion`, predicate and other probes (RIPR-SPEC-0228 Non-Goals).
+pub(crate) fn field_assignment_path(bin_expr: &ast::BinExpr) -> Option<String> {
+    let op = bin_expr.op_token()?;
+    if !matches!(
+        op.text(),
+        "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>="
+    ) {
+        return None;
+    }
+    let rhs = bin_expr.rhs()?;
+    let keeps_other_probe = rhs.syntax().descendants().any(|node| {
+        matches!(
+            ast::Expr::cast(node.clone()),
+            Some(
+                ast::Expr::CallExpr(_)
+                    | ast::Expr::MethodCallExpr(_)
+                    | ast::Expr::MacroExpr(_)
+                    | ast::Expr::TryExpr(_)
+                    | ast::Expr::AwaitExpr(_)
+                    | ast::Expr::IfExpr(_)
+                    | ast::Expr::MatchExpr(_)
+                    | ast::Expr::ClosureExpr(_)
+                    // A block or loop can leave the owner before the write
+                    // (`self.n = { let Some(n) = x else { return }; n };`).
+                    | ast::Expr::BlockExpr(_)
+                    | ast::Expr::ReturnExpr(_)
+                    | ast::Expr::BreakExpr(_)
+                    | ast::Expr::ContinueExpr(_)
+                    | ast::Expr::LetExpr(_)
+                    | ast::Expr::LoopExpr(_)
+                    | ast::Expr::WhileExpr(_)
+                    | ast::Expr::ForExpr(_)
+            )
+        ) || ast::BinExpr::cast(node).is_some_and(|inner| {
+            inner
+                .op_kind()
+                .is_some_and(|op| matches!(op, ast::BinaryOp::CmpOp(_) | ast::BinaryOp::LogicOp(_)))
+        })
+    });
+    // A comment inside the assignment hides it from the textual
+    // `field_assignment_target` reader, which the evidence guard and the
+    // seam skip rely on, so such writes keep no probe.
+    let has_comment = bin_expr
+        .syntax()
+        .descendants_with_tokens()
+        .any(|element| element.kind() == ra_ap_syntax::SyntaxKind::COMMENT);
+    if bin_expr.syntax().text().contains_char('\n') || keeps_other_probe || has_comment {
+        return None;
+    }
+    let mut place = bin_expr.lhs()?;
+    let mut segments = Vec::new();
+    loop {
+        match place {
+            ast::Expr::FieldExpr(field) => {
+                // Only plain ASCII names (no `self.0`, `self.r#type` or
+                // non-ASCII names), matching `field_assignment_target`.
+                let name = field.name_ref()?.text().to_string();
+                let plain = name
+                    .chars()
+                    .next()
+                    .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+                    && name
+                        .chars()
+                        .all(|ch| ch == '_' || ch.is_ascii_alphanumeric());
+                if !plain {
+                    return None;
+                }
+                segments.push(name);
+                place = field.expr()?;
+            }
+            ast::Expr::PathExpr(path) => {
+                let path = path.path()?;
+                let is_self = path.qualifier().is_none()
+                    && path
+                        .segment()
+                        .is_some_and(|segment| segment.self_token().is_some());
+                if !is_self || segments.is_empty() {
+                    return None;
+                }
+                segments.reverse();
+                return Some(segments.join("."));
+            }
+            _ => return None,
+        }
     }
 }
 
@@ -1623,7 +1468,7 @@ fn push_probe_shape(
     let leading = raw.len() - raw.trim_start().len();
     let link_start = (u32::from(start) as usize).saturating_add(leading);
     let text = SourceText::shared_or_owned(source, link_start, &snippet);
-    push_probe_shape_with_text(shapes, line_index, kind, start, end, text);
+    push_probe_shape_with_text(shapes, line_index, kind, start, end, text, None);
 }
 
 fn push_probe_shape_with_text(
@@ -1633,6 +1478,7 @@ fn push_probe_shape_with_text(
     start: TextSize,
     end: TextSize,
     text: SourceText,
+    source_lines: Option<(usize, usize)>,
 ) {
     if text.is_empty() {
         return;
@@ -1645,6 +1491,7 @@ fn push_probe_shape_with_text(
         kind,
         text,
         value_consumed: false,
+        source_lines,
     });
 }
 
@@ -2364,13 +2211,14 @@ fn extract_parser_oracles(
             continue;
         };
         // RIPR-SPEC-0227: `unwrap()` / `expect()` panic on the `Err` side
-        // and read smoke; an `unwrap_err()` whose value is never compared
+        // and read smoke; an `unwrap_err()` or `expect_err(..)` whose value
+        // is never compared
         // panics on the `Ok` side, so it observes the `Err` side
         // (decision 2). Its statement shape is decided by the same
         // `uncompared_unwrap_err` the line scanner uses.
         let (kind, strength) = match name.as_str() {
             "unwrap" | "expect" => (OracleKind::SmokeOnly, OracleStrength::Smoke),
-            "unwrap_err" if uncompared_unwrap_err_statement(&method_call, text) => {
+            "unwrap_err" | "expect_err" if uncompared_unwrap_err_statement(&method_call, text) => {
                 (OracleKind::BroadError, OracleStrength::Weak)
             }
             _ => continue,
@@ -4555,5 +4403,60 @@ mod shadow_fact_equivalence_tests {
             "the nested fn's own walk must still emit its return: {return_errors:?}"
         );
         Ok(())
+    }
+
+    /// RIPR-SPEC-0228: which assignments are probed as field writes.
+    #[test]
+    fn field_assignment_path_reads_single_line_plain_self_field_writes() {
+        let path = |statement: &str| {
+            let source = format!("impl P {{ fn f(&mut self) {{ {statement} }} }}");
+            let parse = SourceFile::parse(&source, Edition::CURRENT);
+            parse
+                .tree()
+                .syntax()
+                .descendants()
+                .find_map(ast::BinExpr::cast)
+                .and_then(|bin_expr| field_assignment_path(&bin_expr))
+        };
+        for (statement, expected) in [
+            ("self.count += 2 - 1;", "count"),
+            ("self.child.count = 0;", "child.count"),
+            ("self.state = State::Done;", "state"),
+            ("self.total <<= 1;", "total"),
+            // A trailing comment is trivia outside the assignment node.
+            ("self.total += 1 /* c */;", "total"),
+        ] {
+            assert_eq!(path(statement).as_deref(), Some(expected), "{statement}");
+        }
+        for statement in [
+            "self.0 = 1;",
+            "self.r#type = 1;",
+            "self.z\u{e4}hler = 1;",
+            "self.count =\n    self.count + 1;",
+            "self.label = compute(2);",
+            "self.count = self.count + compute(2);",
+            "self.count = (self.size() as u32) * 2;",
+            "self.ok = !self.a.is_empty();",
+            "self.label = self.name.clone();",
+            "self.label = format!(\"x\");",
+            "self.count = parse()?;",
+            "count += 1;",
+            "other.count = 1;",
+            "self.items[0] = 1;",
+            "self.count == 1;",
+            "self.locked = self.count >= 4;",
+            "self.ok = self.a && self.b;",
+            "self.count = if self.locked { 2 } else { 5 };",
+            "self.count = match self.locked { true => 1, false => 2 };",
+            // #8061 review: a block can leave the owner before the write,
+            // and a comment hides the write from the textual reader.
+            "self.count = { let Some(n) = self.next else { return }; n };",
+            "self.count = { 1 };",
+            "self.count = loop { break 2 };",
+            "self.count /* c */ += 1;",
+            "self.count += /* c */ 1;",
+        ] {
+            assert_eq!(path(statement), None, "{statement}");
+        }
     }
 }

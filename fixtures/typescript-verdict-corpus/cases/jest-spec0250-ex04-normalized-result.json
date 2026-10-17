@@ -9,7 +9,7 @@
   "edit_kind": "behavior_change",
   "behavior_family": "field_construction",
   "test_shape": "jest_tomatchobject_wrapped_owner_call",
-  "hard_case": "the pins observe `normalize(buildProfileNorm(...))`, not the owner call itself, so the spec withholds the field-pin credit although `normalize` returns its argument",
+  "hard_case": "the pins observe `normalize(buildProfileNorm(...))`, not the owner call itself; the spec credits them only because `normalize` is a test-local identity helper (`return value;`)",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",
@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "`adult: age >= 18` becomes `adult: age > 18`. The test pins `expect(normalize(buildProfileNorm(\"ana\", 17))).toMatchObject({ name: \"ana\", adult: false })` and the same for `(\"bo\", 18)` with `adult: true`, where the test-local `normalize` returns its argument; at 18 the edit gives `adult: false` and the test fails. RIPR-SPEC-0250 example 4: a pin on `normalize(buildProfile(...))` is not `exposed`. ripr reads the pins `relational_check` / weak and reports `weakly_exposed`, as the spec states; against the discriminated truth that is a false actionable gap the spec accepts.",
+  "reasoning": "`adult: age >= 18` becomes `adult: age > 18`. The test pins `expect(normalize(buildProfileNorm(\"ana\", 17))).toMatchObject({ name: \"ana\", adult: false })` and the same for `(\"bo\", 18)` with `adult: true`, where the test-local `normalize` returns its argument; at 18 the edit gives `adult: false` and the test fails. RIPR-SPEC-0250 example 4, amended 2026-10-15: a pin on `normalize(buildProfile(...))` reads as a pin on the owner call when `normalize` is a test-local identity helper (`function normalize<T>(value: T): T { return value; }`, used only as a direct call). `normalize` qualifies here, so the pins read `exact_value` / strong for the listed `adult` field and ripr reports `exposed`, matching the discriminated truth.",
   "labeling_observation": {
     "ripr_commit": "3480fb2",
     "full_checkout_verdict": "gap",

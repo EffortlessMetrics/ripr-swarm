@@ -261,13 +261,18 @@ async fn sdk_session(
                     if serde_json::to_value(error.code).map_err(|error| error.to_string())?
                         == serde_json::json!(expected_resource_code) =>
                 {
-                    if error.message != "unknown resource; available: ripr://workspace/status"
+                    if error.message != "unknown resource; available: ripr://workspace/status; templates: ripr://snapshot/{snapshot_id}, ripr://gap/{canonical_id}, ripr://repair-attempt/{attempt_id}, ripr://receipt/{receipt_id}, ripr://repair-card/{canonical_id}"
                         || error
                             .data
                             .as_ref()
-                            .and_then(|data| data.pointer("/available/0"))
-                            .and_then(Value::as_str)
-                            != Some("ripr://workspace/status")
+                            .and_then(|data| data.get("available"))
+                            != Some(&serde_json::json!(["ripr://workspace/status"]))
+                        || error.data.as_ref().and_then(|data| data.get("resource_templates"))
+                            != Some(&serde_json::json!([
+                                "ripr://snapshot/{snapshot_id}", "ripr://gap/{canonical_id}",
+                                "ripr://repair-attempt/{attempt_id}", "ripr://receipt/{receipt_id}",
+                                "ripr://repair-card/{canonical_id}"
+                            ]))
                     {
                         return Err(
                             "SDK resource miss changed bounded message or available URI data"

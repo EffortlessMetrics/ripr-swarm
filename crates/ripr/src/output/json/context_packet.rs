@@ -71,6 +71,9 @@ pub(crate) fn render_context_packet_dto(packet: &ContextPacket) -> String {
         true,
     );
     number_field(&mut out, 2, "line", packet.probe.line, true);
+    if let Some(signature) = &packet.probe.owner_signature {
+        field(&mut out, 2, "owner_signature", signature, true);
+    }
     field(
         &mut out,
         2,
@@ -217,6 +220,40 @@ mod tests {
 
         assert!(packet.contains("line \\\"a\\\"\\nnext"));
         assert!(packet.contains("No test checks \\\"boundary\\\"\\ncase"));
+    }
+
+    #[test]
+    fn context_packet_renders_owner_signature_when_source_names_the_call_shape()
+    -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-context-json-signature-{}",
+            std::process::id()
+        ));
+        let src = root.join("src");
+        std::fs::create_dir_all(&src).map_err(|err| err.to_string())?;
+        std::fs::write(
+            src.join("lib.rs"),
+            "pub fn greet(name: &str) -> String {\n    format!(\"HELLO, {}!\", name.to_uppercase())\n}\n",
+        )
+        .map_err(|err| err.to_string())?;
+        let mut finding = sample_finding();
+        finding.probe.location = SourceLocation::new("src/lib.rs", 2, 1);
+
+        let packet = render_context_packet(&finding, 5, &root);
+
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(packet.contains("\"owner_signature\": \"greet(name: &str) -> String\""));
+        Ok(())
+    }
+
+    #[test]
+    fn context_packet_omits_owner_signature_when_source_is_unavailable() {
+        let mut finding = sample_finding();
+        finding.probe.location = SourceLocation::new("src/missing.rs", 2, 1);
+
+        let packet = render_context_packet(&finding, 5, Path::new("."));
+
+        assert!(!packet.contains("owner_signature"));
     }
 
     #[test]

@@ -12,7 +12,7 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 118
+floor = 131
 
 # Oracle-accuracy gate. Cases with `expected_oracle` label the related-test
 # oracle kind and strength a spec adopts; `verdict-corpus check` fails when
@@ -21,7 +21,7 @@ floor = 118
 # improves, `check` prints the new numbers: raise the floor and lower the
 # ceiling to them. Loosening either is a reviewed edit with a reason.
 [oracle]
-match_floor = 41
+match_floor = 44
 overclaim_ceiling = 0
 
 # LSP Repair Packet Command
@@ -729,3 +729,15 @@ reason = "acceptance examples are prose, not numbered; corpus cases cite the spe
 [[unmeasured]]
 id = "RIPR-SPEC-0219"
 reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# Owner call shape projection for drill-in surfaces
+[[spec]]
+id = "RIPR-SPEC-0267"
+scope = "out"
+reason = "explain/context packet drill-in projection of an observed signature; not an analyzer verdict"
+
+# Flow-sink evidence row collapses restated labels
+[[spec]]
+id = "RIPR-SPEC-0268"
+scope = "out"
+reason = "render-only collapse of a duplicated evidence row; not an analyzer verdict"

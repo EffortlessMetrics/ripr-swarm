@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-field-projected-collection-arg",
+  "origin": "authored",
+  "version_label": "authored 2026-10-14 (a push into a collection the test passes as a field projection, &mut b.0)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "e747eeb4a1b14dde4e900bf28e83d060ed0f3c931048a339b67e799ebe3ec942"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "21ee629e5120ba9148859d5c5a34e834e4e9d825349661b02f3a989f339675dd"
+    }
+  ]
+}

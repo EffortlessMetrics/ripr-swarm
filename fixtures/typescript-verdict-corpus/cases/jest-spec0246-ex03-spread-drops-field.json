@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "`return { ...cfg, ok: true }` becomes `return { ...cfg }`. The test passes `cfg = { name: \"bo\", ok: true }` and asserts `expect(markOk(cfg)).toEqual(cfg)`, which passes on both versions; the test must hold on the stored package, so its input already carries `ok: true` and the dropped field cannot move the compared value. RIPR-SPEC-0246 example 3: the change is not copy-only, so rule 1 does not apply and the ladder's `exposed` stands. ripr reports `exposed`, as the spec states; against the not-discriminated truth that is a false exposed verdict the spec accepts.",
+  "reasoning": "`return { ...cfg, ok: true }` becomes `return { ...cfg }`. The test passes `cfg = { name: \"bo\", ok: true }` and asserts `expect(markOk(cfg)).toEqual(cfg)`, which passes on both versions; the test must hold on the stored package, so its input already carries `ok: true` and the dropped field cannot move the compared value. RIPR-SPEC-0246 example 3: the change is not copy-only, so rule 1 does not apply. Rule 3 (added 2026-10-14) reads the dropped `ok: true` override against the tested input, which already carries `ok: true`, so ripr reports `weakly_exposed`, the ideal gap. At labeling it reported `exposed`, a false exposed verdict.",
   "labeling_observation": {
     "ripr_commit": "3480fb2",
     "full_checkout_verdict": "credited",

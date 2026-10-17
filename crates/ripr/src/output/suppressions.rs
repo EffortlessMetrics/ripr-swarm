@@ -566,7 +566,13 @@ pub fn load_suppressions_for_root_at(
     if violations.is_empty() {
         Ok(entries)
     } else {
-        Err(violations)
+        // Config may select another root-relative file. Rename only the
+        // parser's location prefix, preserving values and declaration lines.
+        let display = relative_path.display().to_string();
+        Err(violations
+            .into_iter()
+            .map(|violation| violation.replacen(SUPPRESSIONS_PATH, &display, 1))
+            .collect())
     }
 }
 

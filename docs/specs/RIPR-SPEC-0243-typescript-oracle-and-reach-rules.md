@@ -174,6 +174,14 @@ assertion-only callback with no nested test call. This does not expand aliases.
   `if`/`else`, loops, labels, `switch`, `try`/`catch`/`finally` and
   `with`. An assertion is read from an expression statement or a
   `return` argument, after removing one `await`.
+- (Amended 2026-10-16, #8242.) A `try` body with a catch handler supplies
+  no assertions: the handler can swallow a synchronous assertion failure or
+  an awaited rejection. This is conservative even when the handler rethrows
+  or the protected body returns a promise without awaiting it. Catch-handler
+  and finally assertions, and a try body with no catch, retain collection;
+  an enclosing caught try still withholds those nested assertions. This is
+  not general analysis of abrupt completion in finally blocks. Withheld
+  assertion-like syntax remains unresolved admission, not established absence.
 - An assertion inside a nested callback (`forEach`, `waitFor`, `act`, a
   subtest) or inside a declaration initializer is not collected, except
   the three forms RIPR-SPEC-0246 rule 2 names.
@@ -847,7 +855,10 @@ to `amount - 20`, and `tests/lib.test.ts` has
     `save(db, 1); expect(db.write).toHaveBeenCalledWith(3)`:
     `mock_expectation` / medium, `weakly_exposed` (unchanged). With
     `const db = { write: jest.fn() }` in the test, RIPR-SPEC-0247 rule 1
-    reads `mock_expectation` / strong, `exposed`.
+    reads `mock_expectation` / strong, `exposed`; amended 2026-10-15, so
+    does `const db = makeDb();` through a test-file
+    `function makeDb() { return { write: jest.fn() }; }` (RIPR-SPEC-0247
+    decision 8).
 31. `src/lib.ts` is `import { fee } from "./other";` plus the base
     `price`, whose line reads `return fee(amount - 10);`, changed to
     `return fee(amount - 20);`; the test

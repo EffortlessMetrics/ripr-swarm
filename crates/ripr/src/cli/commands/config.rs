@@ -12,7 +12,8 @@ pub(in crate::cli) fn config(args: &[String]) -> Result<(), String> {
     }
 
     let Some((subcommand, rest)) = args.split_first() else {
-        return Err("config requires subcommand `validate`".to_string());
+        help::print_config_help();
+        return Ok(());
     };
     if subcommand != "validate" {
         return Err(format!(
@@ -28,6 +29,10 @@ fn parse_validate_root(args: &[String]) -> Result<PathBuf, String> {
     match args {
         [] => Ok(PathBuf::from(".")),
         [flag] if flag == "--root" => Err("missing value for --root".to_string()),
+        // `--root` is an option token here; `./--root` names the literal path.
+        [flag, value, ..] if flag == "--root" && value == "--root" => {
+            Err("missing value for --root".to_string())
+        }
         [flag, value] if flag == "--root" => Ok(PathBuf::from(value)),
         [flag, _value, extra, ..] if flag == "--root" => {
             Err(unknown_argument("config validate", extra))
@@ -120,6 +125,32 @@ mod tests {
         if !file_error.contains("is not a directory") {
             return Err(format!("unexpected file-root error: {file_error}"));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn validate_rejects_a_nul_path_in_valid_toml() -> Result<(), String> {
+        let root = temp_dir("nul-path");
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        fs::write(
+            root.join(CONFIG_FILE_NAME),
+            r#"[suppressions]
+path = ".ripr/suppressions\u0000.toml"
+"#,
+        )
+        .map_err(|error| error.to_string())?;
+
+        let result = validate_config(&root);
+        fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        let error = result
+            .err()
+            .ok_or_else(|| "an unusable path must not validate".to_string())?;
+        assert!(error.contains("ripr.toml"), "{error}");
+        assert!(
+            error.contains("suppressions.path must not contain NUL characters"),
+            "{error}"
+        );
+        assert!(!error.contains('\0'));
         Ok(())
     }
 

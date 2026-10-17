@@ -393,11 +393,11 @@ pub(crate) fn render_comment_publish_plan_markdown(report: &CommentPublishPlanRe
                 .map(|blocked| blocked.blocked_reason.as_str()),
         ) {
             let message = blocked_message_for_markdown(&reason, &report.blocked);
-            if count == 1 {
-                out.push_str(&format!("- {reason}: {message}\n"));
-            } else {
-                out.push_str(&format!("- {reason}: {count} items blocked ({message})\n"));
-            }
+            // #7753: count-aware noun — "1 item blocked", never "1 items blocked".
+            out.push_str(&format!(
+                "- {reason}: {} ({message})\n",
+                crate::output::count_noun::count_noun(count, "item blocked", "items blocked")
+            ));
         }
         out.push_str("\nNext:\n");
         if report

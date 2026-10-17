@@ -146,6 +146,153 @@ fn proximity_only_reach_through_a_macro_names_the_macro_limit() -> Result<(), St
 }
 
 #[test]
+fn a_chain_past_five_hops_does_not_displace_the_macro_witness() -> Result<(), String> {
+    // RIPR-SPEC-0114 step 5 (#8047): the walk past the bound runs after
+    // every other reach witness, so a second test entering a seven-hop chain
+    // to the same owner leaves the one-macro-hop witness named.
+    let chain = "pub fn d7(x: i64) -> i64 { d6(x) }
+fn d6(x: i64) -> i64 { d5(x) }
+fn d5(x: i64) -> i64 { d4(x) }
+fn d4(x: i64) -> i64 { d3(x) }
+fn d3(x: i64) -> i64 { d2(x) }
+fn d2(x: i64) -> i64 { d1(x) }
+fn d1(x: i64) -> i64 { inner_rate(x) }
+";
+    let fixture = Fixture::new(
+        "macro-and-deep",
+        &format!(
+            "{MACRO_ROUTED}    #[test]\n    fn deep_triples() {{\n        assert_eq!(d7(4), 12);\n    }}\n}}\n{chain}"
+        ),
+    )?;
+    let finding = fixture.rate_finding()?;
+    assert!(
+        all_relations(&finding, crate::analysis::classify::is_proximity_only),
+        "{:?}",
+        finding.related_tests
+    );
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::RustMacroReachUnresolved),
+        "{:?}",
+        finding.evidence
+    );
+    assert!(
+        !finding
+            .stop_reasons
+            .contains(&StopReason::TransitiveReachUnresolved),
+        "{:?}",
+        finding.stop_reasons
+    );
+
+    // Discriminating half: without the macro route, the same chain names
+    // the transitive limit through the walk past the bound.
+    let no_macro = MACRO_ROUTED.replace("call_inner!(x)", "x");
+    let fixture = Fixture::new(
+        "deep-only",
+        &format!(
+            "{no_macro}    #[test]\n    fn deep_triples() {{\n        assert_eq!(d7(4), 12);\n    }}\n}}\n{chain}"
+        ),
+    )?;
+    let finding = fixture.rate_finding()?;
+    assert!(
+        finding
+            .stop_reasons
+            .contains(&StopReason::TransitiveReachUnresolved),
+        "{:?}",
+        finding.evidence
+    );
+    // Pin the full inspect pointer, not a substring of the test name: a
+    // wording or location regression must fail (#8106).
+    assert_eq!(
+        finding
+            .evidence
+            .iter()
+            .find(|line| line.starts_with("For example, the test "))
+            .map(String::as_str),
+        Some(
+            "For example, the test `deep_triples` (src/lib.rs:20) calls `d7`, an entry point that may lead here. Inspect it to judge whether this change is observed."
+        ),
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+#[test]
+fn a_no_static_path_chain_past_five_hops_does_not_displace_the_macro_witness() -> Result<(), String>
+{
+    // The `no_static_path` consumer (#8047): with no related test at all, a
+    // seven-hop chain is still tried only after the macro witness.
+    let lib = "fn inner_rate(x: i64) -> i64 {
+    3 * x
+}
+macro_rules! call_inner {
+    ($x:expr) => {
+        inner_rate($x)
+    };
+}
+pub fn outer(x: i64) -> i64 {
+    call_inner!(x)
+}
+pub fn d7(x: i64) -> i64 { d6(x) }
+fn d6(x: i64) -> i64 { d5(x) }
+fn d5(x: i64) -> i64 { d4(x) }
+fn d4(x: i64) -> i64 { d3(x) }
+fn d3(x: i64) -> i64 { d2(x) }
+fn d2(x: i64) -> i64 { d1(x) }
+fn d1(x: i64) -> i64 { inner_rate(x) }
+";
+    let tests = "#[test]\nfn macro_path() {\n    assert_eq!(reach::outer(4), 12);\n}\n#[test]\nfn deep_path() {\n    assert_eq!(reach::d7(4), 12);\n}\n";
+    let fixture = Fixture::new("nsp-macro-and-deep", lib)?;
+    fs::create_dir_all(fixture.0.join("tests")).map_err(|e| e.to_string())?;
+    fs::write(fixture.0.join("tests/paths.rs"), tests).map_err(|e| e.to_string())?;
+    let finding = fixture.rate_finding()?;
+    // Fixture construction: no test relates to the owner.
+    assert_eq!(finding.class, ExposureClass::NoStaticPath, "{finding:?}");
+    assert!(
+        finding.related_tests.is_empty(),
+        "{:?}",
+        finding.related_tests
+    );
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::RustMacroReachUnresolved),
+        "{:?}",
+        finding.evidence
+    );
+
+    // Discriminating half: without the macro route, the chain past the
+    // bound names the transitive limit and its test.
+    let fixture = Fixture::new("nsp-deep-only", &lib.replace("call_inner!(x)", "x"))?;
+    fs::create_dir_all(fixture.0.join("tests")).map_err(|e| e.to_string())?;
+    fs::write(fixture.0.join("tests/paths.rs"), tests).map_err(|e| e.to_string())?;
+    let finding = fixture.rate_finding()?;
+    assert_eq!(finding.class, ExposureClass::NoStaticPath, "{finding:?}");
+    assert!(
+        finding
+            .stop_reasons
+            .contains(&StopReason::TransitiveReachUnresolved),
+        "{:?}",
+        finding.evidence
+    );
+    // Pin the full inspect pointer, not a substring of the test name: a
+    // wording or location regression must fail (#8106).
+    assert_eq!(
+        finding
+            .evidence
+            .iter()
+            .find(|line| line.starts_with("For example, the test "))
+            .map(String::as_str),
+        Some(
+            "For example, the test `deep_path` (tests/paths.rs:6) calls `d7`, an entry point that may lead here. Inspect it to judge whether this change is observed."
+        ),
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+#[test]
 fn a_forwarding_helper_chain_relates_and_establishes_reach_without_credit() -> Result<(), String> {
     // A same-file test that reaches a private helper through its forwarding
     // caller relates by the chain, not file proximity.

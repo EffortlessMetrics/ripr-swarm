@@ -195,10 +195,22 @@ fn one_entering_call_or_one_unread_input_names_no_guard() -> Result<(), String> 
     for calls in [
         // One call enters the guard, so the tests do run the push.
         "    add(&mut v, 4);\n    add(&mut v, 11);",
+        // A let-bound literal that enters the guard.
+        "    let n = 11;\n    add(&mut v, n);",
         // A computed input is not evaluated.
-        "    let n = 4;\n    add(&mut v, n);",
+        "    let n = 2 + 2;\n    add(&mut v, n);",
         // A non-literal expression is not evaluated either.
         "    add(&mut v, 2 + 2);",
+        // A mutable binding may change before the call.
+        "    let mut n = 4;\n    n += 7;\n    add(&mut v, n);",
+        // A shadowing `let` gives the call another value.
+        "    let n = 4;\n    let n = n + 7;\n    add(&mut v, n);",
+        // An inner block's binding shadows the one the reading would take.
+        "    let n = 4;\n    {\n        let n = 11;\n        add(&mut v, n);\n    }",
+        // A closure parameter of the same name shadows the binding.
+        "    let n = 4;\n    let call = |n: u32| add(&mut v, n);\n    call(11);",
+        // A nested `fn` resolves names without the test's locals.
+        "    let n = 4;\n    fn n_of() -> u32 {\n        11\n    }\n    add(&mut v, n);\n    let _ = n_of();",
     ] {
         for finding in push_findings("x > 10", &test_calling(calls))? {
             assert!(
@@ -212,21 +224,84 @@ fn one_entering_call_or_one_unread_input_names_no_guard() -> Result<(), String> 
 }
 
 #[test]
+fn a_let_bound_literal_that_misses_the_guard_names_it() -> Result<(), String> {
+    for calls in [
+        "    let n = 4;\n    add(&mut v, n);",
+        "    let n: u32 = 4;\n    add(&mut v, n);\n    add(&mut v, n);",
+    ] {
+        for finding in push_findings("x > 10", &test_calling(calls))? {
+            assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{calls}");
+            assert!(
+                finding
+                    .activation
+                    .missing_discriminators
+                    .iter()
+                    .any(|fact| fact.reason.starts_with(UNENTERED_PREFIX)
+                        && fact.reason.contains("`n = 4`")),
+                "{calls}: {:?}",
+                finding.activation.missing_discriminators
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_named_const_bound_that_the_input_misses_names_the_guard() -> Result<(), String> {
+    let test = test_calling("    add(&mut v, 4);");
+    for prelude in [
+        "pub const LIMIT: u32 = 10;\n",
+        "/// The smallest value kept.\nconst LIMIT: u32 = 1_0;\n",
+    ] {
+        for finding in push_findings_with_prelude("x > LIMIT", &test, prelude)? {
+            assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{prelude}");
+            assert!(
+                finding
+                    .activation
+                    .missing_discriminators
+                    .iter()
+                    .any(|fact| fact.reason.starts_with(UNENTERED_PREFIX)
+                        && fact.reason.contains("`if x > LIMIT`")),
+                "{prelude}: {:?}",
+                finding.activation.missing_discriminators
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn an_unreadable_guard_names_nothing() -> Result<(), String> {
-    for guard in ["x > 10 && x < 100", "x + 1 > 10", "x > LIMIT"] {
-        let test = test_calling("    add(&mut v, 4);");
-        let repo_guard = guard.to_string();
-        let findings = if guard.contains("LIMIT") {
-            // `LIMIT` must exist for the owner to read as Rust; the reading
-            // still refuses a named bound.
-            push_findings_with_prelude(&repo_guard, &test, "pub const LIMIT: u32 = 10;\n")?
-        } else {
-            push_findings(&repo_guard, &test)?
-        };
-        for finding in findings {
+    let test = test_calling("    add(&mut v, 4);");
+    for guard in ["x > 10 && x < 100", "x + 1 > 10"] {
+        for finding in push_findings(guard, &test)? {
             assert!(
                 !names_unentered_guard(&finding),
                 "{guard}: an unread guard names nothing: {:?}",
+                finding.ripr.infect
+            );
+        }
+    }
+    for prelude in [
+        // The input enters the named bound.
+        "pub const LIMIT: u32 = 3;\n",
+        // Any attribute on the const may change it; `cfg` may remove it.
+        "#[doc(hidden)]\npub const LIMIT: u32 = 10;\n",
+        // A computed or non-integer constant is not evaluated.
+        "pub const LIMIT: u32 = 5 * 2;\n",
+        // A `static` may be read through interior paths; only `const` reads.
+        "pub static LIMIT: u32 = 10;\n",
+        // Two definitions: which one the guard sees is not read.
+        "pub const LIMIT: u32 = 10;\npub mod other {\n    pub const LIMIT: u32 = 3;\n}\n",
+        // An imported name with no local `const` is not read.
+        "mod limits {\n    pub const SMALL: u32 = 10;\n}\nuse limits::SMALL as LIMIT;\n",
+        // A macro may declare items the owner sees.
+        "macro_rules! limit {\n    () => {\n        pub const LIMIT: u32 = 10;\n    };\n}\nlimit!();\n",
+    ] {
+        for finding in push_findings_with_prelude("x > LIMIT", &test, prelude)? {
+            assert!(
+                !names_unentered_guard(&finding),
+                "{prelude}: an unread bound names nothing: {:?}",
                 finding.ripr.infect
             );
         }
@@ -607,5 +682,68 @@ fn recursion_a_same_line_else_or_a_helper_names_no_guard() -> Result<(), String>
             .map(|finding| &finding.ripr.infect)
             .collect::<Vec<_>>()
     );
+    Ok(())
+}
+
+#[test]
+fn a_named_bound_the_owner_shadows_or_cannot_see_names_no_guard() -> Result<(), String> {
+    let test = test_calling("    add(&mut v, 10);");
+    for (before, after, line) in [
+        // An owner-local `let LIMIT = 3;` shadows the file-level 10, so 4
+        // enters the guard.
+        (
+            "pub const LIMIT: u32 = 10;\npub fn add(v: &mut Vec<u32>, x: u32) {\n    let LIMIT = 3;\n    if x > LIMIT {\n        v.push(x);\n    }\n}\n",
+            "pub const LIMIT: u32 = 10;\npub fn add(v: &mut Vec<u32>, x: u32) {\n    let LIMIT = 3;\n    if x > LIMIT {\n        v.push(x * 1);\n    }\n}\n",
+            5,
+        ),
+        // The owner sits in an inline module, whose `LIMIT` is not read.
+        (
+            "pub const LIMIT: u32 = 10;\npub use inner::add;\nmod inner {\n    use super::LIMIT;\n    pub fn add(v: &mut Vec<u32>, x: u32) {\n        if x > LIMIT {\n            v.push(x);\n        }\n    }\n}\n",
+            "pub const LIMIT: u32 = 10;\npub use inner::add;\nmod inner {\n    use super::LIMIT;\n    pub fn add(v: &mut Vec<u32>, x: u32) {\n        if x > LIMIT {\n            v.push(x * 1);\n        }\n    }\n}\n",
+            7,
+        ),
+        // A literal past the parameter's type wraps when the lint is
+        // allowed: `260` is 4 as a `u8`, so 10 enters the guard.
+        (
+            "#![allow(overflowing_literals)]\npub const LIMIT: u8 = 260;\npub fn add(v: &mut Vec<u8>, x: u8) {\n    if x > LIMIT {\n        v.push(x);\n    }\n}\n",
+            "#![allow(overflowing_literals)]\npub const LIMIT: u8 = 260;\npub fn add(v: &mut Vec<u8>, x: u8) {\n    if x > LIMIT {\n        v.push(x * 1);\n    }\n}\n",
+            5,
+        ),
+        // A `cfg` may remove the const under test, leaving the glob's `MIN`.
+        (
+            "use std::u8::*;\n#[cfg(not(test))]\nconst MIN: u8 = 100;\npub fn add(v: &mut Vec<u8>, x: u8) {\n    if x > MIN {\n        v.push(x);\n    }\n}\n",
+            "use std::u8::*;\n#[cfg(not(test))]\nconst MIN: u8 = 100;\npub fn add(v: &mut Vec<u8>, x: u8) {\n    if x > MIN {\n        v.push(x * 1);\n    }\n}\n",
+            6,
+        ),
+        // An input past the parameter's type wraps the same way: read as
+        // written, 260 misses `x < 10`, but as a `u8` it is 4, which enters.
+        (
+            "#![allow(overflowing_literals)]\npub fn add(v: &mut Vec<u8>, x: u8) {\n    if x < 10 {\n        v.push(x);\n    }\n}\n#[test]\nfn wraps() {\n    let mut v = Vec::new();\n    add(&mut v, 260);\n}\n",
+            "#![allow(overflowing_literals)]\npub fn add(v: &mut Vec<u8>, x: u8) {\n    if x < 10 {\n        v.push(x * 1);\n    }\n}\n#[test]\nfn wraps() {\n    let mut v = Vec::new();\n    add(&mut v, 260);\n}\n",
+            4,
+        ),
+        // A glob import in the owner's body binds `MIN` closer than the
+        // file-level const: `std::u8::MIN` is 0, which 10 enters.
+        (
+            "const MIN: u8 = 100;\npub fn add(v: &mut Vec<u8>, x: u8) {\n    use std::u8::*;\n    if x > MIN {\n        v.push(x);\n    }\n}\n",
+            "const MIN: u8 = 100;\npub fn add(v: &mut Vec<u8>, x: u8) {\n    use std::u8::*;\n    if x > MIN {\n        v.push(x * 1);\n    }\n}\n",
+            5,
+        ),
+        // A bound typed through an alias is not an integer type the reading
+        // trusts.
+        (
+            "pub type Small = u32;\npub const LIMIT: Small = 10;\npub fn add(v: &mut Vec<u32>, x: u32) {\n    if x > LIMIT {\n        v.push(x);\n    }\n}\n",
+            "pub type Small = u32;\npub const LIMIT: Small = 10;\npub fn add(v: &mut Vec<u32>, x: u32) {\n    if x > LIMIT {\n        v.push(x * 1);\n    }\n}\n",
+            5,
+        ),
+    ] {
+        for finding in custom_findings(before, after, line, &test)? {
+            assert!(
+                !names_unentered_guard(&finding),
+                "{after}: no guard may be named: {:?}",
+                finding.ripr.infect
+            );
+        }
+    }
     Ok(())
 }

@@ -146,7 +146,7 @@ pub(crate) fn render_human_triage(
     // bytes stay put.
     match check_case_or_fallback(triage, output, drill_in, provenance) {
         NextActionCheckCase::TopGap => out.push_str(
-            "  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.\n",
+            "  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only\n",
         ),
         NextActionCheckCase::CandidateFilterHidAll => {
             // #4320: findings exist but the #3281 candidate filter hid
@@ -160,12 +160,12 @@ pub(crate) fn render_human_triage(
         }
         NextActionCheckCase::SuppressedByPolicy => {
             out.push_str(
-                "  Safe next action: all findings are suppressed by policy; review the suppression block before treating this run as actionable.\n",
+                "  Safe next action: all findings are suppressed by policy; review the suppression block before treating this run as actionable\n",
             );
         }
         NextActionCheckCase::NoDiffFinding => {
             out.push_str(
-                "  Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation.\n",
+                "  Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation\n",
             );
         }
         NextActionCheckCase::StaticLimited => {
@@ -173,9 +173,9 @@ pub(crate) fn render_human_triage(
                 finding.class == ExposureClass::NoStaticPath && finding.static_limit_kind.is_none()
             });
             out.push_str(if plain_no_path {
-                "  Safe next action: review the unresolved static path and existing tests before treating this as repair-ready.\n"
+                "  Safe next action: review the unresolved static path and existing tests before treating this as repair-ready\n"
             } else {
-                "  Safe next action: inspect the named static limitation before treating this as repair-ready.\n"
+                "  Safe next action: inspect the named static limitation before treating this as repair-ready\n"
             });
         }
         NextActionCheckCase::PreviewAdvisory => {
@@ -201,7 +201,7 @@ pub(crate) fn render_human_triage(
                             .is_some_and(|finding| finding.static_limit_kind.is_some()) =>
                 {
                     out.push_str(
-                        "  Safe next action: preview-language evidence is advisory; the repair packet is blocked by the named static limitation, not by missing fields; resolve the limitation and rerun preview evidence before acting.\n",
+                        "  Safe next action: preview-language evidence is advisory; the repair packet is blocked by the named static limitation, not by missing fields; resolve the limitation and rerun preview evidence before acting\n",
                     );
                 }
                 not_ready => match triage.selected {
@@ -238,11 +238,11 @@ pub(crate) fn render_human_triage(
                                 .unwrap_or(&[]);
                             if missing_fields.is_empty() {
                                 out.push_str(&format!(
-                                    "  Safe next action: preview-language evidence is advisory; the repair packet is blocked by the named static limitation, not by missing fields: {why}; resolve the limitation and rerun preview evidence before acting.\n"
+                                    "  Safe next action: preview-language evidence is advisory; the repair packet is blocked by the named static limitation, not by missing fields: {why}; resolve the limitation and rerun preview evidence before acting\n"
                                 ));
                             } else {
                                 out.push_str(&format!(
-                                    "  Safe next action: preview-language evidence is advisory; the repair packet is blocked by the named static limitation and by missing packet fields ({}): {why}; resolve the limitation and complete the missing fields before acting.\n",
+                                    "  Safe next action: preview-language evidence is advisory; the repair packet is blocked by the named static limitation and by missing packet fields ({}): {why}; resolve the limitation and complete the missing fields before acting\n",
                                     missing_fields.join(", ")
                                 ));
                             }
@@ -255,7 +255,7 @@ pub(crate) fn render_human_triage(
                         ));
                     }
                     _ => out.push_str(
-                        "  Safe next action: preview-language evidence is advisory; complete the missing repair-packet fields before acting.\n",
+                        "  Safe next action: preview-language evidence is advisory; complete the missing repair-packet fields before acting\n",
                     ),
                 },
             }
@@ -271,17 +271,17 @@ pub(crate) fn render_human_triage(
                 && crate::output::analyzed_revisions::is_working_tree_read(output)
             {
                 out.push_str(&format!(
-                    "  Safe next action: the working tree has no changed tracked files against `{base}`; make a change, or `git add -N <path>` a new file, and re-run.\n"
+                    "  Safe next action: the working tree has no changed tracked files against `{base}`; make a change, or `git add -N <path>` a new file, and re-run\n"
                 ));
             } else if let Some(base) = output.base.as_deref() {
                 // "tracked" (#5258): `--worktree` diffs tracked edits only,
                 // so the line must not promise it covers untracked files.
                 out.push_str(&format!(
-                    "  Safe next action: no changed files were compared against `{base}`; commit a change and re-run, or add `--worktree` to include uncommitted tracked edits.\n"
+                    "  Safe next action: no changed files were compared against `{base}`; commit a change and re-run, or add `--worktree` to include uncommitted tracked edits\n"
                 ));
             } else {
                 out.push_str(
-                    "  Safe next action: provide an analysis scope; this empty output is not an all-clear.\n",
+                    "  Safe next action: provide an analysis scope; this empty output is not an all-clear\n",
                 );
             }
         }
@@ -371,12 +371,31 @@ pub(crate) fn render_human_triage(
             out.push_str(&selected_hidden_line(&triage.omitted));
         }
         let listed = triage.omitted.len().min(HIDDEN_FINDINGS_LISTED);
+        // #7643: when the omitted set mixes currentness categories, the
+        // count line's clauses cannot be connected to individual bullets;
+        // append each finding's category so the reader can tell an
+        // outranked candidate from base-side evidence without a rerun.
+        // Single-category sets keep the legacy bullet: the count line
+        // already names the one category that applies.
+        let label_currentness = {
+            let mut categories = std::collections::BTreeSet::new();
+            for finding in &triage.omitted {
+                categories.insert(hidden_bullet_currentness(finding));
+            }
+            categories.len() > 1
+        };
         for finding in triage.omitted.iter().take(listed) {
+            let currentness = if label_currentness {
+                format!(", {}", hidden_bullet_currentness(finding))
+            } else {
+                String::new()
+            };
             out.push_str(&format!(
-                "    - {}:{} ({})\n",
-                display_path(&finding.probe.location.file),
+                "    - {}:{} ({}{})\n",
+                crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
                 finding.probe.location.line,
-                finding.class.as_str()
+                finding.class.as_str(),
+                currentness
             ));
         }
         let remaining = triage.omitted.len() - listed;
@@ -612,6 +631,19 @@ fn no_selection_mix(omitted: &[&Finding]) -> NoSelectionMix {
     }
 }
 
+/// #7643: the per-bullet currentness label, mirroring the categories the
+/// count line names: base-deleted or moved evidence is base-side, an
+/// unresolved subject is not established as either category, and the
+/// remainder is a lower-priority candidate.
+fn hidden_bullet_currentness(finding: &Finding) -> &'static str {
+    match finding.source_currentness {
+        crate::domain::SourceCurrentness::BaseDeleted
+        | crate::domain::SourceCurrentness::MovedOrRenamed => "base-side",
+        crate::domain::SourceCurrentness::UnresolvedSubject => "unresolved currentness",
+        _ => "lower-priority candidate",
+    }
+}
+
 /// #5021: the `Hidden:` count line for a run where a top gap was selected.
 /// `triage.omitted` is every considered finding except the selected one, so
 /// it can hold base-side or unresolved-currentness evidence next to
@@ -692,13 +724,13 @@ fn no_selection_hidden_line(omitted: &[&Finding]) -> String {
 fn no_selection_safe_action_line(omitted: &[&Finding]) -> String {
     match no_selection_mix(omitted) {
         NoSelectionMix::AllBaseSide => {
-            "  Safe next action: all findings are base-side evidence, not candidate edit targets; rerun with --format human-full to inspect the full evidence before treating this run as actionable.\n".to_string()
+            "  Safe next action: all findings are base-side evidence, not candidate edit targets; rerun with --format human-full to inspect the full evidence before treating this run as actionable\n".to_string()
         }
         NoSelectionMix::AllUnresolved => {
-            "  Safe next action: no finding is resolved to the candidate (subject currentness unresolved); rerun with --format human-full to inspect the full evidence before treating this run as actionable.\n".to_string()
+            "  Safe next action: no finding is resolved to the candidate (subject currentness unresolved); rerun with --format human-full to inspect the full evidence before treating this run as actionable\n".to_string()
         }
         NoSelectionMix::Mixed { base_side, unresolved } => format!(
-            "  Safe next action: no finding is a candidate edit target ({} base-side, {} unresolved currentness); rerun with --format human-full to inspect the full evidence before treating this run as actionable.\n",
+            "  Safe next action: no finding is a candidate edit target ({} base-side, {} unresolved currentness); rerun with --format human-full to inspect the full evidence before treating this run as actionable\n",
             base_side, unresolved
         ),
     }
@@ -759,7 +791,7 @@ fn omitted_language_identity(omitted: &[&Finding]) -> Option<String> {
 /// verify command (for example a synthetic Perl packet). Readiness is only
 /// read here, never decided.
 fn complete_packet_preview_safe_action(finding: Option<&Finding>, repair_route: &str) -> String {
-    const GENERIC: &str = "  Safe next action: preview-language evidence is advisory; the repair packet is complete but remains advisory, so verify independently before acting.\n";
+    const GENERIC: &str = "  Safe next action: preview-language evidence is advisory; the repair packet is complete but remains advisory, so verify independently before acting\n";
     let Some(record) = finding.and_then(typescript_gap_record_for) else {
         return GENERIC.to_string();
     };
@@ -784,12 +816,12 @@ fn complete_packet_preview_safe_action(finding: Option<&Finding>, repair_route: 
         .collect::<Vec<_>>()
         .join(" ");
     format!(
-        "  Safe next action: preview-language evidence is advisory; the repair packet is complete: in `{target_file}`, {action}; run `{verify}`, then rerun `ripr check`.\n"
+        "  Safe next action: preview-language evidence is advisory; the repair packet is complete: in `{target_file}`, {action}; run `{verify}`, then rerun `ripr check`\n"
     )
 }
 
 /// An exposed preview finding has nothing to repair, in any preview language.
-const EXPOSED_PREVIEW_SAFE_ACTION: &str = "  Safe next action: preview-language evidence is advisory; a related test appears to observe this change, so there is no repair to make; verify independently before relying on it.\n";
+const EXPOSED_PREVIEW_SAFE_ACTION: &str = "  Safe next action: preview-language evidence is advisory; a related test appears to observe this change, so there is no repair to make; verify independently before relying on it\n";
 
 /// #4216 (TS/JS arm of row 1): the shared validator behind
 /// `preview_actionability_for` kept this preview finding's repair packet
@@ -829,7 +861,7 @@ fn packet_closed_preview_safe_action(finding: &Finding, why_not_actionable: &str
         .unwrap_or(specific);
     let reason = one_line(specific);
     format!(
-        "  Safe next action: this {language} preview finding's repair packet is not ready ({reason}); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; {manual_step}, then rerun `ripr check`.\n"
+        "  Safe next action: this {language} preview finding's repair packet is not ready ({reason}); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; {manual_step}, then rerun `ripr check`\n"
     )
 }
 
@@ -860,11 +892,11 @@ fn python_preview_safe_action(finding: &Finding) -> String {
         return EXPOSED_PREVIEW_SAFE_ACTION.to_string();
     }
     if python_repair_card(finding).is_some() {
-        return "  Safe next action: preview-language evidence is advisory; apply the next step below to the suggested test and run its verify command before relying on it.\n".to_string();
+        return "  Safe next action: preview-language evidence is advisory; apply the next step below to the suggested test and run its verify command before relying on it\n".to_string();
     }
     if let Some(kind) = finding.static_limit_kind.as_ref() {
         return format!(
-            "  Safe next action: static limitation `{}` keeps this Python preview finding from a repair card, so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`.\n",
+            "  Safe next action: static limitation `{}` keeps this Python preview finding from a repair card, so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`\n",
             kind.as_str()
         );
     }
@@ -885,7 +917,7 @@ fn python_preview_safe_action(finding: &Finding) -> String {
         )
     };
     format!(
-        "  Safe next action: this Python preview finding has no repair card ({reason}), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; {manual_step}, then rerun `ripr check`.\n"
+        "  Safe next action: this Python preview finding has no repair card ({reason}), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; {manual_step}, then rerun `ripr check`\n"
     )
 }
 
@@ -1558,5 +1590,71 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn hidden_bullets_label_currentness_when_categories_mix() {
+        // #7643: the count line names the mix; each bullet must connect to
+        // its clause so a base-side row is not mistaken for an outranked
+        // candidate.
+        let top = super::super::tests::sample_finding();
+        let mut candidate = super::super::tests::sample_finding();
+        candidate.id = "finding:candidate".to_string();
+        candidate.probe.id = ProbeId("finding:candidate".to_string());
+        candidate.probe.location = SourceLocation::new("src/lib.rs", 21, 1);
+        let mut base_side = super::super::tests::sample_finding();
+        base_side.id = "finding:base".to_string();
+        base_side.probe.id = ProbeId("finding:base".to_string());
+        base_side.probe.location = SourceLocation::new("src/lib.rs", 26, 1);
+        base_side.source_currentness = SourceCurrentness::BaseDeleted;
+        let mut unresolved = super::super::tests::sample_finding();
+        unresolved.id = "finding:unresolved".to_string();
+        unresolved.probe.id = ProbeId("finding:unresolved".to_string());
+        unresolved.probe.location = SourceLocation::new("src/lib.rs", 31, 1);
+        unresolved.source_currentness = SourceCurrentness::UnresolvedSubject;
+        let output = super::super::tests::bounded_output_with_findings(vec![
+            top, candidate, base_side, unresolved,
+        ]);
+        let rendered = super::super::render(&output);
+        assert!(
+            rendered.contains("    - src/sample.rs:7 (weakly_exposed, lower-priority candidate)\n"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("    - src/lib.rs:26 (weakly_exposed, base-side)\n"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("    - src/lib.rs:31 (weakly_exposed, unresolved currentness)\n"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn hidden_bullets_stay_unlabeled_when_the_set_is_single_category() {
+        // A single-category omitted set keeps the legacy bullet: the count
+        // line already names the one category that applies.
+        let top = super::super::tests::sample_finding();
+        let mut omitted = super::super::tests::sample_finding();
+        omitted.id = "finding:omitted".to_string();
+        omitted.probe.id = ProbeId("finding:omitted".to_string());
+        omitted.probe.location = SourceLocation::new("src/lib.rs", 21, 1);
+        let output = super::super::tests::bounded_output_with_findings(vec![top, omitted]);
+        let rendered = super::super::render(&output);
+        // Exactly one omitted bullet, and no per-bullet currentness label:
+        // the count line already named the single category.
+        assert_eq!(rendered.matches("\n    - src/").count(), 1, "{rendered}");
+        assert!(
+            !rendered.contains("(weakly_exposed, lower-priority candidate)"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("(weakly_exposed, base-side)"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("(weakly_exposed, unresolved currentness)"),
+            "{rendered}"
+        );
     }
 }

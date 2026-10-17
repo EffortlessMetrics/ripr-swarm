@@ -4,12 +4,12 @@ root: fixtures/constant_declaration_probe_reconciliation/input
 
 Summary: 1 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 1 of 1 finding(s) unsuppressed
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
 
 Start here:
   State: limited by static analysis (static_limited)
-  Safe next action: inspect the named static limitation before treating this as repair-ready.
+  Safe next action: inspect the named static limitation before treating this as repair-ready
   File: ./src/lib.rs:1
   Static exposure: unknown (static_unknown, note, confidence 0.20)
   Why unknown: the analysis could not determine a static exposure state
@@ -21,7 +21,7 @@ Start here:
     place this line inside an analyzed Rust function. Add or strengthen a test only if this
     inspection finds a gap. Compare the original and changed implementations with a focused run
     using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static
-    classification may remain unknown.
+    classification may remain unknown
   Evidence: reach no · infection unknown · propagation unknown · observation no · discriminator no
     - reach no: No static test path found for the changed owner
     - infection unknown: Changed syntax is not mapped to a high-confidence probe family

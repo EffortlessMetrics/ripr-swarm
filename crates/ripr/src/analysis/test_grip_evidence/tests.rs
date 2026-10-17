@@ -17448,7 +17448,7 @@ mod tests {
 }
 
 #[test]
-fn medium_snapshot_owner_result_field_stays_already_gripped() -> Result<(), String> {
+fn unbound_snapshot_owner_result_field_stays_weak() -> Result<(), String> {
     let case = refresh_plan_case(
         r#"
 #[cfg(test)]
@@ -17465,19 +17465,27 @@ mod tests {
     )?;
     let eligibility = repair_packet_eligibility(&case.classified);
     let readiness = &eligibility.readiness;
-    if case.classified.class != SeamGripClass::StronglyGripped
-        || case.classified.evidence.discriminate.state != StageState::Yes
+    if case.classified.class != SeamGripClass::WeaklyGripped
+        || case.classified.evidence.discriminate.state != StageState::Weak
         || !case.classified.evidence.missing_discriminators.is_empty()
-        || readiness.state != RepairRouteState::AlreadyGripped
+        || readiness.state == RepairRouteState::AlreadyGripped
         || is_safe_for_repair_packet(&case.classified)
     {
         return Err(format!(
-            "matching Medium snapshot must stay AlreadyGripped: class={:?}, discriminate={:?}, missing={:?}, readiness={:?}, eligible={}",
+            "unbound snapshot field must stay weak without inventing a repair route: class={:?}, discriminate={:?}, missing={:?}, readiness={:?}, eligible={}",
             case.classified.class,
             case.classified.evidence.discriminate.state,
             case.classified.evidence.missing_discriminators,
             readiness.state,
             eligibility.eligible()
+        ));
+    }
+    let context = CompactGripContext::new(&case.index);
+    let compact = compact_evidence_for_seam(&case.seam, &context);
+    if compact.discriminate.state != StageState::Weak {
+        return Err(format!(
+            "compact evidence must also withhold unbound snapshot discrimination: {:?}",
+            compact.discriminate
         ));
     }
     Ok(())
@@ -17837,6 +17845,76 @@ fn seam_reached_by_no_test_path_stays_ungripped() -> Result<(), String> {
     ])?;
     assert_eq!(reach.state, StageState::No, "{reach:?}");
     assert_eq!(class, SeamGripClass::Ungripped);
+    Ok(())
+}
+
+#[test]
+fn seam_behind_a_helper_chain_past_five_hops_is_opaque_not_ungripped() -> Result<(), String> {
+    // RIPR-SPEC-0230 rule 5 with RIPR-SPEC-0114 step 5 (#8047): the test
+    // enters a chain six helper hops from the owner, past the bounded walk.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub fn checkout(amount: u32) -> u32 { h5(amount) }
+             fn h5(amount: u32) -> u32 { h4(amount) }
+             fn h4(amount: u32) -> u32 { h3(amount) }
+             fn h3(amount: u32) -> u32 { h2(amount) }
+             fn h2(amount: u32) -> u32 { h1(amount) }
+             fn h1(amount: u32) -> u32 { if surcharge(amount) { amount + 5 } else { amount } }
+             fn surcharge(amount: u32) -> bool { amount > 100 }
+",
+        ),
+        (
+            "tests/checkout.rs",
+            "#[test] fn checks_out() { let total = ripr_fixture::checkout(150); assert_eq!(total, 155); }
+",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    // Pin the full seam summary, not a substring of the witness: a wording
+    // or location regression must fail (#8106).
+    assert_eq!(
+        reach.summary,
+        "Reach unresolved (rust_integration_public_api_path_unresolved): `checks_out` (tests/checkout.rs:1) calls `checkout`, which may lead to `surcharge` through a call path ripr does not fully trace; no gap is reported"
+    );
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
+fn seam_reach_past_five_hops_does_not_displace_a_macro_witness() -> Result<(), String> {
+    // RIPR-SPEC-0114 step 5 (#8047): the walk past the bound is the last
+    // seam reach witness, so the one-macro-hop path stays named.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "macro_rules! check_surcharge { ($a:expr) => { surcharge($a) }; }
+             pub fn quote(amount: u32) -> bool { check_surcharge!(amount) }
+             pub fn checkout(amount: u32) -> u32 { h5(amount) }
+             fn h5(amount: u32) -> u32 { h4(amount) }
+             fn h4(amount: u32) -> u32 { h3(amount) }
+             fn h3(amount: u32) -> u32 { h2(amount) }
+             fn h2(amount: u32) -> u32 { h1(amount) }
+             fn h1(amount: u32) -> u32 { if surcharge(amount) { amount + 5 } else { amount } }
+             fn surcharge(amount: u32) -> bool { amount > 100 }
+",
+        ),
+        (
+            "tests/checkout.rs",
+            "#[test] fn checks_out() { let total = ripr_fixture::checkout(150); assert_eq!(total, 155); }
+#[test] fn quotes() { assert!(ripr_fixture::quote(150)); }
+",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert!(
+        reach.summary.contains("macro `check_surcharge!`")
+            && reach.summary.contains("`quotes`")
+            && !reach.summary.contains("`checks_out`"),
+        "the macro witness stays named: {}",
+        reach.summary
+    );
+    assert_eq!(class, SeamGripClass::Opaque);
     Ok(())
 }
 
@@ -19433,5 +19511,78 @@ fn asserted_token_affinity_alone_does_not_reach_a_function_owner() -> Result<(),
     assert_eq!(evidence.reach.state, StageState::No, "{:?}", evidence.reach);
     assert_eq!(compact_reach, StageState::No);
     assert_eq!(class, SeamGripClass::Ungripped);
+    Ok(())
+}
+
+/// #7966: the real fixture's manifest/source authority survives observation
+/// binding, and both detailed and compact producers keep the same decision.
+#[test]
+fn field_projected_collection_repo_seam_retains_indexed_target() -> Result<(), String> {
+    for (case, expected) in [
+        ("tuple", StageState::Yes),
+        ("named", StageState::Yes),
+        ("plain", StageState::Yes),
+        ("wrong_field", StageState::Weak),
+        ("wrong_receiver", StageState::Weak),
+        ("rebound", StageState::Weak),
+        ("mutated", StageState::Weak),
+        ("raw_mutated", StageState::Weak),
+        ("raw_rebound", StageState::Weak),
+        ("alias", StageState::Weak),
+        ("ambiguous", StageState::Weak),
+        ("guarded", StageState::Weak),
+        ("unrelated", StageState::Weak),
+        ("computed_expected", StageState::Weak),
+        ("custom_equality", StageState::Weak),
+        ("coerced_equality", StageState::Weak),
+        ("constructor_shadow", StageState::Weak),
+        ("qualified_vec", StageState::Yes),
+        ("root_shadow", StageState::Weak),
+        ("raw_type_alias", StageState::Weak),
+        ("raw_imported_vec", StageState::Weak),
+        ("imported_constructor", StageState::Weak),
+        ("macro_constructor", StageState::Weak),
+        ("proc_constructor", StageState::Weak),
+    ] {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("../../fixtures/collection_argument_{case}/input"));
+        let file = PathBuf::from("src/lib.rs");
+        let index = build_index(&root, std::slice::from_ref(&file))?;
+        let seams = inventory_seams_from_index(std::slice::from_ref(&file), &index);
+        let seam = seams
+            .iter()
+            .find(|seam| {
+                seam.kind() == SeamKind::SideEffect
+                    && seam.expression().trim().trim_end_matches(';') == "v.push(x * 1)"
+            })
+            .ok_or_else(|| format!("{case}: missing actual push seam"))?;
+        let evidence = evidence_for_seam(seam, &index);
+        // Negative fixtures still contain a strong literal equality. It must
+        // never become a matching collection oracle through another projection.
+        assert_eq!(
+            evidence.discriminate.state, expected,
+            "{case}: {evidence:?}"
+        );
+        assert_eq!(evidence.related_tests.len(), 1, "{case}");
+        let related = &evidence.related_tests[0];
+        let target = related
+            .test_target
+            .as_ref()
+            .ok_or_else(|| format!("{case}: indexed test target was lost"))?;
+        assert_eq!(
+            target.symbol_id().0,
+            "src/lib.rs::tests::records_into_the_bag",
+            "{case}"
+        );
+        assert_eq!(target.file(), Path::new("src/lib.rs"), "{case}");
+        assert_eq!(target.test_kind(), TestKind::InlineUnit, "{case}");
+        assert_eq!(target.relation(), RelationReason::DirectOwnerCall, "{case}");
+        let context = CompactGripContext::new(&index);
+        let compact = compact_evidence_for_seam(seam, &context);
+        assert_eq!(
+            compact.discriminate.state, expected,
+            "{case}: compact consumer"
+        );
+    }
     Ok(())
 }

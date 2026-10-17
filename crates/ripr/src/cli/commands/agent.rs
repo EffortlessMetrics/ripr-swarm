@@ -552,7 +552,13 @@ fn agent_verify_error_is_typed_refusal(error: &str) -> bool {
 }
 
 fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), CommandError> {
-    ensure_command_root(&options.root, "agent verify-execute")?;
+    if let Err(error) = ensure_command_root(&options.root, "agent verify-execute") {
+        print!(
+            "{}",
+            app::verification_execution::render_unusable_root(&error)
+        );
+        return Err(CommandError::Failure(error));
+    }
     let outcome = app::verification_execution::execute_verify_packet(
         &options.root,
         &options.packet,
@@ -1324,7 +1330,7 @@ fn run_agent_repair_phase(
             for path in &started.paths {
                 eprintln!(
                     "{}",
-                    terminal_safe(format!("ripr: wrote {}", path.display()))
+                    terminal_safe(format!("ripr: wrote {}", output::path::human_path(path)))
                 );
             }
 
@@ -1340,7 +1346,10 @@ fn run_agent_repair_phase(
             write_text_file(&packet_path, &packet)?;
             eprintln!(
                 "{}",
-                terminal_safe(format!("ripr: wrote {}", packet_path.display()))
+                terminal_safe(format!(
+                    "ripr: wrote {}",
+                    output::path::human_path(&packet_path)
+                ))
             );
             // Nothing prints on stdout here. The before-phase success stdout —
             // with `--json` the packet document carrying the additive
@@ -1374,7 +1383,7 @@ fn run_agent_repair_phase(
             );
             eprintln!(
                 "ripr: consuming attempt manifest {}",
-                attempt.manifest_path.display()
+                output::path::human_path(&attempt.manifest_path)
             );
             // #6033: remember which shared workflow artifacts existed before
             // this phase wrote its own (preserving the previous projection's
@@ -1506,6 +1515,15 @@ fn run_agent_repair_phase(
                     if agent_verify_error_is_typed_refusal(&error) {
                         if error == AGENT_VERIFY_INPUT_DRIFT_ERROR {
                             for line in repair_after_input_drift_lines(&root, store_ref, &attempt) {
+                                refusal.narrate(line);
+                            }
+                        } else if error.starts_with(AGENT_VERIFY_NO_MOVEMENT_PREFIX) {
+                            for line in repair_after_no_movement_lines(
+                                &root,
+                                store_ref,
+                                &attempt,
+                                &cage_policy,
+                            ) {
                                 refusal.narrate(line);
                             }
                         }
@@ -2231,6 +2249,40 @@ fn repair_after_commit_busy_lines(
         cause,
         format!(
             "to recover: wait for the other after phase to complete, then rerun `ripr agent repair --root {root_arg}{store_flag} --attempt {attempt_arg} --phase after`."
+        ),
+    ]
+}
+
+/// Recovery for the verify authority's no-movement refusal. The policy was
+/// already validated from this attempt's retained packet; the compatibility
+/// packet can belong to a later attempt and is never recovery authority.
+fn repair_after_no_movement_lines(
+    root: &Path,
+    store: Option<&Path>,
+    attempt: &crate::app::repair_attempt::ResolvedRepairAttempt,
+    policy: &crate::edit_cage::EditCagePolicy,
+) -> Vec<String> {
+    use crate::agent::loop_commands::{bound_root, shell_arg};
+
+    let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
+    let attempt_arg = shell_arg(attempt.attempt_id.as_str());
+    let store_flag = crate::app::repair_attempt::quoted_store_flag(store);
+    let target = terminal_safe(policy.selected_target.path().to_string());
+    let edit = if policy.inline_test_module_target {
+        format!(
+            "add new test functions inside the existing `#[cfg(test)]` module of `{target}`; leave production code, the module declaration, and existing tests unchanged"
+        )
+    } else {
+        format!("make the focused test edit in `{target}`; leave production code unchanged")
+    };
+    vec![
+        format!(
+            "attempt `{}` remains `awaiting_edit` and still awaits the focused test edit.",
+            attempt.attempt_id.as_str()
+        ),
+        format!("to recover: {edit}, then rerun this after-phase command."),
+        format!(
+            "inspect the selected attempt with `ripr agent status --root {root_arg}{store_flag} --attempt {attempt_arg}`."
         ),
     ]
 }

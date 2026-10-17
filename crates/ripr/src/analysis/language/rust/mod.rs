@@ -357,6 +357,12 @@ fn drop_unreached_test_files(
                 .map(|path| workspace::normalize_path(path)),
         );
     }
+    orphans.extend(cargo_skipped_test_files(
+        root,
+        test_harnesses,
+        &loaded_files,
+        &holds_tests,
+    ));
     if orphans.is_empty() {
         return loaded_files;
     }
@@ -364,6 +370,83 @@ fn drop_unreached_test_files(
         .into_iter()
         .filter(|(path, _)| !orphans.contains(&workspace::normalize_path(path)))
         .collect()
+}
+
+/// Test-holding files that a declared `[[test]]` target keeps out of
+/// `cargo test` (#8016): `test = false`, unmet default-feature
+/// `required-features` (both established by cargo metadata), or `harness =
+/// false` when no registration names the file as a custom harness, so
+/// nothing but libtest could have run its `#[test]` functions. Only packages
+/// whose manifest spells `[[test]]` are asked, because only a declaration can
+/// switch these keys. Unavailable metadata is not a skip, and the pass stands
+/// down entirely while a `Cargo.toml` is dirty in a committed-history check:
+/// the metadata probe reads the working tree, not the `HEAD` bytes the files
+/// were loaded from. A crate root or a file another file declares as a module
+/// is shared with a live target, so it keeps its tests.
+fn cargo_skipped_test_files(
+    root: &Path,
+    test_harnesses: &[crate::config::TestHarnessRegistration],
+    loaded_files: &[(PathBuf, Vec<u8>)],
+    holds_tests: &dyn Fn(&[u8]) -> bool,
+) -> BTreeSet<String> {
+    let mut skipped = BTreeSet::new();
+    if committed_source::current_overlay().is_some_and(|overlay| {
+        overlay
+            .dirty_paths()
+            .any(|path| path.rsplit('/').next() == Some("Cargo.toml"))
+    }) {
+        return skipped;
+    }
+    let mut manifests = BTreeMap::new();
+    let mut declares_tests: BTreeMap<PathBuf, bool> = BTreeMap::new();
+    let mut inventory = workspace::ManifestInventory::default();
+    let mut mentioned = None;
+    let mut package_manifests = BTreeMap::new();
+    for (path, bytes) in loaded_files {
+        if !holds_tests(bytes) {
+            continue;
+        }
+        let Some(package) = owning_manifest_dir(root, path, &mut manifests) else {
+            continue;
+        };
+        let declares = *declares_tests.entry(package.clone()).or_insert_with(|| {
+            committed_source::read_source_bytes(root, &package.join("Cargo.toml"))
+                .ok()
+                .flatten()
+                .is_some_and(|bytes| contains_bytes(&bytes, b"[[test]]"))
+        });
+        if !declares {
+            continue;
+        }
+        let normalized = workspace::normalize_path(path);
+        let harness_off = !test_harnesses.iter().any(|harness| {
+            harness.file_wide_harness_evidence()
+                && workspace::normalize_path(&harness.target) == normalized
+        }) && matches!(
+            inventory.verdict(root, path),
+            workspace::CargoHarnessVerdict::HarnessDisabled
+        );
+        if !(harness_off || inventory.cargo_test_collection_skipped(root, path)) {
+            continue;
+        }
+        let relative = path.strip_prefix(&package).unwrap_or(path);
+        let crate_root = matches!(
+            relative.to_str(),
+            Some("src/lib.rs" | "src/main.rs" | "build.rs")
+        ) || relative.starts_with("src/bin");
+        let stem = path.file_stem().and_then(|stem| stem.to_str());
+        let declared_module = stem.is_some_and(|stem| {
+            mentioned
+                .get_or_insert_with(|| {
+                    mentioned_module_names(root, loaded_files, &mut package_manifests)
+                })
+                .mentions(&Some(package.clone()), stem)
+        });
+        if !crate_root && !declared_module {
+            skipped.insert(normalized);
+        }
+    }
+    skipped
 }
 
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
@@ -1237,6 +1320,9 @@ fn apply_probe_and_oracle_limits(
     oracles::apply_cross_language_limit(finding, probe, index);
     // #7133: a captured log record the test asserts on is a named limit.
     classify::withhold_log_capture_gap(finding, index, owner_name.as_deref());
+    // RIPR-SPEC-0240: a `#[should_panic]` test's panic outcome is an oracle
+    // ripr does not resolve, not a missing assertion.
+    classify::withhold_should_panic_gap(finding, index);
     // RIPR-SPEC-0240 runs last so a producer-named limit keeps its finding.
     classify::withhold_unsupported_gap(finding);
 }
@@ -1315,22 +1401,7 @@ fn apply_rust_no_static_path_limit(
 
     if let Some(witness) = transitive_reach.transitive_witness(&owner_name) {
         replace_witnessed_no_path_infection_summary(finding);
-        finding.static_limit_kind = Some(classify::transitive_reach_limit_kind(&witness.test_file));
-        finding
-            .stop_reasons
-            .push(StopReason::TransitiveReachUnresolved);
-        finding
-            .evidence
-            .push(classify::RUST_TRANSITIVE_REACH_MESSAGE.to_string());
-        finding
-            .evidence
-            .push(classify::transitive_reach_witness_pointer(&witness));
-        finding
-            .evidence
-            .extend(classify::transitive_reach_limitation_detail_lines(
-                &witness,
-                &owner_name,
-            ));
+        apply_rust_transitive_reach_limit(finding, &owner_name, &witness);
     } else if let Some(witness) = transitive_reach.macro_reach_witness(&owner_name) {
         replace_witnessed_no_path_infection_summary(finding);
         apply_rust_macro_reach_limit(finding, &owner_name, &witness);
@@ -1352,6 +1423,11 @@ fn apply_rust_no_static_path_limit(
         property_macro_mentions,
     ) {
         replace_witnessed_no_path_infection_summary(finding);
+    } else if let Some(witness) = transitive_reach.deep_transitive_witness(&owner_name) {
+        // Last: a chain past five hops never displaces a shallower or more
+        // specific witness (#8047).
+        replace_witnessed_no_path_infection_summary(finding);
+        apply_rust_transitive_reach_limit(finding, &owner_name, &witness);
     }
 }
 
@@ -1367,22 +1443,7 @@ fn apply_rust_proximity_reach_limit(
         return;
     };
     if let Some(witness) = transitive_reach.transitive_witness(&owner_name) {
-        finding.static_limit_kind = Some(classify::transitive_reach_limit_kind(&witness.test_file));
-        finding
-            .stop_reasons
-            .push(StopReason::TransitiveReachUnresolved);
-        finding
-            .evidence
-            .push(classify::RUST_TRANSITIVE_REACH_MESSAGE.to_string());
-        finding
-            .evidence
-            .push(classify::transitive_reach_witness_pointer(&witness));
-        finding
-            .evidence
-            .extend(classify::transitive_reach_limitation_detail_lines(
-                &witness,
-                &owner_name,
-            ));
+        apply_rust_transitive_reach_limit(finding, &owner_name, &witness);
         unresolved_reach_next_step(
             finding,
             &witness.test_name,
@@ -1397,7 +1458,39 @@ fn apply_rust_proximity_reach_limit(
             &witness.entry_symbol,
             &owner_name,
         );
+    } else if let Some(witness) = transitive_reach.deep_transitive_witness(&owner_name) {
+        apply_rust_transitive_reach_limit(finding, &owner_name, &witness);
+        unresolved_reach_next_step(
+            finding,
+            &witness.test_name,
+            &witness.entry_symbol,
+            &owner_name,
+        );
     }
+}
+
+/// Shared transitive limitation projection (RIPR-SPEC-0114), for a witness
+/// within the bound or past it. No reach credit, no related-test relation.
+fn apply_rust_transitive_reach_limit(
+    finding: &mut Finding,
+    owner_name: &str,
+    witness: &classify::TransitiveWitness,
+) {
+    finding.static_limit_kind = Some(classify::transitive_reach_limit_kind(&witness.test_file));
+    finding
+        .stop_reasons
+        .push(StopReason::TransitiveReachUnresolved);
+    finding
+        .evidence
+        .push(classify::RUST_TRANSITIVE_REACH_MESSAGE.to_string());
+    finding
+        .evidence
+        .push(classify::transitive_reach_witness_pointer(witness));
+    finding
+        .evidence
+        .extend(classify::transitive_reach_limitation_detail_lines(
+            witness, owner_name,
+        ));
 }
 
 /// Shared typed macro limitation projection. It adds neither reach credit
@@ -1592,14 +1685,26 @@ impl<'a> GeneratedRustSources<'a> {
         config: &'a crate::config::RustLanguageConfig,
         changed_files: &[ChangedFile],
     ) -> Self {
-        let diff_vendored_dirs = changed_files
-            .iter()
-            .filter(|file| {
-                file.path
-                    .file_name()
+        Self::for_changed_paths(
+            root,
+            config,
+            changed_files.iter().map(|file| file.path.as_path()),
+        )
+    }
+
+    /// The same diff-bound generated policy for consumers retaining path facts.
+    pub(crate) fn for_changed_paths<'b>(
+        root: &'a Path,
+        config: &'a crate::config::RustLanguageConfig,
+        changed_paths: impl IntoIterator<Item = &'b Path>,
+    ) -> Self {
+        let diff_vendored_dirs = changed_paths
+            .into_iter()
+            .filter(|path| {
+                path.file_name()
                     .is_some_and(|name| name == CARGO_VENDOR_CHECKSUM_FILE)
             })
-            .filter_map(|file| file.path.parent().map(Path::to_path_buf))
+            .filter_map(|path| path.parent().map(Path::to_path_buf))
             .collect();
         Self {
             root,
@@ -7170,6 +7275,168 @@ fn absent_delimiter_boundary_returns_head() {
             );
             fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         }
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_ignores_tests_in_a_declared_test_target_cargo_skips() -> Result<(), String> {
+        // #8016: `tests/x.rs` pins the changed function, but its `[[test]]`
+        // entry keeps `cargo test` from running it. The empty entry (the
+        // control) is a normal target and keeps the relation.
+        let test_source = "use shop::used::discount;\n\n#[test]\nfn discount_applies() {\n    assert_eq!(discount(150), 140);\n}\n\nfn main() {}\n";
+        for (label, key, runs) in [
+            ("control", "", true),
+            ("test-false", "test = false\n", false),
+            ("harness-false", "harness = false\n", false),
+            (
+                "required-features",
+                "required-features = [\"never\"]\n",
+                false,
+            ),
+        ] {
+            let root = temp_root(&format!("skipped-test-target-{label}"))?;
+            write(
+                &root.join("Cargo.toml"),
+                &format!(
+                    "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n[workspace]\n\n[features]\nnever = []\n\n[[test]]\nname = \"x\"\n{key}"
+                ),
+            )?;
+            write(&root.join("src/lib.rs"), "pub mod used;\n")?;
+            write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+            write(&root.join("tests/x.rs"), test_source)?;
+
+            let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+            let related = related_test_names(&root, &result, "src/used.rs");
+            assert_eq!(
+                related.iter().any(|name| name == "discount_applies"),
+                runs,
+                "{label}: {related:?}"
+            );
+            fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        }
+        Ok(())
+    }
+
+    fn skipped_target_fixture(name: &str, key: &str, test_path: &str) -> Result<PathBuf, String> {
+        let root = temp_root(name)?;
+        write(
+            &root.join("Cargo.toml"),
+            &format!(
+                "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n\n[workspace]\n\n[[test]]\nname = \"old\"\npath = \"{test_path}\"\n{key}"
+            ),
+        )?;
+        write(
+            &root.join("src/lib.rs"),
+            "pub mod used;\n\n#[cfg(test)]\nmod unit {\n    #[test]\n    fn lib_test() {}\n}\n",
+        )?;
+        write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+        write(
+            &root.join("tests/old.rs"),
+            "#[test]\nfn old_test() {}\n\nfn main() {}\n",
+        )?;
+        Ok(root)
+    }
+
+    use super::{cargo_skipped_test_files, contains_bytes};
+    use std::collections::BTreeSet;
+
+    fn skipped_files(
+        root: &Path,
+        harnesses: &[crate::config::TestHarnessRegistration],
+    ) -> Result<BTreeSet<String>, String> {
+        let loaded = [
+            "src/lib.rs",
+            "tests/old.rs",
+            "src/main.rs",
+            "build.rs",
+            "src/bin/tool.rs",
+        ]
+        .iter()
+        .filter(|file| root.join(file).is_file())
+        .map(|file| {
+            fs::read(root.join(file))
+                .map(|bytes| (PathBuf::from(file), bytes))
+                .map_err(|err| err.to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+        Ok(cargo_skipped_test_files(
+            root,
+            harnesses,
+            &loaded,
+            &|bytes| contains_bytes(bytes, b"test"),
+        ))
+    }
+
+    #[test]
+    fn skipped_target_sharing_a_live_library_source_keeps_the_library_tests() -> Result<(), String>
+    {
+        // #8016 review: `[[test]] path = "src/lib.rs"; test = false` is
+        // skipped, but `cargo test --lib` still runs the library's tests.
+        let root =
+            skipped_target_fixture("skipped-target-shares-lib", "test = false\n", "src/lib.rs")?;
+        assert!(skipped_files(&root, &[])?.is_empty());
+        for crate_root in ["src/main.rs", "build.rs", "src/bin/tool.rs"] {
+            let name = format!("skipped-target-shares-{}", crate_root.replace('/', "-"));
+            let shared = skipped_target_fixture(&name, "test = false\n", crate_root)?;
+            write(
+                &shared.join(crate_root),
+                "#[test]\nfn root_test() {}\n\nfn main() {}\n",
+            )?;
+            assert!(skipped_files(&shared, &[])?.is_empty(), "{crate_root}");
+            fs::remove_dir_all(shared).map_err(|error| format!("remove fixture: {error}"))?;
+        }
+        let own =
+            skipped_target_fixture("skipped-target-own-file", "test = false\n", "tests/old.rs")?;
+        assert_eq!(
+            skipped_files(&own, &[])?,
+            BTreeSet::from(["tests/old.rs".to_string()])
+        );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        fs::remove_dir_all(own).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn an_unrelated_harness_registration_does_not_spare_a_harness_off_target() -> Result<(), String>
+    {
+        use crate::config::{TestHarnessAdapter, TestHarnessKind, TestHarnessRegistration};
+        let root = skipped_target_fixture(
+            "skipped-target-registration",
+            "harness = false\n",
+            "tests/old.rs",
+        )?;
+        let registration = |target: &str| TestHarnessRegistration {
+            registration_id: "mimic".to_string(),
+            target: PathBuf::from(target),
+            kind: TestHarnessKind::CustomHarnessTarget,
+            adapter: TestHarnessAdapter::LibtestMimicV1,
+            marker: "trial".to_string(),
+        };
+        let skipped = BTreeSet::from(["tests/old.rs".to_string()]);
+        assert_eq!(
+            skipped_files(&root, &[registration("tests/mimic.rs")])?,
+            skipped
+        );
+        assert!(skipped_files(&root, &[registration("tests/old.rs")])?.is_empty());
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn a_dirty_manifest_stands_the_skip_pass_down() -> Result<(), String> {
+        use crate::analysis::committed_source::{CommittedSourceOverlay, with_overlay};
+        use std::sync::Arc;
+        let root =
+            skipped_target_fixture("skipped-target-dirty", "test = false\n", "tests/old.rs")?;
+        let overlay = CommittedSourceOverlay::from_entries(
+            &root,
+            [("Cargo.toml", Some(&b"[package]\nname='shop'\n"[..]))],
+        );
+        let stood_down = with_overlay(Some(Arc::new(overlay)), || skipped_files(&root, &[]))?;
+        assert!(stood_down.is_empty(), "{stood_down:?}");
+        assert_eq!(skipped_files(&root, &[])?.len(), 1);
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
     }
 

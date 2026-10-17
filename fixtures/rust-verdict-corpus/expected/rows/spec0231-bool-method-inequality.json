@@ -1,0 +1,39 @@
+{
+  "case_id": "spec0231-bool-method-inequality",
+  "subject_id": "authored-bool-method-inequality",
+  "origin": "authored",
+  "anchor": "src/lib.rs:2",
+  "behavior_family": "scalar_return_value",
+  "test_shape": "assert_eq_bool_method_inequality",
+  "hard_case": true,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {},
+  "oracle": {
+    "expected": {
+      "kind": "relational_check",
+      "strength": "weak",
+      "spec": "RIPR-SPEC-0231#32"
+    },
+    "observed_kind": "relational_check",
+    "observed_strength": "weak",
+    "observed_all": [
+      {
+        "test": "score_is_nonzero",
+        "kind": "relational_check",
+        "strength": "weak"
+      }
+    ],
+    "outcome": "match"
+  }
+}
