@@ -1,0 +1,12 @@
+{
+ "schema_version": "work_adapter_identity_provenance.v1",
+ "repository": "EffortlessMetrics/ripr-swarm",
+ "captured_at": "2026-10-09T12:00:00Z",
+ "capture_method": "authored Codex adapter delegation corpus reusing the committed RIPR-SPEC-0244 selection packets and captured directories by reference",
+ "files": [
+  {
+   "path": "corpus.json",
+   "sha256": "b68ffce947b2c9f18e981dbf4a077264b41f809789c56aca07bcd4131c55d82e"
+  }
+ ]
+}

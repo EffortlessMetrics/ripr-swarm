@@ -14784,6 +14784,41 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0277"
+name = "Codex adapter delegations bind the selected-work portfolio basis"
+spec = "docs/specs/RIPR-SPEC-0277-codex-adapter-selected-work-basis.md"
+tests = [
+  "xtask/src/work_adapter_identity.rs::tests::work_adapter_identity_committed_corpus_five_scenarios_hold",
+  "xtask/src/work_adapter_identity.rs::tests::work_adapter_identity_scout_read_only_delegation_passes",
+  "xtask/src/work_adapter_identity.rs::tests::work_adapter_identity_builder_with_prepared_claim_passes",
+  "xtask/src/work_adapter_identity.rs::tests::work_adapter_identity_planner_and_resume_review_pass",
+  "xtask/src/work_adapter_identity.rs::tests::work_adapter_identity_portfolio_reread_and_wrong_inputs_fail",
+  "xtask/src/work_adapter_identity.rs::tests::work_adapter_identity_adapter_schema_has_no_singleton_fields",
+  "xtask/src/work_adapter_identity.rs::tests::work_adapter_identity_roles_and_stages_stay_on_the_closed_set",
+  "xtask/src/work_adapter_identity.rs::tests::work_adapter_identity_human_and_json_projections_agree",
+  "xtask/src/work_adapter_identity.rs::tests::work_adapter_identity_deterministic_output",
+  "xtask/src/work_adapter_identity.rs::tests::work_adapter_identity_corpus_loader_fails_closed",
+  "xtask/src/work_adapter_identity.rs::tests::work_adapter_identity_committed_provenance_covers_every_corpus_byte",
+  "xtask/src/work_adapter_identity.rs::tests::work_adapter_identity_delegations_bind_recorded_issues_and_snapshots",
+  "xtask/src/work_adapter_identity.rs::tests::work_adapter_identity_command_mutate_nothing_mutation_negative",
+]
+fixtures = [
+  "fixtures/work_adapter_identity",
+]
+code = [
+  "xtask/src/work_adapter_identity.rs",
+  "xtask/src/work_selection_identity.rs",
+  "xtask/src/command.rs",
+  "xtask/src/dispatch.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0277-codex-adapter-selected-work-basis.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0244"
 name = "Shared selected-work identity schemas and legacy compatibility"
 spec = "docs/specs/RIPR-SPEC-0244-selected-work-identity.md"

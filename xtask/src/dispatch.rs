@@ -285,6 +285,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::WorkPlanCheck(args) => {
             super::work_plan_identity::work_plan_check_command(&args)
         }
+        XtaskCommand::WorkAdapterCheck(args) => {
+            super::work_adapter_identity::work_adapter_check_command(&args)
+        }
         XtaskCommand::Help(args) => print_help_route(&args),
         XtaskCommand::Unknown(command) if matches!(command.as_str(), "--help" | "-h") => {
             front_door::print()

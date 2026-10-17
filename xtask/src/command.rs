@@ -186,6 +186,7 @@ pub(crate) enum XtaskCommand {
     WorkBurndownCheck(Vec<String>),
     WorkIntakeCheck(Vec<String>),
     WorkPlanCheck(Vec<String>),
+    WorkAdapterCheck(Vec<String>),
     Unknown(String),
 }
 
@@ -440,6 +441,13 @@ impl XtaskCommand {
                     Some("check") => Self::WorkPlanCheck(rest[2..].to_vec()),
                     _ => Self::Unknown(format!(
                         "work plan {}",
+                        rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
+                    )),
+                },
+                Some("adapter") => match rest.get(1).map(|arg| arg.as_str()) {
+                    Some("check") => Self::WorkAdapterCheck(rest[2..].to_vec()),
+                    _ => Self::Unknown(format!(
+                        "work adapter {}",
                         rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
                     )),
                 },
@@ -2488,6 +2496,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Validates committed WorkPlanV1 rows against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR B, RIPR-SPEC-0276, consuming #1646); every plan binds the repository, portfolio-snapshot identity, basis head and the full selected-work identity it plans for, planning emits one closed RIPR-SPEC-0244 disposition and is read-only so a row that would replace or reorder the whole portfolio fails visibly, campaign-targeting dispositions must name a recorded campaign, a blocked disposition must name its blocker, a plan derived from nothing is a claim, and a wrong repository, snapshot, basis or legacy authority attempt fails with exact recompile/reconcile routes.",
+        ),
+        command_entry(
+            "work adapter check [--corpus <dir>] [--json]",
+            "report_only",
+            "target/ripr/reports/work-adapter-check.{json,md}",
+            false,
+            false,
+            "Validates committed WorkAdapterV1 Codex delegation rows against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR B, RIPR-SPEC-0277, consuming #1637/#1649); every delegation binds the repository, portfolio-snapshot identity, basis head and the full selected-work identity it delegates, one closed project role and one closed flow stage, the subagent consumes the selected-work context packet plus relevant overflow and never re-reads the portfolio, write-capable builder delegations require a prepared claim or isolated worktree on the bound selection, subagents never claim (claims stay in the root thread), a delegation derived from nothing is a claim, and a wrong repository, snapshot, basis or legacy authority attempt fails with exact recompile/reconcile routes.",
         ),
     ]
 }
