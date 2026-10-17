@@ -1228,3 +1228,88 @@ fn shared_admission_programs_are_required_before_allocation() -> Result<(), Stri
     }
     Ok(())
 }
+
+/// Replay the watchdog's actual jq program, rather than copying its predicate.
+#[test]
+fn watchdog_pending_runs_use_actual_producer_title_and_head() -> Result<(), String> {
+    const WATCHDOG: &str = include_str!("../../../.github/workflows/pr-staleness-watchdog.yml");
+    let producer = WORKFLOW
+        .lines()
+        .find(|line| line.starts_with("run-name:"))
+        .and_then(|line| line.split_once("format('"))
+        .and_then(|(_, line)| line.split_once("{0}"))
+        .map(|(prefix, _)| prefix)
+        .ok_or("qualification producer title missing")?;
+    let query = WATCHDOG
+        .lines()
+        .find(|line| line.contains("in_flight=\"$(gh api"))
+        .and_then(|line| line.split_once(" --jq \""))
+        .and_then(|(_, line)| line.split_once("\" | awk"))
+        .map(|(program, _)| program.replace("\\\"", "\""))
+        .ok_or("watchdog jq program missing")?;
+    let head = "a".repeat(40);
+    let title = format!("{producer}{head}/{}/{}", "b".repeat(40), "c".repeat(40));
+    let vectors: Value = serde_json::from_str(VECTORS).map_err(|e| e.to_string())?;
+    let pr = &vectors["live_drift_cases"][0]["live_pull_request"];
+    let replay = |program: &str, run: &Value, expected: usize| -> Result<bool, String> {
+        let program = program.replace("$head_sha", &head);
+        let input = json!({"workflow_runs": [run]}).to_string();
+        let script = format!(
+            "actual=$(jq '{program}' <<'RUNS'\n{input}\nRUNS\n)\n[ \"$actual\" = {expected} ]"
+        );
+        execute(&script, pr, &json!([]), &json!({}))
+    };
+    let run = |status: &str, run_head: &str, display: &str| json!({"status":status,"head_sha":run_head,"display_title":display,"event":"pull_request"});
+    for status in ["queued", "in_progress"] {
+        assert!(
+            replay(&query, &run(status, &head, &title), 1)?,
+            "actual {status} qualification was called dark"
+        );
+    }
+    for (label, value) in [
+        ("completed", run("completed", &head, &title)),
+        ("wrong head", run("queued", &"e".repeat(40), &title)),
+        (
+            "wrong title head",
+            run("queued", &head, &title.replace(&head, &"e".repeat(40))),
+        ),
+        ("metadata", run("queued", &head, "Label metadata 123")),
+        (
+            "obsolete title",
+            run("queued", &head, &format!("Merge-ready {head}/b/c")),
+        ),
+    ] {
+        assert!(
+            replay(&query, &value, 0)?,
+            "{label} substituted for a pending qualification"
+        );
+    }
+    // This is the exact old consumer's behavior on the current producer title.
+    let old = format!(
+        "[.workflow_runs[] | select(.status != \"completed\" and (.display_title | startswith(\"Merge-ready {head}/\")))] | length"
+    );
+    assert!(
+        !replay(&old, &run("queued", &head, &title), 1)?,
+        "old predicate must fail the positive qualification vector"
+    );
+    for (old, changed) in [
+        (".status != \"completed\"", "true"),
+        (".head_sha == \"$head_sha\"", "true"),
+        ("Merge-ready event provenance $head_sha/", ""),
+    ] {
+        let mutant = query.replace(old, changed);
+        assert_ne!(mutant, query, "mutation must engage: {old}");
+        let value = if old.starts_with(".status") {
+            run("completed", &head, &title)
+        } else if old.starts_with(".head_sha") {
+            run("queued", &"e".repeat(40), &title)
+        } else {
+            run("queued", &head, "Label metadata 123")
+        };
+        assert!(
+            !replay(&mutant, &value, 0)?,
+            "missing {old} guard must reject its negative vector"
+        );
+    }
+    Ok(())
+}

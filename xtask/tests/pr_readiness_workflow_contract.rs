@@ -206,7 +206,7 @@ fn staleness_watchdog_reports_without_dispatching() -> Result<(), String> {
 /// The required check run appears only when `result` starts, so a head whose
 /// merge-ready run is still queued or running has no required check yet.
 /// Calling that head dark tells the author to re-toggle explicit merge-ready, which
-/// cancels the real run (`cancel-in-progress` for pull_request).
+/// can replace pending native work; it must preserve an active request.
 const WATCHDOG_IN_FLIGHT_QUERY: &str =
     "actions/workflows/routed-rust.yml/runs?event=pull_request&head_sha=$head_sha";
 
@@ -218,7 +218,8 @@ fn watchdog_reports_in_flight_before_dark(source: &str) -> bool {
         return false;
     };
     source.contains(r#"select(.status != \"completed\" and"#)
-        && source.contains("Merge-ready $head_sha/")
+        && source.contains("Merge-ready event provenance $head_sha/")
+        && source.contains(r#".head_sha == \"$head_sha\""#)
         && source.contains("  actions: read\n")
         && query < dark
 }
