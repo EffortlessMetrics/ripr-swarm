@@ -1,0 +1,890 @@
+{
+ "schema_version": "work_context_identity_corpus.v1",
+ "repository": "EffortlessMetrics/ripr-swarm",
+ "selection_policy": "explicit-root-selection",
+ "selection_policy_version": "v1",
+ "scenarios": [
+  {
+   "id": "context-01-one-campaign-packet-passes",
+   "title": "A bounded packet for a one-campaign selection compiles and passes",
+   "captured": "work_portfolio/corpus",
+   "cases": [
+    {
+     "packet": {
+      "packet_id": "packet:context:selection:start_build:issue:9105",
+      "repository": "EffortlessMetrics/ripr-swarm",
+      "portfolio_snapshot": "work-portfolio:sha256:f13413b564d05b401866a5194c6f8265fd03c890597a904648c5c332b3b92005",
+      "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "selection": {
+       "selection_id": "selection:start_build:issue:9105",
+       "repository": "EffortlessMetrics/ripr-swarm",
+       "candidate_id": "candidate:issue:9105",
+       "issue": {
+        "number": 9105,
+        "identity": "issue:9105"
+       },
+       "work_item": null,
+       "pull_request": null,
+       "lifecycle_action": "start_build",
+       "accepted_requirements": [
+        "REQ-dup-family"
+       ],
+       "spec_refs": [
+        "RIPR-SPEC-0202"
+       ],
+       "implementation_slices": [
+        "slice-9105"
+       ],
+       "campaign_refs": [
+        {
+         "id": "campaign-rust-repair",
+         "relation": "member",
+         "source": "campaigns.json"
+        }
+       ],
+       "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+       "expected_head": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+       "overlaps": {
+        "issues": [
+         9106
+        ],
+        "pull_requests": [],
+        "claims": [],
+        "worktrees": [],
+        "resources": []
+       },
+       "role_context_budget": {
+        "role": "writer",
+        "context_profile": "bounded-candidate",
+        "budget": "single-agent",
+        "single_agent": false
+       },
+       "claim_boundary": "Implement only the recorded slices; no campaign, spec or claim mutation.",
+       "stop_conditions": [
+        "acceptance rows covered or explicitly omitted with reasons"
+       ],
+       "legacy_active_goal_ref": null,
+       "legacy_current_work_item_ref": null
+      },
+      "scope": "selected_work_only",
+      "context_refs": [
+       "campaign-rust-repair",
+       "campaigns.json",
+       "RIPR-SPEC-0202",
+       "REQ-dup-family",
+       "slice-9105",
+       "issue:9106"
+      ],
+      "overflow_refs": [],
+      "compiled_from": [
+       "fixtures/work_selection_identity/corpus.json"
+      ],
+      "legacy_active_goal_ref": null,
+      "legacy_current_work_item_ref": null
+     },
+     "expect": "pass",
+     "expect_violations": []
+    }
+   ]
+  },
+  {
+   "id": "context-02-several-related-campaigns-packet-passes",
+   "title": "Several related campaign references stay context, never permission",
+   "captured": "work_selection_identity/captured/multi-campaign",
+   "cases": [
+    {
+     "packet": {
+      "packet_id": "packet:context:selection:start_build:issue:9105:multi-campaign",
+      "repository": "EffortlessMetrics/ripr-swarm",
+      "portfolio_snapshot": "work-portfolio:sha256:d421627ab261553ad372f6615bd67bd6e3ed375d516bf8705fe6f713263cfb69",
+      "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "selection": {
+       "selection_id": "selection:start_build:issue:9105",
+       "repository": "EffortlessMetrics/ripr-swarm",
+       "candidate_id": "candidate:issue:9105",
+       "issue": {
+        "number": 9105,
+        "identity": "issue:9105"
+       },
+       "work_item": null,
+       "pull_request": null,
+       "lifecycle_action": "start_build",
+       "accepted_requirements": [
+        "REQ-dup-family"
+       ],
+       "spec_refs": [
+        "RIPR-SPEC-0202"
+       ],
+       "implementation_slices": [
+        "slice-9105"
+       ],
+       "campaign_refs": [
+        {
+         "id": "campaign-editor-ux",
+         "relation": "member",
+         "source": "campaigns.json"
+        },
+        {
+         "id": "campaign-rust-repair",
+         "relation": "member",
+         "source": "campaigns.json"
+        }
+       ],
+       "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+       "expected_head": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+       "overlaps": {
+        "issues": [
+         9106
+        ],
+        "pull_requests": [],
+        "claims": [],
+        "worktrees": [],
+        "resources": []
+       },
+       "role_context_budget": {
+        "role": "writer",
+        "context_profile": "bounded-candidate",
+        "budget": "single-agent",
+        "single_agent": false
+       },
+       "claim_boundary": "Implement only the recorded slices; no campaign, spec or claim mutation.",
+       "stop_conditions": [
+        "acceptance rows covered or explicitly omitted with reasons"
+       ],
+       "legacy_active_goal_ref": null,
+       "legacy_current_work_item_ref": null
+      },
+      "scope": "selected_work_only",
+      "context_refs": [
+       "campaign-editor-ux",
+       "campaign-rust-repair",
+       "campaigns.json",
+       "RIPR-SPEC-0202",
+       "REQ-dup-family",
+       "issue:9106"
+      ],
+      "overflow_refs": [],
+      "compiled_from": [
+       "fixtures/work_selection_identity/corpus.json"
+      ],
+      "legacy_active_goal_ref": null,
+      "legacy_current_work_item_ref": null
+     },
+     "expect": "pass",
+     "expect_violations": []
+    }
+   ]
+  },
+  {
+   "id": "context-03-standalone-no-campaign-packet-passes",
+   "title": "A standalone issue with no campaign placement compiles a valid packet",
+   "captured": "work_selection_identity/captured/standalone",
+   "cases": [
+    {
+     "packet": {
+      "packet_id": "packet:context:selection:start_build:issue:9106:standalone",
+      "repository": "EffortlessMetrics/ripr-swarm",
+      "portfolio_snapshot": "work-portfolio:sha256:06c8d9fa8eb6feee4e6d2815b56dd8567d39460be40134e158d691a7c8bc2715",
+      "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "selection": {
+       "selection_id": "selection:start_build:issue:9106",
+       "repository": "EffortlessMetrics/ripr-swarm",
+       "candidate_id": "candidate:issue:9106",
+       "issue": {
+        "number": 9106,
+        "identity": "issue:9106"
+       },
+       "work_item": null,
+       "pull_request": null,
+       "lifecycle_action": "start_build",
+       "accepted_requirements": [
+        "REQ-dup-family"
+       ],
+       "spec_refs": [
+        "RIPR-SPEC-0202"
+       ],
+       "implementation_slices": [
+        "slice-9106"
+       ],
+       "campaign_refs": [],
+       "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+       "expected_head": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+       "overlaps": {
+        "issues": [
+         9105
+        ],
+        "pull_requests": [],
+        "claims": [],
+        "worktrees": [],
+        "resources": []
+       },
+       "role_context_budget": {
+        "role": "writer",
+        "context_profile": "bounded-candidate",
+        "budget": "single-agent",
+        "single_agent": false
+       },
+       "claim_boundary": "Implement only the recorded slices; no campaign, spec or claim mutation.",
+       "stop_conditions": [
+        "acceptance rows covered or explicitly omitted with reasons"
+       ],
+       "legacy_active_goal_ref": null,
+       "legacy_current_work_item_ref": null
+      },
+      "scope": "selected_work_only",
+      "context_refs": [
+       "RIPR-SPEC-0202",
+       "REQ-dup-family",
+       "slice-9106",
+       "issue:9105"
+      ],
+      "overflow_refs": [],
+      "compiled_from": [
+       "fixtures/work_selection_identity/corpus.json"
+      ],
+      "legacy_active_goal_ref": null,
+      "legacy_current_work_item_ref": null
+     },
+     "expect": "pass",
+     "expect_violations": []
+    }
+   ]
+  },
+  {
+   "id": "context-04-pr-repair-packet-passes",
+   "title": "A repair packet binds the recorded PR, claim and worktree as relevant overflow",
+   "captured": "work_portfolio/corpus",
+   "cases": [
+    {
+     "packet": {
+      "packet_id": "packet:context:selection:repair_review:issue:9101",
+      "repository": "EffortlessMetrics/ripr-swarm",
+      "portfolio_snapshot": "work-portfolio:sha256:f13413b564d05b401866a5194c6f8265fd03c890597a904648c5c332b3b92005",
+      "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "selection": {
+       "selection_id": "selection:repair_review:issue:9101",
+       "repository": "EffortlessMetrics/ripr-swarm",
+       "candidate_id": "candidate:issue:9101",
+       "issue": {
+        "number": 9101,
+        "identity": "issue:9101"
+       },
+       "work_item": null,
+       "pull_request": 8801,
+       "lifecycle_action": "repair_review",
+       "accepted_requirements": [],
+       "spec_refs": [
+        "RIPR-SPEC-0200"
+       ],
+       "implementation_slices": [],
+       "campaign_refs": [
+        {
+         "id": "campaign-rust-repair",
+         "relation": "member",
+         "source": "campaigns.json"
+        }
+       ],
+       "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+       "expected_head": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+       "overlaps": {
+        "issues": [],
+        "pull_requests": [
+         8801
+        ],
+        "claims": [
+         "claim-9101"
+        ],
+        "worktrees": [
+         "<root>/wt-9101"
+        ],
+        "resources": [
+         "output-contract:rust-json"
+        ]
+       },
+       "role_context_budget": {
+        "role": "writer",
+        "context_profile": "bounded-candidate",
+        "budget": "single-agent",
+        "single_agent": false
+       },
+       "claim_boundary": "Repair PR #8801 only: address each unresolved review finding, reply, resolve, re-request review.",
+       "stop_conditions": [
+        "acceptance rows covered or explicitly omitted with reasons"
+       ],
+       "legacy_active_goal_ref": null,
+       "legacy_current_work_item_ref": null
+      },
+      "scope": "selected_work_plus_relevant_overflow",
+      "context_refs": [
+       "campaign-rust-repair",
+       "campaigns.json",
+       "RIPR-SPEC-0200",
+       "pr:8801"
+      ],
+      "overflow_refs": [
+       "claim-9101",
+       "<root>/wt-9101"
+      ],
+      "compiled_from": [
+       "fixtures/work_selection_identity/corpus.json"
+      ],
+      "legacy_active_goal_ref": null,
+      "legacy_current_work_item_ref": null
+     },
+     "expect": "pass",
+     "expect_violations": []
+    }
+   ]
+  },
+  {
+   "id": "context-05-narrow-single-agent-packet-passes",
+   "title": "A narrow one-file issue stays single-agent despite active campaigns",
+   "captured": "work_portfolio/corpus",
+   "cases": [
+    {
+     "packet": {
+      "packet_id": "packet:context:selection:start_build:issue:9202:narrow",
+      "repository": "EffortlessMetrics/ripr-swarm",
+      "portfolio_snapshot": "work-portfolio:sha256:f13413b564d05b401866a5194c6f8265fd03c890597a904648c5c332b3b92005",
+      "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "selection": {
+       "selection_id": "selection:start_build:issue:9202",
+       "repository": "EffortlessMetrics/ripr-swarm",
+       "candidate_id": "candidate:issue:9202",
+       "issue": {
+        "number": 9202,
+        "identity": "issue:9202"
+       },
+       "work_item": null,
+       "pull_request": null,
+       "lifecycle_action": "start_build",
+       "accepted_requirements": [
+        "REQ-editor-badges"
+       ],
+       "spec_refs": [
+        "RIPR-SPEC-0207"
+       ],
+       "implementation_slices": [
+        "slice-9202"
+       ],
+       "campaign_refs": [
+        {
+         "id": "campaign-editor-ux",
+         "relation": "member",
+         "source": "campaigns.json"
+        }
+       ],
+       "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+       "expected_head": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+       "overlaps": {
+        "issues": [],
+        "pull_requests": [],
+        "claims": [],
+        "worktrees": [],
+        "resources": []
+       },
+       "role_context_budget": {
+        "role": "writer",
+        "context_profile": "bounded-candidate",
+        "budget": "single-agent",
+        "single_agent": true
+       },
+       "claim_boundary": "Edit only editors/vscode/src/badge.ts and its tests; other campaigns stay independent.",
+       "stop_conditions": [
+        "acceptance rows covered or explicitly omitted with reasons"
+       ],
+       "legacy_active_goal_ref": null,
+       "legacy_current_work_item_ref": null
+      },
+      "scope": "selected_work_only",
+      "context_refs": [
+       "campaign-editor-ux",
+       "campaigns.json",
+       "RIPR-SPEC-0207",
+       "REQ-editor-badges",
+       "slice-9202"
+      ],
+      "overflow_refs": [],
+      "compiled_from": [
+       "fixtures/work_selection_identity/corpus.json"
+      ],
+      "legacy_active_goal_ref": null,
+      "legacy_current_work_item_ref": null
+     },
+     "expect": "pass",
+     "expect_violations": []
+    }
+   ]
+  },
+  {
+   "id": "context-06-legacy-and-wrong-context-refs-fail",
+   "title": "Legacy authority, irrelevant refs, unbounded scope, evidence-free packets and wrong identities fail visibly",
+   "captured": "work_portfolio/corpus",
+   "cases": [
+    {
+     "packet": {
+      "packet_id": "packet:context:selection:start_build:issue:9105:legacy-unknown",
+      "repository": "EffortlessMetrics/ripr-swarm",
+      "portfolio_snapshot": "work-portfolio:sha256:f13413b564d05b401866a5194c6f8265fd03c890597a904648c5c332b3b92005",
+      "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "selection": {
+       "selection_id": "selection:start_build:issue:9105",
+       "repository": "EffortlessMetrics/ripr-swarm",
+       "candidate_id": "candidate:issue:9105",
+       "issue": {
+        "number": 9105,
+        "identity": "issue:9105"
+       },
+       "work_item": null,
+       "pull_request": null,
+       "lifecycle_action": "start_build",
+       "accepted_requirements": [
+        "REQ-dup-family"
+       ],
+       "spec_refs": [
+        "RIPR-SPEC-0202"
+       ],
+       "implementation_slices": [
+        "slice-9105"
+       ],
+       "campaign_refs": [
+        {
+         "id": "campaign-rust-repair",
+         "relation": "member",
+         "source": "campaigns.json"
+        }
+       ],
+       "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+       "expected_head": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+       "overlaps": {
+        "issues": [
+         9106
+        ],
+        "pull_requests": [],
+        "claims": [],
+        "worktrees": [],
+        "resources": []
+       },
+       "role_context_budget": {
+        "role": "writer",
+        "context_profile": "bounded-candidate",
+        "budget": "single-agent",
+        "single_agent": false
+       },
+       "claim_boundary": "Implement only the recorded slices; no campaign, spec or claim mutation.",
+       "stop_conditions": [
+        "acceptance rows covered or explicitly omitted with reasons"
+       ],
+       "legacy_active_goal_ref": null,
+       "legacy_current_work_item_ref": null
+      },
+      "scope": "selected_work_only",
+      "context_refs": [
+       "campaign-rust-repair",
+       "RIPR-SPEC-0202"
+      ],
+      "overflow_refs": [],
+      "compiled_from": [
+       "fixtures/work_selection_identity/corpus.json"
+      ],
+      "legacy_active_goal_ref": "campaign-unknown",
+      "legacy_current_work_item_ref": null
+     },
+     "expect": "fail",
+     "expect_violations": [
+      {
+       "law": "legacy_compatibility",
+       "route": "reconcile_selection"
+      }
+     ]
+    },
+    {
+     "packet": {
+      "packet_id": "packet:context:selection:start_build:issue:9105:irrelevant-ref",
+      "repository": "EffortlessMetrics/ripr-swarm",
+      "portfolio_snapshot": "work-portfolio:sha256:f13413b564d05b401866a5194c6f8265fd03c890597a904648c5c332b3b92005",
+      "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "selection": {
+       "selection_id": "selection:start_build:issue:9105",
+       "repository": "EffortlessMetrics/ripr-swarm",
+       "candidate_id": "candidate:issue:9105",
+       "issue": {
+        "number": 9105,
+        "identity": "issue:9105"
+       },
+       "work_item": null,
+       "pull_request": null,
+       "lifecycle_action": "start_build",
+       "accepted_requirements": [
+        "REQ-dup-family"
+       ],
+       "spec_refs": [
+        "RIPR-SPEC-0202"
+       ],
+       "implementation_slices": [
+        "slice-9105"
+       ],
+       "campaign_refs": [
+        {
+         "id": "campaign-rust-repair",
+         "relation": "member",
+         "source": "campaigns.json"
+        }
+       ],
+       "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+       "expected_head": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+       "overlaps": {
+        "issues": [
+         9106
+        ],
+        "pull_requests": [],
+        "claims": [],
+        "worktrees": [],
+        "resources": []
+       },
+       "role_context_budget": {
+        "role": "writer",
+        "context_profile": "bounded-candidate",
+        "budget": "single-agent",
+        "single_agent": false
+       },
+       "claim_boundary": "Implement only the recorded slices; no campaign, spec or claim mutation.",
+       "stop_conditions": [
+        "acceptance rows covered or explicitly omitted with reasons"
+       ],
+       "legacy_active_goal_ref": null,
+       "legacy_current_work_item_ref": null
+      },
+      "scope": "selected_work_only",
+      "context_refs": [
+       "campaign-rust-repair",
+       "RIPR-SPEC-0202",
+       "campaign-unrelated"
+      ],
+      "overflow_refs": [],
+      "compiled_from": [
+       "fixtures/work_selection_identity/corpus.json"
+      ],
+      "legacy_active_goal_ref": null,
+      "legacy_current_work_item_ref": null
+     },
+     "expect": "fail",
+     "expect_violations": [
+      {
+       "law": "campaign_ref_identity",
+       "route": "reconcile_selection"
+      }
+     ]
+    },
+    {
+     "packet": {
+      "packet_id": "packet:context:selection:start_build:issue:9105:unbounded-overflow",
+      "repository": "EffortlessMetrics/ripr-swarm",
+      "portfolio_snapshot": "work-portfolio:sha256:f13413b564d05b401866a5194c6f8265fd03c890597a904648c5c332b3b92005",
+      "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "selection": {
+       "selection_id": "selection:start_build:issue:9105",
+       "repository": "EffortlessMetrics/ripr-swarm",
+       "candidate_id": "candidate:issue:9105",
+       "issue": {
+        "number": 9105,
+        "identity": "issue:9105"
+       },
+       "work_item": null,
+       "pull_request": null,
+       "lifecycle_action": "start_build",
+       "accepted_requirements": [
+        "REQ-dup-family"
+       ],
+       "spec_refs": [
+        "RIPR-SPEC-0202"
+       ],
+       "implementation_slices": [
+        "slice-9105"
+       ],
+       "campaign_refs": [
+        {
+         "id": "campaign-rust-repair",
+         "relation": "member",
+         "source": "campaigns.json"
+        }
+       ],
+       "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+       "expected_head": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+       "overlaps": {
+        "issues": [
+         9106
+        ],
+        "pull_requests": [],
+        "claims": [],
+        "worktrees": [],
+        "resources": []
+       },
+       "role_context_budget": {
+        "role": "writer",
+        "context_profile": "bounded-candidate",
+        "budget": "single-agent",
+        "single_agent": false
+       },
+       "claim_boundary": "Implement only the recorded slices; no campaign, spec or claim mutation.",
+       "stop_conditions": [
+        "acceptance rows covered or explicitly omitted with reasons"
+       ],
+       "legacy_active_goal_ref": null,
+       "legacy_current_work_item_ref": null
+      },
+      "scope": "selected_work_only",
+      "context_refs": [
+       "campaign-rust-repair",
+       "RIPR-SPEC-0202"
+      ],
+      "overflow_refs": [
+       "issue:9106"
+      ],
+      "compiled_from": [
+       "fixtures/work_selection_identity/corpus.json"
+      ],
+      "legacy_active_goal_ref": null,
+      "legacy_current_work_item_ref": null
+     },
+     "expect": "fail",
+     "expect_violations": [
+      {
+       "law": "subject_identity",
+       "route": "reconcile_selection"
+      }
+     ]
+    },
+    {
+     "packet": {
+      "packet_id": "packet:context:selection:start_build:issue:9105:no-compiled-from",
+      "repository": "EffortlessMetrics/ripr-swarm",
+      "portfolio_snapshot": "work-portfolio:sha256:f13413b564d05b401866a5194c6f8265fd03c890597a904648c5c332b3b92005",
+      "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "selection": {
+       "selection_id": "selection:start_build:issue:9105",
+       "repository": "EffortlessMetrics/ripr-swarm",
+       "candidate_id": "candidate:issue:9105",
+       "issue": {
+        "number": 9105,
+        "identity": "issue:9105"
+       },
+       "work_item": null,
+       "pull_request": null,
+       "lifecycle_action": "start_build",
+       "accepted_requirements": [
+        "REQ-dup-family"
+       ],
+       "spec_refs": [
+        "RIPR-SPEC-0202"
+       ],
+       "implementation_slices": [
+        "slice-9105"
+       ],
+       "campaign_refs": [
+        {
+         "id": "campaign-rust-repair",
+         "relation": "member",
+         "source": "campaigns.json"
+        }
+       ],
+       "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+       "expected_head": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+       "overlaps": {
+        "issues": [
+         9106
+        ],
+        "pull_requests": [],
+        "claims": [],
+        "worktrees": [],
+        "resources": []
+       },
+       "role_context_budget": {
+        "role": "writer",
+        "context_profile": "bounded-candidate",
+        "budget": "single-agent",
+        "single_agent": false
+       },
+       "claim_boundary": "Implement only the recorded slices; no campaign, spec or claim mutation.",
+       "stop_conditions": [
+        "acceptance rows covered or explicitly omitted with reasons"
+       ],
+       "legacy_active_goal_ref": null,
+       "legacy_current_work_item_ref": null
+      },
+      "scope": "selected_work_only",
+      "context_refs": [
+       "campaign-rust-repair",
+       "RIPR-SPEC-0202"
+      ],
+      "overflow_refs": [],
+      "compiled_from": [],
+      "legacy_active_goal_ref": null,
+      "legacy_current_work_item_ref": null
+     },
+     "expect": "fail",
+     "expect_violations": [
+      {
+       "law": "subject_identity",
+       "route": "reconcile_selection"
+      }
+     ]
+    },
+    {
+     "packet": {
+      "packet_id": "packet:context:selection:start_build:issue:9105:wrong-repo",
+      "repository": "OtherOrg/other-repo",
+      "portfolio_snapshot": "work-portfolio:sha256:f13413b564d05b401866a5194c6f8265fd03c890597a904648c5c332b3b92005",
+      "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+      "selection": {
+       "selection_id": "selection:start_build:issue:9105",
+       "repository": "EffortlessMetrics/ripr-swarm",
+       "candidate_id": "candidate:issue:9105",
+       "issue": {
+        "number": 9105,
+        "identity": "issue:9105"
+       },
+       "work_item": null,
+       "pull_request": null,
+       "lifecycle_action": "start_build",
+       "accepted_requirements": [
+        "REQ-dup-family"
+       ],
+       "spec_refs": [
+        "RIPR-SPEC-0202"
+       ],
+       "implementation_slices": [
+        "slice-9105"
+       ],
+       "campaign_refs": [
+        {
+         "id": "campaign-rust-repair",
+         "relation": "member",
+         "source": "campaigns.json"
+        }
+       ],
+       "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+       "expected_head": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+       "overlaps": {
+        "issues": [
+         9106
+        ],
+        "pull_requests": [],
+        "claims": [],
+        "worktrees": [],
+        "resources": []
+       },
+       "role_context_budget": {
+        "role": "writer",
+        "context_profile": "bounded-candidate",
+        "budget": "single-agent",
+        "single_agent": false
+       },
+       "claim_boundary": "Implement only the recorded slices; no campaign, spec or claim mutation.",
+       "stop_conditions": [
+        "acceptance rows covered or explicitly omitted with reasons"
+       ],
+       "legacy_active_goal_ref": null,
+       "legacy_current_work_item_ref": null
+      },
+      "scope": "selected_work_only",
+      "context_refs": [
+       "campaign-rust-repair",
+       "RIPR-SPEC-0202"
+      ],
+      "overflow_refs": [],
+      "compiled_from": [
+       "fixtures/work_selection_identity/corpus.json"
+      ],
+      "legacy_active_goal_ref": null,
+      "legacy_current_work_item_ref": null
+     },
+     "expect": "fail",
+     "expect_violations": [
+      {
+       "law": "repository_identity",
+       "route": "recompile_basis"
+      }
+     ]
+    },
+    {
+     "packet": {
+      "packet_id": "packet:context:selection:start_build:issue:9105:stale-basis",
+      "repository": "EffortlessMetrics/ripr-swarm",
+      "portfolio_snapshot": "work-portfolio:sha256:f13413b564d05b401866a5194c6f8265fd03c890597a904648c5c332b3b92005",
+      "basis_sha": "1111111111111111111111111111111111111111",
+      "selection": {
+       "selection_id": "selection:start_build:issue:9105",
+       "repository": "EffortlessMetrics/ripr-swarm",
+       "candidate_id": "candidate:issue:9105",
+       "issue": {
+        "number": 9105,
+        "identity": "issue:9105"
+       },
+       "work_item": null,
+       "pull_request": null,
+       "lifecycle_action": "start_build",
+       "accepted_requirements": [
+        "REQ-dup-family"
+       ],
+       "spec_refs": [
+        "RIPR-SPEC-0202"
+       ],
+       "implementation_slices": [
+        "slice-9105"
+       ],
+       "campaign_refs": [
+        {
+         "id": "campaign-rust-repair",
+         "relation": "member",
+         "source": "campaigns.json"
+        }
+       ],
+       "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+       "expected_head": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+       "overlaps": {
+        "issues": [
+         9106
+        ],
+        "pull_requests": [],
+        "claims": [],
+        "worktrees": [],
+        "resources": []
+       },
+       "role_context_budget": {
+        "role": "writer",
+        "context_profile": "bounded-candidate",
+        "budget": "single-agent",
+        "single_agent": false
+       },
+       "claim_boundary": "Implement only the recorded slices; no campaign, spec or claim mutation.",
+       "stop_conditions": [
+        "acceptance rows covered or explicitly omitted with reasons"
+       ],
+       "legacy_active_goal_ref": null,
+       "legacy_current_work_item_ref": null
+      },
+      "scope": "selected_work_only",
+      "context_refs": [
+       "campaign-rust-repair",
+       "RIPR-SPEC-0202"
+      ],
+      "overflow_refs": [],
+      "compiled_from": [
+       "fixtures/work_selection_identity/corpus.json"
+      ],
+      "legacy_active_goal_ref": null,
+      "legacy_current_work_item_ref": null
+     },
+     "expect": "fail",
+     "expect_violations": [
+      {
+       "law": "basis_identity",
+       "route": "recompile_basis"
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

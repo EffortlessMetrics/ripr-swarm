@@ -21,7 +21,7 @@ use crate::analysis::test_stub::{
 use crate::analysis::{ClassifiedSeam, RepoSeam};
 use crate::app::CheckOutput;
 use crate::config::RiprConfig;
-use crate::domain::{ExposureClass, Finding, ProbeFamily};
+use crate::domain::{ExposureClass, Finding};
 use std::path::{Path, PathBuf};
 
 /// Which gap the caller means.
@@ -47,7 +47,7 @@ impl TestStubSelector {
         };
         if analysis::seam_kind_for_probe_family(family).is_none() {
             return Err(format!(
-                "--kind expects a probe family such as predicate, return_value, error_path, or match_arm, got {family:?}"
+                "--kind expects a probe family such as predicate, return_value, error_path, match_arm, call_deletion, field_construction, or side_effect, got {family:?}"
             ));
         }
         Ok(Self::At {
@@ -296,13 +296,7 @@ pub(crate) fn stub_route_location(
 ) -> Option<(String, usize, &'static str)> {
     let location = &finding.probe.location.file;
     let eligible = finding.class != ExposureClass::Exposed
-        && matches!(
-            finding.probe.family,
-            ProbeFamily::Predicate
-                | ProbeFamily::ReturnValue
-                | ProbeFamily::ErrorPath
-                | ProbeFamily::MatchArm
-        )
+        && finding.probe.family.offers_stub_route()
         && location.extension().and_then(|ext| ext.to_str()) == Some("rs");
     if !eligible {
         return None;
