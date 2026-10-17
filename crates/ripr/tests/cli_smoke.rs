@@ -18781,7 +18781,15 @@ fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
         true
     );
     assert!(
-        stdout.contains("Top recommendation:\n  current change: part of it (this seam is on a line changed since origin/main)"),
+        stdout.contains(
+            "Top recommendation:\n  Exploratory seams, not ranked by expected mutant yield:"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(
+            "  current change: part of it (this seam is on a line changed since origin/main)"
+        ),
         "{stdout}"
     );
     assert!(md.contains("- Current change: part of it"), "{md}");
