@@ -118,6 +118,15 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
 /// from the caller's directory and default base, and without `--worktree`
 /// it omits the findings only the uncommitted edits produce.
 pub(crate) fn no_finding_matched(selector: &str, list_command: &str) -> String {
+    // #8166 reopen: a 16-hex selector is the repair seam ID `ripr check`
+    // prints beside the finding ID, not a finding identity. Name the
+    // equivalent command that accepts it instead of dead-ending at the
+    // finding listing.
+    if looks_like_seam_id(selector) {
+        return format!(
+            "no finding matched {selector:?}; a 16-hex selector is a repair seam ID, not a check finding ID — to act on that seam run `ripr repair {selector}`; to list finding ids run `{list_command}`"
+        );
+    }
     let syntax_hint = if super::selector::location_selector_needs_syntax_hint(selector) {
         " for a file location, use file:line with a nonempty path and a positive decimal line number without leading zeros (for example src/lib.rs:12);"
     } else {
@@ -126,6 +135,16 @@ pub(crate) fn no_finding_matched(selector: &str, list_command: &str) -> String {
     format!(
         "no finding matched {selector:?};{syntax_hint} run `{list_command}` to list available finding ids"
     )
+}
+
+/// A repair seam ID: exactly 16 lowercase hexadecimal characters, the
+/// repository seam namespace `ripr pilot` lists. Case-restricted so an
+/// uppercase spell keeps the plain miss instead of a wrong-family claim.
+fn looks_like_seam_id(selector: &str) -> bool {
+    selector.len() == 16
+        && selector
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 /// The ambiguity message for a selector naming several findings (#8166
@@ -450,7 +469,9 @@ mod tests {
 
     /// #8166 Slice B: zero matches still refuse with the no-match message,
     /// including a 16-hex seam-shaped selector that names no finding in the
-    /// selected diff.
+    /// selected diff. #8166 reopen: the seam-shaped miss names the
+    /// equivalent repair command instead of dead-ending at the finding
+    /// listing.
     #[test]
     fn explain_unmatched_and_seam_shaped_selectors_refuse_as_no_match() {
         for selector in ["probe:not-a-real-id", "0123456789abcdef"] {
@@ -463,6 +484,22 @@ mod tests {
                 "zero-match refusal must keep the no-match message for {selector}: {message}"
             );
         }
+        let seam_message = no_finding_matched("0123456789abcdef", "ripr check --json");
+        assert!(
+            seam_message.contains("is a repair seam ID"),
+            "the seam-shaped miss must name the ID family:\n{seam_message}"
+        );
+        assert!(
+            seam_message.contains("ripr repair 0123456789abcdef"),
+            "the seam-shaped miss must name the equivalent command:\n{seam_message}"
+        );
+        assert!(looks_like_seam_id("67fc764ba37d77bd"));
+        assert!(!looks_like_seam_id("67FC764BA37D77BD"));
+        assert!(!looks_like_seam_id("0123456789abcde"));
+        assert!(
+            !looks_like_seam_id("probe:src_lib.rs:predicate:4036edfa"),
+            "a finding ID must keep the plain miss"
+        );
     }
 
     #[test]

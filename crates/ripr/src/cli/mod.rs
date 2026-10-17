@@ -171,6 +171,7 @@ pub(in crate::cli) fn drive_before_phase(
 pub(in crate::cli) fn drive_before_phase_deferring_stdout(
     options: agent::AgentRepairOptions,
 ) -> Result<(String, String), CommandError> {
+    let options = resolve_finding_selector_subject(options)?;
     let _before_lock = lock_before_repair_attempt(&options.root)?;
     let seam_id = options
         .seam_id
@@ -181,6 +182,41 @@ pub(in crate::cli) fn drive_before_phase_deferring_stdout(
     commands::run_before_repair_with_identity(options.clone(), &identity)?;
     let stdout_document = persist_before_repair_attempt(&options, &identity)?;
     Ok((identity.attempt_id().to_string(), stdout_document))
+}
+
+/// #8166 reopen: the advanced `agent repair --seam-id` spelling and the
+/// `ripr repair` façade share the before-phase publication path, and both
+/// accept the `probe:` / `repo-probe:` finding ID `ripr check` prints. A
+/// finding-ID subject resolves to its repair seam here, before the attempt
+/// identity is prepared, so an unresolved or refused selector never reaches
+/// the attempt store: the named decision names the recovery route instead.
+/// Seam and gap IDs pass through unchanged (the façade already resolved
+/// them; anything else keeps the packet route's own family-named refusal).
+fn resolve_finding_selector_subject(
+    mut options: agent::AgentRepairOptions,
+) -> Result<agent::AgentRepairOptions, CommandError> {
+    if !options
+        .seam_id
+        .as_deref()
+        .is_some_and(crate::app::task_first::is_finding_selector)
+    {
+        return Ok(options);
+    }
+    let item = options
+        .seam_id
+        .take()
+        .ok_or_else(|| "before-phase repair attempt is missing its seam identity".to_string())?;
+    match crate::app::task_first::resolve_repair_subject(&options.root, &item)
+        .map_err(CommandError::from)?
+    {
+        crate::app::task_first::RepairSubject::Seam(seam_id) => {
+            options.seam_id = Some(seam_id);
+            Ok(options)
+        }
+        crate::app::task_first::RepairSubject::Decision(message) => {
+            Err(CommandError::Decision(message))
+        }
+    }
 }
 
 /// Serialize before-phase execution and attempt publication per repository.

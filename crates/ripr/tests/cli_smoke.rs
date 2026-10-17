@@ -5557,6 +5557,11 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
         "{stderr}"
     );
 
+    // #8166 reopen: the repair transaction itself now accepts the finding ID
+    // and resolves it. This ID names no finding in the workspace's current
+    // analysis (its only diff lives in an unapplied file), so the refusal
+    // is the no-finding decision naming the recovery route — not the old
+    // blanket "not a seam ID" dead end, and no attempt is started.
     let repair = run_ripr(&[
         "agent",
         "repair",
@@ -5570,10 +5575,17 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     ]);
     assert!(!repair.status.success());
     let stderr = String::from_utf8_lossy(&repair.stderr);
-    assert!(stderr.contains("not a seam ID"), "{stderr}");
     assert!(
-        stderr.contains("ripr pilot --root ") && stderr.contains("agent-packet-unknown-seam"),
+        stderr.contains("names no finding in the current analysis"),
         "{stderr}"
+    );
+    assert!(
+        stderr.contains("ripr check --root ") && stderr.contains("agent-packet-unknown-seam"),
+        "the refusal must name the check route for the failing root:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("not a seam ID"),
+        "the repair route no longer dead-ends with the family mismatch:\n{stderr}"
     );
 
     // The other ID `ripr check` prints, its canonical gap ID, gets the same

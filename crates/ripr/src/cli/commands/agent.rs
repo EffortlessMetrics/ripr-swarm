@@ -379,9 +379,11 @@ fn refuse_agent_packet(options: &AgentPacketOptions, error: CoreError, json: boo
 
 /// Recovery for an unknown `--seam-id`. Cold agents most often pass one of
 /// the IDs `ripr check` prints (`probe:...` finding ID, `gap:...` canonical
-/// gap ID); the error must name that family mismatch and where seam IDs
-/// come from instead of leaving "not found" as a dead end. The pilot
-/// command names the same root the failing call used.
+/// gap ID); the error must name that family mismatch and the equivalent
+/// command that accepts the ID — `ripr repair` resolves both namespaces to
+/// the repair seam (#8166) — plus where seam IDs come from, instead of
+/// leaving "not found" as a dead end. The pilot command names the same root
+/// the failing call used.
 pub(super) fn unknown_seam_id_hint(root: &Path, seam_id: &str) -> String {
     // `bound_root` over the raw path, like the LSP routes: `display_path`
     // would turn a literal backslash in a Unix path into a separator (#4287).
@@ -391,10 +393,14 @@ pub(super) fn unknown_seam_id_hint(root: &Path, seam_id: &str) -> String {
     let pilot = format!(
         "`ripr pilot --root {root}` to list current seam IDs with their exact `ripr agent repair` commands."
     );
-    if seam_id.starts_with("probe:") {
-        format!("`probe:...` is a `ripr check` finding ID, not a seam ID; run {pilot}")
+    if seam_id.starts_with("probe:") || seam_id.starts_with("repo-probe:") {
+        format!(
+            "`probe:...` is a `ripr check` finding ID, not a seam ID; `ripr repair <finding-id> --root {root}` resolves it to its repair seam, or run {pilot}"
+        )
     } else if seam_id.starts_with("gap:") {
-        format!("`gap:...` is a `ripr check` canonical gap ID, not a seam ID; run {pilot}")
+        format!(
+            "`gap:...` is a `ripr check` canonical gap ID, not a seam ID; `ripr repair <gap-id> --root {root}` resolves it to its repair seam, or run {pilot}"
+        )
     } else {
         format!("Run {pilot}")
     }

@@ -2226,3 +2226,134 @@ fn repair_skips_severity_off_seams_with_named_omission() -> Result<(), String> {
 // not here: the attempt commitment forbids staging a binding by editing
 // a manifest, and the full trust ceremony belongs to the binding
 // authority's own suite (`python_repair_attempt.rs`).
+
+/// The `probe:` finding ID the bounded check drill-down names for
+/// `ripr explain` — the canonical finding identity this issue makes
+/// repair-compatible.
+fn printed_finding_identity(check_stdout: &str) -> Option<String> {
+    check_stdout.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("ripr explain ")
+            .and_then(|tail| tail.split_whitespace().last())
+            .map(str::to_string)
+    })
+}
+
+/// A committed feature-branch workspace whose default check (master...HEAD)
+/// sees the weakened boundary with a clean tree, so `ripr check` and
+/// `ripr repair` analyze the same finding and the before phase can pin
+/// the repository. Returns the printed `probe:` finding ID.
+fn branch_finding_fixture(label: &str) -> Result<(Fixture, String, String), String> {
+    let fixture = Fixture::boundary(label)?;
+    let root = fixture.root.clone();
+    let root_arg = root.to_string_lossy().into_owned();
+    run_git(&root, &["checkout", "-q", "-b", "change"])?;
+    weaken_boundary_predicate(&root)?;
+    run_git(&root, &["add", "src/lib.rs"])?;
+    git_commit(&root, "weaken the boundary predicate")?;
+    let check = run_ripr(&root, &["check", "--root", &root_arg])?;
+    let stdout = stdout_text(&check);
+    let finding_id = printed_finding_identity(&stdout)
+        .ok_or_else(|| format!("check must print a `ripr explain` drill-down:\n{stdout}"))?;
+    if !finding_id.starts_with("probe:") {
+        return Err(format!(
+            "the drill-down must name a `probe:` finding ID, got {finding_id}"
+        ));
+    }
+    Ok((fixture, root_arg, finding_id))
+}
+
+/// #8166 reopen (positive control): the `probe:` finding ID `ripr check`
+/// prints is itself a repair subject. `ripr repair <finding-id>` resolves it
+/// to the same seam the check drill-down names and starts the before phase
+/// for that seam — one canonical finding ID from check to repair.
+#[test]
+fn repair_accepts_check_finding_id_and_starts_the_same_seam() -> Result<(), String> {
+    let (fixture, root_arg, finding_id) = branch_finding_fixture("facade-repair-finding-id")?;
+    let root = &fixture.root;
+    let repair = run_ripr(root, &["repair", &finding_id, "--root", &root_arg])?;
+    assert_exit(&repair, 0, "repair with the check finding ID");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1, "exactly one attempt must be created");
+    assert_eq!(
+        read_manifest(root, &ids[0])?["seam_id"],
+        FIXTURE_SEAM,
+        "the finding ID must resolve to the drill-down seam"
+    );
+    Ok(())
+}
+
+/// #8166 reopen (advanced-spelling control): `ripr agent repair
+/// --seam-id <finding-id> --phase before` accepts the same canonical
+/// finding ID and starts the before phase for the same seam.
+#[test]
+fn agent_repair_before_accepts_check_finding_id() -> Result<(), String> {
+    let (fixture, root_arg, finding_id) = branch_finding_fixture("facade-agent-repair-finding-id")?;
+    let root = &fixture.root;
+    let repair = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--seam-id",
+            &finding_id,
+            "--phase",
+            "before",
+            "--root",
+            &root_arg,
+        ],
+    )?;
+    assert_exit(&repair, 0, "agent repair with the check finding ID");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1, "exactly one attempt must be created");
+    assert_eq!(
+        read_manifest(root, &ids[0])?["seam_id"],
+        FIXTURE_SEAM,
+        "the finding ID must resolve to the drill-down seam"
+    );
+    Ok(())
+}
+
+/// #8166 reopen (negative controls): a finding ID the current analysis does
+/// not produce — never printed, or stale after the diff changed — refuses as
+/// a named decision naming the recovery route, and writes no attempt.
+#[test]
+fn repair_refuses_unknown_or_stale_finding_id_without_an_attempt() -> Result<(), String> {
+    let (fixture, root_arg, finding_id) =
+        branch_finding_fixture("facade-repair-finding-id-refused")?;
+    let root = &fixture.root;
+
+    let unknown = run_ripr(
+        root,
+        &[
+            "repair",
+            "probe:src_lib.rs:predicate:00000000",
+            "--root",
+            &root_arg,
+        ],
+    )?;
+    assert_exit(&unknown, 3, "repair with an unknown finding ID");
+    let stderr = stderr_text(&unknown);
+    assert!(
+        stderr.contains("names no finding in the current analysis"),
+        "unknown finding ID must refuse with the no-finding decision:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("ripr check"),
+        "the refusal must name the recovery route:\n{stderr}"
+    );
+    assert_no_repair_attempt_side_effects(root);
+
+    // Stale: on master the printed diff no longer exists, so the same ID
+    // must refuse instead of guessing a seam.
+    run_git(root, &["checkout", "-q", "master"])?;
+    let stale = run_ripr(root, &["repair", &finding_id, "--root", &root_arg])?;
+    assert_exit(&stale, 3, "repair with a stale finding ID");
+    let stderr = stderr_text(&stale);
+    assert!(
+        stderr.contains("names no finding in the current analysis"),
+        "stale finding ID must refuse with the no-finding decision:\n{stderr}"
+    );
+    assert_no_repair_attempt_side_effects(root);
+    Ok(())
+}
