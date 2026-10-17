@@ -5,7 +5,7 @@
   "base: HEAD~1 <base>\n",
   "head: HEAD <head>\n",
   "\n",
-  "Summary: 7 probe(s), 0 exposed, 7 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 7 of 7 finding(s) unsuppressed\n",
+  "Summary: 7 probe(s), 0 exposed, 7 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 7 of 7 finding(s) unsuppressed (2 base-side evidence, not candidate edit targets)\n",
   "\n",
   "Analysis outcome: findings below (analysis complete; complete_with_findings)\n",
   "  Counts: 1 changed file(s), 3 changed line(s), 2 candidate line(s), 7 probe(s), 7 finding(s)\n",

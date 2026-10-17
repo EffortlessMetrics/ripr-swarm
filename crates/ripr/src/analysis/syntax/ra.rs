@@ -35,7 +35,7 @@ use super::{
 };
 use crate::analysis::rust_index::{
     FunctionFact, OracleFact, ProbeShapeFact, ProbeShapeKind, SourceText, TestFact,
-    classify_assertion, err_return_guard_oracles, extract_call_facts, extract_identifier_tokens,
+    classify_assertion_in, err_return_guard_oracles, extract_call_facts, extract_identifier_tokens,
     extract_line_scanned_oracles, extract_literal_facts, extract_return_facts,
     guarded_result_match_scan_with_shadow_authority, is_unwrap_err_bound_error_assertion,
     unwrap_err_bound_variables,
@@ -2218,7 +2218,7 @@ fn extract_parser_oracles(
         }
         let range = macro_call.syntax().text_range();
         let assertion_text = slice_macro_call_text(text, range.start(), range.end());
-        let mut classification = classify_assertion(&assertion_text);
+        let mut classification = classify_assertion_in(&assertion_text, text);
         // Upgrade exact assertions on unwrap_err-bound variables to
         // ExactErrorVariant when the assertion pins a specific error result
         // (RIPR-SPEC-0106, Part A). Constructor-payload equality reaches this
@@ -2347,7 +2347,7 @@ fn extract_parser_oracles(
         // call split across lines). That grade is a ceiling: a weaker
         // reading of the compared value (a tautology, a broad `is_err()`)
         // is kept, as the line scan keeps it.
-        let classification = classify_assertion(&assertion_text);
+        let classification = classify_assertion_in(&assertion_text, text);
         let (kind, strength) = if matches!(
             classification.strength,
             OracleStrength::Weak | OracleStrength::Smoke | OracleStrength::None
