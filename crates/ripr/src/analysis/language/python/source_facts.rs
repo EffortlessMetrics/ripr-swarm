@@ -4,7 +4,9 @@ use super::owners_tests::{
     TestImportContext, collect_imports_from_statements, collect_owners_from_statements,
     collect_tests_from_statements, module_owner,
 };
-use super::source_utils::{SourceText, line_for_range_end, line_for_range_start, text_for_range};
+use super::source_utils::{
+    SourceText, is_test_file, line_for_range_end, line_for_range_start, text_for_range,
+};
 use super::{PythonOwner, PythonTest, expr_full_name};
 use crate::domain::{LanguageId as DomainLanguageId, StaticLimitKind};
 use rustpython_parser::{
@@ -111,18 +113,25 @@ pub(super) struct PythonSourceLimitation {
 ///   `pyproject.toml` / `setup.cfg` / `tox.ini` (a bare pyproject.toml is
 ///   PEP 517 packaging, not pytest evidence — #2183 review);
 ///   when those markers are absent, bounded code evidence of
-///   `import pytest` / `from pytest import ...` in a `test_*.py` file at
+///   `import pytest` / `from pytest import ...` in a Python test file at
 ///   the root or in `tests/` / `test/` also counts (#7662);
 /// - unittest: no config exists by design, so detection uses bounded code
-///   evidence (`import unittest` in a `test_*.py` file at the root or in
+///   evidence (`import unittest` in a Python test file at the root or in
 ///   `tests/` / `test/`), matching what the adapter detects from source.
+///
+/// Test-path admission reuses the shared [`is_test_file`] predicate (#7706):
+/// Django-conventional `tests.py` / `test.py` modules and `*_test.py`
+/// siblings enter the scan on the same terms the adapter's test index uses
+/// (#7385), and discovery descends one level into immediate app directories
+/// (the `django-admin startapp` layout keeps unittest tests in
+/// `<app>/tests.py`). Every scan stays bounded: 64 entries per directory,
+/// a 4096-byte prefix read per file.
 ///
 /// Config-file pytest markers add pytest; they do not skip the unittest
 /// scan, so a mixed repo reports both frameworks (#7664). Pytest is listed
 /// first when both are present so primary-of-set consumers stay pytest-first.
 /// Fail-closed: empty when no marker matches — callers must report
-/// "not detected", never guess. Django `tests.py` / nested app directories
-/// remain #7706.
+/// "not detected", never guess.
 pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
     let mut saw_pytest = root.join("pytest.ini").exists()
         || root.join("conftest.py").exists()
@@ -132,7 +141,7 @@ pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
         || ini_section_present(&root.join("setup.cfg"), "[tool:pytest]")
         || ini_section_present(&root.join("tox.ini"), "[pytest]");
     let mut saw_unittest = false;
-    'dirs: for dir in [root.to_path_buf(), root.join("tests"), root.join("test")] {
+    'dirs: for dir in python_framework_scan_dirs(root) {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
@@ -141,12 +150,16 @@ pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
             let Some(name) = name.to_str() else {
                 continue;
             };
-            if !name.starts_with("test_") || !name.ends_with(".py") {
+            // #7706: admit the same Python test paths `is_test_file`
+            // recognizes (`tests.py` / `test.py` / `*_test.py` and files
+            // under a `tests`/`test` directory), still restricted to `.py`
+            // sources so foreign-language `test_*.rs` files never enter.
+            if !name.ends_with(".py") || !is_test_file(&entry.path()) {
                 continue;
             }
             // Bounded evidence read: the import line is at the top of the
             // file, so a small prefix suffices. Read at most that prefix so a
-            // large test_*.py cannot exhaust memory when config markers keep
+            // large test file cannot exhaust memory when config markers keep
             // the unittest scan running (#7664 review).
             let Some(text) = read_framework_evidence_prefix(&entry.path()) else {
                 continue;
@@ -170,6 +183,40 @@ pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
         frameworks.push("unittest");
     }
     frameworks
+}
+
+/// Directories scanned for Python framework import evidence: the workspace
+/// root, its `tests`/`test` directories, and each immediate app directory
+/// one level down (the Django `startapp` layout keeps tests in
+/// `<app>/tests.py` — #7706). `tests`/`test` stay listed even when they do
+/// not exist; a missing directory simply skips. App directories are sorted
+/// so the bounded scan order is deterministic across filesystems, and
+/// capped so a repo with hundreds of packages cannot expand the read.
+fn python_framework_scan_dirs(root: &Path) -> Vec<PathBuf> {
+    let mut dirs = vec![root.to_path_buf(), root.join("tests"), root.join("test")];
+    // Review (#8257): collect every immediate directory first, then sort,
+    // then cap. Capping the raw entry stream before filtering let 64
+    // non-directory entries starve the scan and made the surviving set
+    // depend on arbitrary filesystem order.
+    let mut app_dirs: Vec<PathBuf> = std::fs::read_dir(root)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| path.is_dir())
+                .filter(|path| {
+                    !matches!(
+                        path.file_name().and_then(|name| name.to_str()),
+                        Some("tests") | Some("test")
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    app_dirs.sort();
+    app_dirs.truncate(64);
+    dirs.extend(app_dirs);
+    dirs
 }
 
 /// Primary detected Python test framework: the first entry of

@@ -513,6 +513,268 @@ fn detached_head_worktree_and_submodule_roots_work() -> Result<(), String> {
     )
 }
 
+#[test]
+fn submodule_ignore_settings_cannot_hide_pointer_changes() -> Result<(), String> {
+    let scratch = Scratch::new("submodule-ignore")?;
+    let inner = plain(&scratch, "inner")?;
+    let outer = plain(&scratch, "outer")?;
+    let inner_arg = inner.to_string_lossy().into_owned();
+    git(
+        &outer,
+        &[
+            "submodule",
+            "add",
+            "-q",
+            "--name",
+            "audit",
+            &inner_arg,
+            "vendor/sub mod",
+        ],
+    )?;
+    git(&outer, &["commit", "-q", "-m", "add submodule"])?;
+    git(&outer, &["branch", "-f", "main", "HEAD"])?;
+    git(&outer, &["config", "--local", "diff.submodule", "short"])?;
+    let expected_file = fs::canonicalize(outer.join("src/lib.rs")).map_err(|e| e.to_string())?;
+
+    let check = |args: &[&str], skipped: bool, expression: Option<&str>| -> Result<(), String> {
+        let ran = ripr(&outer, args, &[])?;
+        assert_sane(&ran, "submodule inclusion")?;
+        let notice =
+            "skipped 1 submodule pointer change(s); ripr does not analyze submodule contents.";
+        if ran.code != Some(0) || ran.stderr.contains(notice) != skipped {
+            return Err(format!(
+                "{args:?}: expected skipped={skipped}, exit 0; got {:?}\n{}\n{}",
+                ran.code, ran.stdout, ran.stderr
+            ));
+        }
+        let expected_count = usize::from(expression.is_some());
+        if args.contains(&"json") {
+            let report: serde_json::Value =
+                serde_json::from_str(&ran.stdout).map_err(|e| e.to_string())?;
+            let findings = report["findings"]
+                .as_array()
+                .ok_or_else(|| format!("missing findings: {}", ran.stdout))?;
+            if findings.len() != expected_count {
+                return Err(format!("unexpected findings for {args:?}: {}", ran.stdout));
+            }
+            if let Some(expression) = expression {
+                let finding = findings
+                    .first()
+                    .ok_or_else(|| "expected the parent source finding".to_string())?;
+                let probe = &finding["probe"];
+                let file = probe["file"]
+                    .as_str()
+                    .ok_or_else(|| "missing probe file".to_string())?;
+                let file = Path::new(file);
+                let file = if file.is_absolute() {
+                    file.to_path_buf()
+                } else {
+                    outer.join(file)
+                };
+                if fs::canonicalize(file).map_err(|e| e.to_string())? != expected_file
+                    || probe["line"].as_u64() != Some(1)
+                    || !probe["expression"]
+                        .as_str()
+                        .is_some_and(|actual| actual.contains(expression))
+                {
+                    return Err(format!("wrong changed behavior: {finding}"));
+                }
+            }
+        } else if !summary_line(&ran).starts_with(&format!("Summary: {expected_count} probe(s)")) {
+            return Err(format!("unexpected human summary: {}", ran.stdout));
+        }
+        Ok(())
+    };
+
+    // A clean checkout must not acquire a fabricated submodule disclosure.
+    for key in ["diff.ignoreSubmodules", "submodule.audit.ignore"] {
+        git(&outer, &["config", "--local", key, "all"])?;
+        for format in ["json", "human", "human-full"] {
+            check(
+                &["check", "--base", "main", "--worktree", "--format", format],
+                false,
+                None,
+            )?;
+            check(
+                &["check", "--base", "main", "--format", format],
+                false,
+                None,
+            )?;
+        }
+        git(&outer, &["config", "--local", "--unset", key])?;
+    }
+    let child = outer.join("vendor/sub mod");
+    fs::write(
+        child.join("src/lib.rs"),
+        "pub fn total(a: u32) -> u32 { a + 9 }\n",
+    )
+    .map_err(|e| e.to_string())?;
+    git(&child, &["add", "src/lib.rs"])?;
+    git(&child, &["commit", "-q", "-m", "child change"])?;
+
+    for staged in [false, true] {
+        if staged {
+            git(&outer, &["add", "vendor/sub mod"])?;
+        }
+        for key in ["diff.ignoreSubmodules", "submodule.audit.ignore"] {
+            git(&outer, &["config", "--local", key, "all"])?;
+            // Prove the hostile setting really suppresses this native Git
+            // pointer change. A broken fixture must fail before the CLI oracle.
+            let raw = fixture_git_output(&outer, &["diff", "--submodule=short", "main"])?;
+            if !raw.is_empty() {
+                return Err(format!(
+                    "{key}, staged={staged}: raw diff was not suppressed"
+                ));
+            }
+            let inventory = fixture_git_output(
+                &outer,
+                &["diff", "--ignore-submodules=none", "--raw", "main"],
+            )?;
+            if !inventory.contains("160000 160000") || !inventory.contains("vendor/sub mod") {
+                return Err(format!("missing real gitlink change: {inventory}"));
+            }
+            for format in ["json", "human", "human-full"] {
+                check(
+                    &["check", "--base", "main", "--worktree", "--format", format],
+                    true,
+                    None,
+                )?;
+                check(&["check", "--base", "main", "--format", format], true, None)?;
+            }
+            if !staged {
+                let doctor = ripr(&outer, &["doctor"], &[])?;
+                assert_sane(&doctor, "submodule doctor guidance")?;
+                let command = doctor
+                    .stdout
+                    .lines()
+                    .find(|line| line.starts_with("- Recommended first command:"));
+                if !command
+                    .is_some_and(|line| line.contains("--worktree") && line.contains("--base HEAD"))
+                {
+                    return Err(format!(
+                        "doctor lost the tracked edit: {}\n{}",
+                        doctor.stdout, doctor.stderr
+                    ));
+                }
+            }
+            git(&outer, &["config", "--local", "--unset", key])?;
+        }
+    }
+
+    git(&outer, &["commit", "-q", "-m", "pointer-only change"])?;
+    for key in ["diff.ignoreSubmodules", "submodule.audit.ignore"] {
+        git(&outer, &["config", "--local", key, "all"])?;
+        for format in ["json", "human", "human-full"] {
+            check(
+                &["check", "--base", "main", "--committed", "--format", format],
+                true,
+                None,
+            )?;
+        }
+        git(&outer, &["config", "--local", "--unset", key])?;
+    }
+
+    // An adjacent real finding must not mask the omitted submodule notice;
+    // the child expression must never become a parent-source probe.
+    fs::write(
+        outer.join("src/lib.rs"),
+        "pub fn total(a: u32) -> u32 { a + 7 }\n",
+    )
+    .map_err(|e| e.to_string())?;
+    git(
+        &outer,
+        &["config", "--local", "diff.ignoreSubmodules", "all"],
+    )?;
+    check(
+        &["check", "--base", "main", "--worktree", "--format", "json"],
+        true,
+        Some("a + 7"),
+    )?;
+    git(
+        &outer,
+        &["config", "--local", "--unset", "diff.ignoreSubmodules"],
+    )?;
+    git(&outer, &["add", "src/lib.rs"])?;
+    git(&outer, &["commit", "-q", "-m", "parent source change"])?;
+    for key in ["diff.ignoreSubmodules", "submodule.audit.ignore"] {
+        git(&outer, &["config", "--local", key, "all"])?;
+        for format in ["json", "human", "human-full"] {
+            check(
+                &["check", "--base", "main", "--committed", "--format", format],
+                true,
+                Some("a + 7"),
+            )?;
+        }
+        // Both public range consumers reach the shared byte owner, including
+        // the three-context-line PR-evidence path, which has its own extras.
+        for patch in [
+            ripr::analysis::load_diff_range(&outer, "main", "HEAD")?,
+            ripr::analysis::load_pr_evidence_diff_range(&outer, "main", "HEAD")?,
+        ] {
+            if !patch.contains("diff --git a/vendor/sub mod b/vendor/sub mod")
+                || !patch
+                    .lines()
+                    .any(|line| line.starts_with("index ") && line.ends_with(" 160000"))
+                || patch
+                    .lines()
+                    .filter(|line| line.starts_with("+Subproject commit "))
+                    .count()
+                    != 1
+            {
+                return Err(format!("range consumer lost the gitlink: {patch}"));
+            }
+        }
+        let packet = ripr(
+            &outer,
+            &["pr-evidence", "--base", "main", "--head", "HEAD"],
+            &[],
+        )?;
+        assert_sane(&packet, "submodule evidence packet")?;
+        if packet.code != Some(0)
+            || !packet
+                .stderr
+                .contains("skipped 1 submodule pointer change(s)")
+        {
+            return Err(format!(
+                "evidence packet lost the pointer: {}\n{}",
+                packet.stdout, packet.stderr
+            ));
+        }
+        let packet: serde_json::Value = serde_json::from_slice(
+            &fs::read(outer.join("target/ripr/pr/repo-exposure.json"))
+                .map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        // The independent denominator is one parent source file plus one
+        // gitlink. The packet's own checker would accept an identically
+        // suppressed producer/checker inventory, so it is not this oracle.
+        if packet["summary"]["changed_files"].as_u64() != Some(2) {
+            return Err(format!(
+                "evidence inventory concealed the gitlink: {packet}"
+            ));
+        }
+        let verified = ripr(
+            &outer,
+            &["pr-evidence", "--base", "main", "--head", "HEAD", "--check"],
+            &[],
+        )?;
+        assert_sane(&verified, "submodule evidence packet check")?;
+        if verified.code != Some(0) {
+            return Err(format!(
+                "evidence packet check failed: {}\n{}",
+                verified.stdout, verified.stderr
+            ));
+        }
+        git(&outer, &["config", "--local", "--unset", key])?;
+    }
+    check(
+        &["check", "--base", "HEAD", "--worktree", "--format", "json"],
+        false,
+        None,
+    )?;
+    Ok(())
+}
+
 // `file://` clone URLs are POSIX-shaped; Windows needs `file:///C:/...`.
 #[cfg(unix)]
 #[test]

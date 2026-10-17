@@ -2136,6 +2136,16 @@ fn oracle_discriminates_seam(seam: &RepoSeam, oracle: &super::facts::OracleFact)
         return false;
     }
     if seam.kind() == SeamKind::FieldConstruction {
+        // #8120/#8121: snapshot syntax and a matching field spelling do not
+        // bind expected bytes or that field's receiver to the owner's result.
+        // Preserve the existing expect-test equality operand admission; other
+        // snapshot field observations remain unconfirmed until a producer
+        // establishes that binding, even when configured strength is higher.
+        if matches!(oracle.kind, OracleKind::Snapshot)
+            && !crate::analysis::classify::is_inline_expect_snapshot(oracle)
+        {
+            return false;
+        }
         return field_construction_oracle_matches_seam_field(seam, &oracle.text);
     }
     if matches!(oracle.kind, OracleKind::GuardedResultMatch) {

@@ -1,0 +1,64 @@
+schema_version = "2.0"
+id = "ripr.slice.preseeded-first-element-push.v1"
+generation = 1
+
+source_issue = "issue:8203"
+design_reference = "RIPR-SPEC-0228#collection-writes-on-a-field-path"
+change_class = "behavior_change"
+
+claim_boundary = """
+A read of only element zero of a collection written by a push
+(first(), get(0), [0], typed or underscore zero spellings, first-element
+ranges, on a field-path, bare, or through-getter receiver) no longer
+confirms that push in the collection observer, because the element may
+predate the push; the pre-seeded fixture stays weakly_exposed in the
+RIPR-SPEC-0108 honesty corpus. Reads of the pushed element (last(), a
+non-zero index, or the whole collection) still confirm and stay
+exposed. On a bare receiver, a first-element read still confirms when
+the test body proves the collection started empty (a narrow empty
+construction as the whole right-hand side, no test-side seeding, at
+most one mutable escape including a deref escape). Field-path
+first-element reads stay conservatively demoted, and insert writes
+keep prior credit without position awareness. No new classification
+vocabulary, probe family, schema, or runtime execution.
+"""
+
+non_goals = [
+  "proving a field-path collection started empty so a first-element read could confirm",
+  "new classification vocabulary or probe families",
+  "runtime execution, coverage, or mutation-score framing",
+  "changes to insert or keyed-read confirmation",
+]
+
+return_conditions = [
+  "Return to root if a field-path first-element read must be credited when the field collection was empty before the push.",
+  "Return to root if a golden outside the two new fixtures flips class because of this rule.",
+]
+
+owned_seams = [
+  "seam:ripr:analysis:collection-observer-first-element",
+  "seam:ripr:fixtures:preseeded-first-element",
+]
+
+shared_seams = [
+  "seam:ripr:fixtures:evidence-promotion-honesty-corpus",
+  "seam:ripr:xtask:check-evidence-promotion-honesty",
+]
+
+forbidden_seams = [
+  "seam:ripr:domain:classification-vocabulary",
+  "seam:ripr:output:schema",
+]
+
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0228#collection-writes-on-a-field-path"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+
+[evidence]
+state = "outstanding"
+
+[support_claim]
+state = "unchanged"

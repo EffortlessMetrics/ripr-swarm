@@ -3,7 +3,7 @@ use super::model::JsonInput;
 use super::util::{string_field, summary_bool, summary_string_or_null, summary_u64};
 use crate::output::first_pr::{ProofPathLabels, REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP};
 use crate::output::markdown::{
-    COMMAND_SHELL_DISCLOSURE, PowershellForm, code_span, inline_prose, powershell_form,
+    PowershellForm, code_span, command_shell_disclosure, inline_prose, powershell_form,
     push_context_command, table_code_span,
 };
 use serde_json::Value;
@@ -247,9 +247,14 @@ fn push_next_command_pair(out: &mut String, start_here_value: Option<&Value>, pa
             ));
         }
         PowershellForm::SameAsBash => {
-            out.push_str(
-                "- next command runs unchanged in Bash and PowerShell; cmd.exe is not supported.\n",
-            );
+            // Host-aware (#7729): on Windows the command is quoted for the
+            // Windows console, so it runs unchanged in cmd.exe too.
+            let claim = if cfg!(windows) {
+                "- next command runs unchanged in cmd.exe, PowerShell, and Git Bash.\n"
+            } else {
+                "- next command runs unchanged in Bash and PowerShell; cmd.exe is not supported.\n"
+            };
+            out.push_str(claim);
         }
         PowershellForm::Unavailable => {
             out.push_str(&format!(
@@ -643,7 +648,7 @@ pub fn render_evidence_summary_md(s: &super::model::PrEvidenceSummaryJson) -> St
     out.push('\n');
 
     out.push_str("## Local Reproduction Commands\n\n");
-    out.push_str(COMMAND_SHELL_DISCLOSURE);
+    out.push_str(command_shell_disclosure());
     for (index, cmd) in s.local_reproduction_commands.iter().enumerate() {
         if let Some(repair) = &s.top_repair
             // The producer appends verification last. Earlier identical text
@@ -1004,9 +1009,14 @@ mod tests {
                 "an unchanged command must not gain a PowerShell twin:\n{out}"
             ));
         }
-        if !out.contains(
-            "- next command runs unchanged in Bash and PowerShell; cmd.exe is not supported.\n",
-        ) {
+        // Host-aware (#7729): on Windows the unchanged-claim names cmd.exe
+        // as a supported console.
+        let unchanged_note = if cfg!(windows) {
+            "- next command runs unchanged in cmd.exe, PowerShell, and Git Bash.\n"
+        } else {
+            "- next command runs unchanged in Bash and PowerShell; cmd.exe is not supported.\n"
+        };
+        if !out.contains(unchanged_note) {
             return Err(format!("unchanged note missing:\n{out}"));
         }
         Ok(())

@@ -1,0 +1,10 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -9,5 +9,5 @@
+ 
+     pub fn record(&mut self, x: u32) {
+-        self.log.push(x);
++        self.log.push(x * 1);
+     }
+ }

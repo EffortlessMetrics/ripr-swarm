@@ -174,6 +174,14 @@ assertion-only callback with no nested test call. This does not expand aliases.
   `if`/`else`, loops, labels, `switch`, `try`/`catch`/`finally` and
   `with`. An assertion is read from an expression statement or a
   `return` argument, after removing one `await`.
+- (Amended 2026-10-16, #8242.) A `try` body with a catch handler supplies
+  no assertions: the handler can swallow a synchronous assertion failure or
+  an awaited rejection. This is conservative even when the handler rethrows
+  or the protected body returns a promise without awaiting it. Catch-handler
+  and finally assertions, and a try body with no catch, retain collection;
+  an enclosing caught try still withholds those nested assertions. This is
+  not general analysis of abrupt completion in finally blocks. Withheld
+  assertion-like syntax remains unresolved admission, not established absence.
 - An assertion inside a nested callback (`forEach`, `waitFor`, `act`, a
   subtest) or inside a declaration initializer is not collected, except
   the three forms RIPR-SPEC-0246 rule 2 names.

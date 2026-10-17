@@ -1562,3 +1562,19 @@ path = "docs/specs/RIPR-SPEC-0266-coverage-binary-id-diagnostics.md"
 status = "proposed"
 owner = "repo-policy"
 standalone_reason = "Issue #4978 covers an additive CI failure-manifest diagnostic: bounded LLVM profile IDs associate only with exact GNU build IDs in instrumented ELF candidates, with explicit partiality and no test, termination, or cause attribution."
+
+[[artifact]]
+id = "RIPR-SPEC-0267"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0267-owner-call-shape-projection.md"
+status = "proposed"
+owner = "product-output"
+standalone_reason = "Issue #7796 covers the drill-in owner-signature projection: explain's verdict-change recipe and the context packet name the changed function's observed call shape from the same producer as ripr agent stub, gated on candidate-current source and declining unnameable shapes; observed data only, no assertion synthesis."
+
+[[artifact]]
+id = "RIPR-SPEC-0268"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0268-flow-sink-row-collapse.md"
+status = "proposed"
+owner = "product-output"
+standalone_reason = "Issue #7798 covers the render-only collapse of the flow-sink evidence row when sink text restates the kind label, on the human explain surface and the JSON evidence_path; no analyzer, vocabulary, or classification change."

@@ -166,10 +166,12 @@ The development extension also exposes the following commands:
 </details>
 
 Some repair commands appear in the editor context menu for Rust and preview
-languages. Actions that need a diagnostic payload remain code-action-only.
-Default shortcuts are `Ctrl+Alt+R` for Show Status, `Ctrl+Alt+P` for Copy Top
-Repair Packet, and `Ctrl+Alt+Shift+P` for Copy Repair Packet at Cursor; use `Cmd`
-instead of `Ctrl` on macOS. All are configurable.
+languages. `Copy Repair Packet at Cursor` stays at the top level; the remaining
+top-packet copy and inspection commands live behind the **ripr** submenu so the
+context menu stays glanceable. Actions that need a diagnostic payload remain
+code-action-only. Default shortcuts are `Ctrl+Alt+R` for Show Status,
+`Ctrl+Alt+P` for Copy Top Repair Packet, and `Ctrl+Alt+Shift+P` for Copy Repair
+Packet at Cursor; use `Cmd` instead of `Ctrl` on macOS. All are configurable.
 
 ## Preview Limitations
 

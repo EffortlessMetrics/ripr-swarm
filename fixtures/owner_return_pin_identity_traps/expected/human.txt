@@ -32,10 +32,10 @@ No test stub here: the owner is a trait default method or nested function, sits 
 
 Hidden:
   3 lower-priority finding(s) omitted; 2 base-side evidence, not candidate edit targets.
-    - ./src/lib.rs:7 (weakly_exposed)
-    - ./src/lib.rs:7 (static_unknown)
-    - ./src/lib.rs:50 (weakly_exposed)
-    - ./src/lib.rs:55 (weakly_exposed)
-    - ./src/lib.rs:55 (static_unknown)
+    - ./src/lib.rs:7 (weakly_exposed, lower-priority candidate)
+    - ./src/lib.rs:7 (static_unknown, base-side)
+    - ./src/lib.rs:50 (weakly_exposed, lower-priority candidate)
+    - ./src/lib.rs:55 (weakly_exposed, lower-priority candidate)
+    - ./src/lib.rs:55 (static_unknown, base-side)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
