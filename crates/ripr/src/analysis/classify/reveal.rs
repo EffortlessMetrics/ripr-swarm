@@ -4257,6 +4257,12 @@ pub(in crate::analysis) fn contains_as_whole_word(text: &str, token: &str) -> bo
     false
 }
 
+/// Dedup, rank and cap the related-test rows.
+///
+/// #8387: tests the diff touches may now lead the capped render window ahead
+/// of untouched tests in the same confidence tier, so the primary related
+/// test and the repair target can change by design. No row is added or
+/// lifted a tier.
 fn finalize_related_tests(
     mut related: Vec<RelatedTest>,
     diff_touched: Option<&super::DiffTouchedTests>,
@@ -4269,9 +4275,9 @@ fn finalize_related_tests(
     //
     // #8387: within one confidence tier a test the diff itself adds or
     // changes leads, ahead of name order and ahead of the render cap below.
-    // `line` is the test's start line, so only a test whose first line the
-    // diff touched, or whose span contains one, is matched through the
-    // span-aware predicate. Ranking only: no row is added or lifted a tier.
+    // A test counts as touched when the diff adds a line inside its span
+    // (`line` is its start line; matching is span-aware). Ranking only: no
+    // row is added or lifted a tier.
     let touched = |test: &RelatedTest| {
         diff_touched.is_some_and(|touched| touched.touches(&test.file, test.line))
     };

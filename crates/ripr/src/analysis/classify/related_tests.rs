@@ -1167,14 +1167,21 @@ fn find_related_tests_with_candidates<'a>(
     related.sort_by(|(a, a_reason), (b, b_reason)| {
         relation_rank(*b_reason)
             .cmp(&relation_rank(*a_reason))
-            .then_with(|| touched_by_diff(b).cmp(&touched_by_diff(a)))
             .then_with(|| a.name.cmp(&b.name))
             .then_with(|| a.file.cmp(&b.file))
     });
     // A test related through two reasons is no longer adjacent to itself
     // once confidence leads the sort; keep its first (strongest) entry.
+    // The touched signal is deliberately applied only after this dedup, so
+    // it can never change which same-named entry survives and is analyzed.
     let mut seen = BTreeSet::new();
     related.retain(|(test, _)| seen.insert((test.name.clone(), test.file.clone())));
+    // Stable: name then file order holds within one (tier, touched) group.
+    related.sort_by(|(a, a_reason), (b, b_reason)| {
+        relation_rank(*b_reason)
+            .cmp(&relation_rank(*a_reason))
+            .then_with(|| touched_by_diff(b).cmp(&touched_by_diff(a)))
+    });
     related
 }
 
@@ -4155,7 +4162,7 @@ mod tests {
     /// #8387: a test the diff itself adds or changes leads its confidence
     /// tier, ahead of name order, but is never lifted into a higher tier.
     #[test]
-    fn diff_touched_test_leads_its_tier_without_changing_tiers() {
+    fn diff_touched_test_leads_its_tier_without_changing_tiers() -> Result<(), String> {
         let owner = function("src/lib.rs", "target_owner");
         let untouched_direct = test_with_call(
             "tests/target.rs",
@@ -4227,21 +4234,112 @@ mod tests {
             ["z_direct_call", "a_direct_call"],
             "the diff-touched direct call leads its tier: {ranked:?}"
         );
-        if let Some(weak) = ranked
+        let weak = ranked
             .iter()
             .find(|(name, _)| name == "zz_target_owner_name_only")
-        {
-            assert_ne!(
-                weak.1,
-                RelationConfidence::High,
-                "a touched name-only test is not lifted a tier"
-            );
-            assert_eq!(
-                ranked.last().map(|(name, _)| name.as_str()),
-                Some("zz_target_owner_name_only"),
-                "a touched lower-tier test still trails every higher-tier test: {ranked:?}"
-            );
-        }
+            .ok_or("the touched name-only test must stay related")
+            .map_err(str::to_string)?;
+        assert_ne!(
+            weak.1,
+            RelationConfidence::High,
+            "a touched name-only test is not lifted a tier"
+        );
+        assert_eq!(
+            ranked.last().map(|(name, _)| name.as_str()),
+            Some("zz_target_owner_name_only"),
+            "a touched lower-tier test still trails every higher-tier test: {ranked:?}"
+        );
+        Ok(())
+    }
+
+    /// #8387: the diff-touched signal is a pure ranking key. Two same-named
+    /// tests in one file must resolve to the same analyzed body, and so the
+    /// same classification, reach, oracle strength and credited oracle, with
+    /// or without the signal.
+    #[test]
+    fn diff_touched_signal_does_not_change_which_duplicate_name_is_analyzed() -> Result<(), String>
+    {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let path = PathBuf::from("src/lib.rs");
+        let source = "pub fn score(x: i32) -> i32 {\n    if x > 3 { 1 } else { 0 }\n}\n\
+mod first {\n    use super::*;\n    #[test]\n    fn dup() {\n        assert_eq!(score(5), 1);\n    }\n}\n\
+mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = score(5);\n    }\n}\n";
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let mut index = RustIndex::default();
+        index.insert_file(path.clone(), facts, true);
+        let dups: Vec<_> = index.tests().iter().filter(|t| t.name == "dup").collect();
+        assert_eq!(dups.len(), 2, "setup: both same-named tests are indexed");
+        let later = dups
+            .iter()
+            .map(|t| t.start_line)
+            .max()
+            .ok_or("setup: no duplicate")?;
+        let changed_source = crate::analysis::diff::ChangedFile {
+            path: path.clone(),
+            added_lines: vec![crate::analysis::diff::ChangedLine {
+                line: 2,
+                text: "    if x > 3 { 1 } else { 0 }".to_string(),
+                new_side_line: 2,
+            }],
+            removed_lines: Vec::new(),
+        };
+        let changed_test = crate::analysis::diff::ChangedFile {
+            path: path.clone(),
+            added_lines: vec![crate::analysis::diff::ChangedLine {
+                line: later,
+                text: String::new(),
+                new_side_line: later,
+            }],
+            removed_lines: Vec::new(),
+        };
+        let touched = crate::analysis::classify::DiffTouchedTests::from_changed_files(
+            &[changed_test],
+            index.tests().iter(),
+        );
+        assert!(touched.touches(&path, later), "setup: later dup touched");
+        let seeded = crate::analysis::probes::probes_for_file_with_relations(
+            Path::new("."),
+            &changed_source,
+            &index,
+            &[],
+        );
+        let subject = seeded
+            .iter()
+            .find(|s| s.probe.family == ProbeFamily::Predicate)
+            .ok_or("setup: no predicate subject")?;
+
+        let classify = |candidates: &RelatedTestCandidateIndex| {
+            crate::analysis::classifier::classify_probe_with_candidate_index(
+                &subject.probe,
+                &index,
+                true,
+                None,
+                candidates,
+                None,
+            )
+        };
+        let plain = classify(&RelatedTestCandidateIndex::new(&index));
+        let ranked = classify(&RelatedTestCandidateIndex::new(&index).with_diff_touched(touched));
+        assert!(
+            plain.related_tests.iter().any(|t| t.name == "dup"),
+            "setup: the duplicate-name test is related: {plain:?}"
+        );
+        assert_eq!(plain.class, ranked.class);
+        assert_eq!(plain.ripr.reach.state, ranked.ripr.reach.state);
+        assert_eq!(
+            plain
+                .related_tests
+                .iter()
+                .map(|t| (&t.name, t.line, t.oracle_strength.clone(), &t.oracle))
+                .collect::<Vec<_>>(),
+            ranked
+                .related_tests
+                .iter()
+                .map(|t| (&t.name, t.line, t.oracle_strength.clone(), &t.oracle))
+                .collect::<Vec<_>>(),
+            "the touched signal must not change the analyzed body or credited oracle"
+        );
+        Ok(())
     }
 
     #[test]
