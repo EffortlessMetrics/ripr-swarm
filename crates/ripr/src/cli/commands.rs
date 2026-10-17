@@ -7219,7 +7219,10 @@ language = "rust"
         assert_missing_snapshot_named_capture(
             &plain_message,
             &plain_display,
-            &format!("ripr check --format repo-exposure-json > {plain_display}"),
+            &format!(
+                "ripr check --format repo-exposure-json > {}",
+                plain.to_string_lossy()
+            ),
             &["cargo mutants"],
         );
         assert!(
@@ -7229,7 +7232,9 @@ language = "rust"
 
         let spaced = PathBuf::from("missing snapshot.json");
         let spaced_display = output::outcome::display_path(&spaced);
-        let quoted = shell_arg(&spaced_display);
+        // Executable redirect operands keep the native spelling; only prose uses
+        // `display_path`, which normalizes separators (#8240).
+        let quoted = shell_arg(&spaced.to_string_lossy());
         assert_ne!(
             quoted, spaced_display,
             "a space must force quoting of the redirect token"
@@ -7283,7 +7288,7 @@ language = "rust"
         std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
         let missing_before = dir.join("missing before.json");
         let displayed = output::outcome::display_path(&missing_before);
-        let quoted = shell_arg(&displayed);
+        let quoted = shell_arg(&missing_before.to_string_lossy());
         assert!(
             displayed.contains(' '),
             "CLI fixture path must contain a space: {displayed}"
