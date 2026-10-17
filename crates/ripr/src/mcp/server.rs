@@ -671,7 +671,9 @@ impl ServerHandler for McpServer {
         request: CustomRequest,
         _: RequestContext<RoleServer>,
     ) -> Result<CustomResult, ErrorData> {
-        const SERVED_METHODS: [&str; 6] = [
+        const SERVED_METHODS: [&str; 8] = [
+            "server/discover",
+            "completion/complete",
             "tools/call",
             "tools/list",
             "resources/read",
