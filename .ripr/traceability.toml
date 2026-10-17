@@ -1031,6 +1031,8 @@ tests = [
   "crates/ripr/src/cli/commands/doctor.rs::tests::doctor_enable_tip_keeps_already_enabled_languages",
   "crates/ripr/src/cli/commands/doctor.rs::tests::doctor_enable_tip_maps_javascript_to_the_typescript_entry",
   "crates/ripr/src/cli/commands/doctor.rs::tests::doctor_first_command_has_no_enable_step_for_rust_only",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::final_line_attributes_total_and_slowest_measured_check",
+  "crates/ripr/src/output/doctor.rs::tests::elapsed_times_are_additive_and_slowest_spans_checks_and_probes",
   "crates/ripr/tests/cli_smoke.rs::doctor_reports_malformed_config_error",
   "crates/ripr/src/cli/commands.rs::tests::doctor_core_report_fails_closed_for_invalid_config",
   "crates/ripr/src/cli/commands.rs::tests::doctor_core_report_fails_closed_for_missing_root",
@@ -9177,6 +9179,8 @@ tests = [
   "crates/ripr/src/app/diff_source.rs::tests::forced_sources_win_without_running_the_probe",
   "crates/ripr/src/analysis/diff/load.rs::tests::uncommitted_change_detector_counts_tracked_edits_not_untracked_files",
   "crates/ripr/tests/cli_smoke.rs::check_untracked_files_keep_committed_default_and_working_tree_reads_name_them",
+  "crates/ripr/tests/cli_smoke.rs::check_gitignored_files_are_disclosed_not_silent",
+  "crates/ripr/src/analysis/committed_source/tests.rs::ignored_source_paths_name_files_and_directories_but_not_tracked_or_untracked",
   "crates/ripr/src/output/analyzed_revisions.rs::tests::labels_name_ref_short_commits_and_the_head_source",
   "crates/ripr/src/output/analyzed_revisions.rs::tests::labels_disclose_a_distinct_merge_base_and_unresolved_commits",
   "crates/ripr/src/analysis/diff/load.rs::tests::worktree_load_without_merge_base_fails_closed_with_the_committed_diagnosis",
@@ -9203,6 +9207,7 @@ code = [
   "crates/ripr/src/output/sarif.rs",
   "crates/ripr/src/analysis/mod.rs",
   "crates/ripr/src/analysis/pipeline.rs",
+  "crates/ripr/src/analysis/committed_source.rs",
   "crates/ripr/src/analysis/diff/load.rs",
   "crates/ripr/src/git.rs",
   "crates/ripr/src/app/navigation.rs",
@@ -13020,6 +13025,7 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_single_file_rename_of_the_receiver_refuses_the_pin_in_both_spellings",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_single_file_plain_import_of_the_receiver_keeps_its_pin",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_non_plain_drop_on_the_returned_type_lends_no_pin",
+  "crates/ripr/src/analysis/classifier/evidence.rs::a_non_plain_drop_on_the_returned_type_keeps_return_value_weakly",
 ]
 fixtures = [
   "fixtures/rust_trait_default_import",

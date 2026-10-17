@@ -2498,6 +2498,32 @@ Example:
 ```json
 "untracked_working_tree_source_paths": ["src/new.rs"]
 ```
+
+### `ignored_working_tree_source_paths` (top-level additive array, #7467)
+
+Added as an additive optional top-level array of path strings. Emitted only
+when at least one routed source or test file is gitignored in the live
+repository (an ignored-file record, or a routed file under an ignored
+directory such as `target/`), on both committed-history and working-tree
+reads: committed history reads every file as committed, and the working-tree
+diff covers tracked files only, so in both cases the named files were not
+analyzed. Absent (not emitted) when the list is empty. Does not bump
+`schema_version`.
+
+This is the machine-readable form of the human and GitHub gitignored-files
+notes. Without it, a JSON report with zero findings reads as complete while
+routed files were silently excluded — the same false-clean gap the untracked
+field closes, but plain `git add -N` refuses ignored paths, so the notes
+name the force intent-to-add repair (`git add -f -N <path>`). The exclusion
+itself is unchanged: `target/` and other ignored paths stay excluded, only
+disclosed.
+
+Example:
+
+```json
+"ignored_working_tree_source_paths": ["crates/alpha/src/ignored_gen.rs"]
+```
+
 ### `base_commit`, `merge_base_commit`, and `head` (top-level additive, RIPR-SPEC-0116 amendment)
 
 A run that diffs the live repository names the base and head it analyzed.
