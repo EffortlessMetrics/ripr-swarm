@@ -2544,6 +2544,16 @@ fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_const
             "e",
         ),
         (
+            "",
+            "let e = std::sync::Mutex::new(weight(2));\nassert_eq!(weight(2), e);",
+            "e",
+        ),
+        (
+            "",
+            "let e = std::sync::atomic::AtomicUsize::new(weight(2));\nassert_eq!(weight(2), e);",
+            "e",
+        ),
+        (
             "static mut EXPECTED: u32 = weight(4);",
             "unsafe { EXPECTED = 6; }\nassert_eq!(weight(4), unsafe { EXPECTED });",
             "EXPECTED",
