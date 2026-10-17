@@ -91,6 +91,13 @@ pub(crate) fn snapshot_input(path: &Path) -> bool {
         || SNAPSHOT_RUNNER_CONFIG_PREFIXES
             .iter()
             .any(|prefix| name.starts_with(prefix))
+        // A config named for a runner but not at its default name
+        // (`jest.unit.config.js`) is only read when a script passes it by
+        // path; the committed-snapshot walk reads it as well.
+        || (name.contains(".config.")
+            && ["jest", "vitest", "vite"]
+                .iter()
+                .any(|runner| name.contains(runner)))
 }
 
 /// Programming-language source extensions no ripr adapter reads, with the

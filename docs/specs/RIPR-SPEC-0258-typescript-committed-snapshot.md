@@ -160,8 +160,14 @@ RIPR-SPEC-0243 ladder, including the observation guard.
 - A test registered from a template title (`%s`, `%#`, a non-literal
   describe title) has no matching entry and stays medium. A `test.each`
   with one row and a literal title runs once and can read strong.
-- A runner config passed by path (`--config config/jest.js`) or kept above
-  the analysis root is not read.
+- A runner config passed by path is not read; a `package.json` script that
+  passes one refuses instead. A config above the repository boundary, or
+  above the root when no boundary is in reach, is not read.
+- A committed-history run does not compare configs above the analysis root
+  with `HEAD`.
+- An untracked or ignored `.snap` file is refused only in a
+  committed-history run; a `--worktree` run still reads the working tree
+  (#7708 item 3).
 - A stale entry (one that no longer matches the base behavior) already
   fails the test; the reader does not compare entry and behavior.
 
@@ -214,6 +220,13 @@ RIPR-SPEC-0243 ladder, including the observation guard.
    edited `package.json` or runner config in the test's directory or an
    ancestor: medium. A `toMatchSnapshot ()` call with a space before `(`
    counts as a snapshot call.
+7. A `package.json` script `jest --config config/jest.js` (or `-c`,
+   `--config=`), or a `jest.unit.config.js` with a `snapshotResolver`: medium.
+   A `jest.unit.config.js` that overrides nothing, or a `jest --ci
+   --coverage` script: strong. A `jest.config.js` with a `snapshotResolver`
+   above the analysis root, inside the repository: medium; the same file with
+   no repository marker above the root: strong; a symlinked test directory:
+   medium.
 
 ## Test Mapping
 
@@ -226,7 +239,11 @@ RIPR-SPEC-0243 ladder, including the observation guard.
   `hinted_snapshot_without_its_exact_entry_stays_medium` and
   `hinted_snapshot_sharing_its_counter_stays_medium` pin example 4;
   `snapshot_location_or_update_override_stays_medium` pins example 5;
-  `snapshot_input_differing_from_head_stays_medium` pins example 6.
+  `snapshot_input_differing_from_head_stays_medium` pins example 6;
+  `config_passed_by_path_or_custom_named_stays_medium`,
+  `config_above_the_analysis_root_is_read_up_to_the_repository`,
+  `config_above_the_root_without_a_repository_boundary_is_not_read` and
+  `symlinked_test_directory_stays_medium` pin example 7.
 - `crates/ripr/src/analysis/committed_source/tests.rs`:
   `porcelain_parser_records_unrouted_snapshot_inputs` and
   `snapshot_inputs_differ_only_in_their_own_directory` pin the
