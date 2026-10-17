@@ -445,10 +445,15 @@ pub(super) fn classify_change_for_owner(
     let mut guarded_arm_downgraded = false;
     // Table-driven expected values that never vary the changed returned
     // operand cannot discriminate `return default` -> `return None` (#6651).
-    // A non-table strong test, or a row that varies the operand, keeps the
-    // existing oracle verdict.
+    // The same gate evaluates simple integer arithmetic per row so a 20xx
+    // year table cannot credit `year % 100` -> `year % 1000`. A non-table
+    // strong test, a row that distinguishes the arithmetic, or an unreadable
+    // table keeps the existing oracle verdict.
     let unvaried_table = (static_limit.is_none()
-        && matches!(family, ProbeFamily::ReturnValue)
+        && matches!(
+            family,
+            ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction | ProbeFamily::Predicate
+        )
         && boundary_gap.is_none()
         && inactive_term.is_none()
         && guarded_arm_gap.is_none())
@@ -777,7 +782,7 @@ pub(super) fn classify_change_for_owner(
             "Related tests reach the changed term, but every strong related test call gives it the value 0.".to_string()
         } else if table_downgraded {
             format!(
-                "Related tests reach the changed return, but {}.",
+                "Related tests reach the changed operand, but {}.",
                 unvaried_table
                     .as_ref()
                     .map(|gap| gap.reason.as_str())

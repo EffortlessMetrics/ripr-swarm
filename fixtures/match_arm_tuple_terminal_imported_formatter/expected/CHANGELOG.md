@@ -28,7 +28,7 @@ Updated:
 ## Pending — match_arm_tuple_terminal_imported_formatter (3)
 
 Reason:
-RIPR-SPEC-0122: add the base-side evidence count to the Summary line (#8493); wording only, no class change
+RIPR-SPEC-0093: re-bless human summary line with the base-side evidence suffix (stale after #7836 merged)
 
 Command:
 `cargo xtask goldens bless match_arm_tuple_terminal_imported_formatter --reason "..."`

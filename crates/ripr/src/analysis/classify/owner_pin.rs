@@ -2265,7 +2265,10 @@ impl OwnerReturnPin {
     /// expression has at most a plain `Drop` impl in the workspace (#8480).
     /// Types constructed nowhere in the body (scalar returns, calls) have
     /// nothing to refuse.
-    fn returned_types_drop_plain(owner: &FunctionSummary, index: &RustIndex) -> bool {
+    pub(in crate::analysis) fn returned_types_drop_plain(
+        owner: &FunctionSummary,
+        index: &RustIndex,
+    ) -> bool {
         let source = owner.body.as_str();
         let Some(parse) = parse_clean_source_file(source) else {
             return false;
