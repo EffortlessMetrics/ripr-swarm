@@ -6,12 +6,35 @@
 //! repo-exposure. This module is the single owner for the analyzable file
 //! set, the skipped generated paths, and the fingerprint of that same set.
 
-use super::language::GeneratedRustSources;
+use super::language::{GeneratedRustSources, LanguageId, route};
 use super::seam_cache::corpus_fingerprint;
 use super::workspace;
 use crate::config::RiprConfig;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+
+/// Apply diff-aware generated-source policy before observing absent Rust input.
+/// All changed paths are required: an absent changed checksum marker still
+/// excludes its vendored crate, just as in the Rust diff adapter.
+pub(crate) fn absent_changed_rust_file_limitations(
+    root: &Path,
+    config: &RiprConfig,
+    changed_paths: &[PathBuf],
+) -> Result<Vec<crate::analysis_outcome::AnalysisLimitation>, String> {
+    let generated = GeneratedRustSources::for_changed_paths(
+        root,
+        &config.languages().rust,
+        changed_paths.iter().map(PathBuf::as_path),
+    );
+    let absent = workspace::changed_source_files_absent_from_worktree(
+        root,
+        changed_paths
+            .iter()
+            .map(PathBuf::as_path)
+            .filter(|path| route(path) == Some(LanguageId::Rust) && !generated.contains(path)),
+    );
+    workspace::supplement_absent_file_limitations(&absent)
+}
 
 /// Discovered Rust files after the generated-source predicate `ripr check`
 /// uses, plus the skipped paths and the fingerprint of the analyzable set.

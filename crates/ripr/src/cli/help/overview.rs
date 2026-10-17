@@ -23,8 +23,10 @@ Usage:
   ripr <command> [options]
 
 Try this first:
-  ripr doctor                     Check this workspace can produce evidence.
   ripr check                      Analyze the current diff, name the top gap.
+
+Uses tracked edits, or committed history when clean. On a clean base branch,
+edit a tracked source file first; new files need git add -N PATH.
 
 The loop is: ripr names one gap -> you add one focused test -> ripr records
 whether the gap closed. `ripr.toml` is optional; the zero-config run is the
@@ -135,7 +137,7 @@ PR & Review:
   ripr pr-evidence [--base <rev>] [--head <rev>] [--root <path>] [--check]
   ripr impacted-evidence [--pr-evidence <path>] [--label <label>] [--labels <csv>] [--check]
   ripr annotations [--comments <path>] [--out <path>] [--check]
-  ripr pr-ledger record --pr-number 123 --base SHA --head SHA [--gate target/ripr/reports/gate-decision.json] [--baseline-delta target/ripr/reports/baseline-debt-delta.json] [--zero-status target/ripr/reports/ripr-zero-status.json] [--out target/ripr/reports/pr-evidence-ledger.json] [--out-jsonl .ripr/pr-evidence-ledger.jsonl]
+  ripr pr-ledger record --pr-number 123 --base SHA --head SHA (--gate target/ripr/reports/gate-decision.json|--baseline-delta target/ripr/reports/baseline-debt-delta.json|--zero-status target/ripr/reports/ripr-zero-status.json|--pr-guidance target/ripr/review/comments.json|--gap-ledger target/ripr/reports/gap-decision-ledger.json) [--out target/ripr/reports/pr-evidence-ledger.json] [--out-jsonl .ripr/pr-evidence-ledger.jsonl]
   ripr pr-comments existing [--root .] [--raw target/ripr/review/existing-comments.raw.json|-] [--out target/ripr/review/existing-comments.json]
   ripr pr-comments plan --pr-guidance target/ripr/review/comments.json [--existing-comments target/ripr/review/existing-comments.json] [--mode off|plan|inline] [--out target/ripr/review/comment-publish-plan.json]
   ripr pr-comments requests --pull-request N --head-sha SHA [--root .] [--plan target/ripr/review/comment-publish-plan.json] [--out-dir target/ripr/review/publish]

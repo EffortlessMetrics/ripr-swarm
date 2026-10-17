@@ -17,7 +17,9 @@
 //! Both contracts are pinned by tests in this file.
 
 use super::classify::changed_error_variant;
-use super::generated_rust_corpus::{AnalyzableRustCorpus, discover_analyzable_rust_corpus};
+use super::generated_rust_corpus::{
+    AnalyzableRustCorpus, absent_changed_rust_file_limitations, discover_analyzable_rust_corpus,
+};
 use super::rust_index::{self, ProbeShapeFact, ProbeShapeKind, RustIndex};
 #[cfg(test)]
 use super::seam_cache::CLASSIFIED_SEAM_CACHE_STORE_LIMIT;
@@ -1459,12 +1461,22 @@ pub(crate) struct ClassifiedChangeReport {
 /// the change is classified on its own. The no-impact fast path is skipped:
 /// pilot asks only after the limit fired on a change with Rust files, where
 /// it would decline anyway.
+/// `changed_paths` retains the full diff context, including absent changed
+/// vendor markers; `changed_files` remains the Rust classification scope.
 pub(crate) fn classify_seams_in_files_at_with_config(
     root: &Path,
     config: &RiprConfig,
     changed_files: &[PathBuf],
+    changed_paths: &[PathBuf],
     on_change: &dyn Fn(&RepoSeam) -> bool,
 ) -> Result<ClassifiedChangeReport, String> {
+    cancellation::checkpoint()?;
+    // Observe admission at entry, before classification: a file restored later
+    // must not clear an absence caveat for this classification's earlier scope.
+    // The shared owner also retains bounded path-less disclosure on refusal.
+    let absent_file_limitations =
+        absent_changed_rust_file_limitations(root, config, changed_paths)?;
+    cancellation::checkpoint()?;
     let stages = DiffScopeEvidenceStages {
         first: on_change,
         sufficient: &|_| true,
@@ -1478,17 +1490,9 @@ pub(crate) fn classify_seams_in_files_at_with_config(
         Some(&stages),
         None,
     )
-    .and_then(|inventory| {
-        // The supplement keeps its classified seams: an absent-file name the
-        // portable limitation path refuses (a drive-like name on Unix, say)
-        // degrades to the bounded path-less disclosure instead of failing
-        // the whole report (#6976).
-        let absent_file_limitations =
-            workspace::supplement_absent_file_limitations(&inventory.absent_changed_files)?;
-        Ok(ClassifiedChangeReport {
-            classified: inventory.classified,
-            absent_file_limitations,
-        })
+    .map(|inventory| ClassifiedChangeReport {
+        classified: inventory.classified,
+        absent_file_limitations,
     })
 }
 

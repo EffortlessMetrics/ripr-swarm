@@ -74,7 +74,7 @@ Evidence
   - propagation unknown: No propagation model is available for this changed syntax
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator unknown: Assertions exist, but oracle strength is unknown
-  - local flow reaches unknown sink: unknown sink (line 10)
+  - local flow reaches unknown sink (line 10)
   - related test src/lib.rs:33 builds_config uses unknown whole object equality oracle: assert_eq!(
             build(3),
             Config {

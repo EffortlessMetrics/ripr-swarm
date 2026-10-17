@@ -124,6 +124,8 @@ mod pr_comments_github;
 
 #[path = "commands/check.rs"]
 mod check;
+#[path = "commands/check_fanout.rs"]
+mod check_fanout;
 pub(super) use check::check;
 
 #[path = "commands/review_comments.rs"]
@@ -6688,47 +6690,15 @@ language = "rust"
             .ok_or_else(|| format!("TypeScript repair packet has no receipt_command: {packet}"))
     }
 
-    /// Split a copied bash command into argv the way a POSIX shell does for
-    /// the quoting `shell_arg` emits: whitespace-separated words, single-quoted
-    /// spans taken literally, and backslash escapes outside quotes. Any other
-    /// shell-active character fails instead of being guessed at.
+    /// Split a copied command into argv under the same contract the recovery
+    /// parser enforces for the quoting `shell_arg` emits on the running host
+    /// (#7729: POSIX single quotes off Windows, the Windows console form on
+    /// it; #8152 review: this helper reuses the shared parser instead of
+    /// forking a third one). Anything the parser fails closed on errors
+    /// instead of being guessed at.
     fn posix_words(command: &str) -> Result<Vec<String>, String> {
-        let mut words = Vec::new();
-        let mut current: Option<String> = None;
-        let mut chars = command.chars();
-        while let Some(ch) = chars.next() {
-            match ch {
-                '\'' => {
-                    let word = current.get_or_insert_with(String::new);
-                    loop {
-                        match chars.next() {
-                            Some('\'') => break,
-                            Some(inner) => word.push(inner),
-                            None => return Err(format!("unterminated quote in `{command}`")),
-                        }
-                    }
-                }
-                '\\' => {
-                    let escaped = chars
-                        .next()
-                        .ok_or_else(|| format!("dangling escape in `{command}`"))?;
-                    current.get_or_insert_with(String::new).push(escaped);
-                }
-                '"' | '$' | '`' | ';' | '&' | '|' | '<' | '>' | '(' | ')' => {
-                    return Err(format!("shell-active `{ch}` in `{command}`"));
-                }
-                ch if ch.is_whitespace() => {
-                    if let Some(word) = current.take() {
-                        words.push(word);
-                    }
-                }
-                ch => current.get_or_insert_with(String::new).push(ch),
-            }
-        }
-        if let Some(word) = current {
-            words.push(word);
-        }
-        Ok(words)
+        crate::agent::command_specs::shell_words_for(command, cfg!(windows))
+            .ok_or_else(|| format!("command is not parseable host shell text: `{command}`"))
     }
 
     /// #3906 / RIPR-SPEC-0079 `canonical_receipt_command` field rule: the
