@@ -1892,7 +1892,7 @@ fn path_command_candidates(
         } else {
             format!(".{}", ext.to_ascii_lowercase())
         };
-        // `CreateProcessW` (what `Command::new` uses) launches only these
+        // `CreateProcessW` (what process spawning uses) launches only these
         // suffixes directly; interpreter-only entries such as `.PS1`, `.VBS`
         // or `.JS` would be chosen first and then fail to start (#5351).
         if !matches!(ext.as_str(), ".com" | ".exe" | ".bat" | ".cmd") {
@@ -4514,7 +4514,7 @@ mod tests {
     #[test]
     fn path_command_in_windows_skips_interpreter_only_pathext() -> Result<(), String> {
         // Customized PATHEXT lists `.PS1` ahead of `.EXE`; `perllsp.ps1` cannot
-        // be started by `Command::new`, so the working `perllsp.exe` must win (#5351).
+        // be spawned directly, so the working `perllsp.exe` must win (#5351).
         let path_dir = PathBuf::from("bin");
         let ps1 = path_dir.join("perllsp.ps1");
         let exe = path_dir.join("perllsp.exe");
