@@ -360,6 +360,74 @@ fn event_commit_bindings_are_exact_and_history_is_available() -> TestResult {
     Ok(())
 }
 
+/// Every merge-ready-gated lane admits a pull request only through an explicit
+/// `labeled` event for `merge-ready`; no gated `if:` re-admits opened,
+/// synchronize or reopened events while the label is still attached.
+#[test]
+fn gated_lanes_admit_pull_requests_only_on_the_merge_ready_labeled_event() {
+    const GATED: [(&str, &str); 11] = [
+        ("ci.yml", include_str!("../../../.github/workflows/ci.yml")),
+        (
+            "coverage.yml",
+            include_str!("../../../.github/workflows/coverage.yml"),
+        ),
+        (
+            "future-clippy.yml",
+            include_str!("../../../.github/workflows/future-clippy.yml"),
+        ),
+        (
+            "npm-launcher.yml",
+            include_str!("../../../.github/workflows/npm-launcher.yml"),
+        ),
+        (
+            "pilot-ranking.yml",
+            include_str!("../../../.github/workflows/pilot-ranking.yml"),
+        ),
+        (
+            "printed-command-paste.yml",
+            include_str!("../../../.github/workflows/printed-command-paste.yml"),
+        ),
+        (
+            "public-proof.yml",
+            include_str!("../../../.github/workflows/public-proof.yml"),
+        ),
+        (
+            "security.yml",
+            include_str!("../../../.github/workflows/security.yml"),
+        ),
+        (
+            "test-analytics.yml",
+            include_str!("../../../.github/workflows/test-analytics.yml"),
+        ),
+        (
+            "windows-advisory.yml",
+            include_str!("../../../.github/workflows/windows-advisory.yml"),
+        ),
+        (
+            "zed-extension.yml",
+            include_str!("../../../.github/workflows/zed-extension.yml"),
+        ),
+    ];
+    const EXPLICIT: &str =
+        "github.event.action == 'labeled' && github.event.label.name == 'merge-ready'";
+    for (name, source) in GATED {
+        let gated_ifs: Vec<&str> = source
+            .lines()
+            .filter(|line| line.trim_start().starts_with("if:") && line.contains("'merge-ready'"))
+            .collect();
+        assert!(!gated_ifs.is_empty(), "{name} has no merge-ready guard");
+        for line in gated_ifs {
+            assert!(line.contains(EXPLICIT), "{name}: {line}");
+            for event in ["opened", "synchronize", "reopened", "ready_for_review"] {
+                assert!(
+                    !line.contains(&format!("'{event}'")),
+                    "{name} re-admits {event}: {line}"
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn stale_event_base_and_synthetic_merge_checkout_use_pr_head() -> TestResult {
     let fixture = Fixture::new()?;
