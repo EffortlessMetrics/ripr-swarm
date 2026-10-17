@@ -15,8 +15,8 @@ use super::probe_shape::{
     python_infection_evidence, python_propagation_evidence,
 };
 use super::related_tests::{
-    python_repair_placement, related_test_candidates, related_tests_for_candidates,
-    verify_command_for_test,
+    helper_owner_call_candidates, python_repair_placement, related_test_candidates,
+    related_tests_for_candidates, verify_command_for_test,
 };
 use super::sink_alignment::{SinkAlignment, classify_sink_alignment_with_old};
 use super::static_limits::{implicit_dunder_dispatch_limit, static_limit_for_focused_change};
@@ -288,7 +288,16 @@ pub(super) fn classify_change_for_owner(
     // error-path / boundary / changed-default gates and the `test_oracle`
     // evidence — reads that one selection.
     let focus = PythonAssertionFocus::for_change(family.clone(), line_text, old_line_text);
-    let related_candidates = related_test_candidates(owner, all_tests);
+    let mut related_candidates = related_test_candidates(owner, all_tests);
+    // Only when no test relates to the owner itself: a test that calls a
+    // same-module caller of the owner earns a weak `helper_owner_call` row
+    // (#4568), never an oracle.
+    let helper_callers = if related_candidates.is_empty() {
+        helper_owner_call_candidates(owner, owners, all_tests)
+    } else {
+        Vec::new()
+    };
+    related_candidates.extend(helper_callers.iter().map(|helper| helper.candidate));
     let related = related_tests_for_candidates(&related_candidates, Some(&focus));
     let alignment =
         classify_sink_alignment_with_old(owner, line_text, old_line_text, &related, all_tests);
@@ -1033,6 +1042,15 @@ pub(super) fn classify_change_for_owner(
                 "related_test_uncertain: {} ({})",
                 candidate.relation.as_str(),
                 test.name
+            ));
+        }
+        if let Some(helper) = helper_callers
+            .iter()
+            .find(|helper| std::ptr::eq(helper.candidate.test, test))
+        {
+            evidence.push(format!(
+                "helper_owner_call: {} calls {} ({})",
+                helper.caller, owner.name, test.name
             ));
         }
         let selection = candidate
