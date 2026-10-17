@@ -3108,6 +3108,91 @@ fn h1_file_proximity_relation_is_not_eligible() -> Result<(), String> {
     Ok(())
 }
 
+/// Rewrites `EXACT_RETURN_PACKET` as a `partial` packet whose relations are
+/// replaced by `relations` (a JSON array), so a test names exactly which
+/// change-linked evidence survives.
+fn partial_packet_with_relations(relations: serde_json::Value) -> Result<String, String> {
+    let mut packet: serde_json::Value =
+        serde_json::from_str(EXACT_RETURN_PACKET).map_err(|error| format!("parse: {error}"))?;
+    packet["packet_status"] = serde_json::json!("partial");
+    packet["relations"] = relations;
+    serde_json::to_string(&packet).map_err(|error| format!("serialize: {error}"))
+}
+
+/// #8352: a `partial` packet whose only linkage is `file_proximity`, or that
+/// has no relation at all, establishes nothing about the change. It must
+/// classify `static_unknown` (never `reachable_unrevealed` or `no_static_path`,
+/// which read as an assessed result), carry no canonical gap or repair
+/// evidence (the shared validator, tested in the output layer, rejects partial packets).
+#[test]
+fn partial_packet_without_change_linked_relations_is_static_unknown() -> Result<(), String> {
+    use crate::domain::ExposureClass;
+    let proximity_only = {
+        let mut packet: serde_json::Value =
+            serde_json::from_str(EXACT_RETURN_PACKET).map_err(|error| format!("parse: {error}"))?;
+        let relations = packet["relations"]
+            .as_array_mut()
+            .ok_or("fixture relations must be an array")?;
+        assert!(!relations.is_empty(), "fixture must carry a relation");
+        for relation in relations.iter_mut() {
+            relation["relation_kind"] = serde_json::json!("file_proximity");
+        }
+        packet["packet_status"] = serde_json::json!("partial");
+        serde_json::to_string(&packet).map_err(|error| format!("serialize: {error}"))?
+    };
+
+    for (label, text) in [
+        ("file_proximity only", proximity_only),
+        (
+            "no relations",
+            partial_packet_with_relations(serde_json::json!([]))?,
+        ),
+    ] {
+        let findings = findings_from_packet(&text)?;
+        assert!(
+            !findings.is_empty(),
+            "{label}: the change must still project"
+        );
+        for finding in &findings {
+            assert_eq!(
+                finding.class,
+                ExposureClass::StaticUnknown,
+                "{label}: a partial packet with no change-linked relation must be static_unknown"
+            );
+            assert!(finding.canonical_gap.is_none(), "{label}: no canonical gap");
+            assert!(
+                !finding.evidence.iter().any(|entry| {
+                    entry.starts_with("perl_suggested_test_location")
+                        || entry.starts_with("perl_suggested_assertion")
+                }),
+                "{label}: no repair evidence: {:?}",
+                finding.evidence
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Discrimination for the case above: the same file_proximity-only relations in
+/// a `complete` packet keep their advisory class, and a `partial` packet with a
+/// change-linked `direct_owner_call` keeps its earned class. Only the
+/// partial-and-unlinked combination collapses to `static_unknown`.
+#[test]
+fn static_unknown_for_partial_unlinked_packets_does_not_swallow_linked_or_complete()
+-> Result<(), String> {
+    use crate::domain::ExposureClass;
+    let (complete_class, _) = first_finding_misses(
+        &EXACT_RETURN_PACKET.replace("\"direct_owner_call\"", "\"file_proximity\""),
+    )?;
+    assert_eq!(complete_class, ExposureClass::ReachableUnrevealed);
+    let (partial_linked_class, _) = first_finding_misses(&EXACT_RETURN_PACKET.replace(
+        "\"packet_status\": \"complete\"",
+        "\"packet_status\": \"partial\"",
+    ))?;
+    assert_eq!(partial_linked_class, ExposureClass::WeaklyExposed);
+    Ok(())
+}
+
 /// The emitted verify command must belong to the selected test (keyed by
 /// `test_id`), never a different test's runner. EXACT_RETURN_PACKET's verify
 /// command is `prove t/app.t` scoped to `test:t/app.t:test_discount_threshold`.

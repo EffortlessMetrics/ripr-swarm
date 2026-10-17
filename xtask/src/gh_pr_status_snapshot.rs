@@ -44,7 +44,7 @@ impl Subject {
 
 // Keep full-fact collection on gh's existing shape/pagination path. gh 2.46 supports
 // headRefOid here, but baseRefOid is a GraphQL field, not a pr-view JSON field.
-pub(crate) const VIEW_FIELDS: &str = "number,title,isDraft,mergeStateStatus,headRefName,headRefOid,baseRefName,reviewDecision,latestReviews,comments,statusCheckRollup";
+pub(crate) const VIEW_FIELDS: &str = "number,title,isDraft,mergeStateStatus,headRefName,headRefOid,baseRefName,reviewDecision,latestReviews,reviews,comments,statusCheckRollup";
 const IDENTITY_QUERY: &str = "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){number headRefOid baseRefOid baseRefName}}}";
 
 fn collect_identity(

@@ -25,6 +25,18 @@ The page is generated. A unit test that CI requires fails when the page no longe
 
 46 bars. ripr meets 16, is below the bar on 25, and has not measured 5. Bold values miss their bar. A comparable trend shows the baseline revision and prior value it compares. A cross-class trend shows the earlier runner class and, when available, its prior value; it does not compare measurements. A measured row with no earlier measurement is a first measurement. Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them.
 
+By board, so the weak areas show before the full table:
+
+| Board | Meets | Below | Not measured | Failed |
+| --- | --- | --- | --- | --- |
+| Speed and memory | 0 | 4 | 0 | 0 |
+| CI adoption | 1 | 1 | 1 | 0 |
+| Trust | 8 | 9 | 2 | 0 |
+| Pasted commands | 2 | 0 | 0 | 0 |
+| First run | 2 | 3 | 2 | 0 |
+| corpus | 2 | 0 | 0 | 0 |
+| ranking | 1 | 8 | 0 | 0 |
+
 | Board | Bar | Now | Target | Status | Trend |
 | --- | --- | --- | --- | --- | --- |
 | Speed and memory | Cold `ripr pilot` to first useful result | **77.6 s** | <= 30.0 s | below the bar | earlier receipt on another runner class `local-linux-x86_64-4cpu` (was 237.7 s) |

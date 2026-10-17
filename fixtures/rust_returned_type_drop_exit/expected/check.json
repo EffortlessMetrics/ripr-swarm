@@ -1,0 +1,209 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_returned_type_drop_exit/input",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":1,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:fe8b0431e963c3950871dd83582beaa181085ce4aacce3dd19dcd2ee2d5b3645","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:field_construction:7199daa5",
+      "canonical_gap_id": "gap:rust:src/lib.rs:make:field_construction:field_construction:n_x*3",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:make:field_construction:field_construction:n_x*3",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "make",
+        "behavior_kind": "field_construction",
+        "probe_kind": "field_construction",
+        "normalized_discriminator": "n_x*3"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:field_construction:7199daa5",
+        "family": "field_construction",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 13,
+        "expression": "n: x * 3"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach make: makes"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches constructed field: n: x * 3"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach make: makes", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches constructed field: n: x * 3", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches constructed field: n: x * 3 (line 13)", "related test src/lib.rs:21 makes uses strong whole object equality oracle: assert_eq!(make(4), Cfg { n: 12 });", "source assertion argument value 12 at line 22", "source function argument value x = 4 at line 22", "missing discriminator n: x * 3: No field-value assertion observes the constructed field: n: x * 3"],
+      "flow_sinks": [
+        {"kind":"struct_field","text":"n: x * 3","line":13}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches constructed field: n: x * 3", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach make: makes"],
+      "missing": ["Missing discriminator value: n: x * 3", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "22": "assert_eq!(make(4), Cfg { n: 12 });"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 22,
+            "value": "12",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 22,
+            "value": "x = 4",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+          {
+            "value": "n: x * 3",
+            "reason": "No field-value assertion observes the constructed field: n: x * 3",
+            "flow_sink": {"kind":"struct_field","text":"n: x * 3","line":13}
+          }
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 22,
+          "value": "12",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 22,
+          "value": "x = 4",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+        {
+          "value": "n: x * 3",
+          "reason": "No field-value assertion observes the constructed field: n: x * 3",
+          "flow_sink": {"kind":"struct_field","text":"n: x * 3","line":13}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "makes",
+          "file": "src/lib.rs",
+          "line": 21,
+          "oracle_strength": "strong",
+          "oracle_kind": "whole_object_equality",
+          "oracle": "assert_eq!(make(4), Cfg { n: 12 });",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "missing_exact_assertion",
+          "why": "no assertion pins `n: x * 3`"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "whole_object_equality",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:d6c89ab3",
+      "canonical_gap_id": "gap:rust:src/lib.rs:make:return_value:return_value:cfg_n_x*3",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:make:return_value:return_value:cfg_n_x*3",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "make",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "cfg_n_x*3"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:d6c89ab3",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 13,
+        "expression": "Cfg { n: x * 3 }"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach make: makes"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: Cfg { n: x * 3 }"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: whole-object equality assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach make: makes", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: Cfg { n: x * 3 }", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: whole-object equality assertion", "local flow reaches returned value: Cfg { n: x * 3 } (line 13)", "related test src/lib.rs:21 makes uses strong whole object equality oracle: assert_eq!(make(4), Cfg { n: 12 });", "source assertion argument value 12 at line 22", "source function argument value x = 4 at line 22"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"Cfg { n: x * 3 }","line":13}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: Cfg { n: x * 3 }", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach make: makes", "Strong oracle found: whole-object equality assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "22": "assert_eq!(make(4), Cfg { n: 12 });"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 22,
+            "value": "12",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 22,
+            "value": "x = 4",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 22,
+          "value": "12",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 22,
+          "value": "x = 4",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "makes",
+          "file": "src/lib.rs",
+          "line": 21,
+          "oracle_strength": "strong",
+          "oracle_kind": "whole_object_equality",
+          "oracle": "assert_eq!(make(4), Cfg { n: 12 });",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "whole_object_equality",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

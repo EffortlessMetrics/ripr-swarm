@@ -371,8 +371,8 @@ impl TypeScriptAdapter {
                 all_owners.extend(extract_owners(relative, source));
             }
         }
-        // Build tsconfig.json alias map when opt-in flag is enabled (RIPR-SPEC-0099).
-        // fail-closed: None when flag is off, when tsconfig is absent, when extends/
+        // Build tsconfig.json alias map unless explicitly opted out (RIPR-SPEC-0099).
+        // fail-closed: None when the flag is explicitly set false, when tsconfig is absent, when extends/
         // references are present, or when any other parse/resolution failure occurs.
         // A capped-read size limit on the config itself is surfaced below as a
         // named limitation rather than failing silently closed.
@@ -380,8 +380,8 @@ impl TypeScriptAdapter {
             if options.resolve_tsconfig_paths {
                 load_alias_map_with_read_error(&options.root)
             } else {
-                // Flag off: no gap — the MapUnavailable cause carries the
-                // honest "enable the flag" advice for this path (#4106-B).
+                // Flag explicitly false: no gap — the MapUnavailable cause carries the
+                // honest "set the flag back to true" advice for this path (#4106-B).
                 (None, None, None)
             };
         // In-workspace package names resolve whether or not the tsconfig
@@ -686,7 +686,7 @@ impl TypeScriptAdapter {
         let mut limitations = parse_limits
             .iter()
             .map(|limit| {
-                AnalysisLimitation::new(
+                let limitation = AnalysisLimitation::new(
                     AnalysisLimitationKind::LanguageScopeUnsupported,
                     AnalysisStage::LanguageAdapter,
                     AnalysisRecovery::new(
@@ -694,9 +694,38 @@ impl TypeScriptAdapter {
                         "Fix the TypeScript or JavaScript parse error, then re-run the analysis.",
                     )?,
                 )
-                .with_path(limit.file.to_string_lossy())?
-                .with_affected_items(1)?
-                .with_detail(limit.reason.clone())
+                .with_affected_items(1)?;
+                // Legal Unix names such as `C:calc.ts` are not portable DTO
+                // paths. Retain the syntax limitation and source identity,
+                // matching the Rust/Python fallback. Preserve path identity
+                // before truncation so distinct failures cannot deduplicate
+                // merely because their displayed source samples are equal.
+                match limitation.clone().with_path(limit.file.to_string_lossy()) {
+                    Ok(with_path) => with_path.with_detail(limit.reason.clone()),
+                    Err(_) => {
+                        use sha2::{Digest, Sha256};
+                        let identity = Sha256::digest(limit.file.as_os_str().as_encoded_bytes());
+                        let prefix = format!("source_path_sha256:{identity:x}; ");
+                        let source = limit.file.to_string_lossy();
+                        let source_marker = "; source: ";
+                        let max_chars =
+                            crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS;
+                        // A parser diagnostic can include a long user-written
+                        // name. Reserve a source sample before bounding it,
+                        // including when the raw cause exceeds the DTO limit.
+                        let reason_budget = max_chars
+                            - prefix.chars().count()
+                            - source_marker.len()
+                            - source.chars().count().min(64);
+                        let reason = limit.reason.chars().take(reason_budget).collect::<String>();
+                        let source_budget = max_chars
+                            - prefix.chars().count()
+                            - reason.chars().count()
+                            - source_marker.len();
+                        let sample = source.chars().take(source_budget).collect::<String>();
+                        limitation.with_detail(format!("{prefix}{reason}{source_marker}{sample}"))
+                    }
+                }
             })
             .collect::<Result<Vec<_>, String>>()?;
         // Unreadable CHANGED files: their added lines are never classified

@@ -1,0 +1,21 @@
+schema_version = "2.0"
+id = "ripr.slice.returned-type-drop-plain.v1"
+generation = 1
+source_issue = "issue:8480"
+design_reference = "RIPR-SPEC-0197"
+change_class = "behavior_change"
+claim_boundary = """An owner return pin (including the whole-value field pin) cannot be credited when a record type the owner's return expression constructs has a Drop impl in the workspace whose body is non-empty: dropping the returned value while unwinding from a failed assertion may exit the process before the failure is reported, so the finding stays weakly_exposed. Empty or comment-only Drop bodies keep the pin exposed. The generic oracle credit for the return_value finding on the same line is unchanged."""
+non_goals = ["the generic oracle path that credits return_value findings", "field types with Drop impls", "owner-side exit expressions in the return value", "new classification vocabulary or probe families", "runtime execution"]
+return_conditions = ["Return to root if a plain (empty) Drop loses exposed because of this rule."]
+owned_seams = ["seam:ripr:analysis:classify:owner-pin"]
+shared_seams = []
+forbidden_seams = ["seam:ripr:domain:classification-vocabulary", "seam:ripr:output:schema"]
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0197"
+requirement_generation = 1
+[implementation_claim]
+status = "implemented"
+[evidence]
+state = "outstanding"
+[support_claim]
+state = "unchanged"

@@ -83,6 +83,16 @@ echo "$(cat $f.sha256)  $f" | { sha256sum -c - || shasum -a 256 -c -; } && tar x
 ripr check
 ```
 
+The macOS archives are not signed or notarized. A `curl` and `tar` download like
+the one above normally carries no quarantine attribute, so `./ripr` runs
+without a prompt. A browser, AirDrop or mail download of the archive is
+quarantined, and Gatekeeper then blocks the extracted `ripr` with a dialog such
+as "Apple could not verify "ripr" is free of malware" or ""ripr" cannot be
+opened because the developer cannot be verified". Verify the checksum first,
+then clear the attribute with `xattr -d com.apple.quarantine ./ripr` (or
+`xattr -dr com.apple.quarantine <extracted-dir>`). Do that only for an archive
+whose `.sha256` matched.
+
 `cargo xtask first-run --install-archive 0.10.0` replays this route end to end
 and times it. With Rust 1.95 or newer you can instead run `cargo install ripr`,
 which compiles from source. Once the matching 0.11.0 release asset is published,
@@ -120,9 +130,10 @@ checkout of the base branch, edit a tracked source file, then run `ripr check`
 to inspect that change. Stage a new file with `git add -N PATH` to include it.
 No commit or configuration file is needed for this edit-and-check loop.
 
-Installing from Git compiles in the workspace, with its fat-LTO release profile.
-A `cargo build --release` there took about 12 minutes (751 s) on a cold 4-core
-Linux container in October 2026 (`cargo install ripr` for 0.10.0 took about 2
+Installing from Git compiles in the workspace, with its thin-LTO release profile
+(16 codegen units); a cold `cargo build --release` there took about 6 minutes
+(366 s) on a 4-core Linux container in October 2026, against 17 minutes (1037 s)
+for the earlier fat-LTO single-codegen-unit profile (`cargo install ripr` for 0.10.0 took about 2
 minutes on an earlier run). The packaged 0.11.0 crate drops that profile, so
 `cargo install ripr --locked` should build in about 4.6 minutes (275 s) once
 0.11.0 is on crates.io (measured by building the packaged crate with
@@ -162,6 +173,8 @@ ripr check
 `ripr context` commands for the top finding; add `--format json` for
 machine-readable results that embed the same bounded `canonical_next_action`
 (class, selected item, root, diff source, and followable route).
+`ripr doctor --json` carries the same `canonical_next_action` when setup needs
+a precise recovery, matching the human Safe-next-action line.
 For whole-repository exploration or a supported repair route, use
 `ripr pilot --root .`; it names one supported repair or explains why none is
 ready. Run the follow-up
