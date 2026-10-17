@@ -93,6 +93,22 @@ pub fn lock(n: u8) -> Vec<u8> {
     if n > 6 { Vec::new(n) } else { Vec::new(0) }
 }
 
+pub trait Sink {
+    fn put(&mut self, n: usize);
+}
+
+pub fn drain(sink: &mut dyn Sink, n: usize) -> usize {
+    if n > 12 { n } else { sink.put(0); 0 }
+}
+
+pub fn fill(buf: &mut [u8], n: usize) -> usize {
+    if n > 13 { n } else { buf.len() }
+}
+
+pub fn rename(name: &mut str, n: usize) -> usize {
+    if n > 14 { n } else { name.len() }
+}
+
 pub mod shapes {
     pub struct S {
         pub v: u8,
@@ -271,6 +287,11 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
         // A type imported under a std name is not assumed comparable.
         ("n > 6", Expect::StopsAtRiprTodo),
         ("n > 7", Expect::Refused("owner_unsupported")),
+        // Unsized `&mut` targets get an owned stand-in the argument coerces
+        // from: `Box<dyn Sink>`, `Vec<u8>`, `String`.
+        ("n > 12", Expect::StopsAtRiprTodo),
+        ("n > 13", Expect::StopsAtRiprTodo),
+        ("n > 14", Expect::StopsAtRiprTodo),
         // A trait method with a `&self` receiver is called through
         // `<Parser as std::fmt::Display>::fmt(&subject, ..)`.
         ("self.max > 3", Expect::StopsAtRiprTodo),
