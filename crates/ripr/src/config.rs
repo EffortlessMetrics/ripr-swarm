@@ -147,7 +147,7 @@ enabled = ["rust"]
 # enabled = ["typescript"] in [languages] and the `lang-typescript` Cargo feature.
 #
 # [typescript]
-# resolve_tsconfig_paths = false
+# resolve_tsconfig_paths = true  # default; set false to leave tsconfig `paths` aliases unresolved
 
 # Optional Perl adapter settings (fact-packet consumer, preview — see Campaign 31 #1379).
 #
@@ -707,7 +707,7 @@ impl RiprConfig {
         }
         if let Some(ts) = raw.typescript {
             config.typescript = TypescriptConfig {
-                resolve_tsconfig_paths: ts.resolve_tsconfig_paths.unwrap_or(false),
+                resolve_tsconfig_paths: ts.resolve_tsconfig_paths.unwrap_or(true),
             };
         }
         if let Some(perl) = raw.perl {
