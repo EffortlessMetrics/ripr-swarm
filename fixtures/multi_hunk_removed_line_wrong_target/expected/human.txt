@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/multi_hunk_removed_line_wrong_target/input
 
-Summary: 5 probes (0 exposed, 0 weak, 0 unrevealed, 5 no path); 5 of 5 findings unsuppressed
+Summary: 5 probes (0 exposed, 0 weak, 0 unrevealed, 5 no path); 5 of 5 findings unsuppressed (1 base-side evidence, not candidate edit targets)
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 6 changed line(s), 4 candidate line(s), 5 probe(s), 5 finding(s)
@@ -30,7 +30,7 @@ Next: drill into the top finding:
   ripr context --root <cwd>/fixtures/multi_hunk_removed_line_wrong_target/input --diff <cwd>/fixtures/multi_hunk_removed_line_wrong_target/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:17e03c34
 
 Hidden:
-  3 lower-priority finding(s) omitted; 1 base-side evidence, not candidate edit targets.
+  4 finding(s) omitted: 3 lower-priority, 1 base-side evidence (not candidate edit targets).
     - ./src/lib.rs:2 (no path, base-side)
     - ./src/lib.rs:3 (no path, lower-priority candidate)
     - ./src/lib.rs:4 (no path, lower-priority candidate)
