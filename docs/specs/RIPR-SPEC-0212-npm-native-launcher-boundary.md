@@ -9,7 +9,7 @@ Created: 2026-09-29
 Renumbered: from RIPR-SPEC-0181 after main landed the inline test-module
 region cage spec under RIPR-SPEC-0181 first.
 
-Linked issues: #4491, #4710, #7630
+Linked issues: #4491, #4710, #7630, #8423
 
 Linked PRs: #4716
 
@@ -50,6 +50,9 @@ The package `@effortlessmetrics/ripr`:
 - retains the typed missing-native-executable reason, package, version and path,
   and advises matching-tarball restoration or exact-version launcher reinstall
   in the owning npm environment with optional dependencies enabled;
+- retains the POSIX non-executable-file refusal with the native package, exact
+  version and executable path, advising matching-tarball restoration with
+  executable permissions preserved or the same exact-version reinstall;
 - rejects unsupported platforms and Linux libc without suggesting that reinstall
   supplies an unsupported payload;
 - reports direct packaged-library `MODULE_NOT_FOUND` resolution failure on
@@ -74,6 +77,11 @@ The package `@effortlessmetrics/ripr`:
   range or target-set drift;
 - native resolution controls reject missing, mismatched, escaping, symlinked,
   directory, and non-executable payloads;
+- the four registered POSIX target rows retain the non-executable-file typed
+  refusal and exact recovery advice; a host public-bin control before/after a
+  space/Unicode directory move checks foreign-CWD/decoy isolation, blank stdout,
+  exit 1 and restored launch (synthetic Node transport bytes, not native RIPR
+  platform qualification); these controls are mandatory on POSIX;
 - a real POSIX subprocess control sends `SIGTERM` only to the launcher and
   observes exactly one child delivery with no surviving child;
 - a real POSIX escalation control sends `SIGINT` then `SIGTERM` only to the
@@ -153,6 +161,8 @@ The package `@effortlessmetrics/ripr`:
 - `packaging/npm/launcher/test/launcher.test.cjs::public bin identifies corrupt package metadata and recovers after restoration`
 - `packaging/npm/launcher/test/launcher.test.cjs::public bin retains missing-manifest and missing-exports reasons without claiming package absence`
 - `packaging/npm/launcher/test/launcher.test.cjs::rejects missing, wrong-version, wrong-target, traversal, symlink, directory, and non-executable payloads`
+- `packaging/npm/launcher/test/launcher.test.cjs::non-executable native payload gives exact recovery for each POSIX target`
+- `packaging/npm/launcher/test/launcher.test.cjs::public bin non-executable recovery survives a directory move and restores launch`
 - `packaging/npm/launcher/test/launcher.test.cjs::missing native executable gives exact recovery for every registered target`
 - `packaging/npm/launcher/test/launcher.test.cjs::public bin missing-native failure gives exact recovery after a directory move`
 - `packaging/npm/launcher/test/launcher.test.cjs::public bin simulated unsupported platforms fail without reinstall advice or stdout`

@@ -71,6 +71,19 @@ distinct filesystem names. The same path identity survives construction,
 sorting/deduplication, serialization and deserialization, so recovery names the
 actual unavailable file and preview counts exclude only that file (#5110).
 
+TypeScript parse failures on legal Unix drive-like source names retain their
+syntax limitation and static-unknown finding (#8424). If the portable DTO cannot
+represent the source path, omit that path field and name the source in bounded
+detail, matching the Rust/Python parse-failure fallback. This does not disable
+the adapter, change its syntax-limit taxonomy, or promote its evidence.
+The fallback detail keeps a SHA-256 identity of the native source-path bytes and
+the parser cause before the bounded source sample. A long path cannot consume
+the entire cause or make distinct file failures deduplicate solely because their
+displayed samples share a prefix.
+Reserve space for the source sample before bounding a long parser cause, and
+bound that cause before DTO detail validation. Character budgets apply to both
+ASCII and Unicode diagnostics; a long cause must not erase source identification.
+
 Human output must name incomplete or unsupported analysis before any empty
 finding message and must state that zero findings is not a clean result when a
 limitation exists. JSON/status output must expose the same DTO and derive

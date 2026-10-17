@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_json_ignored_result (3)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_ignored_result --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

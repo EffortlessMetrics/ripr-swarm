@@ -30,7 +30,6 @@ Evidence
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Discriminator unconfirmed: no assertion in a test that calls or otherwise reaches this function names the changed arm; a test that only shares its file or module, and calls nothing that reaches the function, cannot confirm the arm (observation_unverified)
   - local flow reaches match arm result: Unit::Fortnight => (line 23)
-  - related test src/lib.rs:32 seconds_total uses smoke smoke only oracle: Unit::from_str(s).unwrap(); misses: assertion too weak to tell the old behavior from the new
   - related test src/lib.rs:32 seconds_total uses strong exact value oracle: assert_eq!(total, 1_814_400); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - related test src/lib.rs:41 from_str_fortnight uses strong exact value oracle: assert!(matches!(Unit::from_str("fortnight"), Ok(Unit::Fortnight))); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source assertion argument value 1_814_400 at line 37

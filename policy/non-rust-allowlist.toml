@@ -758,6 +758,15 @@ classification = "fixture"
 reason = "Fixture-backed base/head attribution rules for canonical evidence comparison."
 covered_by = ["cargo test -p ripr --test causal_delta_fixture", "cargo xtask check-file-policy"]
 
+[[allow]]
+glob = "crates/ripr/tests/data/uncertain-delivery/receipt.json"
+kind = "assertion_helper_fixture"
+owner = "analysis/test-helpers"
+surface = "fixtures"
+classification = "fixture"
+reason = "Version-pinned #4478/#7818 comparison receipt and exact diff consumed by the public API helper witness."
+covered_by = ["cargo test -p ripr --test uncertain_delivery_helper", "cargo xtask check-file-policy"]
+
 # ---------------------------------------------------------------------------
 # Portable consumer (Python stdlib packet transport)
 # ---------------------------------------------------------------------------
@@ -911,3 +920,12 @@ surface = "ci"
 classification = "metadata"
 reason = "#4988/#7164: exact source-owned product member declaration recognized by the reviewed central ripr-product transport; preserves native producer paths and bounded custody without authorizing arbitrary .ci files."
 covered_by = ["cargo test -p xtask --example contabo_product_proof product_members_are_bound_to_actual_producer_paths"]
+
+[[allow]]
+glob = "benchmarks/stub_quality/cases/**/Cargo.toml"
+kind = "fixture_input"
+owner = "analysis-fixtures"
+surface = "fixtures"
+classification = "fixture"
+reason = "Stub quality corpus crates are analyzed inputs for judging suggested tests (#8361)."
+covered_by = ["cargo xtask check-file-policy"]

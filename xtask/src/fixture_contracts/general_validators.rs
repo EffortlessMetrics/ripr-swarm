@@ -1959,6 +1959,87 @@ fn validate_issue_lifecycle_attempts_fixture_corpus_at(
     Ok(())
 }
 
+pub(crate) fn validate_issue_lifecycle_real_rows_corpus(
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    let root = Path::new("fixtures/issue_lifecycle_real_rows");
+    for required in [
+        "SPEC.md",
+        "corpus.json",
+        "provenance.json",
+        "controls.json",
+        "fresh_root_reconstruction.json",
+    ] {
+        let path = root.join(required);
+        if !path.exists() {
+            violations.push(format!(
+                "issue lifecycle real rows corpus is missing {}",
+                normalize_path(&path)
+            ));
+        }
+    }
+    if !root.join("snapshots").is_dir() {
+        violations.push(
+            "issue lifecycle real rows corpus is missing its snapshots directory".to_string(),
+        );
+    }
+    let spec_path = root.join("SPEC.md");
+    if spec_path.exists() {
+        let body = read_text_lossy(&spec_path)?;
+        if !body.contains(crate::issue_lifecycle_real_rows::ISSUE_LIFECYCLE_REAL_ROWS_SPEC) {
+            violations.push(format!(
+                "issue lifecycle real rows SPEC.md must name its {} decision",
+                crate::issue_lifecycle_real_rows::ISSUE_LIFECYCLE_REAL_ROWS_SPEC
+            ));
+        }
+        for heading in ["## Given", "## When", "## Then", "## Must Not"] {
+            if !body.contains(heading) {
+                violations.push(format!(
+                    "issue lifecycle real rows SPEC.md must contain the `{heading}` section"
+                ));
+            }
+        }
+    }
+    let corpus = match crate::issue_lifecycle_real_rows::load_real_rows_corpus() {
+        Ok(corpus) => corpus,
+        Err(error) => {
+            violations.push(format!(
+                "issue lifecycle real rows corpus is invalid: {error}"
+            ));
+            return Ok(());
+        }
+    };
+    let provenance = match crate::issue_lifecycle_real_rows::load_real_rows_provenance() {
+        Ok(provenance) => provenance,
+        Err(error) => {
+            violations.push(format!(
+                "issue lifecycle real rows provenance is invalid: {error}"
+            ));
+            return Ok(());
+        }
+    };
+    if let Err(error) =
+        crate::issue_lifecycle_real_rows::verify_real_rows_bindings(root, &corpus, &provenance)
+    {
+        violations.push(format!("issue lifecycle real rows binding failed: {error}"));
+    }
+    match crate::issue_lifecycle_real_rows::load_fresh_root_receipt() {
+        Ok(receipt) => {
+            if let Err(error) = crate::issue_lifecycle_real_rows::verify_fresh_root_receipt(
+                &corpus,
+                &provenance,
+                &receipt,
+            ) {
+                violations.push(format!(
+                    "issue lifecycle fresh-root reconstruction receipt failed: {error}"
+                ));
+            }
+        }
+        Err(error) => violations.push(error),
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_issue_lifecycle_intake_fixture_corpus(
     violations: &mut Vec<String>,
 ) -> Result<(), String> {
