@@ -331,6 +331,13 @@ fn run(manifest: &Manifest, options: &Options) -> Result<(), String> {
     let report = build_report(manifest, &rows);
     write_report(&report)?;
     println!("real-crate-dogfood: wrote {REPORT_JSON} and {REPORT_MD}");
+    let not_ok = rows.iter().filter(|row| row["status"] != "ok").count();
+    if not_ok > 0 {
+        return Err(format!(
+            "real-crate-dogfood: {not_ok} of {} case(s) did not run to completion; see {REPORT_MD}",
+            rows.len()
+        ));
+    }
     Ok(())
 }
 
