@@ -1,0 +1,2 @@
+<!-- section: Added -->
+- `ripr doctor` warns when ripr's own artifacts under `target/ripr` are already tracked in the git index, even when a `.gitignore` rule covers them, and names `git rm --cached -r -- target/ripr` as the fix. `doctor --json` carries the same evidence as `cache.artifact_tracked` (`none_tracked`, `not_checked`, or `tracked` with the warning line), separate from `cache.artifact_ignore` (#8276).
