@@ -217,15 +217,28 @@ withholds that gap under `rust_debug_assertion_profile_unresolved` when:
 - the finding is `weakly_exposed` or `reachable_unrevealed`, from a
   `return_value` or `error_path` probe, with no `static_limit_kind`, and its
   owner is a free function;
+- the owner pin's own owner-side gate holds (`OwnerReturnPin::establish`):
+  the changed expression is a return path the pin could observe;
 - a related row with a `direct_owner_call` relation, not an unmatched
   examined test, binds (by name, file and start line) a test without
-  `#[ignore]` whose body (comments and strings masked) invokes
-  `debug_assert_eq!`, bare or under a `std` or `core` root, with one
-  compared operand that is exactly a bare `owner(..)` call and another that
-  does not call the owner (an optional third operand is the message).
+  `#[ignore]` whose body (comments and strings masked) does not bind the
+  owner name (`use`, `fn`, `let`) and has, as a statement of the test's own
+  block (not in a closure, branch or nested item), `debug_assert_eq!`, bare
+  or under a `std` or `core` root, with one compared operand that is
+  exactly a bare `owner(..)` call and another (the expected value) that
+  does not call the owner (an optional third operand is the message, and a
+  trailing comma is allowed);
+- the expected value is one only the changed expression produces: for a
+  changed `Err(..)` constructor (any family) an `Err(..)` naming the changed
+  variant, and none for an `error_path` change ripr cannot name; beside
+  another exit (`return`, `?`) an `Ok(..)` or `Some(..)`; otherwise anything
+  but `Err(..)` or `None`.
 
-It reads the test body instead of oracle facts, so it never feeds the
-shared discriminate decision and never upgrades a class. It runs after the
+The test side reads the test body instead of oracle facts, so it never
+feeds the shared discriminate decision and never upgrades a class. The
+expected-value rule is a bounded mirror of the owner pin's own reading,
+which binds to parser-collected `assert_eq!` facts; where they differ it
+keeps the gap. It runs after the
 `#[should_panic]` limit and before `withhold_unsupported_gap`.
 
 Decision (#8051, reversible): withhold rather than credit. Crediting would
@@ -237,10 +250,14 @@ RIPR-SPEC-0219), which scores `static_unknown` as `abstained`. The first cut
 collected `debug_` forms as parser oracles, which let predicate, match-arm
 and field-projection paths credit them as `exposed` and filled the empty
 assertion list the `#[should_panic]` rule requires; review rejected it, so
-the rule reads the body. Everything else keeps the gap: `debug_assert_ne!`,
-`debug_assert!` in any form, an equality that does not compare the owner
-call alone (`debug_assert_eq!(2 + 2, 4)`, `one() + 1`), an ignored test,
-methods, and predicate, match-arm, field and side-effect probes.
+the rule reads the body. A second review found the body read
+withheld gaps an `assert_eq!` would also keep (an `Ok(1)` pin of a changed
+early `Err` exit, a check in a closure never called), so the owner-side gate,
+the statement position and the expected-value rule were added. Everything
+else keeps the gap: `debug_assert_ne!`, `debug_assert!` in any form, an
+equality that does not compare the owner call alone
+(`debug_assert_eq!(2 + 2, 4)`, `one() + 1`), an ignored test, methods, and
+predicate, match-arm, field and side-effect probes.
 
 ## Scope boundary
 

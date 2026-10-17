@@ -467,7 +467,7 @@ pub(crate) struct CachedSeamLimitInfo {
 /// no standalone `1.79` is reusable. Old entries keep that field's gap.
 /// `1.81`: direct test-required helpers no longer seed production seams (#3213).
 /// `1.82`: name unsupported parameter-field match selectors without changing proof (#8479).
-/// `1.83`: a strong `debug_` assertion withholds the gap under
+/// `1.83`: a `debug_assert_eq!` owner pin withholds the gap under
 /// `rust_debug_assertion_profile_unresolved` (#8051). Old entries keep it.
 pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.83";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
@@ -910,9 +910,7 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `1.42`: binding candidates include the names a macro definition's body
 /// defines or imports (#5991). `1.41` candidates omit them.
 /// `1.43`: direct test-required functions retain evidence-only roles (#3213).
-/// `1.44`: the parser collects `debug_assert!`, `debug_assert_eq!` and
-/// `debug_assert_ne!` as assertions (#8051); `1.43` facts omit them.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.44";
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.43";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -4409,9 +4407,7 @@ mod tests {
         // 1.39 -> 1.40: field-assignment probe shapes (RIPR-SPEC-0228).
         // 1.40 -> 1.41: trusted `expect_file` binding candidates (#6578).
         // 1.41 -> 1.42: macro-body binding candidates (#5991).
-        // 1.42 -> 1.43: direct test-required helper roles (#3213).
-        // 1.43 -> 1.44: `debug_` assertion macros are assertions (#8051).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.44");
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.43");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -4519,7 +4515,7 @@ mod tests {
         // and returned-element field pins (RIPR-SPEC-0225 decision 9); no
         // standalone 1.79 is reusable.
         // 1.81 -> 1.82: field-selector limitation metadata (#8479).
-        // 1.82 -> 1.83: the `debug_` assertion profile limit (#8051).
+        // 1.82 -> 1.83: the `debug_assert_eq!` profile limit (#8051).
         assert_eq!(CACHE_SCHEMA_VERSION, "1.83");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,

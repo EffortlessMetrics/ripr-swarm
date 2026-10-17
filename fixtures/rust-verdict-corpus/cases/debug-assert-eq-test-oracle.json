@@ -42,7 +42,7 @@
   },
   "reasoning": "a_kilo_parcel_costs_six_fifty pins shipping_cents(1000) == 650 with debug_assert_eq!, so either mutant fails under cargo test. Under cargo test --release both mutants pass because the check is compiled out, so the label depends on the test profile; a gap verdict would be false.",
   "labeling_observation": {
-    "ripr_commit": "3fc24dfc3",
+    "ripr_commit": "445b02456",
     "full_checkout_verdict": "limited",
     "full_checkout_classifications": [
       "static_unknown"

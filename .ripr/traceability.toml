@@ -16092,6 +16092,8 @@ tests = [
   "crates/ripr/tests/debug_assertion_limit.rs::a_debug_assert_eq_owner_pin_reads_as_a_profile_limit",
   "crates/ripr/tests/debug_assertion_limit.rs::standard_assertions_and_other_debug_checks_keep_their_class",
   "crates/ripr/tests/debug_assertion_limit.rs::a_debug_check_never_earns_exposed_in_any_family",
+  "crates/ripr/tests/debug_assertion_limit.rs::an_error_path_pin_reads_as_a_profile_limit_only_when_it_names_the_variant",
+  "crates/ripr/tests/debug_assertion_limit.rs::a_should_panic_test_with_a_debug_check_keeps_its_panic_outcome_limit",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::analyzer_limit_refusals_are_limits_of_ripr_reading",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::refusals_that_can_keep_an_assertion_from_running_are_not_limits",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_outcome_settling_attribute_is_the_refusal_wherever_it_sits",
