@@ -268,6 +268,20 @@ exact snapshot binding and projection remain separate work. Independent exact
 field assertions can still supply strong discrimination. The delivered
 expect-test equality-operand admission retains its existing behavior.
 
+For a direct free-function `return_value` seam, an Insta snapshot category
+alone does not establish discrimination (#3161/#6642). A supported immediate
+snapshot statement must observe the whole direct owner call or a plain local
+captured from that owner through the shared free-call identity authority.
+Parentheses and immutable borrowing preserve that subject; snapshot names and
+inline expected strings do not supply it. Shadowed, reassigned, mutably borrowed
+or escaped result bindings remain weak. Raw snapshot observations remain
+visible, and an independent exact equality or existing expect-test equality
+can still supply strong discrimination. This subject-only gate reuses the
+run-scoped parser and binding invalidation owner; it does not read expected
+files, establish serializer/settings identity, admit field projections, or
+replace method-receiver attribution. Unsupported overloads and indirect value
+transfers do not gain snapshot credit through this gate.
+
 A `field_construction` seam whose related test already activates the owner and
 weakly observes one constructed field on a parser-backed *direct* owner-result
 binding emits a compatible `RequiredDiscriminator::FieldValue` missing fact

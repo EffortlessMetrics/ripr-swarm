@@ -9,6 +9,10 @@
 //! matches this seam's owner; `super::` itself is not a whitelist, and a
 //! leading `::` extern-prelude path is not a local module.
 
+mod return_snapshot;
+
+pub(super) use return_snapshot::snapshot_observes_owner;
+
 use super::record_field_name;
 use super::related_tests::call_text_contains_named_call;
 use super::related_tests::context::{CompactGripContext, CompactTest};
@@ -516,6 +520,16 @@ fn direct_owner_result_bindings(
     owner_name: &str,
     lines: &LineIndex,
 ) -> Vec<OwnerResultBinding> {
+    direct_result_bindings(function, lines, |initializer| {
+        initializer_is_direct_owner_call(initializer, owner_name)
+    })
+}
+
+fn direct_result_bindings(
+    function: &ast::Fn,
+    lines: &LineIndex,
+    is_owner_call: impl Fn(&ast::Expr) -> bool,
+) -> Vec<OwnerResultBinding> {
     let Some(statements) = function.body().and_then(|body| body.stmt_list()) else {
         return Vec::new();
     };
@@ -530,7 +544,7 @@ fn direct_owner_result_bindings(
         let Some(initializer) = binding.initializer() else {
             continue;
         };
-        if !initializer_is_direct_owner_call(&initializer, owner_name) {
+        if !is_owner_call(&initializer) {
             continue;
         }
         let line = binding
@@ -592,6 +606,14 @@ fn binding_invalidated_before(
         .find(|node| lines.line(node.text_range().start()) == assertion_line)
         .map(|node| node.text_range().start())
         .unwrap_or_else(|| function.syntax().text_range().end());
+    binding_invalidated_before_offset(function, binding, assertion_cutoff)
+}
+
+fn binding_invalidated_before_offset(
+    function: &ast::Fn,
+    binding: &OwnerResultBinding,
+    assertion_cutoff: ra_ap_syntax::TextSize,
+) -> bool {
     let start = binding.range_end;
     if start >= assertion_cutoff {
         return true;

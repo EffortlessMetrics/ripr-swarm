@@ -353,9 +353,9 @@ fn evidence_for_seam_with_context(
     let (activate, observed_values, missing_discriminators) =
         activate_evidence(seam, &related_indexed, context, owner_fn);
     let pin_syntax = crate::analysis::classify::OwnerPinSyntax::default();
-    let propagate = propagate_evidence(seam, &related, owner_fn, context.index, &pin_syntax);
+    let propagate = propagate_evidence(seam, &related, owner_fn, context, &pin_syntax);
     let observe = observe_evidence(&related);
-    let discriminate = discriminate_evidence(seam, &related, owner_fn, context.index, &pin_syntax);
+    let discriminate = discriminate_evidence(seam, &related, owner_fn, context, &pin_syntax);
 
     let related_tests: Vec<Arc<RelatedTestGrip>> = related_with_reason
         .iter()
@@ -437,9 +437,9 @@ pub(crate) fn compact_evidence_for_seam(
     let (activate, missing_discriminators) =
         compact_activate_evidence(seam, &related_indexed, context, owner_fn);
     let pin_syntax = crate::analysis::classify::OwnerPinSyntax::default();
-    let propagate = propagate_evidence(seam, &related, owner_fn, context.index, &pin_syntax);
+    let propagate = propagate_evidence(seam, &related, owner_fn, context, &pin_syntax);
     let observe = observe_evidence(&related);
-    let discriminate = discriminate_evidence(seam, &related, owner_fn, context.index, &pin_syntax);
+    let discriminate = discriminate_evidence(seam, &related, owner_fn, context, &pin_syntax);
     let statically_contradicted_related_tests = related
         .iter()
         .filter(|test| test_has_contradicted_assertion(test, owner_fn))
@@ -1888,7 +1888,7 @@ fn propagate_evidence(
     seam: &RepoSeam,
     related: &[&TestSummary],
     owner_fn: Option<&FunctionSummary>,
-    index: &RustIndex,
+    context: &CompactGripContext<'_>,
     pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
 ) -> StageEvidence {
     if related.is_empty() {
@@ -1904,7 +1904,7 @@ fn propagate_evidence(
     let any_oracle = related.iter().any(|t| !t.assertions.is_empty());
     let any_matching_sink = related
         .iter()
-        .any(|t| oracles_match_sink(seam, t, owner_fn, index, pin_syntax));
+        .any(|t| oracles_match_sink(seam, t, owner_fn, context, pin_syntax));
     let state = match (any_oracle, any_matching_sink) {
         (true, true) => StageState::Yes,
         (true, false) => StageState::Unknown,
@@ -1922,7 +1922,7 @@ fn oracles_match_sink(
     seam: &RepoSeam,
     test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,
-    index: &RustIndex,
+    context: &CompactGripContext<'_>,
     pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
 ) -> bool {
     test.assertions
@@ -1950,7 +1950,7 @@ fn oracles_match_sink(
             ExpectedSink::SideEffect => {
                 if direct_collection_mutation_receiver(seam.expression()).is_some() {
                     oracle_discriminates_seam_in_test(
-                        seam, oracle, test, owner_fn, index, pin_syntax,
+                        seam, oracle, test, owner_fn, context, pin_syntax,
                     )
                 } else {
                     matches!(oracle.kind, OracleKind::MockExpectation)
@@ -1986,7 +1986,7 @@ fn discriminate_evidence(
     seam: &RepoSeam,
     related: &[&TestSummary],
     owner_fn: Option<&FunctionSummary>,
-    index: &RustIndex,
+    context: &CompactGripContext<'_>,
     pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
 ) -> StageEvidence {
     if related.is_empty() {
@@ -2014,7 +2014,7 @@ fn discriminate_evidence(
             // RIPR-SPEC-0106 (Part B): for ErrorVariant seams, oracle_kind_matches_seam
             // is necessary but not sufficient — the oracle must also structurally pin
             // the seam's specific variant. oracle_discriminates_seam checks both.
-            if oracle_discriminates_seam_in_test(seam, oracle, test, owner_fn, index, pin_syntax)
+            if oracle_discriminates_seam_in_test(seam, oracle, test, owner_fn, context, pin_syntax)
                 && strength.rank() > best_matching.rank()
             {
                 best_matching = strength;
@@ -2113,16 +2113,34 @@ fn oracle_discriminates_seam_in_test(
     oracle: &OracleFact,
     test: &TestSummary,
     owner: Option<&FunctionSummary>,
-    index: &RustIndex,
+    context: &CompactGripContext<'_>,
     pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
 ) -> bool {
+    // #3161: a snapshot's kind alone cannot bind another value to this
+    // direct free owner's return. Keep expect-test equality's existing
+    // admission and leave method receiver attribution with its own owner.
+    if seam.kind() == SeamKind::ReturnValue
+        && oracle.kind == OracleKind::Snapshot
+        && !crate::analysis::classify::is_inline_expect_snapshot(oracle)
+        && let Some(owner) = owner
+        && owner.impl_context == FunctionImplContext::Free
+    {
+        return owner_result_binding::snapshot_observes_owner(
+            test, owner, oracle, context, pin_syntax,
+        );
+    }
     oracle_discriminates_seam(seam, oracle)
         || direct_collection_mutation_receiver(seam.expression())
             .zip(owner)
             .is_some_and(|(receiver, owner)| {
                 collection_state_write_oracle_kind(&oracle.kind)
                     && assertion_observes_collection_argument(
-                        receiver, owner, index, test, oracle, pin_syntax,
+                        receiver,
+                        owner,
+                        context.index,
+                        test,
+                        oracle,
+                        pin_syntax,
                     )
             })
 }
@@ -2793,8 +2811,7 @@ fn related_test_grip(
     owner_fn: Option<&FunctionSummary>,
     pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
 ) -> RelatedTestGrip {
-    let (kind, strength, contradiction) =
-        best_oracle(test, seam, owner_fn, context.index, pin_syntax);
+    let (kind, strength, contradiction) = best_oracle(test, seam, owner_fn, context, pin_syntax);
     let summary = if let Some(contradiction) = contradiction {
         contradiction
     } else if matches!(strength, OracleStrength::None) {
@@ -2863,7 +2880,7 @@ fn best_oracle(
     test: &TestSummary,
     seam: &RepoSeam,
     owner_fn: Option<&FunctionSummary>,
-    index: &RustIndex,
+    context: &CompactGripContext<'_>,
     pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
 ) -> (OracleKind, OracleStrength, Option<String>) {
     let mut best_kind = OracleKind::Unknown;
@@ -2884,7 +2901,7 @@ fn best_oracle(
             best_kind = oracle.kind.clone();
             best_contradiction = contradiction.clone();
         }
-        if oracle_discriminates_seam_in_test(seam, oracle, test, owner_fn, index, pin_syntax)
+        if oracle_discriminates_seam_in_test(seam, oracle, test, owner_fn, context, pin_syntax)
             && strength.rank() > best_matching_strength.rank()
         {
             best_matching_strength = strength;
