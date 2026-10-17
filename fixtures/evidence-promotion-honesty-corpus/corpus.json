@@ -9406,6 +9406,22 @@
         { "type": "must_not_promote" },
         { "type": "expected_class", "class": "weakly_exposed" }
       ]
+    },
+    {
+      "id": "ts_mock_payload_wrapped_impl_not_a_fresh_mock",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_mock_payload_iife_impl",
+      "vector": "wrapped_mock_implementation_not_a_fresh_mock_binding",
+      "control": "must_stay_weakly_exposed",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" },
+        { "type": "expected_oracle", "kind": "mock_expectation", "strength": "medium" }
+      ]
     }
   ]
 }
