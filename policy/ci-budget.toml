@@ -87,3 +87,9 @@ name = "windows-ci"
 effect = "run_advisory_windows_lane"
 budget_effect = "medium"
 notes = "Runs the advisory Windows lane (.github/workflows/windows-advisory.yml) on a pull request without opting into every full-ci lane. Test outcomes are advisory; evidence generation is not. Adding or removing this label must not launch Routed Rust Small. Without the label, only the small always-on windows-advisory-subset job (#4938) runs, on the subscribed pull_request actions (opened, synchronize, reopened, labeled); the label still opts into the full twice-run advisory suite."
+
+[[label]]
+name = "macos-ci"
+effect = "run_advisory_macos_lane"
+budget_effect = "medium"
+notes = "Runs the advisory macOS lane (.github/workflows/macos-advisory.yml: clippy -p ripr -p xtask and cargo test -p ripr --lib on macos-15) on a pull request without opting into every full-ci lane. Clippy and test outcomes are advisory; evidence generation is not. Like the other gated lanes it takes effect only together with a merge-ready labeled event, so add macos-ci first and merge-ready last. Adding or removing this label must not launch Routed Rust Small."

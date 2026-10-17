@@ -164,6 +164,7 @@ fn doctor_json(
     {
         report.add_advisory_check("linker_temp_redirect", advisory);
     }
+    report.attach_canonical_next_action(root);
     println!("{}", report.render_json()?);
     output::doctor::doctor_report_result(&report)
 }
