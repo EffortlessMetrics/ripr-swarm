@@ -588,18 +588,19 @@ fn gated_lanes_admit_pull_requests_only_on_the_merge_ready_labeled_event() {
                 "{name}: only a merge-ready request may cancel pull_request runs"
             );
         }
-        let violations = job_guard_violations(source);
+        let violations = job_guard_violations(name, source);
         assert!(violations.is_empty(), "{name}: {violations:?}");
     }
 }
 
-/// Every job under `jobs:` must carry a single-line `if:` admitting only the
-/// explicit merge-ready `labeled` event. Returns one message per violation.
-fn job_guard_violations(source: &str) -> Vec<String> {
+/// Enumerate every job, including those after column-zero comments. Ordinary
+/// jobs require explicit request admission; callable and diagnostic jobs retain
+/// their exact separate authority. Folded conditions belong to their named job.
+fn job_guard_violations(workflow: &str, source: &str) -> Vec<String> {
     const EXPLICIT: &str =
         "github.event.action == 'labeled' && github.event.label.name == 'merge-ready'";
     let mut violations = Vec::new();
-    let mut guarded: Vec<(&str, bool)> = Vec::new();
+    let mut guarded = Vec::new();
     let mut in_jobs = false;
     for line in source.lines() {
         if line == "jobs:" {
@@ -623,29 +624,40 @@ fn job_guard_violations(source: &str) -> Vec<String> {
                     .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
             })
         {
-            guarded.push((key, false));
-        } else if line.starts_with("    if:") && !guarded.is_empty() {
-            if !(line.contains("'merge-ready'") && line.contains(EXPLICIT)) {
-                violations.push(format!(
-                    "guard must admit only the explicit merge-ready event: {line}"
-                ));
-            }
-            for event in ["opened", "synchronize", "reopened", "ready_for_review"] {
-                if line.contains(&format!("'{event}'")) {
-                    violations.push(format!("re-admits {event}: {line}"));
-                }
-            }
-            if let Some(entry) = guarded.last_mut() {
-                entry.1 = true;
-            }
+            guarded.push(key);
         }
     }
     if guarded.is_empty() {
         violations.push("declares no jobs".to_string());
     }
-    for (job, has_guard) in guarded {
-        if !has_guard {
-            violations.push(format!("job `{job}` has no single-line merge-ready guard"));
+    for job in guarded {
+        let condition = job_condition(source, job).unwrap_or_default();
+        let exact = match (workflow, job) {
+            ("ci.yml", "source-identity") => Some("contains(toJSON(inputs), '\"subject_sha\"')"),
+            ("ci.yml", "ci-result") => {
+                Some("always() && contains(toJSON(inputs), '\"subject_sha\"')")
+            }
+            ("windows-advisory.yml", "windows-advisory-subset") => {
+                Some("github.event_name != 'pull_request'")
+            }
+            _ => None,
+        };
+        if let Some(expected) = exact {
+            if condition != expected {
+                violations.push(format!(
+                    "job `{job}` changed its exact authority: {condition}"
+                ));
+            }
+        } else if !condition.contains(EXPLICIT) {
+            violations.push(format!(
+                "job `{job}` has no explicit merge-ready guard: {condition}"
+            ));
+        } else {
+            for event in ["opened", "synchronize", "reopened", "ready_for_review"] {
+                if condition.contains(&format!("'{event}'")) {
+                    violations.push(format!("job `{job}` re-admits {event}: {condition}"));
+                }
+            }
         }
     }
     violations
@@ -655,19 +667,48 @@ fn job_guard_violations(source: &str) -> Vec<String> {
 fn job_guard_scanner_rejects_unguarded_jobs_even_after_column_zero_comments() {
     const GUARD: &str = "    if: github.event_name != 'pull_request' || (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')";
     let guarded = format!("jobs:\n  first:\n{GUARD}\n    runs-on: x\n");
-    assert!(job_guard_violations(&guarded).is_empty());
+    assert!(job_guard_violations("fixture", &guarded).is_empty());
 
     let unguarded = "jobs:\n  first:\n    runs-on: x\n";
-    assert_eq!(job_guard_violations(unguarded).len(), 1);
+    assert_eq!(job_guard_violations("fixture", unguarded).len(), 1);
 
     let after_comment =
         format!("jobs:\n  first:\n{GUARD}\n# a column-zero comment\n  second:\n    runs-on: x\n");
-    let violations = job_guard_violations(&after_comment);
+    let violations = job_guard_violations("fixture", &after_comment);
     assert_eq!(violations.len(), 1, "{violations:?}");
     assert!(violations[0].contains("`second`"), "{violations:?}");
 
     let readmits = "jobs:\n  first:\n    if: github.event.action == 'opened' || (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')\n";
-    assert_eq!(job_guard_violations(readmits).len(), 1);
+    assert_eq!(job_guard_violations("fixture", readmits).len(), 1);
+}
+
+#[test]
+fn callable_and_diagnostic_job_authorities_are_exact_and_unknown_jobs_are_checked() {
+    for (workflow, job) in [
+        ("ci.yml", "source-identity"),
+        ("ci.yml", "ci-result"),
+        ("windows-advisory.yml", "windows-advisory-subset"),
+    ] {
+        let source = GATED
+            .iter()
+            .find(|(name, _)| *name == workflow)
+            .map_or("", |(_, source)| *source);
+        assert!(!source.is_empty());
+        assert!(job_guard_violations(workflow, source).is_empty());
+        let removed = without_job_condition(source, job);
+        assert!(!job_guard_violations(workflow, &removed).is_empty());
+        let condition = job_condition(source, job).unwrap_or_default();
+        assert!(!condition.is_empty());
+        let broadened = source.replacen(&condition, "true", 1);
+        assert_ne!(broadened, source);
+        assert!(!job_guard_violations(workflow, &broadened).is_empty());
+    }
+    let unknown = format!("{WORKFLOW}\n# keep enumerating\n  surprise:\n    runs-on: fixture\n");
+    assert!(
+        job_guard_violations("ci.yml", &unknown)
+            .iter()
+            .any(|error| error.contains("`surprise`"))
+    );
 }
 
 #[test]
