@@ -5365,6 +5365,7 @@ fn first_pr_check_exits_2_for_a_blocked_packet_but_write_mode_exits_0() -> Resul
 
     let check = run(&["--check"])?;
     assert_failure(&check);
+    assert_eq!(check.status.code(), Some(2), "{check:?}");
     let stderr = String::from_utf8_lossy(&check.stderr);
     assert!(stderr.contains("blocked state `wrong_root`"), "{stderr}");
     assert!(
