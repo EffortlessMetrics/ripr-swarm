@@ -55,11 +55,13 @@
         "observed_values": [
           {
             "line": 3,
+            "source_file": "tests/render.rs",
             "value": "x = 4",
             "context": "function_argument"
           },
           {
             "line": 5,
+            "source_file": "tests/render.rs",
             "value": "x = 4",
             "context": "function_argument"
           }
@@ -70,11 +72,13 @@
       "observed_values": [
         {
           "line": 3,
+          "source_file": "tests/render.rs",
           "value": "x = 4",
           "context": "function_argument"
         },
         {
           "line": 5,
+          "source_file": "tests/render.rs",
           "value": "x = 4",
           "context": "function_argument"
         }
@@ -174,11 +178,13 @@
         "observed_values": [
           {
             "line": 3,
+            "source_file": "tests/render.rs",
             "value": "x = 4",
             "context": "function_argument"
           },
           {
             "line": 5,
+            "source_file": "tests/render.rs",
             "value": "x = 4",
             "context": "function_argument"
           }
@@ -189,11 +195,13 @@
       "observed_values": [
         {
           "line": 3,
+          "source_file": "tests/render.rs",
           "value": "x = 4",
           "context": "function_argument"
         },
         {
           "line": 5,
+          "source_file": "tests/render.rs",
           "value": "x = 4",
           "context": "function_argument"
         }
