@@ -5598,6 +5598,28 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
         "{stderr}"
     );
 
+    // A whole-repo `repo-probe:...` finding ID gets the same family-named
+    // refusal as `probe:...` (#8166 review).
+    let repo_probe_packet = run_ripr(&[
+        "agent",
+        "packet",
+        "--root",
+        &root_path,
+        "--seam-id",
+        "repo-probe:src_lib.rs:predicate:566edf6b",
+        "--json",
+    ]);
+    assert!(!repo_probe_packet.status.success());
+    let stderr = String::from_utf8_lossy(&repo_probe_packet.stderr);
+    assert!(
+        stderr.contains("`repo-probe:...` is a `ripr check` finding ID, not a seam ID"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("ripr pilot --root ") && stderr.contains("agent-packet-unknown-seam"),
+        "{stderr}"
+    );
+
     let packet = run_ripr(&[
         "agent",
         "packet",

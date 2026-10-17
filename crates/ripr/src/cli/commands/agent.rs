@@ -393,6 +393,8 @@ pub(super) fn unknown_seam_id_hint(root: &Path, seam_id: &str) -> String {
     );
     if seam_id.starts_with("probe:") {
         format!("`probe:...` is a `ripr check` finding ID, not a seam ID; run {pilot}")
+    } else if seam_id.starts_with("repo-probe:") {
+        format!("`repo-probe:...` is a `ripr check` finding ID, not a seam ID; run {pilot}")
     } else if seam_id.starts_with("gap:") {
         format!("`gap:...` is a `ripr check` canonical gap ID, not a seam ID; run {pilot}")
     } else {

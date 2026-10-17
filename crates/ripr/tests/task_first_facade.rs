@@ -884,6 +884,39 @@ fn cross_namespace_ids_round_trip_between_check_explain_and_repair() -> Result<(
     Ok(())
 }
 
+/// #8166 review: an invented probe ordinal (`.999` on the valid fingerprint
+/// of the sole seam) and a `.2` whose second occurrence is not among the
+/// remaining seams are both stale: they refuse with no attempt instead of
+/// resolving to the sole remaining seam.
+#[test]
+fn repair_refuses_unassignable_probe_ordinals() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-probe-ordinal")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    weaken_boundary_predicate(root)?;
+    let check = run_worktree_check(root, &root_arg)?;
+    let probe_id = printed_probe_identity(&stdout_text(&check)).ok_or_else(|| {
+        format!(
+            "check must print a probe finding ID:\n{}",
+            stdout_text(&check)
+        )
+    })?;
+    for forged in [format!("{probe_id}.999"), format!("{probe_id}.2")] {
+        let repair = run_ripr(root, &["repair", &forged, "--root", &root_arg])?;
+        assert_exit(&repair, 3, "repair with an unassignable probe ordinal");
+        let stderr = stderr_text(&repair);
+        assert!(
+            stderr.contains("names no seam") && stderr.contains("stale"),
+            "an unassignable ordinal must refuse as stale ({forged}):\n{stderr}"
+        );
+    }
+    assert!(
+        attempt_ids(root).is_empty(),
+        "unassignable probe ordinals must create no attempt"
+    );
+    Ok(())
+}
+
 /// #8166 residual (F1): `ripr agent repair --seam-id` accepts the `probe:`
 /// finding ID when it uniquely maps to an eligible seam.
 #[test]

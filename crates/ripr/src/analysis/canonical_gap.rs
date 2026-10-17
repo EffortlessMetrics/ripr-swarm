@@ -92,10 +92,23 @@ pub(crate) fn canonical_gap_identity(entry: &ClassifiedSeam) -> Option<Canonical
 /// content-addressed fingerprint the probe producer uses. A changed line the
 /// seam does not carry therefore never matches. Several seams can still
 /// share one re-minted ID (the fingerprint carries no line); the caller owns
-/// that uniqueness decision. The collision ordinal (`.2`, ...) a repeated
-/// probe ID carries is re-minted too, so an ordinal names the same seam set
-/// its base ID does.
-pub(crate) fn probe_id_names_seam(item: &str, entry: &ClassifiedSeam) -> bool {
+/// that uniqueness decision.
+///
+/// The collision ordinal (`.2`, ...) the probe producers append to the
+/// 2nd+ occurrence of a repeated ID (probe de-duplication in
+/// `probes/diff.rs` and `probes/repo.rs`) is not free-floating: it is only
+/// assignable when at least that many seams in `seams` re-mint the same
+/// base ID. An invented ordinal (`.999` on a sole seam) or a `.2` whose
+/// second occurrence was seam-filtered so only the first seam remains
+/// therefore names nothing (stale), instead of letting every candidate
+/// seam re-mint the fabricated suffix and match. An assignable ordinal
+/// still names the whole seam set sharing its base ID, so the caller
+/// refuses it as ambiguous rather than picking an occurrence.
+pub(crate) fn probe_id_names_seam(
+    item: &str,
+    entry: &ClassifiedSeam,
+    seams: &[ClassifiedSeam],
+) -> bool {
     let prefix = if item.starts_with("probe:") {
         "probe"
     } else if item.starts_with("repo-probe:") {
@@ -108,8 +121,22 @@ pub(crate) fn probe_id_names_seam(item: &str, entry: &ClassifiedSeam) -> bool {
         .and_then(|(_, fp)| fp.rsplit_once('.'))
         .and_then(|(_, ordinal)| ordinal.parse::<u32>().ok())
         .unwrap_or(1);
-    let sanitized = super::sanitize_path(entry.seam.file());
-    let owner = crate::domain::SymbolId(entry.seam.owner().to_string());
+    if reminted_probe_id(entry, prefix, ordinal).as_deref() != Some(item) {
+        return false;
+    }
+    let Some(base) = reminted_probe_id(entry, prefix, 1) else {
+        return false;
+    };
+    let sharing = seams
+        .iter()
+        .filter(|candidate| reminted_probe_id(candidate, prefix, 1).as_deref() == Some(&*base))
+        .count();
+    u32::try_from(sharing).is_ok_and(|sharing| ordinal >= 1 && ordinal <= sharing)
+}
+
+/// Re-mint the probe ID for one seam at `ordinal`, or `None` when the
+/// seam's kind names no probe family.
+fn reminted_probe_id(entry: &ClassifiedSeam, prefix: &str, ordinal: u32) -> Option<String> {
     const FAMILIES: [crate::domain::ProbeFamily; 8] = [
         crate::domain::ProbeFamily::Predicate,
         crate::domain::ProbeFamily::ReturnValue,
@@ -120,9 +147,11 @@ pub(crate) fn probe_id_names_seam(item: &str, entry: &ClassifiedSeam) -> bool {
         crate::domain::ProbeFamily::MatchArm,
         crate::domain::ProbeFamily::StaticUnknown,
     ];
-    FAMILIES.iter().any(|family| {
-        super::seam_kind_for_probe_family(family.as_str()) == Some(entry.seam.kind())
-            && super::fingerprint_probe_id(
+    let sanitized = super::sanitize_path(entry.seam.file());
+    let owner = crate::domain::SymbolId(entry.seam.owner().to_string());
+    FAMILIES.iter().find_map(|family| {
+        (super::seam_kind_for_probe_family(family.as_str()) == Some(entry.seam.kind())).then(|| {
+            super::fingerprint_probe_id(
                 prefix,
                 &sanitized,
                 family.as_str(),
@@ -130,7 +159,8 @@ pub(crate) fn probe_id_names_seam(item: &str, entry: &ClassifiedSeam) -> bool {
                 &super::normalize_expression(entry.seam.expression()),
                 ordinal,
             )
-            .0 == item
+            .0
+        })
     })
 }
 
@@ -489,7 +519,7 @@ mod tests {
         )
         .0;
         assert!(
-            probe_id_names_seam(&id, &entry),
+            probe_id_names_seam(&id, &entry, std::slice::from_ref(&entry)),
             "own probe ID must name its seam: {id}"
         );
         // A fingerprint over a different expression names no seam here.
@@ -499,16 +529,59 @@ mod tests {
             "amount < threshold",
             "x",
         );
-        assert!(!probe_id_names_seam(&id, &other));
+        assert!(!probe_id_names_seam(
+            &id,
+            &other,
+            std::slice::from_ref(&other)
+        ));
         // A stale fingerprint (no seam carries it) names nothing.
         assert!(!probe_id_names_seam(
             "probe:src_pricing.rs:predicate:00000000",
-            &entry
+            &entry,
+            std::slice::from_ref(&entry)
         ));
         // The duplicate-expression twin shares the re-minted ID: the matcher
         // credits both, so the resolver must refuse as ambiguous.
         let twin = classified_gap("src/pricing.rs::pricing::discounted_total", 99, "x");
-        assert!(probe_id_names_seam(&id, &twin));
+        let seams = [entry.clone(), twin.clone()];
+        assert!(probe_id_names_seam(&id, &twin, &seams));
+    }
+
+    /// #8166 review: the collision ordinal is assignable only when enough
+    /// seams re-mint the same base ID. An invented `.999` names nothing,
+    /// and a real `.2` whose second occurrence was seam-filtered (so only
+    /// the first seam remains) must not resolve to that first seam.
+    #[test]
+    fn probe_id_ordinal_must_be_assignable_to_the_seam_set() {
+        let entry = classified_gap("src/pricing.rs::pricing::discounted_total", 88, "x");
+        let mint = |ordinal: u32| {
+            crate::analysis::fingerprint_probe_id(
+                "probe",
+                &crate::analysis::sanitize_path(entry.seam.file()),
+                "predicate",
+                entry.seam.owner(),
+                &crate::analysis::normalize_expression(entry.seam.expression()),
+                ordinal,
+            )
+            .0
+        };
+        let sole = std::slice::from_ref(&entry);
+        assert!(probe_id_names_seam(&mint(1), &entry, sole));
+        assert!(
+            !probe_id_names_seam(&mint(999), &entry, sole),
+            "an invented .999 ordinal must be refused as stale"
+        );
+        assert!(
+            !probe_id_names_seam(&mint(2), &entry, sole),
+            "a .2 whose second occurrence is seam-filtered must not name the sole remaining seam"
+        );
+        // With both occurrences present, `.2` is assignable but still
+        // names the shared seam set (caller refuses as ambiguous), and
+        // `.3` exceeds the set.
+        let twin = classified_gap("src/pricing.rs::pricing::discounted_total", 99, "x");
+        let pair = [entry.clone(), twin];
+        assert!(probe_id_names_seam(&mint(2), &entry, &pair));
+        assert!(!probe_id_names_seam(&mint(3), &entry, &pair));
     }
 
     #[test]

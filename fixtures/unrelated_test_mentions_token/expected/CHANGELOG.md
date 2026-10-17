@@ -506,5 +506,4 @@ Command:
 `cargo xtask goldens bless unrelated_test_mentions_token --reason "..."`
 
 Updated:
-- `expected/check.json`
 - `expected/human.txt`

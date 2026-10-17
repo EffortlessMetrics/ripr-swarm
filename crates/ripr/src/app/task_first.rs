@@ -318,7 +318,7 @@ pub(crate) fn resolve_repair_subject_outcome(
         .filter(|entry| {
             canonical_gap_identity(entry).is_some_and(|identity| identity.id == item)
                 || producer_gap_id_names_seam(item, entry)
-                || probe_id_names_seam(item, entry)
+                || probe_id_names_seam(item, entry, &classified)
                 || super::selector::selector_matches_file_line(
                     crate::analysis::stable_path_text(entry.seam.file()).as_ref(),
                     entry.seam.display_line(),
