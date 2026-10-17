@@ -641,6 +641,29 @@ fn a_literal_none_match_checks_no_message_in_either_framework() -> Result<(), St
 }
 
 #[test]
+fn a_match_name_is_read_from_its_own_function_not_the_whole_file() -> Result<(), String> {
+    // The pattern name binds in the asserting function (plus module level),
+    // so a same-named assignment in another function neither hides it nor
+    // supplies it.
+    assert_ne!(
+        parse_class(
+            "def test_parse():\n    pattern = None\n    with pytest.raises(ValueError, match=pattern):\n        parse(\"\")\n\n\ndef test_other():\n    pattern = \"empty\"\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    let parametrized = |extra: &str| {
+        parse_class(&format!(
+            "@pytest.mark.parametrize(\"pattern\", [\"empty\"])\ndef test_parse(pattern):\n    with pytest.raises(ValueError, match=pattern):\n        parse(\"\")\n{extra}"
+        ))
+    };
+    assert_eq!(
+        parametrized("")?,
+        parametrized("\n\ndef test_other():\n    pattern = \".*\"\n")?
+    );
+    Ok(())
+}
+
+#[test]
 fn a_parametrize_mark_does_not_stand_in_for_example_rows() -> Result<(), String> {
     assert_eq!(
         passed_class(

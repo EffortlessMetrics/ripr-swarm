@@ -666,7 +666,9 @@ fn oracle_for_call(
                 .args
                 .get(1)
                 .or_else(|| keyword_value(call, "expected_regex"))
-                .is_some_and(|pattern| is_trivial_message_pattern(pattern, source)) =>
+                .is_some_and(|pattern| {
+                    is_trivial_message_pattern(pattern, source, usize::from(call.range.start()))
+                }) =>
         {
             Some((
                 OracleKind::BroadError,
@@ -687,8 +689,11 @@ fn oracle_for_call(
         "raises" if name == "pytest.raises" || name == "raises" => {
             // Rule 13: in the callable form pytest passes `match=` to the
             // callable instead of checking the message.
+            let call_start = usize::from(call.range.start());
             let pattern = keyword_value(call, "match").filter(|_| call.args.len() < 2);
-            if pattern.is_some_and(|pattern| !is_trivial_message_pattern(pattern, source)) {
+            if pattern
+                .is_some_and(|pattern| !is_trivial_message_pattern(pattern, source, call_start))
+            {
                 Some((
                     OracleKind::ExactErrorVariant,
                     OracleStrength::Strong,
@@ -843,7 +848,7 @@ fn keyword_value<'a>(call: &'a ast::ExprCall, name: &str) -> Option<&'a Expr> {
 /// admit both the old and the new message (`'empty|blank'`), pins only the
 /// exception class, as does a literal `None` (matching disabled). A bare name reads as the string literal it is bound to
 /// when the file assigns that name exactly once, to a literal (Decision 5).
-fn is_trivial_message_pattern(pattern: &Expr, source: &str) -> bool {
+fn is_trivial_message_pattern(pattern: &Expr, source: &str, call_start: usize) -> bool {
     let text = match pattern {
         Expr::Constant(ast::ExprConstant {
             value: ast::Constant::Str(text),
@@ -860,7 +865,7 @@ fn is_trivial_message_pattern(pattern: &Expr, source: &str) -> bool {
             ..
         }) => return std::str::from_utf8(bytes).is_ok_and(pattern_admits_any_message),
         Expr::Name(name) => {
-            return name_bound_once_to_literal(source, name.id.as_str())
+            return name_bound_once_to_literal(source, name.id.as_str(), call_start)
                 .is_some_and(|text| pattern_admits_any_message(&text));
         }
         _ => return false,
@@ -868,11 +873,82 @@ fn is_trivial_message_pattern(pattern: &Expr, source: &str) -> bool {
     pattern_admits_any_message(text)
 }
 
+/// The source lines a bare `name` at `call_start` can be bound by: the
+/// enclosing function's body plus module-level (unindented) lines, so a
+/// same-named binding in another function cannot supply the pattern. `None`
+/// when the enclosing function takes `name` as a parameter (a fixture,
+/// parametrize argument or default), since its value is then not read from
+/// an assignment. Without an enclosing function the whole file is visible.
+fn visible_scope_text(source: &str, name: &str, call_start: usize) -> Option<String> {
+    let indent = |line: &str| line.len() - line.trim_start().len();
+    let raw: Vec<&str> = source.split_inclusive('\n').collect();
+    let lines: Vec<&str> = raw
+        .iter()
+        .map(|line| line.trim_end_matches(['\r', '\n']))
+        .collect();
+    let mut offset = 0;
+    let mut call_line = lines.len();
+    for (index, line) in raw.iter().enumerate() {
+        if call_start < offset + line.len() {
+            call_line = index;
+            break;
+        }
+        offset += line.len();
+    }
+    let Some(call_text) = lines.get(call_line) else {
+        return Some(source.to_string());
+    };
+    let mut threshold = indent(call_text);
+    let mut def_line = None;
+    for index in (0..call_line).rev() {
+        let line = lines[index];
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() || trimmed.starts_with('#') || indent(line) >= threshold {
+            continue;
+        }
+        if trimmed.starts_with("def ") || trimmed.starts_with("async def ") {
+            def_line = Some(index);
+            break;
+        }
+        threshold = indent(line);
+        if threshold == 0 {
+            break;
+        }
+    }
+    let Some(def_line) = def_line else {
+        return Some(source.to_string());
+    };
+    let def_indent = indent(lines[def_line]);
+    let body_start = (def_line..lines.len())
+        .find(|&index| {
+            let code = lines[index].split('#').next().unwrap_or("").trim_end();
+            code.ends_with(':')
+        })
+        .unwrap_or(def_line);
+    let signature = lines[def_line..=body_start].join("\n");
+    if super::mentions_python_name(&signature, name) {
+        return None;
+    }
+    let body_end = (body_start + 1..lines.len())
+        .find(|&index| !lines[index].trim().is_empty() && indent(lines[index]) <= def_indent)
+        .unwrap_or(lines.len());
+    let visible = lines.iter().enumerate().filter(|(index, line)| {
+        (*index > body_start && *index < body_end) || (indent(line) == 0 && !line.trim().is_empty())
+    });
+    Some(
+        visible
+            .map(|(_, line)| *line)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
+
 /// The string literal `name` is bound to when the file has exactly one
 /// assignment to it (`name = '.*'`) and that assignment is a plain literal
 /// (`name = None` reads as the empty pattern).
-fn name_bound_once_to_literal(source: &str, name: &str) -> Option<String> {
-    let mut assignments = source.lines().filter_map(|line| {
+fn name_bound_once_to_literal(source: &str, name: &str, call_start: usize) -> Option<String> {
+    let scope = visible_scope_text(source, name, call_start)?;
+    let mut assignments = scope.lines().filter_map(|line| {
         let (target, value) = line.split_once('=')?;
         let value = value.strip_prefix('=').map_or(Some(value), |_| None)?;
         (target.trim() == name).then(|| {
