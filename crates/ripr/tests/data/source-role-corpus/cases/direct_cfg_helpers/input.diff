@@ -1,0 +1,28 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -3,14 +3,14 @@
+ 
+ pub fn production_lease() -> Lease {
+     Lease {
+-        value: Some(1),
++        value: None,
+     }
+ }
+ 
+ #[cfg(test)]
+ fn standalone_helper() -> Lease {
+     Lease {
+-        value: Some(1),
++        value: None,
+     }
+ }
+ 
+@@ -20,7 +20,7 @@
+ 
+     fn inline_helper() -> Lease {
+         Lease {
+-            value: Some(1),
++            value: None,
+         }
+     }
+ 
