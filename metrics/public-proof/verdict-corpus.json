@@ -10,19 +10,18 @@
   "by_outcome": {
     "abstained": 175,
     "false_actionable": 12,
-    "false_exposed": 1,
-    "ideal": 300
+    "ideal": 301
   },
   "by_observed_verdict": {
-    "credited": 127,
-    "gap": 186,
+    "credited": 126,
+    "gap": 187,
     "limited": 174,
     "silent": 1
   },
   "false_verdict_rate": {
-    "numerator": 13,
+    "numerator": 12,
     "denominator": 488,
-    "rate": "0.0266"
+    "rate": "0.0246"
   },
   "false_actionable_rate": {
     "numerator": 12,
@@ -30,9 +29,9 @@
     "rate": "0.0502"
   },
   "false_exposed_rate": {
-    "numerator": 1,
+    "numerator": 0,
     "denominator": 249,
-    "rate": "0.0040"
+    "rate": "0.0000"
   },
   "false_silent_rate": {
     "numerator": 0,
@@ -40,9 +39,9 @@
     "rate": "0.0000"
   },
   "ideal_rate": {
-    "numerator": 300,
+    "numerator": 301,
     "denominator": 488,
-    "rate": "0.6148"
+    "rate": "0.6168"
   },
   "abstention_rate": {
     "numerator": 175,
@@ -59,15 +58,15 @@
     "authored": {
       "cases_total": 452,
       "by_observed_verdict": {
-        "credited": 122,
-        "gap": 182,
+        "credited": 121,
+        "gap": 183,
         "limited": 147,
         "silent": 1
       },
       "false_verdict_rate": {
-        "numerator": 11,
+        "numerator": 10,
         "denominator": 452,
-        "rate": "0.0243"
+        "rate": "0.0221"
       },
       "false_actionable_rate": {
         "numerator": 10,
@@ -75,9 +74,9 @@
         "rate": "0.0461"
       },
       "false_exposed_rate": {
-        "numerator": 1,
+        "numerator": 0,
         "denominator": 235,
-        "rate": "0.0043"
+        "rate": "0.0000"
       },
       "false_silent_rate": {
         "numerator": 0,
@@ -85,9 +84,9 @@
         "rate": "0.0000"
       },
       "ideal_rate": {
-        "numerator": 293,
+        "numerator": 294,
         "denominator": 452,
-        "rate": "0.6482"
+        "rate": "0.6504"
       },
       "abstention_rate": {
         "numerator": 148,
@@ -9216,13 +9215,14 @@
       "hard_case": true,
       "truth": "partially_discriminated",
       "ideal_verdict": "gap",
-      "observed_verdict": "credited",
+      "observed_verdict": "gap",
       "followed_retarget": false,
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
-        "exposed"
+        "exposed",
+        "weakly_exposed"
       ],
-      "outcome": "false_exposed",
+      "outcome": "ideal",
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,

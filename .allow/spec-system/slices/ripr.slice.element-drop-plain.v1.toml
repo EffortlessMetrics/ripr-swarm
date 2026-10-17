@@ -1,0 +1,21 @@
+schema_version = "2.0"
+id = "ripr.slice.element-drop-plain.v1"
+generation = 1
+source_issue = "issue:8084"
+design_reference = "RIPR-SPEC-0225"
+change_class = "behavior_change"
+claim_boundary = """A pin of a returned array element's field cannot be credited when the element type has a Drop impl in the workspace whose body is non-empty: dropping the receiver while unwinding from a failed assertion may exit the process before the failure is reported, so the field-construction finding stays weakly_exposed. An empty or comment-only Drop body keeps the pin exposed. The shared owner pins in reveal are unchanged."""
+non_goals = ["the reveal/owner-pin return_value path", "field types with Drop impls (the pinned field is a primitive integer)", "new classification vocabulary or probe families", "runtime execution"]
+return_conditions = ["Return to root if a plain (empty) Drop loses exposed because of this rule."]
+owned_seams = ["seam:ripr:analysis:classify:element-field-pin"]
+shared_seams = []
+forbidden_seams = ["seam:ripr:domain:classification-vocabulary", "seam:ripr:output:schema"]
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0225"
+requirement_generation = 1
+[implementation_claim]
+status = "implemented"
+[evidence]
+state = "outstanding"
+[support_claim]
+state = "unchanged"

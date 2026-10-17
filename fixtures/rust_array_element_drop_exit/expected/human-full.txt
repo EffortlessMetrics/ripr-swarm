@@ -1,0 +1,77 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_array_element_drop_exit/input
+
+Summary: 2 probe(s), 1 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+
+WARNING ./src/lib.rs:12
+  id: probe:src_lib.rs:field_construction:d6d7c327
+
+Changed
+  before: total: a - b
+  after:  total: a + b
+
+Probe
+  family: field_construction
+  delta:  value
+  owner:  src/lib.rs::rows
+  canonical gap: gap:rust:src/lib.rs:rows:field_construction:field_construction:total_a+b
+
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+
+Evidence
+  - reach yes: Related tests appear to reach rows: pins_second_row
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches constructed field: total: a + b
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Discriminator unconfirmed: no field-value assertion observes the constructed field
+  - local flow reaches constructed field: total: a + b (line 12)
+  - related test src/lib.rs:20 pins_second_row uses strong exact value oracle: assert_eq!(rows[1].total, 33); misses: no assertion pins `total: a + b`
+  - source function argument value a = 30 at line 21
+  - source function argument value b = 3 at line 21
+  - source assertion argument value 33 at line 22
+
+Weakness
+  - No strong discriminator was detected
+  - missing discriminator total: a + b: No field-value assertion observes the constructed field: total: a + b
+
+Next step
+  Strengthen the related assertion so it discriminates the changed behavior
+Drill in:
+  ripr explain --root <cwd>/fixtures/rust_array_element_drop_exit/input --diff <cwd>/fixtures/rust_array_element_drop_exit/diff.patch --mode fast probe:src_lib.rs:field_construction:d6d7c327
+  ripr context --root <cwd>/fixtures/rust_array_element_drop_exit/input --diff <cwd>/fixtures/rust_array_element_drop_exit/diff.patch --mode fast --at probe:src_lib.rs:field_construction:d6d7c327
+
+INFO ./src/lib.rs:12
+  id: probe:src_lib.rs:return_value:3877e241
+
+Changed
+  before: [Row { total: 0 }, Row { total: a - b }]
+  after:  [Row { total: 0 }, Row { total: a + b }]
+
+Probe
+  family: return_value
+  delta:  value
+  owner:  src/lib.rs::rows
+  canonical gap: gap:rust:src/lib.rs:rows:return_value:return_value:[row_total_0_row_total_a+b]
+
+Static exposure
+  exposed (info, confidence 1.00)
+
+Evidence
+  - reach yes: Related tests appear to reach rows: pins_second_row
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches returned value: [Row { total: 0 }, Row { total: a + b }]
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator yes: Strong oracle found: exact value or pattern assertion
+  - local flow reaches returned value: [Row { total: 0 }, Row { total: a + b }] (line 12)
+  - related test src/lib.rs:20 pins_second_row uses strong exact value oracle: assert_eq!(rows[1].total, 33);
+  - source function argument value a = 30 at line 21
+  - source function argument value b = 3 at line 21
+  - source assertion argument value 33 at line 22
+Drill in:
+  ripr explain --root <cwd>/fixtures/rust_array_element_drop_exit/input --diff <cwd>/fixtures/rust_array_element_drop_exit/diff.patch --mode fast probe:src_lib.rs:return_value:3877e241
+  ripr context --root <cwd>/fixtures/rust_array_element_drop_exit/input --diff <cwd>/fixtures/rust_array_element_drop_exit/diff.patch --mode fast --at probe:src_lib.rs:return_value:3877e241

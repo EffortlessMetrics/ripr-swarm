@@ -42,6 +42,10 @@ id = "first-run-install"
 paths = ["target/ripr/first-run/first-run.json", "target/ripr/first-run/first-run-rows.jsonl", "target/ripr/first-run/first-run.md", "target/ripr/first-run/install_published.stderr.log", "target/ripr/reports/dx-scoreboard.json", "target/ripr/reports/dx-scoreboard.md"]
 
 [[artifact_family]]
+id = "first-run-archive"
+paths = ["target/ripr/first-run/first-run.json", "target/ripr/first-run/first-run-rows.jsonl", "target/ripr/first-run/first-run.md", "target/ripr/first-run/install_archive.stderr.log"]
+
+[[artifact_family]]
 id = "public-badge-endpoints"
 paths = ["badges/*.json", "target/ripr/reports/repo-ripr-badge*.json", "target/ripr/reports/repo-ripr-badges.md"]
 
@@ -190,6 +194,16 @@ artifact_families = ["first-run-install"]
 description = "First-run install: nightly and on demand only; times a cold crates.io install and the first-run walk on ubuntu-latest and, once a same-runner baseline is committed, fails when install time, time to first useful result or friction regresses past its margin."
 
 [[lane]]
+id = "first-run-archive"
+posture = "advisory"
+workflow = ".github/workflows/first-run-archive.yml"
+jobs = ["archive"]
+commands = ["cargo xtask first-run --install-archive 0.10.0"]
+estimated_lem = 10
+artifact_families = ["first-run-archive"]
+description = "First-run archive install: on demand only; verifies the documented prebuilt-archive snippets on Linux, macOS and Windows hosted runners and walks the first-run path with the released archive. Read-only; publishes nothing."
+
+[[lane]]
 id = "public-proof"
 posture = "advisory"
 workflow = ".github/workflows/public-proof.yml"
@@ -297,7 +311,17 @@ jobs = ["windows-advisory", "windows-advisory-subset"]
 commands = ["cargo test --workspace", "cargo test -p ripr --lib lsp::gap_artifacts", "cargo test -p ripr --lib analysis::workspace::cargo_input_identity::tests", "cargo test -p ripr --test cli_smoke unusable_cache_directory_is_reported_once_per_build", "cargo clippy -p ripr --all-targets -- -D warnings"]
 estimated_lem = 30
 artifact_families = []
-description = "Advisory Windows lane (#2393): runs the suite twice on windows-latest and summarizes per-test verdicts. Since #4938 an always-on subset job (windows-advisory-subset) also runs a fast gap_artifacts/Cargo-home-identity/cache-warning/Windows-clippy filter on every subscribed pull_request action (opened, synchronize, reopened, labeled) with no labels required, advisory under the same contract. Test outcomes are advisory; missing or zero-subject evidence fails the job. Promotion to required is gated on #2430 and on stability across repeated runs."
+description = "Advisory Windows lane (#2393): runs the suite twice on windows-latest and summarizes per-test verdicts. Since #4938 a merge-ready subset job (windows-advisory-subset) also runs a fast gap_artifacts/Cargo-home-identity/cache-warning/Windows-clippy filter when `merge-ready` is applied to a PR (the explicit labeled event), advisory under the same contract. Test outcomes are advisory; missing or zero-subject evidence fails the job. Promotion to required is gated on #2430 and on stability across repeated runs."
+
+[[lane]]
+id = "macos-advisory"
+posture = "advisory"
+workflow = ".github/workflows/macos-advisory.yml"
+jobs = ["macos-advisory"]
+commands = ["cargo clippy -p ripr -p xtask --all-targets -- -D warnings", "cargo test -p ripr --lib --no-fail-fast"]
+estimated_lem = 20
+artifact_families = []
+description = "Advisory native macOS lane (#8391): clippy for ripr and xtask plus the ripr library tests on macos-15. Nightly, on dispatch, and on pull requests labeled macos-ci or full-ci when the merge-ready label is applied. Clippy and test outcomes are advisory; a missing log, missing exit status or zero-test run fails the job."
 
 [[lane]]
 id = "printed-command-paste"

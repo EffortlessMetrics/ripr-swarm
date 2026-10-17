@@ -403,8 +403,8 @@ pub(crate) fn named_limitations_for_unresolved_ownership(
 /// limitation for the same import (we would be disclosing a gap that isn't
 /// there).
 ///
-/// `alias_map` carries the same map the resolver used (None when the opt-in
-/// flag is off OR the flag-ON load fail-closed); its typed
+/// `alias_map` carries the same map the resolver used (None when the
+/// flag is explicitly false OR the flag-ON load fail-closed); its typed
 /// `unresolve_cause_for` keeps the advice honest by naming the actual
 /// fail-closed cause (absolute baseUrl / no patterns / unmatched pattern /
 /// unresolved candidate) instead of a generic message.
@@ -413,8 +413,8 @@ pub(crate) fn named_limitations_for_unresolved_ownership(
 /// flag is on and the map is None, the advice names the REAL cause (missing
 /// config / unparseable JSON(C) / unsupported `extends` /
 /// unreadable config) instead of telling the user to enable a flag that is
-/// already enabled. A None map with a None gap means the flag is off — the
-/// only case where "enable the flag" advice is honest.
+/// already enabled. A None map with a None gap means the flag was explicitly set false — the
+/// only case where "set the flag back to true" advice is honest.
 pub(crate) fn alias_gap_for_unresolved_import(
     owner: &TypeScriptOwner,
     all_tests: &[TypeScriptTest],

@@ -95,6 +95,28 @@ claim. For `check-fast`, independently verify the diff selector and base before
 using it as evidence. An empty or failed selector is not proof that nothing
 needs testing.
 
+### Local mirror of the required hosted gate
+
+Hosted CI is requested late (merge-ready), so the coding session carries the
+proof until then. The required Rust producer (`.github/workflows/rust-gates.yml`)
+runs these steps (plus `cargo policy preflight`, a locked fixture `cargo fetch` and dependency-policy steps); `precommit` covers only the first row. Run the rows the change
+selects, in this order, and record each command and native exit status in the
+PR-native continuation record's `Validation:` line (see
+[PR automation](../PR_AUTOMATION.md#pr-native-continuation-record)):
+
+| Hosted step | Local command | Notes |
+| --- | --- | --- |
+| fmt, policy, dependency/process/network, selected Clippy | `cargo xtask precommit` | Selects Clippy packages from the diff. |
+| Evidence promotion honesty | `cargo xtask check-evidence-promotion-honesty` | Not part of `precommit`; run when evidence promotion changes. |
+| Workspace and all-target check | `cargo check --workspace --all-targets` | Add `cargo check -p ripr --all-targets --all-features` for `ripr` changes. |
+| Strict workspace Clippy | `cargo clippy --workspace --all-targets -- -D warnings` | Hosted always runs the full workspace. |
+| Required Rust tests | `cargo nextest run -p <impacted package>` | Hosted runs `cargo nextest run --workspace --profile ci`. A `-p` run is focused proof, not that run; `cargo-nextest` may need installing, and `.config/nextest.toml` lists `--skip` filters for the slow LSP tests. |
+| Doctests | `cargo test --workspace --doc` | Nextest does not run doctests. |
+| Golden, fixture, verdict contracts | `cargo xtask goldens check`, `cargo xtask fixtures`, `cargo xtask verdict-corpus check-all` | Run when output, fixtures or analysis change. |
+
+Do not report a row as passed unless it ran to a zero native exit status on the
+exact head; list the rows not run and why.
+
 PR CI supplies the required merge matrix. Publishing a coherent candidate with
 `REVIEW_INCOMPLETE` allows hosted proof and review to run; it is not permission
 to merge without them. When local execution is unavailable, record that limit,

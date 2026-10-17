@@ -3,21 +3,25 @@ name: Coverage
 on:
   workflow_dispatch:
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main, master]
 
 permissions:
   contents: read
 
+# Only a `merge-ready` labeled request shares this group, so a re-applied label
+# supersedes the older run for the same PR. Every other pull_request event
+# (opened, synchronize, reopened, other labels) gets a unique group: its jobs
+# are skipped and it can neither cancel nor replace a pending merge-ready run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ (github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run' }}
+  cancel-in-progress: ${{ (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') }}
 
 jobs:
   coverage:
     name: rust-coverage
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'coverage') || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'coverage') || contains(github.event.pull_request.labels.*.name, 'full-ci'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

@@ -137,14 +137,20 @@ retain their eligible tests, including nested fixture directories.
 At item granularity, the typed `FunctionSourceRole` model (#3531)
 classifies each function: `Production`, `TestAttribute` (exact
 supported test-defining attribute; registers an executable
-`TestFact`), `CfgTestModule` (evidence-only member of a
-test-required module, preserved by the facts normalizer and the
-#3533 composition walk), `HarnessHelper` (demoted member of a
+`TestFact`), `CfgTestModule` (historical serialized name for evidence-only
+functions gated directly on test or inside a test-required module, also
+used for compiled-out test items), `HarnessHelper` (demoted member of a
 registered `harness = false` target), and
 `RegisteredTestAttribute` (promoted through a repository-
 governed `[analysis.test_harnesses]` registration, #3532), and
 `ParameterizedExpansion` (expansion of a parameterized-test macro
 registration; registers executable tests).
+Direct function gates use the same `cfg_predicates` authority as module
+gates and survive parser/lexical fact normalization without registering
+helper `TestFact`s. A test conjunct requires evidence role;
+`cfg(any(test, feature = "slow"))`, `cfg(not(test))`, and `cfg(tests)` do
+not establish test-only role.
+
 Attribute-driven membership is authoritative; filenames, imports,
 and macro suffixes never classify.
 
