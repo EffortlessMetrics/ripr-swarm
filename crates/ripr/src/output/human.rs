@@ -2,8 +2,8 @@
 //!
 //! Renders a `CheckOutput` as bounded or full text: header summary, analysis
 //! outcome disclosures (working-tree, committed-history, unanalyzed scope),
-//! and per-finding drill-in. Rendering only: classification and next-action
-//! choice are made upstream and surfaced here, not re-decided.
+//! and per-finding drill-in. Classification lives upstream; triage and
+//! next-action selection are delegated to the `triage` submodule and `domain`.
 
 use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn, FindingNavigation};
 use crate::config::RiprConfig;

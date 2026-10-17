@@ -4,8 +4,8 @@
 //! test set (call names, assertion tokens, trigrams). It only narrows
 //! candidates; every selected test still passes the relation, package, shadow
 //! and confidence checks in this file, and queries the bounded indexes cannot
-//! represent safely fall back to the full test set. Path-dependency adjacency
-//! helpers for cross-package relations also live here.
+//! represent safely fall back to the full test set. Cross-package relations consume
+//! path-dependency adjacency owned by `analysis/workspace`.
 
 use super::super::rust_index::{
     FunctionSummary, RustIndex, TestSummary, extract_identifier_tokens,
