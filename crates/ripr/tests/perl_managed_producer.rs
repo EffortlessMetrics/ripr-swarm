@@ -149,3 +149,39 @@ fn managed_producer_failure_names_the_exporter_stderr() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn managed_producer_refuses_a_stdin_diff_instead_of_starving_the_pipeline() -> Result<(), String> {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let workspace = Workspace::new("stdin")?;
+    let diff = std::fs::read(workspace.root.join("diff.patch")).map_err(|e| e.to_string())?;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .args(["check", "--root"])
+        .arg(&workspace.root)
+        .args(["--diff", "-", "--json"])
+        .env("RIPR_ALLOW_REPO_PERL_EXECUTABLE", "1")
+        .env(
+            "PATH",
+            format!("{}:/usr/bin:/bin", workspace.root.display()),
+        )
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    child
+        .stdin
+        .take()
+        .ok_or("no stdin")?
+        .write_all(&diff)
+        .map_err(|e| e.to_string())?;
+    let output = child.wait_with_output().map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        text.contains("cannot consume a diff read from stdin"),
+        "stdin diff must be refused with a named reason: {text}"
+    );
+    Ok(())
+}

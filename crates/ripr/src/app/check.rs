@@ -261,7 +261,7 @@ fn check_with_progress_and_origins_with_open_rust_paths(
         // language_runs[] entry and a `producer_failure` typed limitation
         // carrying the real cause, and the other languages' findings still
         // emit. The stderr warnings remain for the human stdout path.
-        match invoke_perl_lsp_producer(perl_config, &input) {
+        match invoke_perl_lsp_producer(perl_config, &input, scope) {
             Ok(packet_path) => input.perl_facts_path = Some(packet_path),
             Err(reason) => {
                 eprintln!(
@@ -647,7 +647,8 @@ impl PerlProducerStaging {
     /// report.
     fn stderr_tail(&self) -> Option<String> {
         const LIMIT: usize = 600;
-        let text = std::fs::read_to_string(&self.stderr).ok()?;
+        let bytes = std::fs::read(&self.stderr).ok()?;
+        let text = String::from_utf8_lossy(&bytes);
         let text = text.trim();
         if text.is_empty() {
             return None;
@@ -706,7 +707,18 @@ impl PerlProducerStaging {
 fn invoke_perl_lsp_producer(
     perl_config: &crate::config::PerlConfig,
     input: &CheckInput,
+    scope: AnalysisProgressScope,
 ) -> Result<PathBuf, String> {
+    // stdin can be read once, and the analysis pipeline reads it again after
+    // this producer runs; handing the exporter a diff here would leave the
+    // pipeline an empty one. Fail closed (other languages continue).
+    if input.diff_file.as_deref() == Some(Path::new("-")) {
+        return Err(
+            "the managed Perl producer cannot consume a diff read from stdin \
+                    (`--diff -`); write the diff to a file and pass `--diff <path>`"
+                .to_string(),
+        );
+    }
     if let Some(refused) = perl_config.refused_executable() {
         eprintln!(
             "{}",
@@ -771,13 +783,25 @@ fn invoke_perl_lsp_producer(
     // A candidate-subject run has no worktree diff to hand over.
     let mut diff_arg: Option<String> = None;
     if input.git_candidate.is_none() {
-        let diff_text = crate::analysis::load_diff_core(
-            &input.root,
-            input.base.as_deref(),
-            input.diff_file.as_ref(),
-            input.git_timeout,
-        )
-        .map_err(|e| {
+        // The exporter must see the diff the pipeline analyzes: the live
+        // working-tree diff for a worktree-scope run, otherwise the loaded
+        // base/committed diff or `--diff` file.
+        let loaded = if scope == AnalysisProgressScope::Worktree && input.diff_file.is_none() {
+            crate::analysis::load_worktree_diff_with_effective_base_core(
+                &input.root,
+                input.base.as_deref(),
+                input.git_timeout,
+            )
+            .map(|loaded| loaded.text)
+        } else {
+            crate::analysis::load_diff_core(
+                &input.root,
+                input.base.as_deref(),
+                input.diff_file.as_ref(),
+                input.git_timeout,
+            )
+        };
+        let diff_text = loaded.map_err(|e| {
             staging.settled_failure(format!(
                 "failed to load the diff for the Perl exporter: {e}"
             ))
@@ -788,7 +812,10 @@ fn invoke_perl_lsp_producer(
                 staging.diff.display()
             ))
         })?;
-        diff_arg = Some(root_relative_arg(&input.root, &staging.diff)?);
+        diff_arg = Some(
+            root_relative_arg(&input.root, &staging.diff)
+                .map_err(|e| staging.settled_failure(e))?,
+        );
     }
     let out_arg =
         root_relative_arg(&input.root, tmp_path).map_err(|e| staging.settled_failure(e))?;
@@ -1611,7 +1638,7 @@ mod tests {
         // here we exercise the spawn-failure path directly with a bogus
         // executable by relying on the config default resolving to `perllsp`,
         // which is absent in ripr-swarm CI.
-        let result = invoke_perl_lsp_producer(&config, &input);
+        let result = invoke_perl_lsp_producer(&config, &input, AnalysisProgressScope::Diff);
         // In an environment WITHOUT a Perl facts exporter, this must be an
         // Err naming the missing producer.
         if let Err(reason) = result {
