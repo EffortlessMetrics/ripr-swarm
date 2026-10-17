@@ -19,7 +19,7 @@
 //!
 //! The alias map is built once per analysis run and reused for every
 //! `normalized_relative_import_module` call that encounters a non-relative
-//! specifier.  Building it is opt-in: `AnalysisOptions::resolve_tsconfig_paths`
+//! specifier.  Building it is on by default and opt-out: `AnalysisOptions::resolve_tsconfig_paths`
 //! must be `true`; otherwise `TsAliasMap::empty()` (no-op) is returned.
 
 use std::collections::HashMap;
@@ -123,7 +123,7 @@ impl TsAliasUnresolveCause {
     pub(crate) fn parts(self) -> (&'static str, &'static str) {
         match self {
             Self::MapUnavailable => (
-                "alias resolution is not enabled (`[typescript] resolve_tsconfig_paths` is unset or false in ripr.toml)",
+                "alias resolution is not enabled (`[typescript] resolve_tsconfig_paths` is false in ripr.toml)",
                 "set `[typescript] resolve_tsconfig_paths = true` for credit",
             ),
             Self::BaseUrlAbsolute => (
