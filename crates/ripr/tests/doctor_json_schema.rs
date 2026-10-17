@@ -516,6 +516,23 @@ fn published_doctor_schema_rejects_documents_the_schema_forbids() -> Result<(), 
         &schema,
     )?;
 
+    let mut extra_tracked_property = base.clone();
+    extra_tracked_property["cache"]["artifact_tracking"] =
+        serde_json::json!({"tracked": {"warning": "x", "extra": 1}});
+    assert_rejected(
+        "tracked with an undeclared property",
+        &extra_tracked_property,
+        &schema,
+    )?;
+
+    for verdict in ["not_tracked", "not_checked"] {
+        let mut plain = base.clone();
+        plain["cache"]["artifact_tracking"] = Value::String(verdict.to_string());
+        check(&plain, &schema, &schema, "doctor").map_err(|error| {
+            format!("the plain {verdict} artifact-tracking verdict must stay legal: {error}")
+        })?;
+    }
+
     let mut populated_tracked = base.clone();
     populated_tracked["cache"]["artifact_tracking"] =
         serde_json::json!({"tracked": {"warning": "! git tracks 1 file(s) under target/ripr"}});

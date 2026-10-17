@@ -3816,6 +3816,32 @@ mod tests {
             }
             other => return Err(format!("expected Tracked, got {other:?}")),
         }
+        // The count covers every tracked entry, including nested paths, and
+        // the warning stays one fixed-shape line regardless of how many.
+        let nested = artifact.join("pilot");
+        std::fs::create_dir_all(&nested).map_err(|error| error.to_string())?;
+        std::fs::write(nested.join("cache.json"), "{}").map_err(|error| error.to_string())?;
+        std::fs::write(artifact.join("other.json"), "{}").map_err(|error| error.to_string())?;
+        crate::git::run_git(&root, &["add", "-f", "--", "target/ripr"])
+            .map_err(|error| error.to_string())?;
+        match ripr_artifact_tracking(&root) {
+            DoctorArtifactTracking::Tracked { warning } => {
+                assert!(warning.contains("3 file(s)"), "{warning}");
+                assert!(!warning.contains('\n'), "{warning}");
+                assert!(!warning.contains("cache.json"), "{warning}");
+            }
+            other => return Err(format!("expected Tracked, got {other:?}")),
+        }
+        // Outside a repository no tracked-state claim is made.
+        let outside = unique_command_test_dir("artifact-tracking-no-repo");
+        std::fs::create_dir_all(&outside).map_err(|error| error.to_string())?;
+        if crate::git::run_git(&outside, &["rev-parse", "--git-dir"]).is_err() {
+            assert_eq!(
+                ripr_artifact_tracking(&outside),
+                DoctorArtifactTracking::NotChecked
+            );
+        }
+        let _ = std::fs::remove_dir_all(&outside);
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
