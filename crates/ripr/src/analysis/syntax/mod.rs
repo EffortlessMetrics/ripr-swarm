@@ -7,8 +7,8 @@ mod name_scope;
 mod nesting;
 mod owner_pin;
 mod pattern_pin;
-mod source_snapshot;
 pub(crate) mod run_memo;
+mod source_snapshot;
 pub(crate) use owner_pin::macro_binding_candidates;
 pub(crate) use owner_pin::{
     AssertionContextRefusal, HelperLoan, MacroBindingCandidates, MacroBindingKind,
