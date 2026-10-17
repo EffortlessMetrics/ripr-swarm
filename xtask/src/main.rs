@@ -3480,7 +3480,13 @@ fn parse_gh_pr_status_pull_request(text: &str) -> Result<GhPrStatusPullRequest, 
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .map(parse_gh_pr_status_review)
+        .map(|review| {
+            let subjects = item
+                .get("reviews")
+                .and_then(Value::as_array)
+                .map_or(&[][..], Vec::as_slice);
+            parse_gh_pr_status_review(review, subjects)
+        })
         .collect::<Vec<_>>();
     Ok(GhPrStatusPullRequest {
         number,
@@ -3491,6 +3497,7 @@ fn parse_gh_pr_status_pull_request(text: &str) -> Result<GhPrStatusPullRequest, 
             .is_some_and(|value| value),
         merge_state_status: json_value_string(&item, "mergeStateStatus"),
         head_ref_name: json_value_string(&item, "headRefName"),
+        head_ref_oid: json_value_string(&item, "headRefOid"),
         base_ref_name: json_value_string(&item, "baseRefName"),
         review_decision: json_value_string(&item, "reviewDecision"),
         checks,
@@ -3500,7 +3507,7 @@ fn parse_gh_pr_status_pull_request(text: &str) -> Result<GhPrStatusPullRequest, 
     })
 }
 
-fn parse_gh_pr_status_review(value: &Value) -> GhPrStatusReview {
+fn parse_gh_pr_status_review(value: &Value, subjects: &[Value]) -> GhPrStatusReview {
     let author = match value
         .get("author")
         .and_then(|author| author.get("login"))
@@ -3509,10 +3516,54 @@ fn parse_gh_pr_status_review(value: &Value) -> GhPrStatusReview {
         Some(login) => login.to_string(),
         None => String::new(),
     };
+    // gh latestReviews omits commit identity. Join its exact author/time/state
+    // to the full reviews edge; absent or ambiguous joins retain an unknown subject.
+    let state = json_value_string(value, "state");
+    let submitted_at = json_value_string(value, "submittedAt");
+    let mut matches = subjects.iter().filter(|subject| {
+        !author.is_empty()
+            && !submitted_at.is_empty()
+            && subject
+                .get("author")
+                .and_then(|value| value.get("login"))
+                .and_then(Value::as_str)
+                == Some(author.as_str())
+            && json_value_string(subject, "submittedAt") == submitted_at
+            && json_value_string(subject, "state") == state
+    });
+    let first = matches.next();
+    let commit_oid = if matches.next().is_none() {
+        first
+            .and_then(|subject| subject.get("commit"))
+            .map(|commit| json_value_string(commit, "oid"))
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
     GhPrStatusReview {
         author,
-        state: json_value_string(value, "state"),
+        state,
+        commit_oid,
     }
+}
+
+fn gh_pr_review_currentness(pr: &GhPrStatusPullRequest, review: &GhPrStatusReview) -> &'static str {
+    let full_oid = |oid: &str| oid.len() == 40 && oid.bytes().all(|byte| byte.is_ascii_hexdigit());
+    if !full_oid(&pr.head_ref_oid) || !full_oid(&review.commit_oid) {
+        "subject_unavailable"
+    } else if pr.head_ref_oid.eq_ignore_ascii_case(&review.commit_oid) {
+        "current_head"
+    } else {
+        "stale_for_head"
+    }
+}
+
+fn gh_pr_approved_review_subject_missing(pr: &GhPrStatusPullRequest) -> bool {
+    pr.review_decision.eq_ignore_ascii_case("APPROVED")
+        && !pr.reviews.iter().any(|review| {
+            review.state.eq_ignore_ascii_case("APPROVED")
+                && gh_pr_review_currentness(pr, review) == "current_head"
+        })
 }
 
 fn parse_required_status_contexts(text: &str) -> Result<Vec<String>, String> {
@@ -3535,8 +3586,11 @@ fn gh_pr_status_readiness(
     pr: &GhPrStatusPullRequest,
     required_contexts: &[String],
     required_contexts_available: bool,
-    warnings: Vec<String>,
+    mut warnings: Vec<String>,
 ) -> GhPrStatusReadiness {
+    if gh_pr_approved_review_subject_missing(pr) {
+        warnings.push(format!("APPROVED has no latest approval attributed to current head {}; review subjects are stale or unavailable", value_or_unknown(&pr.head_ref_oid)));
+    }
     let failed_checks = pr
         .checks
         .iter()
@@ -3591,7 +3645,8 @@ fn gh_pr_safe_next_action(
     {
         return "inspect failure";
     }
-    if pr.is_draft
+    if gh_pr_approved_review_subject_missing(pr)
+        || pr.is_draft
         || pr.review_decision.eq_ignore_ascii_case("REVIEW_REQUIRED")
         || !readiness.required_checks_outstanding.is_empty()
         || !readiness.pending_checks.is_empty()
@@ -3637,6 +3692,10 @@ fn gh_pr_status_markdown(
         pr.head_ref_name, pr.base_ref_name
     ));
     body.push_str(&format!(
+        "- Head commit: `{}`\n",
+        value_or_unknown(&pr.head_ref_oid)
+    ));
+    body.push_str(&format!(
         "- mergeable_state: `{}`\n",
         value_or_unknown(&pr.merge_state_status)
     ));
@@ -3678,9 +3737,11 @@ fn gh_pr_status_markdown(
     } else {
         for review in &pr.reviews {
             body.push_str(&format!(
-                "- {}: `{}`\n",
+                "- {}: `{}`; commit `{}`; currentness `{}`\n",
                 value_or_unknown(&review.author),
-                value_or_unknown(&review.state)
+                value_or_unknown(&review.state),
+                value_or_unknown(&review.commit_oid),
+                gh_pr_review_currentness(pr, review)
             ));
         }
     }
@@ -3710,6 +3771,10 @@ fn gh_pr_status_json(
     body.push_str("  \"mode\": \"advisory\",\n");
     body.push_str(&format!("  \"pr_number\": {},\n", pr.number));
     body.push_str(&format!("  \"title\": \"{}\",\n", json_escape(&pr.title)));
+    body.push_str(&format!(
+        "  \"head_commit\": \"{}\",\n",
+        json_escape(&pr.head_ref_oid)
+    ));
     body.push_str("  \"branch\": {\n");
     body.push_str(&format!(
         "    \"head\": \"{}\",\n",
@@ -3764,8 +3829,16 @@ fn gh_pr_status_json(
             json_escape(&review.author)
         ));
         body.push_str(&format!(
-            "      \"state\": \"{}\"\n",
+            "      \"state\": \"{}\",\n",
             json_escape(&review.state)
+        ));
+        body.push_str(&format!(
+            "      \"commit\": \"{}\",\n",
+            json_escape(&review.commit_oid)
+        ));
+        body.push_str(&format!(
+            "      \"currentness\": \"{}\"\n",
+            gh_pr_review_currentness(pr, review)
         ));
         body.push_str("    }");
     }
