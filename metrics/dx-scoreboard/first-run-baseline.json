@@ -1,0 +1,324 @@
+{
+  "analyzer_version": "",
+  "binary": "",
+  "boards": [
+    {
+      "counts": {
+        "below_target": 3,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 4,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "first_run",
+      "metrics": [
+        "first_run.time_to_first_useful_result_s",
+        "first_run.install_seconds",
+        "first_run.unknown_verdicts",
+        "first_run.friction_events",
+        "first_run.failed_steps",
+        "first_run.over_budget_steps",
+        "first_run.walk_secs"
+      ],
+      "status": "gaps"
+    }
+  ],
+  "claim_boundary": "Numbers hold for the recorded revision, binary, runner class and pinned corpus only. Targets are proposed bars, not product guarantees. Wall-time and memory metrics are compared only against a baseline from the same runner class; peak memory is sampled from /proc every 10 ms on Linux and is a lower bound. Static verdict metrics do not claim runtime mutation outcomes.",
+  "corpus": [],
+  "corpus_version": null,
+  "gate": {
+    "baseline_revision": null,
+    "baseline_runner_class": null,
+    "enabled": false,
+    "failed_comparisons": [],
+    "failed_instruments": [],
+    "regressions": [],
+    "review": [],
+    "status": "not_run",
+    "uncompared": []
+  },
+  "metrics": [
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "no baseline supplied"
+      },
+      "board": "first_run",
+      "direction": "lower_is_better",
+      "id": "first_run.time_to_first_useful_result_s",
+      "partial": false,
+      "per_repo": false,
+      "runner_dependent": true,
+      "samples": [
+        {
+          "detail": "ingested from first-run: first_run_row.v1 rows for ripr 0.10.0, 3 case(s)",
+          "repo": "semver-1.0.23",
+          "status": "meets_target",
+          "value": 87.27
+        },
+        {
+          "detail": "ingested from first-run: first_run_row.v1 rows for ripr 0.10.0, 3 case(s)",
+          "repo": "fastrand-2.3.0",
+          "status": "meets_target",
+          "value": 87.26
+        },
+        {
+          "detail": "ingested from first-run: first_run_row.v1 rows for ripr 0.10.0, 3 case(s)",
+          "repo": "bytesize-1.3.0",
+          "status": "meets_target",
+          "value": 87.26
+        }
+      ],
+      "source": "ingest:first-run",
+      "status": "meets_target",
+      "target": 300.0,
+      "title": "New developer, fresh machine: install to first useful result",
+      "unit": "s",
+      "value": 87.27
+    },
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "no baseline supplied"
+      },
+      "board": "first_run",
+      "direction": "lower_is_better",
+      "id": "first_run.install_seconds",
+      "partial": false,
+      "per_repo": false,
+      "runner_dependent": true,
+      "samples": [
+        {
+          "detail": "ingested from first-run: first_run_row.v1 rows for ripr 0.10.0, 3 case(s)",
+          "repo": null,
+          "status": "meets_target",
+          "value": 87.23
+        }
+      ],
+      "source": "ingest:first-run",
+      "status": "meets_target",
+      "target": 120.0,
+      "title": "Fresh machine: seconds to install ripr by the route the walk times (`cargo install ripr --locked`, a source build)",
+      "unit": "s",
+      "value": 87.23
+    },
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "no baseline supplied"
+      },
+      "board": "first_run",
+      "direction": "lower_is_better",
+      "id": "first_run.unknown_verdicts",
+      "partial": false,
+      "per_repo": false,
+      "runner_dependent": false,
+      "samples": [
+        {
+          "detail": "ingested from first-run: verdicts: semver-1.0.23=reachable_unrevealed, fastrand-2.3.0=infection_unknown, bytesize-1.3.0=weakly_exposed",
+          "repo": null,
+          "status": "below_target",
+          "value": 1.0
+        }
+      ],
+      "source": "ingest:first-run",
+      "status": "below_target",
+      "target": 0.0,
+      "title": "Simple boundary edits on unfamiliar crates that get an `*_unknown` verdict",
+      "unit": "cases",
+      "value": 1.0
+    },
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "no baseline supplied"
+      },
+      "board": "first_run",
+      "direction": "lower_is_better",
+      "id": "first_run.friction_events",
+      "partial": false,
+      "per_repo": false,
+      "runner_dependent": false,
+      "samples": [
+        {
+          "detail": "ingested from first-run: first_run_row.v1 rows for ripr 0.10.0, 3 case(s)",
+          "repo": null,
+          "status": "below_target",
+          "value": 9.0
+        }
+      ],
+      "source": "ingest:first-run",
+      "status": "below_target",
+      "target": 0.0,
+      "title": "Friction events logged during the scripted first run",
+      "unit": "events",
+      "value": 9.0
+    },
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "no baseline supplied"
+      },
+      "board": "first_run",
+      "direction": "lower_is_better",
+      "id": "first_run.failed_steps",
+      "partial": false,
+      "per_repo": false,
+      "runner_dependent": false,
+      "samples": [
+        {
+          "detail": "ingested from first-run: none",
+          "repo": null,
+          "status": "meets_target",
+          "value": 0.0
+        }
+      ],
+      "source": "ingest:first-run",
+      "status": "meets_target",
+      "target": 0.0,
+      "title": "First-run steps that exit nonzero",
+      "unit": "steps",
+      "value": 0.0
+    },
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "no baseline supplied"
+      },
+      "board": "first_run",
+      "direction": "lower_is_better",
+      "id": "first_run.over_budget_steps",
+      "partial": false,
+      "per_repo": false,
+      "runner_dependent": false,
+      "samples": [
+        {
+          "detail": "ingested from first-run: semver-1.0.23/init_ci workflow_lines 1957 > 1500, fastrand-2.3.0/init_ci workflow_lines 1957 > 1500, bytesize-1.3.0/init_ci workflow_lines 1957 > 1500",
+          "repo": null,
+          "status": "below_target",
+          "value": 3.0
+        }
+      ],
+      "source": "ingest:first-run",
+      "status": "below_target",
+      "target": 0.0,
+      "title": "First-run steps over their own time, output-length or workflow-size budget",
+      "unit": "steps",
+      "value": 3.0
+    },
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "no baseline supplied"
+      },
+      "board": "first_run",
+      "direction": "lower_is_better",
+      "id": "first_run.walk_secs",
+      "partial": false,
+      "per_repo": true,
+      "runner_dependent": true,
+      "samples": [
+        {
+          "detail": "ingested from first-run: first_run_row.v1 rows for ripr 0.10.0, 3 case(s)",
+          "repo": "semver-1.0.23",
+          "status": "meets_target",
+          "value": 0.25
+        },
+        {
+          "detail": "ingested from first-run: first_run_row.v1 rows for ripr 0.10.0, 3 case(s)",
+          "repo": "fastrand-2.3.0",
+          "status": "meets_target",
+          "value": 0.09
+        },
+        {
+          "detail": "ingested from first-run: first_run_row.v1 rows for ripr 0.10.0, 3 case(s)",
+          "repo": "bytesize-1.3.0",
+          "status": "meets_target",
+          "value": 0.1
+        }
+      ],
+      "source": "ingest:first-run",
+      "status": "meets_target",
+      "target": 10.0,
+      "title": "Seconds for the scripted walk on one crate, setup excluded",
+      "unit": "s",
+      "value": 0.25
+    }
+  ],
+  "report": "dx-scoreboard",
+  "repos": [
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "serde",
+      "metrics": [],
+      "note": "small library workspace, macro-heavy tests",
+      "sha": "dd18663450ec3ee38e35e3a4ee141932614e662c",
+      "status": "not_measured"
+    },
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "ripgrep",
+      "metrics": [],
+      "note": "multi-crate CLI workspace",
+      "sha": "020687a77d13146923333f0beb274eeabd54a270",
+      "status": "not_measured"
+    },
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "regex",
+      "metrics": [],
+      "note": "large library workspace with generated test suites",
+      "sha": "72d650cb0a880a01ab6dc2137c0888e8f89740f7",
+      "status": "not_measured"
+    },
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "ripr-swarm",
+      "metrics": [],
+      "note": "large workspace (~900 files); pinned, not the checkout under test",
+      "sha": "7c64b9c8d0778cc7a6aeaab0deb0452d9e521663",
+      "status": "not_measured"
+    }
+  ],
+  "revision": "51acaabe0eeae011395ab07d69d1655ce8d0bafc",
+  "rollup": {
+    "below_target": 3,
+    "comparison_failed": 0,
+    "failed": 0,
+    "meets_target": 4,
+    "not_measured": 0,
+    "regressed": 0
+  },
+  "runner_class": "github-hosted-linux-x86_64-4cpu-amd-epyc-9v45-96-core-processor",
+  "schema_version": "ripr-dx-scoreboard-v1",
+  "tool": "ripr"
+}
