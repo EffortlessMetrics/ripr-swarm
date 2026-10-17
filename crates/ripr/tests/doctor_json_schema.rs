@@ -494,6 +494,24 @@ fn published_doctor_schema_rejects_documents_the_schema_forbids() -> Result<(), 
         format!("a populated unignored artifact-ignore must stay legal: {error}")
     })?;
 
+    // #8276: tracked artifacts are their own fact, null or a populated
+    // object; a count without its warning (or a zero count) is rejected.
+    let mut countless_tracked = base.clone();
+    countless_tracked["cache"]["tracked_artifacts"] = serde_json::json!({"warning": "w"});
+    assert_rejected(
+        "tracked artifacts without count",
+        &countless_tracked,
+        &schema,
+    )?;
+    let mut zero_tracked = base.clone();
+    zero_tracked["cache"]["tracked_artifacts"] = serde_json::json!({"count": 0, "warning": "w"});
+    assert_rejected("tracked artifacts with zero count", &zero_tracked, &schema)?;
+    let mut populated_tracked = base.clone();
+    populated_tracked["cache"]["tracked_artifacts"] =
+        serde_json::json!({"count": 2, "warning": "! 2 file(s) tracked"});
+    check(&populated_tracked, &schema, &schema, "doctor")
+        .map_err(|error| format!("a populated tracked_artifacts must stay legal: {error}"))?;
+
     let mut wrong_test_surface_type = base.clone();
     wrong_test_surface_type["test_surfaces"] = Value::String("rust".to_string());
     assert_rejected(

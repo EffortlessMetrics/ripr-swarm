@@ -686,6 +686,19 @@ pub(crate) struct DoctorCacheStatus {
     /// same evidence; the typed field keeps `doctor --json` as complete as
     /// the human report (#8257 review).
     pub(crate) artifact_ignore: DoctorArtifactIgnore,
+    /// Ripr artifacts already tracked in the git index (#8276), independent
+    /// of `artifact_ignore`: an ignore rule does not untrack earlier commits.
+    /// `None` when nothing is tracked or git could not answer.
+    pub(crate) tracked_artifacts: Option<DoctorTrackedArtifacts>,
+}
+
+/// Files under `target/ripr` that git already tracks (#8276).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct DoctorTrackedArtifacts {
+    /// How many tracked files sit under the artifact root.
+    pub(crate) count: usize,
+    /// The actionable warning line, including the `git rm --cached` fix.
+    pub(crate) warning: String,
 }
 
 /// Whether git ignore rules cover ripr's own artifact root (`target/ripr`)
@@ -4202,6 +4215,7 @@ mod tests {
                 size_bytes: 0,
                 size_display: "0 B".to_string(),
                 artifact_ignore: DoctorArtifactIgnore::NoArtifacts,
+                tracked_artifacts: None,
             },
             test_surfaces: Vec::new(),
             perl_preview: None,
@@ -4261,6 +4275,7 @@ mod tests {
                 size_bytes: 1024,
                 size_display: "1.00 KB".to_string(),
                 artifact_ignore: DoctorArtifactIgnore::Ignored,
+                tracked_artifacts: None,
             },
             test_surfaces: vec![DoctorTestSurface {
                 language: "python".to_string(),
