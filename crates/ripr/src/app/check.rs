@@ -442,6 +442,7 @@ pub fn repo_seam_inventory_input(input: CheckInput) -> CheckOutput {
             uncommitted_source_paths: Vec::new(),
             analyzed_revisions: None,
             untracked_source_paths: Vec::new(),
+            ignored_source_paths: Vec::new(),
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
         },
@@ -1283,6 +1284,7 @@ mod tests {
             uncommitted_source_paths: Vec::new(),
             analyzed_revisions: None,
             untracked_source_paths: Vec::new(),
+            ignored_source_paths: Vec::new(),
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
         }

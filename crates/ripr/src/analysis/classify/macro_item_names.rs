@@ -15,7 +15,8 @@
 //! - an invoked local `macro_rules!` declares an item through a fragment
 //!   binder (`fn $name`) and an invocation mentions the name; or
 //! - an item-position invocation of a non-local macro passes the name as a
-//!   bare top-level argument (`emit!(suit_color)`). A call, path or method
+//!   bare top-level argument (`emit!(suit_color)`) or declares it there
+//!   after an item keyword (`emit!(fn suit_color() {})`). A call, path or method
 //!   use, or a mention nested in a braced body (`proptest! { fn t() {
 //!   f(suit_color(1)); } }`), binds nothing.
 //!
@@ -152,14 +153,36 @@ fn passes_name_as_bare_argument(masked_arguments: &str, name: &str) -> bool {
         let end = at + name.len();
         let before = top_level[..at].trim_end();
         let after = top_level[end..].trim_start();
-        word_edge(top_level[..at].chars().next_back())
-            && word_edge(top_level[end..].chars().next())
-            && !before.ends_with("::")
+        if !word_edge(top_level[..at].chars().next_back())
+            || !word_edge(top_level[end..].chars().next())
+        {
+            return false;
+        }
+        // `fn name(..)` declares the name even though `(` follows it.
+        if follows_item_keyword(before) {
+            return true;
+        }
+        !before.ends_with("::")
             && !before.ends_with('.')
             && !after.starts_with('(')
             && !after.starts_with("::")
             && !after.starts_with('.')
     })
+}
+
+/// Whether the text ends in an item keyword (`fn`, `static mut`, ..) as a
+/// whole word, so the identifier after it is being declared.
+fn follows_item_keyword(before: &str) -> bool {
+    let tokens = identifier_tokens(before);
+    let ends_on_word = before
+        .chars()
+        .next_back()
+        .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
+    ends_on_word
+        && tokens.last().is_some_and(|last| {
+            ITEM_KEYWORDS.contains(last)
+                || *last == "mut" && tokens.iter().rev().nth(1) == Some(&"static")
+        })
 }
 
 /// Standard-library macros that expand to expressions or statements and
@@ -276,6 +299,23 @@ mod tests {
         ));
         assert!(macro_may_define_item_named("emit!(entry);\n", "entry"));
         assert!(macro_may_define_item_named("emit!(entry, u8);\n", "entry"));
+        // #8467: `fn name(..)` in the arguments declares the name even
+        // though `(` follows it; a call to it or a longer name does not.
+        for source in [
+            "emit!(fn entry() {});\n",
+            "emit!(fn entry(x: u8) -> u8 { x });\n",
+            "emit!(#[inline] fn entry() {});\n",
+            "emit!(pub static mut entry: u8 = 0);\n",
+        ] {
+            assert!(macro_may_define_item_named(source, "entry"), "{source}");
+        }
+        for source in [
+            "emit!(fn entry_other() {});\n",
+            "emit!(prefn entry(1));\n",
+            "emit!(entry(fn));\n",
+        ] {
+            assert!(!macro_may_define_item_named(source, "entry"), "{source}");
+        }
         // Item-position property macros that call the owner inside their
         // body bind nothing.
         for source in [

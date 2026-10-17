@@ -631,14 +631,22 @@ fn packet_to_findings_with_currentness(
             ExposureClass::Exposed
         } else {
             let packet_class = packet.classify_change_from_related_tests(&change.change_id);
-            // Downgrade advisory-only relations: only DirectOwnerCall can keep
-            // a WeaklyExposed (positive-reachability) class. Every other
-            // relation kind is capped at ReachableUnrevealed, regardless of
-            // oracle.
+            // Downgrade advisory-only relations: a WeaklyExposed class is
+            // kept only when some relation's own bound evidence earned it
+            // through an owner call shape (#6583). `DirectOwnerCall` earns
+            // it directly; a reachable `MethodReceiver` or `HelperCall`
+            // earns the same weak credit when its own oracle is the bound,
+            // owner-targeted strong oracle (RIPR-SPEC-0235 examples 13 and
+            // 14) — `classify_related_relation` already requires exactly
+            // that binding, so a wrong-receiver, weak-oracle, or
+            // unreachable relation never reaches WeaklyExposed. Every other
+            // relation kind is capped at ReachableUnrevealed. Sink-aligned
+            // `Exposed` stays direct-only in `sink_aligned_observation`.
             if packet_class == ExposureClass::WeaklyExposed
-                && !related_evidence
-                    .iter()
-                    .any(|ev| ev.relation_kind.supports_positive_reachability())
+                && !related_evidence.iter().any(|ev| {
+                    ev.class == ExposureClass::WeaklyExposed
+                        && ev.relation_kind.supports_weak_oracle_credit()
+                })
             {
                 ExposureClass::ReachableUnrevealed
             } else {
@@ -3001,6 +3009,19 @@ impl RelationKind {
     /// (never to promote), so classification stays conservative-or-stricter.
     fn supports_positive_reachability(self) -> bool {
         matches!(self, Self::DirectOwnerCall)
+    }
+
+    /// True when this relation kind can keep a per-relation `WeaklyExposed`
+    /// earned from its own bound, owner-targeted strong oracle (#6583).
+    /// `MethodReceiver` and `HelperCall` are owner call shapes like
+    /// `DirectOwnerCall`; the remaining kinds are advisory-only. This does
+    /// not grant sink-aligned `Exposed`, a suggested test location, or a
+    /// row miss — those stay gated by `supports_positive_reachability`.
+    fn supports_weak_oracle_credit(self) -> bool {
+        matches!(
+            self,
+            Self::DirectOwnerCall | Self::MethodReceiver | Self::HelperCall
+        )
     }
 }
 

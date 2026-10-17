@@ -1138,6 +1138,7 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
     };
@@ -1589,6 +1590,7 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
     };
@@ -1645,6 +1647,7 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
     };
@@ -1723,6 +1726,7 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
     };
@@ -1768,6 +1772,7 @@ fn same_stem_related_handles_missing_stems() {
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
     };
@@ -3749,6 +3754,7 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
     };
@@ -3820,6 +3826,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
     };
@@ -3888,6 +3895,7 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
     }

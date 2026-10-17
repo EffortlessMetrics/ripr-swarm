@@ -2812,6 +2812,102 @@
       ]
     },
     {
+      "id": "py_local_owner_stand_ins_not_the_imported_owner",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_local_owner_stand_ins",
+      "vector": "function_scope_or_module_level_rebind_of_the_owner_name_is_not_the_imported_owner",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "py_local_owner_stand_in_control_real_import_keeps_credit",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_local_owner_stand_in_control",
+      "vector": "real_import_and_helper_local_shadow_keep_owner_credit",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "py_wrong_receiver_assertion_not_owner_identity",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_wrong_receiver_assertion",
+      "vector": "asserted_method_call_on_a_receiver_not_bound_to_the_owner_class",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "py_bound_receiver_assertion_control_keeps_credit",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_bound_receiver_assertion",
+      "vector": "asserted_method_call_on_a_receiver_bound_to_the_owner_class",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
       "id": "py_unittest_list_equal_effectful_argument",
       "language": "python",
       "tier": "pure",
@@ -9597,6 +9693,32 @@
       ]
     },
     {
+      "id": "rust_array_element_drop_exit_return_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_array_element_drop_exit",
+      "vector": "element_type_non_plain_drop_exits_during_unwind",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_array_element_drop_plain_return_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_array_element_drop_plain",
+      "vector": "element_type_plain_drop_keeps_returned_array_credit",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
       "id": "rust_returned_type_drop_exit",
       "language": "rust",
       "tier": "pure",
@@ -9618,6 +9740,32 @@
       "source_fixture": "fixtures/rust_returned_type_drop_plain",
       "vector": "returned_type_plain_drop_keeps_field_pin",
       "probe_family": "field_construction",
+      "assertions": [
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
+      "id": "rust_returned_type_drop_exit_return_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_returned_type_drop_exit",
+      "vector": "returned_type_non_plain_drop_exits_during_unwind",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_returned_type_drop_plain_return_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_returned_type_drop_plain",
+      "vector": "returned_type_plain_drop_keeps_whole_value_credit",
+      "probe_family": "return_value",
       "assertions": [
         { "type": "expected_class", "class": "exposed" }
       ]
@@ -9665,6 +9813,21 @@
         { "type": "must_promote" },
         { "type": "expected_class", "class": "exposed" },
         { "type": "maximum_class", "class": "exposed" }
+      ]
+    },
+    {
+      "id": "ts_finally_completion_cannot_confirm_rejection",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_finally_completion",
+      "vector": "finally_return_swallows_awaited_rejection_matcher_failure",
+      "probe_family": "error_path",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "expected_oracle", "kind": "unknown", "strength": "unknown" }
       ]
     }
   ]
