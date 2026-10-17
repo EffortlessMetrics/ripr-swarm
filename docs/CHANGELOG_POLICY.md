@@ -70,7 +70,9 @@ Retire a key in this order (#7453):
    change under `Removed`.
 
 The `RETIRED_KEYS` table is empty until the first key is retired. Step 1 is a
-policy requirement for the first rename, not machinery that exists today.
+policy requirement for the first rename, not machinery that exists today;
+[#7453](https://github.com/EffortlessMetrics/ripr-swarm/issues/7453) owns the
+deprecation-warning step.
 
 ## Static Language
 

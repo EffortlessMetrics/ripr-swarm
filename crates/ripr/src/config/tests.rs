@@ -2020,6 +2020,32 @@ fn a_recorded_retired_key_names_its_release_and_replacement() -> Result<(), Stri
 }
 
 #[test]
+fn the_real_parse_path_keeps_the_misplaced_hint_and_adds_no_retirement_note() -> Result<(), String>
+{
+    // A valid key in the wrong table still gets its table hint, and the
+    // retirement lookup contributes nothing while no key is retired.
+    let Err(misplaced) = parse_config_diagnostic("mode = \"fast\"\n") else {
+        return Err("a top-level `mode` must be refused".to_string());
+    };
+    assert!(
+        misplaced
+            .message
+            .contains(&misplaced_key_hint_line("mode", "analysis")),
+        "misplaced hint must win: {}",
+        misplaced.message
+    );
+    assert!(!misplaced.message.contains("was retired in"));
+    // A key matching neither list keeps the plain serde error.
+    let Err(typo) = parse_config_diagnostic("zzz_not_a_key = 1\n") else {
+        return Err("an unknown key must be refused".to_string());
+    };
+    assert!(!typo.message.contains("is a valid key"), "{}", typo.message);
+    assert!(!typo.message.contains("was retired in"), "{}", typo.message);
+    assert_eq!(retired_key_hint(&typo.message), None);
+    Ok(())
+}
+
+#[test]
 fn a_config_error_summary_keeps_a_recorded_retirement_but_drops_forged_lines() {
     let retired = [RetiredKey {
         key: "old_mode",

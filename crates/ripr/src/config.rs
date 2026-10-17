@@ -540,6 +540,10 @@ fn retired_key_hint(error: &str) -> Option<String> {
 /// The retirement note for the key serde rejected, when it is a recorded
 /// retirement. Only a recorded key produces text; every other unknown key
 /// keeps the plain serde error.
+///
+/// The lookup matches the bare key only: serde's unknown-field message names
+/// no table, so a typo that equals a key retired from a different table could
+/// be labelled with that retirement.
 fn retired_key_hint_in(retired: &[RetiredKey], error: &str) -> Option<String> {
     let (_, rest) = error.split_once("unknown field `")?;
     let (key, _) = rest.split_once('`')?;
