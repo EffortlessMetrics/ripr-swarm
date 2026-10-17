@@ -402,7 +402,7 @@ pub(crate) fn qualify_legacy_receipt(mut receipt: Value) -> Result<Value, String
         .as_array_mut()
         .ok_or_else(|| "RIPR+ receipt warnings must be an array".to_string())?;
     let warning = json!(
-        "Exposure/ledger counts alone do not establish complete RIPR+ zero. Test-efficiency measurement, current-candidate binding and blocked/unsupported scope disposition are not established, and no ripr command produces those inputs yet (tracked in #7222), so this receipt stays indeterminate by design. Do not use it as a zero gate."
+        "Exposure/ledger counts alone do not establish complete RIPR+ zero. Complete test-efficiency measurement, current-candidate binding and blocked/unsupported scope disposition are not established, and no ripr command produces those inputs yet (tracked in #7222), so this receipt stays indeterminate by design. Do not use it as a zero gate."
     );
     if !warnings.contains(&warning) {
         warnings.push(warning);
