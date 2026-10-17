@@ -5068,6 +5068,79 @@ fn pretty_assertions_imported_under_its_own_name_is_the_standard_assertion() -> 
 }
 
 #[test]
+fn a_verified_drop_in_import_in_a_macro_body_is_the_standard_assertion() -> Result<(), String> {
+    // #8149: the drop-in rule applies to `use` items a macro body emits.
+    let outside = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    let manifest = |dependency: &str| {
+        format!(
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dev-dependencies]\n{dependency}\n"
+        )
+    };
+    let plain = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-macro-plain",
+        &[("Cargo.toml", &manifest("pretty_assertions = \"1\""))],
+    )?;
+    let aliased = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-macro-aliased",
+        &[(
+            "Cargo.toml",
+            &manifest("pretty_assertions = { package = \"fake-assertions\", version = \"1\" }"),
+        )],
+    )?;
+    let refused = |refusal: Option<AssertionRefusal>| {
+        matches!(
+            refusal,
+            Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::MacroBinding(_)
+            ))
+        )
+    };
+    let mut results = Vec::new();
+    // Admitted under a verified manifest, refused without one or when aliased.
+    for other in [
+        "macro_rules! cases { ($n:ident) => { mod $n { use pretty_assertions::assert_eq; #[test] fn t() { assert_eq!(weight(4), 12); } } }; }\n",
+        "macro_rules! cases { () => { use ::pretty_assertions::assert_eq; }; }\n",
+    ] {
+        let others = [("src/other.rs", other)];
+        results.push((
+            other,
+            weight_refusal_under(outside, &others, Some(&plain)),
+            weight_refusal_under(outside, &others, Some(&aliased)),
+            weight_refusal(outside, &others),
+        ));
+    }
+    // Still refused even under a verified manifest.
+    let mut still_refused = Vec::new();
+    for other in [
+        "macro_rules! m { () => { use other::assert_eq; }; }\n",
+        "macro_rules! m { () => { use pretty_assertions::assert_ne as assert_eq; }; }\n",
+        "macro_rules! m { () => { use pretty_assertions::inner::assert_eq; }; }\n",
+        "macro_rules! m { () => { use pretty_assertions::assert_eq; }; }\nmod pretty_assertions {}\n",
+    ] {
+        still_refused.push((
+            other,
+            weight_refusal_under(outside, &[("src/other.rs", other)], Some(&plain)),
+        ));
+    }
+    // A literal `use` in a matcher binds nothing and cannot reach the next `;`.
+    let matcher =
+        "macro_rules! m { (use other::assert_eq) => { use pretty_assertions::assert_eq; }; }\n";
+    let matcher_result = weight_refusal_under(outside, &[("src/other.rs", matcher)], Some(&plain));
+    let _ = std::fs::remove_dir_all(&plain);
+    let _ = std::fs::remove_dir_all(&aliased);
+    for (other, under_plain, under_alias, unrooted) in results {
+        assert_eq!(under_plain, None, "{other}");
+        assert!(refused(under_alias), "{other}");
+        assert!(refused(unrooted), "{other}");
+    }
+    for (other, refusal) in still_refused {
+        assert!(refused(refusal), "{other}");
+    }
+    assert_eq!(matcher_result, None);
+    Ok(())
+}
+
+#[test]
 fn a_return_guard_that_spares_the_expected_value_is_an_analyzer_limit() {
     // trap-tally-reached-assert-control / trap-steps-early-return.
     let refusal = |body: &str| {
