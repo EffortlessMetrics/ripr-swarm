@@ -1314,10 +1314,10 @@ fn missing_ref_repair(root: &Path, missing_ref: &str, git_timeout: Option<Durati
             .to_string();
     }
     let remotes = configured_remotes(root, git_timeout);
-    if let Some(advice) = qualified_remote_advice(missing_ref, remotes.as_deref()) {
+    if let Some(advice) = local_ancestor_history_advice(root, missing_ref, git_timeout) {
         return advice;
     }
-    if let Some(advice) = local_ancestor_history_advice(root, missing_ref, git_timeout) {
+    if let Some(advice) = qualified_remote_advice(missing_ref, remotes.as_deref()) {
         return advice;
     }
     match remotes.as_deref() {
@@ -1417,11 +1417,8 @@ fn local_ancestor_history_advice(
                 }
                 at = format!("{at}~{steps}");
             }
-            AncestryOp::Parent(0) => {
-                return Some(format!(
-                    "`{at}` has no parent 0, so `{missing_ref}` is not a commit"
-                ));
-            }
+            // `rev^0` is the commit itself.
+            AncestryOp::Parent(0) => {}
             AncestryOp::Parent(1) => {
                 let count = first_parent_commit_count(root, &at, git_timeout)?;
                 if count <= 1 {

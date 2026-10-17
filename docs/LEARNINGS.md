@@ -13,6 +13,7 @@ of a ref that already resolves. Count that walk with
 does not exist, so do not call it short history. Keep the shallow
 `--unshallow` arm and the `origin/main` arms. A suffix on a base that does
 not resolve (`no-such~1`) still uses the remote advice.
+
 ## 2026-10-14: One path can spell three ways on Windows; compare at a shared owner (#7937)
 
 Fifteen lib tests failed deterministically on Windows at a Linux-green main.
