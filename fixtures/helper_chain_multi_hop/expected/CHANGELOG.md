@@ -203,3 +203,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — helper_chain_multi_hop (15)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless helper_chain_multi_hop --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

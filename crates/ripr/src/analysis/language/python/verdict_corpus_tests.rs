@@ -596,6 +596,51 @@ fn a_match_pattern_bound_to_a_name_or_keyword_is_read() -> Result<(), String> {
 }
 
 #[test]
+fn a_literal_none_match_checks_no_message_in_either_framework() -> Result<(), String> {
+    // #7849: `match=None` and `assertRaisesRegex(E, None)` disable message
+    // matching, so only the exception class is pinned. Exact patterns and an
+    // omitted `match=` keep their existing verdicts.
+    assert_ne!(
+        parse_class(
+            "def test_parse():\n    with pytest.raises(ValueError, match=None):\n        parse(\"\")\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    let unittest = |pattern: &str| {
+        classify(
+            PARSE,
+            3,
+            PARSE_OLD,
+            &test_module(
+                "import unittest\n\nfrom src.shop import parse",
+                &format!(
+                    "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        with self.assertRaisesRegex(ValueError, {pattern}):\n            parse(\"\")\n"
+                ),
+            ),
+        )
+    };
+    // A name bound exactly once to `None` reads as `None`.
+    assert_ne!(
+        parse_class(
+            "def test_parse():\n    pattern = None\n    with pytest.raises(ValueError, match=pattern):\n        parse(\"\")\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // A second binding is not a single `None` assignment: the message
+    // stays checked.
+    assert_eq!(
+        parse_class(
+            "def test_parse():\n    pattern = None\n    pattern = \"empty\"\n    with pytest.raises(ValueError, match=pattern):\n        parse(\"\")\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    assert_ne!(unittest("None")?, ExposureClass::Exposed);
+    assert_ne!(unittest("expected_regex=None")?, ExposureClass::Exposed);
+    assert_eq!(unittest("\"empty\"")?, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
 fn a_parametrize_mark_does_not_stand_in_for_example_rows() -> Result<(), String> {
     assert_eq!(
         passed_class(
