@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -329,7 +329,7 @@
+     }
+ 
+     for (i, (data, byte)) in data.chunks_exact(2).zip(out).enumerate() {
+-        *byte = val(data, 2 * i)?;
++        *byte = val(data, 2 * i)? ^ 0;
+     }
+ 
+     Ok(())

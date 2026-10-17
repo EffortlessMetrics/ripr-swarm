@@ -1,0 +1,60 @@
+{
+  "case_id": "hex-decode-slice-write",
+  "subject_id": "rust-hex",
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect",
+  "test_shape": "unit_test_assert_eq_caller_buffer",
+  "diff": "cases/hex-decode-slice-write.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 332
+  },
+  "hard_case": "The same assignment produces a credited call-effect probe and an error-path gap. The rewrite changes only the byte-value expression, retaining val(...)? error propagation; full-checkout and retained-excerpt anchor findings match exactly.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "decoded byte XOR 1",
+        "mutated_line": "*byte = val(data, 2 * i)? ^ 1;",
+        "outcome": "tests_failed",
+        "failing_test": "test::test_decode_to_slice",
+        "equivalence_review": "Not equivalent: 6b697769 decodes to jhvh rather than kiwi. The literal caller-buffer equality at src/lib.rs:487 fails after compilation and a successful call."
+      },
+      {
+        "replacement": "discard decoded byte while retaining error propagation",
+        "mutated_line": "let _ = val(data, 2 * i)?;",
+        "outcome": "tests_failed",
+        "failing_test": "test::test_decode_to_slice",
+        "equivalence_review": "Not equivalent: decoding still validates each pair, but leaves the initially zero caller buffer unchanged; the equality at src/lib.rs:487 fails."
+      },
+      {
+        "replacement": "map decoded-pair errors to OddLength",
+        "mutated_line": "*byte = val(data, 2 * i).map_err(|_| FromHexError::OddLength)? ^ 0;",
+        "outcome": "tests_failed",
+        "failing_test": "test::test_invalid_char",
+        "equivalence_review": "Not equivalent: invalid hex characters report OddLength instead of InvalidHexCharacter with its character and index. Existing exact error assertions fail in test::test_invalid_char and test::test_from_hex_whitespace after compilation."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "XOR zero preserves every decoded byte and the val(...)? error path. The full pinned default-feature suite passes before and after this rewrite. It rejects both wrong/missing buffer writes at test::test_decode_to_slice and the wrong propagated error variant at test::test_invalid_char (also test::test_from_hex_whitespace). These executed controls label the selected mutants discriminated; they do not establish general mutation adequacy. At the anchor ripr reports exposed for call_deletion but weakly_exposed for error_path, with advice to add an exact error-arm test. The corpus gap-over-credit precedence therefore records false_actionable, rather than replacing the observed gap with credited. The existing error assertions reject a wrong variant through the public decoding path, so the error-test recommendation is not justified by these runtime results.",
+  "labeling_observation": {
+    "ripr_commit": "7adb0d66e386f4ad3148cc2b4a981e0f07bcbece",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "exposed",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

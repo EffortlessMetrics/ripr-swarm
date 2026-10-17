@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -381,7 +381,7 @@
+ 
+     for (byte, output) in input.iter().zip(output.chunks_exact_mut(2)) {
+         let (high, low) = byte2hex(*byte, table);
+-        output[0] = high;
++        output[0] = high | 0;
+         output[1] = low;
+     }
+ 

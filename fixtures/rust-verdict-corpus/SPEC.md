@@ -46,6 +46,13 @@ with what the crate's own test suite discriminates, established by running
 the listed mutants of the edited expression against the full pinned
 checkout (for an authored crate, the whole stored crate).
 
+The two `hex-*-slice-write` cases reuse the retained rust-hex pin to cover
+loop-mediated caller-buffer assignments, without retaining more upstream
+files. Their runtime controls reject wrong or missing writes. The decoding
+case records a false actionable error-path finding alongside call-effect
+credit; the encoding case records an acceptable `static_unknown` abstention.
+Runtime test failures do not establish static alias or propagation evidence.
+
 ## Layout
 
 `corpus.json` holds only the corpus header. Each subject is

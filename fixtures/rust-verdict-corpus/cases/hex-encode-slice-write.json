@@ -1,0 +1,52 @@
+{
+  "case_id": "hex-encode-slice-write",
+  "subject_id": "rust-hex",
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect",
+  "test_shape": "unit_test_assert_eq_caller_buffer",
+  "diff": "cases/hex-encode-slice-write.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 384
+  },
+  "hard_case": "The output name shadows the mutable slice parameter with a two-byte mutable chunk. Existing tests reach this private helper through public encoding wrappers and compare the caller buffer; ripr leaves the indexed assignment static_unknown.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "write low nibble into high-nibble position",
+        "mutated_line": "output[0] = low;",
+        "outcome": "tests_failed",
+        "failing_test": "test::test_encode_to_slice",
+        "equivalence_review": "Not equivalent: encoding kiwi writes bb997799 instead of 6b697769. The literal caller-buffer equality at src/lib.rs:461 fails after compilation and a successful call."
+      },
+      {
+        "replacement": "discard high nibble instead of writing it",
+        "mutated_line": "let _ = high;",
+        "outcome": "tests_failed",
+        "failing_test": "test::test_encode_to_slice",
+        "equivalence_review": "Not equivalent: the initially zero high-nibble slots are never filled; the equality at src/lib.rs:461 fails. Length checks and successful return flow are preserved."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "OR zero preserves every high-nibble byte. The full pinned default-feature suite passes before and after this rewrite; the two compiled wrong-write/removal controls fail test::test_encode_to_slice at its literal caller-buffer equality. These executed controls label the selected mutants discriminated, with credited as the ideal verdict. ripr instead reports static_unknown: it has no probe/propagation model for this indexed mutable-chunk assignment and does not establish the public-wrapper test path. The observed limited verdict is an acceptable abstention, not static proof that the writes are observed. Full-checkout and retained-excerpt anchor evidence is identical.",
+  "labeling_observation": {
+    "ripr_commit": "7adb0d66e386f4ad3148cc2b4a981e0f07bcbece",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
