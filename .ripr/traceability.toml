@@ -14571,6 +14571,8 @@ tests = [
   "xtask/src/work_portfolio.rs::tests::work_portfolio_markdown_renders_lists_as_plain_markdown_not_debug",
   "xtask/src/work_portfolio.rs::tests::capture_notice_names_fixture_corpus_date_and_sha_under_the_title",
   "xtask/src/work_portfolio.rs::tests::capture_notice_omits_fixture_banner_for_non_fixture_directories",
+  "xtask/src/work_portfolio.rs::tests::load_and_compile_marks_non_fixture_captured_dir_as_live",
+  "xtask/src/work_portfolio.rs::tests::committed_fixture_detection_fails_closed_for_unresolvable_paths",
   "xtask/src/work_portfolio.rs::tests::work_portfolio_committed_corpus_provenance_and_scenarios_hold",
   "xtask/src/work_portfolio.rs::tests::work_portfolio_argument_errors_fail_closed",
   "xtask/src/work_portfolio.rs::tests::work_portfolio_provenance_rejects_path_traversal",
