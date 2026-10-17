@@ -95,15 +95,21 @@ pub(crate) fn canonical_gap_identity(entry: &ClassifiedSeam) -> Option<Canonical
 /// that uniqueness decision.
 ///
 /// The collision ordinal (`.2`, ...) the probe producers append to the
-/// 2nd+ occurrence of a repeated ID (probe de-duplication in
-/// `probes/diff.rs` and `probes/repo.rs`) is not free-floating: it is only
-/// assignable when at least that many seams in `seams` re-mint the same
-/// base ID. An invented ordinal (`.999` on a sole seam) or a `.2` whose
-/// second occurrence was seam-filtered so only the first seam remains
-/// therefore names nothing (stale), instead of letting every candidate
-/// seam re-mint the fabricated suffix and match. An assignable ordinal
-/// still names the whole seam set sharing its base ID, so the caller
-/// refuses it as ambiguous rather than picking an occurrence.
+/// 2nd+ occurrence of a repeated ID is rank-binding, not free-floating.
+/// Probe de-duplication (`dedup_probe_ids` in `probes/diff.rs:582` and the
+/// inline loop in `probes/repo.rs:82`) scans the probe vector in order:
+/// the first occurrence of a base ID keeps it bare and each later
+/// occurrence takes its 1-based encounter rank as its suffix. The seam
+/// side mirrors that ordering exactly: `seams` is scanned in slice order
+/// (the classified inventory order, which sorts by file then byte offset
+/// in `seam_inventory.rs:2800`, i.e. source order within the one file a
+/// base ID can name, since the fingerprint carries that file), and an
+/// explicit ordinal `N` names only the seam whose rank among the seams
+/// re-minting the same base ID equals `N`. An invented ordinal (`.999`)
+/// or a `.2` whose second occurrence was seam-filtered so only the first
+/// seam remains therefore names nothing (stale). With no ordinal, the
+/// bare base ID still names every sharing seam, so the caller refuses
+/// it as ambiguous rather than picking an occurrence.
 pub(crate) fn probe_id_names_seam(
     item: &str,
     entry: &ClassifiedSeam,
@@ -116,22 +122,41 @@ pub(crate) fn probe_id_names_seam(
     } else {
         return false;
     };
-    let ordinal = item
+    let explicit_ordinal = item
         .rsplit_once(':')
         .and_then(|(_, fp)| fp.rsplit_once('.'))
-        .and_then(|(_, ordinal)| ordinal.parse::<u32>().ok())
-        .unwrap_or(1);
+        .and_then(|(_, ordinal)| ordinal.parse::<u32>().ok());
+    let Some(ordinal) = explicit_ordinal else {
+        // No ordinal: the bare base ID names every seam re-minting it;
+        // the caller owns the resulting ambiguity.
+        if reminted_probe_id(entry, prefix, 1).as_deref() != Some(item) {
+            return false;
+        }
+        let Some(base) = reminted_probe_id(entry, prefix, 1) else {
+            return false;
+        };
+        return seams
+            .iter()
+            .any(|candidate| reminted_probe_id(candidate, prefix, 1).as_deref() == Some(&*base));
+    };
     if reminted_probe_id(entry, prefix, ordinal).as_deref() != Some(item) {
         return false;
     }
     let Some(base) = reminted_probe_id(entry, prefix, 1) else {
         return false;
     };
-    let sharing = seams
-        .iter()
-        .filter(|candidate| reminted_probe_id(candidate, prefix, 1).as_deref() == Some(&*base))
-        .count();
-    u32::try_from(sharing).is_ok_and(|sharing| ordinal >= 1 && ordinal <= sharing)
+    // Rank-binding: the seam at 1-based rank `ordinal` among the seams
+    // re-minting `base`, in slice (inventory/source) order.
+    let mut rank = 0u32;
+    for candidate in seams {
+        if reminted_probe_id(candidate, prefix, 1).as_deref() == Some(&*base) {
+            rank += 1;
+            if candidate.seam.id() == entry.seam.id() {
+                return rank == ordinal;
+            }
+        }
+    }
+    false
 }
 
 /// Re-mint the probe ID for one seam at `ordinal`, or `None` when the
@@ -547,10 +572,10 @@ mod tests {
         assert!(probe_id_names_seam(&id, &twin, &seams));
     }
 
-    /// #8166 review: the collision ordinal is assignable only when enough
-    /// seams re-mint the same base ID. An invented `.999` names nothing,
-    /// and a real `.2` whose second occurrence was seam-filtered (so only
-    /// the first seam remains) must not resolve to that first seam.
+    /// #8166 review: the collision ordinal is rank-binding. An invented
+    /// `.999` names nothing, and a real `.2` whose second occurrence was
+    /// seam-filtered (so only the first seam remains) must not resolve to
+    /// that first seam.
     #[test]
     fn probe_id_ordinal_must_be_assignable_to_the_seam_set() {
         let entry = classified_gap("src/pricing.rs::pricing::discounted_total", 88, "x");
@@ -575,13 +600,44 @@ mod tests {
             !probe_id_names_seam(&mint(2), &entry, sole),
             "a .2 whose second occurrence is seam-filtered must not name the sole remaining seam"
         );
-        // With both occurrences present, `.2` is assignable but still
-        // names the shared seam set (caller refuses as ambiguous), and
-        // `.3` exceeds the set.
+        // With both occurrences present, `.2` binds to the second seam
+        // only, and `.3` exceeds the set (names nothing).
         let twin = classified_gap("src/pricing.rs::pricing::discounted_total", 99, "x");
-        let pair = [entry.clone(), twin];
-        assert!(probe_id_names_seam(&mint(2), &entry, &pair));
+        let pair = [entry.clone(), twin.clone()];
+        assert!(!probe_id_names_seam(&mint(2), &entry, &pair));
+        assert!(probe_id_names_seam(&mint(2), &twin, &pair));
         assert!(!probe_id_names_seam(&mint(3), &entry, &pair));
+        assert!(!probe_id_names_seam(&mint(3), &twin, &pair));
+        // Without an ordinal the bare ID still names both seams, so the
+        // resolver refuses it as ambiguous.
+        assert!(probe_id_names_seam(&mint(1), &entry, &pair));
+        assert!(probe_id_names_seam(&mint(1), &twin, &pair));
+    }
+
+    /// #8166 re-review: a legitimate `.2` with two real seams in the
+    /// inventory resolves to exactly the second seam, not to an
+    /// ambiguity refusal.
+    #[test]
+    fn probe_id_second_ordinal_resolves_to_the_second_seam() {
+        let first = classified_gap("src/pricing.rs::pricing::discounted_total", 88, "x");
+        let second = classified_gap("src/pricing.rs::pricing::discounted_total", 99, "x");
+        let pair = [first.clone(), second.clone()];
+        let second_id = crate::analysis::fingerprint_probe_id(
+            "probe",
+            &crate::analysis::sanitize_path(first.seam.file()),
+            "predicate",
+            first.seam.owner(),
+            &crate::analysis::normalize_expression(first.seam.expression()),
+            2,
+        )
+        .0;
+        let resolved: Vec<&ClassifiedSeam> = pair
+            .iter()
+            .filter(|entry| probe_id_names_seam(&second_id, entry, &pair))
+            .collect();
+        assert_eq!(resolved.len(), 1, ".2 must resolve to exactly one seam");
+        assert_eq!(resolved[0].seam.id(), second.seam.id());
+        assert_ne!(resolved[0].seam.id(), first.seam.id());
     }
 
     #[test]

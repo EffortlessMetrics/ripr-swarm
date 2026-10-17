@@ -917,6 +917,98 @@ fn repair_refuses_unassignable_probe_ordinals() -> Result<(), String> {
     Ok(())
 }
 
+/// #8166 re-review: a legitimate `.2` probe ID with two real seams in the
+/// inventory resolves to the second seam (rank-binding) instead of
+/// refusing as ambiguous, and a repair started through the facade targets
+/// that second seam. The first/second seam IDs are learned through the
+/// public `file:line` repair surface on separate committed fixtures.
+#[test]
+fn repair_with_second_occurrence_probe_id_targets_the_second_seam() -> Result<(), String> {
+    let seam_at_line = |label: &str, location: &str| -> Result<String, String> {
+        let fixture = Fixture::dir(label)?;
+        let root = &fixture.root;
+        populate_duplicate_expression_fixture(root)?;
+        // Match the main fixture's bytes exactly (weakened, committed):
+        // seam IDs carry byte offsets, which the weakening shifts.
+        let lib = root.join("src/lib.rs");
+        let source = std::fs::read_to_string(&lib).map_err(|e| e.to_string())?;
+        std::fs::write(
+            &lib,
+            source.replace("amount >= threshold", "amount > threshold"),
+        )
+        .map_err(|e| e.to_string())?;
+        run_git(root, &["add", "src/lib.rs"])?;
+        git_commit(root, "weaken both duplicate predicates")?;
+        let root_arg = root.to_string_lossy().into_owned();
+        let repair = run_ripr(root, &["repair", location, "--root", &root_arg])?;
+        assert_exit(&repair, 0, "repair learning a duplicate seam by file:line");
+        let ids = attempt_ids(root);
+        assert_eq!(ids.len(), 1, "exactly one learning attempt must be created");
+        read_manifest(root, &ids[0])?["seam_id"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| "learning attempt must name its seam".to_string())
+    };
+    let first_seam = seam_at_line("facade-probe-ordinal-first", "src/lib.rs:2")?;
+    let second_seam = seam_at_line("facade-probe-ordinal-second", "src/lib.rs:7")?;
+    assert_ne!(
+        first_seam, second_seam,
+        "the duplicate seams must have distinct seam IDs"
+    );
+
+    let fixture = Fixture::dir("facade-probe-ordinal-second-target")?;
+    let root = &fixture.root;
+    populate_duplicate_expression_fixture(root)?;
+    let lib = root.join("src/lib.rs");
+    let source = std::fs::read_to_string(&lib).map_err(|e| e.to_string())?;
+    std::fs::write(
+        &lib,
+        source.replace("amount >= threshold", "amount > threshold"),
+    )
+    .map_err(|e| e.to_string())?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let check = run_worktree_check(root, &root_arg)?;
+    let probe_id = printed_probe_identity(&stdout_text(&check))
+        .ok_or_else(|| format!("check must print a probe ID:\n{}", stdout_text(&check)))?;
+    assert!(
+        !probe_id.contains(".2"),
+        "the printed top probe ID must be the bare base ID: {probe_id}"
+    );
+    // The before phase pins HEAD, so the weakened predicate is committed
+    // before any repair start (the probe ID stays valid: it re-mints from
+    // the committed seams' own expression).
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "weaken both duplicate predicates")?;
+    // An invented ordinal still refuses as stale with no attempt.
+    let forged = format!("{probe_id}.999");
+    let forged_repair = run_ripr(root, &["repair", &forged, "--root", &root_arg])?;
+    assert_exit(&forged_repair, 3, "repair with an invented probe ordinal");
+    assert!(
+        stderr_text(&forged_repair).contains("names no seam"),
+        "an invented ordinal must refuse as stale:\n{}",
+        stderr_text(&forged_repair)
+    );
+    assert!(
+        attempt_ids(root).is_empty(),
+        "an invented ordinal must create no attempt"
+    );
+    let second_id = format!("{probe_id}.2");
+    let repair = run_ripr(root, &["repair", &second_id, "--root", &root_arg])?;
+    assert_exit(&repair, 0, "repair with the legitimate .2 probe ID");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1, "exactly one attempt must be created");
+    let targeted = read_manifest(root, &ids[0])?["seam_id"]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| "the .2 attempt must name its seam".to_string())?;
+    assert_eq!(
+        targeted, second_seam,
+        "the .2 probe ID must target the second seam"
+    );
+    assert_ne!(targeted, first_seam);
+    Ok(())
+}
+
 /// #8166 residual (F1): `ripr agent repair --seam-id` accepts the `probe:`
 /// finding ID when it uniquely maps to an eligible seam.
 #[test]
