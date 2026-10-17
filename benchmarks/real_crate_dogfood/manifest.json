@@ -1,0 +1,160 @@
+{
+  "schema_version": "ripr-real-crate-dogfood-v1",
+  "corpus_version": "2026-10-17.1",
+  "description": "Recent real commits of popular open-source Rust crates, each analyzed with `ripr check --base <revision>^`. Re-run before and after an analyzer change to measure related-test naming, duplicate test rows, base-side findings, footer/class agreement and wall time on real diffs. Findings are not judged here; the metrics are counts and timings only.",
+  "limits": [
+    "counts are static-analysis outputs on the pinned commits, not correctness verdicts",
+    "a revision is analyzed as the head of a shallow checkout whose parent is fetched as the base",
+    "fetching is opt-in network (--allow-network); checkouts live under target/ and no repository is vendored"
+  ],
+  "timeout_secs": 300,
+  "cases": [
+    {
+      "id": "anyhow-6e8c000",
+      "crate": "anyhow",
+      "url": "https://github.com/dtolnay/anyhow",
+      "revision": "6e8c000690151cba99305092024535905b2be162",
+      "note": ""
+    },
+    {
+      "id": "bytes-7930d93",
+      "crate": "bytes",
+      "url": "https://github.com/tokio-rs/bytes",
+      "revision": "7930d93d583757e922014312d4aa3e58a415131f",
+      "note": "correct exposed finding; Hidden count mismatch (#8389)"
+    },
+    {
+      "id": "clap-a1b6be7",
+      "crate": "clap",
+      "url": "https://github.com/clap-rs/clap",
+      "revision": "a1b6be720e59248d8b783c1dfce76a355e170dd7",
+      "note": ""
+    },
+    {
+      "id": "fd-b422e5d",
+      "crate": "fd",
+      "url": "https://github.com/sharkdp/fd",
+      "revision": "b422e5d8c9cffaa1ae43ba68e7b97a60fb3e8ae5",
+      "note": "honest limited finding (control)"
+    },
+    {
+      "id": "ripgrep-435f59f",
+      "crate": "ripgrep",
+      "url": "https://github.com/BurntSushi/ripgrep",
+      "revision": "435f59fc4b43af3ab32f34d53fa34978f393fe52",
+      "note": ""
+    },
+    {
+      "id": "ripgrep-241b87b",
+      "crate": "ripgrep",
+      "url": "https://github.com/BurntSushi/ripgrep",
+      "revision": "241b87b3377136659ef0f57948b8e0739e9a691b",
+      "note": "base-deleted probes counted as findings (#8389)"
+    },
+    {
+      "id": "serde_json-d8bbd39",
+      "crate": "serde_json",
+      "url": "https://github.com/serde-rs/json",
+      "revision": "d8bbd390f0f04331ff3e66fc2e0d7cd40faa06c0",
+      "note": "operator PartialEq reach; added test not named (#8387)"
+    },
+    {
+      "id": "regex-c4865a0",
+      "crate": "regex",
+      "url": "https://github.com/rust-lang/regex",
+      "revision": "c4865a0c8446a701e10b0fd987f19068f5dcc365",
+      "note": "added test goes through helper t(); footer contradicts class (#8387, #8389)"
+    },
+    {
+      "id": "regex-468fc64",
+      "crate": "regex",
+      "url": "https://github.com/rust-lang/regex",
+      "revision": "468fc64ecd6493caaca40dbe8319c31c5c08a83d",
+      "note": ""
+    },
+    {
+      "id": "regex-e358341",
+      "crate": "regex",
+      "url": "https://github.com/rust-lang/regex",
+      "revision": "e358341229ebd5feb9a78d8cc85b459c3c7b6600",
+      "note": "block-comment doc prose seeded a probe (#8385)"
+    },
+    {
+      "id": "regex-64ad0b6",
+      "crate": "regex",
+      "url": "https://github.com/rust-lang/regex",
+      "revision": "64ad0b618e043b791ed5385dd5504a436da1ddae",
+      "note": "slow run, new file, block-comment doc lines (#8389, #8385)"
+    },
+    {
+      "id": "tokio-7147b62",
+      "crate": "tokio",
+      "url": "https://github.com/tokio-rs/tokio",
+      "revision": "7147b620d133e4bfcc5efe9762091267adc386d2",
+      "note": "added test calls the changed fn directly (#8387)"
+    },
+    {
+      "id": "tokio-683eeef",
+      "crate": "tokio",
+      "url": "https://github.com/tokio-rs/tokio",
+      "revision": "683eeef6d98d2f902818661fab314989d8f22ebf",
+      "note": "setup unwrap row quoted as the oracle (#8386)"
+    },
+    {
+      "id": "tokio-55fbab7",
+      "crate": "tokio",
+      "url": "https://github.com/tokio-rs/tokio",
+      "revision": "55fbab70dc8b80d7af925e3829f124c2f0d236d7",
+      "note": ""
+    },
+    {
+      "id": "itertools-adac44e",
+      "crate": "itertools",
+      "url": "https://github.com/rust-itertools/itertools",
+      "revision": "adac44e4278b087033d23408652e540aef5b22f0",
+      "note": "first-statement oracle picked (#8386, #8388)"
+    },
+    {
+      "id": "itertools-6c2e8f6",
+      "crate": "itertools",
+      "url": "https://github.com/rust-itertools/itertools",
+      "revision": "6c2e8f611d1d75ca4033dae2bc64ade8c1ac05e1",
+      "note": ""
+    },
+    {
+      "id": "rand-db14664",
+      "crate": "rand",
+      "url": "https://github.com/rust-random/rand",
+      "revision": "db146647afaf002b866420d34e4501b0dd872163",
+      "note": ""
+    },
+    {
+      "id": "hyper-72fcf54",
+      "crate": "hyper",
+      "url": "https://github.com/hyperium/hyper",
+      "revision": "72fcf545c9b4a261f31d89bafd3019a2d4e9e1d7",
+      "note": ""
+    },
+    {
+      "id": "indexmap-c067355",
+      "crate": "indexmap",
+      "url": "https://github.com/indexmap-rs/indexmap",
+      "revision": "c067355e1ca5ec39348f42dcee582d4f222c3295",
+      "note": "macro invocation tests not linked (#8387)"
+    },
+    {
+      "id": "smallvec-1c3b840",
+      "crate": "smallvec",
+      "url": "https://github.com/servo/rust-smallvec",
+      "revision": "1c3b840dcd5bbb64c5b02d66d50fe03989fb785b",
+      "note": "base-side probes, impl header noise (#8389)"
+    },
+    {
+      "id": "syn-96801f7",
+      "crate": "syn",
+      "url": "https://github.com/dtolnay/syn",
+      "revision": "96801f717ed1ae7943182afe1fd4c5857c50428b",
+      "note": ""
+    }
+  ]
+}
