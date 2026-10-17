@@ -119,9 +119,9 @@ use related_tests::{
     verify_command_for_test,
 };
 use related_tests::{
-    first_parenthesized_string_argument, import_module_may_be_owners,
-    import_source_module_matches_owner, strong_test_calls_owner_method_on_bound_receiver,
-    strong_test_imports_owner_from_module, strong_tests_import_only_rival_modules,
+    first_parenthesized_string_argument, import_source_module_matches_owner,
+    strong_test_calls_owner_method_on_bound_receiver, strong_test_imports_owner_from_module,
+    strong_tests_import_only_rival_modules,
 };
 #[cfg(test)]
 use sink_alignment::strong_oracle_observes_owner;

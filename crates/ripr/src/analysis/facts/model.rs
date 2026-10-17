@@ -568,6 +568,13 @@ pub struct SourceRoleProvenance {
     /// `None` means every recorded edge resolved exactly. An unresolved edge
     /// fails closed: no composed role is granted from it.
     pub earliest_unresolved_reason: Option<String>,
+    /// True only when the file is positively outside every crate's module
+    /// tree (#7426): a plain `src/<name>.rs` that no resolved `mod <name>;`
+    /// or include reaches, in a package whose crate roots were parsed and
+    /// whose workspace has no unresolved include or `#[path]`. Cargo never
+    /// compiles such a file, so no test can import what it defines. Any doubt
+    /// leaves this `false`; it is never set from a missing or unparsed input.
+    pub outside_module_tree: bool,
 }
 
 /// One edge in a composed source-role provenance chain (#3533).
