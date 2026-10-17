@@ -5464,7 +5464,7 @@ fn trusted_macro_scan_skips_files_only_once_every_name_is_ambiguous() {
         // A foreign glob saturates the set before the defining file is read.
         (
             vec![
-                ("src/a.rs", "use std::io::prelude::*;\n"),
+                ("src/a.rs", "use rayon::prelude::*;\n"),
                 ("src/b.rs", shadowing),
             ],
             true,
@@ -5539,7 +5539,7 @@ fn convergence_index() -> RustIndex {
     index(&[
         (
             CONVERGENCE_GLOB,
-            "use std::io::prelude::*;\npub fn drain(input: &mut Vec<u8>) {\n    input.clear();\n}\n",
+            "use rayon::prelude::*;\npub fn drain(input: &mut Vec<u8>) {\n    input.clear();\n}\n",
         ),
         (
             LIB,
@@ -10538,4 +10538,69 @@ fn a_macro_body_site_names_the_macro_and_its_reach() {
         sites("macro_rules! g { () => { use crate::x::*; use $crate::y::*; use super::*; }; }\n"),
         Vec::new()
     );
+}
+
+/// #8388: a glob from the standard crates (`use core::simd::prelude::*`)
+/// names only items the standard library defines, so a sibling file's glob
+/// no longer withholds every plain `assert_eq!` in the crate. The shape is
+/// rand's `utils.rs`: a cfg-gated std glob and an unrelated `macro_rules!`
+/// beside a test module whose `assert_eq!` calls carry cfg attributes. Each
+/// control keeps a real rebinding, or a glob that may carry one, ambiguous.
+#[test]
+fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() {
+    let tests = "use demo::weight;\n\n#[cfg(test)]\nmod test {\n    use crate::weight;\n    #[cfg(feature = \"simd_support\")]\n    use std::simd::{Mask, Simd};\n\n    #[test]\n    fn weighs() {\n        assert_eq!(weight(4), 12);\n\n        #[cfg(feature = \"simd_support\")]\n        assert_eq!(weight(5), 15);\n    }\n}\n";
+    let refusal_beside = |sibling: &str| {
+        let index = index(&[(LIB, WEIGHT_LIB), ("src/simd.rs", sibling), (TESTS, tests)]);
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.file == Path::new(TESTS))?;
+        let assertion = test
+            .assertions
+            .iter()
+            .find(|assertion| assertion.text.starts_with("assert_eq!(weight(4)"))?;
+        OwnerPinSyntax::default().refusal(test, assertion, &index)
+    };
+    let rebound = |refusal: Option<AssertionRefusal>| {
+        matches!(
+            refusal,
+            Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::MacroBinding(_)
+            ))
+        )
+    };
+    // Fixture premise: a rebinding sibling does refuse this exact test.
+    let shadowing = "macro_rules! assert_eq { ($($tokens:tt)*) => {} }\n";
+    assert!(rebound(refusal_beside(shadowing)));
+    // Credited: standard-crate globs, gated or not, beside unrelated macros.
+    for sibling in [
+        "#[cfg(feature = \"simd_support\")]\nuse core::simd::prelude::*;\nmacro_rules! wmul_impl { () => {}; }\n",
+        "use std::io::prelude::*;\n",
+        "use alloc::vec::*;\nuse ::core::arch::x86::*;\n",
+        "use core::{simd::*, mem};\n",
+        "mod inner {\n    use std::collections::*;\n}\n",
+    ] {
+        assert_eq!(refusal_beside(sibling), None, "{sibling}");
+    }
+    // Still not credited: a real definition or import of the name, even
+    // beside a standard glob.
+    for sibling in [
+        "use core::simd::prelude::*;\nmacro_rules! assert_eq { ($($tokens:tt)*) => {} }\n",
+        "use std::io::prelude::*;\nuse other::assert_eq;\n",
+    ] {
+        assert!(rebound(refusal_beside(sibling)), "{sibling}");
+    }
+    // Still not credited: any glob that is not rooted at the standard
+    // crates, and a standard root a local module or alias takes. (A
+    // workspace package's own glob is scanned as workspace-owned code.)
+    for sibling in [
+        "use rayon::prelude::*;\n",
+        "use stdx::prelude::*;\n",
+        "use ::rayon::prelude::*;\n",
+        "mod core {}\nuse core::simd::prelude::*;\n",
+        "extern crate other as std;\nuse std::io::prelude::*;\n",
+        "use other as core;\nuse core::simd::prelude::*;\n",
+    ] {
+        assert!(rebound(refusal_beside(sibling)), "{sibling}");
+    }
 }

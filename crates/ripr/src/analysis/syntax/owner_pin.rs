@@ -312,7 +312,8 @@ pub(crate) enum MacroBindingKind {
     /// `#[macro_use]` on an `extern crate` or a module ripr did not resolve
     /// to an indexed file; the text is the item it is attached to.
     MacroUse(String),
-    /// A glob import from outside the workspace; the text is its path.
+    /// A glob import from outside the workspace and the unshadowed standard
+    /// crates (`std`, `core`, `alloc`, #8388); the text is its path.
     ForeignGlob(String),
     /// A `macro_rules!` or `macro` definition with the trusted name.
     Definition,
@@ -832,7 +833,19 @@ fn macro_binding_ambiguities(
                 || packages
                     .iter()
                     .any(|package| package.replace('-', "_") == root);
+            // #8388: a glob rooted at the standard crates (`use
+            // core::simd::prelude::*`) names only items the standard library
+            // defines, and its one `assert_eq!` is the standard macro, so it
+            // cannot rebind a trusted name. A workspace package, module or
+            // alias taking the root's name can, which `drop_in_shadowed`
+            // already answers for the drop-in crates; that case, and every
+            // glob from any other root, stays a foreign glob.
+            let standard_root = matches!(root, "std" | "core" | "alloc");
             for item in tree.syntax().descendants().filter_map(ast::UseTree::cast) {
+                if item.star_token().is_some() && standard_root && !drop_in_shadowed(root, external)
+                {
+                    continue;
+                }
                 if item.star_token().is_some() && !own {
                     let path = import.syntax().text().to_string();
                     let line = line_of(&node);
