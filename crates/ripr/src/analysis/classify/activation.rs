@@ -3278,13 +3278,18 @@ fn observed_parameter_values(rows: &[Vec<ParameterValue>], parameter: &str) -> V
     values
 }
 
+/// Parameter names of `function`, read from its whole signature so a
+/// rustfmt-wrapped parameter list is still seen (#7840). Each name is the
+/// text before the parameter's first `:`, so a destructuring pattern is not
+/// widened into its field names (unlike `signature_parameters`).
 pub(crate) fn function_parameters(function: &FunctionSummary) -> Vec<String> {
-    let signature = function
-        .body
-        .lines()
-        .next()
-        .unwrap_or(function.body.as_str());
-    parameters_in_signature(signature)
+    let body = function.body.as_str();
+    let Some(arguments) =
+        parameter_list_open(body).and_then(|open| delimited_contents_at(body, open))
+    else {
+        return Vec::new();
+    };
+    parameters_in_arguments(&arguments)
 }
 
 /// Parameter names of `function` read from its whole signature, so a
@@ -3391,11 +3396,8 @@ fn pattern_bindings(pattern: &str) -> Vec<String> {
         .collect()
 }
 
-fn parameters_in_signature(signature: &str) -> Vec<String> {
-    let Some(arguments) = delimited_contents_after(signature, '(') else {
-        return Vec::new();
-    };
-    split_top_level_args(&arguments)
+fn parameters_in_arguments(arguments: &str) -> Vec<String> {
+    split_top_level_args(arguments)
         .into_iter()
         .filter_map(|argument| {
             argument
@@ -4049,11 +4051,6 @@ fn macro_arguments(text: &str) -> Option<Vec<String>> {
     let start = text.find("!(")? + 1;
     let contents = delimited_contents_at(text, start)?;
     Some(split_top_level_args(&contents))
-}
-
-fn delimited_contents_after(text: &str, delimiter: char) -> Option<String> {
-    let start = text.find(delimiter)?;
-    delimited_contents_at(text, start)
 }
 
 fn split_top_level_args(text: &str) -> Vec<String> {
@@ -4887,6 +4884,25 @@ mod tests {
             "p",
             "points"
         ));
+    }
+
+    #[test]
+    fn function_parameters_read_a_wrapped_signature_without_widening_patterns() {
+        // #7840: a rustfmt-wrapped parameter list is seen, a destructuring
+        // pattern keeps its pre-colon text, and a body-only `(` is no list.
+        let wrapped =
+            function("pub fn tier(\n    points: i64,\n    bonus: u8,\n) -> u8 {\n    0\n}");
+        assert_eq!(function_parameters(&wrapped), vec!["points", "bonus"]);
+        let one_line = function("pub fn tier(points: i64) -> u8 {\n    0\n}");
+        assert_eq!(function_parameters(&one_line), vec!["points"]);
+        let destructured =
+            function("pub fn total(\n    Input { subtotal }: Input,\n) -> u8 {\n    0\n}");
+        assert_eq!(
+            function_parameters(&destructured),
+            vec!["Input { subtotal }"]
+        );
+        let no_params = function("pub fn zero() -> u8 {\n    f(1)\n}");
+        assert!(function_parameters(&no_params).is_empty());
     }
 
     #[test]
