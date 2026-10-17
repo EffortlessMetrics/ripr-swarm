@@ -1862,6 +1862,87 @@ fn pilot_repair_line_follows_the_canonical_pilot_decision() -> Result<(), String
     Ok(())
 }
 
+/// The repair start refuses only an inline-module target file that differs
+/// from HEAD, so the precondition appears exactly when the change is
+/// uncommitted and the repair targets an inline module; step 3 names the
+/// `ripr continue` command that step 1 prints.
+#[test]
+fn pilot_next_steps_name_the_dirty_target_precondition_only_when_it_applies() -> Result<(), String>
+{
+    use crate::analysis::new_test_target::{
+        InlineTestRegionAuthority, NewTestKind, NewTestProposalProvenance, NewTestTargetAdmission,
+        NewTestTargetProposal,
+    };
+
+    let artifacts = pilot_artifacts();
+    let root = Path::new(".");
+    let tests_dir_entry = route_ready_entry(&["tests/pricing.rs"]);
+    let mut inline_entry = route_ready_entry(&["src/pricing.rs"]);
+    let region = InlineTestRegionAuthority {
+        file: PathBuf::from("src/pricing.rs"),
+        module_name: "tests".to_string(),
+        parent_modules: Vec::new(),
+        body_start: 0,
+        close_brace_start: 0,
+        source_digest: String::new(),
+    };
+    inline_entry.evidence.new_test_target = Some(NewTestTargetAdmission {
+        proposal: Some(NewTestTargetProposal {
+            kind: NewTestKind::InlineUnit,
+            file: PathBuf::from("src/pricing.rs"),
+            owner: "pricing::discounted_total".to_string(),
+            provenance: NewTestProposalProvenance::ProducerOwned,
+        }),
+        region: Some(region.clone()),
+        blocker: None,
+        owner_inline_region: Some(region),
+    });
+    let precondition = "if `src/pricing.rs` has uncommitted edits, commit or stash them";
+    let dirty = changed("src/pricing.rs", 3).with_working_tree(true);
+    let clean = changed("src/pricing.rs", 3);
+
+    let render = |entry: &ClassifiedSeam, change: &PilotCurrentChange| -> Result<String, String> {
+        let route = commands::repair_start_command(root, entry)
+            .ok_or_else(|| "fixture seam must offer a repair start".to_string())?;
+        let mut context = pilot_context(&artifacts);
+        context.current_change = Some(change);
+        let terminal = render_pilot_terminal(std::slice::from_ref(entry), context);
+        assert!(terminal.contains(&format!("  1. {route}\n")), "{terminal}");
+        Ok(terminal)
+    };
+
+    // Dirty tree and an inline target: the line sits between heading and step 1.
+    let route = commands::repair_start_command(root, &inline_entry)
+        .ok_or_else(|| "inline fixture must offer a repair start".to_string())?;
+    let inline_dirty = render(&inline_entry, &dirty)?;
+    let positions = (
+        inline_dirty.find("Next, in order:"),
+        inline_dirty.find(precondition),
+        inline_dirty.find(&format!("  1. {route}")),
+    );
+    assert!(
+        matches!(positions, (Some(head), Some(pre), Some(one)) if head < pre && pre < one),
+        "{inline_dirty}"
+    );
+    assert!(
+        inline_dirty
+            .contains("  3. run the `ripr continue --attempt ...` command that step 1 prints\n"),
+        "{inline_dirty}"
+    );
+
+    // Negatives: clean tree, no change, and a tests/ target under a dirty tree.
+    assert!(!render(&inline_entry, &clean)?.contains("uncommitted edits"));
+    let no_change = PilotCurrentChange::NoChange { base: None };
+    assert!(!render(&inline_entry, &no_change)?.contains("uncommitted edits"));
+    let tests_dirty = render(&tests_dir_entry, &dirty)?;
+    assert!(!tests_dirty.contains("uncommitted edits"), "{tests_dirty}");
+    assert!(
+        tests_dirty.contains("  3. run the `ripr continue"),
+        "{tests_dirty}"
+    );
+    Ok(())
+}
+
 fn discovered_files(
     entries: &[(crate::domain::LanguageId, &str)],
 ) -> Vec<(crate::domain::LanguageId, PathBuf)> {

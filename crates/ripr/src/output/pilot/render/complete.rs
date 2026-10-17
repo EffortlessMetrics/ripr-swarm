@@ -13,7 +13,8 @@ use crate::output::json::escape as json_escape;
 use crate::output::markdown::{PowershellForm, code_span, powershell_form};
 use crate::output::path::{display_path, display_path_text};
 use crate::output::pilot::commands::{
-    PilotCommands, python_card_first_pr_command, repair_edit_scope, repair_start_command,
+    PilotCommands, python_card_first_pr_command, repair_edit_scope, repair_inline_target_file,
+    repair_start_command,
 };
 use crate::output::pilot::ranking::{
     actionable_in_change, actionable_in_owner, actionable_total, top_actionable_seams,
@@ -411,7 +412,7 @@ pub(crate) fn render_pilot_summary_md(
                 .map(|entry| repair_edit_scope(entry))
                 .unwrap_or_default();
             out.push_str(&format!(
-                "Start the repair transaction for the top seam, add one focused test {scope}, then run the `--attempt ... --phase after` command it prints:\n\n",
+                "Start the repair transaction for the top seam, add one focused test {scope}, then run the `ripr continue --attempt ...` command it prints:\n\n",
             ));
             vec![command]
         }
@@ -712,6 +713,16 @@ pub(crate) fn render_pilot_terminal(
         .and_then(|entry| repair_start_command(context.root, entry))
     {
         out.push_str("Next, in order:\n");
+        if context
+            .current_change
+            .is_some_and(crate::output::pilot::PilotCurrentChange::is_uncommitted)
+            && let Some(file) = top
+                .first()
+                .and_then(|entry| repair_inline_target_file(entry))
+        {
+            out.push_str(&dirty_target_precondition(&file));
+            out.push('\n');
+        }
         out.push_str(&format!("  1. {command}\n"));
         if let Some(form) = crate::output::markdown::powershell_text_variant(&command) {
             out.push_str(&format!("     (PowerShell) {form}\n"));
@@ -722,7 +733,7 @@ pub(crate) fn render_pilot_terminal(
                 .map(|entry| repair_edit_scope(entry))
                 .unwrap_or_default()
         ));
-        out.push_str("  3. run the `--attempt ... --phase after` command that step 1 prints\n");
+        out.push_str("  3. run the `ripr continue --attempt ...` command that step 1 prints\n");
         out.push_str(
             "  (do not redirect these commands' output into the checkout, for example `> packet.json`: the edit cage counts that file as an edit; use target/ripr/ or a directory outside the repository)\n",
         );
@@ -798,11 +809,22 @@ pub(crate) fn render_pilot_terminal(
             "Next, by hand: add the focused test named above, then compare against this run:\n",
         );
     } else {
-        out.push_str("Run after adding the focused test:\n");
+        // No recommended seam: there is no focused test to add or compare.
+        return out;
     }
     out.push_str(&format!("  {}\n", commands.after_snapshot));
     out.push_str(&format!("  {}\n", commands.outcome));
     out
+}
+
+/// Precondition printed ahead of the repair steps when the change is
+/// uncommitted and the repair edits an inline test module in `file`: the
+/// repair start refuses that file when its worktree or index copy differs
+/// from HEAD.
+fn dirty_target_precondition(file: &str) -> String {
+    format!(
+        "  Before step 1: if `{file}` has uncommitted edits, commit or stash them; the repair start refuses a target file that differs from HEAD."
+    )
 }
 
 /// Terminal note for a top seam whose focused test is named but that fails the
