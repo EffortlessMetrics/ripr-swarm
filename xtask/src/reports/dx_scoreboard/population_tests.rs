@@ -1292,6 +1292,15 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
             assert_eq!(metric[key], original[key], "{id} {key}");
         }
     }
+    // #8492: the witness keeps the title that still counted workflow size;
+    // that step is now `first_run.over_budget_workflows`, so only the title moved.
+    let steps = witness["metrics"]
+        .as_array_mut()
+        .ok_or("metrics missing")?
+        .iter_mut()
+        .find(|metric| metric["id"] == "first_run.over_budget_steps")
+        .ok_or("first_run.over_budget_steps missing")?;
+    steps["title"] = Value::from("First-run steps over their own time or output-length budget");
     assert_eq!(live, witness);
     assert_eq!(
         include_str!("../../../../metrics/dx-scoreboard/baseline.json"),
