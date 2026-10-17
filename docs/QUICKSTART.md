@@ -25,6 +25,16 @@ echo "$(cat $f.sha256)  $f" | { sha256sum -c - || shasum -a 256 -c -; } && tar x
   && export PATH="$PWD:$PATH"   # ./ripr is now first on PATH for this shell
 ```
 
+The macOS archives are not signed or notarized. A `curl` and `tar` download like
+the one above normally carries no quarantine attribute, so `./ripr` runs
+without a prompt. A browser, AirDrop or mail download of the archive is
+quarantined, and Gatekeeper then blocks the extracted `ripr` with a dialog such
+as "Apple could not verify "ripr" is free of malware" or ""ripr" cannot be
+opened because the developer cannot be verified". Verify the checksum first,
+then clear the attribute with `xattr -d com.apple.quarantine ./ripr` (or
+`xattr -dr com.apple.quarantine <extracted-dir>`). Do that only for an archive
+whose `.sha256` matched.
+
 Or install the published CLI with Cargo, which compiles from source:
 
 ```bash
