@@ -123,6 +123,14 @@ pub(super) fn repair_edit_scope(entry: &ClassifiedSeam) -> String {
     }
 }
 
+/// The production file the repair confines its edit to (an inline
+/// `#[cfg(test)]` module), when the recommended test lives in one. The repair
+/// start refuses exactly this file when it differs from HEAD.
+pub(super) fn repair_inline_target_file(entry: &ClassifiedSeam) -> Option<String> {
+    let recommended = recommended_test_for(entry);
+    recommended_inline_test_module(entry, &recommended.file).map(|_| recommended.file.clone())
+}
+
 /// `ripr first-pr` for a Python repair card without its own receipt command.
 /// First-pr builds the gap ledger and names the gap's receipt command; it must
 /// run before the test edit, because once the edit closes the gap first-pr no
