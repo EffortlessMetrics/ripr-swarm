@@ -21,6 +21,9 @@ use serde_json::Value;
 
 const PAGE: &str = "docs/PUBLIC_PROOF.md";
 const RECEIPTS: &str = "metrics/public-proof";
+
+#[cfg(test)]
+mod required_fields_tests;
 const CORPUS_MANIFEST: &str = "benchmarks/rust_corpus/manifest.json";
 const CORPUS_RECEIPT: &str = "metrics/public-proof/corpus-manifest.json";
 
