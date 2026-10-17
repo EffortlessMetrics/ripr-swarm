@@ -124,11 +124,45 @@ pub(crate) fn partition_analyzable_rust_corpus(
     config: &RiprConfig,
 ) -> AnalyzableRustCorpus {
     let generated_sources = GeneratedRustSources::for_repo(root, &config.languages().rust);
+    partition_with_generated_sources(root, discovered, generated_sources, None).0
+}
+
+/// Pilot selects the same diff-bound exclusions for source, evidence and absence.
+/// The boolean observes membership differences from ordinary repo exposure;
+/// disclosure and this observation are fresh even when selected bytes hit cache.
+pub(crate) fn discover_analyzable_rust_corpus_for_changed_paths(
+    root: &Path,
+    config: &RiprConfig,
+    changed_paths: &[PathBuf],
+) -> Result<(AnalyzableRustCorpus, bool), String> {
+    let discovered = workspace::discover_rust_files(root)?;
+    let generated = GeneratedRustSources::for_changed_paths(
+        root,
+        &config.languages().rust,
+        changed_paths.iter().map(PathBuf::as_path),
+    );
+    let canonical = GeneratedRustSources::for_repo(root, &config.languages().rust);
+    Ok(partition_with_generated_sources(
+        root,
+        discovered,
+        generated,
+        Some(canonical),
+    ))
+}
+
+fn partition_with_generated_sources(
+    root: &Path,
+    discovered: Vec<PathBuf>,
+    generated_sources: GeneratedRustSources<'_>,
+    canonical: Option<GeneratedRustSources<'_>>,
+) -> (AnalyzableRustCorpus, bool) {
     let mut analyzable = Vec::new();
     let mut skipped_generated = Vec::new();
     let mut naming_only_skips = Vec::new();
+    let mut diff_bound = false;
     for path in discovered {
         if generated_sources.contains(&path) {
+            diff_bound |= canonical.as_ref().is_some_and(|view| !view.contains(&path));
             if generated_sources.is_convention_only_exclusion(&path) {
                 naming_only_skips.push(path.clone());
             }
@@ -138,12 +172,15 @@ pub(crate) fn partition_analyzable_rust_corpus(
         }
     }
     let fingerprint = corpus_fingerprint(root, &analyzable);
-    AnalyzableRustCorpus {
-        analyzable,
-        skipped_generated,
-        naming_only_skips,
-        fingerprint,
-    }
+    (
+        AnalyzableRustCorpus {
+            analyzable,
+            skipped_generated,
+            naming_only_skips,
+            fingerprint,
+        },
+        diff_bound,
+    )
 }
 
 /// Producer-owned, character-bounded recovery shared by diff and repo output.
@@ -189,6 +226,74 @@ mod tests {
 
     fn portable(path: &Path) -> String {
         path.to_string_lossy().replace('\\', "/")
+    }
+
+    #[test]
+    fn changed_vendor_context_excludes_evidence_and_refreshes_skip_strength() -> Result<(), String>
+    {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-contextual-corpus-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos()
+        ));
+        for path in [
+            "src/lib.rs",
+            "src/third_party/lib.rs",
+            "src/third_party/tests/oracle.rs",
+            "src/third_party/generated.rs",
+        ] {
+            let full = root.join(path);
+            std::fs::create_dir_all(full.parent().ok_or("missing fixture parent")?)
+                .map_err(|error| error.to_string())?;
+            std::fs::write(full, "pub fn value() -> u32 { 1 }\n")
+                .map_err(|error| error.to_string())?;
+        }
+        let config = RiprConfig::default();
+        let changed = paths(&["src/third_party/.cargo-checksum.json"]);
+        assert!(!root.join(&changed[0]).exists());
+        let canonical = super::discover_analyzable_rust_corpus(&root, &config)?;
+        assert_eq!(
+            canonical.analyzable,
+            paths(&[
+                "src/lib.rs",
+                "src/third_party/lib.rs",
+                "src/third_party/tests/oracle.rs"
+            ])
+        );
+        assert_eq!(
+            canonical.naming_only_skips,
+            paths(&["src/third_party/generated.rs"])
+        );
+        let (selected, different) =
+            super::discover_analyzable_rust_corpus_for_changed_paths(&root, &config, &changed)?;
+        assert!(
+            different,
+            "evidence inputs are part of corpus comparability"
+        );
+        assert_eq!(selected.analyzable, paths(&["src/lib.rs"]));
+        assert!(
+            selected.naming_only_skips.is_empty(),
+            "vendor exclusion is stronger than naming"
+        );
+        for path in ["src/third_party/lib.rs", "src/third_party/tests/oracle.rs"] {
+            std::fs::remove_file(root.join(path)).map_err(|error| error.to_string())?;
+        }
+        let (same, different) =
+            super::discover_analyzable_rust_corpus_for_changed_paths(&root, &config, &changed)?;
+        assert!(
+            !different,
+            "both views exclude the remaining convention-only source"
+        );
+        assert_eq!(same.analyzable, selected.analyzable);
+        assert!(
+            same.naming_only_skips.is_empty(),
+            "fresh guidance still recognizes vendor context"
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        Ok(())
     }
 
     #[test]

@@ -241,6 +241,7 @@ fn check_with_progress_and_origins_with_open_rust_paths(
     // acquisition, so a subject input can never fall through to worktree
     // analysis or an empty diff.
     super::analysis_subject::validate_input_subject(&input).map_err(|error| error.to_string())?;
+    crate::atomic_file::ensure_default_output_contained(&input.root)?;
     // Managed producer mode (Campaign 31 Phase D, #1407; architecture
     // corrected post perl-lsp-swarm #3294): when a Perl facts exporter is
     // configured (`producer = "perl-ripr-facts"` or `producer = "perllsp"`
@@ -261,7 +262,7 @@ fn check_with_progress_and_origins_with_open_rust_paths(
         // language_runs[] entry and a `producer_failure` typed limitation
         // carrying the real cause, and the other languages' findings still
         // emit. The stderr warnings remain for the human stdout path.
-        match invoke_perl_lsp_producer(perl_config, &input) {
+        match invoke_perl_lsp_producer(perl_config, &input, scope) {
             Ok(packet_path) => input.perl_facts_path = Some(packet_path),
             Err(reason) => {
                 eprintln!(
@@ -578,6 +579,11 @@ fn perl_facts_cache_dir(perl_config: &crate::config::PerlConfig, root: &Path) ->
 struct PerlProducerStaging {
     directory: PathBuf,
     packet: PathBuf,
+    /// Unified diff handed to the exporter so it can emit `changes[]`.
+    diff: PathBuf,
+    /// Exporter stderr, kept in a file (not a pipe) so a chatty producer can
+    /// never block on a full pipe, and read back only to explain a failure.
+    stderr: PathBuf,
 }
 
 impl PerlProducerStaging {
@@ -600,6 +606,8 @@ impl PerlProducerStaging {
                 Ok(()) => {
                     return Ok(Self {
                         packet: directory.join(format!("{packet_hash}.json.tmp")),
+                        diff: directory.join("ripr.diff"),
+                        stderr: directory.join("exporter.stderr"),
                         directory,
                     });
                 }
@@ -635,7 +643,39 @@ impl PerlProducerStaging {
         }
     }
 
+    /// The tail of the exporter's stderr, for failure messages. The file is
+    /// attempt-private and bounded here, so a noisy producer cannot flood the
+    /// report.
+    fn stderr_tail(&self) -> Option<String> {
+        const LIMIT: usize = 600;
+        let bytes = std::fs::read(&self.stderr).ok()?;
+        let text = String::from_utf8_lossy(&bytes);
+        let text = text.trim();
+        if text.is_empty() {
+            return None;
+        }
+        let start = text
+            .char_indices()
+            .rev()
+            .map(|(index, _)| index)
+            .nth(LIMIT)
+            .unwrap_or(0);
+        Some(text[start..].trim().to_string())
+    }
+
     fn remove_empty_directory(&self) -> Result<(), String> {
+        // Attempt-private scratch (diff, stderr) goes first so the directory
+        // can be removed; any other file keeps the directory and is reported.
+        for scratch in [&self.diff, &self.stderr] {
+            if let Err(error) = std::fs::remove_file(scratch)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(format!(
+                    "Perl exporter staging cleanup failed at `{}`: {error}; staging retained",
+                    scratch.display()
+                ));
+            }
+        }
         std::fs::remove_dir(&self.directory).map_err(|error| {
             format!(
                 "Perl exporter staging cleanup failed at `{}`: {error}; staging retained",
@@ -668,7 +708,18 @@ impl PerlProducerStaging {
 fn invoke_perl_lsp_producer(
     perl_config: &crate::config::PerlConfig,
     input: &CheckInput,
+    scope: AnalysisProgressScope,
 ) -> Result<PathBuf, String> {
+    // stdin can be read once, and the analysis pipeline reads it again after
+    // this producer runs; handing the exporter a diff here would leave the
+    // pipeline an empty one. Fail closed (other languages continue).
+    if input.diff_file.as_deref() == Some(Path::new("-")) {
+        return Err(
+            "the managed Perl producer cannot consume a diff read from stdin \
+                    (`--diff -`); write the diff to a file and pass `--diff <path>`"
+                .to_string(),
+        );
+    }
     if let Some(refused) = perl_config.refused_executable() {
         eprintln!(
             "{}",
@@ -720,35 +771,77 @@ fn invoke_perl_lsp_producer(
     //     return Ok(packet_path);
     // }
 
-    // Item 4b: handle diff_file explicitly. When input.diff_file is set,
-    // pass it to the exporter via --diff so the exporter scopes its
-    // analysis to the diff range.
-    let diff_arg = input.diff_file.as_ref().map(|p| p.display().to_string());
-
     // Atomic publication still uses the existing final packet key. Each
     // invocation owns separate staging, including after an interrupted run;
     // a new attempt neither consumes nor deletes another attempt's partial.
     let staging = PerlProducerStaging::create(&cache_dir, &packet_hash)?;
     let tmp_path = &staging.packet;
 
-    let mut argv =
-        perl_facts_export_argv(&root_str, &tmp_path.display().to_string(), base, Some(head));
+    // The exporter emits `changes[]` only from a diff it is handed (it never
+    // runs git), and its path arguments must be root-relative without a
+    // leading `./` or `..`. So hand it the same diff ripr analyzes, as a file
+    // inside private staging, and run it from the root with `--root .`.
+    // A candidate-subject run has no worktree diff to hand over.
+    let mut diff_arg: Option<String> = None;
+    if input.git_candidate.is_none() {
+        // The exporter must see the diff the pipeline analyzes: the live
+        // working-tree diff for a worktree-scope run, otherwise the loaded
+        // base/committed diff or `--diff` file.
+        let loaded = if scope == AnalysisProgressScope::Worktree && input.diff_file.is_none() {
+            crate::analysis::load_worktree_diff_with_effective_base_core(
+                &input.root,
+                input.base.as_deref(),
+                input.git_timeout,
+            )
+            .map(|loaded| loaded.text)
+        } else {
+            crate::analysis::load_diff_core(
+                &input.root,
+                input.base.as_deref(),
+                input.diff_file.as_ref(),
+                input.git_timeout,
+            )
+        };
+        let diff_text = loaded.map_err(|e| {
+            staging.settled_failure(format!(
+                "failed to load the diff for the Perl exporter: {e}"
+            ))
+        })?;
+        std::fs::write(&staging.diff, diff_text).map_err(|e| {
+            staging.settled_failure(format!(
+                "failed to stage the diff for the Perl exporter at `{}`: {e}",
+                staging.diff.display()
+            ))
+        })?;
+        diff_arg = Some(
+            root_relative_arg(&input.root, &staging.diff)
+                .map_err(|e| staging.settled_failure(e))?,
+        );
+    }
+    let out_arg =
+        root_relative_arg(&input.root, tmp_path).map_err(|e| staging.settled_failure(e))?;
+
+    let mut argv = perl_facts_export_argv(".", &out_arg, base, Some(head));
     if let Some(diff) = &diff_arg {
         argv.push("--diff".to_string());
         argv.push(diff.clone());
     }
 
-    // Item 4b: redirect stdout/stderr to Stdio::null() instead of piping.
-    // The previous piped-without-draining approach risked a deadlock when a
-    // verbose producer filled the OS pipe buffer. We don't read the producer's
-    // stdout/stderr — we check the packet file's existence after exit. Stderr
-    // diagnostics from a failing producer are not captured here (the caller
-    // surfaces the failure reason, not the producer's stderr).
+    // stdout is discarded and stderr goes to a staging file rather than a
+    // pipe: an undrained pipe could deadlock a verbose producer, and the file
+    // lets a failing exporter's own message reach the failure reason below.
+    let stderr_file = std::fs::File::create(&staging.stderr).map_err(|e| {
+        staging.settled_failure(format!(
+            "failed to create Perl exporter stderr capture `{}`: {e}",
+            staging.stderr.display()
+        ))
+    })?;
     let mut command = Command::new(&executable);
     command
         .args(&argv)
+        .current_dir(&input.root)
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+        .stderr(std::process::Stdio::from(stderr_file));
 
     // The shared owned-subprocess authority (#3803) owns containment: on
     // Windows the exporter is assigned to a Job Object before its user code
@@ -775,9 +868,13 @@ fn invoke_perl_lsp_producer(
             // packet exists. Only accept the packet if the producer exited
             // successfully AND the file exists.
             if !status.success() {
+                let detail = staging
+                    .stderr_tail()
+                    .map(|tail| format!(": {tail}"))
+                    .unwrap_or_default();
                 return Err(staging.settled_failure(format!(
                     "Perl facts exporter exited with status {status} (non-zero); \
-                     packet rejected even if a partial file exists"
+                     packet rejected even if a partial file exists{detail}"
                 )));
             }
             if tmp_path.is_file() {
@@ -831,6 +928,21 @@ fn invoke_perl_lsp_producer(
             Err(staging.retained_failure(cleanup))
         }
     }
+}
+
+/// `path` as the root-relative, `./`-free string the Perl exporter requires
+/// for `--out` and `--diff`. The exporter runs with the root as its working
+/// directory, so a path outside the root cannot be named.
+fn root_relative_arg(root: &Path, path: &Path) -> Result<String, String> {
+    let relative = path.strip_prefix(root).map_err(|error| {
+        format!(
+            "Perl exporter staging path `{}` is outside the analysis root `{}`: {error}",
+            path.display(),
+            root.display()
+        )
+    })?;
+    let text = relative.to_string_lossy().replace('\\', "/");
+    Ok(text.trim_start_matches("./").to_string())
 }
 
 /// Whether the cached packet at `path` is fresh enough to reuse: the file
@@ -1527,7 +1639,7 @@ mod tests {
         // here we exercise the spawn-failure path directly with a bogus
         // executable by relying on the config default resolving to `perllsp`,
         // which is absent in ripr-swarm CI.
-        let result = invoke_perl_lsp_producer(&config, &input);
+        let result = invoke_perl_lsp_producer(&config, &input, AnalysisProgressScope::Diff);
         // In an environment WITHOUT a Perl facts exporter, this must be an
         // Err naming the missing producer.
         if let Err(reason) = result {

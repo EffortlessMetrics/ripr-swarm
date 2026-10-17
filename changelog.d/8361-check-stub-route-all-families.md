@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr check` now resolves the stub route for every probe family with a seam, not only predicate, return value, error path and match arm. A field construction, call deletion or side effect finding prints either the `ripr agent stub` command or the reason no stub can be written (for example an `impl Trait` parameter or a change that needs an observer), instead of ending in silence (#8361).

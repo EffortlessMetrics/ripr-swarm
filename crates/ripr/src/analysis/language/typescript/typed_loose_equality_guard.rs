@@ -100,7 +100,8 @@ pub(crate) fn ts_typed_loose_number_facts(
         if local_identifier_declared_in_test_body(&candidate.test.body_text, &owner.name) {
             continue;
         }
-        let receivers = owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
+        let receivers =
+            unshadowed_owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
         // A bare `f(...)` is the owner only when this file imports `f` by
         // name from the owner's module: a namespace import relates the test
         // without vouching for a bare `f` imported from elsewhere.

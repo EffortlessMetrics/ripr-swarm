@@ -19,6 +19,7 @@
 use super::classify::changed_error_variant;
 use super::generated_rust_corpus::{
     AnalyzableRustCorpus, absent_changed_rust_file_limitations, discover_analyzable_rust_corpus,
+    discover_analyzable_rust_corpus_for_changed_paths,
 };
 use super::rust_index::{self, ProbeShapeFact, ProbeShapeKind, RustIndex};
 #[cfg(test)]
@@ -171,6 +172,9 @@ pub(crate) struct ClassifiedSeamsReport {
     /// its consumed corpus identity avoids a later renderer hashing new
     /// workspace bytes for old classifications. Synthetic reports have none.
     pub(crate) corpus_key: Option<RepoSeamCacheKey>,
+    /// This run's selected inputs differ from ordinary repo exposure, including
+    /// evidence-only files. Recomputed at discovery, never reused from cache.
+    pub(crate) diff_bound_corpus: bool,
     pub(crate) limit_info: Option<SeamLimitInfo>,
     pub(crate) skipped_generated: Vec<PathBuf>,
     pub(crate) naming_only_skips: Vec<PathBuf>,
@@ -188,6 +192,23 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
     root: &Path,
     config: &RiprConfig,
 ) -> Result<ClassifiedSeamsReport, String> {
+    inventory_classified_seams_report_inner(root, config, None)
+}
+
+/// Diff-aware pilot selection, using ordinary selected-path/byte cache identity.
+pub(crate) fn inventory_pilot_seams_report_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+    changed_paths: &[PathBuf],
+) -> Result<ClassifiedSeamsReport, String> {
+    inventory_classified_seams_report_inner(root, config, Some(changed_paths))
+}
+
+fn inventory_classified_seams_report_inner(
+    root: &Path,
+    config: &RiprConfig,
+    changed_paths: Option<&[PathBuf]>,
+) -> Result<ClassifiedSeamsReport, String> {
     let total_started = Instant::now();
     let cache = RepoSeamFactCache::at(root);
     let store_limit = classified_seam_cache_store_limit()?;
@@ -195,7 +216,11 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
     // and the index build, not after the work it was meant to bound.
     repo_exposure_seam_limit()?;
     let collect_started = Instant::now();
-    let corpus = match scan_corpus_fingerprint(root, config) {
+    let selection = match changed_paths {
+        Some(paths) => discover_analyzable_rust_corpus_for_changed_paths(root, config, paths),
+        None => scan_corpus_fingerprint(root, config).map(|corpus| (corpus, false)),
+    };
+    let (corpus, diff_bound_corpus) = match selection {
         Ok(scan) => scan,
         Err(err) => {
             trace_latency_phase(
@@ -242,6 +267,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
                 return Ok(ClassifiedSeamsReport {
                     classified: cached,
                     corpus_key: Some(key),
+                    diff_bound_corpus,
                     limit_info: cached_limit_info.map(SeamLimitInfo::from),
                     skipped_generated,
                     naming_only_skips,
@@ -299,6 +325,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
             return Ok(ClassifiedSeamsReport {
                 classified: cached,
                 corpus_key: Some(key),
+                diff_bound_corpus,
                 limit_info: cached_limit_info.map(SeamLimitInfo::from),
                 skipped_generated,
                 naming_only_skips,
@@ -365,6 +392,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
     Ok(ClassifiedSeamsReport {
         classified,
         corpus_key: key.is_reusable().then_some(key),
+        diff_bound_corpus,
         limit_info,
         skipped_generated,
         naming_only_skips,
@@ -1438,8 +1466,7 @@ pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
     inventory_diff_scoped_classified_seams_inner(
         root,
         config,
-        changed_files,
-        changed_owner_names,
+        DiffScopeInputs::canonical(changed_files, changed_owner_names),
         !no_impact_fast_path_disabled(),
         None,
         None,
@@ -1484,8 +1511,11 @@ pub(crate) fn classify_seams_in_files_at_with_config(
     inventory_diff_scoped_classified_seams_inner(
         root,
         config,
-        changed_files,
-        &[],
+        DiffScopeInputs {
+            changed_files,
+            changed_owner_names: &[],
+            generated_context: Some(changed_paths),
+        },
         false,
         Some(&stages),
         None,
@@ -1509,15 +1539,20 @@ pub(crate) fn classify_seams_in_files_at_with_config(
 pub(crate) fn diff_only_rust_files(
     root: &Path,
     config: &RiprConfig,
-    changed_files: &[PathBuf],
+    changed_paths: &[PathBuf],
 ) -> Vec<(PathBuf, workspace::DiffOnlySource)> {
-    let generated = super::language::GeneratedRustSources::for_repo(root, &config.languages().rust);
+    let generated = super::language::GeneratedRustSources::for_changed_paths(
+        root,
+        &config.languages().rust,
+        changed_paths.iter().map(PathBuf::as_path),
+    );
     // Only files `ripr check` can index, by the shared worktree admission:
     // a changed path missing from the working tree (sparse checkout, deleted
     // since the diff), a symlink, or a file below a symlinked directory is
     // refused by Rust discovery, so check has no probes for it either.
-    let candidates = changed_files
+    let candidates = changed_paths
         .iter()
+        .filter(|path| super::language::route(path) == Some(super::language::LanguageId::Rust))
         .filter(|path| workspace::worktree_contains_regular_source_file(root, path))
         .filter(|path| !generated.contains(path))
         .collect::<Vec<_>>();
@@ -1578,8 +1613,7 @@ pub(crate) fn inventory_diff_scoped_streamed_seams_at_with_config(
     inventory_diff_scoped_classified_seams_inner(
         root,
         config,
-        changed_files,
-        changed_owner_names,
+        DiffScopeInputs::canonical(changed_files, changed_owner_names),
         !no_impact_fast_path_disabled(),
         None,
         Some((consumer, review_evidence_window_size()?)),
@@ -1678,6 +1712,23 @@ fn classify_evidence_windows(
     Ok(evaluated)
 }
 
+/// Changed subjects plus optional diff-bound generated-source context for pilot.
+struct DiffScopeInputs<'a> {
+    changed_files: &'a [PathBuf],
+    changed_owner_names: &'a [String],
+    generated_context: Option<&'a [PathBuf]>,
+}
+
+impl<'a> DiffScopeInputs<'a> {
+    fn canonical(changed_files: &'a [PathBuf], changed_owner_names: &'a [String]) -> Self {
+        Self {
+            changed_files,
+            changed_owner_names,
+            generated_context: None,
+        }
+    }
+}
+
 /// Shared body behind [`inventory_diff_scoped_classified_seams_at_with_config`].
 /// The explicit `fast_path_enabled` flag is the removal control (issue
 /// #3859, control 12): tests drive the disabled route directly instead
@@ -1685,12 +1736,16 @@ fn classify_evidence_windows(
 fn inventory_diff_scoped_classified_seams_inner(
     root: &Path,
     config: &RiprConfig,
-    changed_files: &[PathBuf],
-    changed_owner_names: &[String],
+    inputs: DiffScopeInputs<'_>,
     fast_path_enabled: bool,
     stages: Option<&DiffScopeEvidenceStages<'_>>,
     consumer: Option<(&mut dyn ScopedEvidenceConsumer, usize)>,
 ) -> Result<ScopedClassifiedSeamInventory, String> {
+    let DiffScopeInputs {
+        changed_files,
+        changed_owner_names,
+        generated_context,
+    } = inputs;
     cancellation::checkpoint()?;
     let absent_changed_files = workspace::changed_source_files_absent_from_worktree(
         root,
@@ -1720,7 +1775,12 @@ fn inventory_diff_scoped_classified_seams_inner(
             Duration::ZERO,
         );
     }
-    let state = collect_workspace_state(root, config)?;
+    let state = if let Some(paths) = generated_context {
+        let (corpus, _) = discover_analyzable_rust_corpus_for_changed_paths(root, config, paths)?;
+        collect_workspace_state_from_files(root, config, corpus.analyzable)?
+    } else {
+        collect_workspace_state(root, config)?
+    };
     cancellation::checkpoint()?;
     let workspace_cache_key = state.cache_key();
     let total_rust_files = state.files.len();
@@ -2659,6 +2719,40 @@ pub(crate) fn file_seams_without_evidence_at_with_config(
     let index =
         rust_index::build_index_with_test_harnesses(root, &files, harness_registrations(config))?;
     Ok(seams_from_index_files(&files, &index))
+}
+
+/// Classify only the seams in `file`, gathering test-grip evidence from a
+/// bounded index of `file` plus `evidence_files` — the files a caller
+/// already knows carry the relevant finding's related tests (#8320).
+/// Unlike the diff-scoped inventory this never builds a workspace-wide
+/// index or evidence context: evidence for these seams comes only from
+/// the named files, so a seam gripped solely by a test outside them can
+/// classify as a gap here where the full inventory would not. Callers
+/// must therefore treat a route admitted from this scope as bounded
+/// evidence and fail closed when the scope cannot decide, never as a
+/// workspace-wide eligibility proof.
+pub(crate) fn classify_seams_in_file_with_related_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+    file: &Path,
+    evidence_files: &[PathBuf],
+) -> Result<Vec<ClassifiedSeam>, String> {
+    let context = production_role_context(root, config, std::iter::once(file));
+    if !workspace::classify_with(file, &context).seeds_production_findings() {
+        return Ok(Vec::new());
+    }
+    let mut files = vec![file.to_path_buf()];
+    for evidence_file in evidence_files {
+        if !files.contains(evidence_file) {
+            files.push(evidence_file.clone());
+        }
+    }
+    let mut index =
+        rust_index::build_index_with_test_harnesses(root, &files, harness_registrations(config))?;
+    rust_index::apply_oracle_policy(&mut index, config.oracles());
+    let seams = seams_from_index_files(&[file.to_path_buf()], &index);
+    let evidence = test_grip_evidence::evidence_for_seams(&seams, &index);
+    Ok(seam_classification::classify_seams(&seams, &evidence))
 }
 
 fn seams_from_index_files(production_files: &[PathBuf], index: &RustIndex) -> Vec<RepoSeam> {
@@ -6777,8 +6871,7 @@ marker = "libtest_mimic::Trial"
         let full = inventory_diff_scoped_classified_seams_inner(
             &root,
             &config,
-            &changed,
-            &[],
+            DiffScopeInputs::canonical(&changed, &[]),
             false,
             None,
             None,
@@ -6961,8 +7054,7 @@ marker = "libtest_mimic::Trial"
         let cold = inventory_diff_scoped_classified_seams_inner(
             &root,
             &config,
-            &changed,
-            &[],
+            DiffScopeInputs::canonical(&changed, &[]),
             false,
             None,
             None,
@@ -7019,8 +7111,7 @@ marker = "libtest_mimic::Trial"
         let recovered = inventory_diff_scoped_classified_seams_inner(
             &root,
             &config,
-            &changed,
-            &[],
+            DiffScopeInputs::canonical(&changed, &[]),
             true,
             None,
             None,
@@ -7114,8 +7205,7 @@ marker = "libtest_mimic::Trial"
         let fast = inventory_diff_scoped_classified_seams_inner(
             &root,
             &config,
-            &changed,
-            &[],
+            DiffScopeInputs::canonical(&changed, &[]),
             true,
             None,
             None,
@@ -7123,8 +7213,7 @@ marker = "libtest_mimic::Trial"
         let full = inventory_diff_scoped_classified_seams_inner(
             &root,
             &config,
-            &changed,
-            &[],
+            DiffScopeInputs::canonical(&changed, &[]),
             false,
             None,
             None,

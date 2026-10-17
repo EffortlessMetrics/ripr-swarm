@@ -1,0 +1,12 @@
+{
+ "schema_version": "work_claim_identity_provenance.v1",
+ "repository": "EffortlessMetrics/ripr-swarm",
+ "captured_at": "2026-10-09T12:00:00Z",
+ "capture_method": "authored durable-claim corpus for the RIPR-SPEC-0270 selected-work claim law checker against the committed RIPR-SPEC-0244 selection corpus",
+ "files": [
+  {
+   "path": "corpus.json",
+   "sha256": "8a21a852bae84ac9c6806ae0d18cd394daa70f18d23c56f77f96b5371a053618"
+  }
+ ]
+}

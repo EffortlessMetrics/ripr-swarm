@@ -5,7 +5,7 @@ use crate::config::RiprConfig;
 use crate::domain::{
     CanonicalNextActionV1, ExposureClass, Finding, LanguageId, NextActionAlternative,
     NextActionCheckCase, NextActionCurrentness, NextActionDiffSource, NextActionInput,
-    NextActionProducer, NextActionStop, ProbeFamily, StaticLimitKind, current_command_platform,
+    NextActionProducer, NextActionStop, StaticLimitKind, current_command_platform,
     select_canonical_next_action,
 };
 use crate::output::path::display_path;
@@ -136,11 +136,9 @@ pub(crate) fn render_human_triage(
     provenance: CheckDiffProvenance,
 ) {
     out.push_str("Start here:\n");
-    out.push_str(&format!(
-        "  State: {} ({})\n",
-        triage.state.plain_label(),
-        triage.state.as_str()
-    ));
+    // #8165: the default (bounded) human render speaks plain language only;
+    // the `HumanTriageState` schema token stays in machine surfaces.
+    out.push_str(&format!("  State: {}\n", triage.state.plain_label()));
     // The canonical decision (#6304) selects the line family; the prose
     // below is unchanged, so the decision has one authority while rendered
     // bytes stay put.
@@ -301,6 +299,15 @@ pub(crate) fn render_human_triage(
                 out.push_str(&format!("  {command}\n"));
                 super::push_powershell_variant(out, "  ", &command);
             }
+            // #8166 Slice C: an eligible top finding also gets the repair
+            // start, naming the seam identity the check pipeline's
+            // producer-owned gate established. No route, no line: an
+            // ineligible or unbound finding keeps only explain/context.
+            if let Some(route) = navigation.repair_route_for(&finding.id) {
+                let command = navigation.repair_command(&route.seam_id);
+                out.push_str(&format!("  {command}\n"));
+                super::push_powershell_variant(out, "  ", &command);
+            }
             // #5355: a Rust gap gets the one-step route to a runnable test.
             // A gap withheld because ripr could not read the related
             // assertions (RIPR-SPEC-0240) claims no missing test, so it gets
@@ -310,13 +317,7 @@ pub(crate) fn render_human_triage(
                 && finding.static_limit_kind
                     != Some(StaticLimitKind::RustAssertionContextUnresolved)
                 && !super::sections::untraced_reach_weak_finding(finding)
-                && matches!(
-                    finding.probe.family,
-                    ProbeFamily::Predicate
-                        | ProbeFamily::ReturnValue
-                        | ProbeFamily::ErrorPath
-                        | ProbeFamily::MatchArm
-                )
+                && finding.probe.offers_stub_route()
                 && finding
                     .probe
                     .location
@@ -394,7 +395,7 @@ pub(crate) fn render_human_triage(
                 "    - {}:{} ({}{})\n",
                 crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
                 finding.probe.location.line,
-                finding.class.as_str(),
+                finding.class.plain_label(),
                 currentness
             ));
         }
@@ -995,8 +996,9 @@ mod tests {
     use super::*;
     use crate::app::Mode;
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, NextActionClass, Probe, ProbeId, RevealEvidence,
-        RiprEvidence, SourceCurrentness, SourceLocation, StageEvidence, StageState, Summary,
+        ActivationEvidence, Confidence, DeltaKind, NextActionClass, Probe, ProbeFamily, ProbeId,
+        RevealEvidence, RiprEvidence, SourceCurrentness, SourceLocation, StageEvidence, StageState,
+        Summary,
     };
     use std::path::PathBuf;
 
@@ -1617,15 +1619,15 @@ mod tests {
         ]);
         let rendered = super::super::render(&output);
         assert!(
-            rendered.contains("    - src/sample.rs:7 (weakly_exposed, lower-priority candidate)\n"),
+            rendered.contains("    - src/sample.rs:7 (weak, lower-priority candidate)\n"),
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/lib.rs:26 (weakly_exposed, base-side)\n"),
+            rendered.contains("    - src/lib.rs:26 (weak, base-side)\n"),
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/lib.rs:31 (weakly_exposed, unresolved currentness)\n"),
+            rendered.contains("    - src/lib.rs:31 (weak, unresolved currentness)\n"),
             "{rendered}"
         );
     }
@@ -1645,15 +1647,12 @@ mod tests {
         // the count line already named the single category.
         assert_eq!(rendered.matches("\n    - src/").count(), 1, "{rendered}");
         assert!(
-            !rendered.contains("(weakly_exposed, lower-priority candidate)"),
+            !rendered.contains("(weak, lower-priority candidate)"),
             "{rendered}"
         );
+        assert!(!rendered.contains("(weak, base-side)"), "{rendered}");
         assert!(
-            !rendered.contains("(weakly_exposed, base-side)"),
-            "{rendered}"
-        );
-        assert!(
-            !rendered.contains("(weakly_exposed, unresolved currentness)"),
+            !rendered.contains("(weak, unresolved currentness)"),
             "{rendered}"
         );
     }

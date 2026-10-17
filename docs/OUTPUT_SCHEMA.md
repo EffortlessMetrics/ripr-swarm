@@ -442,7 +442,7 @@ document.
 | `unanalyzed_source_languages[]` | Source in languages no adapter reads: `language` and `file_count`. A non-coverage disclosure, never a finding. Omitted when no such source exists. |
 | `preview_language_gaps[]` | Detected preview languages `ripr check` skips until they are enabled: `config_entry` (what `[languages] enabled` accepts) and `detected_language` (the source it analyzes). The two differ for a JavaScript-only workspace, which the `typescript` entry analyzes. Omitted when there is no such gap. |
 | `config_defaults` | The effective configuration: `source_path` (`null` when the built-in defaults apply), `analysis_mode`, `lsp_seam_diagnostics`, `suppressions_path`, `bun_ub_profile_configured`, `bun_ub_test_roots[]`, `bun_ub_bridge_hints` (the bridge-hints path, `null` when the profile is absent). The whole field is `null` when the configuration could not be loaded, so it never claims a default the run did not verify. |
-| `cache` | Always an object in a released document, never `null`: `cache_dir`, `relocated_by_env` (whether `RIPR_CACHE_DIR` relocated it), `size_bytes`, `size_display`, and `artifact_ignore` (whether git ignore rules cover ripr's own artifact root `target/ripr`: `no_artifacts`, `ignored`, `not_checked`, or `unignored` with the exact warning line the human screen prints). `size_bytes` is `0` when the directory does not exist or cannot be read, which is a legitimate state, not a failed measurement. A producer that stopped reporting the cache fails the published schema instead of validating. |
+| `cache` | Always an object in a released document, never `null`: `cache_dir`, `relocated_by_env` (whether `RIPR_CACHE_DIR` relocated it), `size_bytes`, `size_display`, and `artifact_ignore` (whether git ignore rules cover ripr's own artifact root `target/ripr`: `no_artifacts`, `ignored`, `not_checked`, or `unignored` with the exact warning line the human screen prints), and `artifact_tracking` (whether git's index tracks files under `target/ripr`, independent of ignore rules: `untracked`, `not_checked`, or `tracked` with the exact warning line naming `git rm --cached -r -- target/ripr`). `size_bytes` is `0` when the directory does not exist or cannot be read, which is a legitimate state, not a failed measurement. A producer that stopped reporting the cache fails the published schema instead of validating. |
 | `test_surfaces[]` | One or more entries per detected language: `language`, `framework` (`null` when no framework marker was confirmed), and `evidence` (the exact `<language>: …` fragment the human screen prints). Perl carries its adapter, runner, and first-command status lines as additional entries. |
 | `perl_preview` | `null` when the marker scan found no Perl project. Otherwise `pm_files`, `pl_files`, `t_files`, `adapter_compiled`, `producer`, `ignored_configured_executable`, `exporter` (`state` of `compatible` / `incompatible` / `not_found`, plus `executable` and `version`), `expected_schema`, `test_roots[]`, `frameworks[]`, `runners[]`, and `next_command`. |
 
@@ -469,6 +469,22 @@ closed shape, must be updated before it accepts a `0.4` document. Every `0.3`
 field keeps its meaning, and every field this version adds is additive for a
 consumer that ignores unknown keys. Reverting the change restores `0.3`
 exactly, so a revert is the migration path for a consumer that cannot yet adapt.
+
+### Doctor canonical next action (additive, no `schema_version` bump, #6986)
+
+`ripr doctor --json` carries an optional `canonical_next_action` object: the
+same `canonical_next_action.v1` DTO that `ripr check --format json` embeds
+(#7258), produced by the decision the human `- Safe next action:` line follows
+rather than re-inferred for the machine document. It is present only when the
+first-command state is a precise recovery: `stop.kind` is `doctor_recovery`,
+`stop.check_name` names the failing check (`root_directory`, `config`, or
+`cargo_toml` for the generic failed-prerequisite case), `stop.recovery_route`
+is the recovery prose, `action_class` is `satisfy_prerequisite`, and `command`
+is absent because a recovery is not a runnable command. The key is omitted when
+the state names a runnable command, and for the `source-build` profile. The
+document root is `canonical_next_action.subject.root`; doctor reads no diff, so
+`diff_source` is the fixed no-base committed mode, never a live-tree claim. The
+human line and this object agree by construction (Control 9).
 
 ### What `--json` now probes, and where that shows up
 
@@ -8199,7 +8215,11 @@ the result.
 
 Every successfully parsed execution attempt — including authorization and
 execution refusals — emits one typed JSON terminal result on stdout with a
-`disposition` field. Usage errors (a missing `--packet`, `--result-json`, or
+`disposition` field. A root that is missing or is not a directory retains
+operational exit `2` and its root diagnostic, with a schema `1`
+`verification_wrong_root` response, `executed: false`, and
+`result_committed: false`; no packet runs and no result is written.
+Usage errors (a missing `--packet`, `--result-json`, or
 `--json`, or a malformed `--cancel-after-ms`) remain plain usage errors on
 stderr and produce no disposition. The exit status distinguishes only whether
 RIPR
@@ -13014,6 +13034,27 @@ pass/fail authority. See
 reviewer, developer, maintainer, and coding-agent workflow over the generated
 panel.
 
+## GitHub PR Status Review Subjects
+
+The advisory `cargo xtask gh-pr-status --pr <number>` JSON report keeps
+`schema_version: "0.1"` and adds `head_commit`, the observed full PR head SHA.
+Each entry in `reviews` retains `author` and `state` and adds `commit`, the
+original review commit SHA, plus `currentness`: `current_head`, `stale_for_head`,
+or `subject_unavailable`. Missing identities are empty strings in JSON and
+`unknown` in Markdown. Malformed or ambiguous identities remain unavailable.
+
+The live collector requests `headRefOid`, `latestReviews`, and `reviews` from
+GitHub CLI. It joins the latest summaries to full review subjects by exact
+author, submission time, and state; an absent or ambiguous join supplies no
+commit identity. For an `APPROVED` aggregate, no latest approval of the exact
+head means `safe_next_action: "wait"`, with an explanatory warning. Original
+stale reviews stay visible; they are not silently attributed to the new head.
+
+This attribution is advisory. It does not establish substantive or independent
+review, required approval counts, protection satisfaction, integration proof,
+or permission to merge. The retained current-head control preserves the
+existing advisory action; the command performs no PR mutation.
+
 ## Report Packet Index
 
 RIPR-SPEC-0024 defines the report packet index contract. The index is the
@@ -16126,11 +16167,11 @@ target/ripr/pilot/pilot-summary.md
 stdout and suppresses the human terminal. Packet files are still written under
 `--out`. There is no `--json` alias.
 
-`pilot-summary.json` uses schema `0.3`:
+`pilot-summary.json` uses schema `0.4`:
 
 ```json
 {
-  "schema_version": "0.3",
+  "schema_version": "0.4",
   "tool": "ripr",
   "scope": "repo",
   "status": "complete",
@@ -16157,6 +16198,8 @@ stdout and suppresses the human terminal. Packet files are still written under
     "pilot_summary_md"
   ],
   "actionable_seams_total": 1,
+  "actionable_seams_total_is_lower_bound": false,
+  "seam_limit": null,
   "withheld_static_limitations_total": 0,
   "top_actionable_seams": [
     {
@@ -16351,6 +16394,16 @@ Header-only exclusions require available worktree bytes or an active
 committed-source overlay; pilot creates no new overlay and does not establish
 the header of a sparse missing file.
 
+Pilot's initial inventory, current-change supplement and diff-only follow-up
+selection use that same loaded change's generated-source context. The corpus is
+selected before indexing evidence or counting seams, so restoring only a vendor
+Rust file while its changed checksum remains sparse does not admit its seams or
+evidence. Ordinary repo exposure keeps its disk-based population and cache
+identity. Pilot recomputes contextual skip guidance and population comparability
+on every run/cache hit; it omits `artifact` identity whenever its selected source
+or evidence inputs differ from ordinary repo exposure. Identical selected bytes
+may still share a cache entry across marker disappearance and restoration.
+
 The terminal and Markdown "Inspected" block names each absent path, the
 `changed_file_absent_from_worktree` category, and the producer's recovery
 guidance, even when `top_recommendation_in_change` is true for a present file.
@@ -16366,7 +16419,7 @@ If analysis exceeds the pilot budget, `pilot-summary.json` is still written with
 
 ```json
 {
-  "schema_version": "0.3",
+  "schema_version": "0.4",
   "tool": "ripr",
   "scope": "repo",
   "status": "partial",
@@ -16402,9 +16455,22 @@ If analysis exceeds the pilot budget, `pilot-summary.json` is still written with
 
 Field contract:
 
-- `schema_version` — currently `"0.3"`. `0.3` withholds static limitations
+- `schema_version` — currently `"0.4"`. `0.4` adds
+  `actionable_seams_total_is_lower_bound` and `seam_limit` to complete
+  summaries (#6739). `0.3` withholds static limitations
   from the ranking and adds `withheld_static_limitations_total` (#5497);
   `actionable_seams_total` no longer counts `opaque` or `*_unknown` seams.
+- `actionable_seams_total_is_lower_bound` — complete summaries only. `true`
+  when a seam limit cut the classified seams before ranking, so
+  `actionable_seams_total` counts only the kept seams and seams past the cut
+  may hold more; `false` when no limit applied and the total is exact. The
+  Markdown summary says "at least N" in the same case.
+- `seam_limit` — complete summaries only. `null` when no limit applied;
+  otherwise `{"analyzed": <kept>, "total": <available>, "source":
+  "default"|"configured"}`, where `source` names whether the cap is the
+  built-in default or an explicit `RIPR_REPO_EXPOSURE_SEAM_LIMIT` /
+  `RIPR_PILOT_SEAM_BUDGET` setting. Partial (timeout) summaries carry neither
+  field; their `actionable_seams_total` is `null`.
 - `scope` — always `"repo"`.
 - `status` — `"complete"` when repo exposure and agent seam packet artifacts
   were written, or `"partial"` when the command stopped at a diagnostic summary.

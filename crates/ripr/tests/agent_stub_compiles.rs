@@ -93,6 +93,22 @@ pub fn lock(n: u8) -> Vec<u8> {
     if n > 6 { Vec::new(n) } else { Vec::new(0) }
 }
 
+pub trait Sink {
+    fn put(&mut self, n: usize);
+}
+
+pub fn drain(sink: &mut dyn Sink, n: usize) -> usize {
+    if n > 12 { n } else { sink.put(0); 0 }
+}
+
+pub fn fill(buf: &mut [u8], n: usize) -> usize {
+    if n > 13 { n } else { buf.len() }
+}
+
+pub fn rename(name: &mut str, n: usize) -> usize {
+    if n > 14 { n } else { name.len() }
+}
+
 pub mod shapes {
     pub struct S {
         pub v: u8,
@@ -271,6 +287,11 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
         // A type imported under a std name is not assumed comparable.
         ("n > 6", Expect::StopsAtRiprTodo),
         ("n > 7", Expect::Refused("owner_unsupported")),
+        // Unsized `&mut` targets get an owned stand-in the argument coerces
+        // from: `Box<dyn Sink>`, `Vec<u8>`, `String`.
+        ("n > 12", Expect::StopsAtRiprTodo),
+        ("n > 13", Expect::StopsAtRiprTodo),
+        ("n > 14", Expect::StopsAtRiprTodo),
         // A trait method with a `&self` receiver is called through
         // `<Parser as std::fmt::Display>::fmt(&subject, ..)`.
         ("self.max > 3", Expect::StopsAtRiprTodo),
@@ -622,6 +643,102 @@ fn check_prints_the_stub_route_only_when_the_printed_command_yields_a_stub() -> 
     assert_eq!(document["owner"], "src/zz.rs::fee", "{stub_stdout}");
     assert_eq!(document["written"], false, "{stub_stdout}");
     scratch.cleanup()
+}
+
+/// #8361: families beyond predicate/return_value/error_path/match_arm used to
+/// print neither a route nor a reason. A field_construction finding whose
+/// owner takes `impl Into<String>` now prints the stub producer's refusal.
+#[test]
+fn check_prints_the_stub_refusal_for_a_field_construction_finding() -> Result<(), String> {
+    const FIELD_LIB: &str = "pub struct Opts { pub jobs: usize }\nimpl Opts { pub fn new(name: impl Into<String>) -> Self { let _n: String = name.into(); Self { jobs: 2 } } }\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn builds() {\n        let _ = Opts::new(\"x\");\n    }\n}\n";
+    let scratch = Scratch::new()?;
+    let root = scratch.directory.clone();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"stub_field\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), FIELD_LIB).map_err(|error| error.to_string())?;
+    let diff = one_line_diff(
+        &scratch,
+        "src/lib.rs",
+        &FIELD_LIB
+            .lines()
+            .nth(1)
+            .ok_or("fixture has a second line")?
+            .replace("jobs: 2", "jobs: 1"),
+        FIELD_LIB
+            .lines()
+            .nth(1)
+            .ok_or("fixture has a second line")?,
+    )?;
+    let stdout = check_human(&root, &diff)?;
+    assert!(stdout.contains("src/lib.rs:2"), "{stdout}");
+    assert!(
+        stdout.contains("No test stub here: a parameter or the return type uses `impl Trait`"),
+        "a refused field_construction stub prints its reason: {stdout}"
+    );
+    assert!(!stdout.contains("Write a test for it:"), "{stdout}");
+    scratch.cleanup()
+}
+
+/// `check` output for a one-line change to line 2 of a scratch crate.
+fn check_for_changed_line_two(lib: &str, old: &str, new: &str) -> Result<String, String> {
+    let scratch = Scratch::new()?;
+    let root = scratch.directory.clone();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"stub_const\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), lib).map_err(|error| error.to_string())?;
+    let diff = one_line_diff(&scratch, "src/lib.rs", old, new)?;
+    let stdout = check_human(&root, &diff)?;
+    scratch.cleanup()?;
+    Ok(stdout)
+}
+
+/// #8361: a changed `const` has no seam of its own, so `check` routes it to
+/// the function that consumes it, and the stub it names is the one
+/// `agent stub --at` writes for that function.
+#[test]
+fn check_routes_a_changed_constant_to_its_consumer() -> Result<(), String> {
+    const LIB: &str = "//! caps\nconst CAP: u64 = 5_000;\n\npub fn billed(units: u64) -> u64 {\n    units.min(CAP) * 2\n}\n";
+    let stdout =
+        check_for_changed_line_two(LIB, "const CAP: u64 = 10_000;", "const CAP: u64 = 5_000;")?;
+    assert!(stdout.contains("Write a test for it:"), "{stdout}");
+    assert!(
+        stdout.contains("--at src/lib.rs:5 --kind return_value"),
+        "the route names the consuming function's return value: {stdout}"
+    );
+    Ok(())
+}
+
+/// The route skips a name inside a string or comment and a test consumer,
+/// and lands on the production function that really uses the constant.
+#[test]
+fn check_routes_a_changed_constant_past_strings_comments_and_tests() -> Result<(), String> {
+    const LIB: &str = "//! caps\nconst CAP: u64 = 5_000;\n\npub fn label() -> &'static str {\n    \"CAP\" // CAP\n}\n\npub fn billed(units: u64) -> u64 {\n    units.min(CAP) * 2\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn cap_is_positive() {\n        assert!(CAP > 0);\n    }\n}\n";
+    let stdout =
+        check_for_changed_line_two(LIB, "const CAP: u64 = 10_000;", "const CAP: u64 = 5_000;")?;
+    assert!(
+        stdout.contains("--at src/lib.rs:9 --kind return_value"),
+        "the route names `billed`, not `label` or the test: {stdout}"
+    );
+    Ok(())
+}
+
+/// A constant nothing in the file consumes has no function to stub, so
+/// `check` prints no route for it.
+#[test]
+fn check_prints_no_route_for_an_unconsumed_constant() -> Result<(), String> {
+    const LIB: &str = "//! caps\nconst CAP: u64 = 5_000;\n\npub fn billed(units: u64) -> u64 {\n    units * 2\n}\n";
+    let stdout =
+        check_for_changed_line_two(LIB, "const CAP: u64 = 10_000;", "const CAP: u64 = 5_000;")?;
+    assert!(stdout.contains("src/lib.rs:2"), "{stdout}");
+    assert!(!stdout.contains("Write a test for it:"), "{stdout}");
+    assert!(!stdout.contains("No test stub here"), "{stdout}");
+    Ok(())
 }
 
 /// #5471: without `--kind` no `check` finding vouches for the location, so a

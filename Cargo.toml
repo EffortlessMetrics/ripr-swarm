@@ -158,10 +158,18 @@ readonly_write_lock = "deny"
 allow_attributes_without_reason = "deny"
 blanket_clippy_restriction_lints = "deny"
 
+# Release: thin LTO with parallel codegen. The single `ripr` crate is ~700 of
+# ~900 CPU-seconds of a release build, so one codegen unit under fat LTO
+# serialized the whole build onto one core (751 s on 4 cores; far longer on
+# slow runners). Thin LTO with 16 units builds the same crate in a fraction of
+# that, which is what `cargo build --release`, `cargo install --git` and agent
+# sessions use. Shipped release archives keep the fully optimized profile:
+# the release-archive producer overrides it through
+# `CARGO_PROFILE_RELEASE_LTO` / `CARGO_PROFILE_RELEASE_CODEGEN_UNITS`.
 [profile.release]
-lto = true
+lto = "thin"
 strip = true
-codegen-units = 1
+codegen-units = 16
 
 # Dev profile: line-tables-only gives backtraces with file:line resolution
 # without the full variable-debuginfo cost of the default `debug = "full"`.
@@ -170,3 +178,24 @@ codegen-units = 1
 # test` when a developer needs to step-debug with variable inspection.
 [profile.dev]
 debug = "line-tables-only"
+
+# Policy gates (`cargo xtask precommit`) and analyzer tests parse every Rust
+# source in the repo. Unoptimized rowan/rust-analyzer parsing dominated the
+# no-panic, source-role and public-api scans (20-30s each); optimizing just
+# this small parsing stack costs well under a minute of cold build.
+[profile.dev.package.ra_ap_syntax]
+opt-level = 2
+[profile.dev.package.ra_ap_parser]
+opt-level = 2
+[profile.dev.package.ra-ap-rustc_lexer]
+opt-level = 2
+[profile.dev.package.rowan]
+opt-level = 2
+[profile.dev.package.hashbrown]
+opt-level = 2
+[profile.dev.package.rustc-hash]
+opt-level = 2
+[profile.dev.package.memchr]
+opt-level = 2
+[profile.dev.package.smol_str]
+opt-level = 2

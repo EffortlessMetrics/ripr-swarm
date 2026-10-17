@@ -417,6 +417,21 @@ fn observes_with(
         receiver = Some(bound);
         rest.next();
     }
+    // `let r = &rows[k];` borrows one element of the result. It evaluates
+    // the same literal index the inline read does, so it can settle nothing
+    // the read would not, and the assertion then reads that element's field
+    // through the alias.
+    let mut alias = None;
+    if let Some(ast::Stmt::LetStmt(binding)) = rest.peek()
+        && let Some(name) =
+            element_alias(binding, &array, receiver.as_ref(), &owner.name, authority)
+    {
+        if binds_more_than_once(&body, &name) {
+            return false;
+        }
+        alias = Some(name);
+        rest.next();
+    }
     let first = match rest.next() {
         Some(ast::Stmt::ExprStmt(statement)) => statement.expr(),
         Some(_) => return false,
@@ -434,8 +449,14 @@ fn observes_with(
     else {
         return false;
     };
-    array.pinned_by(&call, receiver.as_ref(), &owner.name, integer, authority)
-        && authority.admits_line(line)
+    array.pinned_by(
+        &call,
+        receiver.as_ref(),
+        alias.as_deref(),
+        &owner.name,
+        integer,
+        authority,
+    ) && authority.admits_line(line)
 }
 
 /// The owner's whole body is one array of struct literals, and the probe
@@ -449,6 +470,10 @@ struct ReturnedArray {
     /// The integer literal each other element builds `field` from, or
     /// `None` when that element builds it from anything else.
     others: Vec<Option<i128>>,
+    /// Every other element builds `field` from a literal or a plain path,
+    /// so constructing the array cannot leave the process (or settle the
+    /// test any other way) before the assertion runs (#8084).
+    siblings_plain: bool,
 }
 
 impl ReturnedArray {
@@ -539,11 +564,33 @@ impl ReturnedArray {
                 others.push(initializer.expr().as_ref().and_then(integer_literal));
             }
         }
+        let siblings_plain = fields.iter().enumerate().all(|(position, list)| {
+            position == index
+                || list
+                    .fields()
+                    .find(|initializer| {
+                        initializer
+                            .field_name()
+                            .is_some_and(|name| name.text() == field.as_str())
+                    })
+                    .is_some_and(|initializer| match initializer.expr() {
+                        // Shorthand `Row { total }` reads the plain path.
+                        None => true,
+                        Some(expr) => {
+                            integer_literal(&expr).is_some()
+                                || matches!(
+                                    unwrap_parens(expr),
+                                    ast::Expr::Literal(_) | ast::Expr::PathExpr(_)
+                                )
+                        }
+                    })
+        });
         Some(Self {
             type_name,
             field,
             index,
             others,
+            siblings_plain,
         })
     }
 
@@ -555,6 +602,7 @@ impl ReturnedArray {
         &self,
         call: &ast::MacroCall,
         receiver: Option<&Receiver>,
+        alias: Option<&str>,
         owner: &str,
         integer: &str,
         authority: &dyn PinAuthority,
@@ -586,11 +634,14 @@ impl ReturnedArray {
             arguments.as_slice(),
         ) {
             ("assert_eq", [left, right]) => {
-                [(left, right), (right, left)]
-                    .into_iter()
-                    .any(|(read, expected)| {
-                        is_literal(expected) && self.indexed_read(read, &is_receiver)
-                    })
+                self.siblings_plain
+                    && [(left, right), (right, left)]
+                        .into_iter()
+                        .any(|(read, expected)| {
+                            is_literal(expected)
+                                && (self.indexed_read(read, &is_receiver)
+                                    || self.aliased_read(read, alias))
+                        })
             }
             ("assert", [condition]) => {
                 self.membership(condition, integer, &is_receiver)
@@ -620,6 +671,20 @@ impl ReturnedArray {
                 .as_ref()
                 .and_then(integer_literal)
                 .is_some_and(|index| usize::try_from(index).is_ok_and(|index| index == self.index))
+    }
+
+    /// `alias.field`, where `alias` is the test's `let alias = &recv[index];`.
+    fn aliased_read(&self, read: &ast::Expr, alias: Option<&str>) -> bool {
+        let ast::Expr::FieldExpr(read) = unwrap_parens(read.clone()) else {
+            return false;
+        };
+        read.name_ref()
+            .is_some_and(|name| name.text() == self.field.as_str())
+            && matches!(
+                (read.expr().map(unwrap_parens), alias),
+                (Some(ast::Expr::PathExpr(path)), Some(alias))
+                    if path.path().is_some_and(|path| path.syntax().text() == alias)
+            )
     }
 
     /// `recv.iter().any(|r| r.field == literal)`, or `into_iter`, or the
@@ -717,6 +782,55 @@ fn owner_binding(binding: &ast::LetStmt) -> Option<(ast::IdentPat, ast::CallExpr
         return None;
     };
     Some((pattern, call))
+}
+
+/// `let NAME = &RECV[index];` with a plain immutable binding, the probed
+/// element's literal index and the owner's result (the test's receiver or a
+/// direct owner call) as the indexed base: the alias's name. A binding named
+/// like the owner could take the owner's name from a later call.
+fn element_alias(
+    binding: &ast::LetStmt,
+    array: &ReturnedArray,
+    receiver: Option<&Receiver>,
+    owner: &str,
+    authority: &dyn PinAuthority,
+) -> Option<String> {
+    let ast::Pat::IdentPat(pattern) = binding.pat()? else {
+        return None;
+    };
+    if pattern.mut_token().is_some() || pattern.ref_token().is_some() || pattern.pat().is_some() {
+        return None;
+    }
+    if binding.let_else().is_some() || binding.ty().is_some() {
+        return None;
+    }
+    let name = pattern.name()?.text().to_string();
+    if name == owner || receiver.is_some_and(|receiver| receiver.name == name) {
+        return None;
+    }
+    let ast::Expr::RefExpr(borrow) = unwrap_parens(binding.initializer()?) else {
+        return None;
+    };
+    if borrow.mut_token().is_some() || borrow.raw_token().is_some() {
+        return None;
+    }
+    let ast::Expr::IndexExpr(element) = unwrap_parens(borrow.expr()?) else {
+        return None;
+    };
+    let base_is_result = match unwrap_parens(element.base()?) {
+        ast::Expr::PathExpr(path) => receiver.is_some_and(|receiver| {
+            path.path()
+                .is_some_and(|path| path.syntax().text() == receiver.name.as_str())
+        }),
+        ast::Expr::CallExpr(call) => is_owner_call(&call, owner, authority, receiver),
+        _ => false,
+    };
+    let at_probed_index = element
+        .index()
+        .as_ref()
+        .and_then(integer_literal)
+        .is_some_and(|index| usize::try_from(index).is_ok_and(|index| index == array.index));
+    (base_is_result && at_probed_index).then_some(name)
 }
 
 /// A direct call of the owner by its own name, or through `super::`/`crate::`,
@@ -992,6 +1106,9 @@ mod tests {
             "        assert_eq!(rows(30, 3)[1].total, 33);",
             "        assert!(super::rows(30, 3).iter().any(|r| r.total == 33));",
             "        let rows = crate::rows(30, 3);\n        assert_eq!(rows[1].total, 33)",
+            "        let rows = rows(30, 3);\n        let r = &rows[1];\n        assert_eq!(r.total, 33);",
+            "        let rows = rows(30, 3);\n        let r = &rows[1];\n        assert_eq!(33, r.total);",
+            "        let r = &rows(30, 3)[1];\n        assert_eq!(r.total, 33);",
         ] {
             if pinned(ARRAY, "#[test]", test)? != Some(true) {
                 return Err(format!("expected a pin: {test}"));
@@ -1024,6 +1141,38 @@ mod tests {
         }
         if pinned(negative, "#[test]", &membership("33"))? != Some(true) {
             return Err("a sibling of the opposite sign refused the pin".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_sibling_field_that_may_exit_before_the_assertion_observes_nothing() -> Result<(), String> {
+        // #8084: constructing an earlier element whose pinned field is a
+        // block (or any non-literal, non-path expression) may exit the
+        // process before the test reaches its assertion, so an indexed
+        // pin of the probed element observes nothing.
+        for array in [
+            "[Row { total: { std::process::exit(0) } }, Row { total: a + b + 0 }]",
+            "[Row { total: compute() }, Row { total: a + b + 0 }]",
+            "[Row { total: a * b }, Row { total: a + b + 0 }]",
+        ] {
+            let indexed = "        let rows = rows(30, 3);\n        assert_eq!(rows[1].total, 33);";
+            if pinned(array, "#[test]", indexed)? != Some(false) {
+                return Err(format!("expected no pin: {array}"));
+            }
+        }
+        // A sibling built from a plain path or literal cannot leave during
+        // construction, so the indexed pin still observes the probed field.
+        for array in [
+            "[Row { total: a }, Row { total: a + b + 0 }]",
+            "[Row { total: 7 }, Row { total: a + b + 0 }]",
+            "[Row { total }, Row { total: a + b + 0 }]",
+            "[Row { total: (-33) }, Row { total: a + b + 0 }]",
+        ] {
+            let indexed = "        let rows = rows(30, 3);\n        assert_eq!(rows[1].total, 33);";
+            if pinned(array, "#[test]", indexed)? != Some(true) {
+                return Err(format!("expected a pin: {array}"));
+            }
         }
         Ok(())
     }
@@ -1114,6 +1263,75 @@ mod tests {
             (
                 "#[test]",
                 "        assert_eq!(rows(30, { std::process::exit(0) })[1].total, 33);",
+            ),
+            // The alias must borrow the probed element, immutably, once.
+            (
+                "#[test]",
+                "        let rows = rows(30, 3);\n        let r = &rows[0];\n        assert_eq!(r.total, 33);",
+            ),
+            (
+                "#[test]",
+                "        let rows = rows(30, 3);\n        let r = &mut rows[1];\n        assert_eq!(r.total, 33);",
+            ),
+            (
+                "#[test]",
+                "        let rows = rows(30, 3);\n        let mut r = &rows[1];\n        assert_eq!(r.total, 33);",
+            ),
+            (
+                "#[test]",
+                "        let rows = rows(30, 3);\n        let r = rows[1];\n        assert_eq!(r.total, 33);",
+            ),
+            (
+                "#[test]",
+                "        let rows = rows(30, 3);\n        let r = &rows[1];\n        let r = Row { total: 33 };\n        assert_eq!(r.total, 33);",
+            ),
+            (
+                "#[test]",
+                "        let rows = rows(30, 3);\n        let r = &rows[1];\n        assert_eq!(r.total, 33);\n        let r = 1;",
+            ),
+            (
+                "#[test]",
+                "        let rows = rows(30, 3);\n        let rows = &rows[1];\n        assert_eq!(rows.total, 33);",
+            ),
+            (
+                "#[test]",
+                "        let rows = rows(30, 3);\n        let r = &rows[1];\n        assert_eq!(q.total, 33);",
+            ),
+            (
+                "#[test]",
+                "        let other = [Row { total: 33 }, Row { total: 33 }];\n        let r = &other[1];\n        assert_eq!(r.total, 33);",
+            ),
+            (
+                "#[test]",
+                "        let rows = rows(30, 3);\n        let r = &rows[1 + 0];\n        assert_eq!(r.total, 33);",
+            ),
+            (
+                "#[test]",
+                "        let got = rows(30, 3);\n        let rows = &got[1];\n        assert_eq!(rows.total, 33);",
+            ),
+            (
+                "#[test]",
+                "        let rows = rows(30, 3);\n        let r: &Row = &rows[1];\n        assert_eq!(r.total, 33);",
+            ),
+            (
+                "#[test]",
+                "        let rows = rows(30, 3);\n        let ref r = &rows[1];\n        assert_eq!(r.total, 33);",
+            ),
+            (
+                "#[test]",
+                "        let rows = rows(30, 3);\n        let r = &&rows[1];\n        assert_eq!(r.total, 33);",
+            ),
+            (
+                "#[test]",
+                "        let rows = rows(30, 3);\n        let r = &rows[1];\n        settle!();\n        assert_eq!(r.total, 33);",
+            ),
+            (
+                "#[test]",
+                "        let r = &rows[1];\n        let rows = rows(30, 3);\n        assert_eq!(r.total, 33);",
+            ),
+            (
+                "#[test]",
+                "        let rows = rows(30, 3);\n        let r = &rows[1];\n        assert!(r.total == 33);",
             ),
             ("#[test]\n    #[should_panic]", ANY),
             ("#[test]\n    #[ignore]", ANY),

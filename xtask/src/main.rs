@@ -64,8 +64,17 @@ mod python_judged_panel_report;
 mod repo_readiness;
 mod schema_pattern;
 mod types;
+mod work_adapter_identity;
+mod work_burndown_identity;
+mod work_claim_identity;
+mod work_context_identity;
+mod work_intake_identity;
+mod work_plan_identity;
 mod work_portfolio;
+mod work_result_identity;
 mod work_selection_identity;
+mod work_synthesis_identity;
+mod work_wave_identity;
 pub(crate) use types::*;
 mod reports;
 mod ripr_swarm;
@@ -317,9 +326,9 @@ pub(crate) use reports::{
     write_badge_artifacts_after_build, write_badge_artifacts_from_diff, write_badge_input_identity,
 };
 pub(crate) use reports::{
-    FixtureCheckFormat, fixture_dirs, goldens_check, is_manifest_only_fixture_dir,
-    normalize_fixture_human_output, normalize_fixture_json_output, ripr_fixture_binary,
-    run_fixture_check, yes_no,
+    FixtureCheckFormat, PrecommitGoldens, fixture_dirs, golden_staleness_trigger, goldens_check,
+    goldens_check_for_precommit, is_manifest_only_fixture_dir, normalize_fixture_human_output,
+    normalize_fixture_json_output, ripr_fixture_binary, run_fixture_check, yes_no,
 };
 #[cfg(test)]
 pub(crate) use reports::{
@@ -650,6 +659,9 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
     check_rust_source_role_authority()?;
     check_public_api()?;
     check_output_contracts()?;
+    if !collect_all {
+        precommit_goldens_for_output_changes()?;
+    }
     check_identity_registry()?;
     check_doc_artifacts()?;
     check_doc_index()?;
@@ -670,6 +682,38 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
         check_lint_policy()?;
     }
     publish_precommit_policy_report(collect_all)
+}
+
+/// Output-surface diffs must not reach review with stale goldens (#8421): main
+/// went red twice on 2026-10-17 because renderer wording changed without
+/// re-blessing the fixtures that print it. Running `goldens check` on every
+/// precommit is too slow (minutes), so it runs only when the diff against
+/// `origin/main` touches output-surface code or a fixture expectation. A
+/// dependency-preparation gap is reported as such, never as a pass.
+fn precommit_goldens_for_output_changes() -> Result<(), String> {
+    let mut changed = changed_files_vs_base(Path::new("."))?;
+    changed.extend(git_changed_files(Path::new("."), "HEAD")?);
+    let Some(trigger) = golden_staleness_trigger(&changed) else {
+        println!("goldens check: skipped, no output-surface or golden file changed vs origin/main");
+        return Ok(());
+    };
+    println!("goldens check: running because `{trigger}` changed vs origin/main");
+    match goldens_check_for_precommit()? {
+        PrecommitGoldens::Verified => {
+            println!("goldens check: pass");
+            Ok(())
+        }
+        PrecommitGoldens::EnvironmentGap(gaps) => {
+            println!(
+                "goldens check: INCOMPLETE (environment gap, not a pass): {} fixture(s) could not be compared; hosted CI still owns them. Run `cargo xtask goldens prepare` to close the gap.",
+                gaps.len()
+            );
+            for gap in gaps {
+                println!("  {gap}");
+            }
+            Ok(())
+        }
+    }
 }
 
 fn publish_precommit_policy_report(ci_policy: bool) -> Result<(), String> {
@@ -919,13 +963,18 @@ fn categorize_changed_files(files: &[String]) -> ChangedFileCategories {
 }
 
 fn changed_files_vs_base(root: &Path) -> Result<Vec<String>, String> {
+    git_changed_files(root, "origin/main...HEAD")
+}
+
+/// `git diff --name-only <rev>`; a bare `HEAD` covers staged and unstaged edits.
+fn git_changed_files(root: &Path, rev: &str) -> Result<Vec<String>, String> {
     // Raw NUL-delimited inventory (#4006): `-z` output is never C-quoted,
     // so exotic names survive byte-exact; parsing rules come from the
     // shared authority in `decode_changed_files`, not from line splitting
     // here. The spawn site is unchanged (gate-runner policy entry).
     let output = std::process::Command::new("git")
         .current_dir(root)
-        .args(["diff", "--name-only", "-z", "origin/main...HEAD"])
+        .args(["diff", "--name-only", "-z", rev])
         .output()
         .map_err(|err| format!("git diff --name-only failed: {err}"))?;
     if !output.status.success() {
@@ -936,7 +985,7 @@ fn changed_files_vs_base(root: &Path) -> Result<Vec<String>, String> {
             stderr
         };
         return Err(format!(
-            "git diff --name-only origin/main...HEAD failed: {detail};              if origin/main is not available, run `git fetch origin main` first"
+            "git diff --name-only {rev} failed: {detail};              if origin/main is not available, run `git fetch origin main` first"
         ));
     }
     decode_changed_files(&output.stdout)
@@ -3471,7 +3520,13 @@ fn parse_gh_pr_status_pull_request(text: &str) -> Result<GhPrStatusPullRequest, 
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .map(parse_gh_pr_status_review)
+        .map(|review| {
+            let subjects = item
+                .get("reviews")
+                .and_then(Value::as_array)
+                .map_or(&[][..], Vec::as_slice);
+            parse_gh_pr_status_review(review, subjects)
+        })
         .collect::<Vec<_>>();
     Ok(GhPrStatusPullRequest {
         number,
@@ -3482,6 +3537,7 @@ fn parse_gh_pr_status_pull_request(text: &str) -> Result<GhPrStatusPullRequest, 
             .is_some_and(|value| value),
         merge_state_status: json_value_string(&item, "mergeStateStatus"),
         head_ref_name: json_value_string(&item, "headRefName"),
+        head_ref_oid: json_value_string(&item, "headRefOid"),
         base_ref_name: json_value_string(&item, "baseRefName"),
         review_decision: json_value_string(&item, "reviewDecision"),
         checks,
@@ -3491,7 +3547,7 @@ fn parse_gh_pr_status_pull_request(text: &str) -> Result<GhPrStatusPullRequest, 
     })
 }
 
-fn parse_gh_pr_status_review(value: &Value) -> GhPrStatusReview {
+fn parse_gh_pr_status_review(value: &Value, subjects: &[Value]) -> GhPrStatusReview {
     let author = match value
         .get("author")
         .and_then(|author| author.get("login"))
@@ -3500,10 +3556,54 @@ fn parse_gh_pr_status_review(value: &Value) -> GhPrStatusReview {
         Some(login) => login.to_string(),
         None => String::new(),
     };
+    // gh latestReviews omits commit identity. Join its exact author/time/state
+    // to the full reviews edge; absent or ambiguous joins retain an unknown subject.
+    let state = json_value_string(value, "state");
+    let submitted_at = json_value_string(value, "submittedAt");
+    let mut matches = subjects.iter().filter(|subject| {
+        !author.is_empty()
+            && !submitted_at.is_empty()
+            && subject
+                .get("author")
+                .and_then(|value| value.get("login"))
+                .and_then(Value::as_str)
+                == Some(author.as_str())
+            && json_value_string(subject, "submittedAt") == submitted_at
+            && json_value_string(subject, "state") == state
+    });
+    let first = matches.next();
+    let commit_oid = if matches.next().is_none() {
+        first
+            .and_then(|subject| subject.get("commit"))
+            .map(|commit| json_value_string(commit, "oid"))
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
     GhPrStatusReview {
         author,
-        state: json_value_string(value, "state"),
+        state,
+        commit_oid,
     }
+}
+
+fn gh_pr_review_currentness(pr: &GhPrStatusPullRequest, review: &GhPrStatusReview) -> &'static str {
+    let full_oid = |oid: &str| oid.len() == 40 && oid.bytes().all(|byte| byte.is_ascii_hexdigit());
+    if !full_oid(&pr.head_ref_oid) || !full_oid(&review.commit_oid) {
+        "subject_unavailable"
+    } else if pr.head_ref_oid.eq_ignore_ascii_case(&review.commit_oid) {
+        "current_head"
+    } else {
+        "stale_for_head"
+    }
+}
+
+fn gh_pr_approved_review_subject_missing(pr: &GhPrStatusPullRequest) -> bool {
+    pr.review_decision.eq_ignore_ascii_case("APPROVED")
+        && !pr.reviews.iter().any(|review| {
+            review.state.eq_ignore_ascii_case("APPROVED")
+                && gh_pr_review_currentness(pr, review) == "current_head"
+        })
 }
 
 fn parse_required_status_contexts(text: &str) -> Result<Vec<String>, String> {
@@ -3526,8 +3626,11 @@ fn gh_pr_status_readiness(
     pr: &GhPrStatusPullRequest,
     required_contexts: &[String],
     required_contexts_available: bool,
-    warnings: Vec<String>,
+    mut warnings: Vec<String>,
 ) -> GhPrStatusReadiness {
+    if gh_pr_approved_review_subject_missing(pr) {
+        warnings.push(format!("APPROVED has no latest approval attributed to current head {}; review subjects are stale or unavailable", value_or_unknown(&pr.head_ref_oid)));
+    }
     let failed_checks = pr
         .checks
         .iter()
@@ -3582,7 +3685,8 @@ fn gh_pr_safe_next_action(
     {
         return "inspect failure";
     }
-    if pr.is_draft
+    if gh_pr_approved_review_subject_missing(pr)
+        || pr.is_draft
         || pr.review_decision.eq_ignore_ascii_case("REVIEW_REQUIRED")
         || !readiness.required_checks_outstanding.is_empty()
         || !readiness.pending_checks.is_empty()
@@ -3628,6 +3732,10 @@ fn gh_pr_status_markdown(
         pr.head_ref_name, pr.base_ref_name
     ));
     body.push_str(&format!(
+        "- Head commit: `{}`\n",
+        value_or_unknown(&pr.head_ref_oid)
+    ));
+    body.push_str(&format!(
         "- mergeable_state: `{}`\n",
         value_or_unknown(&pr.merge_state_status)
     ));
@@ -3669,9 +3777,11 @@ fn gh_pr_status_markdown(
     } else {
         for review in &pr.reviews {
             body.push_str(&format!(
-                "- {}: `{}`\n",
+                "- {}: `{}`; commit `{}`; currentness `{}`\n",
                 value_or_unknown(&review.author),
-                value_or_unknown(&review.state)
+                value_or_unknown(&review.state),
+                value_or_unknown(&review.commit_oid),
+                gh_pr_review_currentness(pr, review)
             ));
         }
     }
@@ -3701,6 +3811,10 @@ fn gh_pr_status_json(
     body.push_str("  \"mode\": \"advisory\",\n");
     body.push_str(&format!("  \"pr_number\": {},\n", pr.number));
     body.push_str(&format!("  \"title\": \"{}\",\n", json_escape(&pr.title)));
+    body.push_str(&format!(
+        "  \"head_commit\": \"{}\",\n",
+        json_escape(&pr.head_ref_oid)
+    ));
     body.push_str("  \"branch\": {\n");
     body.push_str(&format!(
         "    \"head\": \"{}\",\n",
@@ -3755,8 +3869,16 @@ fn gh_pr_status_json(
             json_escape(&review.author)
         ));
         body.push_str(&format!(
-            "      \"state\": \"{}\"\n",
+            "      \"state\": \"{}\",\n",
             json_escape(&review.state)
+        ));
+        body.push_str(&format!(
+            "      \"commit\": \"{}\",\n",
+            json_escape(&review.commit_oid)
+        ));
+        body.push_str(&format!(
+            "      \"currentness\": \"{}\"\n",
+            gh_pr_review_currentness(pr, review)
         ));
         body.push_str("    }");
     }
@@ -21081,9 +21203,9 @@ fn local_context_line_findings(line: &str) -> Vec<(String, String)> {
     }
 
     let lower = line.to_ascii_lowercase();
-    for (marker, problem) in local_context_markers() {
-        if lower.contains(&marker.to_ascii_lowercase()) {
-            findings.insert((marker, problem));
+    for (marker, marker_lower, problem) in local_context_marker_table() {
+        if lower.contains(marker_lower.as_str()) {
+            findings.insert((marker.clone(), problem.clone()));
         }
     }
 
@@ -21130,6 +21252,21 @@ fn local_context_line_findings(line: &str) -> Vec<(String, String)> {
     findings.into_iter().collect()
 }
 
+/// Markers with their lowercase needles, built once: the per-line scan runs
+/// over every tracked line and must not reallocate the table.
+fn local_context_marker_table() -> &'static [(String, String, String)] {
+    static TABLE: std::sync::OnceLock<Vec<(String, String, String)>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        local_context_markers()
+            .into_iter()
+            .map(|(marker, problem)| {
+                let lowered = marker.to_ascii_lowercase();
+                (marker, lowered, problem)
+            })
+            .collect()
+    })
+}
+
 fn local_context_markers() -> Vec<(String, String)> {
     vec![
         (
@@ -21169,8 +21306,13 @@ fn suspicious_runtime_file_names() -> Vec<String> {
 }
 
 fn windows_absolute_path_tokens(line: &str) -> Vec<String> {
-    let bytes = line.as_bytes();
     let mut tokens = Vec::new();
+    // Every match needs a drive-letter colon; the std search is far cheaper
+    // than the byte loop below on the many lines that have none.
+    if !line.contains(':') {
+        return tokens;
+    }
+    let bytes = line.as_bytes();
     let mut index = 0;
     while index + 2 < bytes.len() {
         let token_boundary = index == 0 || is_local_context_token_delimiter(bytes[index - 1]);
@@ -21259,6 +21401,9 @@ fn recorded_on_pattern() -> &'static str {
 
 fn file_reference_tokens(line: &str) -> Vec<String> {
     let mut tokens = Vec::new();
+    if !line.contains("file_") && !line.contains("turn") {
+        return tokens;
+    }
     let bytes = line.as_bytes();
     let mut index = 0;
     while index < bytes.len() {
