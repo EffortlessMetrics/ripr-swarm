@@ -203,3 +203,30 @@ fn missing_retained_evidence_names_executable_status_without_mutation() -> TestR
     }
     Ok(())
 }
+
+/// The façade `continue` selection boundary wraps its own refusals, so a
+/// missing attempt names exactly one read-only inspection command.
+#[test]
+fn continue_selection_failure_names_one_status_command() -> TestResult {
+    let base = unique_temp_workspace("continue-selection-guidance");
+    let root = base.join("repo");
+    init_producer_fixture_repo(&root)?;
+    let id = "repair-attempt-000000000000000000000001";
+    let root_arg = root.to_string_lossy().to_string();
+    let output = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&base),
+        &["continue", "--root", &root_arg, "--attempt", id],
+    )?;
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("manifest not found"), "{stderr}");
+    assert_eq!(stderr.matches("ripr agent status").count(), 1, "{stderr}");
+    assert!(
+        stderr.contains("No new repair attempt was started."),
+        "{stderr}"
+    );
+    std::fs::remove_dir_all(base)?;
+    Ok(())
+}

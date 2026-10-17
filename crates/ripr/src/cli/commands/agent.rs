@@ -851,8 +851,9 @@ pub(super) fn repair_attempt_input_error(
         return error;
     };
     // State refusals (for example an ended attempt) already end with their own
-    // `ripr agent status` next step; adding another would duplicate guidance.
-    if error.contains("ripr agent status") {
+    // `ripr agent status` or façade `ripr status` next step; adding another
+    // would duplicate guidance.
+    if error.contains("ripr agent status") || error.contains("ripr status") {
         return error;
     }
     if crate::app::repair_attempt::RepairAttemptId::parse(id.to_string()).is_err() {
@@ -2702,17 +2703,26 @@ mod tests {
     #[test]
     fn repair_attempt_input_error_does_not_duplicate_state_refusal_guidance() {
         let root = std::path::Path::new("repo");
-        let id = "repair-attempt-0000000000000001";
+        let id = "repair-attempt-000000000000000000000001";
         let refusal = "repair attempt x already finished. Next: `ripr agent status --root repo` reads the outcome".to_string();
         assert_eq!(
             repair_attempt_input_error(root, None, Some(id), refusal.clone()),
             refusal
         );
+        let facade_refusal =
+            "repair attempt x already finished. Inspect: `ripr status --attempt x --root repo`"
+                .to_string();
+        assert_eq!(
+            repair_attempt_input_error(root, None, Some(id), facade_refusal.clone()),
+            facade_refusal
+        );
+        assert!(
+            crate::app::repair_attempt::RepairAttemptId::parse(id.to_string()).is_ok(),
+            "fixture id must parse so the wrapping branch is exercised"
+        );
         let read_failure = "canonicalize artifact a failed: missing".to_string();
         let wrapped = repair_attempt_input_error(root, None, Some(id), read_failure);
-        if crate::app::repair_attempt::RepairAttemptId::parse(id.to_string()).is_ok() {
-            assert_eq!(wrapped.matches("ripr agent status").count(), 1, "{wrapped}");
-        }
+        assert_eq!(wrapped.matches("ripr agent status").count(), 1, "{wrapped}");
     }
     use crate::cli::commands_agent_support::{
         agent_brief_lines_from_diff, agent_brief_owners_for_lines, normalize_agent_brief_path,
