@@ -1539,11 +1539,21 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         .as_ref()
         .map(|_| app::FindingDrillIn::Commands(navigation.clone()));
     let navigation = if matches!(format, OutputFormat::Human) && analyzed_live_files {
-        navigation.with_stub_route(app::test_stub::check_stub_route(
-            &limited_check_input.root,
-            &config,
-            &output,
-        ))
+        navigation
+            .with_stub_route(app::test_stub::check_stub_route(
+                &limited_check_input.root,
+                &config,
+                &output,
+            ))
+            // #8166 Slice C: the repair line reuses the producer-owned
+            // admission gate over the live seam inventory, for the same
+            // live-files reason as the stub route above. Other formats
+            // keep their existing next-step contracts unchanged.
+            .with_repair_route(crate::app::task_first::check_repair_route(
+                &limited_check_input.root,
+                &config,
+                &output,
+            ))
     } else {
         navigation
     };

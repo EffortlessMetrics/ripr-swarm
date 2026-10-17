@@ -21,7 +21,7 @@ use crate::analysis::test_stub::{
 use crate::analysis::{ClassifiedSeam, RepoSeam};
 use crate::app::CheckOutput;
 use crate::config::RiprConfig;
-use crate::domain::{ExposureClass, Finding, ProbeFamily};
+use crate::domain::{ExposureClass, Finding};
 use std::path::{Path, PathBuf};
 
 /// Which gap the caller means.
@@ -47,7 +47,7 @@ impl TestStubSelector {
         };
         if analysis::seam_kind_for_probe_family(family).is_none() {
             return Err(format!(
-                "--kind expects a probe family such as predicate, return_value, error_path, or match_arm, got {family:?}"
+                "--kind expects a probe family such as predicate, return_value, error_path, match_arm, call_deletion, field_construction, or side_effect, got {family:?}"
             ));
         }
         Ok(Self::At {
@@ -88,6 +88,10 @@ pub(crate) struct TestStubResolution {
     /// use case looks the class up afterward so the stub can disclose it
     /// (#7290). `None` when that lookup did not find the seam.
     pub(crate) grip_class: Option<SeamGripClass>,
+    /// Set when `--at FILE:LINE` named a line that holds no gap and the
+    /// nearest gap in the same function was stubbed instead (#6298), so the
+    /// substitution is stated rather than left to the generated comment.
+    pub(crate) at_note: Option<String>,
 }
 
 #[derive(Debug)]
@@ -226,6 +230,7 @@ impl<'a> AtCandidate<'a> {
                     source,
                     outcome,
                     grip_class: None,
+                    at_note: None,
                 }
             }
             Self::Classified(entry) => resolution_for(entry, source),
@@ -291,13 +296,7 @@ pub(crate) fn stub_route_location(
 ) -> Option<(String, usize, &'static str)> {
     let location = &finding.probe.location.file;
     let eligible = finding.class != ExposureClass::Exposed
-        && matches!(
-            finding.probe.family,
-            ProbeFamily::Predicate
-                | ProbeFamily::ReturnValue
-                | ProbeFamily::ErrorPath
-                | ProbeFamily::MatchArm
-        )
+        && finding.probe.family.offers_stub_route()
         && location.extension().and_then(|ext| ext.to_str()) == Some("rs");
     if !eligible {
         return None;
@@ -489,7 +488,16 @@ fn resolve_at(
     }
     let mut first_refusal = None;
     for candidate in candidates {
-        let resolution = candidate.resolution(source.clone());
+        let seam_line = candidate.seam().display_line();
+        let mut resolution = candidate.resolution(source.clone());
+        // A finding line is the changed line, which need not hold a gap of
+        // its own; when the stub is for a different line, say so (#6298).
+        if seam_line != line {
+            resolution.at_note = Some(format!(
+                "note: {file}:{line} has no stubbable gap; this stub is for the nearest one in `{}`, {file}:{seam_line}",
+                resolution.owner
+            ));
+        }
         if resolution.outcome.is_ok() {
             return Ok(resolution);
         }
@@ -545,6 +553,7 @@ fn resolution_for(entry: &ClassifiedSeam, source: String) -> TestStubResolution 
         source,
         outcome,
         grip_class: Some(entry.class),
+        at_note: None,
     }
 }
 
@@ -1050,6 +1059,47 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         assert!(outcome_ok, "stub as scaffold stays ready");
         assert_eq!(grip, Some(SeamGripClass::StronglyGripped));
+        Ok(())
+    }
+
+    /// #6298: `--at` on a line that holds no gap stubs the nearest gap in the
+    /// function, and the resolution says so; a line that holds a gap says
+    /// nothing, so the note never fires on an exact match.
+    #[test]
+    fn at_a_line_without_a_gap_names_the_nearest_gap_it_stubbed() -> Result<(), String> {
+        const SOURCE: &str = "pub struct Size(pub u64);
+impl Size {
+    pub fn whole(&self, unit: u64) -> Option<u64> {
+        if unit == 0 || self.0 % unit != 0 {
+            return None;
+        }
+        Some(self.0 / unit)
+    }
+}
+";
+        let root = scratch_stub_crate("at-note", SOURCE)?;
+        let config = RiprConfig::default();
+        let resolve = |line: usize, family: &str| {
+            let selector =
+                TestStubSelector::parse_at(&format!("src/lib.rs:{line}"))?.with_kind(family)?;
+            resolve_test_stub(&root, &config, &selector).map_err(|error| format!("{error:?}"))
+        };
+        let exact = resolve(7, "return_value")?;
+        let off = resolve(8, "return_value")?;
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(exact.at_note, None, "an exact line match needs no note");
+        assert!(
+            off.outcome.is_ok(),
+            "the nearest gap is still stubbed: {:?}",
+            off.outcome.err()
+        );
+        let note = off.at_note.ok_or("a substituted line must carry a note")?;
+        assert!(
+            note.contains("src/lib.rs:8")
+                && note.contains("src/lib.rs:7")
+                && note.contains("nearest"),
+            "{note}"
+        );
         Ok(())
     }
 

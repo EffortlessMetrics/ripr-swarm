@@ -24,11 +24,7 @@ fn unique_temp_workspace(label: &str) -> PathBuf {
 }
 
 fn run_ripr(current_dir: &Path, args: &[&str]) -> Result<Output, String> {
-    std::process::Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .current_dir(current_dir)
-        .args(args)
-        .output()
-        .map_err(|error| format!("spawn ripr {args:?}: {error}"))
+    run_ripr_env(current_dir, args, &[])
 }
 
 fn run_git(root: &Path, args: &[&str]) -> Result<String, String> {
@@ -502,6 +498,219 @@ fn repair_explicit_policy_omitted_gap_and_seam_refuse_without_attempt_or_lock() 
         );
         assert_no_repair_attempt_side_effects(root);
     }
+    Ok(())
+}
+
+fn run_ripr_env(
+    current_dir: &Path,
+    args: &[&str],
+    envs: &[(&str, &str)],
+) -> Result<Output, String> {
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command.current_dir(current_dir).args(args);
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    command
+        .output()
+        .map_err(|error| format!("spawn ripr {args:?}: {error}"))
+}
+
+/// Weaken the boundary predicate (`>=` becomes `>`) as an uncommitted
+/// worktree edit, so `ripr check --worktree` reports the seam's gap.
+fn weaken_boundary_predicate(root: &Path) -> Result<(), String> {
+    let lib = root.join("src/lib.rs");
+    let source = std::fs::read_to_string(&lib).map_err(|e| e.to_string())?;
+    assert!(
+        source.contains("amount >= discount_threshold"),
+        "fixture predicate must be present before weakening:\n{source}"
+    );
+    std::fs::write(
+        &lib,
+        source.replace(
+            "amount >= discount_threshold",
+            "amount > discount_threshold",
+        ),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// The seam identity a printed `ripr repair <identity>` drill-down line
+/// names, when the bounded check output offers one.
+fn printed_repair_identity(check_stdout: &str) -> Option<String> {
+    check_stdout.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("ripr repair ")
+            .and_then(|tail| tail.split_whitespace().next())
+            .map(str::to_string)
+    })
+}
+
+fn run_worktree_check(root: &Path, root_arg: &str) -> Result<Output, String> {
+    run_ripr(
+        root,
+        &["check", "--root", root_arg, "--base", "HEAD", "--worktree"],
+    )
+}
+
+/// #8166 Slice C (positive control): the bounded human check drill-down for
+/// a repair-eligible top finding prints a `ripr repair` line naming the seam
+/// identity the repair resolver accepts, and running that exact identity
+/// starts the before phase for the same seam. The printed identity is never
+/// the `probe:` finding ID the resolver refuses.
+#[test]
+fn check_drill_down_prints_repair_identity_that_starts_the_same_seam() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-check-drilldown-eligible")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    weaken_boundary_predicate(root)?;
+    let check = run_worktree_check(root, &root_arg)?;
+    let stdout = stdout_text(&check);
+    assert!(
+        stdout.contains("Next: drill into the top finding:"),
+        "check must print the drill-down block:\n{stdout}\nstderr:\n{}",
+        stderr_text(&check)
+    );
+    assert!(
+        stdout.contains("ripr explain"),
+        "check must keep the explain next step:\n{stdout}"
+    );
+    let identity = printed_repair_identity(&stdout).ok_or_else(|| {
+        format!("eligible top finding must print a `ripr repair` next step:\n{stdout}")
+    })?;
+    assert!(
+        !identity.starts_with("probe:"),
+        "the repair line must not name the refused finding ID: {identity}"
+    );
+    assert!(
+        !stdout.contains("ripr repair probe:"),
+        "no repair line may name a `probe:` identity:\n{stdout}"
+    );
+    // The other formats carry no new repair next step: human-full keeps its
+    // per-finding explain/context drill-in only, and JSON is unchanged.
+    let full = run_ripr(
+        root,
+        &[
+            "check",
+            "--root",
+            &root_arg,
+            "--base",
+            "HEAD",
+            "--worktree",
+            "--format",
+            "human-full",
+        ],
+    )?;
+    assert!(
+        !stdout_text(&full).contains("ripr repair"),
+        "human-full must not gain the bounded repair line:\n{}",
+        stdout_text(&full)
+    );
+    let json = run_ripr(
+        root,
+        &[
+            "check",
+            "--root",
+            &root_arg,
+            "--base",
+            "HEAD",
+            "--worktree",
+            "--format",
+            "json",
+        ],
+    )?;
+    assert!(
+        !stdout_text(&json).contains("ripr repair"),
+        "JSON must not gain a repair next step:\n{}",
+        stdout_text(&json)
+    );
+    // Round-trip: the printed identity resolves through `ripr repair` to
+    // the same seam and starts exactly one before-phase attempt for it.
+    // The before phase pins the repository at HEAD, so the worktree edit
+    // is committed first (the recovery `ripr repair` itself names for a
+    // dirty production file); committing identical bytes keeps the seam
+    // identity the check printed.
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "weaken the boundary predicate")?;
+    let repair = run_ripr(root, &["repair", &identity, "--root", &root_arg])?;
+    assert_exit(&repair, 0, "repair with the check-printed identity");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1, "exactly one attempt must be created");
+    assert_eq!(read_manifest(root, &ids[0])?["seam_id"], identity);
+    Ok(())
+}
+
+/// #8166 Slice C (negative control): when the top finding's seam is no
+/// longer repair-eligible (its boundary is already gripped, so it is not a
+/// headline repair target), the drill-down prints no `ripr repair` line.
+#[test]
+fn check_drill_down_omits_repair_when_top_seam_is_not_eligible() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-check-drilldown-ineligible")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{FIXTURE_WEAK_TEST}{FIXTURE_BOUNDARY_TEST}"),
+    )
+    .map_err(|e| e.to_string())?;
+    run_git(root, &["add", "tests/pricing.rs"])?;
+    git_commit(root, "grip the boundary")?;
+    // A semantics-preserving predicate edit keeps the seam gripped (the
+    // Slice A ineligible state) while still producing its check finding:
+    // parenthesizing the comparison changes the changed line, not the
+    // behavior the boundary test discriminates.
+    let lib = root.join("src/lib.rs");
+    let source = std::fs::read_to_string(&lib).map_err(|e| e.to_string())?;
+    std::fs::write(
+        &lib,
+        source.replace(
+            "amount >= discount_threshold",
+            "(amount) >= discount_threshold",
+        ),
+    )
+    .map_err(|e| e.to_string())?;
+    let check = run_worktree_check(root, &root_arg)?;
+    let stdout = stdout_text(&check);
+    assert!(
+        stdout.contains("Next: drill into the top finding:"),
+        "the gripped finding must still drill down to explain/context:\n{stdout}"
+    );
+    assert!(
+        printed_repair_identity(&stdout).is_none() && !stdout.contains("ripr repair"),
+        "an ineligible seam must print no repair line:\n{stdout}"
+    );
+    assert!(
+        attempt_ids(root).is_empty(),
+        "check must never start a repair attempt"
+    );
+    Ok(())
+}
+
+/// #8166 Slice C (negative control): a truncated seam inventory cannot
+/// establish eligibility, so the drill-down prints no `ripr repair` line
+/// even though the seam itself is eligible in a complete inventory.
+#[test]
+fn check_drill_down_omits_repair_when_seam_inventory_is_truncated() -> Result<(), String> {
+    let fixture = Fixture::two_seam("facade-check-drilldown-truncated")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    weaken_boundary_predicate(root)?;
+    let check = run_ripr_env(
+        root,
+        &["check", "--root", &root_arg, "--base", "HEAD", "--worktree"],
+        &[("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1")],
+    )?;
+    let stdout = stdout_text(&check);
+    assert!(
+        stdout.contains("Next: drill into the top finding:"),
+        "check must print the drill-down block:\n{stdout}\nstderr:\n{}",
+        stderr_text(&check)
+    );
+    assert!(
+        printed_repair_identity(&stdout).is_none() && !stdout.contains("ripr repair"),
+        "a truncated inventory must print no repair line:\n{stdout}"
+    );
     Ok(())
 }
 
