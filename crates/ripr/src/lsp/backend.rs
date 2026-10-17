@@ -3024,6 +3024,25 @@ impl Backend {
             .unwrap_or(false)
     }
 
+    /// Adopt the committed snapshot's analyzed identity for a clean open of a
+    /// Rust file the snapshot already analyzed byte-for-byte, so reopening an
+    /// unchanged file does not quarantine it as never analyzed. Returns
+    /// whether the document is now clean.
+    fn adopt_committed_snapshot_for_clean_open(&self, uri: &Uri) -> bool {
+        let committed = self.latest_analysis.lock().ok().and_then(|latest| {
+            let snapshot = latest.as_ref()?;
+            let relative = super::uri::file_uri_relative_to_root(&snapshot.root, uri)?;
+            let digest = snapshot.rust_consumed_sources.digest(&relative)?;
+            Some((digest, snapshot.input_identity_id()))
+        });
+        let Some((digest, input_identity)) = committed else {
+            return false;
+        };
+        self.documents.lock().ok().is_some_and(|mut documents| {
+            documents.adopt_committed_identity(uri, &digest, input_identity)
+        })
+    }
+
     /// Whether a clean open still carries an input the committed snapshot
     /// never analyzed: the file may have changed on disk while it was closed
     /// and no watch event arrived, so the buffer matches the persisted bytes
@@ -5431,7 +5450,7 @@ impl LanguageServer for Backend {
         // The store records exactly the params version with the open
         // decision (#1747); capture it before `params` moves.
         let decision_version = Some(params.text_document.version);
-        let Some((uri, transition)) = self.open_document(params) else {
+        let Some((uri, mut transition)) = self.open_document(params) else {
             // A failed store lock means the document was never registered;
             // skip every downstream mutation so the store, the workspace
             // revision, and the committed snapshot cannot diverge.
@@ -5460,6 +5479,18 @@ impl LanguageServer for Backend {
         // captured for the same Rust path keeps the refresh too: the file
         // changed on disk while closed, so the session's committed evidence
         // predates the input it would otherwise keep serving.
+        if transition == QuarantineTransition::Entered
+            && self.refresh_scheduler_has_analysis_state()
+            && self.adopt_committed_snapshot_for_clean_open(&uri)
+        {
+            // The open created the document already quarantined as never
+            // analyzed and the adoption lifted that. Report the lift so the
+            // committed diagnostics are re-served: a stale withdrawal marker
+            // from an earlier dirty episode may still be the last publish.
+            transition = QuarantineTransition::Exited {
+                was_disclosed: false,
+            };
+        }
         let open_matches_saved = self.open_document_matches_saved_content(&uri);
         let session_has_analysis = self.refresh_scheduler_has_analysis_state();
         self.handle_document_quarantine_transition(&uri, transition, decision_version)
