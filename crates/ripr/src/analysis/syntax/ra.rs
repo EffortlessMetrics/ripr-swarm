@@ -2359,7 +2359,10 @@ fn extract_parser_oracles(
             (OracleKind::Snapshot, OracleStrength::Medium)
         };
         let line = line_index.line(range.start());
-        expect_test_comparisons.push(assertion_text.clone());
+        expect_test_comparisons.push((
+            line..=line_index.line_for_range_end(range.end()),
+            assertion_text.clone(),
+        ));
         assertions.push(OracleFact {
             line,
             kind,
@@ -2409,9 +2412,10 @@ fn extract_parser_oracles(
         .into_iter()
         .filter(|oracle| !guarded_matches.match_start_lines.contains(&oracle.line))
         .filter(|oracle| {
-            !expect_test_comparisons
-                .iter()
-                .any(|comparison| is_expect_test_continuation(&oracle.text, comparison))
+            !expect_test_comparisons.iter().any(|(lines, comparison)| {
+                lines.contains(&oracle.line)
+                    && is_expect_test_continuation(&oracle.text, comparison)
+            })
         })
     {
         assertions.push(oracle);
@@ -3744,6 +3748,26 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
                 .iter()
                 .any(|oracle| oracle.text.contains("ensure!(other() == 2")),
             "sibling ensure! on the continuation line must remain: {oracles:?}"
+        );
+    }
+
+    /// A later custom `assert_eq(` helper can be a text suffix of a parsed
+    /// comparison without being that comparison's continuation.
+    #[test]
+    fn a_later_custom_assert_helper_is_not_treated_as_expect_test_continuation() {
+        let function = "fn scores() {\n    expect![[\"w12\"]].assert_eq(&render(4));\n    assert_eq(&render(4));\n}\n";
+        let oracles = parser_oracles_for_function(function, 1).unwrap_or_default();
+        assert!(
+            oracles.iter().any(|oracle| {
+                oracle.text.contains("expect![[") && oracle.text.contains("assert_eq(&render(4))")
+            }),
+            "parsed expect-test comparison must remain: {oracles:?}"
+        );
+        assert!(
+            oracles.iter().any(|oracle| {
+                oracle.text.contains("assert_eq(&render(4))") && !oracle.text.contains("expect![[")
+            }),
+            "later custom assert_eq helper must remain: {oracles:?}"
         );
     }
 }
