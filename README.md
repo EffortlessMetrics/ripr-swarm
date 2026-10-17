@@ -158,6 +158,8 @@ ripr check
 `ripr context` commands for the top finding; add `--format json` for
 machine-readable results that embed the same bounded `canonical_next_action`
 (class, selected item, root, diff source, and followable route).
+`ripr doctor --json` carries the same `canonical_next_action` when setup needs
+a precise recovery, matching the human Safe-next-action line.
 For whole-repository exploration or a supported repair route, use
 `ripr pilot --root .`; it names one supported repair or explains why none is
 ready. Run the follow-up
