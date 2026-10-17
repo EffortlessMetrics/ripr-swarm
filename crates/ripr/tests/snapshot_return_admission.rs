@@ -135,3 +135,12 @@ fn independent_literal_assertion_remains_strong_beside_an_unrelated_snapshot() -
     assert_strong(&fixture.seam()?);
     Ok(())
 }
+
+#[test]
+fn read_only_comparisons_do_not_rebind_the_owner_result() -> Result<(), String> {
+    let fixture = Fixture::new(
+        "let count = make_count(2);\n        if count == 0 {\n            return;\n        }\n        debug_assert!(count >= 1);\n        insta::assert_json_snapshot!(count);",
+    )?;
+    assert_strong(&fixture.seam()?);
+    Ok(())
+}

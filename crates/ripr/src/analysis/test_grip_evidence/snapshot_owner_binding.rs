@@ -125,13 +125,42 @@ fn statement_binding_verdict(statement: &str, name: &str, owner_name: &str) -> O
                 }),
         );
     }
-    let lhs = trimmed.split_once('=').map(|(lhs, _)| {
-        lhs.trim_end_matches(['+', '-', '*', '/', '%', '&', '|', '^', '<', '>', '!'])
-            .trim()
-    });
-    match lhs {
-        Some(lhs) if contains_word(lhs, name) && !trimmed.starts_with("assert") => Some(false),
+    match assignment_target(trimmed) {
+        Some(target) if contains_word(target, name) => Some(false),
         _ => None,
+    }
+}
+
+/// The place expression assigned by `statement`, when it is an assignment
+/// (`x = ..`, `x += ..`, `*x.y <<= ..`). Comparisons (`==`, `!=`, `<=`,
+/// `>=`), match arms (`=>`) and any left-hand side that is not a plain
+/// place (`if x == 0 {`, `debug_assert!(x == 3);`) are not assignments.
+fn assignment_target(statement: &str) -> Option<&str> {
+    let bytes = statement.as_bytes();
+    let at = (0..bytes.len()).find(|&at| {
+        bytes[at] == b'='
+            && !matches!(bytes.get(at + 1), Some(b'=') | Some(b'>'))
+            && !matches!(
+                at.checked_sub(1).map(|prev| bytes[prev]),
+                Some(b'=') | Some(b'!')
+            )
+            && !is_comparison_angle(bytes, at)
+    })?;
+    let target = statement[..at]
+        .trim_end_matches(['+', '-', '*', '/', '%', '&', '|', '^', '<', '>'])
+        .trim();
+    let plain_place = !target.is_empty()
+        && target
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '*'));
+    plain_place.then_some(target)
+}
+
+/// `<=` / `>=` compare; `<<=` / `>>=` assign.
+fn is_comparison_angle(bytes: &[u8], at: usize) -> bool {
+    match at.checked_sub(1).map(|prev| bytes[prev]) {
+        Some(angle @ (b'<' | b'>')) => at.checked_sub(2).map(|prev| bytes[prev]) != Some(angle),
+        _ => false,
     }
 }
 
@@ -142,4 +171,45 @@ fn contains_word(text: &str, word: &str) -> bool {
         !before.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
             && !after.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{assignment_target, statement_binding_verdict};
+
+    #[test]
+    fn reads_and_comparisons_are_not_assignments() {
+        for read in [
+            "if count == 0 {",
+            "debug_assert!(count == 3);",
+            "while count >= 1 {",
+            "if count <= 1 {",
+            "assert!(count != 4);",
+            "match count { 1 => {",
+        ] {
+            assert_eq!(assignment_target(read), None, "{read}");
+            assert_eq!(
+                statement_binding_verdict(read, "count", "make_count"),
+                None,
+                "{read}"
+            );
+        }
+    }
+
+    #[test]
+    fn plain_and_compound_assignments_are_assignments() {
+        for (write, target) in [
+            ("count = 5;", "count"),
+            ("count += 1;", "count"),
+            ("count <<= 1;", "count"),
+            ("*count = 2;", "*count"),
+            ("record.count -= 1;", "record.count"),
+        ] {
+            assert_eq!(assignment_target(write), Some(target), "{write}");
+        }
+        assert_eq!(
+            statement_binding_verdict("count = 5;", "count", "make_count"),
+            Some(false)
+        );
+    }
 }
