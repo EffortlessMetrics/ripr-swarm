@@ -4794,7 +4794,7 @@ mod tests {
                 .iter_mut()
                 .filter(|call| call.name == "discounted_total" && call.line == old_offset + 1)
             {
-                call.text = old_line.clone();
+                call.text = old_line.clone().into();
             }
         };
         for function in &mut favorable.functions {
@@ -4815,7 +4815,7 @@ mod tests {
         assert_ne!(old_key.analyzer_version, current_key.analyzer_version);
         cache.store_file_facts(&old_key, &favorable)?;
         assert!(
-            matches!(cache.load_file_facts(&old_key), CacheLoad::Hit(ref facts) if owner_call(facts) == Some(old_line.clone()))
+            matches!(cache.load_file_facts(&old_key), CacheLoad::Hit(ref facts) if owner_call(facts) == Some(old_line.clone().into()))
         );
         assert!(matches!(
             cache.load_file_facts(&current_key),

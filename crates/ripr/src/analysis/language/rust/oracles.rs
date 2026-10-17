@@ -917,7 +917,7 @@ mod tests {
             calls: vec![CallFact {
                 line: start_line,
                 name: "inner".to_string(),
-                text: "inner(10, 3)".to_string(),
+                text: "inner(10, 3)".to_string().into(),
             }],
             assertions: Vec::new(),
             literals: vec![
