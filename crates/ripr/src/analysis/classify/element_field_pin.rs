@@ -470,6 +470,10 @@ struct ReturnedArray {
     /// The integer literal each other element builds `field` from, or
     /// `None` when that element builds it from anything else.
     others: Vec<Option<i128>>,
+    /// Every other element builds `field` from a literal or a plain path,
+    /// so constructing the array cannot leave the process (or settle the
+    /// test any other way) before the assertion runs (#8084).
+    siblings_plain: bool,
 }
 
 impl ReturnedArray {
@@ -560,11 +564,33 @@ impl ReturnedArray {
                 others.push(initializer.expr().as_ref().and_then(integer_literal));
             }
         }
+        let siblings_plain = fields.iter().enumerate().all(|(position, list)| {
+            position == index
+                || list
+                    .fields()
+                    .find(|initializer| {
+                        initializer
+                            .field_name()
+                            .is_some_and(|name| name.text() == field.as_str())
+                    })
+                    .is_some_and(|initializer| match initializer.expr() {
+                        // Shorthand `Row { total }` reads the plain path.
+                        None => true,
+                        Some(expr) => {
+                            integer_literal(&expr).is_some()
+                                || matches!(
+                                    unwrap_parens(expr),
+                                    ast::Expr::Literal(_) | ast::Expr::PathExpr(_)
+                                )
+                        }
+                    })
+        });
         Some(Self {
             type_name,
             field,
             index,
             others,
+            siblings_plain,
         })
     }
 
@@ -608,13 +634,14 @@ impl ReturnedArray {
             arguments.as_slice(),
         ) {
             ("assert_eq", [left, right]) => {
-                [(left, right), (right, left)]
-                    .into_iter()
-                    .any(|(read, expected)| {
-                        is_literal(expected)
-                            && (self.indexed_read(read, &is_receiver)
-                                || self.aliased_read(read, alias))
-                    })
+                self.siblings_plain
+                    && [(left, right), (right, left)]
+                        .into_iter()
+                        .any(|(read, expected)| {
+                            is_literal(expected)
+                                && (self.indexed_read(read, &is_receiver)
+                                    || self.aliased_read(read, alias))
+                        })
             }
             ("assert", [condition]) => {
                 self.membership(condition, integer, &is_receiver)
@@ -1114,6 +1141,38 @@ mod tests {
         }
         if pinned(negative, "#[test]", &membership("33"))? != Some(true) {
             return Err("a sibling of the opposite sign refused the pin".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_sibling_field_that_may_exit_before_the_assertion_observes_nothing() -> Result<(), String> {
+        // #8084: constructing an earlier element whose pinned field is a
+        // block (or any non-literal, non-path expression) may exit the
+        // process before the test reaches its assertion, so an indexed
+        // pin of the probed element observes nothing.
+        for array in [
+            "[Row { total: { std::process::exit(0) } }, Row { total: a + b + 0 }]",
+            "[Row { total: compute() }, Row { total: a + b + 0 }]",
+            "[Row { total: a * b }, Row { total: a + b + 0 }]",
+        ] {
+            let indexed = "        let rows = rows(30, 3);\n        assert_eq!(rows[1].total, 33);";
+            if pinned(array, "#[test]", indexed)? != Some(false) {
+                return Err(format!("expected no pin: {array}"));
+            }
+        }
+        // A sibling built from a plain path or literal cannot leave during
+        // construction, so the indexed pin still observes the probed field.
+        for array in [
+            "[Row { total: a }, Row { total: a + b + 0 }]",
+            "[Row { total: 7 }, Row { total: a + b + 0 }]",
+            "[Row { total }, Row { total: a + b + 0 }]",
+            "[Row { total: (-33) }, Row { total: a + b + 0 }]",
+        ] {
+            let indexed = "        let rows = rows(30, 3);\n        assert_eq!(rows[1].total, 33);";
+            if pinned(array, "#[test]", indexed)? != Some(true) {
+                return Err(format!("expected a pin: {array}"));
+            }
         }
         Ok(())
     }

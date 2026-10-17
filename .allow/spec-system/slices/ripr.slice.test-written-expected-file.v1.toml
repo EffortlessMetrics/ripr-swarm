@@ -1,0 +1,21 @@
+schema_version = "2.0"
+id = "ripr.slice.test-written-expected-file.v1"
+generation = 1
+source_issue = "issue:8097"
+design_reference = "RIPR-SPEC-0197"
+change_class = "behavior_change"
+claim_boundary = """An assert_eq! expected operand read from a file the same test may write cannot pin the owner return: the test rewrites the golden from the owner before comparing, so the finding stays weakly_exposed. A committed golden the test never writes still pins and reads exposed. Fail-closed via test_may_write_files: any writer in the body taints any file read (inline or let-bound)."""
+non_goals = ["new classification vocabulary or probe families", "reading golden file contents", "runtime execution"]
+return_conditions = ["Return to root if a committed-golden comparison loses exposed because of this rule."]
+owned_seams = ["seam:ripr:analysis:classify:owner-pin"]
+shared_seams = []
+forbidden_seams = ["seam:ripr:domain:classification-vocabulary", "seam:ripr:output:schema"]
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0197"
+requirement_generation = 1
+[implementation_claim]
+status = "implemented"
+[evidence]
+state = "outstanding"
+[support_claim]
+state = "unchanged"
