@@ -5348,10 +5348,24 @@ fn first_pr_check_recovery_write_resolves_the_default_base() -> Result<(), Strin
 fn first_pr_check_exits_2_for_a_blocked_packet_but_write_mode_exits_0() -> Result<(), String> {
     let root = unique_temp_workspace("first-pr-blocked-exit");
     std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+    // The temp root can sit inside the checkout (a redirected TMPDIR). Stop git
+    // discovery at its parent so the root is never resolved against the
+    // checkout's shallow history, which has no default base on a PR runner.
+    let ceiling = root
+        .parent()
+        .ok_or("temp root has no parent")?
+        .to_path_buf();
+    let ceiling = ceiling.to_string_lossy().into_owned();
     let run = |extra: &[&str]| -> Result<Output, String> {
         let mut args = vec!["first-pr", "--root", "."];
         args.extend_from_slice(extra);
-        run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &args).map_err(|err| err.to_string())
+        run_command_with_env(
+            env!("CARGO_BIN_EXE_ripr"),
+            &root,
+            &args,
+            &[("GIT_CEILING_DIRECTORIES", ceiling.as_str())],
+        )
+        .map_err(|err| err.to_string())
     };
 
     let write = run(&[])?;
