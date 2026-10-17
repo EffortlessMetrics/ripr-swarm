@@ -1519,9 +1519,12 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         // mode that is neither committed history nor a working-tree read
         // must not inherit it. A working-tree read keeps it: its diff covers
         // tracked files only, so the untracked routed files are named in a
-        // note of their own (RIPR-SPEC-0116).
+        // note of their own (RIPR-SPEC-0116). #7467: the gitignored list
+        // drives the same family and follows the same rule — neither diff
+        // analyzes it.
         if !worktree_run {
             output.untracked_working_tree_source_paths.clear();
+            output.ignored_working_tree_source_paths.clear();
         }
     }
     // A working-tree run (explicit `--worktree`, or the dirty-tree default)

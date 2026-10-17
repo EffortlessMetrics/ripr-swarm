@@ -506,6 +506,24 @@ pub(crate) fn render_with_config(
             false,
         );
     }
+    // Additive advisory field: emitted when routed source or test files are
+    // gitignored in the live repository (#7467), on both committed-history
+    // and working-tree reads, since neither read analyzes them — and plain
+    // `git add -N` refuses them, so the human/GitHub notes name the force
+    // intent-to-add repair. Absent when the list is empty. This is the
+    // machine-readable form of the human/GitHub gitignored-files notes;
+    // without it a zero-finding JSON report reads as complete while routed
+    // files were silently excluded.
+    if !output.ignored_working_tree_source_paths.is_empty() {
+        out.push_str(",\n");
+        array_field(
+            &mut out,
+            1,
+            "ignored_working_tree_source_paths",
+            &output.ignored_working_tree_source_paths,
+            false,
+        );
+    }
     // Additive advisory field — emitted only when preview-language files were
     // in scope. Absent for pure-Rust diffs (RIPR-SPEC-0082).
     if !output.preview_language_advisories.is_empty() {
@@ -1828,6 +1846,7 @@ mod harness_projection_tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             partial_scope: None,

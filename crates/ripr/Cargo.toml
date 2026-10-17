@@ -103,6 +103,13 @@ tower = { version = "0.5", default-features = false }
 # version, or when the selected ra_ap_syntax drops the assert.
 unicode-ident = { version = "=1.0.24", optional = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# Keep the standard-library flag implementation shared with xtask's archive
+# stack on the measured Linux build route. Otherwise bitflags/std changes the
+# OXC/LSP dependency identities and recompiles ripr on CLI -> tool builds (#8507).
+# Already transitive; this selects a feature without adding a resolved crate.
+bitflags = { version = "2", features = ["std"] }
+
 [target.'cfg(windows)'.dependencies]
 # #5213: `kernel` for HPROCESS::GetProcessTimes (per-process user/kernel CPU
 # time); `psapi` for HPROCESS::GetProcessMemoryInfo (per-process
