@@ -13,8 +13,9 @@
   "admitted": [],
   "non_claims": [
     "The inactive template does not restrict ordinary development or select a release candidate.",
-    "An admitted PR/head is eligible to request qualification only; it is not qualified, approved, merged, or published.",
-    "Activation requires a separately reviewed #5114/#2766 packet with the exact current main SHA/tree and finite PR/head set.",
-    "After #1609 pins the immutable candidate, candidate_pinned releases rolling development without retargeting that candidate."
+    "The finite selected PR/head rows are recorded only after they have landed; active freezes ordinary qualification rather than acting as a serial merge queue.",
+    "Activation is a separately reviewed packet-only control commit whose first parent is the exact product cut SHA/tree consumed by #3807, #2768 and #1609.",
+    "A packet-only control PR may deactivate or move to candidate_pinned; product changes require reopening and later re-freezing a successor cut.",
+    "Qualification, final merge judgment, candidate-ref creation and publication remain separate authorities."
   ]
 }
