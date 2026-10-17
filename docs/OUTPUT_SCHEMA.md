@@ -470,6 +470,22 @@ field keeps its meaning, and every field this version adds is additive for a
 consumer that ignores unknown keys. Reverting the change restores `0.3`
 exactly, so a revert is the migration path for a consumer that cannot yet adapt.
 
+### Doctor canonical next action (additive, no `schema_version` bump, #6986)
+
+`ripr doctor --json` carries an optional `canonical_next_action` object: the
+same `canonical_next_action.v1` DTO that `ripr check --format json` embeds
+(#7258), produced by the decision the human `- Safe next action:` line follows
+rather than re-inferred for the machine document. It is present only when the
+first-command state is a precise recovery: `stop.kind` is `doctor_recovery`,
+`stop.check_name` names the failing check (`root_directory`, `config`, or
+`cargo_toml` for the generic failed-prerequisite case), `stop.recovery_route`
+is the recovery prose, `action_class` is `satisfy_prerequisite`, and `command`
+is absent because a recovery is not a runnable command. The key is omitted when
+the state names a runnable command, and for the `source-build` profile. The
+document root is `canonical_next_action.subject.root`; doctor reads no diff, so
+`diff_source` is the fixed no-base committed mode, never a live-tree claim. The
+human line and this object agree by construction (Control 9).
+
 ### What `--json` now probes, and where that shows up
 
 Both surfaces read one probe per run, so `ripr doctor --json` performs the

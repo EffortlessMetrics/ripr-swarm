@@ -580,6 +580,7 @@ fn owner_headers_are_told_from_lines_that_only_hold_a_callback() {
         "  setTimeout(function () {",
         "  const listener: (state: State) => void = noop;",
         "  if (total > 100) {",
+        "  doThing(); {",
     ] {
         assert!(!super::deleted_lines::opens_an_owner(line), "{line}");
     }
@@ -1046,6 +1047,95 @@ fn deleted_method_after_an_unspaced_length_comparison_is_not_stolen() -> Result<
             .all(|finding| !finding.is_candidate_actionable()),
         "base-side records must stay non-actionable: {findings:?}"
     );
+    Ok(())
+}
+
+/// #7705 shape 5: a removed behavior line followed by a removed bare `{`
+/// joins as `doThing(); {` and must not be read as a method header. The
+/// statement stays base-side evidence on the live owner. The inner block
+/// line is also live-enclosing once the false header is refused.
+#[test]
+fn deleted_statement_then_bare_brace_is_not_swallowed_as_a_header() -> Result<(), String> {
+    let findings = analyze(
+        "statement-then-bare-brace",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "-  doThing();",
+            "-  {",
+            "-    audit(items);",
+            "-  }",
+            "   return items.length;",
+            " }",
+        ],
+    )?;
+    let dos = findings
+        .iter()
+        .filter(|finding| {
+            finding.source_currentness.is_base_side()
+                && finding.probe.before.as_deref().map(str::trim) == Some("doThing();")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        dos.len(),
+        1,
+        "doThing(); must not be swallowed as a header: {findings:?}"
+    );
+    assert_eq!(
+        dos[0]
+            .probe
+            .owner
+            .as_ref()
+            .map(|owner| owner.0.rsplit("::").next().unwrap_or_default()),
+        Some("cappedTotal"),
+        "{findings:?}"
+    );
+    assert!(
+        findings.iter().any(|finding| {
+            finding.source_currentness.is_base_side()
+                && finding
+                    .probe
+                    .before
+                    .as_deref()
+                    .is_some_and(|text| text.contains("audit(items)"))
+        }),
+        "the block body stays on the live owner: {findings:?}"
+    );
+    assert!(
+        findings
+            .iter()
+            .filter(|finding| finding.source_currentness.is_base_side())
+            .all(|finding| !finding.is_candidate_actionable()),
+        "base-side records must stay non-actionable: {findings:?}"
+    );
+    assert!(
+        findings
+            .iter()
+            .all(|finding| !finding.is_candidate_actionable()),
+        "no kept record may become actionable: {findings:?}"
+    );
+    Ok(())
+}
+
+/// An Allman-style method header (`save()` then `{` on the next line) is
+/// still a header: deleting it does not give its body to the enclosing
+/// live function. Shape 5 must not refuse this join.
+#[test]
+fn deleted_allman_method_header_is_not_given_to_the_enclosing_function() -> Result<(), String> {
+    let findings = analyze(
+        "allman-method-header",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "   const api = {",
+            "-    save()",
+            "-    {",
+            "-      audit(id);",
+            "-    },",
+            "   };",
+            "   return items.length;",
+            " }",
+        ],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
     Ok(())
 }
 
