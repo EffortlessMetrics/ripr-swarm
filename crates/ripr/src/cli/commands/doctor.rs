@@ -3895,6 +3895,24 @@ mod tests {
     }
 
     #[test]
+    fn ripr_artifact_tracked_fails_closed_when_git_cannot_answer() -> Result<(), String> {
+        use output::doctor::DoctorArtifactTracked;
+        let root = unique_command_test_dir("artifact-tracked-notchecked");
+        std::fs::create_dir_all(root.join("target").join("ripr"))
+            .map_err(|error| error.to_string())?;
+        // A `.git` file that is not a valid gitfile makes every git command
+        // exit non-zero here, without walking up to an ancestor repository.
+        std::fs::write(root.join(".git"), "not a gitfile\n").map_err(|error| error.to_string())?;
+        assert_eq!(
+            ripr_artifact_tracked(&root),
+            DoctorArtifactTracked::NotChecked,
+            "a failed probe must not claim Untracked"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
     fn generated_workflow_line_flags_unpinned_and_other_version_installs() {
         // The exact install step `ripr 0.10.0 init --ci github` wrote.
         let v010 = "      - name: Install ripr\n        run: cargo install ripr --locked\n";

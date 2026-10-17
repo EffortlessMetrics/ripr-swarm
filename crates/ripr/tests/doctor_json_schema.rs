@@ -526,6 +526,20 @@ fn published_doctor_schema_rejects_documents_the_schema_forbids() -> Result<(), 
         format!("a populated tracked artifact verdict must stay legal: {error}")
     })?;
 
+    let mut extra_tracked_prop = base.clone();
+    extra_tracked_prop["cache"]["artifact_tracked"] =
+        serde_json::json!({"tracked": {"warning": "w", "count": 1}});
+    assert_rejected(
+        "undeclared field on the tracked arm",
+        &extra_tracked_prop,
+        &schema,
+    )?;
+
+    let mut not_checked_tracked = base.clone();
+    not_checked_tracked["cache"]["artifact_tracked"] = Value::String("not_checked".to_string());
+    check(&not_checked_tracked, &schema, &schema, "doctor")
+        .map_err(|error| format!("a not_checked tracked verdict must stay legal: {error}"))?;
+
     let mut wrong_test_surface_type = base.clone();
     wrong_test_surface_type["test_surfaces"] = Value::String("rust".to_string());
     assert_rejected(
