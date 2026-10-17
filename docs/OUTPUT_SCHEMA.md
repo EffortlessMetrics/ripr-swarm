@@ -3,6 +3,63 @@
 `ripr` emits stable JSON for tools, CI systems, editor integrations, and coding
 agents.
 
+## Native diff output set
+
+`ripr check --root ROOT --diff change.diff --output-dir NEW_DIRECTORY` runs
+the existing diff analysis once and writes `badge.json`, `detail.json`, and
+`human.txt`. Each member uses its native CLI projection, including effective
+configuration, JSON source stamps and canonical navigation, human navigation
+and Python notes, and the badge's separate suppression/date policy. No member
+schema changes. stdout is empty; diagnostics and progress remain on stderr.
+
+The directory must not exist and its parent must exist. `manifest.json` uses
+`schema_version: "ripr-native-diff-output-set-v1"`. It records `complete_set`,
+`command_success`, `error`, `identity`, and `members`. Each member records
+`file`, `bytes`, and `sha256`. Identity binds the producer, available language
+features, effective input/configuration, rendering budget, UTC date, Cargo
+input identity and observed input hashes. The effective input/configuration
+strings are diagnostic bindings, not a configuration parsing API.
+
+Consumers must require a successful command, a valid manifest with
+`complete_set: true` and `command_success: true`, all three expected members,
+and matching member byte lengths and SHA-256 hashes. They must still validate
+the native badge/detail documents and their analysis states. Complete output
+publication does not mean complete analysis or a passing gate. Unsupported
+analysis retains its native reports and nonzero exit. Post-parse failures use
+the native machine refusal documents, empty human stdout bytes, and a manifest
+with both booleans false. Usage errors remain diagnostics only.
+
+All three projections render before publication. Member files are created
+exclusively; the complete manifest is published last from `manifest.pending`.
+A render, member write, final drift check or manifest write failure prevents
+successful complete-set admission. An interrupted or failed write can leave
+partial files; retain them for diagnosis and use a new destination on retry.
+Member payloads plus the manifest are capped to 32 MiB.
+Existing sets are never replaced. Later tampering is detected by consumers'
+member hash verification. This is not a crash-durability or hostile-filesystem
+transaction guarantee.
+
+This first interface requires a named diff file. It refuses `--format`,
+`--json`, `--worktree`, `--committed`, candidate-tree options, `--gap-ledger`,
+`--write-artifact`, explicit `--suppression-policy`, and configured Perl
+producers. The explicit policy is unavailable to standalone badge-json too;
+config-selected badge suppressions do not suppress detail/human findings.
+Existing single-format parsing and behavior remain unchanged. Explain/context
+artifacts are neither read nor produced and cannot become gating inputs.
+
+Input custody checks observed persistent drift before and after rendering and
+again before manifest publication. It includes regular-file contents and
+directory membership below the root, ancestor configuration/manifests/locks,
+the named diff/facts, selected suppression file (including absence), shared
+Cargo input identity, date, and JSON budget. Inventory is bounded to 16,384
+entries, 128 MiB, and depth 64; nonregular inputs are refused. The inventory
+skips Git metadata and Cargo-owned `target` directories. The native source/module-read
+owners refuse fan-out when its reads or probes escape the root or enter those
+build directories. Analysis scope and classification do not expand. These are
+observations on a stable filesystem, not an immutable snapshot: transient
+change-and-revert, compiler/dependency-cache integrity, and malicious concurrent
+filesystem replacement are outside this interface's guarantee.
+
 ## Output streams by command family
 
 The CLI has two intentional output conventions:
@@ -11,7 +68,8 @@ The CLI has two intentional output conventions:
   their primary result to stdout. `check`, `diff`, and `context` can emit
   machine-readable JSON; `explain` emits its human explanation. Warnings and
   diagnostics go to stderr, so scripts can capture stdout without filtering
-  status text. `ripr check` also writes bounded producer-owned analysis
+  status text. The explicit `check --output-dir` adapter writes its named
+  output set with empty stdout, as described above. `ripr check` also writes bounded producer-owned analysis
   stages to stderr (`ripr progress: <stage> [<scope>]`). That stream is not
   part of the JSON/SARIF/GitHub stdout contract, carries no percentage or
   ETA when totals are unknown, and is suppressed by `--quiet`. It does not
@@ -43,6 +101,7 @@ map is:
 | Output | Field | Current value |
 | --- | --- | --- |
 | `ripr check --format json` | `schema_version` | `0.2` |
+| `ripr check --output-dir DIR` manifest | `schema_version` | `ripr-native-diff-output-set-v1` |
 | `ripr check --format sarif` | `version` | `2.1.0` (standard SARIF envelope) |
 | `ripr gate evaluate` | `schema_version` | `0.1` |
 | `ripr doctor --json` | `schema_version` | `0.4` |

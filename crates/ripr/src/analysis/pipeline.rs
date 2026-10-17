@@ -38,6 +38,19 @@ fn is_preview_language(language: LanguageId) -> bool {
     )
 }
 
+#[cfg(test)]
+static DIFF_PIPELINE_ENTRIES: std::sync::Mutex<
+    std::collections::BTreeMap<std::path::PathBuf, usize>,
+> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+#[cfg(test)]
+pub(crate) fn diff_pipeline_entry_count(root: &std::path::Path) -> Result<usize, String> {
+    let counts = DIFF_PIPELINE_ENTRIES
+        .lock()
+        .map_err(|_poisoned| "diff pipeline counter lock poisoned")?;
+    Ok(counts.get(root).copied().unwrap_or(0))
+}
+
 pub(crate) fn run_diff_pipeline_with_oracle_policy(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
@@ -59,6 +72,13 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
     rust_config: &crate::config::RustLanguageConfig,
     language_config: &crate::config::LanguagesConfig,
 ) -> Result<AnalysisResult, CoreError> {
+    #[cfg(test)]
+    {
+        let mut counts = DIFF_PIPELINE_ENTRIES
+            .lock()
+            .map_err(|_poisoned| "diff pipeline counter lock poisoned".to_string())?;
+        *counts.entry(options.root.clone()).or_default() += 1;
+    }
     // Immutable Git candidate subject (#3237 / #3277): resolve the
     // bound identity through object plumbing, derive the exact
     // base→candidate diff, and analyze the materialized candidate root.

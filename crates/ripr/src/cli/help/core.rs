@@ -266,6 +266,14 @@ Options:
                            unsuppressed findings only. Relative PATH
                            resolves against --root; a missing or malformed
                            policy fails the run.
+  --output-dir DIR         With a named --diff file, write native badge.json,
+                           detail.json and human.txt from one analysis. DIR must
+                           be new (parent exists). Verify manifest.json and member
+                           hashes before consuming the set. Does not combine with
+                           --format/--json, scope switches, --gap-ledger,
+                           --write-artifact or --suppression-policy. Bounded input
+                           inventory refuses drift, nonregular files and external
+                           module reads. See docs/OUTPUT_SCHEMA.md.
   --write-artifact PATH    Write a full-fidelity check artifact (schema
                            ripr-check-artifact-v1) for later
                            `ripr explain --from PATH` /
