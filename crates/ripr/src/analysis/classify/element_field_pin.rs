@@ -488,10 +488,42 @@ fn drop_is_plain(index: &RustIndex, type_name: &str) -> bool {
         .all(|(_, facts)| drop_is_plain_in_source(&facts.source, type_name))
 }
 
+/// Names this source binds to the `Drop` trait besides `Drop` itself:
+/// `use std::ops::Drop as Cleanup;` makes `Cleanup` a Drop trait name.
+fn drop_alias_names(tree: &ast::SourceFile) -> Vec<String> {
+    let mut names = Vec::new();
+    fn walk(tree: &ast::UseTree, names: &mut Vec<String>) {
+        if let Some(rename) = tree.rename()
+            && let Some(path) = tree.path()
+            && squeeze(&path.syntax().text().to_string())
+                .rsplit("::")
+                .next()
+                .is_some_and(|last| last == "Drop")
+            && let Some(name) = rename.name()
+        {
+            names.push(name.text().to_string());
+        }
+        if let Some(list) = tree.use_tree_list() {
+            for child in list.use_trees() {
+                walk(&child, names);
+            }
+        }
+    }
+    for node in tree.syntax().descendants() {
+        if let Some(item) = ast::Use::cast(node)
+            && let Some(tree) = item.use_tree()
+        {
+            walk(&tree, &mut names);
+        }
+    }
+    names
+}
+
 fn drop_is_plain_in_source(source: &str, type_name: &str) -> bool {
     let Some(parse) = parse_clean_source_file(source) else {
         return false;
     };
+    let aliases = drop_alias_names(&parse.tree());
     parse.tree().syntax().descendants().all(|node| {
         let Some(imp) = ast::Impl::cast(node) else {
             return true;
@@ -500,7 +532,11 @@ fn drop_is_plain_in_source(source: &str, type_name: &str) -> bool {
             squeeze(&path.syntax().text().to_string())
                 .rsplit("::")
                 .next()
-                .is_some_and(|last| last == "Drop" || last.starts_with("Drop<"))
+                .is_some_and(|last| {
+                    last == "Drop"
+                        || last.starts_with("Drop<")
+                        || aliases.iter().any(|alias| alias == last)
+                })
         });
         let is_type = imp.self_ty().is_some_and(|ty| {
             let text = squeeze(&ty.syntax().text().to_string());
@@ -1640,6 +1676,14 @@ mod tests {
             ),
             (
                 "pub struct Row {\n    pub total: u32,\n}\n\nimpl Drop for Row {\n    fn drop(&mut self) {\n    }\n}\n\npub fn rows(a: u32, b: u32) -> [Row; 2] {\n    [Row { total: 0 }, Row { total: a + b }]\n}",
+                true,
+            ),
+            (
+                "use std::ops::Drop as Cleanup;\nimpl Cleanup for Row { fn drop(&mut self) { std::process::exit(0); } }",
+                false,
+            ),
+            (
+                "use std::ops::Drop as Cleanup;\nimpl Cleanup for Row { fn drop(&mut self) {} }",
                 true,
             ),
         ] {
