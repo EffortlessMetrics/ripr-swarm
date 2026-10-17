@@ -3,20 +3,20 @@ mode: fast
 root: fixtures/python_ranking_noise_control/input
 config: <cwd>/fixtures/python_ranking_noise_control/input/ripr.toml
 
-Summary: 4 probe(s), 1 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 1 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 4 of 4 finding(s) unsuppressed
+Summary: 4 probes (1 exposed, 1 weak, 0 unrevealed, 1 no path, 1 unknown); 4 of 4 findings unsuppressed
 
 Changed file(s) by language: python = 4
 
-Analysis outcome: findings below (analysis complete; complete_with_findings)
+Analysis outcome: findings below (analysis complete)
   Counts: 4 changed file(s), 4 changed line(s), 4 candidate line(s), 4 probe(s), 4 finding(s)
 
 Start here:
-  State: preview language, advisory only (preview_limited)
+  State: preview language, advisory only
   Safe next action: preview-language evidence is advisory; apply the next step below to the suggested test and run its verify command before relying on it
   File: src/c_discount.py:2
   Language: python
   Language status: preview
-  Static exposure: weak (weakly_exposed, warning, confidence 0.40)
+  Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:python:src/c_discount.py:calculate_discount:predicate_boundary:predicate:amount>=threshold
   Changed behavior: if amount >= threshold:
@@ -39,8 +39,8 @@ Next: drill into the top finding:
 Hidden:
   3 lower-priority finding(s) omitted from default human output (Python preview: 3).
     - src/b_observed.py:2 (exposed)
-    - src/d_isolated.py:2 (no_static_path)
-    - src/a_dynamic.py:2 (static_unknown)
+    - src/d_isolated.py:2 (no path)
+    - src/a_dynamic.py:2 (unknown)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

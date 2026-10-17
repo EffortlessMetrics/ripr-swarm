@@ -491,3 +491,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_opaque_custom_helper_limit (16)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless python_opaque_custom_helper_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
