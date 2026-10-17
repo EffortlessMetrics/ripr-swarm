@@ -123,10 +123,11 @@ remainder that does not exist:
   lower-priority candidates, whether or not a top gap was selected (#5021).
   Base-side evidence (`base_deleted`, `moved_or_renamed`) and
   `unresolved_subject` findings are not candidate edit targets, so when they
-  share the omitted set with lower-ranked candidates the count line names the
-  mix — `L lower-priority finding(s) omitted; B base-side evidence, not
-  candidate edit targets` (an `U unresolved currentness, not candidate edit
-  targets` clause joins when present) — and an omitted set that is entirely
+  share the omitted set with lower-ranked candidates the count line states the
+  total first and then the mix — `T finding(s) omitted: L lower-priority, B
+  base-side evidence (not candidate edit targets)` (a `U unresolved
+  currentness` clause joins when present), so the leading count always
+  equals the number of listed bullets (#8389) — and an omitted set that is entirely
   base-side or entirely unresolved currentness says so (`All N omitted
   finding(s) are base-side evidence, not candidate edit targets.`). Pure
   lower-priority omitted sets keep the single count clause.

@@ -2365,6 +2365,12 @@ impl RepoFileFactCache {
             .as_deref()
     }
 
+    /// Normal analysis opts into maintenance even when every lookup hits.
+    /// Keep plain cache reads and current-snapshot export free of cleanup.
+    pub(crate) fn sweep_stale_temp_files(&self) {
+        crate::atomic_file::sweep_stale_temp_files_once(&self.dir);
+    }
+
     pub(crate) fn load_file_facts(&self, key: &RepoFileFactCacheKey) -> CacheLoad<FileFacts> {
         // An unusable base fails every lookup the same way, but on Windows
         // that failure is indistinguishable from `NotFound` (#4918). The
