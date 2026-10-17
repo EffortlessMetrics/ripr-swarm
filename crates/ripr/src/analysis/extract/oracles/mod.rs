@@ -8,14 +8,14 @@ mod scan;
 pub(crate) use arguments::{
     assertion_oracle_text, equality_assertion_arguments, outer_assertion_condition,
 };
-pub(crate) use classify::{classify_assertion, is_inequality_assertion};
+pub(crate) use classify::{classify_assertion, classify_assertion_in, is_inequality_assertion};
 #[cfg(test)]
 pub(crate) use patterns::contains_macro_invocation;
 pub(crate) use patterns::{
     OracleTextShape, has_oracle_text_shape, is_unwrap_err_bound_error_assertion,
 };
 pub(crate) use scan::{
-    err_return_guard_oracles, err_return_guard_twin, extract_assertions,
+    err_return_guard_oracles, err_return_guard_twin, extract_assertions, extract_assertions_in,
     extract_line_scanned_oracles, guarded_result_match_scan_with_shadow_authority,
     terminal_err_return_guard_oracle,
 };
