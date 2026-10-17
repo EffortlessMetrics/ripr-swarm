@@ -28,7 +28,7 @@ Policy impact:
 
 - No new crates, binaries, or LSP servers.
 - New module: `crates/ripr/src/analysis/language/typescript/tsconfig.rs`.
-- New config key: `[typescript] resolve_tsconfig_paths` (default `false`).
+- New config key: `[typescript] resolve_tsconfig_paths` (default `true` after the amendment; originally `false`).
 - No schema version bump. `typescript_path_alias_unresolved` is additive
   evidence on existing findings; it does not change the JSON schema version.
 - Register this spec in `policy/doc-artifacts.toml`.
@@ -50,7 +50,17 @@ alias-resolution artifact rather than an actual coverage hole.
 
 ## Solution
 
-### 1. Config opt-in (default OFF)
+### 1. Config switch (default ON; amended)
+
+Amendment: the default is now ON. `@/owner`-style aliases are near-universal in
+real TypeScript projects (Vite, Next, tsconfig `paths`), so the original
+default-OFF made nearly every aliased test read as a false `no_static_path`.
+Resolution stays explicit-source-only (one alias hop to a unique workspace
+file, per section 2), so the fail-closed boundary is unchanged. An explicit
+`resolve_tsconfig_paths = false` restores the original behavior and the
+always-on disclosure in section 4 still fires.
+
+Original rationale (kept for history):
 
 Add `[typescript] resolve_tsconfig_paths = false` to the ripr config model.
 The feature is opt-in because tsconfig path resolution without running the
