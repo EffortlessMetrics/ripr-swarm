@@ -1,5 +1,5 @@
 name: 'PR candidate admission'
-description: 'Refuse expensive qualification for stale, competing, oversized, or hard-cut-unadmitted candidates (#2022, #4987, #5391)'
+description: 'Refuse expensive qualification for stale, competing, oversized, or hard-cut-frozen candidates (#2022, #4987, #5391)'
 author: 'EffortlessMetrics'
 
 inputs:
@@ -59,10 +59,10 @@ outputs:
     description: 'GitHub additions plus deletions for the current PR'
     value: ${{ steps.admit.outputs.changed_lines }}
   cut_status:
-    description: 'Hard-cut admission status'
+    description: 'Hard-cut freeze status'
     value: ${{ steps.admit.outputs.cut_status }}
   cut_reason:
-    description: 'Stable hard-cut admission reason token'
+    description: 'Stable hard-cut freeze reason token'
     value: ${{ steps.admit.outputs.cut_reason }}
 
 runs:
@@ -83,12 +83,17 @@ runs:
       run: |
         set -euo pipefail
         action_root="${GITHUB_ACTION_PATH}"
-        packet="${GITHUB_WORKSPACE}/docs/release-candidates/0.11.0-hard-cut-admission.json"
+        packet_path="docs/release-candidates/0.11.0-hard-cut-admission.json"
+        local_packet="${GITHUB_WORKSPACE}/${packet_path}"
         tmp="$(mktemp -d)"
         trap 'rm -rf "$tmp"' EXIT
         current="$tmp/current.json"
         open_prs="$tmp/open-prs.json"
+        pr_files="$tmp/pr-files.json"
         base_commit="$tmp/base-commit.json"
+        cut_commit="$tmp/cut-commit.json"
+        packet="$tmp/cut-packet.json"
+        packet_meta="$tmp/cut-packet-meta.json"
         result="$tmp/result.json"
         cut_result="$tmp/cut-result.json"
 
@@ -106,9 +111,26 @@ runs:
           [ -n "${ADMISSION_REPOSITORY:-}" ] || { echo '::error::candidate admission requires owner/name repository identity'; exit 1; }
           gh api "repos/${ADMISSION_REPOSITORY}/pulls/${ADMISSION_PR_NUMBER}" > "$current"
           gh api --paginate "repos/${ADMISSION_REPOSITORY}/pulls?state=open&per_page=100" | jq -s 'add' > "$open_prs"
+          gh api --paginate "repos/${ADMISSION_REPOSITORY}/pulls/${ADMISSION_PR_NUMBER}/files?per_page=100" | jq -s 'add' > "$pr_files"
           base_sha="$(jq -r '.base.sha // empty' "$current")"
           [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::candidate admission received no exact base SHA'; exit 1; }
           gh api "repos/${ADMISSION_REPOSITORY}/git/commits/${base_sha}" > "$base_commit"
+
+          # The enforcement packet comes from the exact base commit, never the
+          # candidate checkout. The local inactive template is used only while
+          # the machinery PR is being introduced on a base that has no packet.
+          if gh api "repos/${ADMISSION_REPOSITORY}/contents/${packet_path}?ref=${base_sha}" > "$packet_meta" 2>/dev/null; then
+            jq -r '.content' "$packet_meta" | tr -d '\n' | base64 --decode > "$packet"
+          else
+            cp "$local_packet" "$packet"
+          fi
+          cut_sha="$(jq -r 'if .state == "active" then .observed_main.sha // "" else "" end' "$packet")"
+          cut_args=()
+          if [ -n "$cut_sha" ]; then
+            [[ "$cut_sha" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::hard-cut packet has an invalid product-cut SHA'; exit 1; }
+            gh api "repos/${ADMISSION_REPOSITORY}/git/commits/${cut_sha}" > "$cut_commit"
+            cut_args=(--cut-commit "$cut_commit")
+          fi
 
           docs_flag=()
           [ "${ADMISSION_DOCS_ONLY:-false}" = "true" ] && docs_flag=(--docs-only)
@@ -124,7 +146,9 @@ runs:
             --packet "$packet" \
             --current "$current" \
             --base-commit "$base_commit" \
-            --expected-head "${ADMISSION_EXPECTED_HEAD:-}" > "$cut_result"
+            --pr-files "$pr_files" \
+            --expected-head "${ADMISSION_EXPECTED_HEAD:-}" \
+            "${cut_args[@]}" > "$cut_result"
           set -e
         fi
 
@@ -178,6 +202,6 @@ runs:
           exit 1
         fi
         if [ "$cut_status" = "refused" ]; then
-          echo "::error::hard-cut admission refused ($cut_reason): reconcile the exact #5114/#2766 packet, current main, and PR head before qualification"
+          echo "::error::hard-cut admission refused ($cut_reason): the active cut is frozen; only a packet-only #5114/#2766 control update may qualify before #1609"
           exit 1
         fi
