@@ -149,8 +149,8 @@ the evidence unchanged.
      `assert_ne!`, never a message argument.
    - Each owner call passes every argument the owner declares, and an
      integer literal for the compared parameter. The bound's `const` name
-     stands for its value only when the test is in the owner's file, where
-     rule 1 saw every binding of the name.
+     is not read as its value on the test side: a glob import or a
+     macro-defined item can rebind the name where the test reads it.
 4. **Both sides, counted.** The number of owner calls whose input the
    guard takes equals `N`, so the test passes on the current code. One
    taken input and one skipped input are adjacent integers.
@@ -184,7 +184,7 @@ reads `exposed`.
   generic parameter.
 - Tests that count through `checkpoint`, sequences, range counts or a
   closure matcher (`withf`, `returning`), and tests whose inputs are not
-  integer literals or the bound's `const`.
+  integer literals.
 - Judging the returned value. The rule says nothing about what `send`
   returns or whether the result assertions discriminate on their own.
 

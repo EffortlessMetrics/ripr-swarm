@@ -46,8 +46,8 @@
 //!    owner-call slot of that parameter. Every owner call runs exactly once:
 //!    a top-level statement, a `let` initializer, or the condition of an
 //!    assertion macro, never a message argument, a branch or a
-//!    short-circuit operand. Each passes an integer literal (or the bound's
-//!    `const`) for the compared parameter.
+//!    short-circuit operand. Each passes an integer literal for the compared
+//!    parameter.
 //! 4. The count the guard predicts equals `N` (the test passes on the
 //!    current code), and one taken input and one skipped input are adjacent
 //!    integers.
@@ -155,15 +155,11 @@ struct CountGate {
     /// The comparison, normalized to `parameter <op> bound`.
     op: ast::CmpOp,
     bound: i128,
-    /// The bound's `const` name, when the guard names one.
-    bound_name: Option<String>,
     /// `Mock<Trait>` and `expect_<method>`.
     mock_type: String,
     expectation: String,
     condition: String,
     condition_line: usize,
-    /// The owner file's text, to tell whether a test reads that file.
-    owner_source: String,
 }
 
 impl CountGate {
@@ -194,17 +190,16 @@ impl CountGate {
             unwrap_parens(comparison.lhs()?),
             unwrap_parens(comparison.rhs()?),
         );
-        let (name, (bound, bound_name), op) =
-            match (parameter_name(&lhs), bound_value(&rhs, root, function)) {
-                (Some(name), Some(bound)) if parameter_named(&parameters, &name).is_some() => {
-                    (name, bound, op)
-                }
-                _ => (
-                    parameter_name(&rhs)?,
-                    bound_value(&lhs, root, function)?,
-                    flipped(op),
-                ),
-            };
+        let (name, bound, op) = match (parameter_name(&lhs), bound_value(&rhs, root, function)) {
+            (Some(name), Some(bound)) if parameter_named(&parameters, &name).is_some() => {
+                (name, bound, op)
+            }
+            _ => (
+                parameter_name(&rhs)?,
+                bound_value(&lhs, root, function)?,
+                flipped(op),
+            ),
+        };
         let parameter = parameters.iter().position(|parameter| {
             parameter_named(std::slice::from_ref(parameter), &name).is_some()
                 && parameter.ty().is_some_and(|ty| {
@@ -231,12 +226,10 @@ impl CountGate {
             parameter_count: parameters.len(),
             op,
             bound,
-            bound_name,
             mock_type: format!("Mock{trait_name}"),
             expectation: format!("expect_{method}"),
             condition: canonical_tokens(condition.syntax(), None),
             condition_line: line_of(source, condition.syntax())?,
-            owner_source: source.to_string(),
         })
     }
 
@@ -302,13 +295,6 @@ impl CountGate {
             return None;
         }
         let mock = self.mock_binding(&body)?;
-        // A call parsed out of an assertion's tokens sits in its own tree,
-        // so the test's file is read from the test itself.
-        let owner_file = test
-            .syntax()
-            .ancestors()
-            .last()
-            .is_some_and(|root| root.text() == self.owner_source.as_str());
         let mut expected = None;
         let mut inputs = Vec::new();
         let mut mock_uses = 0usize;
@@ -346,7 +332,7 @@ impl CountGate {
                 None => {}
             }
             for call in self.executed_owner_calls(&expression, owner)? {
-                inputs.push(self.compared_input(&call, &mock, owner_file)?);
+                inputs.push(self.compared_input(&call, &mock)?);
                 mock_uses += 1;
             }
         }
@@ -487,9 +473,8 @@ impl CountGate {
     }
 
     /// The compared parameter's input, when the call passes `&m` for the
-    /// mocked parameter, an integer literal or the bound's `const` for the
-    /// compared one, and names the mock nowhere else.
-    fn compared_input(&self, call: &ast::CallExpr, mock: &str, owner_file: bool) -> Option<i128> {
+    /// mocked parameter, an integer literal for the compared one, and names the mock nowhere else.
+    fn compared_input(&self, call: &ast::CallExpr, mock: &str) -> Option<i128> {
         let arguments = call.arg_list()?.args().collect::<Vec<_>>();
         if arguments.len() != self.parameter_count {
             return None;
@@ -502,15 +487,10 @@ impl CountGate {
             return None;
         }
         let compared = unwrap_parens(arguments.get(self.parameter)?.clone());
-        // The bound's name stands for its value only in the owner's own
-        // file, where `bound_value` saw every binding of it; a test file
-        // elsewhere may bind the name again.
-        integer_literal(&compared).or_else(|| {
-            (owner_file
-                && self.bound_name.as_deref()
-                    == Some(compared.syntax().text().to_string().as_str()))
-            .then_some(self.bound)
-        })
+        // Only a literal: the bound's `const` name may be rebound where the
+        // test reads it (a glob import, a macro-defined item), which the
+        // owner-side binding count cannot see.
+        integer_literal(&compared)
     }
 }
 
@@ -564,13 +544,9 @@ fn parameter_named(parameters: &[ast::Param], name: &str) -> Option<usize> {
 /// An integer literal, or a file-level `const NAME: <integer> = <literal>;`
 /// that is the file's only binding of `NAME` and that the owner does not
 /// shadow.
-fn bound_value(
-    expression: &ast::Expr,
-    root: &SyntaxNode,
-    function: &ast::Fn,
-) -> Option<(i128, Option<String>)> {
+fn bound_value(expression: &ast::Expr, root: &SyntaxNode, function: &ast::Fn) -> Option<i128> {
     if let Some(literal) = integer_literal(expression) {
-        return Some((literal, None));
+        return Some(literal);
     }
     let name = parameter_name(expression)?;
     let constant = root
@@ -594,7 +570,7 @@ fn bound_value(
     {
         return None;
     }
-    Some((value, Some(name)))
+    Some(value)
 }
 
 /// `&dyn T`, `&impl T`: the trait's single-segment name.
@@ -786,12 +762,11 @@ mod tests {
                 read.parameter,
                 read.receiver,
                 read.bound,
-                read.bound_name.as_deref(),
                 read.mock_type.as_str(),
                 read.expectation.as_str(),
                 read.condition_line,
             ),
-            (2, 0, 30, Some("GRACE_DAYS"), "MockMailer", "expect_send", 9)
+            (2, 0, 30, "MockMailer", "expect_send", 9)
         );
         assert!(read.takes(31) && !read.takes(30));
         assert!(counted(OWNER, TEST)?);
@@ -857,10 +832,6 @@ mod tests {
             TEST.replace(
                 "assert!(!remind(&mailer, \"ann\", 30));",
                 "remind(&mailer, \"ann\", 30);",
-            ),
-            TEST.replace(
-                "assert!(!remind(&mailer, \"ann\", 30));",
-                "remind(&mailer, \"ann\", GRACE_DAYS);",
             ),
             // A far input on the taken side counts toward `times`.
             TEST.replace(".times(1)", ".times(2)") + "\n    assert!(remind(&mailer, \"ann\", 90));",
@@ -1150,22 +1121,12 @@ mod tests {
     }
 
     #[test]
-    fn a_const_input_counts_only_in_the_owner_file() -> Result<(), String> {
-        let read = gate(OWNER).ok_or("premise: the owner gate reads")?;
+    fn a_const_input_is_not_read_as_its_value() -> Result<(), String> {
+        // In the owner's own file too: a glob import or a macro-defined
+        // item can rebind the name where the test reads it.
         let body = TEST.replace("\"ann\", 30)", "\"ann\", GRACE_DAYS)");
-        let same = format!("{OWNER}#[test]\nfn t() {{\n{body}\n}}\n");
-        let elsewhere =
-            format!("use super::*;\nconst GRACE_DAYS: u32 = 29;\n#[test]\nfn t() {{\n{body}\n}}\n");
-        let read_same = gate(&same).ok_or("premise: the owner gate reads")?;
-        for (gate, source, want) in [(&read_same, &same, true), (&read, &elsewhere, false)] {
-            let root = parsed(source).ok_or("premise: the source parses")?;
-            let test = unique_function(root.syntax(), "t").ok_or("premise: one test `t`")?;
-            assert_eq!(
-                gate.counted_on_both_sides(&test, "remind"),
-                want,
-                "{source}"
-            );
-        }
+        assert!(!counted(OWNER, &body)?);
+        assert!(counted(OWNER, TEST)?);
         Ok(())
     }
 
