@@ -12,3 +12,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — one_hop_field_projection_wrong_sink (2)
+
+Reason:
+RIPR-SPEC-0002: re-bless the plain-language Summary line (#8165) that landed without refreshing this fixture; formatting-only, ported from #8351
+
+Command:
+`cargo xtask goldens bless one_hop_field_projection_wrong_sink --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
