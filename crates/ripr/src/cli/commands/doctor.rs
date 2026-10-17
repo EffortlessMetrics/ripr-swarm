@@ -3883,6 +3883,13 @@ mod tests {
             other => return Err(format!("expected Tracked, got {other:?}")),
         }
         let _ = std::fs::remove_dir_all(&root);
+
+        // A root git cannot even run in establishes nothing: the spawn
+        // fails and doctor reports NotChecked rather than a verdict.
+        assert_eq!(
+            ripr_artifact_tracking(&root),
+            DoctorArtifactTracking::NotChecked
+        );
         Ok(())
     }
 
