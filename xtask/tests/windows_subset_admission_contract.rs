@@ -242,6 +242,8 @@ fn native_program(source: &str, name: &str) -> Result<String, String> {
 
 fn subject_binding_is_current(source: &str) -> Result<bool, String> {
     let program = native_program(source, "NATIVE_SUBJECT_JQ")?;
+    let qualified = native_program(source, "QUALIFICATION_SUBJECT_JQ")?;
+    let current = native_program(source, "FINAL_CURRENTNESS_JQ")?;
     Ok([
         "$p.headRefOid == $head",
         "$p.baseRef.target.__typename == \"Commit\"",
@@ -256,7 +258,21 @@ fn subject_binding_is_current(source: &str) -> Result<bool, String> {
         && source
             .matches("\"$NATIVE_SUBJECT_JQ\" <<< \"$frame\"")
             .count()
-            == 2)
+            == 1
+        && qualified.contains("if $q == $expected")
+        && qualified.contains("parents:[$q.base,$head]")
+        && current.contains("$p.headRefOid == $head")
+        && current.contains("$r.ref.target.oid == $p.baseRef.target.oid")
+        && [
+            "\"$QUALIFICATION_SUBJECT_JQ\" <<< \"$EXPECTED_SUBJECT\"",
+            "[[ \"$EXPECTED_REQUEST_ID\" == \"$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT\" ]]",
+            "[[ \"$identity\" == \"$EXPECTED_IDENTITY\" ]]",
+            "\"$FINAL_CURRENTNESS_JQ\" <<< \"$frame\"",
+            "current_base_before=$(observe_current_base)",
+            "current_base_after=$(observe_current_base)",
+        ]
+        .iter()
+        .all(|guard| source.contains(guard)))
 }
 
 fn prior_request_binding_is_current(source: &str) -> Result<bool, String> {
@@ -346,6 +362,23 @@ fn live_subject_and_prior_origin_controls_reject_missing_guards() -> Result<(), 
         !subject_binding_is_current(&changed)?,
         "one-phase subject bypass was accepted"
     );
+    for guard in [
+        "if $q == $expected",
+        "parents:[$q.base,$head]",
+        "\"$QUALIFICATION_SUBJECT_JQ\" <<< \"$EXPECTED_SUBJECT\"",
+        "[[ \"$EXPECTED_REQUEST_ID\" == \"$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT\" ]]",
+        "[[ \"$identity\" == \"$EXPECTED_IDENTITY\" ]]",
+        "\"$FINAL_CURRENTNESS_JQ\" <<< \"$frame\"",
+        "current_base_before=$(observe_current_base)",
+        "current_base_after=$(observe_current_base)",
+    ] {
+        let changed = NATIVE.replace(guard, "true");
+        assert_ne!(changed, NATIVE);
+        assert!(
+            !subject_binding_is_current(&changed)?,
+            "missing qualified/current binding {guard}"
+        );
+    }
     for guard in [
         ".workflow_id == $workflow and .head_sha == $head",
         ".repository.node_id == $repo_id",
