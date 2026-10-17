@@ -5464,7 +5464,7 @@ fn trusted_macro_scan_skips_files_only_once_every_name_is_ambiguous() {
         // A foreign glob saturates the set before the defining file is read.
         (
             vec![
-                ("src/a.rs", "use std::io::prelude::*;\n"),
+                ("src/a.rs", "use rayon::prelude::*;\n"),
                 ("src/b.rs", shadowing),
             ],
             true,
@@ -5539,7 +5539,7 @@ fn convergence_index() -> RustIndex {
     index(&[
         (
             CONVERGENCE_GLOB,
-            "use std::io::prelude::*;\npub fn drain(input: &mut Vec<u8>) {\n    input.clear();\n}\n",
+            "use rayon::prelude::*;\npub fn drain(input: &mut Vec<u8>) {\n    input.clear();\n}\n",
         ),
         (
             LIB,
@@ -10538,4 +10538,120 @@ fn a_macro_body_site_names_the_macro_and_its_reach() {
         sites("macro_rules! g { () => { use crate::x::*; use $crate::y::*; use super::*; }; }\n"),
         Vec::new()
     );
+}
+
+/// #8388: a glob from the standard crates (`use core::simd::prelude::*`)
+/// names only items the standard library defines, so a sibling file's glob
+/// no longer withholds every plain `assert_eq!` in the crate. The shape is
+/// rand's `utils.rs`: a cfg-gated std glob and an unrelated `macro_rules!`
+/// beside a test module whose `assert_eq!` calls carry cfg attributes. Each
+/// control keeps a real rebinding, or a glob that may carry one, ambiguous.
+#[test]
+fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Result<(), String> {
+    let manifest = |dependencies: &str| {
+        format!("[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\n{dependencies}")
+    };
+    let plain = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-std-glob-plain",
+        &[
+            ("Cargo.toml", &manifest("")),
+            ("src/simd.rs", ""),
+            ("src/root.rs", ""),
+            ("src/lib.rs", ""),
+            ("tests/buf_tests.rs", ""),
+        ],
+    )?;
+    let renamed = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-std-glob-renamed",
+        &[(
+            "Cargo.toml",
+            &manifest("core = { package = \"fake-core\", version = \"1\" }\n"),
+        )],
+    )?;
+    let tests = "use demo::weight;\n\n#[cfg(test)]\nmod test {\n    use crate::weight;\n    #[cfg(feature = \"simd_support\")]\n    use std::simd::{Mask, Simd};\n\n    #[test]\n    fn weighs() {\n        assert_eq!(weight(4), 12);\n\n        #[cfg(feature = \"simd_support\")]\n        assert_eq!(weight(5), 15);\n    }\n}\n";
+    let refusal_under = |root: &Path, sibling: &str| {
+        let mut index = index(&[(LIB, WEIGHT_LIB), ("src/simd.rs", sibling), (TESTS, tests)]);
+        index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(root);
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.file == Path::new(TESTS))?;
+        let assertion = test
+            .assertions
+            .iter()
+            .find(|assertion| assertion.text.starts_with("assert_eq!(weight(4)"))?;
+        OwnerPinSyntax::default().refusal(test, assertion, &index)
+    };
+    let refusal_beside = |sibling: &str| refusal_under(&plain, sibling);
+    let rebound = |refusal: Option<AssertionRefusal>| {
+        matches!(
+            refusal,
+            Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::MacroBinding(_)
+            ))
+        )
+    };
+    // Fixture premise: a rebinding sibling does refuse this exact test.
+    let shadowing = "macro_rules! assert_eq { ($($tokens:tt)*) => {} }\n";
+    assert!(rebound(refusal_beside(shadowing)));
+    // Credited: standard-crate globs, gated or not, beside unrelated macros.
+    for sibling in [
+        "#[cfg(feature = \"simd_support\")]\nuse core::simd::prelude::*;\nmacro_rules! wmul_impl { () => {}; }\n",
+        "use std::io::prelude::*;\n",
+        "use ::core::arch::x86::*;\n",
+        "use core::{simd::*, mem};\n",
+        "mod inner {\n    use std::collections::*;\n}\n",
+    ] {
+        assert_eq!(refusal_beside(sibling), None, "{sibling}");
+    }
+    // Still not credited: a real definition or import of the name, even
+    // beside a standard glob.
+    for sibling in [
+        "use core::simd::prelude::*;\nmacro_rules! assert_eq { ($($tokens:tt)*) => {} }\n",
+        "use std::io::prelude::*;\nuse other::assert_eq;\n",
+    ] {
+        assert!(rebound(refusal_beside(sibling)), "{sibling}");
+    }
+    // Still not credited: any glob that is not rooted at the standard
+    // crates, and a standard root a local module or alias takes. (A
+    // workspace package's own glob is scanned as workspace-owned code.)
+    for sibling in [
+        "use rayon::prelude::*;\n",
+        "use stdx::prelude::*;\n",
+        "use ::rayon::prelude::*;\n",
+        "mod core {}\nuse core::simd::prelude::*;\n",
+        "extern crate other as std;\nuse std::io::prelude::*;\n",
+        "use other as core;\nuse core::simd::prelude::*;\n",
+        // `alloc` has no manifest proof, so it stays a foreign glob.
+        "use alloc::vec::*;\n",
+    ] {
+        assert!(rebound(refusal_beside(sibling)), "{sibling}");
+    }
+    // A Cargo rename of the root, and a crate-root alias in a file the glob
+    // is not in, both rebind it.
+    assert!(rebound(refusal_under(
+        &renamed,
+        "use core::simd::prelude::*;\n"
+    )));
+    let aliased_elsewhere = index(&[
+        (LIB, &format!("extern crate other as std;\n{WEIGHT_LIB}")),
+        ("src/simd.rs", "use std::io::prelude::*;\n"),
+        (TESTS, tests),
+    ]);
+    let mut aliased_elsewhere = aliased_elsewhere;
+    aliased_elsewhere.drop_in_manifests =
+        crate::analysis::facts::drop_in::DropInManifests::new(&plain);
+    let test = aliased_elsewhere
+        .tests()
+        .iter()
+        .find(|test| test.file == Path::new(TESTS))
+        .ok_or("the fixture test must be indexed")?;
+    let assertion = test
+        .assertions
+        .iter()
+        .find(|assertion| assertion.text.starts_with("assert_eq!(weight(4)"))
+        .ok_or("the fixture assertion must be indexed")?;
+    let refusal = OwnerPinSyntax::default().refusal(test, assertion, &aliased_elsewhere);
+    assert!(rebound(refusal.clone()), "{refusal:?}");
+    Ok(())
 }
