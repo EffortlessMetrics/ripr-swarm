@@ -1,0 +1,89 @@
+//! Reminders gated on a grace period and sent through a mocked mailer. Each
+//! owner is tested only through mockall call counts, so the count is the
+//! only thing that can notice the guard's edge move.
+
+#[cfg_attr(test, mockall::automock)]
+pub trait Mailer {
+    fn send(&self, to: &str, body: &str) -> bool;
+}
+
+pub const GRACE_DAYS: u32 = 30;
+
+pub fn remind_both(mailer: &dyn Mailer, user: &str, overdue_days: u32) -> bool {
+    if overdue_days > GRACE_DAYS {
+        return mailer.send(user, "late");
+    }
+    false
+}
+
+pub fn remind_one(mailer: &dyn Mailer, user: &str, overdue_days: u32) -> bool {
+    if overdue_days > GRACE_DAYS {
+        return mailer.send(user, "late");
+    }
+    false
+}
+
+pub fn remind_range(mailer: &dyn Mailer, user: &str, overdue_days: u32) -> bool {
+    if overdue_days > GRACE_DAYS {
+        return mailer.send(user, "late");
+    }
+    false
+}
+
+pub fn remind_always(mailer: &dyn Mailer, user: &str, overdue_days: u32) -> bool {
+    if overdue_days > GRACE_DAYS {
+        return mailer.send(user, "late");
+    }
+    mailer.send(user, "reminder")
+}
+
+pub fn remind_far(mailer: &dyn Mailer, user: &str, overdue_days: u32) -> bool {
+    if overdue_days > GRACE_DAYS {
+        return mailer.send(user, "late");
+    }
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sends_once_across_the_grace_edge() {
+        let mut mailer = MockMailer::new();
+        mailer.expect_send().times(1).return_const(true);
+        remind_both(&mailer, "ann", 31);
+        remind_both(&mailer, "ann", 30);
+    }
+
+    #[test]
+    fn sends_once_after_the_grace_period() {
+        let mut mailer = MockMailer::new();
+        mailer.expect_send().times(1).return_const(true);
+        remind_one(&mailer, "bob", 31);
+    }
+
+    #[test]
+    fn sends_at_least_once_across_the_edge() {
+        let mut mailer = MockMailer::new();
+        mailer.expect_send().times(1..3).return_const(true);
+        remind_range(&mailer, "cy", 31);
+        remind_range(&mailer, "cy", 30);
+    }
+
+    #[test]
+    fn always_sends_something() {
+        let mut mailer = MockMailer::new();
+        mailer.expect_send().times(2).return_const(true);
+        remind_always(&mailer, "dee", 31);
+        remind_always(&mailer, "dee", 30);
+    }
+
+    #[test]
+    fn sends_once_far_from_the_edge() {
+        let mut mailer = MockMailer::new();
+        mailer.expect_send().times(1).return_const(true);
+        remind_far(&mailer, "eve", 40);
+        remind_far(&mailer, "eve", 3);
+    }
+}

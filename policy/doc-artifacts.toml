@@ -1317,6 +1317,14 @@ owner = "product-analysis"
 standalone_reason = "Extends the RIPR-SPEC-0247 literal mock-payload credit to a mock passed in an inline object and to owners with nested functions away from the changed line, from corpus mutation evidence."
 
 [[artifact]]
+id = "RIPR-SPEC-0267"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0267-rust-mock-call-count-side-flip.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Credits a Rust guard whose block alone calls one mockall automock method when one test calls the owner on both sides of the edge under a literal times(N), from corpus mutation evidence."
+
+[[artifact]]
 id = "RIPR-SPEC-0265"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0265-rust-closures-in-iterator-adaptors.md"

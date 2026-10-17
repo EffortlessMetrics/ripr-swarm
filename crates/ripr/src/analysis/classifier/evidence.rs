@@ -695,7 +695,10 @@ impl ClassifiedProbeEvidence {
         // RIPR-SPEC-0227 rule 3 pairs its own oracles: both sides of the
         // guard's edge are asserted in one test, so the #4828 same-test
         // pairing below has nothing left to establish.
-        let guard_side_flip = side_flip::guard::discrimination(context, &observe, &discriminate);
+        // RIPR-SPEC-0267 pairs the same way: one test calls the owner on
+        // both sides of the edge under one mock call count.
+        let guard_side_flip = side_flip::guard::discrimination(context, &observe, &discriminate)
+            .or_else(|| side_flip::mock_count::discrimination(context, &observe, &discriminate));
         let guard_side_flip_paired = guard_side_flip.is_some();
         let discriminate = guard_side_flip.unwrap_or(discriminate);
         // #4828: a boundary-class probe may not read `exposed` by taking a
