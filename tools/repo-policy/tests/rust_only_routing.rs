@@ -365,7 +365,7 @@ fn event_commit_bindings_are_exact_and_history_is_available() -> TestResult {
 /// synchronize or reopened events while the label is still attached.
 #[test]
 fn gated_lanes_admit_pull_requests_only_on_the_merge_ready_labeled_event() {
-    const GATED: [(&str, &str); 11] = [
+    const GATED: [(&str, &str); 12] = [
         ("ci.yml", include_str!("../../../.github/workflows/ci.yml")),
         (
             "coverage.yml",
@@ -374,6 +374,10 @@ fn gated_lanes_admit_pull_requests_only_on_the_merge_ready_labeled_event() {
         (
             "future-clippy.yml",
             include_str!("../../../.github/workflows/future-clippy.yml"),
+        ),
+        (
+            "macos-advisory.yml",
+            include_str!("../../../.github/workflows/macos-advisory.yml"),
         ),
         (
             "npm-launcher.yml",

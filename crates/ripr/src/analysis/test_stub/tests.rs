@@ -1257,3 +1257,85 @@ fn owners_behind_a_non_test_cfg_are_refused() -> Result<(), String> {
     assert!(rust_test_stub(&seam, None, kept).is_ok(), "{kept}");
     Ok(())
 }
+
+#[test]
+fn relational_boundary_over_a_field_names_the_equal_inputs() -> Result<(), String> {
+    const SOURCE: &str = "pub struct Bucket {
+    tokens: u32,
+}
+
+impl Bucket {
+    pub fn allow(&mut self, n: u32) -> bool {
+        self.tokens > n
+    }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        SOURCE,
+        "self.tokens > n",
+        SeamKind::PredicateBoundary,
+        boundary("self.tokens > n"),
+    )?;
+    let stub = rust_test_stub(&seam, None, SOURCE).map_err(|r| r.reason().to_string())?;
+    assert!(
+        stub.text.contains("choose `n` so that self.tokens == n"),
+        "{}",
+        stub.text
+    );
+    assert!(
+        stub.text
+            .contains("when self.tokens == n (where `>` and its neighbor differ)"),
+        "{}",
+        stub.text
+    );
+    assert!(
+        !stub.text.contains("so that self.tokens > n"),
+        "inputs satisfying the changed comparison itself do not separate `>` from `>=`: {}",
+        stub.text
+    );
+    Ok(())
+}
+
+#[test]
+fn unsized_mut_reference_parameters_bind_an_owned_stand_in() {
+    assert_eq!(
+        owned_mut_binding("dyn Sink", "sink"),
+        (
+            "std::boxed::Box<dyn Sink>".to_string(),
+            "&mut *sink".to_string()
+        )
+    );
+    assert_eq!(
+        owned_mut_binding("[u8]", "buf"),
+        ("std::vec::Vec<u8>".to_string(), "&mut buf".to_string())
+    );
+    assert_eq!(
+        owned_mut_binding("str", "name"),
+        ("std::string::String".to_string(), "&mut name".to_string())
+    );
+    // A slice of arrays is still unsized; a parenthesized object type too.
+    assert_eq!(
+        owned_mut_binding("[[u8; 4]]", "rows"),
+        (
+            "std::vec::Vec<[u8; 4]>".to_string(),
+            "&mut rows".to_string()
+        )
+    );
+    assert_eq!(
+        owned_mut_binding("(dyn Sink + Send)", "sink"),
+        (
+            "std::boxed::Box<dyn Sink + Send>".to_string(),
+            "&mut *sink".to_string()
+        )
+    );
+    // A fixed-size array is sized: it stays as written.
+    assert_eq!(
+        owned_mut_binding("[u8; 4]", "buf"),
+        ("[u8; 4]".to_string(), "&mut buf".to_string())
+    );
+    assert_eq!(
+        owned_mut_binding("Vec<u8>", "v"),
+        ("Vec<u8>".to_string(), "&mut v".to_string())
+    );
+}

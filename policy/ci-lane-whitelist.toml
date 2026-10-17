@@ -300,6 +300,16 @@ artifact_families = []
 description = "Advisory Windows lane (#2393): runs the suite twice on windows-latest and summarizes per-test verdicts. Since #4938 a merge-ready subset job (windows-advisory-subset) also runs a fast gap_artifacts/Cargo-home-identity/cache-warning/Windows-clippy filter on every subscribed pull_request action of a merge-ready PR (opened, synchronize, reopened, or labeled with merge-ready), advisory under the same contract. Test outcomes are advisory; missing or zero-subject evidence fails the job. Promotion to required is gated on #2430 and on stability across repeated runs."
 
 [[lane]]
+id = "macos-advisory"
+posture = "advisory"
+workflow = ".github/workflows/macos-advisory.yml"
+jobs = ["macos-advisory"]
+commands = ["cargo clippy -p ripr -p xtask --all-targets -- -D warnings", "cargo test -p ripr --lib --no-fail-fast"]
+estimated_lem = 20
+artifact_families = []
+description = "Advisory native macOS lane (#8391): clippy for ripr and xtask plus the ripr library tests on macos-15. Nightly, on dispatch, and on pull requests labeled macos-ci or full-ci when the merge-ready label is applied. Clippy and test outcomes are advisory; a missing log, missing exit status or zero-test run fails the job."
+
+[[lane]]
 id = "printed-command-paste"
 posture = "advisory"
 workflow = ".github/workflows/printed-command-paste.yml"

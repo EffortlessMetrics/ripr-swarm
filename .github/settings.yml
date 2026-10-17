@@ -69,6 +69,9 @@ labels:
   - name: windows-ci
     color: "1d76db"
     description: Run the advisory Windows lane on a pull request without opting into every full-ci lane.
+  - name: macos-ci
+    color: "1d76db"
+    description: Run the advisory macOS lane on a pull request without opting into every full-ci lane (needs merge-ready).
   # Status labels — the closed status vocabulary used by the status-comment
   # verification contract (AGENTS.md § "Status-comment verification contract").
   # These are the primary status signal; a status comment is secondary.
