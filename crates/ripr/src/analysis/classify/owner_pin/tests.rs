@@ -2531,6 +2531,33 @@ fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_const
             "assert_eq!(weight(4), EXPECTED);",
             "EXPECTED",
         ),
+        // #8112: an interior-mutable `let` and a `static mut` may hold a
+        // value other than their initializer at the assertion.
+        (
+            "",
+            "let e = std::cell::Cell::new(weight(2));\ne.set(6);\nassert_eq!(std::cell::Cell::new(weight(2)), e);",
+            "e",
+        ),
+        (
+            "",
+            "let e = std::rc::Rc::new(RefCell::new(weight(2)));\nassert_eq!(weight(2), e);",
+            "e",
+        ),
+        (
+            "",
+            "let e = std::sync::Mutex::new(weight(2));\nassert_eq!(weight(2), e);",
+            "e",
+        ),
+        (
+            "",
+            "let e = std::sync::atomic::AtomicUsize::new(weight(2));\nassert_eq!(weight(2), e);",
+            "e",
+        ),
+        (
+            "static mut EXPECTED: u32 = weight(4);",
+            "unsafe { EXPECTED = 6; }\nassert_eq!(weight(4), unsafe { EXPECTED });",
+            "EXPECTED",
+        ),
     ] {
         assert_eq!(value(items, body, operand), None, "{body}");
     }
