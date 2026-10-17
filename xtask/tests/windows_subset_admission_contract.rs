@@ -67,6 +67,58 @@ fn normalized_job(source: &str) -> Result<String, String> {
     Ok(job)
 }
 
+// Keep the prototype frozen and forward only the reviewed quotation repair.
+// Expected literals are pinned here; they are never read from STAGED at runtime.
+// The native Windows replay separately confirms the producer's double quotes.
+fn expected_job_with_recovery_quote_repair() -> Result<String, String> {
+    let mut expected = normalized_job(LEGACY)?;
+    for (before, after) in [
+        (
+            r###"              def test_windows_recovery_matches_published_slashes_and_keeps_literal(self):
+                  # Inert Windows-shaped sentinels: no real drive or directory is accessed.
+                  drive = 'Q' + ':'
+                  root = drive + r'\synthetic-selector-fixture literal'
+                  diff = root + r'\fixture change.diff'
+                  expected = f"ripr check --root '{drive}/synthetic-selector-fixture literal' --diff '{drive}/synthetic-selector-fixture literal/fixture change.diff' --json"
+                  self.assertEqual(self.ns['recovery_command'](root, diff, windows=True), expected)
+                  stderr = ('No finding. Retry `' + expected + '`.').encode()
+                  self.assertEqual(self.ns['printed_recovery'](stderr, root, diff, windows=True), expected)
+
+"###,
+            r###"              def test_windows_recovery_matches_published_slashes_and_keeps_literal(self):
+                  # Inert Windows-shaped sentinels: no real drive or directory is accessed.
+                  drive = 'Q' + ':'
+                  root = drive + r'\synthetic-selector-fixture literal'
+                  diff = root + r'\fixture change.diff'
+                  expected = f'ripr check --root "{drive}/synthetic-selector-fixture literal" --diff "{drive}/synthetic-selector-fixture literal/fixture change.diff" --json'
+                  self.assertEqual(self.ns['recovery_command'](root, diff, windows=True), expected)
+                  stderr = ('No finding. Retry `' + expected + '`.').encode()
+                  self.assertEqual(self.ns['printed_recovery'](stderr, root, diff, windows=True), expected)
+                  stale = expected.replace('"', "'")
+                  for wrong in (stale, expected.replace('--json', '--no-cache'),
+                                expected.replace('fixture change.diff', 'wrong.diff'),
+                                expected.replace('synthetic-selector-fixture literal', 'wrong root', 1)):
+                      with self.subTest(command=wrong), self.assertRaises(RuntimeError):
+                          self.ns['printed_recovery'](('`' + wrong + '`').encode(), root, diff, windows=True)
+
+"###,
+        ),
+        (
+            r###"              return f"ripr check --root '{paths[0]}' --diff '{paths[1]}' --json""###,
+            r###"              quote = '"' if windows else "'"
+              return f"ripr check --root {quote}{paths[0]}{quote} --diff {quote}{paths[1]}{quote} --json""###,
+        ),
+    ] {
+        assert_eq!(
+            expected.matches(before).count(),
+            1,
+            "frozen quotation anchor drift"
+        );
+        expected = expected.replacen(before, after, 1);
+    }
+    Ok(expected)
+}
+
 #[test]
 fn production_producer_preserves_all_native_commands_oracles_and_cleanup() -> Result<(), String> {
     assert!(
@@ -74,7 +126,10 @@ fn production_producer_preserves_all_native_commands_oracles_and_cleanup() -> Re
             "WORKFLOW = Path.cwd() / '.github/workflows/windows-subset-qualification.yml'"
         )
     );
-    assert_eq!(normalized_job(STAGED)?, normalized_job(LEGACY)?);
+    assert_eq!(
+        normalized_job(STAGED)?,
+        expected_job_with_recovery_quote_repair()?
+    );
     Ok(())
 }
 
@@ -85,7 +140,32 @@ fn subset_command_removal_is_detected() -> Result<(), String> {
         "Removed Cargo-home identity subset",
     );
     assert_ne!(bad, STAGED);
-    assert_ne!(normalized_job(&bad)?, normalized_job(LEGACY)?);
+    assert_ne!(
+        normalized_job(&bad)?,
+        expected_job_with_recovery_quote_repair()?
+    );
+    Ok(())
+}
+
+#[test]
+fn recovery_quote_scope_and_cleanup_drift_still_break_preservation() -> Result<(), String> {
+    let expected = expected_job_with_recovery_quote_repair()?;
+    for (before, after) in [
+        (r###"quote = '"' if windows else "'""###, "quote = chr(39)"),
+        (
+            "expected.replace('--json', '--no-cache')",
+            "expected.replace('--json', '--wrong')",
+        ),
+        (
+            "receipt[\"producer_cleanup\"] = remove_aliases(ownership)",
+            "receipt[\"producer_cleanup\"] = {}",
+        ),
+    ] {
+        assert_eq!(STAGED.matches(before).count(), 1, "control anchor drift");
+        let changed = STAGED.replacen(before, after, 1);
+        assert_ne!(changed, STAGED);
+        assert_ne!(normalized_job(&changed)?, expected);
+    }
     Ok(())
 }
 
