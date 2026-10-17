@@ -4,13 +4,17 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::policy::distribution::{DistributionContract, load_distribution_contract};
-use crate::run::run_output_owned;
+use crate::run::{run_output_owned, run_output_owned_with_envs};
 
 use super::payload::FinalNativePayloadIdentity;
 use super::sha256_file;
 
 const PRODUCER_SCHEMA_VERSION: u32 = 1;
 const PRODUCER_KIND: &str = "ripr_final_native_payload_producer_build";
+const ARCHIVE_PROFILE_ENV: &[(&str, &str)] = &[
+    ("CARGO_PROFILE_RELEASE_LTO", "true"),
+    ("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "1"),
+];
 pub(crate) const PRODUCER_RECEIPT_FILE: &str = "producer-build.json";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -82,7 +86,11 @@ pub(crate) fn build_release_executable(
         target.to_string(),
         "--message-format=json-render-diagnostics".to_string(),
     ];
-    let output = run_output_owned("cargo", &cargo_arguments)?;
+    // Archives ship the fully optimized profile; the workspace `release`
+    // profile trades that for build time. The recorded cargo arguments do not
+    // include this overlay, so the receipt alone does not name the effective
+    // `lto`/`codegen-units`; they are fixed by this constant.
+    let output = run_output_owned_with_envs("cargo", &cargo_arguments, ARCHIVE_PROFILE_ENV)?;
     let expected_executable = Path::new("target")
         .join(target)
         .join("release")
@@ -442,6 +450,17 @@ fn is_lower_hex(value: &str, length: usize) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn shipped_archives_keep_the_fat_lto_single_codegen_unit_profile() {
+        assert_eq!(
+            super::ARCHIVE_PROFILE_ENV,
+            &[
+                ("CARGO_PROFILE_RELEASE_LTO", "true"),
+                ("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "1"),
+            ]
+        );
+    }
+
     use super::*;
 
     #[test]
