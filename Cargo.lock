@@ -1494,6 +1494,7 @@ dependencies = [
 name = "ripr"
 version = "0.11.0"
 dependencies = [
+ "bitflags",
  "fs2",
  "home",
  "oxc_allocator",

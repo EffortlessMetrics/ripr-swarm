@@ -326,25 +326,22 @@ pub(crate) fn ts_changed_value_is_observed(
                     matches!(owner.owner_kind, OwnerKind::Method | OwnerKind::ClassMethod);
                 // Method owners keep the legacy member-segment reading: their
                 // honest needle IS `receiver.method(...)`.
-                let observes_owner = if owner_is_method {
-                    owner_names
-                        .iter()
-                        .any(|name| ts_references_identifier(&observed_code, name))
+                let namespace_receivers = if owner_is_method {
+                    Vec::new()
                 } else {
-                    let receivers = unshadowed_owner_namespace_receivers(
+                    unshadowed_owner_namespace_receivers(
                         candidate.test,
                         owner,
                         alias_map,
                         workspace_root,
-                    );
-                    owner_names
-                        .iter()
-                        .any(|name| ts_observed_bare_reference(&observed_code, name))
-                        || owner_names.iter().any(|name| {
-                            ts_observed_namespaced_owner_call(&observed_code, name, &receivers)
-                        })
+                    )
                 };
-                if observes_owner {
+                if ts_masked_observes_owner(
+                    &observed_code,
+                    &owner_names,
+                    owner_is_method,
+                    &namespace_receivers,
+                ) {
                     return true;
                 }
                 if changed_tokens
@@ -364,6 +361,8 @@ pub(crate) fn ts_changed_value_is_observed(
                     &owner_names,
                     &changed_tokens,
                     candidate.test,
+                    owner_is_method,
+                    &namespace_receivers,
                 ) {
                     return true;
                 }
@@ -471,11 +470,19 @@ pub(crate) fn ts_changed_value_is_observed(
 ///
 /// #7497: a local the test rewrites or escapes ([`ts_test_local_is_mutated`])
 /// observes the test's own write, so the one-hop credit stays unavailable.
+///
+/// #7813: the initializer uses the same owner-reference rule as the #7507
+/// value guard. For a bare-call owner, `const r = helper.price(150)` is not
+/// an observation of `export function price` — only a bare occurrence or a
+/// call through an unshadowed owner-module namespace receiver confirms.
+/// Method owners keep the legacy member-segment reading.
 fn ts_observed_local_aliases_owner(
     observed: &str,
     owner_names: &[&str],
     changed_tokens: &[String],
     test: &TypeScriptTest,
+    owner_is_method: bool,
+    namespace_receivers: &[String],
 ) -> bool {
     fn is_ident_byte(b: u8) -> bool {
         b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
@@ -514,16 +521,21 @@ fn ts_observed_local_aliases_owner(
                     .map(|p| rhs_start + p)
                     .unwrap_or(test_body.len());
                 let rhs = &test_body[rhs_start..rhs_end];
-                // RIPR-SPEC-0243 rules 6 and 7: the same whole-identifier
+                // RIPR-SPEC-0243 rules 6 and 7, plus the #7507/#7813
+                // bare-call owner exception: the same whole-identifier
                 // test, over the owner name and its alias-rename locals
-                // (in code, not in a string or comment).
+                // (in code, not in a string or comment). Member segments
+                // credit only method owners; a bare-call owner needs a
+                // bare occurrence or an owner-module namespace call.
                 let rhs_code = ts_mask_literals_and_comments(rhs);
-                if owner_names
+                if ts_masked_observes_owner(
+                    &rhs_code,
+                    owner_names,
+                    owner_is_method,
+                    namespace_receivers,
+                ) || changed_tokens
                     .iter()
-                    .any(|name| ts_references_identifier(&rhs_code, name))
-                    || changed_tokens
-                        .iter()
-                        .any(|tok| ts_references_identifier(rhs, tok))
+                    .any(|tok| ts_references_identifier(rhs, tok))
                 {
                     // #7497: a local the test rewrites or escapes observes
                     // the test's own write, so the one-hop credit stays
@@ -540,9 +552,36 @@ fn ts_observed_local_aliases_owner(
     false
 }
 
+/// Shared owner-name observation for the value guard and the one-hop alias
+/// initializer (#7507, #7813). Method owners still match member segments;
+/// bare-call owners require a bare occurrence or an owner-module namespace
+/// call.
+fn ts_masked_observes_owner(
+    masked: &str,
+    owner_names: &[&str],
+    owner_is_method: bool,
+    namespace_receivers: &[String],
+) -> bool {
+    if owner_is_method {
+        owner_names
+            .iter()
+            .any(|name| ts_references_identifier(masked, name))
+    } else {
+        owner_names
+            .iter()
+            .any(|name| ts_observed_bare_reference(masked, name))
+            || owner_names
+                .iter()
+                .any(|name| ts_observed_namespaced_owner_call(masked, name, namespace_receivers))
+    }
+}
+
 /// `true` when `text` contains `ident` as a whole identifier: the characters
 /// on both sides of the occurrence are not `[A-Za-z0-9_$]` (RIPR-SPEC-0243
-/// rule 6). A member segment counts (`ns.price(` references `price`);
+/// rule 6). A member segment counts for method owners (`c.total(`
+/// references `total`). For a bare-call owner the value and alias guards
+/// use [`ts_observed_bare_reference`] instead (#7507, #7813), so
+/// `helper.price(` is not an observation of `export function price`.
 /// `address` does not reference `add`. An empty `ident` never matches.
 pub(crate) fn ts_references_identifier(text: &str, ident: &str) -> bool {
     // JavaScript identifiers may hold non-ASCII letters, so the boundary
