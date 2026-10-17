@@ -1120,6 +1120,34 @@ fn an_unasserted_owner_call_does_not_block_an_inactive_term() -> Result<(), Stri
         )?,
         ExposureClass::Exposed
     );
+    let assigned =
+        quote_module("    total = subtotal_cents\n    return {\"total_cents\": total}\n");
+    assert_eq!(
+        quote_module_class(
+            &assigned,
+            16,
+            "    total = subtotal_cents + shipping_fee(subtotal_cents)",
+            "def test_quote():\n    quote(1000)\n    assert quote(6000)[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // Two owner calls on one line: the covering statement cannot pick a
+    // single observation, so the nonzero call still blocks.
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    quote(6000); collected.append(quote(1000))\n    assert quote(6000)[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // An attribute that shares the bound local's name is not a local read.
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    quote(1000)\n    out = quote(6000)\n    assert other.out == 0\n"
+        )?,
+        ExposureClass::Exposed
+    );
     Ok(())
 }
 

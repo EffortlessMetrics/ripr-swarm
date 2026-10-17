@@ -34,7 +34,7 @@ use super::boundary::{
 };
 use super::effect_alignment::ChangedEffect;
 use super::module_constants::{body_bound_names, mentions_identifier};
-use super::no_behavior::split_top_level_args;
+use super::no_behavior::{call_arglists_with_offsets, split_top_level_args};
 use super::related_tests::{PythonRelatedCandidate, python_text_hides_code};
 use super::source_utils::{SourceText, line_for_range_end, line_for_range_start, text_for_range};
 use super::static_limits::has_identifier_boundary;
@@ -582,6 +582,9 @@ fn classify_body_call(
     let covering = body
         .iter()
         .find(|stmt| range_contains(stmt.range(), offset))?;
+    if owner_call_count_on_line(&row.text, owner, test) > 1 {
+        return Some(CallObservation::Unclear);
+    }
     if strong_assertion_covers_stmt(covering, strong, test, &parsed) {
         return Some(CallObservation::Observed);
     }
@@ -653,7 +656,7 @@ fn later_strong_assertion_reads(
     local: &str,
 ) -> CallObservation {
     if strong.iter().any(|assertion| {
-        assertion.line > row_line && assertion_text_observes_token(&assertion.gate_text, local)
+        assertion.line > row_line && assertion_reads_local(&assertion.gate_text, local)
     }) {
         CallObservation::Observed
     } else {
@@ -678,18 +681,53 @@ fn is_owner_call_expr(expr: &Expr, owner: &PythonOwner, test: &PythonTest) -> bo
             .is_some_and(|(_, last)| last == owner.name)
 }
 
-fn assertion_text_observes_token(text: &str, token: &str) -> bool {
-    !token.is_empty()
-        && text
-            .match_indices(token)
-            .any(|(idx, _)| has_identifier_boundary(text, idx, token.len()))
+fn assertion_reads_local(text: &str, local: &str) -> bool {
+    !local.is_empty()
+        && text.match_indices(local).any(|(idx, _)| {
+            has_identifier_boundary(text, idx, local.len())
+                && text[..idx].chars().next_back() != Some('.')
+        })
+}
+
+fn owner_call_count_on_line(line: &str, owner: &PythonOwner, test: &PythonTest) -> usize {
+    owner_call_names(owner, test)
+        .iter()
+        .map(|name| call_arglists_with_offsets(line, name, false).len())
+        .sum()
+}
+
+fn owner_call_names(owner: &PythonOwner, test: &PythonTest) -> Vec<String> {
+    let mut names = vec![owner.name.clone()];
+    names.extend(
+        test.imports
+            .iter()
+            .filter(|import| import.imported == owner.name)
+            .map(|import| import.alias.clone()),
+    );
+    names.sort();
+    names.dedup();
+    names
 }
 
 fn return_change_has_no_effect_store(old_line: &str, new_line: &str, owner: &PythonOwner) -> bool {
     ChangedEffect::of(old_line, Some(new_line), owner).is_none()
         && ChangedEffect::of(new_line, Some(old_line), owner).is_none()
-        && old_line.trim().starts_with("return")
-        && new_line.trim().starts_with("return")
+        && return_line_is_value_expression(old_line)
+        && return_line_is_value_expression(new_line)
+}
+
+fn return_line_is_value_expression(line: &str) -> bool {
+    let Some(rest) = line.trim().strip_prefix("return") else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    if rest.is_empty() || rest.starts_with('(') {
+        return false;
+    }
+    let ident_len = rest
+        .find(|ch: char| !(ch.is_alphanumeric() || ch == '_' || ch == '.'))
+        .unwrap_or(rest.len());
+    ident_len == 0 || !rest[ident_len..].trim_start().starts_with('(')
 }
 
 fn offset_of_line_code(source: &str, line: usize) -> Option<TextSize> {

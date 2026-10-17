@@ -1,7 +1,8 @@
 <!-- section: Fixed -->
-- Python rule 20 no longer treats a discarded owner call as activating a
-  removed additive term. A strong related test that only asserts inputs
-  where the term is 0 now reads `weakly_exposed` even when the same test
-  also contains an unasserted call whose term is nonzero. Assigned, nested,
-  or otherwise unclear calls still block the downgrade
+- Python rule 20 ignores a discarded owner call only when the changed
+  lines are `return`s of a value expression with no recognized effect
+  store. A strong related test that only asserts inputs where a removed
+  additive term is 0 then reads `weakly_exposed` even if the same test
+  also contains such a discarded call whose term is nonzero. Assigned,
+  nested, or otherwise unclear calls still block the downgrade
   (RIPR-SPEC-0238, #7562).
