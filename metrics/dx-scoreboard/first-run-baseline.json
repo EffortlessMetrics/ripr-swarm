@@ -19,6 +19,7 @@
         "first_run.friction_events",
         "first_run.failed_steps",
         "first_run.over_budget_steps",
+        "first_run.over_budget_workflows",
         "first_run.walk_secs"
       ],
       "status": "gaps"
@@ -194,6 +195,32 @@
       "runner_dependent": false,
       "samples": [
         {
+          "detail": "ingested from first-run: none",
+          "repo": null,
+          "status": "meets_target",
+          "value": 0.0
+        }
+      ],
+      "source": "ingest:first-run",
+      "status": "meets_target",
+      "target": 0.0,
+      "title": "First-run steps over their own time or output-length budget",
+      "unit": "steps",
+      "value": 0.0
+    },
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "no baseline supplied"
+      },
+      "board": "first_run",
+      "direction": "lower_is_better",
+      "id": "first_run.over_budget_workflows",
+      "partial": false,
+      "per_repo": false,
+      "runner_dependent": false,
+      "samples": [
+        {
           "detail": "ingested from first-run: semver-1.0.23/init_ci workflow_lines 1957 > 1500, fastrand-2.3.0/init_ci workflow_lines 1957 > 1500, bytesize-1.3.0/init_ci workflow_lines 1957 > 1500",
           "repo": null,
           "status": "below_target",
@@ -203,8 +230,8 @@
       "source": "ingest:first-run",
       "status": "below_target",
       "target": 0.0,
-      "title": "First-run steps over their own time, output-length or workflow-size budget",
-      "unit": "steps",
+      "title": "Generated CI workflows over their line budget",
+      "unit": "workflows",
       "value": 3.0
     },
     {
