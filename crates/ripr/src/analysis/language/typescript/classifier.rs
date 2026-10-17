@@ -317,11 +317,11 @@ pub(crate) fn ts_changed_value_is_observed(
                 // owners keep the legacy member-segment reading: their honest
                 // needle IS `receiver.method(...)`.
                 let observed_code = ts_mask_literals_and_comments(observed);
-                // #7507: `expect(typeof cost)` observes the type string, not
-                // the changed value — never a value witness.
-                if ts_observed_is_typeof_name(&observed_code, &owner_names) {
-                    continue;
-                }
+                // #7507/#7815: `typeof cost` observes the type string, not
+                // the changed value. [`ts_masked_observes_owner`] excludes
+                // only those consumed occurrences, so a mixed assertion
+                // (`typeof price === 'function' ? price(150) : 0`) can
+                // still witness the later value check.
                 let owner_is_method =
                     matches!(owner.owner_kind, OwnerKind::Method | OwnerKind::ClassMethod);
                 // Method owners keep the legacy member-segment reading: their
@@ -553,26 +553,27 @@ fn ts_observed_local_aliases_owner(
 }
 
 /// Shared owner-name observation for the value guard and the one-hop alias
-/// initializer (#7507, #7813). Method owners still match member segments;
-/// bare-call owners require a bare occurrence or an owner-module namespace
-/// call.
+/// initializer (#7507, #7813, #7815). Method owners still match member
+/// segments; bare-call owners require a bare occurrence or an owner-module
+/// namespace call. Typeof-consumed occurrences are not value witnesses.
 fn ts_masked_observes_owner(
     masked: &str,
     owner_names: &[&str],
     owner_is_method: bool,
     namespace_receivers: &[String],
 ) -> bool {
+    let masked = ts_mask_typeof_consumed_owner_names(masked, owner_names);
     if owner_is_method {
         owner_names
             .iter()
-            .any(|name| ts_references_identifier(masked, name))
+            .any(|name| ts_references_identifier(&masked, name))
     } else {
         owner_names
             .iter()
-            .any(|name| ts_observed_bare_reference(masked, name))
+            .any(|name| ts_observed_bare_reference(&masked, name))
             || owner_names
                 .iter()
-                .any(|name| ts_observed_namespaced_owner_call(masked, name, namespace_receivers))
+                .any(|name| ts_observed_namespaced_owner_call(&masked, name, namespace_receivers))
     }
 }
 
@@ -676,45 +677,63 @@ fn ts_observed_namespaced_owner_call(
         })
     })
 }
-/// `true` when the masked observed expression observes an owner name only
-/// through `typeof` (`typeof cost`, `typeof(cost)`; #7507). A type string is
-/// not the changed value, so such an assertion never witnesses a
-/// ReturnValue / FieldConstruction sink.
-fn ts_observed_is_typeof_name(masked_observed: &str, owner_names: &[&str]) -> bool {
-    owner_names.iter().any(|name| {
-        let mut from = 0usize;
-        while let Some(rel) = masked_observed[from..].find("typeof") {
-            let at = from + rel;
-            let before_ok = masked_observed[..at]
-                .chars()
-                .next_back()
-                .is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == '$'));
-            // The keyword must also end on a word boundary: without this, an
-            // identifier that merely starts with `typeof` (such as
-            // `typeofprice`) reads as a `typeof` operator observation.
-            let after_ok = masked_observed[at + "typeof".len()..]
-                .chars()
-                .next()
-                .is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == '$'));
-            if !before_ok || !after_ok {
-                from = at + "typeof".len();
-                continue;
-            }
-            let rest = masked_observed[at + "typeof".len()..].trim_start();
-            let rest = rest
-                .strip_prefix('(')
-                .map_or(rest, |inner| inner.trim_start());
-            if rest.strip_prefix(name).is_some_and(|tail| {
-                tail.chars()
-                    .next()
-                    .is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == '$'))
-            }) {
-                return true;
-            }
+/// Blank owner-name occurrences that are the operand of `typeof`
+/// (`typeof cost`, `typeof(cost)`; #7507, #7815). A type string is not the
+/// changed value, but a later non-typeof occurrence in the same expression
+/// still can be. Identifiers that merely start with `typeof` (`typeofprice`)
+/// are not the operator.
+fn ts_mask_typeof_consumed_owner_names(masked_observed: &str, owner_names: &[&str]) -> String {
+    fn is_ident_char(c: char) -> bool {
+        c.is_alphanumeric() || c == '_' || c == '$'
+    }
+    let mut out = masked_observed.to_string();
+    let mut from = 0usize;
+    while let Some(rel) = out[from..].find("typeof") {
+        let at = from + rel;
+        let before_ok = out[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !is_ident_char(c));
+        let after_ok = out[at + "typeof".len()..]
+            .chars()
+            .next()
+            .is_none_or(|c| !is_ident_char(c));
+        if !before_ok || !after_ok {
             from = at + "typeof".len();
+            continue;
         }
-        false
-    })
+        let after_kw = at + "typeof".len();
+        let consumed = {
+            let rest = &out[after_kw..];
+            let trimmed = rest.trim_start();
+            let leading_ws = rest.len() - trimmed.len();
+            let (inner, extra) = trimmed
+                .strip_prefix('(')
+                .map(|after_paren| {
+                    let inner = after_paren.trim_start();
+                    (inner, 1 + (after_paren.len() - inner.len()))
+                })
+                .unwrap_or((trimmed, 0));
+            owner_names.iter().copied().find_map(|name| {
+                if name.is_empty() {
+                    return None;
+                }
+                inner.strip_prefix(name).and_then(|tail| {
+                    tail.chars()
+                        .next()
+                        .is_none_or(|c| !is_ident_char(c))
+                        .then_some((after_kw + leading_ws + extra, name.len()))
+                })
+            })
+        };
+        if let Some((name_at, name_len)) = consumed {
+            out.replace_range(name_at..name_at + name_len, &" ".repeat(name_len));
+            from = name_at + name_len;
+        } else {
+            from = after_kw;
+        }
+    }
+    out
 }
 /// `text` with string-literal contents, template-literal text, regular
 /// expression literals and comments replaced by spaces, so an identifier
