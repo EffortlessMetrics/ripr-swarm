@@ -85,7 +85,9 @@ document does not imply implementation, evidence, or support.
 
 The DTO on the wire for card (`RepairCardV1.canonical_next_action`),
 status (`agent_attempt_status.canonical_next_action`), and the public
-navigation-aware `ripr check --format json` adapter; the
+navigation-aware `ripr check --format json` adapter and, for a precise
+recovery only, the `ripr doctor --json` document (Control 9 pins its
+`stop.check_name` to the human Safe-next-action line); the
 `next_action_class` governed-enum registration proving the vocabulary is
 identical in code, registry, and docs; the control battery (controls 1-10)
 with each gate owning one focused negative. The generic check JSON renderer

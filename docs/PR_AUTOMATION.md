@@ -333,6 +333,18 @@ savings is claimed. Ordinary local `precommit` keeps selected Clippy.
 format and numbering, and the policy surfaces that should fail quickly before
 review.
 
+Local `precommit` also runs `goldens check` when the diff against
+`origin/main` touches output-surface code (`crates/ripr/src/output/`,
+`crates/ripr/src/domain/`, `lsp.rs`, `docs/OUTPUT_SCHEMA.md`,
+`policy/output_contracts.txt`) or a fixture `expected/` file, because renderer
+wording changes make stale goldens the usual way main goes red (#8421). Other
+diffs print a skip line and do not pay for the fixture run. Real drift fails
+`precommit`. If fixtures only fail because their locked dependencies cannot be
+prepared in the environment, `precommit` prints `goldens check: INCOMPLETE
+(environment gap, not a pass)` and continues; run `cargo xtask goldens prepare`
+to close the gap, and hosted CI still owns those fixtures. The step is not part
+of the hosted collect-all policy run, which has its own goldens job.
+
 `cargo xtask check-fast` also runs `check-support-tiers` for committed spec
 Markdown, the support map, root README, Rust repair trust corpus, xtask source,
 and referenced workflow/script path changes. It runs before compilation-bearing
@@ -517,7 +529,13 @@ latest reviews, and Droid-related checks, then writes
 checks, failed checks, behind-main state, review status, Droid status, and a
 safe next action: `wait`, `inspect integration`, `inspect failure`, or `merge`.
 `BEHIND` requests integration judgment after Draft, review-required and pending
-waits; it does not establish that a branch update is needed. It is advisory and
+waits; it does not establish that a branch update is needed. The packet retains the current head commit and each latest review's original
+commit, with `current_head`, `stale_for_head`, or `subject_unavailable` attribution.
+An `APPROVED` aggregate without an exact-head latest approval recommends `wait`.
+The CLI's `latestReviews` summaries are joined by author, submission time, and
+state to the full `reviews` subjects; missing or ambiguous identity stays unknown.
+This attribution does not establish review substance, independence, approval
+quotas, integration qualification, or protection satisfaction. It is advisory and
 never updates the branch, comments, approves, or merges.
 The provider-response section retains known quota notices and unknown substance
 from returned reviews/comments without treating either as review completion.

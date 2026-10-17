@@ -5,9 +5,65 @@ use std::path::Path;
 
 static TEMP_FILE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// A temporary file this old cannot belong to a live writer: cache entries
-/// are small and rename within milliseconds, so only a writer that was terminated
-/// between creating and renaming leaves one behind.
+/// Refuse to analyze a workspace whose default output tree
+/// (`{root}/target`, `{root}/target/ripr`) is a link that resolves outside
+/// the workspace (#7781). A committed `target -> /elsewhere` symlink is
+/// repository-controlled content; following it would let an untrusted repo
+/// choose where cache and workflow artifacts are written. Links that stay
+/// inside the workspace, and an explicit `RIPR_CACHE_DIR`, are unaffected.
+pub(crate) fn ensure_default_output_contained(root: &Path) -> Result<(), String> {
+    ensure_default_output_contained_with(root, std::env::var("RIPR_CACHE_DIR").ok().as_deref())
+}
+
+fn ensure_default_output_contained_with(
+    root: &Path,
+    cache_dir_env: Option<&str>,
+) -> Result<(), String> {
+    if cache_dir_env.is_some_and(|value| !value.trim().is_empty()) {
+        return Ok(());
+    }
+    // A missing or non-directory root writes nothing here; leave it to the
+    // caller's own root validation so its established error is preserved.
+    if !root.is_dir() {
+        return Ok(());
+    }
+    let canonical_root = root.canonicalize().map_err(|error| {
+        format!(
+            "refusing to write ripr output: cannot resolve workspace root {}: {error}",
+            root.display()
+        )
+    })?;
+    // Compare resolved locations rather than asking `is_symlink`, so NTFS
+    // junctions and other aliases are judged by where they actually land.
+    for relative in [
+        "target",
+        "target/ripr",
+        "target/ripr/cache",
+        "target/ripr/reports",
+    ] {
+        let path = root.join(relative);
+        match std::fs::symlink_metadata(&path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            _ => {}
+        }
+        let problem = match path.canonicalize() {
+            Ok(canonical) if canonical.starts_with(&canonical_root) => continue,
+            Ok(_) => "resolves outside the workspace",
+            Err(_) => "cannot be resolved (dangling or looping link)",
+        };
+        return Err(format!(
+            "refusing to write ripr output: {} {problem} (workspace {}). \
+             A repository can check in a link to redirect where ripr writes. Either replace it with a real directory, \
+             or choose the location yourself, for example: RIPR_CACHE_DIR=/var/cache/ripr ripr check",
+            path.display(),
+            root.display()
+        ));
+    }
+    Ok(())
+}
+
+/// Grace before treating a cache staging file as abandoned. A stalled writer
+/// older than this may lose staging and fail its best-effort publication.
 const STALE_TEMP_GRACE: std::time::Duration = std::time::Duration::from_mins(10);
 
 /// Directories already swept by this process, so a cache with thousands of
@@ -53,7 +109,7 @@ pub(crate) fn write_cache(path: &Path, bytes: &[u8], label: &str) -> Result<(), 
     Ok(())
 }
 
-fn sweep_stale_temp_files_once(dir: &Path) {
+pub(crate) fn sweep_stale_temp_files_once(dir: &Path) {
     let first_visit = {
         let mut swept = match SWEPT_DIRECTORIES.lock() {
             Ok(guard) => guard,
@@ -344,6 +400,10 @@ mod tests {
         CreateNewError, STALE_TEMP_GRACE, TEMP_FILE_SEQUENCE, create_new, is_stranded_temp_name,
         sweep_stale_temp_files, write, write_cache,
     };
+    // Only the unix symlink-escape guard test calls this; importing it
+    // unconditionally is an unused import on Windows (#8485).
+    #[cfg(unix)]
+    use super::ensure_default_output_contained_with;
     use std::path::{Path, PathBuf};
 
     fn isolated_dir(label: &str) -> PathBuf {
@@ -762,6 +822,169 @@ mod tests {
         let swept = !stranded.exists();
         let _ = std::fs::remove_dir_all(&root);
         assert!(swept, "a streamed cache write sweeps the directory too");
+        Ok(())
+    }
+
+    /// Re-entered only by the parent test below. Exit from the actual fill
+    /// callback skips publication and cleanup, as process termination does.
+    #[test]
+    fn interrupted_cache_fill_child() -> Result<(), String> {
+        let Some(path) = std::env::var_os("RIPR_TEST_INTERRUPTED_CACHE_PATH") else {
+            return Ok(());
+        };
+        super::write_cache_streamed(Path::new(&path), "interrupted cache", |file| {
+            use std::io::Write as _;
+            file.write_all(b"partial replacement")?;
+            file.flush()?;
+            std::process::exit(86);
+        })
+    }
+
+    #[test]
+    fn terminated_cache_fill_recovers_without_publishing_partial_bytes() -> Result<(), String> {
+        let root = isolated_dir("terminated-fill");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let destination = root.join("previous.json");
+        std::fs::write(&destination, b"previous complete entry")
+            .map_err(|error| error.to_string())?;
+        let child =
+            std::process::Command::new(std::env::current_exe().map_err(|error| error.to_string())?)
+                .args([
+                    "--exact",
+                    "atomic_file::tests::interrupted_cache_fill_child",
+                    "--nocapture",
+                ])
+                .env("RIPR_TEST_INTERRUPTED_CACHE_PATH", &destination)
+                .output()
+                .map_err(|error| format!("run interrupted writer: {error}"))?;
+        assert_eq!(child.status.code(), Some(86), "child output: {child:?}");
+        let mut stranded = Vec::new();
+        for entry in std::fs::read_dir(&root).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            if entry
+                .file_name()
+                .to_str()
+                .is_some_and(is_stranded_temp_name)
+            {
+                stranded.push(entry.path());
+            }
+        }
+        assert_eq!(stranded.len(), 1, "the child must exit inside publication");
+        assert_eq!(
+            std::fs::read(&stranded[0]).map_err(|error| error.to_string())?,
+            b"partial replacement"
+        );
+        assert_eq!(
+            std::fs::read(&destination).map_err(|error| error.to_string())?,
+            b"previous complete entry"
+        );
+        // A subsequent analysis may sweep only after the existing grace period.
+        let cache = crate::analysis::seam_cache::RepoFileFactCache::at_dir(root.clone());
+        cache.sweep_stale_temp_files();
+        assert!(
+            stranded[0].exists(),
+            "fresh interruption residue must be kept"
+        );
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&stranded[0])
+            .and_then(|file| file.set_modified(std::time::SystemTime::now() - STALE_TEMP_GRACE * 3))
+            .map_err(|error| error.to_string())?;
+        // The once-per-process admission was consumed above. Exercise the
+        // retained sweep directly at a later time, as a later process does.
+        assert_eq!(
+            sweep_stale_temp_files(&root, std::time::SystemTime::now(), STALE_TEMP_GRACE),
+            1
+        );
+        assert!(!stranded[0].exists());
+        assert_eq!(
+            std::fs::read(&destination).map_err(|error| error.to_string())?,
+            b"previous complete entry"
+        );
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn default_output_guard_refuses_target_symlink_escaping_workspace() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!("ripr-guard-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let ws = base.join("ws");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&ws).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&outside).map_err(|e| e.to_string())?;
+        // Control: no target at all, and a real target directory, pass.
+        ensure_default_output_contained_with(&ws, None)?;
+        std::fs::create_dir_all(ws.join("target/ripr")).map_err(|e| e.to_string())?;
+        ensure_default_output_contained_with(&ws, None)?;
+        // In-workspace alias passes.
+        std::fs::remove_dir_all(ws.join("target")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(ws.join("real-target")).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(ws.join("real-target"), ws.join("target"))
+            .map_err(|e| e.to_string())?;
+        ensure_default_output_contained_with(&ws, None)?;
+        // Escaping `target` and escaping `target/ripr` both refuse.
+        std::fs::remove_file(ws.join("target")).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&outside, ws.join("target")).map_err(|e| e.to_string())?;
+        let escaped = ensure_default_output_contained_with(&ws, None);
+        std::fs::remove_file(ws.join("target")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(ws.join("target")).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&outside, ws.join("target/ripr")).map_err(|e| e.to_string())?;
+        let escaped_ripr = ensure_default_output_contained_with(&ws, None);
+        std::fs::remove_file(ws.join("target/ripr")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(ws.join("target/ripr")).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&outside, ws.join("target/ripr/cache"))
+            .map_err(|e| e.to_string())?;
+        let escaped_cache = ensure_default_output_contained_with(&ws, None);
+        std::fs::remove_file(ws.join("target/ripr/cache")).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&outside, ws.join("target/ripr/reports"))
+            .map_err(|e| e.to_string())?;
+        let escaped_reports = ensure_default_output_contained_with(&ws, None);
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(escaped_cache.is_err(), "target/ripr/cache link must refuse");
+        assert!(
+            escaped_reports.is_err(),
+            "target/ripr/reports link must refuse"
+        );
+        // An explicit RIPR_CACHE_DIR is the opt-in and passes the guard.
+        ensure_default_output_contained_with(&ws, Some("/var/cache/ripr"))?;
+        assert!(
+            escaped.is_err_and(|e| {
+                e.contains("RIPR_CACHE_DIR=/var/cache/ripr") && !e.contains('\\')
+            })
+        );
+        assert!(escaped_ripr.is_err());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_refuses_hostile_target_symlink_without_writing_outside() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!("ripr-hostile-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let ws = base.join("ws");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&ws).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&outside).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&outside, ws.join("target")).map_err(|e| e.to_string())?;
+        if std::env::var("RIPR_CACHE_DIR").is_ok_and(|value| !value.trim().is_empty()) {
+            // The explicit opt-in disables the guard; nothing to prove here.
+            let _ = std::fs::remove_dir_all(&base);
+            return Ok(());
+        }
+        let input = crate::app::CheckInput {
+            root: ws.clone(),
+            ..crate::app::CheckInput::default()
+        };
+        let result = crate::app::check_workspace(input);
+        let outside_empty = std::fs::read_dir(&outside)
+            .map_err(|e| e.to_string())?
+            .next()
+            .is_none();
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(result.is_err_and(|e| e.contains("refusing to write ripr output")));
+        assert!(outside_empty, "check wrote through the hostile symlink");
         Ok(())
     }
 }

@@ -8,6 +8,7 @@ cargo_manifest|crates/ripr/tests/data/**/Cargo.toml|source-role conformance corp
 cargo_manifest|editors/vscode/test-fixtures/**/Cargo.toml|VS Code extension test fixture workspace manifest
 cargo_manifest|editors/zed/Cargo.toml|Zed extension crate; its own workspace, compiled to wasm32-wasip2 by Zed (#4460)
 cargo_manifest|fixtures/**/Cargo.toml|fixture input workspace manifests
+cargo_manifest|benchmarks/stub_quality/cases/**/Cargo.toml|stub quality corpus case manifests
 cargo_manifest|metrics/rust-judged-behavior-panel/subjects/**/Cargo.toml|governed Rust judged-panel subject manifests for issue #3198
 cargo_manifest|xtask/Cargo.toml|unpublished automation manifest
 workspace_member|crates/ripr|published product package

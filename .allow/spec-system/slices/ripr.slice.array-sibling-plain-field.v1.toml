@@ -1,0 +1,21 @@
+schema_version = "2.0"
+id = "ripr.slice.array-sibling-plain-field.v1"
+generation = 1
+source_issue = "issue:8084"
+design_reference = "RIPR-SPEC-0225"
+change_class = "behavior_change"
+claim_boundary = """An indexed (or aliased) pin of one returned array element's field cannot be credited when a sibling element builds the same field from anything but a literal or a plain path: constructing that sibling may exit the process before the test reaches its assertion, so the field-construction finding stays weakly_exposed. Siblings built from literals or plain paths keep the pin exposed. The membership (any) shape already requires integer-literal siblings and is unchanged."""
+non_goals = ["Drop-impl refusal (the other #8084 case)", "return_value owner-pin path in reveal", "new classification vocabulary or probe families", "runtime execution"]
+return_conditions = ["Return to root if a literal or plain-path sibling loses exposed because of this rule."]
+owned_seams = ["seam:ripr:analysis:classify:element-field-pin"]
+shared_seams = []
+forbidden_seams = ["seam:ripr:domain:classification-vocabulary", "seam:ripr:output:schema"]
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0225"
+requirement_generation = 1
+[implementation_claim]
+status = "implemented"
+[evidence]
+state = "outstanding"
+[support_claim]
+state = "unchanged"

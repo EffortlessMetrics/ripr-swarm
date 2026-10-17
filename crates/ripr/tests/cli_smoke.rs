@@ -65,11 +65,22 @@ mod next_action;
 #[path = "cli_smoke/output_leaf_identity.rs"]
 mod output_leaf_identity;
 #[cfg(all(
+    unix,
+    feature = "lang-rust",
+    feature = "lang-python",
+    feature = "lang-typescript"
+))]
+#[path = "cli_smoke/parse_failure_path_outcome.rs"]
+mod parse_failure_path_outcome;
+#[cfg(all(
     feature = "lang-rust",
     any(feature = "lang-python", feature = "lang-typescript")
 ))]
 #[path = "cli_smoke/partial_preview_disclosure.rs"]
 mod partial_preview_disclosure;
+#[cfg(all(unix, feature = "lang-rust"))]
+#[path = "cli_smoke/pilot_timeout_retry.rs"]
+mod pilot_timeout_retry;
 #[cfg(all(feature = "lang-rust", feature = "lang-python"))]
 #[path = "cli_smoke/portable_diff_paths.rs"]
 mod portable_diff_paths;
@@ -2293,8 +2304,8 @@ fn selector_location_misses_explain_syntax_and_preserve_retry_scope()
     let diff_arg = diff.display().to_string();
     let expected_listing = format!(
         "ripr check --root {} --diff {} --json",
-        renderer_shell_arg(&root_arg),
-        renderer_shell_arg(&diff_arg)
+        renderer_shell_arg(&rendered_path(&root_arg)),
+        renderer_shell_arg(&rendered_path(&diff_arg))
     );
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
         let listed = run_command(
@@ -5291,8 +5302,15 @@ fn first_pr_check_missing_packet_recovers_without_a_resolvable_base()
             .join("target/ripr/reports/start-here.json")
             .is_file()
     );
+    // The packet is current (not "does not create one", not stale) and
+    // records the blocked missing-artifacts state, which fails the gate (#7373).
     let recheck = run_ripr(&["first-pr", "--root", &root, "--base", "HEAD", "--check"]);
-    assert_success(&recheck);
+    assert_failure(&recheck);
+    let recheck_stderr = String::from_utf8_lossy(&recheck.stderr);
+    assert!(
+        recheck_stderr.contains("blocked state `missing_artifacts`"),
+        "{recheck_stderr}"
+    );
     ignore_remove_dir_all(&workspace);
     Ok(())
 }
@@ -5321,11 +5339,66 @@ fn first_pr_check_recovery_write_resolves_the_default_base() -> Result<(), Strin
     )?;
     assert_eq!(base, "master");
 
+    // `--check` resolves the omitted base too, so the packet is current; the
+    // blocked missing-artifacts state it records fails the gate (#7373).
     let check = run_ripr(&["first-pr", "--root", &root_str, "--check"]);
-    assert_success(&check);
+    assert_failure(&check);
+    let check_stderr = String::from_utf8_lossy(&check.stderr);
     assert!(
-        String::from_utf8_lossy(&check.stdout).contains("First PR start-here packet ok"),
-        "{check:?}"
+        check_stderr.contains("blocked state `missing_artifacts`"),
+        "{check_stderr}"
+    );
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #7373: `--check` is the gate, so a current packet that records a blocked
+/// state fails it (exit 2) while write mode keeps exiting 0 after composing the
+/// packet. The unblocked packet stays the passing control.
+#[test]
+fn first_pr_check_exits_2_for_a_blocked_packet_but_write_mode_exits_0() -> Result<(), String> {
+    let root = unique_temp_workspace("first-pr-blocked-exit");
+    std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+    // The temp root can sit inside the checkout (a redirected TMPDIR). Stop git
+    // discovery at its parent so the root is never resolved against the
+    // checkout's shallow history, which has no default base on a PR runner.
+    let ceiling = root
+        .parent()
+        .ok_or("temp root has no parent")?
+        .to_path_buf();
+    let ceiling = ceiling.to_string_lossy().into_owned();
+    let run = |extra: &[&str]| -> Result<Output, String> {
+        // Select the base explicitly so this gate test works beneath a
+        // detached CI checkout with no default-base refs. The tests above
+        // cover default-base discovery with isolated Git repositories.
+        let mut args = vec!["first-pr", "--root", ".", "--base", "HEAD"];
+        args.extend_from_slice(extra);
+        run_command_with_env(
+            env!("CARGO_BIN_EXE_ripr"),
+            &root,
+            &args,
+            &[("GIT_CEILING_DIRECTORIES", ceiling.as_str())],
+        )
+        .map_err(|err| err.to_string())
+    };
+
+    let write = run(&[])?;
+    assert_success(&write);
+    let packet = root.join("target/ripr/reports/start-here.json");
+    assert_eq!(json_string_at(&packet, "/status")?, "blocked");
+    assert_eq!(
+        json_string_at(&packet, "/selected/output_state")?,
+        "wrong_root"
+    );
+
+    let check = run(&["--check"])?;
+    assert_failure(&check);
+    assert_eq!(check.status.code(), Some(2), "{check:?}");
+    let stderr = String::from_utf8_lossy(&check.stderr);
+    assert!(stderr.contains("blocked state `wrong_root`"), "{stderr}");
+    assert!(
+        !String::from_utf8_lossy(&check.stdout).contains("start-here packet ok"),
+        "a blocked packet must not print the ok line"
     );
     ignore_remove_dir_all(&root);
     Ok(())
@@ -5822,7 +5895,17 @@ fn agent_card_identity_is_portable_across_equivalent_checkout_roots()
     let clone = run_command(
         "git",
         Some(&root),
-        &["clone", &root.to_string_lossy(), &second.to_string_lossy()],
+        &[
+            "clone",
+            // Windows Git defaults to autocrlf=true, which would rewrite the
+            // clone's working tree as CRLF. This test varies only the
+            // absolute root; line-ending spelling has its own test below
+            // (#5270).
+            "-c",
+            "core.autocrlf=false",
+            &root.to_string_lossy(),
+            &second.to_string_lossy(),
+        ],
     )?;
     assert!(
         clone.status.success(),
@@ -5859,6 +5942,49 @@ fn agent_card_identity_is_portable_across_equivalent_checkout_roots()
     );
     std::fs::remove_dir_all(&root)?;
     std::fs::remove_dir_all(&second)?;
+    Ok(())
+}
+
+/// #5270 / #7203: a checkout whose working tree spells line breaks as CRLF
+/// (Windows `core.autocrlf=true`) mints the same seam ID as the LF checkout,
+/// so the card finds the seam by the same ID. Runs on every host: the CRLF
+/// spelling is written explicitly instead of relying on the host's Git
+/// defaults.
+#[test]
+fn agent_card_finds_the_same_seam_in_a_crlf_spelled_checkout()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unbuilt_repair_fixture("agent-card-crlf-checkout")?;
+    let source = std::fs::read_to_string(root.join("src/lib.rs"))?;
+    assert!(
+        !source.contains('\r'),
+        "precondition: the fixture source is LF-spelled"
+    );
+    std::fs::write(root.join("src/lib.rs"), source.replace('\n', "\r\n"))?;
+    let crlf = std::fs::read(root.join("src/lib.rs"))?;
+    assert!(
+        crlf.windows(2).any(|pair| pair == b"\r\n"),
+        "precondition: the fixture source is now CRLF-spelled"
+    );
+    run_git(&root, &["add", "src/lib.rs"])?;
+    commit_repair_fixture(&root, &["-qm", "crlf spelling"])?;
+
+    let root_arg = root.display().to_string();
+    let card = run_ripr(&[
+        "agent",
+        "card",
+        "--root",
+        &root_arg,
+        "--seam-id",
+        BOUNDARY_GAP_SEAM_ID,
+        "--json",
+    ]);
+    assert_success(&card);
+    let card: serde_json::Value = serde_json::from_slice(&card.stdout)?;
+    assert_eq!(
+        card["subject"]["seam_id"], BOUNDARY_GAP_SEAM_ID,
+        "a CRLF-spelled checkout must keep the LF seam ID: {card:#}"
+    );
+    std::fs::remove_dir_all(root)?;
     Ok(())
 }
 
@@ -13822,8 +13948,8 @@ fn doctor_missing_root_recommends_recovery_and_outside_git_recommends_runnable_c
     // resolve. `first_command_at` reproduces the same quoting.
     let physical = root.strip_prefix(r"\\?\").unwrap_or(&root).to_string();
     let result = if !stdout.contains(&format!(
-        "- Recommended first command: fix the Git check above, or scan without Git history: `{}`",
-        first_command_at(&physical, " --format repo-exposure-md")
+        "- Recommended first command: fix the Git check above, or explore the repository without Git history: `{}`",
+        first_pilot_command_at(&physical)
     )) || stdout.contains("- Recommended first command: ripr check\n")
         || stderr.contains("working-tree change probe failed")
     {
@@ -14067,22 +14193,29 @@ fn recommended_first_command_line(stdout: &str) -> Option<&str> {
 /// directory: `ripr check` defaults to `.`, so the root is named, quoted the
 /// way `agent::loop_commands::shell_arg` quotes it. `root` is absolute; on
 /// Windows command paths render with `/` separators.
-fn first_command_at(root: &str, flags: &str) -> String {
+fn quoted_first_root(root: &str) -> String {
     let root = if cfg!(windows) {
         root.replace('\\', "/")
     } else {
         root.to_string()
     };
-    let quoted = if !root.is_empty()
+    if !root.is_empty()
         && root
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '/' | '_' | '-' | ':'))
     {
-        root.to_string()
+        root
     } else {
         format!("'{}'", root.replace('\'', r"'\''"))
-    };
-    format!("ripr check --root {quoted}{flags}")
+    }
+}
+
+fn first_command_at(root: &str, flags: &str) -> String {
+    format!("ripr check --root {}{flags}", quoted_first_root(root))
+}
+
+fn first_pilot_command_at(root: &str) -> String {
+    format!("ripr pilot --root {}", quoted_first_root(root))
 }
 
 #[test]
@@ -15486,6 +15619,64 @@ fn pilot_snapshot_is_the_agent_verify_baseline() -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
+/// #7426: a `src/<name>.rs` that no `mod` declaration reaches is never
+/// compiled, so no test can import it. Pilot must not rank it as a test gap;
+/// it reads `opaque` (withheld and counted), while the declared sibling with
+/// the same shape still ranks as a true gap.
+#[test]
+fn pilot_withholds_a_file_outside_the_module_tree_and_keeps_a_linked_gap()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("pilot-orphan-file");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"shop\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(root.join("src/lib.rs"), "pub mod linked;\n")?;
+    let fee = "pub fn shipping_fee(weight: i32, free_limit: i32) -> i32 {\n    if weight > free_limit { 5 } else { 0 }\n}\n";
+    std::fs::write(root.join("src/linked.rs"), fee)?;
+    std::fs::write(root.join("src/orphan.rs"), fee)?;
+
+    let pilot = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&root),
+        &["pilot", "--root", ".", "--mode", "draft"],
+    )?;
+    assert_success(&pilot);
+    let exposure: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/pilot/repo-exposure.json"),
+    )?)?;
+    let class_of = |file: &str| {
+        exposure["seams"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|seam| seam["owner"] == format!("src/{file}.rs::shipping_fee"))
+            .map(|seam| seam["grip_class"].as_str().unwrap_or_default().to_string())
+            .collect::<Vec<_>>()
+    };
+    // Preconditions: the fixture really holds one orphan and one linked gap.
+    assert_eq!(class_of("orphan"), ["opaque"], "{exposure}");
+    assert_eq!(class_of("linked"), ["ungripped"], "{exposure}");
+
+    let summary: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/pilot/pilot-summary.json"),
+    )?)?;
+    assert_eq!(summary["withheld_static_limitations_total"], 1, "{summary}");
+    let ranked = summary["top_actionable_seams"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|seam| seam["owner"].as_str().unwrap_or_default())
+        .collect::<Vec<_>>();
+    assert!(ranked.contains(&"src/linked.rs::shipping_fee"), "{summary}");
+    assert!(
+        !ranked.contains(&"src/orphan.rs::shipping_fee"),
+        "{summary}"
+    );
+    Ok(())
+}
+
 /// #5497: pilot ranks gap classes only. A private helper reached only
 /// through an integration test reads `opaque` (unresolved reach); pilot
 /// withholds it and says so, while the genuinely uncalled `shipping_fee`
@@ -15717,6 +15908,20 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
             "- Seam limit reached: ranked 1 of {full_total} seams;"
         )),
         "{summary}"
+    );
+    // #6739: the JSON summary carries the same cut, so a machine consumer
+    // does not read the actionable total as exact.
+    let summary_json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/pilot/pilot-summary.json"),
+    )?)?;
+    assert_eq!(
+        summary_json["actionable_seams_total_is_lower_bound"], true,
+        "{summary_json}"
+    );
+    assert_eq!(summary_json["seam_limit"]["analyzed"], 1, "{summary_json}");
+    assert_eq!(
+        summary_json["seam_limit"]["total"], full_total,
+        "{summary_json}"
     );
     // When the inventory limit also cuts, the disclosed total is still the
     // inventory's, not the already-capped list the budget saw.
@@ -16298,7 +16503,7 @@ fn pilot_format_json_prints_the_packet_summary_and_suppresses_the_human_block() 
     );
     let parsed: serde_json::Value =
         serde_json::from_str(&stdout).map_err(|e| format!("stdout JSON: {e}\n{stdout}"))?;
-    assert_eq!(parsed["schema_version"], "0.3", "{parsed}");
+    assert_eq!(parsed["schema_version"], "0.4", "{parsed}");
     // Both surfaces share a renderer: equality alone also accepts a timeout
     // summary after completed analysis. Pin the fixture's completed result.
     assert_eq!(parsed["status"], "complete", "{parsed}");
@@ -16397,7 +16602,7 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
 
     let summary_json = std::fs::read_to_string(out_dir.join("pilot-summary.json"))
         .map_err(|e| format!("read pilot summary json: {e}"))?;
-    assert!(summary_json.contains(r#""schema_version": "0.3""#));
+    assert!(summary_json.contains(r#""schema_version": "0.4""#));
     assert!(summary_json.contains(r#""scope": "repo""#));
     assert!(summary_json.contains(r#""status": "complete""#));
     assert!(summary_json.contains(r#""timeout_ms": 30000"#));
@@ -17585,6 +17790,8 @@ fn python_check_safe_action(
         .lines()
         .find(|line| line.starts_with("  Safe next action:"))
         .ok_or_else(|| format!("check printed no safe next action:\n{stdout}"))?;
+    // #8165 / #8275: the bounded State line is plain language only; the
+    // `preview_limited` schema token stays on machine surfaces.
     assert!(
         stdout.contains("State: preview language, advisory only"),
         "expected preview_limited triage:\n{stdout}"
@@ -23487,12 +23694,17 @@ fn check_dirty_tree_with_deleted_head_tip_names_damage() -> Result<(), String> {
 }
 
 /// The argv of a printed `ripr ...` command, without the program name.
-/// Printed commands quote with POSIX single quotes (`shell_arg`).
+/// Printed commands quote with POSIX single quotes (`shell_arg`), or on
+/// Windows with console double quotes.
 fn printed_ripr_args(command: &str) -> Result<Vec<String>, String> {
+    printed_ripr_args_for(command, cfg!(windows))
+}
+
+fn printed_ripr_args_for(command: &str, windows: bool) -> Result<Vec<String>, String> {
     let mut tokens = Vec::new();
     let mut token = String::new();
     let mut in_token = false;
-    let mut chars = command.chars();
+    let mut chars = command.chars().peekable();
     while let Some(ch) = chars.next() {
         match ch {
             '\'' => {
@@ -23500,6 +23712,20 @@ fn printed_ripr_args(command: &str) -> Result<Vec<String>, String> {
                 loop {
                     match chars.next() {
                         Some('\'') => break,
+                        Some(inner) => token.push(inner),
+                        None => return Err(format!("unterminated quote in `{command}`")),
+                    }
+                }
+            }
+            '"' if windows => {
+                in_token = true;
+                loop {
+                    match chars.next() {
+                        Some('"') if chars.peek() == Some(&'"') => {
+                            chars.next();
+                            token.push('"');
+                        }
+                        Some('"') => break,
                         Some(inner) => token.push(inner),
                         None => return Err(format!("unterminated quote in `{command}`")),
                     }
@@ -23528,17 +23754,54 @@ fn printed_ripr_args(command: &str) -> Result<Vec<String>, String> {
     }
 }
 
-/// `listing` with its root token spelled as `ripr` prints it (quoted only
-/// when the path needs it).
+/// `listing` with its root token spelled as `ripr` prints it on the running
+/// host (separators, then quoted only when the path needs it).
 fn printed_ripr_command_text(listing: &str, root: &str) -> String {
-    let needs_quotes = root
-        .chars()
-        .any(|ch| !(ch.is_ascii_alphanumeric() || "/._-:@%+=,".contains(ch)));
-    if needs_quotes {
-        listing.replacen(root, &format!("'{root}'"), 1)
-    } else {
-        listing.to_string()
-    }
+    printed_ripr_command_text_for(listing, root, cfg!(windows))
+}
+
+fn printed_ripr_command_text_for(listing: &str, root: &str, windows: bool) -> String {
+    let rendered = rendered_path_for(root, windows);
+    listing.replacen(root, &renderer_shell_arg_for(&rendered, windows), 1)
+}
+
+#[test]
+fn printed_command_helpers_round_trip_both_host_spellings() -> Result<(), String> {
+    let windows_root = format!("{}:\\temp\\RUNNER~1\\ripr-drill", 'C');
+    let bound = format!("{}:/temp/RUNNER~1/ripr-drill", 'C');
+    let listing = format!("ripr check --root {windows_root} --base HEAD --json");
+    let printed = printed_ripr_command_text_for(&listing, &windows_root, true);
+    assert_eq!(
+        printed,
+        format!(
+            "ripr check --root \"{}:/temp/RUNNER~1/ripr-drill\" --base HEAD --json",
+            'C'
+        )
+    );
+    assert_eq!(
+        printed_ripr_args_for(&printed, true)?,
+        [
+            "check",
+            "--root",
+            bound.as_str(),
+            "--base",
+            "HEAD",
+            "--json"
+        ]
+    );
+    let unix =
+        printed_ripr_command_text_for("ripr check --root /tmp/a b --json", "/tmp/a b", false);
+    assert_eq!(unix, "ripr check --root '/tmp/a b' --json");
+    assert_eq!(
+        printed_ripr_args_for(&unix, false)?,
+        ["check", "--root", "/tmp/a b", "--json"]
+    );
+    // A plain root stays bare on both hosts.
+    assert_eq!(
+        printed_ripr_command_text_for("ripr check --root /tmp/p --json", "/tmp/p", true),
+        "ripr check --root /tmp/p --json"
+    );
+    Ok(())
 }
 
 fn first_finding_id(stdout: &[u8]) -> Result<String, String> {
@@ -25469,9 +25732,16 @@ fn agent_status_follows_a_focused_test_committed_between_the_phases()
 }
 
 /// Quote one argument exactly as the product's generated-command renderer
-/// (`agent::loop_commands::shell_arg`) does: a plain token stays bare, any
-/// other value is POSIX single-quoted.
+/// (`agent::loop_commands::shell_arg`) does on the running host.
 fn renderer_shell_arg(value: &str) -> String {
+    renderer_shell_arg_for(value, cfg!(windows))
+}
+
+/// Host-parameterised core of [`renderer_shell_arg`] (#6947): a plain token
+/// stays bare; any other value is POSIX single-quoted, or on Windows
+/// double-quoted with an interior `"` doubled (`shell_arg_for`'s console form).
+/// Parameterised so both hosts' spellings are testable on any machine.
+fn renderer_shell_arg_for(value: &str, windows: bool) -> String {
     if !value.is_empty()
         && value
             .chars()
@@ -25479,7 +25749,49 @@ fn renderer_shell_arg(value: &str) -> String {
     {
         return value.to_string();
     }
+    if windows && !value.chars().any(|ch| matches!(ch, '$' | '`')) {
+        let trailing = value.chars().rev().take_while(|ch| *ch == '\\').count();
+        return format!(
+            "\"{}{}\"",
+            value.replace('"', "\"\""),
+            "\\".repeat(trailing)
+        );
+    }
     shell_single_quoted(value)
+}
+
+/// A selected path as the product's command renderer spells it: on Windows
+/// `\` is a separator and renders as `/` (`root_path_display`); on Unix the
+/// path renders exactly as the filesystem spells it.
+fn rendered_path_for(path: &str, windows: bool) -> String {
+    if windows {
+        path.replace('\\', "/")
+    } else {
+        path.to_string()
+    }
+}
+
+fn rendered_path(path: &str) -> String {
+    rendered_path_for(path, cfg!(windows))
+}
+
+#[test]
+fn renderer_spellings_follow_the_host_for_windows_temp_roots() {
+    // #6947: a Windows temp root carries `\` separators and an 8.3 `~`, so
+    // the product prints it with `/` separators inside console double quotes
+    // while a Unix root keeps its bytes inside single quotes.
+    let windows_root = format!("{}:\\temp\\RUNNER~1\\ripr-x", 'C');
+    assert_eq!(
+        renderer_shell_arg_for(&rendered_path_for(&windows_root, true), true),
+        format!("\"{}:/temp/RUNNER~1/ripr-x\"", 'C')
+    );
+    assert_eq!(
+        renderer_shell_arg_for(&rendered_path_for("/tmp/ripr x", false), false),
+        "'/tmp/ripr x'"
+    );
+    assert_eq!(renderer_shell_arg_for("/tmp/plain", true), "/tmp/plain");
+    assert_eq!(renderer_shell_arg_for("it's", true), "\"it's\"");
+    assert_eq!(renderer_shell_arg_for("it's", false), r"'it'\''s'");
 }
 
 /// Decode one rendered POSIX shell word (bare, single-quoted, or `'\''`
@@ -25516,7 +25828,7 @@ fn decode_shell_token_inverts_the_renderer_quoting() {
         r"/tmp/back\slash it's",
     ] {
         assert_eq!(
-            decode_shell_token(&renderer_shell_arg(value)).as_deref(),
+            decode_shell_token(&renderer_shell_arg_for(value, false)).as_deref(),
             Some(value),
             "round trip for {value:?}"
         );
@@ -29489,6 +29801,54 @@ fn check_missing_base_advice_does_not_assume_origin_remote()
     assert!(
         !stderr.contains("git fetch origin"),
         "the repair must not assume an `origin` remote: {stderr}"
+    );
+    std::fs::remove_dir_all(&root)?;
+    Ok(())
+}
+
+/// An ancestor revision past the start of history (`HEAD~5`) is not fixed by
+/// adding a remote; the repair says the history is shorter, and an empty
+/// `--base` names itself instead of quoting an empty ref.
+#[test]
+fn check_ancestor_and_empty_base_advice_is_not_about_remotes()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("missing-base-ancestor");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(root.join("src/lib.rs"), "")?;
+    init_git_fixture_repo(&root)?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&["check", "--root", &root_arg, "--base", "HEAD~5"]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("`HEAD~5`")
+            && stderr.contains("history is shorter")
+            && stderr.contains("git log --oneline"),
+        "an ancestor revision must get the short-history repair: {stderr}"
+    );
+    assert!(
+        !stderr.contains("remote"),
+        "a remote cannot supply an ancestor revision: {stderr}"
+    );
+    // A missing anchor is the missing ref itself; only a resolvable anchor
+    // makes the offset the problem.
+    let missing_anchor = run_ripr(&["check", "--root", &root_arg, "--base", "nosuchbranch~1"]);
+    assert_eq!(missing_anchor.status.code(), Some(2), "{missing_anchor:?}");
+    let stderr = String::from_utf8_lossy(&missing_anchor.stderr);
+    assert!(
+        !stderr.contains("history is shorter"),
+        "an unresolved anchor must keep the fetch advice: {stderr}"
+    );
+    let empty = run_ripr(&["check", "--root", &root_arg, "--base", ""]);
+    assert_eq!(empty.status.code(), Some(2), "{empty:?}");
+    let stderr = String::from_utf8_lossy(&empty.stderr);
+    assert!(
+        stderr.contains("the base is empty") && !stderr.contains("remote"),
+        "an empty base must be named as empty: {stderr}"
     );
     std::fs::remove_dir_all(&root)?;
     Ok(())
