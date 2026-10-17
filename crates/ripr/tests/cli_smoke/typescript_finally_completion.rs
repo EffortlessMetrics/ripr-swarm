@@ -122,8 +122,12 @@ fn benign_and_independent_finalizers_keep_credit() -> TestResult {
         // A break that stays inside the finalizer's own loop is local.
         format!("try {{ {CHECK} }} finally {{ for (;;) {{ break; }} }}"),
         // The finalizer's own awaited assertion is independent.
+        // The setup is empty so the finalizer assertion is the only path to
+        // pass or fail: a wrong rejection reason fails it (runtime-verified).
         format!("try {{}} finally {{ {CHECK} }}"),
-        // A finalizer return that is statically unreachable cannot replace it.
+        format!("try {{ return; }} finally {{ {CHECK} }}"),
+        // `if (false) return;` is conservative for the scan, and the reachable
+        // outside assertion is what discriminates a wrong rejection reason.
         format!("try {{ {CHECK} }} finally {{ if (false) return; }}\n{CHECK}"),
     ] {
         Subject::new(&body)?.check("exposed", "exact_error_variant", "strong")?;
