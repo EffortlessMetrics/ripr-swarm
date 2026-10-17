@@ -198,13 +198,26 @@ fn a_direct_parameter_match_keeps_its_genuine_unselected_arm_gap()
         .iter()
         .filter(|finding| finding.probe.family == ripr::ProbeFamily::MatchArm)
         .collect::<Vec<_>>();
-    assert_eq!(arms.len(), 1);
-    let arm = arms[0];
-    assert_ne!(arm.class, ExposureClass::Exposed);
-    assert!(arm.static_limit_kind.is_none());
-    assert!(
-        !arm.activation.missing_discriminators.is_empty(),
-        "the real unselected-arm discriminator must remain actionable"
+    assert_eq!(
+        arms.len(),
+        2,
+        "both the current and deleted arm subjects survive"
     );
+    assert_eq!(
+        arms.iter()
+            .filter(
+                |arm| arm.source_currentness == ripr::domain::SourceCurrentness::CandidateCurrent
+            )
+            .count(),
+        1
+    );
+    for arm in arms {
+        assert_ne!(arm.class, ExposureClass::Exposed);
+        assert!(arm.static_limit_kind.is_none());
+        assert!(
+            !arm.activation.missing_discriminators.is_empty(),
+            "the real unselected-arm discriminator must remain actionable"
+        );
+    }
     Ok(())
 }
