@@ -55,6 +55,9 @@ mod init_followups;
 #[path = "cli_smoke/javascript_awaited_roots.rs"]
 mod javascript_awaited_roots;
 #[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/mixed_quote_rename.rs"]
+mod mixed_quote_rename;
+#[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/native_fanout.rs"]
 mod native_fanout;
 #[path = "cli_smoke/next_action.rs"]
