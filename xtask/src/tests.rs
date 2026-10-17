@@ -3077,6 +3077,7 @@ fn gh_pr_status_pr(checks: Vec<PrTriageCheck>) -> GhPrStatusPullRequest {
         title: "devex: merge readiness".to_string(),
         is_draft: false,
         merge_state_status: "CLEAN".to_string(),
+        head_ref_oid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
         head_ref_name: "devex-gh-pr-status".to_string(),
         base_ref_name: "main".to_string(),
         review_decision: "APPROVED".to_string(),
@@ -3084,6 +3085,7 @@ fn gh_pr_status_pr(checks: Vec<PrTriageCheck>) -> GhPrStatusPullRequest {
         reviews: vec![GhPrStatusReview {
             author: "droid".to_string(),
             state: "APPROVED".to_string(),
+            commit_oid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
         }],
         provider_review_observations: Default::default(),
     }
