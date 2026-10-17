@@ -54001,6 +54001,13 @@ fn precommit_goldens_availability_failure_is_not_reported_as_drift() -> Result<(
             "availability failure not distinguished: {classified}"
         ));
     }
+    let mixed =
+        format!("goldens check failed\n  drift: fixture `a` [human.txt]: x\n  error: {prep}");
+    if super::classify_precommit_goldens_failure(&mixed) != mixed {
+        return Err(
+            "real drift beside an availability error must stay a drift failure".to_string(),
+        );
+    }
     let drift =
         "goldens check failed; semantic drift detail in target/ripr/reports/golden-drift.md";
     if super::classify_precommit_goldens_failure(drift) != drift {

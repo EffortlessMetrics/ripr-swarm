@@ -713,10 +713,13 @@ fn select_precommit_goldens(changed: &[String], ci: bool) -> PrecommitGoldensSel
 }
 
 /// Preparation/availability failures are an instrument gap, not golden drift.
+/// A run that also found real drift stays a drift failure: the card already
+/// lists the availability error verbatim beside the drifted fixtures.
 fn classify_precommit_goldens_failure(error: &str) -> String {
-    if error.contains("fixture dependency preparation failed")
-        || error.contains("Do not bless availability drift")
-    {
+    let has_drift = error.contains("\n  drift: fixture ");
+    let unavailable = error.contains("fixture dependency preparation failed")
+        || error.contains("Do not bless availability drift");
+    if unavailable && !has_drift {
         format!(
             "precommit goldens check could not run (instrument gap, not golden drift):\n{error}"
         )
