@@ -138,6 +138,7 @@ pub(crate) use source_facts::{detect_python_test_framework, detect_python_test_f
 use source_facts::{extract_source_facts, source_fact_snapshot_observation};
 mod source_utils;
 use source_utils::{is_test_file, normalized_path};
+mod module_callees;
 mod same_class_callees;
 mod static_limits;
 mod term_activation;
@@ -211,6 +212,10 @@ struct PythonOwner {
     /// non-methods and `@staticmethod`. Used only to name a Python
     /// transitive-reach limitation on silent `no_static_path` findings (#4765).
     same_class_callees: Vec<String>,
+    /// Names this function/method body calls as bare `name(` calls, minus
+    /// parameters and names it rebinds. Used only to relate a test that calls
+    /// a same-module caller of a changed helper (`helper_owner_call`, #4568).
+    module_callees: Vec<String>,
     /// Dotted path of the enclosing classes of a method owner, outermost
     /// first (`Outer.Inner` for `Outer.Inner.__init__`). Empty for other
     /// owners. `qualified_name` keeps only the innermost class.
@@ -1031,6 +1036,9 @@ mod assertion_selection_tests;
 
 #[cfg(test)]
 mod deleted_lines_tests;
+
+#[cfg(test)]
+mod helper_owner_call_tests;
 
 #[cfg(test)]
 mod new_declaration_tests;
