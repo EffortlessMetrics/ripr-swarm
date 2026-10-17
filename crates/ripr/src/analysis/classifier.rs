@@ -10,7 +10,7 @@ use self::finding::build_finding;
 use self::owner::resolve_owner_function;
 use super::classify::{
     DependencyEdgeContext, HelperChain, ProbeContext, RelatedTestCandidateIndex,
-    ambiguous_helper_entry_called_by_tests, confidence_score,
+    TransitiveReachIndex, ambiguous_helper_entry_called_by_tests, confidence_score,
     find_related_tests_with_candidate_index, is_assertion_shaped_owner,
 };
 use super::probes::parser_expression_for_probe;
@@ -25,12 +25,14 @@ pub fn classify_probe(
     dependency_edges: Option<&DependencyEdgeContext<'_>>,
 ) -> Finding {
     let candidate_index = RelatedTestCandidateIndex::new(index);
+    let transitive_reach = TransitiveReachIndex::new(index);
     classify_probe_with_candidate_index(
         probe,
         index,
         workspace_complete,
         dependency_edges,
         &candidate_index,
+        &transitive_reach,
         None,
     )
 }
@@ -41,6 +43,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     workspace_complete: bool,
     dependency_edges: Option<&DependencyEdgeContext<'_>>,
     candidate_index: &RelatedTestCandidateIndex,
+    transitive_reach: &TransitiveReachIndex<'_>,
     propagation_origin: Option<&crate::analysis::diff::ChangedLine>,
 ) -> Finding {
     let owner_fn = resolve_owner_function(probe, index);
@@ -90,7 +93,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
         &probe.expression,
     )
     .unwrap_or(&probe.expression);
-    let evidence = ClassifiedProbeEvidence::gather(&context, reveal_expression);
+    let evidence = ClassifiedProbeEvidence::gather(&context, reveal_expression, transitive_reach);
     let class = evidence.classify(context.probe);
     // #7532: `build_finding` rewrites a `no_static_path` finding's misses;
     // keep reveal's so a withheld finding can report them again.
