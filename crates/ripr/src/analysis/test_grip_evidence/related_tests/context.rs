@@ -3810,6 +3810,33 @@ mod tests {
     use crate::analysis::facts::{FileFacts, FunctionFact, FunctionSourceRole, RustIndex};
     use crate::domain::SymbolId;
 
+    /// #8282 headline claim: across a rayon seam walk the first full-index
+    /// pass is paid once per worker thread, not once per seam.
+    #[test]
+    fn first_pin_syntax_pass_is_paid_per_worker_not_per_seam() {
+        use rayon::prelude::*;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let index = RustIndex::default();
+        let context = CompactGripContext::new(&index);
+        let seams = 400;
+        let first_passes = AtomicUsize::new(0);
+        (0..seams).into_par_iter().for_each(|_| {
+            let lease = context.lease_pin_syntax();
+            if lease.workspace_scan_passes() == 0 {
+                lease.pay_ambiguity_pass(&index);
+                first_passes.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+        let paid = first_passes.load(Ordering::Relaxed);
+        let workers = rayon::current_num_threads();
+        assert!(paid >= 1, "some seam must pay the first pass");
+        assert!(
+            paid <= workers,
+            "{paid} first passes for {seams} seams on {workers} workers"
+        );
+    }
+
     /// #8282: the repo seam walk used a fresh `OwnerPinSyntax` per seam, so
     /// every seam re-paid the first full-index pass. A worker thread keeps one
     /// instance across the seams of a context, and never lends it to another
@@ -3835,6 +3862,13 @@ mod tests {
             "the next seam must inherit the pass the previous seam paid"
         );
         drop(second);
+        let third = context.lease_pin_syntax();
+        assert_eq!(
+            third.workspace_scan_passes(),
+            1,
+            "reuse must continue past the second seam"
+        );
+        drop(third);
 
         let other_index = RustIndex::default();
         let other = CompactGripContext::new(&other_index);
