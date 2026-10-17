@@ -353,24 +353,36 @@ fn const_consumer_route(
     name: &str,
 ) -> Option<StubRouteDecision> {
     let source = std::fs::read_to_string(root.join(file)).ok()?;
-    let mut seen_fns = Vec::new();
+    let lines = source.lines().collect::<Vec<_>>();
+    // Everything from the first `#[cfg(test)]` on is test code, which a
+    // stub never targets.
+    let test_start = lines
+        .iter()
+        .position(|text| text.trim() == "#[cfg(test)]")
+        .map_or(lines.len() + 1, |index| index + 1);
+    let mut seen_fns: Vec<(usize, usize)> = Vec::new();
     let mut first_refusal = None;
-    for (index, text) in source.lines().enumerate() {
+    for (index, text) in lines.iter().enumerate() {
         let line = index + 1;
-        let code = text.trim_start();
-        if line == const_line || code.starts_with("//") || !names_identifier(text, name) {
+        if line == const_line || line >= test_start || !names_identifier(&code_of(text), name) {
+            continue;
+        }
+        if seen_fns
+            .iter()
+            .any(|&(start, end)| (start..=end).contains(&line))
+        {
             continue;
         }
         let Some(span) = owner_fn_line_span(&source, line) else {
             continue;
         };
-        if seen_fns.contains(&span) {
+        seen_fns.push(span);
+        if is_test_fn(&lines, span.0) {
             continue;
         }
-        if seen_fns.len() == CONSUMER_FN_LIMIT {
+        if seen_fns.len() > CONSUMER_FN_LIMIT {
             break;
         }
-        seen_fns.push(span);
         for kind in CONSUMER_KINDS {
             let Ok(resolution) = resolve_at_location(root, config, file, line, Some(kind)) else {
                 continue;
@@ -392,6 +404,48 @@ fn const_consumer_route(
         }
     }
     first_refusal
+}
+
+/// `line` with string literals and a trailing `//` comment blanked, and a
+/// block-comment line emptied, so a name inside them is not a use.
+fn code_of(line: &str) -> String {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with("/*") || trimmed.starts_with('*') {
+        return String::new();
+    }
+    let mut code = String::new();
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut previous = '\0';
+    for c in line.chars() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            code.push(' ');
+        } else if c == '"' {
+            in_string = true;
+            code.push(' ');
+        } else if c == '/' && previous == '/' {
+            code.pop();
+            break;
+        } else {
+            code.push(c);
+        }
+        previous = c;
+    }
+    code
+}
+
+/// Whether the function starting at `start` (1-based) carries `#[test]`.
+fn is_test_fn(lines: &[&str], start: usize) -> bool {
+    lines[start.saturating_sub(4)..start.min(lines.len())]
+        .iter()
+        .any(|text| text.trim().starts_with("#[test]"))
 }
 
 /// Whether `text` holds `name` as a whole identifier.
@@ -749,6 +803,20 @@ pub(crate) fn run_command(manifest: &str, stub: &RustTestStub) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn code_of_blanks_strings_comments_and_block_comment_lines() {
+        assert!(!names_identifier(&code_of("let s = \"CAP\";"), "CAP"));
+        assert!(!names_identifier(&code_of("let s = \"a\\\"CAP\";"), "CAP"));
+        assert!(!names_identifier(&code_of("x + 1 // CAP"), "CAP"));
+        assert!(!names_identifier(&code_of("    * the CAP applies"), "CAP"));
+        assert!(!names_identifier(&code_of("/* CAP */"), "CAP"));
+        assert!(names_identifier(&code_of("x.min(CAP) // cap"), "CAP"));
+        assert!(names_identifier(
+            &code_of("let s = \"x\"; y.min(CAP)"),
+            "CAP"
+        ));
+    }
 
     #[test]
     fn names_identifier_matches_whole_identifiers_only() {

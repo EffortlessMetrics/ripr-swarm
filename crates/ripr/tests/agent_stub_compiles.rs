@@ -714,6 +714,20 @@ fn check_routes_a_changed_constant_to_its_consumer() -> Result<(), String> {
     Ok(())
 }
 
+/// The route skips a name inside a string or comment and a test consumer,
+/// and lands on the production function that really uses the constant.
+#[test]
+fn check_routes_a_changed_constant_past_strings_comments_and_tests() -> Result<(), String> {
+    const LIB: &str = "//! caps\nconst CAP: u64 = 5_000;\n\npub fn label() -> &'static str {\n    \"CAP\" // CAP\n}\n\npub fn billed(units: u64) -> u64 {\n    units.min(CAP) * 2\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn cap_is_positive() {\n        assert!(CAP > 0);\n    }\n}\n";
+    let stdout =
+        check_for_changed_line_two(LIB, "const CAP: u64 = 10_000;", "const CAP: u64 = 5_000;")?;
+    assert!(
+        stdout.contains("--at src/lib.rs:9 --kind return_value"),
+        "the route names `billed`, not `label` or the test: {stdout}"
+    );
+    Ok(())
+}
+
 /// A constant nothing in the file consumes has no function to stub, so
 /// `check` prints no route for it.
 #[test]

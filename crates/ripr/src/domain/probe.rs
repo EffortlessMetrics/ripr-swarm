@@ -225,8 +225,13 @@ impl Probe {
             .find(|c: char| !(c.is_alphanumeric() || c == '_'))
             .unwrap_or(rest.len());
         let name = &rest[..end];
-        let named_item =
-            !name.is_empty() && name != "_" && rest[end..].trim_start().starts_with(':');
+        let declaration = rest[end..].trim_start();
+        // An initializer on the line separates an item from a generics or
+        // parameter continuation line such as `const N: usize,`.
+        let named_item = !name.is_empty()
+            && name != "_"
+            && declaration.starts_with(':')
+            && declaration.contains('=');
         named_item.then_some(name)
     }
 
@@ -771,6 +776,7 @@ mod tests {
             "const _: () = ();",
             "pub const",
             "x = 1;",
+            "const N: usize,",
         ] {
             assert_eq!(name(expression), None, "{expression}");
         }
