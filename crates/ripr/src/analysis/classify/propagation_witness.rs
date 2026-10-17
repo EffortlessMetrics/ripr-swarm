@@ -1759,10 +1759,16 @@ pub(in crate::analysis) fn assertion_restates_seeded_collection(
     // writes the collection directly between construction and this
     // assertion; a clear/reassignment/direct push in between makes the
     // asserted state discriminating again, so the cap declines.
-    let assertion_at = body[construction_end..]
-        .find(&text[at..])
+    // The stored assertion text can differ from the body (lexical
+    // extraction rejoins multiline assertions); when it cannot be
+    // located, the pre-call interval is unknown and the cap declines.
+    let Some(assertion_at) = body
+        .get(construction_end..)
+        .and_then(|tail| tail.find(&text[at..]))
         .map(|offset| construction_end + offset)
-        .unwrap_or(body.len());
+    else {
+        return false;
+    };
     if collection_written_between(body, construction_end, assertion_at, &receiver) {
         return false;
     }
@@ -1878,7 +1884,21 @@ fn collection_written_between(body: &str, start: usize, end: usize, receiver: &s
         "swap_remove",
         "fill",
     ];
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
     for (at, _) in masked.match_indices(receiver) {
+        // The receiver must match as a whole path, not inside a longer
+        // identifier (`other_items.clear()`, `pp.log.clear()`).
+        let bound = masked[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|before| !(ident(before) || before == '.'));
+        let ends = masked[at + receiver.len()..]
+            .chars()
+            .next()
+            .is_none_or(|next| !ident(next));
+        if !bound || !ends {
+            continue;
+        }
         let after = masked[at + receiver.len()..].trim_start();
         if let Some(call) = after.strip_prefix('.') {
             let method: String = call
