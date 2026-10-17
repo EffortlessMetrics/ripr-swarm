@@ -699,7 +699,8 @@ fn callable_and_diagnostic_job_authorities_are_exact_and_unknown_jobs_are_checke
         assert!(!job_guard_violations(workflow, &removed).is_empty());
         let condition = job_condition(source, job).unwrap_or_default();
         assert!(!condition.is_empty());
-        let broadened = source.replacen(&condition, "true", 1);
+        let block = named_job(source, job);
+        let broadened = source.replacen(block, &block.replacen(&condition, "true", 1), 1);
         assert_ne!(broadened, source);
         assert!(!job_guard_violations(workflow, &broadened).is_empty());
     }
