@@ -42,6 +42,26 @@ pub(crate) const MAX_NEXT_ACTION_STOP_CANDIDATES: usize = 8;
 /// authorities.
 pub(crate) const CANONICAL_NEXT_ACTION_NON_CLAIM: &str = "Advisory selection from producer-bound state; it does not execute, complete, or prove the repair, and the display string is never execution authority.";
 
+/// The canonical next actions for a run with no analysis scope: `ripr check`
+/// is diff-first, so the primary remedy is to provide a diff scope, and the
+/// whole-repository alternative is `ripr pilot` — the route README and
+/// QUICKSTART name for exploration when there is no active diff. Pilot writes
+/// the same repo-exposure artifacts as the repo-scoped check formats and adds
+/// seam ranking plus a supported repair route, and it keeps its repo-wide
+/// ranking when Git or a default base is unavailable, so it is runnable in
+/// every no-scope state. `ripr check --format repo-exposure-md` remains a
+/// valid explicit output format, but guidance must not recommend it as the
+/// escape hatch: every format (human triage and note, JSON, GitHub) and every
+/// failure path (default-base resolution, doctor) names these same commands.
+pub(crate) const NO_SCOPE_BASE_COMMAND: &str = "ripr check --base BASE";
+pub(crate) const WHOLE_REPO_PILOT_COMMAND: &str = "ripr pilot --root .";
+
+/// The whole-repository pilot command bound to an already shell-quoted root
+/// argument, for producers (doctor) that bind a physical root instead of `.`.
+pub(crate) fn whole_repo_pilot_command(root_arg: &str) -> String {
+    format!("ripr pilot --root {root_arg}")
+}
+
 const TRANSITION_EVIDENCE_CURRENT: &str = "evidence_current";
 const TRANSITION_ATTEMPT_RESTARTED: &str = "attempt_restarted";
 const TRANSITION_PREREQUISITE_SATISFIED: &str = "prerequisite_satisfied";
