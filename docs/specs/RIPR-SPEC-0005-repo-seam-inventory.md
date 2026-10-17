@@ -270,9 +270,11 @@ expect-test equality-operand admission retains its existing behavior.
 
 The same rule applies to a `return_value` seam (#8121): a snapshot oracle is
 admitted by kind, but it discriminates the seam only when it names the owner
-call or a plain, non-`mut` local last bound to a direct owner call before the
-assertion. A snapshot of another value in the same test, or of a name that was
-rebound or reassigned, keeps discrimination weak. This is a static name-binding
+call or a plain, non-`mut` local last bound to a direct owner call (the call
+itself, optionally followed by `?` or `.unwrap()`) in a block still in scope at
+the assertion. A snapshot of another value in the same test, of a name that was
+rebound, reassigned or shadowed by a pattern binder, or of a transformed owner
+call, keeps discrimination weak. This is a static name-binding
 check; it does not read committed snapshots or establish what the snapshot
 bytes contain. Independent exact assertions still supply strong discrimination.
 

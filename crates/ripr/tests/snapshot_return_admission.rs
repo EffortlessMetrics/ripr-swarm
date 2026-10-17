@@ -144,3 +144,30 @@ fn read_only_comparisons_do_not_rebind_the_owner_result() -> Result<(), String> 
     assert_strong(&fixture.seam()?);
     Ok(())
 }
+
+#[test]
+fn inner_block_owner_binding_cannot_carry_an_outer_literal_snapshot() -> Result<(), String> {
+    let fixture = Fixture::new(
+        "let count = 2usize;\n        {\n            let count = make_count(2);\n            let _ = count;\n        }\n        insta::assert_json_snapshot!(count);",
+    )?;
+    assert_weak(&fixture.seam()?);
+    Ok(())
+}
+
+#[test]
+fn pattern_binder_shadow_cannot_carry_the_owner_result_snapshot() -> Result<(), String> {
+    let fixture = Fixture::new(
+        "let count = make_count(2);\n        if let Some(count) = Some(2usize) {\n            insta::assert_json_snapshot!(count);\n        }",
+    )?;
+    assert_weak(&fixture.seam()?);
+    Ok(())
+}
+
+#[test]
+fn transformed_owner_call_is_not_the_owner_result() -> Result<(), String> {
+    let fixture = Fixture::new(
+        "let count = make_count(2).to_string();\n        insta::assert_json_snapshot!(count);",
+    )?;
+    assert_weak(&fixture.seam()?);
+    Ok(())
+}
