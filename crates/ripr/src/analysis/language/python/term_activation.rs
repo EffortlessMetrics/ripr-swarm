@@ -684,8 +684,7 @@ fn is_owner_call_expr(expr: &Expr, owner: &PythonOwner, test: &PythonTest) -> bo
 fn assertion_reads_local(text: &str, local: &str) -> bool {
     !local.is_empty()
         && text.match_indices(local).any(|(idx, _)| {
-            has_identifier_boundary(text, idx, local.len())
-                && text[..idx].chars().next_back() != Some('.')
+            has_identifier_boundary(text, idx, local.len()) && !text[..idx].ends_with('.')
         })
 }
 
