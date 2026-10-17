@@ -94,6 +94,23 @@ The `ripr check --format json` schema version is:
 0.2
 ```
 
+The published [check schema](../schemas/ripr/check.schema.json) constrains
+completeness, limitation and outcome-count combinations, including zero/nonzero
+agreement with summary totals. Schema conformance is structural evidence:
+`summary.findings = 2` and typed `counts.finding_count = 1` can both satisfy
+the positive-total constraints. Full positive-total equality requires a
+semantic consumer check.
+
+For DX scoreboard samples, the existing `admit_check_document` predicate in
+`xtask/src/reports/dx_scoreboard/measure/check_admission.rs` checks the expected
+subject and complete-work metadata, then requires declared finding totals to
+agree before allowing a rendered findings prefix. A declared prefix may contain
+fewer rows than the agreed total; an unmarked prefix is rejected. Legacy
+envelopes may omit `analysis_outcome` under the published schema, but do not
+qualify as complete DX samples. This predicate remains scoped to scoreboard
+sample admission. Tests constructing `complete_no_findings` exercise the typed
+contract, not a claim that the current CLI produces that state.
+
 `schema_version` is a per-contract namespace, not a single product-wide number
 (#2075): each output family versions independently. The command-to-version
 map is:

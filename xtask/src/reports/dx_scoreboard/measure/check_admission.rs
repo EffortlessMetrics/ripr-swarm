@@ -14,6 +14,11 @@
 //! incomplete, but a trust scan that needs omitted findings cannot appear
 //! clean.
 //!
+//! Published-schema conformance is structural evidence. Positive totals in
+//! different fields can each satisfy the schema while disagreeing with one
+//! another; this sample-admission predicate checks their semantic agreement
+//! for the expected DX subject. It is not a general check-document validator.
+//!
 //! Root identity is compared in producer encoding: the expected checkout
 //! unifies `\\` to `/` and encodes each `%` as `%25`, then matches the
 //! producer root after the same separator unification. Decoding `%25` on
@@ -23,6 +28,10 @@
 //! emits `head.commit`; a missing head is unknown, not a mismatch.
 
 use serde_json::Value;
+
+#[cfg(test)]
+#[path = "check_admission/schema_contract_tests.rs"]
+mod schema_contract_tests;
 
 /// Current `ripr check --format json` envelope version.
 pub(crate) const CHECK_SCHEMA_VERSION: &str = "0.2";
