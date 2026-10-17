@@ -276,13 +276,25 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                     1,
                     "{id}: concise classification must be nonempty"
                 );
+                // #8165: the bounded line names the class in plain words;
+                // the schema token agrees with JSON on human-full.
+                let classification = finding["classification"]
+                    .as_str()
+                    .ok_or("missing classification")?;
+                let plain_word = match classification {
+                    "exposed" => "exposed",
+                    "weakly_exposed" => "weak",
+                    "reachable_unrevealed" => "unrevealed",
+                    "no_static_path" => "no path",
+                    _ => "unknown",
+                };
                 assert!(
-                    exposure[0].contains(
-                        finding["classification"]
-                            .as_str()
-                            .ok_or("missing classification")?
-                    ),
-                    "{id}: human/JSON classification agreement"
+                    exposure[0].contains(plain_word),
+                    "{id}: human/JSON classification agreement (plain word)"
+                );
+                assert!(
+                    human_full_text.contains(classification),
+                    "{id}: human-full/JSON classification agreement"
                 );
                 let projection = "- related test src/lib.rs:8 observes_score uses ";
                 assert_eq!(

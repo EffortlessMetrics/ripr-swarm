@@ -211,7 +211,7 @@ fn summary_line(ran: &Ran) -> &str {
 
 fn assert_found_change(ran: &Ran, what: &str) -> Result<(), String> {
     assert_sane(ran, what)?;
-    if ran.code != Some(0) || !summary_line(ran).starts_with("Summary: 1 probe(s)") {
+    if ran.code != Some(0) || !summary_line(ran).starts_with("Summary: 1 probe (") {
         return Err(format!(
             "{what}: expected one probe, got {:?}\n{}\n{}",
             ran.code, ran.stdout, ran.stderr
@@ -580,7 +580,7 @@ fn submodule_ignore_settings_cannot_hide_pointer_changes() -> Result<(), String>
                     return Err(format!("wrong changed behavior: {finding}"));
                 }
             }
-        } else if !summary_line(&ran).starts_with(&format!("Summary: {expected_count} probe(s)")) {
+        } else if !summary_line(&ran).starts_with(&format!("Summary: {expected_count} probe")) {
             return Err(format!("unexpected human summary: {}", ran.stdout));
         }
         Ok(())

@@ -331,8 +331,12 @@ pub(crate) fn ts_changed_value_is_observed(
                         .iter()
                         .any(|name| ts_references_identifier(&observed_code, name))
                 } else {
-                    let receivers =
-                        owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
+                    let receivers = unshadowed_owner_namespace_receivers(
+                        candidate.test,
+                        owner,
+                        alias_map,
+                        workspace_root,
+                    );
                     owner_names
                         .iter()
                         .any(|name| ts_observed_bare_reference(&observed_code, name))
@@ -1066,7 +1070,7 @@ pub(crate) fn ts_predicate_boundary_row_activation(
         return TypeScriptPredicateActivation::Unresolved;
     }
     let owner_receivers =
-        owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
+        unshadowed_owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
     // #4104-E3: a constant-shaped boundary operand reads its value from
     // the owner's own module declaration. Resolution is per candidate so
     // the test's scope never substitutes a value the owner cannot see;
@@ -5556,7 +5560,8 @@ pub(crate) fn ts_spread_override_unseen(
         if local_identifier_declared_in_test_body(&candidate.test.body_text, &owner.name) {
             continue;
         }
-        let receivers = owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
+        let receivers =
+            unshadowed_owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
         let names = ts_owner_call_names(candidate, owner, alias_map, workspace_root);
         let qualified: Vec<String> = receivers
             .iter()
@@ -5684,7 +5689,8 @@ pub(crate) fn ts_dropped_term_witness(
         if local_identifier_declared_in_test_body(&candidate.test.body_text, &owner.name) {
             continue;
         }
-        let receivers = owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
+        let receivers =
+            unshadowed_owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
         let names = ts_owner_call_names(candidate, owner, alias_map, workspace_root);
         for assertion in &candidate.test.assertions {
             // A value matcher sees the returned value; an error matcher

@@ -841,7 +841,7 @@ fn keyword_value<'a>(call: &'a ast::ExprCall, name: &str) -> Option<&'a Expr> {
 /// RIPR-SPEC-0238 rule 2: a literal message pattern that admits any message
 /// (`''`, `.*`, `.+`, `^`, `$`, `^.*$`, `(?s).*`), or an alternation that can
 /// admit both the old and the new message (`'empty|blank'`), pins only the
-/// exception class. A bare name reads as the string literal it is bound to
+/// exception class, as does a literal `None` (matching disabled). A bare name reads as the string literal it is bound to
 /// when the file assigns that name exactly once, to a literal (Decision 5).
 fn is_trivial_message_pattern(pattern: &Expr, source: &str) -> bool {
     let text = match pattern {
@@ -849,6 +849,12 @@ fn is_trivial_message_pattern(pattern: &Expr, source: &str) -> bool {
             value: ast::Constant::Str(text),
             ..
         }) => text.as_str(),
+        // `match=None` / `assertRaisesRegex(E, None)` disables message
+        // matching in pytest and unittest, so it pins only the class.
+        Expr::Constant(ast::ExprConstant {
+            value: ast::Constant::None,
+            ..
+        }) => return true,
         Expr::Constant(ast::ExprConstant {
             value: ast::Constant::Bytes(bytes),
             ..
@@ -863,16 +869,29 @@ fn is_trivial_message_pattern(pattern: &Expr, source: &str) -> bool {
 }
 
 /// The string literal `name` is bound to when the file has exactly one
-/// assignment to it (`name = '.*'`) and that assignment is a plain literal.
+/// assignment to it (`name = '.*'`) and that assignment is a plain literal
+/// (`name = None` reads as the empty pattern).
 fn name_bound_once_to_literal(source: &str, name: &str) -> Option<String> {
     let mut assignments = source.lines().filter_map(|line| {
         let (target, value) = line.split_once('=')?;
         let value = value.strip_prefix('=').map_or(Some(value), |_| None)?;
-        (target.trim() == name).then(|| value.trim())
+        (target.trim() == name).then(|| {
+            // An unspaced `name=None` is a default argument (a wrapped
+            // signature or call), not an assignment.
+            if value.trim() == "None" && !(target.ends_with(' ') && value.starts_with(' ')) {
+                "<default-argument>"
+            } else {
+                value.trim()
+            }
+        })
     });
     let value = assignments.next()?;
     if assignments.next().is_some() {
         return None;
+    }
+    // `name = None` disables matching like `''` does: it admits any message.
+    if value == "None" {
+        return Some(String::new());
     }
     let value = value.strip_prefix('r').unwrap_or(value);
     let quote = value.chars().next().filter(|ch| matches!(ch, '\'' | '"'))?;

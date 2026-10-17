@@ -7400,6 +7400,18 @@ language = "rust"
     }
 
     #[test]
+    fn init_parses_mcp_flag() {
+        assert_eq!(
+            parse_init_options(&args(&["--mcp"])).map(|options| options.mcp),
+            Ok(true)
+        );
+        assert_eq!(
+            parse_init_options(&args(&[])).map(|options| options.mcp),
+            Ok(false)
+        );
+    }
+
+    #[test]
     fn init_parses_root_dry_run_and_force() {
         assert_eq!(
             parse_init_options(&args(&[
@@ -7415,6 +7427,7 @@ language = "rust"
                 dry_run: true,
                 force: true,
                 ci: Some(InitCi::Github),
+                mcp: false,
             })
         );
     }

@@ -21,7 +21,18 @@ pub(super) fn parse_git_old_path(raw: &str) -> Option<PathBuf> {
     let path = if marker.starts_with('"') {
         parse_diff_path_token(marker)?
     } else {
-        let old_path = marker.strip_prefix("a/")?.split_once(" b/")?.0;
+        // #7795: git quotes each header path independently under
+        // `core.quotePath=true`, so an unquoted old path can be followed by
+        // a quoted destination (`a/src/lib.rs "b/src/日本語.rs"`). An
+        // unquoted path cannot contain a quote — git would have quoted the
+        // whole path — so the quoted destination boundary is unambiguous
+        // and must be tried before the unquoted one; the unquoted fallback
+        // alone returned no old path and silently dropped the rename.
+        let rest = marker.strip_prefix("a/")?;
+        let old_path = match rest.split_once(" \"b/") {
+            Some((old, _quoted_destination)) => old,
+            None => rest.split_once(" b/")?.0,
+        };
         parse_diff_path_token(&format!("a/{old_path}"))?
     };
     let path = path.without_side_prefix("a/");
@@ -744,6 +755,50 @@ mod tests {
         );
         assert_eq!(
             parse_git_old_path("diff --git a/../../../etc/passwd b/../../../etc/passwd"),
+            None
+        );
+    }
+
+    #[test]
+    fn parse_git_old_path_pairs_each_destination_quoting_layout() {
+        // #7795: git quotes each `diff --git` path independently with
+        // `core.quotePath=true`. The old-path reader must pair an unquoted
+        // old path with an independently quoted destination instead of
+        // assuming symmetric quoting; the new-path-only case lost the old
+        // path entirely, which dropped the rename from scope.
+        let unicode_octal = "\\346\\227\\245\\346\\234\\254\\350\\252\\236";
+        // Both paths unquoted (spaces stay unquoted in git output).
+        assert_eq!(
+            parse_git_old_path("diff --git a/src/old name.rs b/src/new name.rs"),
+            Some(PathBuf::from("src/old name.rs"))
+        );
+        // Old path quoted only.
+        assert_eq!(
+            parse_git_old_path(&format!(
+                "diff --git \"a/src/{unicode_octal}.rs\" b/src/lib.rs"
+            )),
+            Some(PathBuf::from("src/日本語.rs"))
+        );
+        // New path quoted only: the #7795 witness (ASCII -> Unicode rename).
+        assert_eq!(
+            parse_git_old_path(&format!(
+                "diff --git a/src/lib.rs \"b/src/{unicode_octal}.rs\""
+            )),
+            Some(PathBuf::from("src/lib.rs"))
+        );
+        // Both paths quoted.
+        assert_eq!(
+            parse_git_old_path(&format!(
+                "diff --git \"a/src/lib.rs\" \"b/src/{unicode_octal}.rs\""
+            )),
+            Some(PathBuf::from("src/lib.rs"))
+        );
+        // Confinement is unchanged for the mixed layout: a traversal old
+        // path paired with a quoted destination is still rejected.
+        assert_eq!(
+            parse_git_old_path(&format!(
+                "diff --git a/../../../etc/passwd \"b/src/{unicode_octal}.rs\""
+            )),
             None
         );
     }
