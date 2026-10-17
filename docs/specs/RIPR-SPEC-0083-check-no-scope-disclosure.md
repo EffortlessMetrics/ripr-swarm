@@ -87,10 +87,13 @@ The guidance does NOT fire when:
   with 0 probes (real analyzed-empty result, #4012).
 
 In those cases the existing "No diff-derived mutation exposure probes found."
-message is honest and correct. The full-repo scan command
+message is honest and correct. The repo-scoped format command
 `ripr check --root . --format repo-exposure-md` uses `--format` (scope), not
 `--mode` (speed), so it also suppresses the disclosure (it analyzes the whole
-repo).
+repo). It remains a valid explicit format, but the guidance itself recommends
+the canonical whole-repository route `ripr pilot --root .` (owned by
+`domain::next_action`): pilot writes the same repo-exposure artifacts, adds
+seam ranking and a supported repair route, and runs without Git or a base.
 
 ### Scope detection
 
@@ -129,7 +132,7 @@ Note: `<base>...HEAD` contains no changed files, so there was nothing to analyze
 ```
 Note: no analysis scope was provided — `ripr check` is diff-first. Run
 `ripr check --base BASE` with BASE set to an existing ref to analyze your changes, or
-`ripr check --root . --format repo-exposure-md` for a full-repo scan. An empty result here
+`ripr pilot --root .` for whole-repository exploration. An empty result here
 does NOT mean your changed behavior is covered.
 ```
 
@@ -153,7 +156,7 @@ No-scope example (no established base):
   {
     "scope_status": "no_scope_provided",
     "category": "no_scope_disclosure",
-    "why": "no analysis scope provided; ripr check is diff-first; empty result does not mean changed behavior is covered; run ripr check --base BASE with BASE set to an existing ref or ripr check --root . --format repo-exposure-md"
+    "why": "no analysis scope provided; ripr check is diff-first; empty result does not mean changed behavior is covered; run ripr check --base BASE with BASE set to an existing ref or ripr pilot --root . for whole-repository exploration"
   }
 ]
 ```
@@ -227,8 +230,8 @@ consumers use the structured `base` and `scope_status` fields instead.
    is a speed tier, not a scope provider.
 5. **Full-repo scan via format**: `ripr check --root . --format repo-exposure-md`
    → no guidance. `--format repo-exposure-md` triggers a repo-scope analysis;
-   scope is real (not empty). This is the correct "full-repo scan" command,
-   NOT `--mode fast`.
+   scope is real (not empty), NOT `--mode fast`. The format stays valid when
+   requested explicitly; no-scope guidance recommends `ripr pilot --root .`.
 6. **Bare run that analyzed changes (#4012)**: bare `ripr check` that resolved
    a default base and analyzed changed files with 0 probes → ordinary
    analyzed-empty result: NO `Note:` guidance, NO `missing_scope` triage
@@ -239,10 +242,10 @@ consumers use the structured `base` and `scope_status` fields instead.
 - `crates/ripr/src/output/human.rs::tests::render_emits_no_scope_guidance_when_no_scope_provided_and_empty`
 - `crates/ripr/src/output/human.rs::tests::render_omits_no_scope_guidance_when_scope_provided_and_empty`
 - `crates/ripr/src/output/human.rs::tests::render_no_scope_guidance_uses_conservative_static_language`
-- `crates/ripr/src/output/human.rs::tests::guidance_recommends_format_repo_exposure_md_not_mode_fast`
+- `crates/ripr/src/output/human.rs::tests::guidance_recommends_pilot_not_mode_fast`
 - `crates/ripr/src/output/json::tests::json_render_emits_scope_disclosures_when_no_scope_provided`
 - `crates/ripr/src/output/json::tests::json_render_omits_scope_disclosures_when_scope_provided`
-- `crates/ripr/src/output/json::tests::json_guidance_recommends_format_repo_exposure_md_not_mode_fast`
+- `crates/ripr/src/output/json::tests::json_guidance_recommends_pilot_not_mode_fast`
 - `crates/ripr/tests/cli_smoke.rs::check_mode_fast_alone_on_empty_range_names_compared_base_smoke` (#4012: empty established range names the base, never claims no scope)
 - `crates/ripr/tests/cli_smoke.rs::check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke` (#4012: bare run that analyzed changed files emits no disclosure in any form)
 - `crates/ripr/tests/cli_smoke.rs::check_default_base_with_clean_worktree_keeps_no_scope_note_only` (SPEC-0112 intent preserved: clean tree keeps disclosure-only output; wording updated to the #4012 base-naming form)

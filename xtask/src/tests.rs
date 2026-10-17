@@ -78,7 +78,7 @@ use super::{
     GENERATED_CI_FRONT_PANEL_REPAIR, GENERATED_CI_PACKET_INDEX_REPAIR, GhPrStatusPullRequest,
     GhPrStatusReview, Lane1EvidenceAuditRepoExposureGeneration,
     Lane1EvidenceAuditRepoExposureOutcome, LocalContextAllow, LocalMarkdownTarget,
-    LspCockpitFixture, LspCockpitReport, MarkdownLink, PYTHON_REAL_REPO_EVAL_REQUIRED_CASES,
+    LspCockpitFixture, MarkdownLink, PYTHON_REAL_REPO_EVAL_REQUIRED_CASES,
     PYTHON_REAL_REPO_EVAL_REQUIRED_NO_ACTION_CASES,
     PYTHON_REAL_REPO_EVAL_REQUIRED_STATIC_LIMIT_CASES, PrTriageCheck, PrTriageFinding,
     PrTriagePullRequest, REAL_REPAIR_ATTEMPTS_CORPUS, REAL_REPAIR_ATTEMPTS_REQUIRED_CASES,
@@ -11248,224 +11248,193 @@ jobs = ["Ripr Rust Small Result", "Ripr Rust Small on CX53"]
 }
 
 #[test]
-fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
+fn routed_rust_merge_ready_event_matrix_withholds_unrequested_context() -> Result<(), String> {
     let workflow = include_str!("../../.github/workflows/routed-rust.yml");
-    let cases = [
-        (
-            "pull_request",
-            Some("ready_for_review"),
-            None,
-            RoutedRustEventRoute::LaunchFullGate,
-        ),
-        (
-            "pull_request",
-            Some("opened"),
-            None,
-            RoutedRustEventRoute::WorkflowNotTriggered,
-        ),
-        (
-            "pull_request",
-            Some("reopened"),
-            None,
-            RoutedRustEventRoute::WorkflowNotTriggered,
-        ),
-        (
-            "pull_request",
-            Some("synchronize"),
-            None,
-            RoutedRustEventRoute::WorkflowNotTriggered,
-        ),
-        (
-            "pull_request",
-            Some("labeled"),
-            Some("full-ci"),
-            RoutedRustEventRoute::WorkflowNotTriggered,
-        ),
-        (
-            "pull_request",
-            Some("labeled"),
-            Some("windows-ci"),
-            RoutedRustEventRoute::WorkflowNotTriggered,
-        ),
-        (
-            "pull_request",
-            Some("unlabeled"),
-            Some("full-ci"),
-            RoutedRustEventRoute::WorkflowNotTriggered,
-        ),
-        ("push", None, None, RoutedRustEventRoute::LaunchFullGate),
-        (
-            "workflow_dispatch",
-            None,
-            None,
-            RoutedRustEventRoute::LaunchFullGate,
-        ),
-    ];
-    for (event_name, action, label, expected) in cases {
-        let actual = routed_rust_event_route(workflow, event_name, action, label);
+    assert!(
+        routed_rust_ready_event_contract_violations(workflow).is_empty(),
+        "the unchanged caller must satisfy the admission contract"
+    );
+    let replace_once = |source: &str, before: &str, after: &str| {
         assert_eq!(
-            actual, expected,
-            "event={event_name} action={action:?} label={label:?}"
+            source.matches(before).count(),
+            1,
+            "unique mutation anchor: {before}"
+        );
+        let changed = source.replacen(before, after, 1);
+        assert_ne!(changed, source, "mutation must engage: {before}");
+        changed
+    };
+    let rejected = |changed: &str, diagnostic: &str| {
+        let violations = routed_rust_ready_event_contract_violations(changed);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains(diagnostic)),
+            "expected {diagnostic:?}, got {violations:?}"
+        );
+    };
+
+    for action in [
+        "ready_for_review",
+        "opened",
+        "reopened",
+        "synchronize",
+        "unlabeled",
+        "edited",
+    ] {
+        assert_eq!(
+            routed_rust_event_route(workflow, "pull_request", Some(action), Some("merge-ready")),
+            RoutedRustEventRoute::WorkflowNotTriggered,
+            "only a fresh labeled event requests PR qualification: {action}"
         );
     }
+    for label in [Some("merge-ready"), Some("MeRgE-ReAdY")] {
+        assert_eq!(
+            routed_rust_event_route(workflow, "pull_request", Some("labeled"), label),
+            RoutedRustEventRoute::LaunchFullGate,
+            "explicit request label={label:?}"
+        );
+    }
+    for label in [
+        None,
+        Some("full-ci"),
+        Some("windows-ci"),
+        Some("merge-ready-extra"),
+    ] {
+        assert_eq!(
+            routed_rust_event_route(workflow, "pull_request", Some("labeled"), label),
+            RoutedRustEventRoute::BookkeepingOnly,
+            "unrelated labels must not earn required context: {label:?}"
+        );
+    }
+    // This helper models PR admission only. Main/manual execution deliberately
+    // bypasses that job; hosted_cache_continuity/native_admission separately
+    // enforce its full prerequisite, Rust, cache-writer and result contract.
+    for event in ["push", "workflow_dispatch"] {
+        assert_eq!(
+            routed_rust_event_route(workflow, event, None, None),
+            RoutedRustEventRoute::WorkflowNotTriggered,
+            "{event} must not fabricate PR admission"
+        );
+    }
+    assert!(workflow.contains("  push:\n    branches: [main, master]\n  workflow_dispatch:"));
+    assert!(workflow.contains("  admission:\n    if: github.event_name == 'pull_request'\n"));
 
-    let draft_resurrected = workflow.replace(
-        "    types: [ready_for_review]",
-        "    types: [ready_for_review, synchronize]",
-    );
-    assert!(
-        routed_rust_ready_event_contract_violations(&draft_resurrected)
-            .iter()
-            .any(|violation| {
-                violation.contains("must be exactly") && violation.contains("synchronize")
-            }),
-        "re-admitting synchronize must fail the Ready-only contract: {:?}",
-        routed_rust_ready_event_contract_violations(&draft_resurrected)
-    );
-
-    let label_resurrected = workflow.replace(
-        "    types: [ready_for_review]",
-        "    types: [ready_for_review, labeled]",
-    );
-    assert!(
-        routed_rust_ready_event_contract_violations(&label_resurrected)
-            .iter()
-            .any(|violation| {
-                violation.contains("must be exactly") && violation.contains("labeled")
-            }),
-        "re-admitting label events must fail the Ready-only contract: {:?}",
-        routed_rust_ready_event_contract_violations(&label_resurrected)
-    );
-
-    let edited_resurrected = workflow.replace(
-        "    types: [ready_for_review]",
-        "    types: [ready_for_review, edited]",
-    );
-    assert!(
-        routed_rust_ready_event_contract_violations(&edited_resurrected)
-            .iter()
-            .any(|violation| {
-                violation.contains("must be exactly") && violation.contains("edited")
-            }),
-        "re-admitting the edited activity type must fail the Ready-only contract: {:?}",
-        routed_rust_ready_event_contract_violations(&edited_resurrected)
-    );
-
-    let ready_dropped = workflow.replace(
-        "    types: [ready_for_review]",
+    for activity in [
+        "ready_for_review",
+        "synchronize",
+        "edited",
+        "opened",
+        "reopened",
+        "unlabeled",
+    ] {
+        let changed = replace_once(
+            workflow,
+            "    types: [labeled]",
+            &format!("    types: [labeled, {activity}]"),
+        );
+        rejected(&changed, "must be exactly");
+        rejected(&changed, activity);
+    }
+    let dropped_request = replace_once(
+        workflow,
+        "    types: [labeled]",
         "    types: [opened, synchronize, reopened]",
     );
-    assert!(
-        routed_rust_ready_event_contract_violations(&ready_dropped)
-            .iter()
-            .any(|violation| violation.contains("must be exactly")),
-        "dropping the Ready transition must fail closed: {:?}",
-        routed_rust_ready_event_contract_violations(&ready_dropped)
-    );
+    rejected(&dropped_request, "must be exactly");
+    let missing_types = replace_once(workflow, "    types: [labeled]\n", "");
+    rejected(&missing_types, "inline pull_request types array");
 
-    let missing_types = workflow.replace("    types: [ready_for_review]\n", "");
-    assert!(
-        routed_rust_ready_event_contract_violations(&missing_types)
-            .iter()
-            .any(|violation| violation.contains("inline pull_request types array")),
-        "removing types must fail closed: {:?}",
-        routed_rust_ready_event_contract_violations(&missing_types)
-    );
-
-    let cancellation_disabled = workflow.replace(
-        "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+    let cancellation_enabled = replace_once(
+        workflow,
         "  cancel-in-progress: false",
+        "  cancel-in-progress: true",
     );
-    assert!(
-        routed_rust_ready_event_contract_violations(&cancellation_disabled)
-            .iter()
-            .any(|violation| violation.contains("cancel-in-progress")),
-        "disabling Ready-run cancellation must fail: {:?}",
-        routed_rust_ready_event_contract_violations(&cancellation_disabled)
-    );
-
-    let uncancellable_fallback = workflow.replace("      !cancelled() &&", "      always() &&");
-    assert_ne!(
-        uncancellable_fallback, workflow,
-        "fixture must actually swap the hosted fallback condition"
-    );
-    assert!(
-        routed_rust_ready_event_contract_violations(&uncancellable_fallback)
-            .iter()
-            .any(|violation| violation.contains("`rust-github`") && violation.contains("always()")),
-        "a job-level always() on an implementation job must fail: it survives Ready-run cancellation: {:?}",
-        routed_rust_ready_event_contract_violations(&uncancellable_fallback)
-    );
-
-    let spaced_uppercase = workflow.replace("      !cancelled() &&", "      Always () &&");
-    assert!(
-        routed_rust_ready_event_contract_violations(&spaced_uppercase)
-            .iter()
-            .any(|violation| violation.contains("`rust-github`")),
-        "expression names are case-insensitive and may carry spaces: {:?}",
-        routed_rust_ready_event_contract_violations(&spaced_uppercase)
-    );
-
-    let step_level_cleanup = workflow.replace(
-        "    uses: ./.github/workflows/rust-gates.yml\n    with:\n      runner-config: '\"ubuntu-latest\"'",
-        "    uses: ./.github/workflows/rust-gates.yml\n    # cleanup may use always()\n    with:\n      runner-config: '\"ubuntu-latest\"'",
-    );
-    assert_ne!(step_level_cleanup, workflow, "fixture must add the comment");
-    assert!(
-        !routed_rust_ready_event_contract_violations(&step_level_cleanup)
-            .iter()
-            .any(|violation| violation.contains("must not use `always()`")),
-        "always() outside the job condition must not be rejected: {:?}",
-        routed_rust_ready_event_contract_violations(&step_level_cleanup)
-    );
-
-    let shared_group = workflow.replace(
-        "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}",
+    rejected(&cancellation_enabled, "cancel-in-progress: false");
+    let group = workflow
+        .lines()
+        .find(|line| line.starts_with("  group:"))
+        .ok_or("missing concurrency group")?;
+    let shared_group = replace_once(
+        workflow,
+        group,
         "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}",
     );
-    assert!(
-        routed_rust_ready_event_contract_violations(&shared_group)
-            .iter()
-            .any(|violation| violation.contains("event-qualified concurrency group")),
-        "sharing the push/manual concurrency group must fail: {:?}",
-        routed_rust_ready_event_contract_violations(&shared_group)
+    rejected(
+        &shared_group,
+        "must isolate qualification and per-run metadata concurrency",
+    );
+    let unqualified_main_manual = replace_once(
+        workflow,
+        "format('{0}-{1}-{2}', github.workflow, github.ref, github.event_name)",
+        "format('{0}-{1}', github.workflow, github.ref)",
+    );
+    rejected(
+        &unqualified_main_manual,
+        "must isolate qualification and per-run metadata concurrency",
     );
 
-    let draft_guard = workflow.replace(
-        "    name: Route Ripr Rust Small",
-        "    if: github.event.pull_request.draft != true\n    name: Route Ripr Rust Small",
+    let hosted = workflow
+        .split_once("\n  rust-github:\n")
+        .ok_or("missing hosted job")?
+        .1
+        .split_once("\n  docs-gate:\n")
+        .ok_or("missing next job")?
+        .0;
+    for condition in ["      always() &&", "      Always () &&"] {
+        let changed_hosted = replace_once(hosted, "      !cancelled() &&", condition);
+        let changed = replace_once(workflow, hosted, &changed_hosted);
+        rejected(
+            &changed,
+            "implementation job `rust-github` must not use `always()`",
+        );
+    }
+    let cleanup_comment_hosted = replace_once(
+        hosted,
+        "    uses: ./.github/workflows/rust-gates.yml\n",
+        "    uses: ./.github/workflows/rust-gates.yml\n    # cleanup may use always()\n",
+    );
+    let cleanup_comment = replace_once(workflow, hosted, &cleanup_comment_hosted);
+    assert_eq!(
+        replace_once(&cleanup_comment, "    # cleanup may use always()\n", ""),
+        workflow,
+        "the permitted-comment control must preserve every other workflow byte"
     );
     assert!(
-        routed_rust_ready_event_contract_violations(&draft_guard)
-            .iter()
-            .any(|violation| violation.contains("github.event.pull_request.draft")),
-        "a draft job guard must fail; a skipped required job reports success: {:?}",
-        routed_rust_ready_event_contract_violations(&draft_guard)
+        routed_rust_ready_event_contract_violations(&cleanup_comment).is_empty(),
+        "always() outside a job condition is permitted"
+    );
+    let draft_guard = replace_once(
+        workflow,
+        "  admission:\n    if: github.event_name == 'pull_request'",
+        "  admission:\n    if: github.event_name == 'pull_request' && github.event.pull_request.draft != true",
+    );
+    rejected(
+        &draft_guard,
+        "must not gate jobs on `github.event.pull_request.draft`",
     );
 
-    let pseudo_result = workflow.replace(
-        "    name: Ripr Rust Small Result",
-        "    name: ${{ github.event_name == 'pull_request' && 'Ripr Rust Small Ignored Label Event' || 'Ripr Rust Small Result' }}",
+    let result_name = workflow
+        .split_once("\n  result:\n")
+        .ok_or("missing result job")?
+        .1
+        .lines()
+        .find(|line| line.starts_with("    name:"))
+        .ok_or("missing result name")?;
+    for name in ["Ripr Rust Small Result", "Ripr Rust Small Draft Result"] {
+        let changed = replace_once(workflow, result_name, &format!("    name: {name}"));
+        rejected(&changed, "must post event-bound");
+    }
+    let pseudo_result = replace_once(
+        workflow,
+        result_name,
+        "    name: Ripr Rust Small Ignored Label Event",
     );
-    assert!(
-        routed_rust_ready_event_contract_violations(&pseudo_result)
-            .iter()
-            .any(|violation| violation.contains("Ignored Label Event")),
-        "resurrecting the ignored-label pseudo-result must fail: {:?}",
-        routed_rust_ready_event_contract_violations(&pseudo_result)
+    rejected(
+        &pseudo_result,
+        "retired `Ripr Rust Small Ignored Label Event`",
     );
-
-    let renamed_result = workflow.replace(
-        "    name: Ripr Rust Small Result",
-        "    name: Ripr Rust Small Draft Result",
-    );
-    assert!(
-        routed_rust_ready_event_contract_violations(&renamed_result)
-            .iter()
-            .any(|violation| violation.contains("must post the static")),
-        "renaming the required result context must fail: {:?}",
-        routed_rust_ready_event_contract_violations(&renamed_result)
-    );
+    Ok(())
 }
 
 #[test]
@@ -29692,6 +29661,7 @@ fn gh_pr_status_pr(checks: Vec<PrTriageCheck>) -> GhPrStatusPullRequest {
         title: "devex: merge readiness".to_string(),
         is_draft: false,
         merge_state_status: "CLEAN".to_string(),
+        head_ref_oid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
         head_ref_name: "devex-gh-pr-status".to_string(),
         base_ref_name: "main".to_string(),
         review_decision: "APPROVED".to_string(),
@@ -29699,6 +29669,7 @@ fn gh_pr_status_pr(checks: Vec<PrTriageCheck>) -> GhPrStatusPullRequest {
         reviews: vec![GhPrStatusReview {
             author: "droid".to_string(),
             state: "APPROVED".to_string(),
+            commit_oid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
         }],
         provider_review_observations: Default::default(),
     }
@@ -29895,7 +29866,9 @@ fn gh_pr_status_behind_packet_reports_integration_judgment() -> Result<(), Strin
             "headRefName": "candidate",
             "baseRefName": "main",
             "reviewDecision": "APPROVED",
-            "latestReviews": [],
+            "headRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "latestReviews": [{"author": {"login": "reviewer"}, "state": "APPROVED", "submittedAt": "2026-10-14T01:00:00Z"}],
+            "reviews": [{"author": {"login": "reviewer"}, "state": "APPROVED", "submittedAt": "2026-10-14T01:00:00Z", "commit": {"oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}],
             "statusCheckRollup": [
                 {"__typename": "CheckRun", "name": "rust", "status": "COMPLETED", "conclusion": "SUCCESS"}
             ]
@@ -30588,6 +30561,73 @@ fn xtask_run_helpers_report_success_failure_and_optional_output() -> Result<(), 
 
 #[test]
 fn policy_checker_facade_runs_current_repo_checks() -> Result<(), String> {
+    #[cfg(all(unix, not(target_os = "linux")))]
+    {
+        // Preserve the original owner on Unix platforms without the qualified
+        // session capture. Do not introduce a partial containment boundary.
+        policy_checker_facade_checks_in_repo_cwd()
+    }
+    #[cfg(not(all(unix, not(target_os = "linux"))))]
+    policy_checker_facade_in_subprocess()
+}
+
+#[cfg(not(all(unix, not(target_os = "linux"))))]
+fn policy_checker_facade_in_subprocess() -> Result<(), String> {
+    const CHILD_ENV: &str = "RIPR_XTASK_POLICY_FACADE_CHILD";
+    const COMPLETED: &str = "policy facade child checks completed";
+    const TEST: &str = "tests::policy_checker_facade_runs_current_repo_checks";
+    match std::env::var_os(CHILD_ENV) {
+        Some(value) if value == "1" => {
+            #[cfg(target_os = "linux")]
+            crate::run::enter_test_session()?;
+            policy_checker_facade_checks_in_repo_cwd()?;
+            eprintln!("{COMPLETED}");
+            return Ok(());
+        }
+        Some(value) => return Err(format!("invalid policy facade child marker: {value:?}")),
+        None => {}
+    }
+    // Keep the real checks in a fresh process: its CWD writer cannot convoy
+    // aggregate peers while file policy performs its real Cargo inventories.
+    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    #[cfg(target_os = "linux")]
+    let capture = crate::run::capture_isolated_test;
+    #[cfg(not(target_os = "linux"))]
+    let capture = crate::run::capture_output_measured;
+    let output = capture(
+        &exe.to_string_lossy(),
+        &[
+            TEST.to_string(),
+            "--exact".to_string(),
+            "--nocapture".to_string(),
+        ],
+        Some(&repo_root()?),
+        &[(CHILD_ENV, "1")],
+        crate::run::tool_build_timeout()?,
+        "isolated policy facade checks",
+    )?
+    .output;
+    let diagnostic = format!(
+        "policy facade child status={:?}, timed_out={}, stdout={}, stderr={}",
+        output.status, output.timed_out, output.stdout, output.stderr
+    );
+    if output.timed_out
+        || !output.status.is_some_and(|status| status.success())
+        || !output.stdout.lines().any(|line| line == "running 1 test")
+        || !output
+            .stdout
+            .lines()
+            .any(|line| line.starts_with("test result: ok. 1 passed; 0 failed; 0 ignored;"))
+        || !output.stdout.contains(&format!("test {TEST} ... "))
+        || !output.stderr.lines().any(|line| line == COMPLETED)
+    {
+        return Err(diagnostic);
+    }
+    eprintln!("{diagnostic}");
+    Ok(())
+}
+
+fn policy_checker_facade_checks_in_repo_cwd() -> Result<(), String> {
     with_repo_cwd(|| {
         check_static_language()?;
         check_no_panic_family()?;
@@ -50139,9 +50179,81 @@ fn editor_lsp_workflow_fixture_pins_saved_workspace_loop() -> Result<(), String>
 }
 
 #[test]
+fn preview_editor_workflow_fixtures_do_not_wait_for_cwd() -> Result<(), String> {
+    const CHILD_ENV: &str = "RIPR_XTASK_PREVIEW_CWD_CHILD";
+    const COMPLETED: &str = "preview CWD child assertions completed";
+    match std::env::var_os(CHILD_ENV) {
+        Some(value) if value == "1" => {
+            preview_fixture_assertions_with_cwd_writer()?;
+            eprintln!("{COMPLETED}");
+            return Ok(());
+        }
+        Some(value) => return Err(format!("invalid preview CWD child marker: {value:?}")),
+        None => {}
+    }
+    // Only the isolated child acquires the CWD writer: aggregate peers may
+    // already hold it across their own Cargo work before our timers can start.
+    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    let output = crate::run::capture_output_measured(
+        &exe.to_string_lossy(),
+        &[
+            "tests::preview_editor_workflow_fixtures_do_not_wait_for_cwd".to_string(),
+            "--exact".to_string(),
+            "--nocapture".to_string(),
+        ],
+        Some(&repo_root()?),
+        &[(CHILD_ENV, "1")],
+        Duration::from_secs(20),
+        "isolated preview CWD regression",
+    )?
+    .output;
+    let diagnostic = format!(
+        "preview CWD child status={:?}, timed_out={}, stdout={}, stderr={}",
+        output.status, output.timed_out, output.stdout, output.stderr
+    );
+    if output.timed_out
+        || !output.status.is_some_and(|status| status.success())
+        || !output.stdout.contains("running 1 test")
+        || !output.stdout.contains("1 passed; 0 failed; 0 ignored;")
+        || !output.stderr.lines().any(|line| line == COMPLETED)
+    {
+        return Err(diagnostic);
+    }
+    eprintln!("{diagnostic}");
+    Ok(())
+}
+
+fn preview_fixture_assertions_with_cwd_writer() -> Result<(), String> {
+    let (started, completed, worker) = with_temp_cwd("preview-independent-cwd", |_root| {
+        let (start_tx, start_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let _ = start_tx.send(());
+            let _ = done_tx.send(preview_editor_workflow_fixtures_pin_preview_boundaries());
+        });
+        let started = start_rx.recv_timeout(Duration::from_secs(2));
+        let completed = done_rx.recv_timeout(Duration::from_secs(2));
+        (started, completed, worker)
+    });
+    // Restore the cwd and release its writer before joining, including timeout
+    // and panic paths: the old guarded implementation must fail without hanging.
+    worker.join().map_err(|panic_payload| {
+        let message = panic_payload
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| panic_payload.downcast_ref::<String>().map(String::as_str))
+            .unwrap_or("non-string panic payload");
+        format!("preview fixture assertion thread panicked: {message}")
+    })?;
+    started.map_err(|error| format!("preview fixture assertion thread did not start: {error}"))?;
+    completed.map_err(|error| {
+        format!("preview fixture assertions waited for the process-wide CWD guard: {error}")
+    })?
+}
+
+#[test]
 fn preview_editor_workflow_fixtures_pin_preview_boundaries() -> Result<(), String> {
-    let report = with_repo_cwd(build_lsp_cockpit_report)?;
-    let python = lsp_fixture(&report, "python_missing_import_graph_limit")?;
+    let python = preview_lsp_fixture("python_missing_import_graph_limit")?;
     assert_eq!(python.diagnostic_count, 1);
     assert_eq!(python.finding_diagnostic_count, 1);
     assert_eq!(python.seam_diagnostic_count, 0);
@@ -50158,7 +50270,7 @@ fn preview_editor_workflow_fixtures_pin_preview_boundaries() -> Result<(), Strin
         "missing_import_graph",
     )?;
 
-    let typescript = lsp_fixture(&report, "typescript_mocked_module_limit")?;
+    let typescript = preview_lsp_fixture("typescript_mocked_module_limit")?;
     assert_eq!(typescript.diagnostic_count, 1);
     assert_eq!(typescript.finding_diagnostic_count, 1);
     assert_eq!(typescript.seam_diagnostic_count, 0);
@@ -50175,7 +50287,7 @@ fn preview_editor_workflow_fixtures_pin_preview_boundaries() -> Result<(), Strin
         "mocked_module",
     )?;
 
-    let disabled = lsp_fixture(&report, "python_disabled")?;
+    let disabled = preview_lsp_fixture("python_disabled")?;
     assert_eq!(disabled.diagnostic_count, 0);
     assert_eq!(disabled.finding_diagnostic_count, 0);
     assert_eq!(disabled.seam_diagnostic_count, 0);
@@ -50208,15 +50320,14 @@ fn lsp_cockpit_report_json_and_markdown_are_structured() -> Result<(), String> {
     Ok(())
 }
 
-fn lsp_fixture<'a>(
-    report: &'a LspCockpitReport,
-    name: &str,
-) -> Result<&'a LspCockpitFixture, String> {
-    report
-        .fixtures
-        .iter()
-        .find(|fixture| fixture.fixture == name)
-        .ok_or_else(|| format!("expected `{name}` LSP cockpit fixture"))
+fn preview_lsp_fixture(name: &str) -> Result<LspCockpitFixture, String> {
+    let fixture = repo_root()?.join("fixtures").join(name);
+    crate::lsp_cockpit_fixture_report(name, &fixture)?.ok_or_else(|| {
+        format!(
+            "expected LSP cockpit fixture `{name}` at {}",
+            fixture.display()
+        )
+    })
 }
 
 fn assert_preview_lsp_fixture(
@@ -54732,6 +54843,130 @@ fn pr_change_inventory_bytes_accept_empty() -> Result<(), String> {
     Ok(())
 }
 
+/// Use the real gh JSON shape: latestReviews does not contain commit identity.
+fn gh_pr_status_subject_fixture(commit: &str) -> Value {
+    serde_json::json!({
+        "number": 42, "title": "exact review subject fixture", "isDraft": false,
+        "mergeStateStatus": "CLEAN", "headRefName": "candidate", "baseRefName": "main",
+        "headRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "reviewDecision": "APPROVED",
+        "latestReviews": [{"author": {"login": "reviewer"}, "state": "APPROVED", "submittedAt": "2026-10-14T01:00:00Z"}],
+        "reviews": [{"author": {"login": "reviewer"}, "state": "APPROVED", "submittedAt": "2026-10-14T01:00:00Z", "commit": {"oid": commit}}],
+        "statusCheckRollup": [{"__typename": "CheckRun", "name": "rust", "status": "COMPLETED", "conclusion": "SUCCESS"}]
+    })
+}
+
+#[test]
+fn gh_pr_status_stale_review_head_must_wait() -> Result<(), String> {
+    let fixture = gh_pr_status_subject_fixture("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    let pr = parse_gh_pr_status_pull_request(&fixture.to_string())?;
+    assert_eq!(
+        pr.reviews.len(),
+        1,
+        "fixture must retain its review subject"
+    );
+    assert_eq!(
+        pr.checks.len(),
+        1,
+        "fixture must contain its successful check"
+    );
+    assert_eq!(pr.head_ref_oid, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    assert_eq!(
+        pr.reviews[0].commit_oid,
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+    let readiness = gh_pr_status_readiness(&pr, &["rust".to_string()], true, Vec::new());
+    assert_eq!(
+        readiness.safe_next_action, "wait",
+        "approval of aaaa must not qualify head bbbb"
+    );
+    let report: Value = serde_json::from_str(&gh_pr_status_json(&pr, &[], &readiness))
+        .map_err(|e| e.to_string())?;
+    assert_eq!(
+        report["head_commit"],
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    );
+    assert_eq!(
+        report["reviews"][0]["commit"],
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+    assert_eq!(report["reviews"][0]["currentness"], "stale_for_head");
+    assert_eq!(report["safe_next_action"], "wait");
+    let markdown = gh_pr_status_markdown(&pr, &[], &readiness);
+    assert!(markdown.contains("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"));
+    assert!(markdown.contains("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+    assert!(markdown.contains("stale_for_head"));
+    assert!(!readiness.warnings.is_empty());
+    Ok(())
+}
+
+#[test]
+fn gh_pr_status_current_review_subject_control() -> Result<(), String> {
+    let fixture = gh_pr_status_subject_fixture("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    let pr = parse_gh_pr_status_pull_request(&fixture.to_string())?;
+    assert_eq!(
+        crate::gh_pr_review_currentness(&pr, &pr.reviews[0]),
+        "current_head"
+    );
+    let readiness = gh_pr_status_readiness(&pr, &["rust".to_string()], true, Vec::new());
+    assert_eq!(readiness.safe_next_action, "merge");
+    assert!(readiness.warnings.is_empty());
+    Ok(())
+}
+
+#[test]
+fn gh_pr_status_review_subject_refusals() -> Result<(), String> {
+    for case in [
+        "missing head",
+        "short head",
+        "missing subject",
+        "short subject",
+        "nonhex subject",
+        "missing author",
+        "missing time",
+        "wrong author",
+        "wrong time",
+        "wrong state",
+        "ambiguous subject",
+        "missing latest",
+    ] {
+        let mut fixture = gh_pr_status_subject_fixture("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        match case {
+            "missing head" => fixture["headRefOid"] = Value::Null,
+            "short head" => fixture["headRefOid"] = Value::String("bbbb".to_string()),
+            "missing subject" => fixture["reviews"] = Value::Null,
+            "short subject" => {
+                fixture["reviews"][0]["commit"]["oid"] = Value::String("bbbb".to_string())
+            }
+            "nonhex subject" => {
+                fixture["reviews"][0]["commit"]["oid"] = Value::String("z".repeat(40))
+            }
+            "missing author" => fixture["latestReviews"][0]["author"] = Value::Null,
+            "missing time" => fixture["latestReviews"][0]["submittedAt"] = Value::Null,
+            "wrong author" => {
+                fixture["reviews"][0]["author"]["login"] = Value::String("other".to_string())
+            }
+            "wrong time" => {
+                fixture["reviews"][0]["submittedAt"] =
+                    Value::String("2026-10-13T01:00:00Z".to_string())
+            }
+            "wrong state" => {
+                fixture["reviews"][0]["state"] = Value::String("COMMENTED".to_string())
+            }
+            "ambiguous subject" => {
+                let second = fixture["reviews"][0].clone();
+                fixture["reviews"] = serde_json::json!([second.clone(), second]);
+            }
+            _ => fixture["latestReviews"] = Value::Null,
+        }
+        let pr = parse_gh_pr_status_pull_request(&fixture.to_string())?;
+        let readiness = gh_pr_status_readiness(&pr, &["rust".to_string()], true, Vec::new());
+        assert_eq!(readiness.safe_next_action, "wait", "{case}");
+        assert!(!readiness.warnings.is_empty(), "{case}");
+    }
+    Ok(())
+}
+
 #[test]
 fn ci_policy_dispatch_and_catalog_expand_the_existing_policy_owner() -> Result<(), String> {
     assert_eq!(
@@ -54763,6 +54998,27 @@ fn ci_policy_dispatch_and_catalog_expand_the_existing_policy_owner() -> Result<(
         super::expand_precommit_ci_invocations(&mut enforced);
         assert!(enforced.is_empty(), "advisory expansion: {enforced:?}");
     }
+    Ok(())
+}
+
+#[test]
+fn gh_pr_status_review_join_preserves_latest_author_subject() -> Result<(), String> {
+    let mut fixture = gh_pr_status_subject_fixture("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    let mut old_current_approval = fixture["reviews"][0].clone();
+    old_current_approval["submittedAt"] = Value::String("2026-10-13T01:00:00Z".to_string());
+    old_current_approval["commit"]["oid"] =
+        Value::String("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string());
+    fixture["reviews"] = serde_json::json!([old_current_approval, fixture["reviews"][0].clone()]);
+    let pr = parse_gh_pr_status_pull_request(&fixture.to_string())?;
+    assert_eq!(
+        pr.reviews[0].commit_oid,
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+    let readiness = gh_pr_status_readiness(&pr, &["rust".to_string()], true, Vec::new());
+    assert_eq!(
+        readiness.safe_next_action, "wait",
+        "an older matching approval must not replace the latest subject"
+    );
     Ok(())
 }
 

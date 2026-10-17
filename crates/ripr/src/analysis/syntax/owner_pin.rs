@@ -7,6 +7,8 @@
 //! calls eagerly (#6482); see [`local_helper_assertions`].
 
 mod fallible_check;
+#[cfg(test)]
+mod json_authority_tests;
 mod literal_json;
 use literal_json::{
     json_namespace_rebound, literal_json_import_visible_among, literal_json_tokens,
@@ -890,6 +892,63 @@ fn macro_binding_ambiguities(
                     }
                 }
             }
+        }
+    }
+    // A trusted name with a binding site is no longer a known macro, so its
+    // arguments are only tokens too (#5941): `vec!(assert_eq!(mod tests;))`
+    // beside `macro_rules! vec` can emit `macro_rules! assert_eq` and the
+    // module whose tests then use it. The first pass skips trusted calls, so
+    // run to a fixpoint: a name bound through one call's arguments makes its
+    // own calls opaque in turn.
+    let mut bound: BTreeSet<String> = ambiguous.iter().map(|(name, _)| name.clone()).collect();
+    let mut reported = BTreeSet::new();
+    loop {
+        let before = bound.len();
+        for node in parse.tree().syntax().descendants() {
+            let Some(call) = ast::MacroCall::cast(node.clone()) else {
+                continue;
+            };
+            let Some(path) = call.path() else { continue };
+            let path = path.syntax().text().to_string();
+            if !bound.contains(path.trim_start_matches("r#")) || !is_trusted_macro(&path, trusted) {
+                continue;
+            }
+            let Some(tree) = call.token_tree() else {
+                continue;
+            };
+            let tokens: Vec<_> = tree
+                .syntax()
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .filter(|token| !token.kind().is_trivia())
+                .collect();
+            // As for an untrusted wrapper: a macro whose only definition
+            // shows an expansion that cannot bind a name stays transparent.
+            if binding_free_local_wrapper(&binding_free, &call, &tokens, trusted) {
+                continue;
+            }
+            for token in &tokens {
+                let name = token.text().trim_start_matches("r#");
+                if trusted.contains(&name) {
+                    bound.insert(name.to_string());
+                    let line = line_of(&node);
+                    if !reported.insert((name.to_string(), line, path.clone())) {
+                        continue;
+                    }
+                    ambiguous.push((
+                        name.to_string(),
+                        MacroBindingSite {
+                            line,
+                            kind: MacroBindingKind::MacroArgument(path.clone()),
+                            scope: None,
+                            crate_local: false,
+                        },
+                    ));
+                }
+            }
+        }
+        if bound.len() == before {
+            break;
         }
     }
     ambiguous
@@ -3271,7 +3330,7 @@ fn has_escape(
             // Macro operands are opaque to AST descendant walks. Refuse
             // hidden exits and nested expansion, but not boolean negation.
             if call.token_tree().is_some_and(|tree| {
-                opaque_macro_operand_with_json(&tree, trusted.contains(&"json") && json_visible)
+                opaque_macro_operand_with_json(&tree, || trusted.contains(&"json") && json_visible)
             }) {
                 return Some(AssertionContextRefusal::MacroOperandExit(path));
             }
@@ -3298,10 +3357,16 @@ fn has_escape(
 }
 
 fn opaque_macro_operand(tree: &ast::TokenTree) -> bool {
-    opaque_macro_operand_with_json(tree, false)
+    opaque_macro_operand_with_json(tree, || false)
 }
 
-fn opaque_macro_operand_with_json(tree: &ast::TokenTree, literal_json: bool) -> bool {
+fn opaque_macro_operand_with_json(
+    tree: &ast::TokenTree,
+    mut literal_json: impl FnMut() -> bool,
+) -> bool {
+    // Import visibility walks the enclosing file. Only a plain nested json!
+    // needs that authority, shared by this invocation's operands only.
+    let mut json_authority = None;
     let tokens = operand_tokens(tree);
     tokens.iter().any(|token| {
         matches!(
@@ -3309,7 +3374,9 @@ fn opaque_macro_operand_with_json(tree: &ast::TokenTree, literal_json: bool) -> 
             "return" | "break" | "continue" | "yield" | "?"
         )
     }) || nested_invocations(&tokens).any(|(name, plain)| {
-        !(plain && (NESTED_EXPANSIONS.contains(&name) || name == "json" && literal_json))
+        !(plain
+            && (NESTED_EXPANSIONS.contains(&name)
+                || name == "json" && *json_authority.get_or_insert_with(&mut literal_json)))
     }) || tokens.windows(3).enumerate().any(|(at, window)| {
         window[0].text() == "json"
             && window[1].text() == "!"

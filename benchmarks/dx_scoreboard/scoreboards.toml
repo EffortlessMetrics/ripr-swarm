@@ -627,8 +627,20 @@ source = "ingest:first-run"
 [[metric]]
 id = "first_run.over_budget_steps"
 board = "first_run"
-title = "First-run steps over their own time, output-length or workflow-size budget"
+title = "First-run steps over their own time or output-length budget"
 unit = "steps"
+direction = "lower_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "ingest:first-run"
+
+[[metric]]
+id = "first_run.over_budget_workflows"
+board = "first_run"
+title = "Generated CI workflows over their line budget"
+unit = "workflows"
 direction = "lower_is_better"
 target = 0
 regression_pct = 0

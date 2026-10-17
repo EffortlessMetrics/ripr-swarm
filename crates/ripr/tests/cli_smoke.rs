@@ -65,6 +65,14 @@ mod next_action;
 #[path = "cli_smoke/output_leaf_identity.rs"]
 mod output_leaf_identity;
 #[cfg(all(
+    unix,
+    feature = "lang-rust",
+    feature = "lang-python",
+    feature = "lang-typescript"
+))]
+#[path = "cli_smoke/parse_failure_path_outcome.rs"]
+mod parse_failure_path_outcome;
+#[cfg(all(
     feature = "lang-rust",
     any(feature = "lang-python", feature = "lang-typescript")
 ))]
@@ -2293,8 +2301,8 @@ fn selector_location_misses_explain_syntax_and_preserve_retry_scope()
     let diff_arg = diff.display().to_string();
     let expected_listing = format!(
         "ripr check --root {} --diff {} --json",
-        renderer_shell_arg(&root_arg),
-        renderer_shell_arg(&diff_arg)
+        renderer_shell_arg(&rendered_path(&root_arg)),
+        renderer_shell_arg(&rendered_path(&diff_arg))
     );
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
         let listed = run_command(
@@ -2890,25 +2898,29 @@ fn write_suppression_policy(label: &str, text: &str) -> Result<PathBuf, String> 
 }
 
 #[test]
-fn check_json_suppression_policy_marks_findings_and_adjusts_summary() -> Result<(), String> {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
+fn check_json_suppression_policy_marks_findings_and_adjusts_summary() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
     let policy = write_suppression_policy(
         "suppression-json",
         "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"crates/ripr/examples/sample/**\"\nreason = \"sample surface accepted for this smoke test\"\nowner = \"repo-owner\"\n",
     )?;
     let policy_arg = policy.display().to_string();
 
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--json",
-        "--suppression-policy",
-        &policy_arg,
-    ]);
+    let output = fixture.execute(
+        &[
+            "check",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "--json",
+            "--suppression-policy",
+            &policy_arg,
+        ],
+        &[],
+    )?;
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -2948,24 +2960,29 @@ fn check_json_suppression_policy_marks_findings_and_adjusts_summary() -> Result<
 }
 
 #[test]
-fn check_human_suppression_policy_lists_suppressed_findings_compactly() -> Result<(), String> {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
+fn check_human_suppression_policy_lists_suppressed_findings_compactly() -> sample_output::TestResult
+{
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
     let policy = write_suppression_policy(
         "suppression-human",
         "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"crates/ripr/examples/sample/**\"\nreason = \"sample surface accepted for this smoke test\"\nowner = \"repo-owner\"\n",
     )?;
     let policy_arg = policy.display().to_string();
 
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--suppression-policy",
-        &policy_arg,
-    ]);
+    let output = fixture.execute(
+        &[
+            "check",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "--suppression-policy",
+            &policy_arg,
+        ],
+        &[],
+    )?;
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -2988,20 +3005,24 @@ fn check_github_over_broad_suppression_policy_emits_denominator_notice() -> samp
 }
 
 #[test]
-fn check_suppression_policy_missing_file_fails_closed() {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
+fn check_suppression_policy_missing_file_fails_closed() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
 
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--json",
-        "--suppression-policy",
-        "does/not/exist.toml",
-    ]);
+    let output = fixture.execute(
+        &[
+            "check",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "--json",
+            "--suppression-policy",
+            "does/not/exist.toml",
+        ],
+        &[],
+    )?;
     assert_failure(&output);
 
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -3009,6 +3030,7 @@ fn check_suppression_policy_missing_file_fails_closed() {
         stderr.contains("failed to read suppression policy"),
         "stderr: {stderr}"
     );
+    Ok(())
 }
 
 #[test]
@@ -4560,13 +4582,14 @@ fn check_json_success_carries_no_refusal_shape() -> sample_output::TestResult {
 /// #5448: an invalid `RIPR_DIFF_DEPENDENT_SCOPE` names itself even when the
 /// diff has no dependent packages to narrow.
 #[test]
-fn check_rejects_an_invalid_dependent_scope_without_dependents() {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr_with_env(
+fn check_rejects_an_invalid_dependent_scope_without_dependents() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
+    let output = fixture.execute(
         &["check", "--root", &root, "--diff", &diff, "--json"],
         &[("RIPR_DIFF_DEPENDENT_SCOPE", "everything")],
-    );
+    )?;
     assert_failure(&output);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -4575,6 +4598,7 @@ fn check_rejects_an_invalid_dependent_scope_without_dependents() {
         ),
         "stderr should name the invalid override: {stderr}"
     );
+    Ok(())
 }
 
 #[test]
@@ -5348,13 +5372,27 @@ fn first_pr_check_recovery_write_resolves_the_default_base() -> Result<(), Strin
 fn first_pr_check_exits_2_for_a_blocked_packet_but_write_mode_exits_0() -> Result<(), String> {
     let root = unique_temp_workspace("first-pr-blocked-exit");
     std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+    // The temp root can sit inside the checkout (a redirected TMPDIR). Stop git
+    // discovery at its parent so the root is never resolved against the
+    // checkout's shallow history, which has no default base on a PR runner.
+    let ceiling = root
+        .parent()
+        .ok_or("temp root has no parent")?
+        .to_path_buf();
+    let ceiling = ceiling.to_string_lossy().into_owned();
     let run = |extra: &[&str]| -> Result<Output, String> {
         // Select the base explicitly so this gate test works beneath a
         // detached CI checkout with no default-base refs. The tests above
         // cover default-base discovery with isolated Git repositories.
         let mut args = vec!["first-pr", "--root", ".", "--base", "HEAD"];
         args.extend_from_slice(extra);
-        run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &args).map_err(|err| err.to_string())
+        run_command_with_env(
+            env!("CARGO_BIN_EXE_ripr"),
+            &root,
+            &args,
+            &[("GIT_CEILING_DIRECTORIES", ceiling.as_str())],
+        )
+        .map_err(|err| err.to_string())
     };
 
     let write = run(&[])?;
@@ -13923,8 +13961,8 @@ fn doctor_missing_root_recommends_recovery_and_outside_git_recommends_runnable_c
     // resolve. `first_command_at` reproduces the same quoting.
     let physical = root.strip_prefix(r"\\?\").unwrap_or(&root).to_string();
     let result = if !stdout.contains(&format!(
-        "- Recommended first command: fix the Git check above, or scan without Git history: `{}`",
-        first_command_at(&physical, " --format repo-exposure-md")
+        "- Recommended first command: fix the Git check above, or explore the repository without Git history: `{}`",
+        first_pilot_command_at(&physical)
     )) || stdout.contains("- Recommended first command: ripr check\n")
         || stderr.contains("working-tree change probe failed")
     {
@@ -14168,22 +14206,29 @@ fn recommended_first_command_line(stdout: &str) -> Option<&str> {
 /// directory: `ripr check` defaults to `.`, so the root is named, quoted the
 /// way `agent::loop_commands::shell_arg` quotes it. `root` is absolute; on
 /// Windows command paths render with `/` separators.
-fn first_command_at(root: &str, flags: &str) -> String {
+fn quoted_first_root(root: &str) -> String {
     let root = if cfg!(windows) {
         root.replace('\\', "/")
     } else {
         root.to_string()
     };
-    let quoted = if !root.is_empty()
+    if !root.is_empty()
         && root
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '/' | '_' | '-' | ':'))
     {
-        root.to_string()
+        root
     } else {
         format!("'{}'", root.replace('\'', r"'\''"))
-    };
-    format!("ripr check --root {quoted}{flags}")
+    }
+}
+
+fn first_command_at(root: &str, flags: &str) -> String {
+    format!("ripr check --root {}{flags}", quoted_first_root(root))
+}
+
+fn first_pilot_command_at(root: &str) -> String {
+    format!("ripr pilot --root {}", quoted_first_root(root))
 }
 
 #[test]
@@ -20384,17 +20429,21 @@ fn check_badge_command_exits_zero_even_with_nonzero_count() -> sample_output::Te
 }
 
 #[test]
-fn explain_returns_targeted_probe_details() {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr(&[
-        "explain",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250",
-    ]);
+fn explain_returns_targeted_probe_details() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
+    let output = fixture.execute(
+        &[
+            "explain",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250",
+        ],
+        &[],
+    )?;
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -20402,22 +20451,27 @@ fn explain_returns_targeted_probe_details() {
     assert!(stdout.contains("delta:  value"));
     assert!(stdout.contains("Static exposure\n  weakly_exposed"));
     assert!(stdout.contains("No exact error variant discriminator was detected"));
+    Ok(())
 }
 
 #[test]
-fn context_json_returns_probe_and_discriminator_guidance() {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr(&[
-        "context",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--at",
-        "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250",
-        "--json",
-    ]);
+fn context_json_returns_probe_and_discriminator_guidance() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
+    let output = fixture.execute(
+        &[
+            "context",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "--at",
+            "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250",
+            "--json",
+        ],
+        &[],
+    )?;
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -20428,24 +20482,30 @@ fn context_json_returns_probe_and_discriminator_guidance() {
     );
     assert!(stdout.contains(r#""discriminate": "weak""#));
     assert!(stdout.contains(r#""missing""#));
+    Ok(())
 }
 
 #[test]
-fn explain_unknown_probe_fails_with_clear_error() {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr(&[
-        "explain",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "probe:missing:0:not_real",
-    ]);
+fn explain_unknown_probe_fails_with_clear_error() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
+    let output = fixture.execute(
+        &[
+            "explain",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "probe:missing:0:not_real",
+        ],
+        &[],
+    )?;
     assert!(!output.status.success());
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("no finding matched"));
+    Ok(())
 }
 
 // -------- check-artifact reuse smoke (RIPR-SPEC-0140, #2107) --------
@@ -20605,40 +20665,48 @@ fn context_reuse_matches_fresh(fresh: &[u8], reused: &[u8]) -> Result<(), String
 /// Every identity mismatch class fails closed with a typed error naming the
 /// mismatched field — never a silent recompute.
 #[test]
-fn explain_from_fails_closed_on_tampered_identity() -> Result<(), String> {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
+fn explain_from_fails_closed_on_tampered_identity() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
     let dir = unique_temp_workspace("check-artifact-tamper");
     std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
     let artifact = dir.join("last-check.json");
     let artifact_arg = artifact.display().to_string();
     let selector = "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250";
 
-    let result = (|| {
-        let check = run_ripr(&[
-            "check",
-            "--root",
-            &root,
-            "--diff",
-            &diff,
-            "--write-artifact",
-            &artifact_arg,
-        ]);
+    let result: sample_output::TestResult = (|| {
+        let check = fixture.execute(
+            &[
+                "check",
+                "--root",
+                &root,
+                "--diff",
+                &diff,
+                "--write-artifact",
+                &artifact_arg,
+            ],
+            &[],
+        )?;
         assert_success(&check);
         let original = std::fs::read_to_string(&artifact)
             .map_err(|err| format!("artifact was not written: {err}"))?;
 
         // Mode mismatch (tampered recording).
         let tampered = original.replace("\"mode\": \"draft\"", "\"mode\": \"ready\"");
+        assert_ne!(tampered, original, "mode mutation must change the artifact");
         std::fs::write(&artifact, &tampered).map_err(|err| format!("write: {err}"))?;
-        let output = run_ripr(&[
-            "explain",
-            "--root",
-            &root,
-            "--from",
-            &artifact_arg,
-            selector,
-        ]);
+        let output = fixture.execute(
+            &[
+                "explain",
+                "--root",
+                &root,
+                "--from",
+                &artifact_arg,
+                selector,
+            ],
+            &[],
+        )?;
         assert_failure(&output);
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
@@ -20650,15 +20718,19 @@ fn explain_from_fails_closed_on_tampered_identity() -> Result<(), String> {
 
         // Unsupported schema version.
         let stale = original.replace("ripr-check-artifact-v1", "ripr-check-artifact-v0");
+        assert_ne!(stale, original, "schema mutation must change the artifact");
         std::fs::write(&artifact, &stale).map_err(|err| format!("write: {err}"))?;
-        let output = run_ripr(&[
-            "explain",
-            "--root",
-            &root,
-            "--from",
-            &artifact_arg,
-            selector,
-        ]);
+        let output = fixture.execute(
+            &[
+                "explain",
+                "--root",
+                &root,
+                "--from",
+                &artifact_arg,
+                selector,
+            ],
+            &[],
+        )?;
         assert_failure(&output);
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
@@ -20670,18 +20742,21 @@ fn explain_from_fails_closed_on_tampered_identity() -> Result<(), String> {
         // override: a different --diff than the recording fails closed.
         std::fs::write(&artifact, &original).map_err(|err| format!("write: {err}"))?;
         let other_diff = dir.join("other.diff");
-        std::fs::copy(sample_diff(), &other_diff).map_err(|err| format!("copy: {err}"))?;
+        std::fs::copy(fixture.diff(), &other_diff).map_err(|err| format!("copy: {err}"))?;
         let other_diff_arg = other_diff.display().to_string();
-        let output = run_ripr(&[
-            "explain",
-            "--root",
-            &root,
-            "--from",
-            &artifact_arg,
-            "--diff",
-            &other_diff_arg,
-            selector,
-        ]);
+        let output = fixture.execute(
+            &[
+                "explain",
+                "--root",
+                &root,
+                "--from",
+                &artifact_arg,
+                "--diff",
+                &other_diff_arg,
+                selector,
+            ],
+            &[],
+        )?;
         assert_failure(&output);
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
@@ -20691,7 +20766,8 @@ fn explain_from_fails_closed_on_tampered_identity() -> Result<(), String> {
         Ok(())
     })();
     ignore_remove_dir_all(&dir);
-    result
+    result?;
+    Ok(())
 }
 
 /// `--write-artifact` fails closed with a named limitation for run shapes
@@ -20952,60 +21028,73 @@ fn explain_from_consumes_artifact_written_with_non_default_mode() -> Result<(), 
 /// same flag (byte-identical) and fails closed naming
 /// `analysis_options.include_unchanged_tests` without it.
 #[test]
-fn context_from_consumes_artifact_written_with_no_unchanged_tests() -> Result<(), String> {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
+fn context_from_consumes_artifact_written_with_no_unchanged_tests() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
     let dir = unique_temp_workspace("check-artifact-unchanged");
     std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
     let artifact = dir.join("no-unchanged.json");
     let artifact_arg = artifact.display().to_string();
     let selector = "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250";
 
-    let check = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--no-unchanged-tests",
-        "--write-artifact",
-        &artifact_arg,
-    ]);
+    let check = fixture.execute(
+        &[
+            "check",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "--no-unchanged-tests",
+            "--write-artifact",
+            &artifact_arg,
+        ],
+        &[],
+    )?;
     assert_success(&check);
 
-    let fresh = run_ripr(&[
-        "context",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--no-unchanged-tests",
-        "--at",
-        selector,
-    ]);
+    let fresh = fixture.execute(
+        &[
+            "context",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "--no-unchanged-tests",
+            "--at",
+            selector,
+        ],
+        &[],
+    )?;
     assert_success(&fresh);
-    let reused = run_ripr(&[
-        "context",
-        "--root",
-        &root,
-        "--from",
-        &artifact_arg,
-        "--no-unchanged-tests",
-        "--at",
-        selector,
-    ]);
+    let reused = fixture.execute(
+        &[
+            "context",
+            "--root",
+            &root,
+            "--from",
+            &artifact_arg,
+            "--no-unchanged-tests",
+            "--at",
+            selector,
+        ],
+        &[],
+    )?;
     assert_success(&reused);
     context_reuse_matches_fresh(&fresh.stdout, &reused.stdout)?;
 
-    let without_flag = run_ripr(&[
-        "context",
-        "--root",
-        &root,
-        "--from",
-        &artifact_arg,
-        "--at",
-        selector,
-    ]);
+    let without_flag = fixture.execute(
+        &[
+            "context",
+            "--root",
+            &root,
+            "--from",
+            &artifact_arg,
+            "--at",
+            selector,
+        ],
+        &[],
+    )?;
     assert_failure(&without_flag);
     let stderr = String::from_utf8_lossy(&without_flag.stderr);
     assert!(
@@ -23662,12 +23751,17 @@ fn check_dirty_tree_with_deleted_head_tip_names_damage() -> Result<(), String> {
 }
 
 /// The argv of a printed `ripr ...` command, without the program name.
-/// Printed commands quote with POSIX single quotes (`shell_arg`).
+/// Printed commands quote with POSIX single quotes (`shell_arg`), or on
+/// Windows with console double quotes.
 fn printed_ripr_args(command: &str) -> Result<Vec<String>, String> {
+    printed_ripr_args_for(command, cfg!(windows))
+}
+
+fn printed_ripr_args_for(command: &str, windows: bool) -> Result<Vec<String>, String> {
     let mut tokens = Vec::new();
     let mut token = String::new();
     let mut in_token = false;
-    let mut chars = command.chars();
+    let mut chars = command.chars().peekable();
     while let Some(ch) = chars.next() {
         match ch {
             '\'' => {
@@ -23675,6 +23769,20 @@ fn printed_ripr_args(command: &str) -> Result<Vec<String>, String> {
                 loop {
                     match chars.next() {
                         Some('\'') => break,
+                        Some(inner) => token.push(inner),
+                        None => return Err(format!("unterminated quote in `{command}`")),
+                    }
+                }
+            }
+            '"' if windows => {
+                in_token = true;
+                loop {
+                    match chars.next() {
+                        Some('"') if chars.peek() == Some(&'"') => {
+                            chars.next();
+                            token.push('"');
+                        }
+                        Some('"') => break,
                         Some(inner) => token.push(inner),
                         None => return Err(format!("unterminated quote in `{command}`")),
                     }
@@ -23703,17 +23811,54 @@ fn printed_ripr_args(command: &str) -> Result<Vec<String>, String> {
     }
 }
 
-/// `listing` with its root token spelled as `ripr` prints it (quoted only
-/// when the path needs it).
+/// `listing` with its root token spelled as `ripr` prints it on the running
+/// host (separators, then quoted only when the path needs it).
 fn printed_ripr_command_text(listing: &str, root: &str) -> String {
-    let needs_quotes = root
-        .chars()
-        .any(|ch| !(ch.is_ascii_alphanumeric() || "/._-:@%+=,".contains(ch)));
-    if needs_quotes {
-        listing.replacen(root, &format!("'{root}'"), 1)
-    } else {
-        listing.to_string()
-    }
+    printed_ripr_command_text_for(listing, root, cfg!(windows))
+}
+
+fn printed_ripr_command_text_for(listing: &str, root: &str, windows: bool) -> String {
+    let rendered = rendered_path_for(root, windows);
+    listing.replacen(root, &renderer_shell_arg_for(&rendered, windows), 1)
+}
+
+#[test]
+fn printed_command_helpers_round_trip_both_host_spellings() -> Result<(), String> {
+    let windows_root = format!("{}:\\temp\\RUNNER~1\\ripr-drill", 'C');
+    let bound = format!("{}:/temp/RUNNER~1/ripr-drill", 'C');
+    let listing = format!("ripr check --root {windows_root} --base HEAD --json");
+    let printed = printed_ripr_command_text_for(&listing, &windows_root, true);
+    assert_eq!(
+        printed,
+        format!(
+            "ripr check --root \"{}:/temp/RUNNER~1/ripr-drill\" --base HEAD --json",
+            'C'
+        )
+    );
+    assert_eq!(
+        printed_ripr_args_for(&printed, true)?,
+        [
+            "check",
+            "--root",
+            bound.as_str(),
+            "--base",
+            "HEAD",
+            "--json"
+        ]
+    );
+    let unix =
+        printed_ripr_command_text_for("ripr check --root /tmp/a b --json", "/tmp/a b", false);
+    assert_eq!(unix, "ripr check --root '/tmp/a b' --json");
+    assert_eq!(
+        printed_ripr_args_for(&unix, false)?,
+        ["check", "--root", "/tmp/a b", "--json"]
+    );
+    // A plain root stays bare on both hosts.
+    assert_eq!(
+        printed_ripr_command_text_for("ripr check --root /tmp/p --json", "/tmp/p", true),
+        "ripr check --root /tmp/p --json"
+    );
+    Ok(())
 }
 
 fn first_finding_id(stdout: &[u8]) -> Result<String, String> {
@@ -25644,9 +25789,16 @@ fn agent_status_follows_a_focused_test_committed_between_the_phases()
 }
 
 /// Quote one argument exactly as the product's generated-command renderer
-/// (`agent::loop_commands::shell_arg`) does: a plain token stays bare, any
-/// other value is POSIX single-quoted.
+/// (`agent::loop_commands::shell_arg`) does on the running host.
 fn renderer_shell_arg(value: &str) -> String {
+    renderer_shell_arg_for(value, cfg!(windows))
+}
+
+/// Host-parameterised core of [`renderer_shell_arg`] (#6947): a plain token
+/// stays bare; any other value is POSIX single-quoted, or on Windows
+/// double-quoted with an interior `"` doubled (`shell_arg_for`'s console form).
+/// Parameterised so both hosts' spellings are testable on any machine.
+fn renderer_shell_arg_for(value: &str, windows: bool) -> String {
     if !value.is_empty()
         && value
             .chars()
@@ -25654,7 +25806,49 @@ fn renderer_shell_arg(value: &str) -> String {
     {
         return value.to_string();
     }
+    if windows && !value.chars().any(|ch| matches!(ch, '$' | '`')) {
+        let trailing = value.chars().rev().take_while(|ch| *ch == '\\').count();
+        return format!(
+            "\"{}{}\"",
+            value.replace('"', "\"\""),
+            "\\".repeat(trailing)
+        );
+    }
     shell_single_quoted(value)
+}
+
+/// A selected path as the product's command renderer spells it: on Windows
+/// `\` is a separator and renders as `/` (`root_path_display`); on Unix the
+/// path renders exactly as the filesystem spells it.
+fn rendered_path_for(path: &str, windows: bool) -> String {
+    if windows {
+        path.replace('\\', "/")
+    } else {
+        path.to_string()
+    }
+}
+
+fn rendered_path(path: &str) -> String {
+    rendered_path_for(path, cfg!(windows))
+}
+
+#[test]
+fn renderer_spellings_follow_the_host_for_windows_temp_roots() {
+    // #6947: a Windows temp root carries `\` separators and an 8.3 `~`, so
+    // the product prints it with `/` separators inside console double quotes
+    // while a Unix root keeps its bytes inside single quotes.
+    let windows_root = format!("{}:\\temp\\RUNNER~1\\ripr-x", 'C');
+    assert_eq!(
+        renderer_shell_arg_for(&rendered_path_for(&windows_root, true), true),
+        format!("\"{}:/temp/RUNNER~1/ripr-x\"", 'C')
+    );
+    assert_eq!(
+        renderer_shell_arg_for(&rendered_path_for("/tmp/ripr x", false), false),
+        "'/tmp/ripr x'"
+    );
+    assert_eq!(renderer_shell_arg_for("/tmp/plain", true), "/tmp/plain");
+    assert_eq!(renderer_shell_arg_for("it's", true), "\"it's\"");
+    assert_eq!(renderer_shell_arg_for("it's", false), r"'it'\''s'");
 }
 
 /// Decode one rendered POSIX shell word (bare, single-quoted, or `'\''`
@@ -25691,7 +25885,7 @@ fn decode_shell_token_inverts_the_renderer_quoting() {
         r"/tmp/back\slash it's",
     ] {
         assert_eq!(
-            decode_shell_token(&renderer_shell_arg(value)).as_deref(),
+            decode_shell_token(&renderer_shell_arg_for(value, false)).as_deref(),
             Some(value),
             "round trip for {value:?}"
         );
@@ -29664,6 +29858,54 @@ fn check_missing_base_advice_does_not_assume_origin_remote()
     assert!(
         !stderr.contains("git fetch origin"),
         "the repair must not assume an `origin` remote: {stderr}"
+    );
+    std::fs::remove_dir_all(&root)?;
+    Ok(())
+}
+
+/// An ancestor revision past the start of history (`HEAD~5`) is not fixed by
+/// adding a remote; the repair says the history is shorter, and an empty
+/// `--base` names itself instead of quoting an empty ref.
+#[test]
+fn check_ancestor_and_empty_base_advice_is_not_about_remotes()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("missing-base-ancestor");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(root.join("src/lib.rs"), "")?;
+    init_git_fixture_repo(&root)?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&["check", "--root", &root_arg, "--base", "HEAD~5"]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("`HEAD~5`")
+            && stderr.contains("history is shorter")
+            && stderr.contains("git log --oneline"),
+        "an ancestor revision must get the short-history repair: {stderr}"
+    );
+    assert!(
+        !stderr.contains("remote"),
+        "a remote cannot supply an ancestor revision: {stderr}"
+    );
+    // A missing anchor is the missing ref itself; only a resolvable anchor
+    // makes the offset the problem.
+    let missing_anchor = run_ripr(&["check", "--root", &root_arg, "--base", "nosuchbranch~1"]);
+    assert_eq!(missing_anchor.status.code(), Some(2), "{missing_anchor:?}");
+    let stderr = String::from_utf8_lossy(&missing_anchor.stderr);
+    assert!(
+        !stderr.contains("history is shorter"),
+        "an unresolved anchor must keep the fetch advice: {stderr}"
+    );
+    let empty = run_ripr(&["check", "--root", &root_arg, "--base", ""]);
+    assert_eq!(empty.status.code(), Some(2), "{empty:?}");
+    let stderr = String::from_utf8_lossy(&empty.stderr);
+    assert!(
+        stderr.contains("the base is empty") && !stderr.contains("remote"),
+        "an empty base must be named as empty: {stderr}"
     );
     std::fs::remove_dir_all(&root)?;
     Ok(())

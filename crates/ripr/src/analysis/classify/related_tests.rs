@@ -18,10 +18,6 @@ use crate::analysis::facts::{FunctionContainer, FunctionImplContext};
 use crate::analysis::seam_cache::PathDependencySection;
 use crate::analysis::workspace::{PathDependencyAdjacency, PathDependencyGraphStatus};
 use crate::domain::{Probe, RelationConfidence, RelationReason};
-use ra_ap_syntax::{
-    AstNode, SyntaxNode,
-    ast::{self, HasArgList, HasName},
-};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -113,6 +109,9 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     /// test paths stay relative to it (#6791). `None` when the caller did not
     /// name one; same-file matching then infers the changed file's path.
     analysis_root: Option<std::path::PathBuf>,
+    /// Tests the diff adds or changes (#8387). Ranking only; see
+    /// [`super::DiffTouchedTests`].
+    diff_touched: super::DiffTouchedTests,
 }
 
 impl RelatedTestCandidateIndex {
@@ -204,6 +203,20 @@ impl RelatedTestCandidateIndex {
     pub(in crate::analysis) fn with_analysis_root(mut self, root: &Path) -> Self {
         self.analysis_root = Some(root.to_path_buf());
         self
+    }
+
+    /// Record which tests the diff adds or changes, so they lead their
+    /// confidence tier (#8387). Never admits a test or raises a confidence.
+    pub(in crate::analysis) fn with_diff_touched(
+        mut self,
+        diff_touched: super::DiffTouchedTests,
+    ) -> Self {
+        self.diff_touched = diff_touched;
+        self
+    }
+
+    pub(in crate::analysis) fn diff_touched(&self) -> &super::DiffTouchedTests {
+        &self.diff_touched
     }
 
     /// Fold in the macro bindings of files a narrowed diff index withheld
@@ -1139,6 +1152,18 @@ fn find_related_tests_with_candidates<'a>(
     // (`bytes_mut_unsplit_empty_self` for bytes' `try_get_int`) stand in
     // front of the `direct_owner_call` test that pins the returned value.
     // Within one confidence tier the order stays name, then file.
+    //
+    // #8387: within one confidence tier a test the diff itself adds or
+    // changes leads: the author wrote it for this change. This reorders
+    // candidates only; it admits nothing and never lifts a tier.
+    let diff_touched = match candidates {
+        RelatedTestCandidates::Indexed(candidate_index) => Some(&candidate_index.diff_touched),
+        #[cfg(test)]
+        RelatedTestCandidates::FullScan => None,
+    };
+    let touched_by_diff = |test: &TestSummary| {
+        diff_touched.is_some_and(|touched| touched.touches(&test.file, test.start_line))
+    };
     related.sort_by(|(a, a_reason), (b, b_reason)| {
         relation_rank(*b_reason)
             .cmp(&relation_rank(*a_reason))
@@ -1147,8 +1172,16 @@ fn find_related_tests_with_candidates<'a>(
     });
     // A test related through two reasons is no longer adjacent to itself
     // once confidence leads the sort; keep its first (strongest) entry.
+    // The touched signal is deliberately applied only after this dedup, so
+    // it can never change which same-named entry survives and is analyzed.
     let mut seen = BTreeSet::new();
     related.retain(|(test, _)| seen.insert((test.name.clone(), test.file.clone())));
+    // Stable: name then file order holds within one (tier, touched) group.
+    related.sort_by(|(a, a_reason), (b, b_reason)| {
+        relation_rank(*b_reason)
+            .cmp(&relation_rank(*a_reason))
+            .then_with(|| touched_by_diff(b).cmp(&touched_by_diff(a)))
+    });
     related
 }
 
@@ -3047,437 +3080,6 @@ fn method_call_resolves_to_impl_in(
     })
 }
 
-/// An indexed name is not the receiver authority for an inherent method:
-/// dependency methods are absent from the workspace's same-name count (#7415).
-pub(in crate::analysis) fn requires_inherent_receiver_identity(owner: &FunctionSummary) -> bool {
-    owner.item.has_self_param && matches!(owner.item.container, FunctionContainer::Inherent { .. })
-}
-
-/// Bounded nominal receiver authority for inherent methods. Read real call
-/// syntax and the nearest visible local declaration,
-/// never a raw captured-line comment or a binding in an expired inner block.
-/// Aliases, receiver value flow and unsupported binding scopes stay unresolved.
-/// This does not establish general type or Cargo-target identity.
-pub(in crate::analysis) fn inherent_receiver_call_resolves(
-    test: &TestSummary,
-    method: &str,
-    impl_type: &str,
-    index: Option<&RustIndex>,
-) -> bool {
-    // The legacy text scan cannot be a deny gate: its last `let` can live in
-    // an expired sibling block, and it cannot read a qualified unit variant.
-    // The AST below establishes the same bounded type heads in live scope.
-    if method.is_empty() || impl_type.is_empty() {
-        return false;
-    }
-    let pin_syntax = super::OwnerPinSyntax::default();
-    let unit_struct = |name: &str| {
-        index.is_some_and(|index| {
-            super::owner_pin::unit_struct_value(name, &test.file, index, &pin_syntax)
-        })
-    };
-    executable_call_resolves(test, index, &pin_syntax, &|node, scope| {
-        inherent_call_node_resolves(node, scope, method, impl_type, &unit_struct)
-    })
-}
-
-/// A helper-name graph supplies candidates, never executable function identity.
-/// Resolve each observed free call in its caller's real source/module scope.
-/// Nested local functions and unsupported paths fail closed.
-pub(in crate::analysis) fn free_helper_call_resolves(
-    caller: &TestSummary,
-    helper: &FunctionSummary,
-    index: &RustIndex,
-) -> bool {
-    if helper.item.container != FunctionContainer::Free {
-        return false;
-    }
-    let syntax = super::OwnerPinSyntax::default();
-    executable_call_resolves(caller, Some(index), &syntax, &|node, _| {
-        let Some(call) = ast::CallExpr::cast(node) else {
-            return false;
-        };
-        let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
-            return false;
-        };
-        let Some(path) = callee.path() else {
-            return false;
-        };
-        let Some(segment) = path.segment() else {
-            return false;
-        };
-        if segment
-            .name_ref()
-            .is_none_or(|name| name.text() != helper.name)
-        {
-            return false;
-        }
-        let prefix = path.qualifier().map(|path| {
-            path.syntax()
-                .text()
-                .to_string()
-                .split_whitespace()
-                .collect::<String>()
-        });
-        super::owner_pin::same_file_free_helper_call_reaches_owner(
-            caller,
-            helper,
-            prefix.as_deref(),
-            index,
-            &syntax,
-        )
-    })
-}
-
-/// Walk only syntax executed by the outer function. Item declarations,
-/// closures and async blocks do not execute their bodies by being declared.
-/// Even an invoked nested function stays unresolved here; its body cannot
-/// borrow the outer function's receiver bindings. Standard assertion operands
-/// share the source-aware macro refusal and the same call-site predicate.
-fn executable_call_resolves(
-    test: &TestSummary,
-    index: Option<&RustIndex>,
-    pin_syntax: &super::OwnerPinSyntax,
-    resolves: &dyn Fn(SyntaxNode, Option<&SyntaxNode>) -> bool,
-) -> bool {
-    let parse = match index {
-        Some(index) => index.source_syntax.parse_fragment(&test.body),
-        None => crate::analysis::syntax::parse_clean_source_file(&test.body),
-    };
-    let Some(parse) = parse else {
-        return false;
-    };
-    let syntax = parse.tree().syntax().clone();
-    let Some(function) = syntax.children().find_map(ast::Fn::cast) else {
-        return false;
-    };
-    let executable = |node: &SyntaxNode| node_executes_in(node, function.syntax());
-    syntax
-        .descendants()
-        .filter(executable)
-        .any(|node| resolves(node, None))
-        || syntax
-            .descendants()
-            .filter(executable)
-            .filter_map(ast::MacroCall::cast)
-            .any(|call| {
-                let binding_admitted = index.is_none_or(|index| {
-                    let offset = u32::from(call.syntax().text_range().start()) as usize;
-                    let line = test.start_line
-                        + test.body[..offset]
-                            .bytes()
-                            .filter(|byte| *byte == b'\n')
-                            .count();
-                    call.path().is_some_and(|path| {
-                        pin_syntax.targeted_macro_binding_is_unambiguous(
-                            test,
-                            line,
-                            &path.syntax().text().to_string(),
-                            index,
-                        )
-                    })
-                });
-                binding_admitted && assertion_arguments_resolve(&call, index, resolves)
-            })
-}
-
-/// Both source and synthetic assertion trees obey the same execution boundary.
-/// Constructing an unpolled future does not execute calls in its body.
-fn node_executes_in(node: &SyntaxNode, function: &SyntaxNode) -> bool {
-    node.ancestors()
-        .skip(1)
-        .take_while(|scope| scope != function)
-        .all(|scope| {
-            !ast::Item::can_cast(scope.kind())
-                && !ast::ClosureExpr::can_cast(scope.kind())
-                && ast::BlockExpr::cast(scope).is_none_or(|block| block.async_token().is_none())
-        })
-}
-
-fn inherent_call_node_resolves(
-    node: SyntaxNode,
-    original_scope: Option<&SyntaxNode>,
-    method: &str,
-    impl_type: &str,
-    unit_struct: &dyn Fn(&str) -> bool,
-) -> bool {
-    if !ast::MethodCallExpr::can_cast(node.kind()) && !ast::CallExpr::can_cast(node.kind()) {
-        return false;
-    }
-    // A declared type parameter can hide the nominal owner name. Refuse its
-    // spelling without inferring a bound, argument type or factory result.
-    if original_scope
-        .unwrap_or(&node)
-        .ancestors()
-        .filter_map(ast::Fn::cast)
-        .any(|function| {
-            crate::analysis::syntax::function_type_param_names(&function).contains(impl_type)
-        })
-    {
-        return false;
-    }
-    if let Some(call) = ast::MethodCallExpr::cast(node.clone()) {
-        return call.name_ref().is_some_and(|name| name.text() == method)
-            && call.receiver().is_some_and(|receiver| {
-                scoped_receiver_names_type(
-                    receiver,
-                    original_scope.unwrap_or_else(|| call.syntax()),
-                    impl_type,
-                    unit_struct,
-                )
-            });
-    }
-    // UFCS still needs the actual first argument's receiver type.
-    let Some(call) = ast::CallExpr::cast(node) else {
-        return false;
-    };
-    let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
-        return false;
-    };
-    let text = callee.syntax().text().to_string();
-    let segments: Vec<_> = text.split("::").map(str::trim).collect();
-    matches!(segments.as_slice(), [.., ty, name] if *ty == impl_type && *name == method)
-        && call
-            .arg_list()
-            .and_then(|arguments| arguments.args().next())
-            .is_some_and(|receiver| {
-                scoped_receiver_names_type(
-                    receiver,
-                    original_scope.unwrap_or_else(|| call.syntax()),
-                    impl_type,
-                    unit_struct,
-                )
-            })
-}
-
-/// Assertion token trees are not expression descendants of the source AST.
-/// Parse only their evaluated operands, preserving the original invocation as
-/// the lexical scope anchor. Diagnostics and unsupported macros add no proof.
-fn assertion_arguments_resolve(
-    call: &ast::MacroCall,
-    index: Option<&RustIndex>,
-    resolves: &dyn Fn(SyntaxNode, Option<&SyntaxNode>) -> bool,
-) -> bool {
-    let Some(path) = call.path() else {
-        return false;
-    };
-    let name = path.syntax().text().to_string();
-    let operands = match name.trim() {
-        "assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne" => 2,
-        "assert" | "debug_assert" => 1,
-        _ => return false,
-    };
-    if call.syntax().ancestors().any(|scope| {
-        ast::StmtList::cast(scope).is_some_and(|list| {
-            list.syntax().children().any(|node| {
-                ast::MacroRules::cast(node.clone())
-                    .and_then(|item| item.name())
-                    .or_else(|| ast::MacroDef::cast(node).and_then(|item| item.name()))
-                    .is_some_and(|bound| bound.text() == name.trim())
-            })
-        })
-    }) {
-        return false;
-    }
-    let Some(tree) = call.token_tree() else {
-        return false;
-    };
-    let text = tree.syntax().text().to_string();
-    let Some(arguments) = text.get(1..text.len().saturating_sub(1)) else {
-        return false;
-    };
-    let Some(arguments) = super::reveal::split_top_level_arguments(arguments) else {
-        return false;
-    };
-    arguments.into_iter().take(operands).any(|argument| {
-        let text = format!("fn ripr_receiver_operand() {{ let _ = {argument}; }}");
-        let parse = match index {
-            Some(index) => index.source_syntax.parse_fragment(&text),
-            None => crate::analysis::syntax::parse_clean_source_file(&text),
-        };
-        let Some(parse) = parse else {
-            return false;
-        };
-        let syntax = parse.tree().syntax().clone();
-        let Some(wrapper) = syntax.children().find_map(ast::Fn::cast) else {
-            return false;
-        };
-        // Operand-local items can bind value constructors or shadow type names.
-        // Only the actual synthetic wrapper is exempt, never a same-named item.
-        // Locals and pattern scopes also require separate value-flow authority.
-        if syntax.descendants().any(|node| {
-            ast::ClosureExpr::can_cast(node.kind())
-                || ast::ForExpr::can_cast(node.kind())
-                || ast::MatchArm::can_cast(node.kind())
-                || ast::LetExpr::can_cast(node.kind())
-                || (ast::Item::can_cast(node.kind()) && node != *wrapper.syntax())
-                || ast::LetStmt::cast(node)
-                    .is_some_and(|binding| !matches!(binding.pat(), Some(ast::Pat::WildcardPat(_))))
-        }) {
-            return false;
-        }
-        syntax
-            .descendants()
-            .filter(|node| node_executes_in(node, wrapper.syntax()))
-            .any(|node| resolves(node, Some(call.syntax())))
-    })
-}
-
-fn scoped_receiver_names_type(
-    mut receiver: ast::Expr,
-    call: &SyntaxNode,
-    impl_type: &str,
-    unit_struct: &dyn Fn(&str) -> bool,
-) -> bool {
-    // Parentheses and borrows preserve this bounded receiver identity.
-    for _ in 0..32 {
-        let inner = match &receiver {
-            ast::Expr::ParenExpr(expression) => expression.expr(),
-            ast::Expr::RefExpr(expression) => expression.expr(),
-            _ => break,
-        };
-        let Some(inner) = inner else {
-            return false;
-        };
-        receiver = inner;
-    }
-    match &receiver {
-        ast::Expr::PathExpr(_) => {
-            let name = receiver.syntax().text().to_string();
-            let name = name.trim();
-            if !name.is_empty() && name.bytes().all(is_ident_byte) {
-                return visible_receiver_binding_names_type(name, call, impl_type, unit_struct);
-            }
-        }
-        ast::Expr::CallExpr(_) | ast::Expr::RecordExpr(_) => {}
-        _ => return false,
-    }
-    let text = mask_comments_and_strings(&receiver.syntax().text().to_string());
-    initializer_is_one_head_expr(&text) && initializer_type_head(&text) == Some(impl_type)
-}
-
-fn visible_receiver_binding_names_type(
-    name: &str,
-    call: &SyntaxNode,
-    impl_type: &str,
-    unit_struct: &dyn Fn(&str) -> bool,
-) -> bool {
-    for ancestor in call.ancestors().skip(1) {
-        // These patterns may bind the receiver. This small admission does not
-        // infer their types, and never borrows an outer same-spelled binding.
-        if ast::ClosureExpr::can_cast(ancestor.kind())
-            || ast::ForExpr::can_cast(ancestor.kind())
-            || ast::MatchArm::can_cast(ancestor.kind())
-        {
-            return false;
-        }
-        if let Some(condition) = ast::IfExpr::cast(ancestor.clone())
-            .and_then(|node| node.condition())
-            .or_else(|| ast::WhileExpr::cast(ancestor.clone()).and_then(|node| node.condition()))
-            && condition
-                .syntax()
-                .descendants()
-                .filter_map(ast::LetExpr::cast)
-                .any(|binding| {
-                    binding.pat().is_some_and(|pattern| {
-                        pattern
-                            .syntax()
-                            .descendants()
-                            .filter_map(ast::IdentPat::cast)
-                            .any(|pattern| pattern.name().is_some_and(|bound| bound.text() == name))
-                    })
-                })
-        {
-            return false;
-        }
-        if let Some(list) = ast::StmtList::cast(ancestor.clone()) {
-            // Scope-wide items can shadow an outer value even when their
-            // declaration follows the call. Imports/globs remain unresolved.
-            if list.syntax().children().any(|node| {
-                ast::Item::can_cast(node.kind())
-                    && ast::AnyHasName::cast(node.clone())
-                        .and_then(|item| item.name())
-                        .is_some_and(|bound| bound.text().trim_start_matches("r#") == name)
-                    || ast::Use::cast(node).is_some_and(|item| {
-                        item.syntax().descendants().any(|node| {
-                            ast::UseTree::cast(node.clone())
-                                .is_some_and(|tree| tree.star_token().is_some())
-                                || ast::NameRef::cast(node.clone()).is_some_and(|bound| {
-                                    bound.text().trim_start_matches("r#") == name
-                                })
-                                || ast::Name::cast(node).is_some_and(|bound| {
-                                    bound.text().trim_start_matches("r#") == name
-                                })
-                        })
-                    })
-            }) {
-                return false;
-            }
-            let binding = list
-                .syntax()
-                .children()
-                .filter_map(ast::LetStmt::cast)
-                .filter(|binding| binding.syntax().text_range().end() <= call.text_range().start())
-                .filter(|binding| {
-                    binding.pat().is_some_and(|pattern| {
-                        pattern
-                            .syntax()
-                            .descendants()
-                            .filter_map(ast::IdentPat::cast)
-                            .any(|pattern| pattern.name().is_some_and(|bound| bound.text() == name))
-                    })
-                })
-                .last();
-            if let Some(binding) = binding {
-                let Some(ast::Pat::IdentPat(pattern)) = binding.pat() else {
-                    return false;
-                };
-                if pattern.at_token().is_some() || binding.let_else().is_some() {
-                    return false;
-                }
-                if let Some(annotation) = binding.ty() {
-                    return compact_impl_type_name(&annotation.syntax().text().to_string())
-                        .as_deref()
-                        == Some(impl_type);
-                }
-                return binding.initializer().is_some_and(|initializer| {
-                    let text = mask_comments_and_strings(&initializer.syntax().text().to_string());
-                    initializer_is_one_head_expr(&text)
-                        && (initializer_type_head(&text) == Some(impl_type)
-                            // A bare type name is a value only for a verified
-                            // unit struct, not a same-spelled constant/import.
-                            || (text.trim() == impl_type && unit_struct(impl_type)))
-                });
-            }
-        }
-        if ast::Fn::can_cast(ancestor.kind()) {
-            return false;
-        }
-    }
-    false
-}
-
-/// Helper last hops borrow the direct owner's complete receiver refusal,
-/// including module/type shadowing and source-aware assertion bindings.
-pub(in crate::analysis) fn inherent_owner_call_resolves(
-    caller: &TestSummary,
-    owner: &FunctionSummary,
-    index: &RustIndex,
-) -> bool {
-    requires_inherent_receiver_identity(owner)
-        && owner_call_relation_reason(
-            caller,
-            Some(owner),
-            &owner.name,
-            &[],
-            index
-                .files()
-                .get(&caller.file)
-                .map(|facts| facts.data().source.as_ref()),
-            index,
-        ) == RelationReason::DirectOwnerCall
-}
-
 fn owner_call_relation_reason(
     test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,
@@ -3533,8 +3135,7 @@ fn owner_call_relation_reason(
                         test,
                         source,
                         trait_name,
-                        Some(owner_scope),
-                        index,
+                        owner_scope.in_file(&test.file),
                     )
                 }) || super::owner_pin::parent_chain_shadows_trait(
                     test,
@@ -3593,8 +3194,7 @@ fn owner_call_relation_reason(
             test,
             source,
             &impl_type,
-            Some(owner_scope),
-            index,
+            owner_scope.in_file(&test.file),
         ) || super::owner_pin::file_renames_to(source, &impl_type)
             || super::owner_pin::file_renames_to(source, raw_impl_type.as_str())
     }) || super::owner_pin::parent_chain_shadows_type(test, &impl_type, owner_scope, index)
@@ -3616,21 +3216,13 @@ fn owner_call_relation_reason(
                 test,
                 source,
                 trait_name,
-                Some(owner_scope),
-                index,
+                owner_scope.in_file(&test.file),
             )
         })
     }) || owner_trait.as_deref().is_some_and(|trait_name| {
         super::owner_pin::parent_chain_shadows_trait(test, trait_name, owner_scope, index)
     }) {
         return RelationReason::WeakTokenSubstring;
-    }
-    if requires_inherent_receiver_identity(owner) {
-        return if inherent_receiver_call_resolves(test, owner_name, &impl_type, Some(index)) {
-            RelationReason::DirectOwnerCall
-        } else {
-            RelationReason::WeakTokenSubstring
-        };
     }
     if indexed_same_name_count <= 1 {
         return RelationReason::DirectOwnerCall;
@@ -4565,6 +4157,190 @@ mod tests {
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "target_owner_is_observed");
         assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// #8387: a test the diff itself adds or changes leads its confidence
+    /// tier, ahead of name order, but is never lifted into a higher tier.
+    #[test]
+    fn diff_touched_test_leads_its_tier_without_changing_tiers() -> Result<(), String> {
+        let owner = function("src/lib.rs", "target_owner");
+        let untouched_direct = test_with_call(
+            "tests/target.rs",
+            "a_direct_call",
+            "target_owner(1)",
+            "target_owner",
+        );
+        let mut touched_direct = test_with_call(
+            "tests/target.rs",
+            "z_direct_call",
+            "target_owner(2)",
+            "target_owner",
+        );
+        touched_direct.start_line = 20;
+        touched_direct.end_line = 30;
+        let mut touched_weak = test("tests/target.rs", "zz_target_owner_name_only", "helper(1)");
+        touched_weak.start_line = 40;
+        touched_weak.end_line = 50;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![untouched_direct, touched_direct, touched_weak],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "target_owner(value)");
+        let changed = crate::analysis::diff::ChangedFile {
+            path: PathBuf::from("tests/target.rs"),
+            added_lines: [25, 45]
+                .into_iter()
+                .map(|line| crate::analysis::diff::ChangedLine {
+                    line,
+                    text: String::new(),
+                    new_side_line: line,
+                })
+                .collect(),
+            removed_lines: Vec::new(),
+        };
+        let touched = crate::analysis::classify::DiffTouchedTests::from_changed_files(
+            &[changed],
+            index.tests().iter(),
+        );
+        assert!(touched.touches(Path::new("tests/target.rs"), 20), "setup");
+        assert!(touched.touches(Path::new("tests/target.rs"), 40), "setup");
+
+        let names = |candidate_index: &RelatedTestCandidateIndex| {
+            find_related_tests_with_candidate_index(
+                &probe,
+                Some(&owner),
+                &index,
+                true,
+                None,
+                None,
+                candidate_index,
+            )
+            .into_iter()
+            .map(|(test, reason)| (test.name.clone(), reason.confidence()))
+            .collect::<Vec<_>>()
+        };
+
+        let baseline = names(&RelatedTestCandidateIndex::new(&index));
+        assert_eq!(baseline[0].0, "a_direct_call", "name order without a diff");
+
+        let ranked = names(&RelatedTestCandidateIndex::new(&index).with_diff_touched(touched));
+        assert_eq!(
+            ranked
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .take(2)
+                .collect::<Vec<_>>(),
+            ["z_direct_call", "a_direct_call"],
+            "the diff-touched direct call leads its tier: {ranked:?}"
+        );
+        let weak = ranked
+            .iter()
+            .find(|(name, _)| name == "zz_target_owner_name_only")
+            .ok_or("the touched name-only test must stay related")
+            .map_err(str::to_string)?;
+        assert_ne!(
+            weak.1,
+            RelationConfidence::High,
+            "a touched name-only test is not lifted a tier"
+        );
+        assert_eq!(
+            ranked.last().map(|(name, _)| name.as_str()),
+            Some("zz_target_owner_name_only"),
+            "a touched lower-tier test still trails every higher-tier test: {ranked:?}"
+        );
+        Ok(())
+    }
+
+    /// #8387: the diff-touched signal is a pure ranking key. Two same-named
+    /// tests in one file must resolve to the same analyzed body, and so the
+    /// same classification, reach, oracle strength and credited oracle, with
+    /// or without the signal.
+    #[test]
+    fn diff_touched_signal_does_not_change_which_duplicate_name_is_analyzed() -> Result<(), String>
+    {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let path = PathBuf::from("src/lib.rs");
+        let source = "pub fn score(x: i32) -> i32 {\n    if x > 3 { 1 } else { 0 }\n}\n\
+mod first {\n    use super::*;\n    #[test]\n    fn dup() {\n        assert_eq!(score(5), 1);\n    }\n}\n\
+mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = score(5);\n    }\n}\n";
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let mut index = RustIndex::default();
+        index.insert_file(path.clone(), facts, true);
+        let dups: Vec<_> = index.tests().iter().filter(|t| t.name == "dup").collect();
+        assert_eq!(dups.len(), 2, "setup: both same-named tests are indexed");
+        let later = dups
+            .iter()
+            .map(|t| t.start_line)
+            .max()
+            .ok_or("setup: no duplicate")?;
+        let changed_source = crate::analysis::diff::ChangedFile {
+            path: path.clone(),
+            added_lines: vec![crate::analysis::diff::ChangedLine {
+                line: 2,
+                text: "    if x > 3 { 1 } else { 0 }".to_string(),
+                new_side_line: 2,
+            }],
+            removed_lines: Vec::new(),
+        };
+        let changed_test = crate::analysis::diff::ChangedFile {
+            path: path.clone(),
+            added_lines: vec![crate::analysis::diff::ChangedLine {
+                line: later,
+                text: String::new(),
+                new_side_line: later,
+            }],
+            removed_lines: Vec::new(),
+        };
+        let touched = crate::analysis::classify::DiffTouchedTests::from_changed_files(
+            &[changed_test],
+            index.tests().iter(),
+        );
+        assert!(touched.touches(&path, later), "setup: later dup touched");
+        let seeded = crate::analysis::probes::probes_for_file_with_relations(
+            Path::new("."),
+            &changed_source,
+            &index,
+            &[],
+        );
+        let subject = seeded
+            .iter()
+            .find(|s| s.probe.family == ProbeFamily::Predicate)
+            .ok_or("setup: no predicate subject")?;
+
+        let classify = |candidates: &RelatedTestCandidateIndex| {
+            crate::analysis::classifier::classify_probe_with_candidate_index(
+                &subject.probe,
+                &index,
+                true,
+                None,
+                candidates,
+                &crate::analysis::classify::transitive_reach::TransitiveReachIndex::new(&index),
+                None,
+            )
+        };
+        let plain = classify(&RelatedTestCandidateIndex::new(&index));
+        let ranked = classify(&RelatedTestCandidateIndex::new(&index).with_diff_touched(touched));
+        assert!(
+            plain.related_tests.iter().any(|t| t.name == "dup"),
+            "setup: the duplicate-name test is related: {plain:?}"
+        );
+        assert_eq!(plain.class, ranked.class);
+        assert_eq!(plain.ripr.reach.state, ranked.ripr.reach.state);
+        assert_eq!(
+            plain
+                .related_tests
+                .iter()
+                .map(|t| (&t.name, t.line, t.oracle_strength.clone(), &t.oracle))
+                .collect::<Vec<_>>(),
+            ranked
+                .related_tests
+                .iter()
+                .map(|t| (&t.name, t.line, t.oracle_strength.clone(), &t.oracle))
+                .collect::<Vec<_>>(),
+            "the touched signal must not change the analyzed body or credited oracle"
+        );
+        Ok(())
     }
 
     #[test]
@@ -9978,100 +9754,6 @@ let r = try_parse_summary(\"x\");",
             let summary = test("tests/site.rs", "t", body);
             assert_eq!(
                 method_call_resolves_to_impl_type(&summary, "build", "Site"),
-                expected,
-                "{body}"
-            );
-        }
-    }
-
-    /// #7415: keep the conservative corpus boundary separate from runtime
-    /// truth. Arbitrary factories, parameters and imported bare variants do
-    /// not gain receiver proof merely because the method name is unique.
-    #[test]
-    fn inherent_receiver_corpus_boundary_and_live_scope() {
-        for (body, method, ty, expected) in [
-            (
-                "fn t() { assert_eq!(ByteSize::gb(43).as_kib(), 1.0); }",
-                "as_kib",
-                "ByteSize",
-                false,
-            ),
-            (
-                "fn t() { assert_eq!(ByteSize::kib(9).as_mb(), 1.0); }",
-                "as_mb",
-                "ByteSize",
-                false,
-            ),
-            (
-                "fn t() { assert_eq!(ByteSize::new(43).as_kib(), 1.0); }",
-                "as_kib",
-                "ByteSize",
-                true,
-            ),
-            (
-                "fn t() { let size: ByteSize = make(); assert_eq!(size.as_kib(), 1.0); }",
-                "as_kib",
-                "ByteSize",
-                true,
-            ),
-            (
-                "fn t() { assert_eq!(Other::new(43).as_kib(), 1.0); }",
-                "as_kib",
-                "ByteSize",
-                false,
-            ),
-            (
-                "fn t(account: Account) { assert_eq!(account.monthly_fee(), 5); }",
-                "monthly_fee",
-                "Account",
-                false,
-            ),
-            (
-                "fn t() { let account: Account = make(); assert_eq!(account.monthly_fee(), 5); }",
-                "monthly_fee",
-                "Account",
-                true,
-            ),
-            (
-                "fn t() { let account: Other = make(); assert_eq!(account.monthly_fee(), 5); }",
-                "monthly_fee",
-                "Account",
-                false,
-            ),
-            (
-                "fn t() { for original in [\"x\"] { assert_eq!(UpperCase.apply_to_field(original), \"X\"); } }",
-                "apply_to_field",
-                "RenameRule",
-                false,
-            ),
-            (
-                "fn t() { assert_eq!(LowerCase.apply_to_variant(\"X\"), \"x\"); }",
-                "apply_to_variant",
-                "RenameRule",
-                false,
-            ),
-            (
-                "fn t() { assert_eq!(RenameRule::UpperCase.apply_to_field(\"x\"), \"X\"); }",
-                "apply_to_field",
-                "RenameRule",
-                true,
-            ),
-            (
-                "fn t() { let value = JsonValue::Null; { let value = Foreign::new(); let _ = value; } assert_eq!(value.as_object(), None); }",
-                "as_object",
-                "JsonValue",
-                true,
-            ),
-            (
-                "fn t() { let value = Foreign::new(); { let value = JsonValue::Null; let _ = value; } assert_eq!(value.as_object(), None); }",
-                "as_object",
-                "JsonValue",
-                false,
-            ),
-        ] {
-            let summary = test("src/lib.rs", "t", body);
-            assert_eq!(
-                inherent_receiver_call_resolves(&summary, method, ty, None),
                 expected,
                 "{body}"
             );

@@ -31,6 +31,18 @@ fn job(name: &str) -> TestResult<&str> {
 
 fn shell(name: &str) -> TestResult<String> {
     let source = job(name)?;
+    let source = if name == "detect-docs-only" {
+        source
+            .split_once("      - name: Check whether every changed file is docs/spec/markdown\n")
+            .ok_or("selector step")?
+            .1
+    } else {
+        source
+    };
+    shell_body(source)
+}
+
+fn shell_body(source: &str) -> TestResult<String> {
     assert_eq!(source.matches("        run: |\n").count(), 1);
     let (_, body) = source.split_once("        run: |\n").ok_or("shell block")?;
     let script = body
@@ -185,6 +197,14 @@ impl Fixture {
         let output = self.run(
             script,
             &[
+                ("LABEL", "merge-ready"),
+                ("ADMISSION_RESULT", "success"),
+                ("EXECUTE", "true"),
+                ("PRIOR_RESULT", "none"),
+                ("WINDOWS_RESULT", "success"),
+                ("PASTE_RESULT", "success"),
+                ("CI_RESULT", "success"),
+                ("WHEEL_RESULT", "success"),
                 ("EVENT_NAME", event),
                 ("BASE_SHA", base),
                 ("HEAD_SHA", head),
@@ -242,7 +262,11 @@ impl Drop for Fixture {
 #[test]
 fn event_commit_bindings_are_exact_and_history_is_available() -> TestResult {
     let detector = job("detect-docs-only")?;
-    let (step, _) = detector
+    let selector = detector
+        .split_once("      - name: Check whether every changed file is docs/spec/markdown\n")
+        .ok_or("selector step")?
+        .1;
+    let (step, _) = selector
         .split_once("        run: |\n")
         .ok_or("detector step")?;
     let (_, env) = step
@@ -250,8 +274,8 @@ fn event_commit_bindings_are_exact_and_history_is_available() -> TestResult {
         .ok_or("detector step env")?;
     for binding in [
         "          EVENT_NAME: ${{ github.event_name }}",
-        "          BASE_SHA: ${{ github.event.pull_request.base.sha }}",
-        "          HEAD_SHA: ${{ github.event.pull_request.head.sha }}",
+        "          BASE_SHA: ${{ steps.admitted.outputs.base }}",
+        "          HEAD_SHA: ${{ steps.admitted.outputs.head }}",
     ] {
         assert_eq!(
             env.lines().filter(|line| *line == binding).count(),
@@ -411,6 +435,8 @@ fn invalid_identities_empty_diff_and_non_pr_events_use_full_proof() -> TestResul
     fixture.write("src/mixed.rs", "fn mixed() {}\n")?;
     let mixed = fixture.commit()?;
     assert!(!fixture.detect(&production, "pull_request", &base, &mixed, None)?);
+    // Branch-isolation controls for the aggregate body, not admission events.
+    // Native admission separately refuses these as qualification requests.
     for event in ["push", "workflow_dispatch"] {
         assert!(
             !fixture.detect(&production, event, &base, &head, None)?,
@@ -487,7 +513,15 @@ fn routed_result(
     docs_gate: &str,
     heavy: &str,
 ) -> TestResult<bool> {
-    let source = job("result")?;
+    // Admission and cancellation have separate boundary tests. Exercise this
+    // named aggregate step, rather than the job's earlier live API refresh.
+    let source = job("result")?
+        .split_once("      - name: Summarize routed result\n")
+        .ok_or("named aggregate step exists")?
+        .1
+        .split("      - name:")
+        .next()
+        .ok_or("aggregate body exists")?;
     let (setup, _) = source.split_once("        run: |\n").ok_or("result step")?;
     let (_, bindings) = setup.split_once("        env:\n").ok_or("result env")?;
     let mut env = bindings
@@ -499,7 +533,26 @@ fn routed_result(
         })
         .collect::<Vec<_>>();
     assert!(env.len() >= 20, "actual result env is initialized");
+    let pr_result = if event == "pull_request" {
+        "success"
+    } else {
+        "skipped"
+    };
+    let label = if event == "pull_request" {
+        "merge-ready"
+    } else {
+        ""
+    };
     env.extend([
+        ("REF", "refs/heads/main"),
+        ("LABEL", label),
+        ("ADMISSION_RESULT", pr_result),
+        ("EXECUTE", "true"),
+        ("PRIOR_RESULT", "none"),
+        ("WINDOWS_RESULT", pr_result),
+        ("PASTE_RESULT", pr_result),
+        ("CI_RESULT", pr_result),
+        ("WHEEL_RESULT", pr_result),
         ("EVENT_NAME", event),
         ("DOCS_DETECT_RESULT", detector),
         ("DOCS_ONLY", docs),
@@ -508,7 +561,7 @@ fn routed_result(
         ("ROUTE_RESULT", "success"),
         ("GITHUB_RESULT", heavy),
     ]);
-    let output = fixture.run(&shell("result")?, &env, None)?;
+    let output = fixture.run(&shell_body(source)?, &env, None)?;
     let summary = fs::read_to_string(fixture.root.join(".git/actions-summary"))?;
     assert!(
         summary.contains("- status:"),
@@ -551,6 +604,8 @@ fn actual_result_block_requires_successful_detection_and_selected_proof() -> Tes
             "success"
         )?);
     }
+    // Main/manual skip PR admission and leaves, but still require full Rust.
+    // Even an injected docs-only output cannot substitute the docs gate.
     for event in ["push", "workflow_dispatch"] {
         for docs in ["false", "true"] {
             assert!(!routed_result(

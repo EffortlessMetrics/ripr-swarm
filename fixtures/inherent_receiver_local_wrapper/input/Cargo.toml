@@ -1,6 +1,0 @@
-[package]
-name = "inherent-receiver-local-wrapper"
-version = "0.0.0"
-edition = "2024"
-
-[workspace]

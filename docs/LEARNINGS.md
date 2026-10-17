@@ -3186,46 +3186,6 @@ Durable rules:
   wrapper listing and a compile attempt that uses it - before writing that a
   capability is unavailable.
 
-### Assertion operand items can replace an outer receiver (#8004)
-
-A token-tree assertion operand parsed in a synthetic function must not borrow
-its invocation's outer receiver through an operand-local item. A unit or tuple
-struct introduces a value constructor, so `struct value; value.as_object()` can
-dispatch a foreign blanket trait despite an outer `let value = JsonValue::Null`.
-Type aliases, enums and modules can similarly replace nominal type paths. Refuse
-operand items as a bounded class; exempt a synthetic wrapper by syntax identity,
-never its name. The production diff and full/compact receiver matrices retain
-real object/null calls and the genuine-helper relation. The
-`inherent_receiver_operand_item_shadow` honesty fixture pins a retained weak
-relation independently of its golden output. This establishes a refusal boundary,
-not general Rust type or value-flow resolution.
-
-
-### Owner evidence requires execution and declaration identity (#8004)
-
-A scope-aware nominal receiver check is only one part of owner admission.
-Repository direct calls must reuse the complete refusal used by diff and helper
-last hops; otherwise a module-local type with the right terminal name can regain
-high credit. Audit every consumer when extending a shared admission boundary.
-
-Descendant syntax is not execution: an uncalled nested function, closure or
-async body can contain a perfect assertion without running the owner. Keep the
-outer executable walk separate from declared/deferred bodies and use that same
-walk for helper entry. A helper-name graph supplies candidates, not identities:
-`foreign::read_as_object()` cannot borrow the root helper's real owner call.
-Resolve the specific free call in each hop's own module/import scope, retaining
-conservative refusal for unknown declarations. Paired native controls distinguish
-runtime discrimination from static support; invoking a nested function can kill
-the mutant while its static route remains unresolved.
-
-Boundary tests must exercise the candidate route as well as the final gate.
-The initial one-line qualified `bridge` control was already absent from the
-pre-repair candidate graph. The retained multiline bare-call pair uses the
-existing route, then changes the intermediate function's actual import binding.
-Its negative must refuse owner reach and its positive must retain it. Keep such
-setup failures and raw original inputs rather than counting a vacuous negative
-as identity proof. Repeated parsing and discarded per-call syntax caches remain
-performance work under #8005, independently of semantic test results.
 ## 2026-10-16: Per-macro full-file `use` scans hang dogfood PR evidence
 
 `cargo xtask ripr-pr` builds this branch's `ripr` and runs `ripr check` on

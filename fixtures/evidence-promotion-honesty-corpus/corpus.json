@@ -9456,6 +9456,34 @@
       ]
     },
     {
+      "id": "rust_direct_collection_count_payload_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_direct_collection_count_payload",
+      "vector": "len_count_confirms_deleted_direct_push",
+      "probe_family": "call_deletion",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ],
+      "control": "must_stay_exposed"
+    },
+    {
+      "id": "rust_direct_collection_count_payload_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_direct_collection_count_payload",
+      "vector": "len_count_cannot_confirm_changed_direct_push_payload",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
       "id": "ts_mock_payload_wrapped_impl_not_a_fresh_mock",
       "language": "typescript",
       "tier": "pure",
@@ -9472,896 +9500,81 @@
       ]
     },
     {
-      "id": "rust_inherent_receiver_operand_item_shadow",
+      "id": "rust_array_sibling_exit_field",
       "language": "rust",
       "tier": "pure",
-      "source_fixture": "fixtures/inherent_receiver_operand_item_shadow",
-      "vector": "operand_local_constructor_cannot_borrow_outer_receiver_identity",
-      "probe_family": "match_arm",
+      "source_fixture": "fixtures/rust_array_sibling_exit_field",
+      "vector": "sibling_element_field_may_exit_before_indexed_pin_assertion",
+      "probe_family": "field_construction",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "expected_related_test",
-          "name": "operand_constructor_is_not_the_outer_receiver",
-          "file": "src/lib.rs",
-          "line": 24,
-          "kind": "whole_object_equality",
-          "strength": "strong",
-          "relation_reason": "weak_token_substring"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
-      "id": "rust_inherent_receiver_macro_discard_diff",
+      "id": "rust_array_sibling_plain_field",
       "language": "rust",
       "tier": "pure",
-      "source_fixture": "fixtures/inherent_receiver_macro_discard",
-      "vector": "bounded_inherent_receiver_identity_not_name_only",
-      "probe_family": "match_arm",
+      "source_fixture": "fixtures/rust_array_sibling_plain_field",
+      "vector": "sibling_element_field_plain_path_keeps_indexed_pin",
+      "probe_family": "field_construction",
       "assertions": [
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "expected_related_test",
-          "name": "ignored_operand",
-          "file": "src/lib.rs",
-          "line": 14,
-          "kind": "exact_value",
-          "strength": "strong",
-          "relation_reason": "weak_token_substring"
-        }
+        { "type": "expected_class", "class": "exposed" }
       ]
     },
     {
-      "id": "rust_inherent_receiver_foreign_helper_diff",
+      "id": "rust_array_element_drop_exit",
       "language": "rust",
       "tier": "pure",
-      "source_fixture": "fixtures/inherent_receiver_foreign_helper",
-      "vector": "bounded_inherent_receiver_identity_not_name_only",
-      "probe_family": "match_arm",
+      "source_fixture": "fixtures/rust_array_element_drop_exit",
+      "vector": "element_type_non_plain_drop_exits_during_unwind",
+      "probe_family": "field_construction",
       "assertions": [
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "expected_related_test",
-          "name": "foreign_helper",
-          "file": "src/lib.rs",
-          "line": 20,
-          "kind": "exact_value",
-          "strength": "strong",
-          "relation_reason": "same_test_file"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
-      "id": "rust_repo_inherent_receiver_macro_discard",
+      "id": "rust_array_element_drop_plain",
       "language": "rust",
       "tier": "pure",
-      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-macro-discard.json",
-      "vector": "bounded_inherent_helper_receiver_and_macro_binding",
+      "source_fixture": "fixtures/rust_array_element_drop_plain",
+      "vector": "element_type_plain_drop_keeps_indexed_pin",
+      "probe_family": "field_construction",
       "assertions": [
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "match self",
-          "grip_class": "activation_unknown",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Self::Object(value) =>",
-          "grip_class": "activation_unknown",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Some(*value)",
-          "grip_class": "activation_unknown",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "_ =>",
-          "grip_class": "activation_unknown",
-          "reach": "weak"
-        }
+        { "type": "expected_class", "class": "exposed" }
       ]
     },
     {
-      "id": "rust_repo_inherent_receiver_foreign_helper",
+      "id": "rust_returned_type_drop_exit",
       "language": "rust",
       "tier": "pure",
-      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-foreign-helper.json",
-      "vector": "bounded_inherent_helper_receiver_and_macro_binding",
+      "source_fixture": "fixtures/rust_returned_type_drop_exit",
+      "vector": "returned_type_non_plain_drop_exits_during_unwind",
+      "probe_family": "field_construction",
       "assertions": [
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "match self",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Some(*value)",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "_ =>",
-          "grip_class": "opaque",
-          "reach": "weak"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
-      "id": "rust_repo_inherent_receiver_local_wrapper",
+      "id": "rust_returned_type_drop_plain",
       "language": "rust",
       "tier": "pure",
-      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-local-wrapper.json",
-      "vector": "bounded_inherent_helper_receiver_and_macro_binding",
+      "source_fixture": "fixtures/rust_returned_type_drop_plain",
+      "vector": "returned_type_plain_drop_keeps_field_pin",
+      "probe_family": "field_construction",
       "assertions": [
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "match self",
-          "grip_class": "strongly_gripped",
-          "reach": "yes"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Self::Object(value) =>",
-          "grip_class": "strongly_gripped",
-          "reach": "yes"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Some(*value)",
-          "grip_class": "strongly_gripped",
-          "reach": "yes"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "_ =>",
-          "grip_class": "strongly_gripped",
-          "reach": "yes"
-        }
-      ]
-    },
-    {
-      "id": "rust_repo_inherent_receiver_module_type_shadow",
-      "language": "rust",
-      "tier": "pure",
-      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-module-type-shadow.json",
-      "vector": "executable_owner_declaration_identity",
-      "assertions": [
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "match self",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Some(*value)",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "_ =>",
-          "grip_class": "opaque",
-          "reach": "weak"
-        }
-      ]
-    },
-    {
-      "id": "rust_diff_inherent_receiver_module_type_shadow",
-      "language": "rust",
-      "tier": "pure",
-      "source_fixture": "fixtures/inherent_receiver_module_type_shadow",
-      "vector": "executable_owner_declaration_identity",
-      "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 2
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
-      ]
-    },
-    {
-      "id": "rust_repo_inherent_receiver_dormant_body",
-      "language": "rust",
-      "tier": "pure",
-      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-dormant-body.json",
-      "vector": "executable_owner_declaration_identity",
-      "assertions": [
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "match self",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Some(*value)",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "_ =>",
-          "grip_class": "opaque",
-          "reach": "weak"
-        }
-      ]
-    },
-    {
-      "id": "rust_diff_inherent_receiver_dormant_body",
-      "language": "rust",
-      "tier": "pure",
-      "source_fixture": "fixtures/inherent_receiver_dormant_body",
-      "vector": "executable_owner_declaration_identity",
-      "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 2
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
-      ]
-    },
-    {
-      "id": "rust_repo_inherent_receiver_free_helper_identity",
-      "language": "rust",
-      "tier": "pure",
-      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-free-helper-identity.json",
-      "vector": "executable_owner_declaration_identity",
-      "assertions": [
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "match self",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Some(*value)",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "_ =>",
-          "grip_class": "opaque",
-          "reach": "weak"
-        }
-      ]
-    },
-    {
-      "id": "rust_diff_inherent_receiver_free_helper_identity",
-      "language": "rust",
-      "tier": "pure",
-      "source_fixture": "fixtures/inherent_receiver_free_helper_identity",
-      "vector": "executable_owner_declaration_identity",
-      "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 2
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
-      ]
-    },
-    {
-      "id": "rust_repo_inherent_receiver_helper_scope_shadow",
-      "language": "rust",
-      "tier": "pure",
-      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-scope-shadow.json",
-      "vector": "function_type_parameter_has_no_repository_declaration_identity",
-      "assertions": [
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "match self",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Some(*value)",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "_ =>",
-          "grip_class": "opaque",
-          "reach": "weak"
-        }
-      ]
-    },
-    {
-      "id": "rust_repo_inherent_receiver_helper_type_parameter",
-      "language": "rust",
-      "tier": "pure",
-      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-type-parameter.json",
-      "vector": "function_type_parameter_has_no_repository_declaration_identity",
-      "assertions": [
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "match self",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Some(*value)",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "_ =>",
-          "grip_class": "opaque",
-          "reach": "weak"
-        }
-      ]
-    },
-    {
-      "id": "rust_diff_inherent_receiver_helper_scope_shadow",
-      "language": "rust",
-      "tier": "pure",
-      "source_fixture": "fixtures/inherent_receiver_helper_scope_shadow",
-      "vector": "function_type_parameter_has_no_repository_declaration_identity",
-      "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 2
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
-      ]
-    },
-    {
-      "id": "rust_repo_inherent_receiver_async_operand",
-      "language": "rust",
-      "tier": "pure",
-      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand.json",
-      "vector": "discarded_unpolled_assertion_operand_is_not_execution",
-      "assertions": [
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "match self",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Some(*value)",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "_ =>",
-          "grip_class": "opaque",
-          "reach": "weak"
-        }
-      ]
-    },
-    {
-      "id": "rust_diff_inherent_receiver_async_operand",
-      "language": "rust",
-      "tier": "pure",
-      "source_fixture": "fixtures/inherent_receiver_async_operand",
-      "vector": "discarded_unpolled_assertion_operand_is_not_execution",
-      "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 2
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
-      ]
-    },
-    {
-      "id": "rust_repo_inherent_receiver_async_operand_helper",
-      "language": "rust",
-      "tier": "pure",
-      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand-helper.json",
-      "vector": "discarded_unpolled_assertion_operand_is_not_execution",
-      "assertions": [
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "match self",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Some(*value)",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "_ =>",
-          "grip_class": "opaque",
-          "reach": "weak"
-        }
-      ]
-    },
-    {
-      "id": "rust_diff_inherent_receiver_async_operand_helper",
-      "language": "rust",
-      "tier": "pure",
-      "source_fixture": "fixtures/inherent_receiver_async_operand_helper",
-      "vector": "discarded_unpolled_assertion_operand_is_not_execution",
-      "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 2
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
-      ]
-    },
-    {
-      "id": "rust_repo_inherent_async_fn_operand",
-      "language": "rust",
-      "tier": "pure",
-      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-operand.json",
-      "vector": "unpolled_async_fn_helper_is_not_owner_execution",
-      "assertions": [
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "match self",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Some(*value)",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "_ =>",
-          "grip_class": "opaque",
-          "reach": "weak"
-        }
-      ]
-    },
-    {
-      "id": "rust_repo_inherent_async_fn_entry",
-      "language": "rust",
-      "tier": "pure",
-      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-entry.json",
-      "vector": "unpolled_async_fn_helper_is_not_owner_execution",
-      "assertions": [
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "match self",
-          "grip_class": "weakly_gripped",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Self::Object(value) =>",
-          "grip_class": "weakly_gripped",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Some(*value)",
-          "grip_class": "weakly_gripped",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "_ =>",
-          "grip_class": "weakly_gripped",
-          "reach": "weak"
-        }
-      ]
-    },
-    {
-      "id": "rust_repo_inherent_async_fn_last_hop",
-      "language": "rust",
-      "tier": "pure",
-      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-last-hop.json",
-      "vector": "unpolled_async_fn_helper_is_not_owner_execution",
-      "assertions": [
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "match self",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Some(*value)",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "_ =>",
-          "grip_class": "opaque",
-          "reach": "weak"
-        }
-      ]
-    },
-    {
-      "id": "rust_repo_inherent_async_fn_method_entry",
-      "language": "rust",
-      "tier": "pure",
-      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-entry.json",
-      "vector": "unpolled_async_fn_helper_is_not_owner_execution",
-      "assertions": [
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "match self",
-          "grip_class": "weakly_gripped",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Self::Object(value) =>",
-          "grip_class": "weakly_gripped",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Some(*value)",
-          "grip_class": "weakly_gripped",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "_ =>",
-          "grip_class": "weakly_gripped",
-          "reach": "weak"
-        }
-      ]
-    },
-    {
-      "id": "rust_repo_inherent_async_fn_activated_unsupported",
-      "language": "rust",
-      "tier": "pure",
-      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-activated-unsupported.json",
-      "vector": "explicit_polling_keeps_bounded_helper_activation_unsupported",
-      "assertions": [
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "match self",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Some(*value)",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "_ =>",
-          "grip_class": "opaque",
-          "reach": "weak"
-        }
-      ]
-    },
-    {
-      "id": "rust_repo_inherent_async_fn_intermediate",
-      "language": "rust",
-      "tier": "pure",
-      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-intermediate.json",
-      "vector": "unpolled_async_fn_helper_is_not_owner_execution",
-      "assertions": [
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "match self",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Some(*value)",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "_ =>",
-          "grip_class": "opaque",
-          "reach": "weak"
-        }
-      ]
-    },
-    {
-      "id": "rust_repo_inherent_async_fn_method_last_hop",
-      "language": "rust",
-      "tier": "pure",
-      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-last-hop.json",
-      "vector": "unpolled_async_fn_helper_is_not_owner_execution",
-      "assertions": [
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "match self",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "Some(*value)",
-          "grip_class": "opaque",
-          "reach": "weak"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::impl JsonValue::as_object",
-          "expression": "_ =>",
-          "grip_class": "opaque",
-          "reach": "weak"
-        }
-      ]
-    },
-    {
-      "id": "rust_diff_inherent_async_fn_operand",
-      "language": "rust",
-      "tier": "pure",
-      "source_fixture": "fixtures/inherent_receiver_async_function",
-      "vector": "unpolled_async_fn_helper_is_not_owner_execution",
-      "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 2
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+        { "type": "expected_class", "class": "exposed" }
       ]
     },
     {

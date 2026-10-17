@@ -1,208 +1,5 @@
 mod json_construction;
-#[test]
-fn module_shadow_snapshot_shares_facts_and_complete_answers() -> Result<(), String> {
-    let source = "mod production {\nstruct Widget;\nimpl Widget { fn read() {} }\n#[test] fn subject() {}\nmod nested { struct Widget; trait Render {}\n#[test] fn subject() {}\n}\n}\nmod peer { struct Widget;\n#[test] fn subject() {}\n}\n";
-    let index = index(&[(LIB, source)]);
-    let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
-    let snapshot = index
-        .source_syntax
-        .get(&index, Path::new(LIB))
-        .ok_or("snapshot")?;
-    let test = index
-        .tests()
-        .iter()
-        .find(|t| t.start_line == 4)
-        .ok_or("production subject")?;
-    let owner = OwnerScope::new("read", 3, Path::new(LIB));
-    for _ in 0..20 {
-        assert!(!test_module_shadows_type(
-            test,
-            source,
-            "Widget",
-            Some(owner),
-            &index
-        ));
-    }
-    assert_eq!(
-        snapshot.shadow_computations(),
-        1,
-        "identical shadow queries must compute once"
-    );
-    let scopes = snapshot.lexical_items().ok_or("scope facts")?;
-    assert!(std::ptr::eq(
-        scopes,
-        snapshot.lexical_items().ok_or("scope facts")?
-    ));
-    // Owner file/name/line all affect the exemption, even at the same test.
-    for wrong in [
-        OwnerScope::new("read", 3, Path::new(HELPERS)),
-        OwnerScope::new("missing", 3, Path::new(LIB)),
-        OwnerScope::new("read", 100, Path::new(LIB)),
-    ] {
-        assert!(test_module_shadows_type(
-            test,
-            source,
-            "Widget",
-            Some(wrong),
-            &index
-        ));
-    }
-    let nested = index
-        .tests()
-        .iter()
-        .find(|t| t.start_line == 6)
-        .ok_or("nested subject")?;
-    assert!(test_module_shadows_type(
-        nested,
-        source,
-        "Widget",
-        Some(owner),
-        &index
-    ));
-    assert!(test_module_shadows_trait(
-        nested,
-        source,
-        "Render",
-        Some(owner),
-        &index
-    ));
-    assert!(!test_module_shadows_type(
-        nested,
-        source,
-        "Render",
-        Some(owner),
-        &index
-    ));
-    assert!(!test_module_shadows_type(
-        nested,
-        source,
-        "Absent",
-        Some(owner),
-        &index
-    ));
-    let peer = index
-        .tests()
-        .iter()
-        .find(|t| t.start_line == 10)
-        .ok_or("peer subject")?;
-    assert!(test_module_shadows_type(
-        peer,
-        source,
-        "Widget",
-        Some(owner),
-        &index
-    ));
-    // Name and both coordinates remain in the key, including macro-shaped
-    // callers that have no matching function and require the line fallback.
-    let before = snapshot.shadow_computations();
-    for changed in 0..3 {
-        let mut other = test.clone();
-        match changed {
-            0 => other.name = "macro_subject".into(),
-            1 => other.start_line = 5,
-            _ => other.end_line = 6,
-        }
-        let _ = test_module_shadows_type(&other, source, "Widget", Some(owner), &index);
-    }
-    assert_eq!(snapshot.shadow_computations(), before + 3);
-    Ok(())
-}
-
-#[test]
-fn module_shadow_snapshot_replacement_and_external_source_cannot_borrow_answers()
--> Result<(), String> {
-    let original = "mod tests { struct Widget; #[test] fn subject() {} }";
-    let mut index = index(&[(LIB, original)]);
-    let test = index.tests().iter().next().ok_or("subject")?.clone();
-    let old = index
-        .source_syntax
-        .get(&index, Path::new(LIB))
-        .ok_or("snapshot")?;
-    let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
-    assert!(test_module_shadows_type(
-        &test, source, "Widget", None, &index
-    ));
-    assert!(!test_module_shadows_type(
-        &test,
-        "mod tests { #[test] fn subject() {} }",
-        "Widget",
-        None,
-        &index
-    ));
-    assert!(test_module_shadows_type(
-        &test,
-        "mod tests { struct Widget; fn broken( {",
-        "Widget",
-        None,
-        &index
-    ));
-    let clone = index.clone();
-    let cloned = clone
-        .source_syntax
-        .get(&clone, Path::new(LIB))
-        .ok_or("clone")?;
-    assert!(!Arc::ptr_eq(&old, &cloned));
-    assert_eq!(cloned.shadow_computations(), 0);
-    index.file_data_mut(Path::new(LIB)).ok_or("file")?.source =
-        "mod tests { #[test] fn subject() {} }".into();
-    let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
-    assert!(!test_module_shadows_type(
-        &test, source, "Widget", None, &index
-    ));
-    let new = index
-        .source_syntax
-        .get(&index, Path::new(LIB))
-        .ok_or("new snapshot")?;
-    assert!(!Arc::ptr_eq(&old, &new));
-    assert_eq!(old.shadow_computations(), 1);
-    assert_eq!(new.shadow_computations(), 1);
-    Ok(())
-}
-
-#[test]
-fn module_shadow_snapshot_keeps_raw_alias_same_line_and_owner_ambiguity() -> Result<(), String> {
-    for (source, expected) in [
-        (
-            "mod sibling { struct Widget; } #[test] fn subject() {}",
-            false,
-        ),
-        (
-            "mod a { struct Widget; #[test] fn subject() {} } mod b { #[test] fn subject() {} }",
-            true,
-        ),
-        ("mod a { struct r#Widget; #[test] fn r#subject() {} }", true),
-        (
-            "mod a { type Widget = Other; #[test] fn subject() {} }",
-            true,
-        ),
-        (
-            "mod a { use foreign::Other as Widget; #[test] fn subject() {} }",
-            false,
-        ),
-        (
-            "mod a { struct Widget; fn read() {} fn read() {} #[test] fn subject() {} }",
-            true,
-        ),
-    ] {
-        let index = index(&[(LIB, source)]);
-        let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
-        let owner = OwnerScope::new("read", 1, Path::new(LIB));
-        for test in index.tests().iter() {
-            assert_eq!(
-                test_module_shadows_type(test, source, "Widget", Some(owner), &index),
-                expected,
-                "{source}"
-            );
-        }
-        assert!(!index.tests().is_empty());
-        if source.contains("use foreign::Other as Widget") {
-            // Import renames refuse at the outer caller's existing authority;
-            // they are not declarations handled by this module-item helper.
-            assert!(file_renames_to(source, "Widget"));
-        }
-    }
-    Ok(())
-}
+mod projected_workspace_memo;
 
 use super::*;
 use crate::analysis::facts::{FunctionItemFact, SourceRoleProvenance, SourceRoleProvenanceEdge};
@@ -215,27 +12,6 @@ const LIB: &str = "src/lib.rs";
 const TESTS: &str = "tests/buf_tests.rs";
 const HELPERS: &str = "src/helpers.rs";
 const CHILD: &str = "src/helpers/stack_tests.rs";
-
-#[test]
-fn owner_lexical_facts_are_shared_across_syntax_owners() -> Result<(), String> {
-    let index = index(&[(LIB, "fn helper() {}\n#[test] fn subject() { helper(); }\n")]);
-    let first = OwnerPinSyntax::default()
-        .file_scopes(&index, Path::new(LIB))
-        .ok_or("scope table")?;
-    let second = OwnerPinSyntax::default()
-        .file_scopes(&index, Path::new(LIB))
-        .ok_or("scope table")?;
-    assert!(
-        std::ptr::eq(&*first, &*second),
-        "a source snapshot must share lexical facts across owners"
-    );
-    let cloned = index.clone();
-    let other_index = OwnerPinSyntax::default()
-        .file_scopes(&cloned, Path::new(LIB))
-        .ok_or("scope table")?;
-    assert!(!std::ptr::eq(&*first, &*other_index));
-    Ok(())
-}
 
 /// The bytes 7930d93 shape: a trait default method whose changed tail is
 /// the only `Ok(..)` and whose `?` exits early with an `Err(..)`.
@@ -2355,6 +2131,27 @@ fn only_a_plain_assert_eq_against_an_owner_free_value_pins() {
     // A `#[should_panic]` test passes exactly when the values differ.
     let tests = "use demo::weight;\n\n#[test]\n#[should_panic]\nfn weighs() {\n    assert_eq!(weight(4), 13);\n}\n";
     assert!(weight_admitted(tests).is_empty());
+}
+
+#[test]
+fn a_non_plain_drop_on_the_returned_type_lends_no_pin() {
+    // #8480: dropping the receiver while unwinding from a failed
+    // assertion may exit 0 before the failure is reported.
+    let lib = |drop_body: &str| {
+        format!(
+            "#[derive(Debug, PartialEq)]\npub struct Cfg {{\n    pub n: u32,\n}}\n\nimpl Drop for Cfg {{\n    fn drop(&mut self) {{{drop_body}\n    }}\n}}\n\npub fn make(x: u32) -> Cfg {{\n    Cfg {{ n: x * 3 }}\n}}\n"
+        )
+    };
+    let tests = "use demo::make;\nuse demo::Cfg;\n\n#[test]\nfn makes() {\n    assert_eq!(make(4), Cfg { n: 12 });\n}\n";
+    let admitted = |drop_body: &str| {
+        let index = index(&[(LIB, &lib(drop_body)), (TESTS, tests)]);
+        let pin = establish(&index, "make", "Cfg { n: x * 3 }");
+        assert!(pin.is_some(), "the struct owner must establish a pin");
+        pin.map(|pin| admitted_texts(&index, &pin).len())
+            .unwrap_or_default()
+    };
+    assert_eq!(admitted("\n        std::process::exit(0);"), 0);
+    assert_eq!(admitted(""), 1);
 }
 
 #[test]
@@ -4880,6 +4677,63 @@ fn any_mention_in_another_macros_arguments_stays_ambiguous() {
     // A macro whose arguments name no trusted macro binds nothing.
     assert_eq!(
         weight_refusal(tests, &[("src/other.rs", "wrap!(1 + 1);")]),
+        None
+    );
+}
+
+#[test]
+fn a_bound_trusted_macros_arguments_are_opaque_to_other_trusted_names() {
+    // #5941: a user-defined `vec!` is no longer std's, so `assert_eq!` named
+    // only inside its arguments can be defined by the expansion together with
+    // the module whose tests use it.
+    let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    let define = "macro_rules! vec { ($name:ident ! ($($rest:tt)*)) => { macro_rules! $name { ($a:expr, $b:expr) => {{ let _ = (&$a, &$b); }}; } $($rest)* }; }\n";
+    let refused = |other: &str| {
+        matches!(
+            weight_refusal(tests, &[("src/other.rs", other)]),
+            Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::MacroBinding(_)
+            ))
+        )
+    };
+    // The issue's own shape. Its definition body also binds through
+    // `macro_rules! $name`, so this case alone does not isolate the new rule.
+    assert!(refused(&format!(
+        "{define}vec!(assert_eq!(#[cfg(test)] mod tests;));\n"
+    )));
+    // Isolating cases: `vec` is bound without its body making `assert_eq`
+    // ambiguous, so only the arguments of `vec!` can reach it.
+    let not_refused: Vec<&str> = [
+        // An import of a foreign `vec`.
+        "use ext::vec;\nvec!(assert_eq!(#[cfg(test)] mod tests;));\n",
+        // A local `vec` whose body binds only a non-trusted name.
+        "macro_rules! vec { () => { macro_rules! other { () => {}; } }; }\nvec!(assert_eq!(#[cfg(test)] mod tests;));\n",
+        // Fixpoint: `vec!(format)` binds `format`, which is then opaque, even
+        // though its call precedes the `vec!` call that binds it.
+        "use ext::vec;\nformat!(assert_eq!(1, 1));\nvec!(format);\n",
+    ]
+    .into_iter()
+    .filter(|other| !refused(other))
+    .collect();
+    assert!(not_refused.is_empty(), "not refused: {not_refused:?}");
+    // Discriminating negatives: an unbound `vec!` keeps its arguments
+    // trusted, and a locally defined `vec!` whose expansion cannot bind a
+    // name stays transparent (#6648).
+    assert_eq!(
+        weight_refusal(
+            tests,
+            &[("src/other.rs", "fn f() { vec![assert_eq!(1, 1)]; }\n")]
+        ),
+        None
+    );
+    assert_eq!(
+        weight_refusal(
+            tests,
+            &[(
+                "src/other.rs",
+                "macro_rules! vec { ($e:expr) => { 0 }; }\nfn f() { vec![assert_eq!(1, 1)]; }\n"
+            )]
+        ),
         None
     );
 }
@@ -10537,10 +10391,18 @@ fn a_macro_body_that_binds_a_trusted_name_makes_it_ambiguous() {
     for other in [
         "macro_rules! m { (use other::assert_eq;) => {}; }\nm!();\n",
         "macro_rules! m { (use other::*) => {}; }\nm!();\n",
+    ] {
+        assert_eq!(refusal(other), None, "{other}");
+    }
+    // #5941, intentional over-refusal: a trusted-named macro with any binding
+    // site is opaque, so `vec!(assert_eq)` counts as a mention of `assert_eq`
+    // even though these bodies only rename or path-extend their argument. The
+    // earlier "binds nothing" expectation for them is dropped on purpose.
+    for other in [
         "macro_rules! vec { ($n:ident) => { use $n as check; }; }\nvec!(assert_eq);\n",
         "macro_rules! vec { ($n:ident) => { use $n::path; }; }\nvec!(assert_eq);\n",
     ] {
-        assert_eq!(refusal(other), None, "{other}");
+        assert!(refused(other), "{other}");
     }
     // A test-generating macro whose body only calls `assert_eq!`, renames it
     // away, or glob-imports this crate binds nothing.

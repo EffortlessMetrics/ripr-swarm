@@ -2572,6 +2572,7 @@ dependencies = [
  "rayon",
  "repo-policy",
  "ripr",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",

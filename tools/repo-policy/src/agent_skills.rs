@@ -948,4 +948,78 @@ mod tests {
         }
         Ok(())
     }
+
+    // Source-contract controls, not a claim of live agent execution or CI.
+    fn selected_finish_guidance_is_current(finish: &str, deliver: &str) -> bool {
+        let required = [
+            "Select the candidate intended to land",
+            "SOURCE_REVIEW_READY",
+            "add `merge-ready`",
+            "Keep the accountable owner warm",
+            "separate current-repository and product-vision judgment",
+            "normal protected expected-head squash",
+            "No auto-merge or native merge queue",
+            "references/review-conversations.md",
+        ];
+        let prohibited = [
+            "Before arming auto-merge",
+            "arm normal auto-merge",
+            "Auto-merge may be armed",
+            "existing Draft -> Ready proof trigger remains in force",
+            "AUTO_MERGE_ARMED",
+        ];
+        required.iter().all(|value| finish.contains(value))
+            && prohibited.iter().all(|value| !finish.contains(value))
+            && !deliver.contains("AUTO_MERGE_ARMED")
+            && deliver.contains("accountable owner normally retains context")
+    }
+
+    #[test]
+    fn maintained_finish_guidance_preserves_selected_late_qualification() {
+        for (provider, finish, deliver) in [
+            (
+                "agents",
+                include_str!("../../../.agents/skills/finish-pr/SKILL.md"),
+                include_str!("../../../.agents/skills/deliver-pr/SKILL.md"),
+            ),
+            (
+                "claude",
+                include_str!("../../../.claude/skills/finish-pr/SKILL.md"),
+                include_str!("../../../.claude/skills/deliver-pr/SKILL.md"),
+            ),
+        ] {
+            assert!(
+                selected_finish_guidance_is_current(finish, deliver),
+                "{provider}: current selected qualification contract is missing or conflicts with retired merge authority"
+            );
+            for required in [
+                "SOURCE_REVIEW_READY",
+                "add `merge-ready`",
+                "Keep the accountable owner warm",
+                "separate current-repository and product-vision judgment",
+                "normal protected expected-head squash",
+            ] {
+                let changed = finish.replace(required, "removed obligation");
+                assert_ne!(changed, finish);
+                assert!(
+                    !selected_finish_guidance_is_current(&changed, deliver),
+                    "{provider}: missing {required} must fail"
+                );
+            }
+            for retired in [
+                "Auto-merge may be armed",
+                "arm normal auto-merge",
+                "AUTO_MERGE_ARMED",
+            ] {
+                assert!(
+                    !selected_finish_guidance_is_current(&format!("{finish}\n{retired}"), deliver),
+                    "{provider}: retired authority must fail"
+                );
+            }
+            assert!(!selected_finish_guidance_is_current(
+                finish,
+                &format!("{deliver}\n- `AUTO_MERGE_ARMED`")
+            ));
+        }
+    }
 }

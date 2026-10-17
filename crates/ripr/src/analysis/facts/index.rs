@@ -149,9 +149,6 @@ pub struct RustIndex {
     /// facts), so the memos can never answer for sources other than the
     /// ones they were computed from; a cloned index starts empty.
     pub(crate) call_identity_memos: crate::analysis::classify::CallIdentityMemos,
-    /// Complete-source syntax and lexical answers, owned by immutable source
-    /// snapshots rather than by individual owners or probe computations.
-    pub(crate) source_syntax: crate::analysis::syntax::SourceSyntaxMemos,
 }
 
 #[derive(Clone, Debug, Default)]

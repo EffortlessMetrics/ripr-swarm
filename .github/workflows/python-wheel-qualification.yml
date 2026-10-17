@@ -1,6 +1,30 @@
 name: Qualify ripr-rs Python Wheel (read-only)
 
 on:
+  # Staged callable path. Legacy production events remain until caller cutover.
+  workflow_call:
+    inputs:
+      proof_profile:
+        type: string
+        required: true
+      request_id:
+        type: string
+        required: true
+      head_sha:
+        type: string
+        required: true
+      base_sha:
+        type: string
+        default: ''
+      subject_sha:
+        type: string
+        required: true
+      subject_tree:
+        type: string
+        default: ''
+      workflow_generation:
+        type: string
+        required: true
   workflow_dispatch:
     inputs:
       mcp_evidence_pair:
@@ -29,11 +53,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: python-wheel-qualification-${{ github.event.pull_request.number || github.ref }}
+  group: python-wheel-qualification-${{ inputs.request_id || github.event.pull_request.number || github.ref }}-${{ inputs.subject_sha }}
   cancel-in-progress: true
 
 env:
-  CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  CANDIDATE_SHA: ${{ inputs.subject_sha || github.event.pull_request.head.sha || github.sha }}
   RUST_TARGET: x86_64-unknown-linux-gnu
   MATURIN_VERSION: "1.14.1"
   TWINE_VERSION: "7.0.0"
@@ -46,15 +70,58 @@ jobs:
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.mcp_evidence_pair) }}
     name: workflow policy and wheel applicability
     runs-on: ubuntu-22.04
-    timeout-minutes: 10
+    timeout-minutes: ${{ contains(toJSON(inputs), '"subject_sha"') && 3 || 10 }}
     outputs:
-      qualify: ${{ steps.select.outputs.qualify }}
+      qualify: ${{ steps.select.outputs.qualify || steps.subject.outputs.qualify }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ env.CANDIDATE_SHA }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Verify callable exact subject before policy or product execution
+        id: subject
+        shell: bash
+        env:
+          CALL_INPUTS: ${{ toJSON(inputs) }}
+          PROOF_PROFILE: ${{ inputs.proof_profile }}
+          ADMITTED_REQUEST: ${{ inputs.request_id }}
+          ADMITTED_HEAD: ${{ inputs.head_sha }}
+          ADMITTED_BASE: ${{ inputs.base_sha }}
+          ADMITTED_SUBJECT: ${{ inputs.subject_sha }}
+          ADMITTED_TREE: ${{ inputs.subject_tree }}
+          ADMITTED_GENERATION: ${{ inputs.workflow_generation }}
+        run: |
+          set -euo pipefail
+          # workflow_call inherits the caller event; never detect it by event_name.
+          # Key presence also rejects a callable request with every value empty.
+          has_subject="$(jq -er 'if . == null then "false" elif type == "object" then has("subject_sha") | tostring else error("invalid inputs") end' <<< "${CALL_INPUTS}")"
+          if test "${has_subject}" = false; then
+            exit 0
+          fi
+          test "${GITHUB_REPOSITORY}" = EffortlessMetrics/ripr-swarm
+          for value in "${ADMITTED_HEAD}" "${ADMITTED_SUBJECT}" "${ADMITTED_GENERATION}"; do
+            [[ "${value}" =~ ^[0-9a-f]{40}$ ]]
+          done
+          [[ "${ADMITTED_REQUEST}" =~ ^[0-9]+-[0-9]+$ ]]
+          test "${ADMITTED_REQUEST}" = "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test "${GITHUB_WORKFLOW_SHA}" = "${ADMITTED_GENERATION}"
+          actual="$(git rev-parse HEAD)"
+          test "${actual}" = "${ADMITTED_SUBJECT}"
+          tree="$(git rev-parse 'HEAD^{tree}')"
+          case "${PROOF_PROFILE}" in
+            qualification)
+              [[ "${ADMITTED_BASE}" =~ ^[0-9a-f]{40}$ ]]
+              [[ "${ADMITTED_TREE}" =~ ^[0-9a-f]{40}$ ]]
+              test "${tree}" = "${ADMITTED_TREE}"
+              parents="$(git show -s --format=%P HEAD)"
+              test "${parents}" = "${ADMITTED_BASE} ${ADMITTED_HEAD}"
+              ;;
+            diagnostic) test "${actual}" = "${ADMITTED_HEAD}" ;;
+            *) echo 'Unknown wheel proof profile' >&2; exit 1 ;;
+          esac
+          printf 'qualify=true\n' >> "${GITHUB_OUTPUT}"
+
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: 1.95.0
@@ -63,7 +130,7 @@ jobs:
         run: cargo policy check-workflows
       - name: Select wheel applicability from immutable event history
         id: select
-        if: ${{ always() && !cancelled() }}
+        if: ${{ always() && !cancelled() && !contains(toJSON(inputs), '"subject_sha"') }}
         env:
           EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         shell: bash
@@ -94,11 +161,43 @@ jobs:
             cat "${selection}" >> "${GITHUB_OUTPUT}"
           fi
 
+  # Run the unchanged dev/test source contract alongside the release build.
+  # Both producers remain mandatory; consumption waits for both to succeed.
+  source-contract:
+    needs: applicability
+    if: ${{ always() && !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.mcp_evidence_pair) && (!contains(toJSON(inputs), '"subject_sha"') || needs.applicability.result == 'success') && (needs.applicability.result != 'success' || needs.applicability.outputs.qualify != 'false') }}
+    name: Python package source contract
+    timeout-minutes: ${{ contains(toJSON(inputs), '"subject_sha"') && 8 || 20 }}
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          persist-credentials: false
+      - name: Bind exact package source candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REPOSITORY}" = "EffortlessMetrics/ripr-swarm"
+          [[ "${CANDIDATE_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]
+          checkout_head="$(git rev-parse HEAD)"
+          test "${checkout_head}" = "${CANDIDATE_SHA,,}"
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: 1.95.0
+      - name: Validate package source contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo xtask check-release-targets
+          cargo test -p xtask --locked policy::distribution::tests -- --nocapture
+
   build-wheel:
     needs: applicability
     # Only an explicit successful skip proof can avoid qualification.
-    if: ${{ always() && !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.mcp_evidence_pair) && (needs.applicability.result != 'success' || needs.applicability.outputs.qualify != 'false') }}
+    if: ${{ always() && !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.mcp_evidence_pair) && (!contains(toJSON(inputs), '"subject_sha"') || needs.applicability.result == 'success') && (needs.applicability.result != 'success' || needs.applicability.outputs.qualify != 'false') }}
     name: build and inspect Linux x64 wheel
+    timeout-minutes: ${{ contains(toJSON(inputs), '"subject_sha"') && 12 || 20 }}
     runs-on: ubuntu-22.04
     outputs:
       native_version: ${{ steps.candidate.outputs.native_version }}
@@ -123,7 +222,8 @@ jobs:
           set -euo pipefail
           test "${GITHUB_REPOSITORY}" = "EffortlessMetrics/ripr-swarm"
           [[ "${CANDIDATE_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]
-          test "$(git rev-parse HEAD)" = "${CANDIDATE_SHA,,}"
+          checkout_head="$(git rev-parse HEAD)"
+          test "${checkout_head}" = "${CANDIDATE_SHA,,}"
           native_version="$(cargo metadata --no-deps --format-version 1 | jq -er '.packages[] | select(.name == "ripr") | .version')"
           test -n "${native_version}"
           echo "native_version=${native_version}" >> "${GITHUB_OUTPUT}"
@@ -160,13 +260,6 @@ jobs:
           "${venv}/bin/python" -m twine --version
           "${venv}/bin/python" -m uv --version
           "${venv}/bin/python" -c 'import packaging; print(f"packaging {packaging.__version__}")'
-
-      - name: Validate package source contract
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo xtask check-release-targets
-          cargo test -p xtask --locked policy::distribution::tests -- --nocapture
 
       - name: Resolve and cross-check Python distribution version
         id: python_version
@@ -448,9 +541,10 @@ jobs:
 
   consume:
     # A successful fallback build is consumable even after failed applicability.
-    if: ${{ always() && !cancelled() && needs.build-wheel.result == 'success' }}
+    if: ${{ always() && !cancelled() && needs.build-wheel.result == 'success' && needs.source-contract.result == 'success' }}
     name: clean ${{ matrix.client }} install and useful Python journey
-    needs: build-wheel
+    timeout-minutes: ${{ contains(toJSON(inputs), '"subject_sha"') && 5 || 20 }}
+    needs: [build-wheel, source-contract]
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
