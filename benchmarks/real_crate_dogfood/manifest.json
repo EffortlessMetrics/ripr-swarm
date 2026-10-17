@@ -1,7 +1,7 @@
 {
   "schema_version": "ripr-real-crate-dogfood-v1",
   "corpus_version": "2026-10-17.1",
-  "description": "Recent real commits of popular open-source Rust crates, each analyzed with `ripr check --base <revision>^`. Re-run before and after an analyzer change to measure related-test naming, duplicate test rows, base-side findings, footer/class agreement and wall time on real diffs. Findings are not judged here; the metrics are counts and timings only.",
+  "description": "Recent real commits of popular open-source Rust crates, each analyzed with `ripr check --base <revision>^`. Re-run before and after an analyzer change to measure related-test naming, duplicate test rows, base-side findings and wall time on real diffs. Findings are not judged here; the metrics are counts and timings only.",
   "limits": [
     "counts are static-analysis outputs on the pinned commits, not correctness verdicts",
     "a revision is analyzed as the head of a shallow checkout whose parent is fetched as the base",

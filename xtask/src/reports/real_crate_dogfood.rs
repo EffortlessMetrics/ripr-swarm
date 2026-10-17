@@ -358,10 +358,20 @@ fn measure_case(case: &Case, dir: &Path, ripr: &Path, timeout: Duration) -> Resu
         ));
     }
     let base = format!("{}^", case.revision);
-    let diff_files: BTreeSet<String> = git(dir, &["diff", "--name-only", &base, "HEAD"])?
-        .lines()
-        .map(str::to_string)
-        .collect();
+    let diff_files: BTreeSet<String> = git(
+        dir,
+        &[
+            "-c",
+            "core.quotepath=off",
+            "diff",
+            "--name-only",
+            &base,
+            "HEAD",
+        ],
+    )?
+    .lines()
+    .map(str::to_string)
+    .collect();
     let args = vec![
         "check".to_string(),
         "--root".to_string(),
