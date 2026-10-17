@@ -202,3 +202,29 @@ fn unchanged_deep_cr_only_elif_chain_is_a_named_limit_not_an_abort() -> Result<(
     }
     assert_tree_budget_disclosed("CR elif", &source)
 }
+
+/// Real parametrize tables hold hundreds of ANSI/regex literals whose `[` is
+/// never closed inside the string (`"\x1b[31m"`). The literals' brackets must
+/// not accumulate into file nesting: the file would be dropped, and a
+/// changed behavior its tests cover would read `no_static_path`.
+#[test]
+fn unbalanced_bracket_string_literals_do_not_trip_the_nesting_budget() -> Result<(), String> {
+    let mut source = String::from("TABLE = [\n");
+    for index in 0..200 {
+        source.push_str(&format!("    (\"\\x1b[{index}mx\", \"\\x1b[0m\"),\n"));
+    }
+    source.push_str("]\n");
+    let root = write_workspace(&source)?;
+    let output = check(&root)?;
+    let _ = fs::remove_dir_all(&root);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if output.status.code().is_none() {
+        return Err(format!("ripr aborted\nstdout: {stdout}"));
+    }
+    if stdout.contains("parse_budget:") {
+        return Err(format!(
+            "unbalanced brackets inside string literals must not count as nesting\n{stdout}"
+        ));
+    }
+    Ok(())
+}
