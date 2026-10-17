@@ -1801,6 +1801,18 @@ fn loop_table_that_never_varies_default_is_weakly_exposed() -> Result<(), String
     Ok(())
 }
 
+/// A later unvaried table in the same test must not hide an earlier exact
+/// oracle. `select_relevant_assertion` would prefer the later equal-strength
+/// line and wrongly downgrade.
+#[test]
+fn unvaried_table_does_not_hide_an_earlier_exact_oracle_in_the_same_test() -> Result<(), String> {
+    let finding = last_finding(
+        "import unittest\nfrom src.subject import last\n\nclass LastTests(unittest.TestCase):\n    def test_default(self):\n        self.assertEqual(last([], default=0), 0)\n        for iterable, default in [([], None), (iter([]), None)]:\n            with self.subTest(iterable=iterable):\n                self.assertEqual(last(iterable, default=default), default)\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
 /// A second, non-table exact oracle may still discriminate; do not downgrade
 /// the finding merely because a sibling table is unvaried.
 #[test]

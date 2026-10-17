@@ -15,7 +15,7 @@
 //! fail after the replacement (`default=0` vs `return None`) keeps today's
 //! verdict.
 
-use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
+use super::assertion_selection::PythonAssertionFocus;
 use super::boundary::{literal_value, literals_equal};
 use super::parametrize::PythonParametrizeCases;
 use super::related_tests::PythonRelatedCandidate;
@@ -59,26 +59,36 @@ pub(super) fn python_unvaried_table_operand(
         if !candidate.relation.uses_oracle() {
             continue;
         }
-        let Some(assertion) =
-            select_relevant_assertion(&candidate.test.assertions, Some(focus)).assertion()
-        else {
-            continue;
-        };
-        if assertion.oracle_strength.rank() < OracleStrength::Strong.rank() {
+        // One selected assertion is not enough: a later unvaried table row can
+        // win the equal-strength tie-break over an earlier exact oracle in the
+        // same test. Any strong admitted assertion that is not this tautology
+        // may still discriminate.
+        let strong_assertions: Vec<&PythonAssertion> = candidate
+            .test
+            .assertions
+            .iter()
+            .filter(|assertion| {
+                focus.admits(assertion)
+                    && assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
+            })
+            .collect();
+        if strong_assertions.is_empty() {
             continue;
         }
         let Some(table) = table_cases(candidate.test) else {
             // A strong oracle that is not table-driven may still discriminate.
             return None;
         };
-        if !table_does_not_vary(
-            candidate.test,
-            owner,
-            &operand,
-            &replacement,
-            &table,
-            assertion,
-        ) {
+        if strong_assertions.iter().any(|assertion| {
+            !table_does_not_vary(
+                candidate.test,
+                owner,
+                &operand,
+                &replacement,
+                &table,
+                assertion,
+            )
+        }) {
             return None;
         }
         saw_table = true;
@@ -232,7 +242,7 @@ fn owner_call_and_expected_from_stmt<'a>(
         Stmt::Assert(assert_stmt) => match assert_stmt.test.as_ref() {
             Expr::Compare(compare)
                 if compare.ops.len() == 1
-                    && matches!(compare.ops[0], ast::CmpOp::Eq | ast::CmpOp::Is)
+                    && matches!(compare.ops[0], ast::CmpOp::Eq)
                     && compare.comparators.len() == 1 =>
             {
                 sides(compare.left.as_ref(), &compare.comparators[0], owner_names)
@@ -280,7 +290,7 @@ fn is_equality_assertion(call: &ast::ExprCall) -> bool {
     expr_full_name(&call.func).is_some_and(|name| {
         matches!(
             name.rsplit('.').next().unwrap_or(name.as_str()),
-            "assertEqual" | "assertIs"
+            "assertEqual"
         )
     })
 }
