@@ -30,6 +30,8 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/one_hop_field_projection_discarded/input --diff <cwd>/fixtures/one_hop_field_projection_discarded/diff.patch --mode fast probe:src_lib.rs:field_construction:42ec5018
   ripr context --root <cwd>/fixtures/one_hop_field_projection_discarded/input --diff <cwd>/fixtures/one_hop_field_projection_discarded/diff.patch --mode fast --at probe:src_lib.rs:field_construction:42ec5018
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/one_hop_field_projection_discarded/input --at src/lib.rs:5 --kind field_construction
 
 More:
   Full evidence: rerun with --format human-full
