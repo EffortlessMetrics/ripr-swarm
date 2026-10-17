@@ -1823,3 +1823,121 @@ fn unvaried_table_does_not_hide_a_varied_exact_oracle() -> Result<(), String> {
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }
+
+const YY_SOURCE: &str = "def yy(year):\n    return year % 1000\n";
+const YY_OLD: &str = "    return year % 100";
+const YY_NEW: &str = "    return year % 1000";
+
+fn yy_finding(tests: &str) -> Result<Finding, String> {
+    classify_case(YY_SOURCE, tests, 2, YY_OLD, YY_NEW)
+}
+
+fn table_does_not_vary_year(finding: &Finding) {
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|entry| entry.contains("table rows do not vary year")),
+        "{finding:?}"
+    );
+    assert!(
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .any(|fact| fact.reason == "table rows do not vary year"),
+        "{finding:?}"
+    );
+}
+
+/// #6651 loguru slice: every parametrized year is 20xx, so `year % 100` and
+/// `year % 1000` agree on every row. Before per-row arithmetic evaluation the
+/// exact oracle credited `exposed`.
+#[test]
+fn parametrize_20xx_years_do_not_distinguish_year_modulo() -> Result<(), String> {
+    let finding = yy_finding(
+        "import pytest\nfrom src.subject import yy\n\n@pytest.mark.parametrize(\"year\", [2015, 2016, 2020])\ndef test_yy(year):\n    assert yy(year) == year % 100\n",
+    )?;
+    table_does_not_vary_year(&finding);
+    Ok(())
+}
+
+/// A year such as 1999 makes `x % 100` differ from `x % 1000`, so the table
+/// remains a discriminator.
+#[test]
+fn parametrize_year_that_distinguishes_modulo_stays_exposed() -> Result<(), String> {
+    let finding = yy_finding(
+        "import pytest\nfrom src.subject import yy\n\n@pytest.mark.parametrize(\"year\", [2015, 1999])\ndef test_yy(year):\n    assert yy(year) == year % 100\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(finding.activation.missing_discriminators.is_empty());
+    Ok(())
+}
+
+#[test]
+fn subtest_20xx_years_do_not_distinguish_year_modulo() -> Result<(), String> {
+    let finding = yy_finding(
+        "import unittest\nfrom src.subject import yy\n\nclass YearTests(unittest.TestCase):\n    def test_yy(self):\n        for year in [2015, 2016, 2020]:\n            with self.subTest(year=year):\n                self.assertEqual(yy(year), year % 100)\n",
+    )?;
+    table_does_not_vary_year(&finding);
+    Ok(())
+}
+
+/// Arithmetic that still changes on 20xx years (`+ 1` vs `+ 2`) must not be
+/// weakened just because the table is a year column.
+#[test]
+fn parametrize_20xx_years_still_distinguish_plus_offset() -> Result<(), String> {
+    let finding = classify_case(
+        "def yy(year):\n    return year + 2\n",
+        "import pytest\nfrom src.subject import yy\n\n@pytest.mark.parametrize(\"year\", [2015, 2016, 2020])\ndef test_yy(year):\n    assert yy(year) == year + 1\n",
+        2,
+        "    return year + 1",
+        "    return year + 2",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+/// A table whose year cells are not integer literals stays on today's verdict.
+#[test]
+fn variable_year_table_does_not_claim_unvaried_modulo() -> Result<(), String> {
+    let finding = yy_finding(
+        "from src.subject import yy\n\nYEARS = [2015, 2016, 2020]\n\ndef test_yy():\n    for year in YEARS:\n        assert yy(year) == year % 100\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+const TOKENS_SOURCE: &str =
+    "def tokens(t):\n    return {\n        \"YY\": t.tm_year % 1000,\n    }\n";
+const TOKENS_OLD: &str = "        \"YY\": t.tm_year % 100,";
+const TOKENS_NEW: &str = "        \"YY\": t.tm_year % 1000,";
+
+/// Loguru shape: the changed dict field is `t.tm_year % 100`, and every
+/// parametrized datetime is constructed from a 20xx year literal.
+#[test]
+fn datetime_20xx_rows_do_not_distinguish_tm_year_modulo() -> Result<(), String> {
+    let finding = classify_case(
+        TOKENS_SOURCE,
+        "import pytest\nfrom datetime import datetime\nfrom src.subject import tokens\n\n@pytest.mark.parametrize(\"year\", [2015, 2016, 2020])\ndef test_yy(year):\n    assert tokens(datetime(year, 1, 1))[\"YY\"] == year % 100\n",
+        3,
+        TOKENS_OLD,
+        TOKENS_NEW,
+    )?;
+    table_does_not_vary_year(&finding);
+    Ok(())
+}
+
+#[test]
+fn datetime_row_that_distinguishes_tm_year_modulo_stays_exposed() -> Result<(), String> {
+    let finding = classify_case(
+        TOKENS_SOURCE,
+        "import pytest\nfrom datetime import datetime\nfrom src.subject import tokens\n\n@pytest.mark.parametrize(\"year\", [2015, 1999])\ndef test_yy(year):\n    assert tokens(datetime(year, 1, 1))[\"YY\"] == year % 100\n",
+        3,
+        TOKENS_OLD,
+        TOKENS_NEW,
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
