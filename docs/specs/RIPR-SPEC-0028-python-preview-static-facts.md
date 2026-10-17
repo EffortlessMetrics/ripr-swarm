@@ -281,6 +281,14 @@ Test-name and fixture-name proximity may provide a suggested repair location,
 but these links must be marked uncertain, must keep weak reachability, and must
 not promote unrelated assertions to strong revealability.
 
+A top-level helper function that no test calls itself is related, with the
+weak `helper_owner_call` relation, to a test that calls a same-module caller of
+it (`Version.__init__` reaching `_validate_epoch`), following bare-name calls
+for at most three hops in the helper's file. The relation is uncertain,
+carries no oracle, and never reaches `exposed`; a duplicate helper name, a
+parameter or local rebinding of the name, an attribute call, and comment or
+string text make no edge (#4568).
+
 A Python test is related to an owner only when the test references the owner.
 Same-stem file, test-name, and fixture-name proximity only rank a test that
 already references the owner without a recognized call shape; they never
