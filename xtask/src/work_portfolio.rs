@@ -4899,6 +4899,28 @@ mod tests {
         Ok(())
     }
 
+    /// Fixture detection fails closed: an unresolvable path under `fixtures/`
+    /// and a lexically similar sibling are never the committed corpus, while
+    /// the real corpus directory is.
+    #[test]
+    fn committed_fixture_detection_fails_closed_for_unresolvable_paths() -> Result<(), String> {
+        if !is_committed_fixture_dir(&workspace_path(DEFAULT_WORK_CAPTURED_DIR)) {
+            return Err("the committed corpus must be detected".to_string());
+        }
+        for path in [
+            workspace_path("fixtures/does-not-exist-7429"),
+            workspace_path("fixtures-sibling-7429"),
+        ] {
+            if is_committed_fixture_dir(&path) {
+                return Err(format!(
+                    "`{}` must not be a committed fixture",
+                    path.display()
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// A real `load_and_compile` over a non-fixture directory reports a live
     /// capture, not the committed fixture corpus.
     #[test]
