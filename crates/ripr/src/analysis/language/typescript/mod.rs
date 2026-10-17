@@ -102,6 +102,10 @@ mod static_limit;
 mod table_rows;
 #[cfg(test)]
 mod tests;
+// Declared here, not in `tests.rs`, so #7813 does not collide with #8476.
+#[cfg(test)]
+#[path = "tests/issue7813_alias_member_tests.rs"]
+mod issue7813_alias_member_tests;
 mod tests_extract;
 #[cfg(test)]
 mod tests_extract_tests;

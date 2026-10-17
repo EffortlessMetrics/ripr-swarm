@@ -310,6 +310,14 @@ missing file cannot be read as this run's evidence, and the summary schema stays
 unchanged (`outputs` remains the packet path map; `outputs_written` names what
 this run produced) (#7425).
 
+The timeout JSON summary's `next.retry_command` must explicitly request
+`--format json`, so an agent following it continues receiving structured stdout
+on recovery (#8472). The shared root, output directory, mode, seam count and
+retry-budget policy remain bound to the original request. Human Markdown and
+terminal retry commands retain their default human format. This does not
+promote the partial analysis: totals remain `null`, ranked seams and completed
+phases remain empty, and only the two summaries are declared written.
+
 ## Outcome Receipt
 
 The public before/after receipt command should expose the existing targeted-test
@@ -772,6 +780,8 @@ Current tests and reports that support the contract:
 - `crates/ripr/src/cli/commands/pilot.rs::tests::remove_unwritten_timeout_packet_siblings_unlinks_a_symlink_and_keeps_its_target`
 - `crates/ripr/src/cli/commands/pilot.rs::tests::remove_unwritten_timeout_packet_siblings_refuses_a_directory`
 - `crates/ripr/src/output/pilot/tests.rs::timeout_summary_json_is_partial_and_points_to_retry`
+- `crates/ripr/src/output/pilot/tests/timeout_retry.rs::timeout_json_retry_preserves_format_and_unknown_analysis`
+- `crates/ripr/tests/cli_smoke/pilot_timeout_retry.rs::timeout_json_retry_replays_as_json_from_a_foreign_directory`
 - `crates/ripr/src/output/pilot/tests.rs::timeout_summary_md_explains_partial_status_and_retry_command`
 - `crates/ripr/tests/cli_smoke.rs::pilot_accepts_python_project_without_ripr_config`
 - `crates/ripr/tests/cli_smoke.rs::pilot_projects_python_repair_card_for_git_diff`
