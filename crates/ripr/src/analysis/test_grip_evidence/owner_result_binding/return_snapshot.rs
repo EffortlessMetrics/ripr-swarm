@@ -101,9 +101,8 @@ pub(in crate::analysis::test_grip_evidence) fn snapshot_macro_is_unambiguous(
     context: &CompactGripContext<'_>,
 ) -> bool {
     let leaf = text.rsplit("::").next().unwrap_or_default();
-    let qualified = text.trim_start_matches("::").starts_with("insta::");
     if crate::analysis::classify::targeted_name_is_alias(context.index, leaf)
-        || (qualified && crate::analysis::classify::targeted_name_is_alias(context.index, "insta"))
+        || crate::analysis::classify::targeted_name_is_alias(context.index, "insta")
     {
         return false;
     }
@@ -111,7 +110,7 @@ pub(in crate::analysis::test_grip_evidence) fn snapshot_macro_is_unambiguous(
         if facts.used_lexical_fallback {
             return false;
         }
-        if !facts.source.contains(leaf) && (!qualified || !facts.source.contains("insta")) {
+        if !facts.source.contains(leaf) && !facts.source.contains("insta") {
             return true;
         }
         let Some(parsed) = context.parsed_test_file(file) else {
@@ -121,10 +120,16 @@ pub(in crate::analysis::test_grip_evidence) fn snapshot_macro_is_unambiguous(
         let mut allowed_imports = std::collections::BTreeSet::new();
         for import in tree.syntax().descendants().filter_map(ast::Use::cast) {
             for item in import.syntax().descendants().filter_map(ast::UseTree::cast) {
-                if item.rename().is_some()
-                    || item.use_tree_list().is_some()
-                    || item.star_token().is_some()
-                {
+                if let Some(rename) = item.rename() {
+                    if rename
+                        .name()
+                        .is_some_and(|name| name.text().trim_start_matches("r#") == leaf)
+                    {
+                        return false;
+                    }
+                    continue;
+                }
+                if item.use_tree_list().is_some() || item.star_token().is_some() {
                     continue;
                 }
                 let Some(path) = item.path() else { continue };
@@ -175,14 +180,13 @@ pub(in crate::analysis::test_grip_evidence) fn snapshot_macro_is_unambiguous(
         sites.iter().all(|(_, site)| {
             matches!(site.kind, crate::analysis::syntax::MacroBindingKind::Import)
                 && allowed_imports.contains(&site.line)
-        }) && (!qualified
-            || (!tree
-                .syntax()
-                .descendants()
-                .filter_map(ast::Module::cast)
-                .filter_map(|item| item.name())
-                .any(|name| name.text().trim_start_matches("r#") == "insta")
-                && !crate::analysis::syntax::source_declares_value_name(&facts.source, "insta")))
+        }) && (!tree
+            .syntax()
+            .descendants()
+            .filter_map(ast::Module::cast)
+            .filter_map(|item| item.name())
+            .any(|name| name.text().trim_start_matches("r#") == "insta")
+            && !crate::analysis::syntax::source_declares_value_name(&facts.source, "insta"))
     })
 }
 

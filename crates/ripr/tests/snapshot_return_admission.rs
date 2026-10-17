@@ -235,6 +235,9 @@ fn inline_string_commas_keep_direct_snapshot_credit() -> Result<(), String> {
 #[test]
 fn local_snapshot_lookalikes_cannot_borrow_the_operand_exception() -> Result<(), String> {
     weak(
+        "use opaque_snapshots as insta;\n        use insta::assert_snapshot;\n        let actual = make_count(2);\n        assert_snapshot!(make_count(2), @\"2\");",
+    )?;
+    weak(
         "macro_rules! define_snapshot { () => { macro_rules! assert_snapshot { ($ignored:expr, @$expected:literal) => {}; } }; }\n        define_snapshot!();\n        let actual = make_count(2);\n        assert_snapshot!(make_count(2), @\"2\");",
     )?;
     weak(
@@ -250,14 +253,20 @@ fn local_snapshot_lookalikes_cannot_borrow_the_operand_exception() -> Result<(),
 
 #[test]
 fn snapshot_imports_cannot_borrow_another_modules_same_line() -> Result<(), String> {
-    let source = SOURCE.replace("mod tests {\n    use super::*;", "mod unused { use insta::assert_snapshot; } mod tests { use opaque_snapshots::assert_snapshot;\n    use super::*;");
-    assert_weak(
-        Fixture::with_source(
-            &source,
-            "let actual = make_count(2);\n        assert_snapshot!(make_count(2), @\"2\");",
-        )?
-        .seam()?,
-    )
+    for import in [
+        "use opaque_snapshots::assert_snapshot;",
+        "use opaque_snapshots::assert_snapshot as r#assert_snapshot;",
+    ] {
+        let source = SOURCE.replace("mod tests {\n    use super::*;", &format!("mod unused {{ use insta::assert_snapshot; }} mod tests {{ {import}\n    use super::*;"));
+        assert_weak(
+            Fixture::with_source(
+                &source,
+                "let actual = make_count(2);\n        assert_snapshot!(make_count(2), @\"2\");",
+            )?
+            .seam()?,
+        )?;
+    }
+    Ok(())
 }
 
 #[test]
