@@ -12,7 +12,7 @@
 
 .github/actions/ci-scratch-lease/action.yml|86|Shared self-hosted scratch ownership authority (#3841): acquire/release a kernel flock lease per job, self-check it at reclaim and release, and reclaim only terminal trees this repository owns while holding that lease. It must run before the Rust toolchain exists and on the toolchain-free scheduled GC lane, so it cannot be an xtask command; the executed behavior harness lives in tools/repo-policy/src/ci_scratch/tests.rs.
 .github/actions/ripr-check/action.yml|7|Adoption composite action installs ripr when missing and runs one ripr check command (#2626).
-.github/actions/pr-candidate-admission/action.yml|309|Candidate admission (#2022, #4987): one bounded read-only GitHub API snapshot, then a self-tested pure decision (stale head, claim identity, trusted competing peer with recorded winner/replacement reconciliation, oversize non-docs scope) that must run before any product allocation; the decision table and its discriminating self-test controls live in the same run block so the executed behavior stays reviewable.
+.github/actions/pr-candidate-admission/action.yml|198|Candidate and hard-cut admission (#2022, #4987, #5391): bounded read-only GitHub snapshots feed two self-tested pure Python decisions; the wrapper reports exact-head/claim/competitor/scope state and reads the inactive/active/pinned release packet from the exact base commit before product allocation.
 
 .github/workflows/badge-endpoints.yml|1|Badge endpoint refresh delegates generation to cargo xtask and opens a PR.
 .github/workflows/ci.yml|38|#4987: bounded event-head Rust surface detection; remaining CI blocks call direct Cargo or npm commands.
@@ -35,7 +35,7 @@
 .github/workflows/routed-rust.yml|63|Routed Rust selects one trusted self-hosted runner or the hosted fallback, preserves normalized result semantics, and delegates implementation proof to the reusable Rust gate workflow.
 .github/workflows/rust-corpus.yml|4|Shared Rust corpus lane: one-command build, fetch and smoke steps, then one folded cargo xtask dx-scoreboard gate command.
 .github/workflows/rust-gates.yml|31|Reusable Rust gate implementation preserves scratch tempfail fallback, required proof, bounded PR evidence, and failure-only ordinary artifacts.
-.github/workflows/scratch-gc.yml|3|Scheduled scratch-GC lane reclaims terminal scratch through the shared ci-scratch-lease action (#3841), then trims sccache, reports disk, and keeps the hard-fail guard on a timer so disk recovery does not depend on PR traffic (#1028).
+.github/workflows/scratch-gc.yml|3|Scheduled scratch-GC lane reclaims terminal scratch through the shared ci-scratch-lease action (#1028), then trims sccache, reports disk, and keeps the hard-fail guard on a timer so disk recovery does not depend on PR traffic (#1028).
 .github/workflows/security.yml|1|Security workflow installs cargo-deny as a normal binary, then runs the standard cargo-deny command without requiring Docker.
 .github/workflows/server-archive-qualification.yml|90|Exact measured largest run block retains ruleset diagnostics plus five-target producer, explicit per-target archive-readback evidence, and receipt-v3 aggregation; credential-free qualification delegates payload and archive construction to Rust xtask commands.
 .github/workflows/source-of-truth.yml|15|Advisory source-of-truth workflow runs two xtask doc checks, publishes the bounded spec maintenance digest, and annotates an instrument failure as a failed advisory observation (#3467).
