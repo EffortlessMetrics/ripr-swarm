@@ -51,7 +51,7 @@ permissions:
 # are skipped and it can neither cancel nor replace a pending merge-ready run.
 concurrency:
   group: pilot-ranking-${{ github.event.pull_request.number || github.ref }}-${{ (github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run' }}
-  cancel-in-progress: ${{ (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') || (github.event_name != 'pull_request' && true) }}
+  cancel-in-progress: ${{ (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') || github.event_name != 'pull_request' }}
 
 jobs:
   ranking:

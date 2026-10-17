@@ -421,21 +421,30 @@ fn gated_lanes_admit_pull_requests_only_on_the_merge_ready_labeled_event() {
             .collect();
         assert!(!gated_ifs.is_empty(), "{name} has no merge-ready guard");
         if source.contains("\nconcurrency:\n") {
-            let group = source
-                .lines()
-                .find(|line| line.trim_start().starts_with("group:"))
-                .unwrap_or_default();
-            assert!(
-                group.contains("github.run_id") && group.contains("'merge-ready'"),
-                "{name}: non-request pull_request events must get a unique group: {group}"
+            const REQUEST: &str = "github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready'";
+            let prefix = match name {
+                "pilot-ranking.yml" => "pilot-ranking",
+                "public-proof.yml" => "public-proof",
+                _ => "${{ github.workflow }}",
+            };
+            let cancels_non_pr = matches!(name, "pilot-ranking.yml" | "public-proof.yml");
+            let expected_group = format!(
+                "  group: {prefix}-${{{{ github.event.pull_request.number || github.ref }}}}-${{{{ (github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run' }}}}"
             );
-            let cancel = source
-                .lines()
-                .find(|line| line.trim_start().starts_with("cancel-in-progress:"))
-                .unwrap_or_default();
+            let expected_cancel = if cancels_non_pr {
+                format!(
+                    "  cancel-in-progress: ${{{{ ({REQUEST}) || github.event_name != 'pull_request' }}}}"
+                )
+            } else {
+                format!("  cancel-in-progress: ${{{{ ({REQUEST}) }}}}")
+            };
             assert!(
-                cancel.contains("github.event.label.name == 'merge-ready'"),
-                "{name}: only a merge-ready request may cancel in-flight runs: {cancel}"
+                source.lines().any(|line| line == expected_group),
+                "{name}: group must give non-request pull_request events a unique group"
+            );
+            assert!(
+                source.lines().any(|line| line == expected_cancel),
+                "{name}: only a merge-ready request may cancel pull_request runs"
             );
         }
         for line in gated_ifs {
