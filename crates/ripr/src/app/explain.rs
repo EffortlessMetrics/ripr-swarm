@@ -118,6 +118,11 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
 /// from the caller's directory and default base, and without `--worktree`
 /// it omits the findings only the uncommitted edits produce.
 pub(crate) fn no_finding_matched(selector: &str, list_command: &str) -> String {
+    if looks_like_seam_id(selector) {
+        return format!(
+            "no finding matched {selector:?}; this looks like a seam id (as printed by `ripr pilot`), and `explain`/`context` select finding ids, not seam ids; run `ripr repair {selector}` or `ripr agent repair --seam-id {selector} --phase before` to work on the seam"
+        );
+    }
     let syntax_hint = if super::selector::location_selector_needs_syntax_hint(selector) {
         " for a file location, use file:line with a nonempty path and a positive decimal line number without leading zeros (for example src/lib.rs:12);"
     } else {
@@ -126,6 +131,17 @@ pub(crate) fn no_finding_matched(selector: &str, list_command: &str) -> String {
     format!(
         "no finding matched {selector:?};{syntax_hint} run `{list_command}` to list available finding ids"
     )
+}
+
+/// A seam id as handed out by `ripr pilot`/`ripr repair`: 16 lowercase hex
+/// digits, or an explicit `seam:` prefix. Finding ids are `probe:`/`gap:`
+/// identities or `file:line` locations, so this never captures them.
+fn looks_like_seam_id(selector: &str) -> bool {
+    (selector.len() == 16
+        && selector
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+        || selector.starts_with("seam:")
 }
 
 /// The ambiguity message for a selector naming several findings (#8166
@@ -453,6 +469,31 @@ mod tests {
     /// selected diff.
     #[test]
     fn explain_unmatched_and_seam_shaped_selectors_refuse_as_no_match() {
+        for selector in ["probe:not-a-real-id", "0123456789abcdef"] {
+            let result = explain_fixture("collection_argument_plain", selector);
+            let message = result.err().unwrap_or_default();
+            let seam_shaped = selector == "0123456789abcdef";
+            assert_eq!(
+                message.contains("this looks like a seam id"),
+                seam_shaped,
+                "seam-id hint only for seam-shaped selectors: {message}"
+            );
+            assert_eq!(
+                message.contains("to list available finding ids"),
+                !seam_shaped,
+                "finding-id miss keeps the check hint, seam id drops it: {message}"
+            );
+            if seam_shaped {
+                assert!(
+                    message.contains("ripr repair 0123456789abcdef"),
+                    "{message}"
+                );
+                assert!(
+                    message.contains("ripr agent repair --seam-id 0123456789abcdef --phase before"),
+                    "{message}"
+                );
+            }
+        }
         for selector in ["probe:not-a-real-id", "0123456789abcdef"] {
             let result = explain_fixture("collection_argument_plain", selector);
             let message = result
