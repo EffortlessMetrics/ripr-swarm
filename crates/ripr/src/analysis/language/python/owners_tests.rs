@@ -166,6 +166,8 @@ fn owner_from_function(
         body,
         super::same_class_callees::method_receiver_name(&parameters, &decorators),
     );
+    let module_callees =
+        super::module_callees::bare_callees(&text_for_range(context.source, range), &parameters);
     PythonOwner {
         name: name.to_string(),
         qualified_name,
@@ -188,6 +190,7 @@ fn owner_from_function(
             &text_for_range(context.source, range),
         ),
         same_class_callees,
+        module_callees,
         class_path: context.class_context.unwrap_or_default().to_string(),
         term_facts,
     }
@@ -245,6 +248,7 @@ fn owner_from_class(
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
     }
@@ -273,6 +277,7 @@ pub(super) fn module_owner(
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
     }

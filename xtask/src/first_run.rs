@@ -30,6 +30,10 @@ const ROW_SCHEMA: &str = "first_run_row.v1";
 const ROWS_FILE: &str = "first-run-rows.jsonl";
 /// A developer is asked to review the generated workflow before committing it.
 const MAX_WORKFLOW_LINES: usize = 1500;
+/// Marker for the friction flag emitted when the generated workflow exceeds
+/// `MAX_WORKFLOW_LINES`. The public-proof page matches on this text to keep
+/// the workflow-size flag in its own metric, so the wording has one owner.
+pub(crate) const GENERATED_WORKFLOW_BUDGET_FLAG: &str = "generated workflow is";
 const INSTALL_STDERR_LOG: &str = "install_published.stderr.log";
 const ARCHIVE_STDERR_LOG: &str = "install_archive.stderr.log";
 const OUT_MARKER: &str = ".first-run-output";
@@ -930,7 +934,7 @@ fn friction(result: &StepResult, workflow: Option<&str>) -> Vec<String> {
                 let lines = text.lines().count();
                 if lines > MAX_WORKFLOW_LINES {
                     flags.push(format!(
-                        "generated workflow is {lines} lines, over the {MAX_WORKFLOW_LINES}-line review budget"
+                        "{GENERATED_WORKFLOW_BUDGET_FLAG} {lines} lines, over the {MAX_WORKFLOW_LINES}-line review budget"
                     ));
                 }
                 if text.contains("cargo install ripr") && !text.contains("sha256") {

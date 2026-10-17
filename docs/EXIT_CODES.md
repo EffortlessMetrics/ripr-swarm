@@ -92,8 +92,9 @@ preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
   `analysis_outcome: null`; no `run_status` field), and
   `repo-exposure-json` and `agent-seam-packets-json` render their format's
   refused envelope (zeroed counts, `run_status: "refused"`). Machine formats without an
-  honest refusal shape yet — `repo-sarif`, `badge-plus`, `repo-badge-*`,
-  `shields`, `repo-seams-*`, and `repo-exposure-summary-json` — write
+  honest refusal shape yet — `repo-sarif`, `badge-shields`, `badge-plus-*`,
+  `repo-badge-*`, `repo-seams-*`, `repo-exposure-md`, and
+  `repo-exposure-summary-json` — write
   nothing to stdout and put the prose diagnostic on stderr for now; that
   gap is a named limitation, not a clean result. Exactly two cases stay
   prose-only with empty stdout on every command: argv usage errors and

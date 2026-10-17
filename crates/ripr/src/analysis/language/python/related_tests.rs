@@ -23,6 +23,9 @@ pub(super) enum PythonRelationKind {
     SameStem,
     TestNameSimilarity,
     FixtureName,
+    /// The test calls a same-module caller of the owner, and no test calls the
+    /// owner itself (#4568). Reach evidence only; never an oracle.
+    HelperOwnerCall,
     ActivationLimited,
 }
 
@@ -39,6 +42,7 @@ impl PythonRelationKind {
             Self::SameStem => 3,
             Self::TestNameSimilarity => 2,
             Self::FixtureName => 1,
+            Self::HelperOwnerCall => 2,
             Self::ActivationLimited => 0,
         }
     }
@@ -71,6 +75,7 @@ impl PythonRelationKind {
             Self::SameStem => "same_stem",
             Self::TestNameSimilarity => "test_name_similarity",
             Self::FixtureName => "fixture_name",
+            Self::HelperOwnerCall => "helper_owner_call",
             Self::ActivationLimited => "test_activation_unestablished",
         }
     }
@@ -130,6 +135,107 @@ pub(super) fn related_test_candidates<'a>(
             .then_with(|| left.test.name.cmp(&right.test.name))
     });
     candidates
+}
+
+/// Most same-module caller hops followed from a changed helper (#4568).
+const MAX_HELPER_CALLER_DEPTH: usize = 3;
+
+/// A weak `helper_owner_call` candidate and the same-module caller the test
+/// calls (`Version.__init__` for `_validate_epoch`).
+pub(super) struct HelperOwnerCallCandidate<'a> {
+    pub(super) candidate: PythonRelatedCandidate<'a>,
+    pub(super) caller: String,
+}
+
+/// Tests that call a same-module caller of a changed top-level helper, for an
+/// owner no test calls itself (#4568). The caller list is bounded to
+/// [`MAX_HELPER_CALLER_DEPTH`] hops of bare-name calls in the owner's file;
+/// the helper name must be unique in that file, and a caller that rebinds the
+/// name or takes it as a parameter makes no edge (`module_callees`). Every
+/// candidate is reach-only: the relation never carries an oracle.
+pub(super) fn helper_owner_call_candidates<'a>(
+    owner: &PythonOwner,
+    owners: &[PythonOwner],
+    all_tests: &'a [PythonTest],
+) -> Vec<HelperOwnerCallCandidate<'a>> {
+    let top_level_function = |candidate: &PythonOwner| {
+        candidate.owner_kind == Some(OwnerKind::Function)
+            && candidate.class_path.is_empty()
+            && candidate.qualified_name == candidate.name
+    };
+    if !top_level_function(owner)
+        || owners
+            .iter()
+            .filter(|other| {
+                other.file == owner.file && other.name == owner.name && top_level_function(other)
+            })
+            .count()
+            != 1
+    {
+        return Vec::new();
+    }
+    let mut frontier = vec![owner.name.clone()];
+    let mut callers: Vec<&PythonOwner> = Vec::new();
+    for _ in 0..MAX_HELPER_CALLER_DEPTH {
+        let mut next = Vec::new();
+        let fresh: Vec<&PythonOwner> = owners
+            .iter()
+            .filter(|caller| {
+                caller.file == owner.file
+                    && !caller.is_module_owner()
+                    && caller.owner_kind.is_some()
+                    && caller.name != owner.name
+                    && !callers.iter().any(|seen| std::ptr::eq(*seen, *caller))
+                    && caller
+                        .module_callees
+                        .iter()
+                        .any(|callee| frontier.contains(callee))
+            })
+            .collect();
+        for caller in fresh {
+            callers.push(caller);
+            // Only a top-level function is callable by bare name again.
+            if top_level_function(caller) {
+                next.push(caller.name.clone());
+            }
+        }
+        if next.is_empty() {
+            break;
+        }
+        frontier = next;
+    }
+    let mut found: Vec<HelperOwnerCallCandidate<'a>> = Vec::new();
+    for caller in callers {
+        for test in all_tests {
+            if found.iter().any(|existing| {
+                existing.candidate.test.file == test.file
+                    && existing.candidate.test.qualified_name == test.qualified_name
+            }) {
+                continue;
+            }
+            if related_test_relation(test, caller).is_some_and(PythonRelationKind::uses_oracle) {
+                found.push(HelperOwnerCallCandidate {
+                    candidate: PythonRelatedCandidate {
+                        test,
+                        relation: if super::test_activation::activation_control(test).is_some() {
+                            PythonRelationKind::ActivationLimited
+                        } else {
+                            PythonRelationKind::HelperOwnerCall
+                        },
+                    },
+                    caller: caller.qualified_name.clone(),
+                });
+            }
+        }
+    }
+    found.sort_by(|left, right| {
+        left.candidate
+            .test
+            .file
+            .cmp(&right.candidate.test.file)
+            .then_with(|| left.candidate.test.name.cmp(&right.candidate.test.name))
+    });
+    found
 }
 
 fn strongest_rank(test: &PythonTest) -> u8 {
@@ -1364,7 +1470,7 @@ pub(super) fn contains_call_name(body_text: &str, call_name: &str) -> bool {
 
 /// `def name(` / `async def name(` / `class name(` defines `name`; it does not
 /// call it.
-fn is_definition_name(body_text: &str, idx: usize) -> bool {
+pub(super) fn is_definition_name(body_text: &str, idx: usize) -> bool {
     matches!(
         line_prefix_before(body_text, idx)
             .split_whitespace()
@@ -1539,6 +1645,71 @@ pub(super) fn owner_method_bound_locals(
         }
     }
     locals
+}
+
+/// Whether the assertion text calls `.method(` only on receivers that are not
+/// statically bound to the owner class (#8247). The relation-level evidence
+/// ([`strong_test_calls_owner_method_on_bound_receiver`]) reads the whole test
+/// body, so a test that calls the owner on `c = Cart()` and asserts a different
+/// object's `.total(...)` borrows the owner's identity. An assertion with no
+/// `.method(` call (it reads a result local, say) is not judged here.
+pub(super) fn assertion_calls_method_only_on_foreign_receiver(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    class: &str,
+    method: &str,
+    assertion_text: &str,
+) -> bool {
+    let needle = format!(".{method}(");
+    let class_locals = owner_class_locals(test, owner, class);
+    let bound_locals = owner_method_bound_locals(test, owner, class, method);
+    let mut saw_call = false;
+    for (dot, _) in assertion_text.match_indices(&needle) {
+        if line_prefix_looks_like_comment_or_string(assertion_text, dot) {
+            continue;
+        }
+        saw_call = true;
+        let before = assertion_text[..dot].trim_end();
+        let receiver = if before.ends_with(')') {
+            inline_construct_callee(before)
+        } else {
+            let start = before
+                .rfind(|ch: char| !(is_python_identifier_char(ch) || ch == '.'))
+                .map_or(0, |idx| idx + 1);
+            Some(&before[start..])
+        };
+        let bound = receiver.is_some_and(|receiver| {
+            class_locals.iter().any(|local| local == receiver)
+                || bound_locals.iter().any(|local| local == receiver)
+        });
+        if bound {
+            return false;
+        }
+    }
+    saw_call
+}
+
+/// The callee name of the trailing call in `before` (`Cart(...)` -> `Cart`,
+/// `pkg.Cart(...)` -> `pkg.Cart`), or None when the parentheses do not balance.
+fn inline_construct_callee(before: &str) -> Option<&str> {
+    let mut depth = 0i32;
+    for (idx, ch) in before.char_indices().rev() {
+        match ch {
+            ')' => depth += 1,
+            '(' => {
+                depth -= 1;
+                if depth == 0 {
+                    let head = &before[..idx];
+                    let start = head
+                        .rfind(|ch: char| !(is_python_identifier_char(ch) || ch == '.'))
+                        .map_or(0, |found| found + 1);
+                    return Some(&head[start..]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Relation-layer receiver-identity evidence for a method/classmethod owner: a
@@ -1719,13 +1890,19 @@ fn test_binds_local(test: &PythonTest, name: &str) -> bool {
 /// Whether the test BODY binds `name` (every [`test_binds_local`] form except
 /// a parameter), so a parameter of that name no longer holds its argument.
 pub(super) fn test_body_binds_local(test: &PythonTest, name: &str) -> bool {
-    assignment_count(&test.body_text, name) > 0 || binds_other_than_assignment(test, name)
+    text_binds_name(&test.body_text, name)
 }
 
 /// Every binding form of [`test_body_binds_local`] except a plain `name =`
 /// assignment, plus an augmented assignment (`name += 1`).
 fn binds_other_than_assignment(test: &PythonTest, name: &str) -> bool {
-    keyword_or_operator_binds(test, name, true)
+    keyword_or_operator_binds_text(&test.body_text, name, true)
+}
+
+/// Whether `text` binds `name` by assignment, `def`/`class`/`for`/`as`/import,
+/// augmented assignment or walrus. Shared by test-body and owner-body checks.
+pub(super) fn text_binds_name(text: &str, name: &str) -> bool {
+    assignment_count(text, name) > 0 || keyword_or_operator_binds_text(text, name, true)
 }
 
 /// [`test_binds_local`] for an imported alias: the test body's own
@@ -1734,11 +1911,10 @@ fn binds_other_than_assignment(test: &PythonTest, name: &str) -> bool {
 fn test_rebinds_import_alias(test: &PythonTest, alias: &str) -> bool {
     test.fixtures.iter().any(|fixture| fixture == alias)
         || assignment_count(&test.body_text, alias) > 0
-        || keyword_or_operator_binds(test, alias, false)
+        || keyword_or_operator_binds_text(&test.body_text, alias, false)
 }
 
-fn keyword_or_operator_binds(test: &PythonTest, name: &str, import_as_binds: bool) -> bool {
-    let body = test.body_text.as_str();
+fn keyword_or_operator_binds_text(body: &str, name: &str, import_as_binds: bool) -> bool {
     augmented_assignment(body, name)
         || walrus_binds(body, name)
         || ["def ", "class ", "for ", "as "]

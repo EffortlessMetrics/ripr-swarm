@@ -1328,6 +1328,7 @@ fn check_help_is_one_screen_and_all_is_the_full_reference() -> Result<(), String
         "--format FORMAT",
         "--json",
         "--mode MODE",
+        "instant, draft (default), fast, deep, or ready",
         "--root PATH",
         "--quiet",
         "Unknown totals show no percentage or ETA",

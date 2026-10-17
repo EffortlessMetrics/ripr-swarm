@@ -182,6 +182,14 @@ assertion-only callback with no nested test call. This does not expand aliases.
   an enclosing caught try still withholds those nested assertions. This is
   not general analysis of abrupt completion in finally blocks. Withheld
   assertion-like syntax remains unresolved admission, not established absence.
+- (Amended 2026-10-17, #8508.) A `finally` that can replace its `try`'s
+  completion withholds the try body's and catch handler's assertions: any
+  `return` or `throw` outside a nested function, or a `break`/`continue`
+  whose target lies outside the finalizer, discards a rejected awaited
+  matcher. The test is over-approximate (a `throw` the finalizer itself
+  catches still withholds). The finalizer's own assertions, assertions
+  outside the `try`, and benign finalizers keep collection. This is not
+  general promise dataflow or runner semantics.
 - An assertion inside a nested callback (`forEach`, `waitFor`, `act`, a
   subtest) or inside a declaration initializer is not collected, except
   the three forms RIPR-SPEC-0246 rule 2 names.

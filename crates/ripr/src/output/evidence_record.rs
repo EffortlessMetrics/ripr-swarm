@@ -23,7 +23,7 @@ pub(crate) use crate::analysis::repair_route::{
 };
 use crate::analysis::seams::{SeamGripClass, SeamKind};
 use crate::analysis::test_grip_evidence::{RelationReason, oracle_semantics_for};
-use crate::domain::{CommandSpec, EvidenceState};
+use crate::domain::{CommandSpec, EvidenceState, StaticLimitKind};
 use crate::domain::{OracleKind, OracleStrength, StageEvidence, StageState};
 use crate::output::agent_seam_packets::{
     AssertionShape, CandidateValue, RecommendedTest, assertion_shape_for_entry,
@@ -1334,8 +1334,19 @@ fn push_stage_limitation(
 ) {
     if matches!(evidence.state, StageState::Unknown | StageState::Opaque) {
         let state = evidence.state.as_str();
-        let base_category = static_limitation_category(stage, state, &evidence.summary);
-        let category = static_limitation_category_for_entry(base_category, entry);
+        // RIPR-SPEC-0236 example 23: a reach limitation that already names a
+        // rust-macro-reach limit kind is opaque static evidence, not a
+        // macro-generated *value*. The substring classifier still treats any
+        // "macro" mention as `macro_generated_value` and would otherwise
+        // steal this row. Honor the producer token only on the reach stage so
+        // examples 21/22 (snapshot/mock/generated name inference) stay out.
+        let category = if stage == "reach" && rust_macro_reach_limitation_reason(&evidence.summary)
+        {
+            "opaque_static_evidence"
+        } else {
+            let base_category = static_limitation_category(stage, state, &evidence.summary);
+            static_limitation_category_for_entry(base_category, entry)
+        };
         limitations.push(EvidenceRecordStaticLimitation {
             stage: stage.to_string(),
             state: state.to_string(),
@@ -1344,6 +1355,14 @@ fn push_stage_limitation(
             repair_route: static_limitation_repair_route_for_entry(category, entry).to_string(),
         });
     }
+}
+
+/// True when the reach producer already named a rust-macro-reach limit kind.
+/// Matches the typed `StaticLimitKind` tokens, not every "macro" substring.
+fn rust_macro_reach_limitation_reason(reason: &str) -> bool {
+    let reason = reason.to_ascii_lowercase();
+    reason.contains(StaticLimitKind::RustMacroReachUnresolved.as_str())
+        || reason.contains(StaticLimitKind::RustMacroWrappedTestCallUnresolved.as_str())
 }
 
 fn static_limitation_category(stage: &str, state: &str, reason: &str) -> &'static str {
@@ -3946,6 +3965,211 @@ mod tests {
             json["static_limitations"][1]["repair_route"],
             "analysis/static-limitation-taxonomy"
         );
+    }
+
+    /// RIPR-SPEC-0236 example 23 producer shape: a test calls `run`, whose
+    /// body reaches a same-crate `macro_rules!` that names private `tier`.
+    const EXAMPLE_23_MACRO_WITNESS_SUMMARY: &str = "Reach unresolved (rust_macro_reach_unresolved): `calls_run` (tests/run.rs:2) calls `run`, which reaches macro `tier_of!` (src/lib.rs:4) that names `tier`; ripr does not expand macros, so no gap is reported";
+
+    fn example_23_macro_witness_classified(reach_summary: &str) -> ClassifiedSeam {
+        let mut entry = sample_classified(StageState::Yes, SeamGripClass::Opaque);
+        entry.evidence.related_tests.clear();
+        entry.evidence.reach = stage(StageState::Opaque, reach_summary);
+        entry.evidence.activate = stage(StageState::Yes, "activation not under test");
+        entry.evidence.propagate = stage(StageState::Yes, "propagation not under test");
+        entry.evidence.observe = stage(StageState::Yes, "observation not under test");
+        entry.evidence.discriminate = stage(StageState::Yes, "discrimination not under test");
+        entry.evidence.observed_values.clear();
+        entry.evidence.missing_discriminators.clear();
+        entry
+    }
+
+    fn reach_limitation(json: &Value) -> Option<&Value> {
+        json["static_limitations"]
+            .as_array()
+            .and_then(|items| items.iter().find(|item| item["stage"] == "reach"))
+    }
+
+    fn limitation_categories(json: &Value) -> Vec<&str> {
+        json["static_limitations"]
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item["category"].as_str())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn evidence_record_maps_example_23_macro_witness_reach_to_opaque_static_evidence() {
+        let entry = example_23_macro_witness_classified(EXAMPLE_23_MACRO_WITNESS_SUMMARY);
+        let record = evidence_record_for(&entry, None);
+        let json = evidence_record_json_value(&record);
+        let reach = reach_limitation(&json);
+        assert!(
+            reach.is_some(),
+            "missing reach-stage limitation in {:?}",
+            json["static_limitations"]
+        );
+
+        assert_eq!(
+            reach.and_then(|item| item["state"].as_str()),
+            Some("opaque")
+        );
+        assert!(
+            reach
+                .and_then(|item| item["reason"].as_str())
+                .is_some_and(|reason| {
+                    reason.contains(StaticLimitKind::RustMacroReachUnresolved.as_str())
+                }),
+            "expected the producer rust_macro_reach_unresolved token, got {:?}",
+            reach.and_then(|item| item["reason"].as_str())
+        );
+        assert_eq!(
+            reach.and_then(|item| item["category"].as_str()),
+            Some("opaque_static_evidence")
+        );
+        assert_eq!(
+            reach.and_then(|item| item["repair_route"].as_str()),
+            Some("analysis/static-limitation-taxonomy")
+        );
+        assert!(
+            !limitation_categories(&json).contains(&"macro_generated_value"),
+            "example 23 must not keep macro_generated_value beside opaque_static_evidence: {:?}",
+            limitation_categories(&json)
+        );
+    }
+
+    #[test]
+    fn evidence_record_maps_wrapped_test_call_macro_witness_reach_to_opaque_static_evidence() {
+        let summary = "Reach unresolved (rust_macro_wrapped_test_call_unresolved): `calls_run` (tests/run.rs:2) calls `run`, which reaches macro `tier_of!` (src/lib.rs:4) that names `tier`; ripr does not expand macros, so no gap is reported";
+        let json = evidence_record_json_value(&evidence_record_for(
+            &example_23_macro_witness_classified(summary),
+            None,
+        ));
+
+        assert_eq!(
+            reach_limitation(&json).and_then(|item| item["category"].as_str()),
+            Some("opaque_static_evidence")
+        );
+        assert!(
+            !limitation_categories(&json).contains(&"macro_generated_value"),
+            "{:?}",
+            limitation_categories(&json)
+        );
+    }
+
+    #[test]
+    fn evidence_record_keeps_example_23_opaque_when_test_or_entry_names_look_like_21_or_22() {
+        // Same macro-witness token, coincidental snapshot/mock/generated names.
+        // Those names own examples 21/22 only when the rust-macro-reach token
+        // is absent. Absorbing them here would be a different claim.
+        let summary = "Reach unresolved (rust_macro_reach_unresolved): `snapshot_checkout` (tests/mock_checkout.rs:2) calls `generated_route`, which reaches macro `tier_of!` (src/lib.rs:4) that names `tier`; ripr does not expand macros, so no gap is reported";
+        let json = evidence_record_json_value(&evidence_record_for(
+            &example_23_macro_witness_classified(summary),
+            None,
+        ));
+
+        assert_eq!(
+            reach_limitation(&json).and_then(|item| item["category"].as_str()),
+            Some("opaque_static_evidence")
+        );
+        assert!(
+            !limitation_categories(&json).contains(&"macro_generated_value"),
+            "{:?}",
+            limitation_categories(&json)
+        );
+        assert!(
+            !limitation_categories(&json).contains(&"snapshot_field_unknown"),
+            "{:?}",
+            limitation_categories(&json)
+        );
+        assert!(
+            !limitation_categories(&json).contains(&"unsupported_mock_shape"),
+            "{:?}",
+            limitation_categories(&json)
+        );
+    }
+
+    #[test]
+    fn evidence_record_keeps_macro_generated_value_for_actual_macro_value_limitations() {
+        let mut entry = sample_classified(StageState::Unknown, SeamGripClass::ActivationUnknown);
+        entry.evidence.activate = stage(StageState::Unknown, "macro generated value hides literal");
+        let json = evidence_record_json_value(&evidence_record_for(&entry, None));
+
+        assert_eq!(json["static_limitations"][0]["stage"], "activate");
+        assert_eq!(
+            json["static_limitations"][0]["category"],
+            "macro_generated_value"
+        );
+        assert_eq!(
+            json["static_limitations"][0]["repair_route"],
+            "analysis/macro-generated-value-fixtures"
+        );
+    }
+
+    #[test]
+    fn evidence_record_does_not_absorb_example_21_snapshot_name_inference() {
+        let summary = "Reach unresolved (rust_integration_public_api_path_unresolved): `snapshot_checkout` (tests/checkout.rs:2) calls `checkout`, which may lead to `tier` through a call path ripr does not fully trace; no gap is reported";
+        let json = evidence_record_json_value(&evidence_record_for(
+            &example_23_macro_witness_classified(summary),
+            None,
+        ));
+
+        assert_eq!(
+            reach_limitation(&json).and_then(|item| item["category"].as_str()),
+            Some("snapshot_field_unknown"),
+            "example 21 remains a separate substring misfire"
+        );
+    }
+
+    #[test]
+    fn evidence_record_does_not_absorb_example_22_mock_or_generated_name_inference() {
+        let mock_summary = "Reach unresolved (rust_integration_public_api_path_unresolved): `mock_checkout` (tests/checkout.rs:2) calls `checkout`, which may lead to `tier` through a call path ripr does not fully trace; no gap is reported";
+        let generated_summary = "Reach unresolved (rust_integration_public_api_path_unresolved): `checks_out` (tests/checkout.rs:2) calls `generated_route`, which may lead to `tier` through a call path ripr does not fully trace; no gap is reported";
+
+        assert_eq!(
+            reach_limitation(&evidence_record_json_value(&evidence_record_for(
+                &example_23_macro_witness_classified(mock_summary),
+                None,
+            )))
+            .and_then(|item| item["category"].as_str()),
+            Some("unsupported_mock_shape"),
+            "example 22 mock-name inference stays out of this lane"
+        );
+        assert_eq!(
+            reach_limitation(&evidence_record_json_value(&evidence_record_for(
+                &example_23_macro_witness_classified(generated_summary),
+                None,
+            )))
+            .and_then(|item| item["category"].as_str()),
+            Some("macro_generated_value"),
+            "example 22 generated-entry inference stays out of this lane"
+        );
+    }
+
+    #[test]
+    fn rust_macro_reach_limitation_reason_requires_the_typed_limit_kind_token() {
+        assert!(rust_macro_reach_limitation_reason(
+            EXAMPLE_23_MACRO_WITNESS_SUMMARY
+        ));
+        assert!(rust_macro_reach_limitation_reason(
+            "Reach unresolved (rust_macro_wrapped_test_call_unresolved): test body"
+        ));
+        assert!(
+            !rust_macro_reach_limitation_reason(
+                "Reach unresolved (rust_macro_wrapped_assertion_unresolved): assert_eq! wrapper"
+            ),
+            "assertion-macro limits are not example 23 reach witnesses"
+        );
+        assert!(!rust_macro_reach_limitation_reason(
+            "macro generated value hides literal"
+        ));
+        assert!(!rust_macro_reach_limitation_reason(
+            "Reach unresolved (rust_integration_public_api_path_unresolved): `snapshot_checkout` calls `generated_route`"
+        ));
     }
 
     #[test]
