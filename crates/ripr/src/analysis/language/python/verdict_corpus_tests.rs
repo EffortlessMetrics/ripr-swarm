@@ -1141,10 +1141,22 @@ fn an_unasserted_owner_call_does_not_block_an_inactive_term() -> Result<(), Stri
         ExposureClass::Exposed
     );
     // An attribute that shares the bound local's name is not a local read.
+    // The assertion still observes `quote(6000)` so the finding would stay
+    // `exposed` unless `out = quote(6000)` were falsely marked observed.
     assert_eq!(
         quote_class(
             QUOTE_OLD_SHIPPING,
-            "def test_quote():\n    quote(1000)\n    out = quote(6000)\n    assert other.out == 0\n"
+            "def test_quote():\n    quote(1000)\n    out = quote(6000)\n    assert quote(6000)[\"total_cents\"] == other.out\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    let nested_store = quote_module("    return sink.append(subtotal_cents)\n");
+    assert_eq!(
+        quote_module_class(
+            &nested_store,
+            16,
+            "    return sink.append(subtotal_cents + shipping_fee(subtotal_cents))",
+            "def test_quote():\n    quote(1000)\n    assert quote(6000)[\"total_cents\"] == 6000\n"
         )?,
         ExposureClass::Exposed
     );
