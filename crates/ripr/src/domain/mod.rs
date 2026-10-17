@@ -96,8 +96,9 @@ pub use next_action::{
     NextActionStop, NextActionSubject, NextActionTransition,
 };
 pub(crate) use next_action::{
-    NextActionAttemptView, NextActionDoctorRecovery, NextActionInput, NextActionPilotDelegation,
-    current_command_platform, select_canonical_next_action,
+    NO_SCOPE_BASE_COMMAND, NextActionAttemptView, NextActionDoctorRecovery, NextActionInput,
+    NextActionPilotDelegation, WHOLE_REPO_PILOT_COMMAND, current_command_platform,
+    select_canonical_next_action, whole_repo_pilot_command,
 };
 pub(crate) use probe::{
     ARM_UNSELECTED_REASON_PREFIX, GUARD_UNENTERED_REASON_PREFIX, exact_assertion_fact,

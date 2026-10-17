@@ -44,6 +44,18 @@ pr/merge/issue identities must agree. Every snapshot digest recorded in
 LF-normalized bytes (matching the LF bytes git stores per `.gitattributes
 * text=auto eol=lf`), so a CRLF rewrite or a content edit rejects the row.
 
+`fresh_root_reconstruction.json` is the #4932 final acceptance receipt: a
+fresh root with no prior chat context re-runs the scorecard and the
+row-validation tests offline, re-verifies every live identity the rows bind
+(issue/PR states, merge commits, current-main ancestry) with read-only `gh`
+commands, and records the observed facts, the exact commands, the
+reconstructed dispositions and the fail-closed drift conclusions. The
+receipt is validated against the corpus and the provenance: it must bind
+exactly the two real rows (no synthetic lifecycle enters), every identity
+must agree, and every reconstructed disposition must equal the disposition
+the unchanged counting law assesses; any drift or disagreement rejects
+instead of fabricating a match.
+
 ## Then
 
 - Row A counts as exactly one real lifecycle at disposition `completed`:

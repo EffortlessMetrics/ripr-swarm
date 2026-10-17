@@ -97,10 +97,14 @@ selected source in the `ripr` output channel:
 1. ripr.server.path
 2. bundled server binary, if present
 3. downloaded cached server binary
-4. verified first-run download from GitHub Releases
-5. ripr on PATH
-6. actionable error
+4. ripr on PATH, when ripr.server.version is empty (before any download)
+5. verified first-run download from GitHub Releases
+6. ripr on PATH, when ripr.server.version is set or the download failed
+7. actionable error
 ```
+
+A compatible `ripr` already on `PATH` therefore avoids a network call on first
+use; pin `ripr.server.version` to prefer the managed release instead.
 
 Normal Marketplace and Open VSX installs should not require Cargo. For offline,
 pinned, or controlled environments, manual installation remains available:

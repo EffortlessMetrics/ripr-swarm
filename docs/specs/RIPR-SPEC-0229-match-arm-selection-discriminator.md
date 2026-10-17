@@ -607,6 +607,13 @@ the diff changes `None => 1` to `None => 0`.
   helper-lent char literal that selects the changed arm credits it; a
   literal for another arm and a variable argument do not. Verdict corpus
   case `grid-match-helper`.
+  A same-file `macro_rules!` that may define an item of the owner's name
+  (#7985) makes the owner call ambiguous, so it credits nothing; a macro
+  defining an unrelated name does not. Unit tests: `macro_item_names.rs`
+  `tests` and the `helper_transfer.rs` unit test
+  `test_call_is_shadowed_by_a_macro_defined_same_named_fn`, plus the shared-gate
+  test `macro_defined_same_name_is_a_foreign_rebind_for_every_gate_caller` in
+  `reveal.rs` (covering the owner-pin callers).
 - `crates/ripr/tests/match_arm_table_selection.rs` and the
   `arm_selection.rs` unit tests
   `integer_scrutinee_arithmetic_evaluates_the_input`,
@@ -665,3 +672,25 @@ the diff changes `None => 1` to `None => 0`.
   exact oracle confirms the arm.
 - Verdict-corpus false-actionable and false-silent counts on `match_arm`
   cases do not rise.
+
+## Named field-selector boundary (#8479)
+
+A plain parameter field in a statement-free tail match is outside the credited
+whole-parameter selector rules. A candidate-current weak finding with reach
+`yes`, discrimination `weak`, and a strong oracle in a directly calling test
+may name `rust_field_match_selector_unresolved`. The whole match header and
+unique direct-arm start lines qualify. Guarded, nested, computed, local or
+ambiguous same-line shapes do not. This metadata preserves every class, proof
+leg and missing discriminator; it proves neither Option identity nor that a
+particular invocation feeds the assertion. Guidance first asks to inspect that
+alignment and only then repair a demonstrated observation gap. Existing typed
+limitations, including FFI/binding exposure, take precedence. Cached classified findings must be invalidated;
+file facts and output wire versions do not change.
+
+The preserved identities are finding/probe IDs; preserved counts are raw class
+counts. Existing #5268 rules withhold the canonical repair-gap projection when a
+typed limitation is present. MCP repair readiness and derived gate routes may
+therefore refuse these rows as analyzer uncertainty. This is not exposure,
+resolved test debt, or evidence that a consumer's strict qualification passed.
+The supported direct-parameter genuine-gap case retains its canonical identity
+and missing discriminator.

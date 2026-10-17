@@ -529,12 +529,13 @@ into LSP `initializationOptions` and server-launch arguments.
 | `ripr.enabled` | boolean | `true` | Enables the VS Code saved-workspace server, diagnostics, hovers, status, and code actions. Set to `false` for an explicit disabled editor state without starting the language server. |
 | `ripr.server.path` | string | `""` | Absolute path to a `ripr` executable. Wins over bundled, downloaded, and `PATH` resolution. |
 | `ripr.server.args` | string array | `["lsp", "--stdio"]` | Arguments used to start the language server. |
-| `ripr.server.autoDownload` | boolean | `true` | Auto-download a matching server binary when no configured, bundled, or cached one is available. |
+| `ripr.server.autoDownload` | boolean | `true` | Auto-download a matching server binary when no configured, bundled, cached, or (while `ripr.server.version` is empty) compatible `PATH` one is available. |
 | `ripr.server.version` | string | `""` | Pin a specific server version. Empty means match the extension version. |
 | `ripr.server.downloadBaseUrl` | string | `""` | Override the server manifest base URL (e.g. internal mirror). Empty uses GitHub Releases. |
 
 For the full resolution order (configured → bundled → cached → first-run
-download → `PATH`), see
+download → `PATH`; an unpinned install checks a compatible `PATH` `ripr` before the
+download), see
 [Server provisioning](SERVER_PROVISIONING.md).
 
 ### Analysis

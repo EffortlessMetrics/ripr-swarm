@@ -363,11 +363,14 @@ fn return_relational_comparison(leading: &str) -> Option<&str> {
     .then_some(expression)
 }
 
-/// The condition of a `return <condition> ? <a> : <b>` line, when the
-/// returned expression is a conditional whose ` ? ` and ` : ` sit outside
-/// strings and comments. `??` and `?.` never match ` ? `.
+/// The condition of a returned conditional: `return <condition> ? <a> : <b>`,
+/// `return (<condition> ? <a> : <b>)`, or the same expression as the body of
+/// a declared concise arrow (`const f = (n) => <condition> ? <a> : <b>`).
+/// ` ? ` and ` : ` must sit outside strings and comments; `??` and `?.` never
+/// match ` ? `.
 fn return_ternary_condition(leading: &str) -> Option<&str> {
-    let expression = leading.strip_prefix("return ")?.trim_start();
+    let expression = returned_expression(leading)?;
+    // A returned or declared arrow's own body is not the conditional.
     let question = expression.match_indices(" ? ").find_map(|(idx, _)| {
         (!line_prefix_looks_like_comment_or_string(expression, idx)
             && !inside_block_comment(expression, idx))
@@ -376,8 +379,104 @@ fn return_ternary_condition(leading: &str) -> Option<&str> {
     if !contains_unquoted_shape(expression.get(question + 3..)?, " : ") {
         return None;
     }
+    if expression.get(..question)?.contains(" => ") {
+        return None;
+    }
     let condition = expression.get(..question)?.trim();
+    // `(cond ? a : b)`: the opening paren wraps the whole conditional, so it
+    // is unmatched inside the condition. A balanced `(a > b) ? x : y` keeps
+    // its parens.
+    let condition = wrapper_paren_inner(condition).unwrap_or(condition);
     (!condition.is_empty()).then_some(condition)
+}
+
+/// `(cond ? a : b)`: the inner text when the leading paren wraps the whole
+/// condition and never closes inside it. `(a > b) && (c)` keeps its parens,
+/// and a quote may hold a paren, so quoted text is not trusted.
+fn wrapper_paren_inner(condition: &str) -> Option<&str> {
+    let inner = condition.strip_prefix('(')?;
+    if inner.contains(['"', '\'', '`']) {
+        return None;
+    }
+    let mut depth = 0usize;
+    for ch in inner.chars() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth = depth.checked_sub(1)?,
+            _ => {}
+        }
+    }
+    (depth == 0).then(|| inner.trim())
+}
+
+/// `(a, b)` or `(a, b): Type`: the first paren group closes, then nothing or
+/// a return annotation follows, so ` => ` belongs to this parameter list.
+fn parameters_close_before_annotation(parameters: &str) -> bool {
+    let mut depth = 0usize;
+    for (idx, ch) in parameters.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth = match depth.checked_sub(1) {
+                    Some(depth) => depth,
+                    None => return false,
+                };
+                if depth == 0 {
+                    let rest = parameters.get(idx + 1..).unwrap_or("").trim_start();
+                    return rest.is_empty() || rest.starts_with(':');
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// The expression a line returns: after `return `, or after the `=>` of a
+/// declared concise arrow (`export const f = (n) => <expr>`). A callback
+/// arrow nested in a call (`xs.map((x) => x > 1 ? a : b)`) is not a declared
+/// body, and a block body (`=> {`) returns nothing here.
+fn returned_expression(leading: &str) -> Option<&str> {
+    if let Some(expression) = leading.strip_prefix("return ") {
+        return Some(expression.trim_start());
+    }
+    // `[export ](const|let|var) name[: Type] = <initializer>`: the first ` = `
+    // must close a plain declaration head, not a destructuring or parameter
+    // default (`const { f = (x) => ... } = o`, `function g(cb = x => ...)`).
+    let declaration = leading.strip_prefix("export ").unwrap_or(leading);
+    let declaration = ["const ", "let ", "var "]
+        .iter()
+        .find_map(|keyword| declaration.strip_prefix(keyword))?;
+    let (head, initializer) = declaration.split_once(" = ")?;
+    if head.contains(['(', '{', '[', ',']) {
+        return None;
+    }
+    let initializer = initializer.trim_start();
+    let initializer = initializer.strip_prefix("async ").unwrap_or(initializer);
+    // The arrow is the declaration's own initializer: `(params)[: Type]` or
+    // one bare parameter, with nothing (a call, a ternary) in front of it.
+    let (parameters, body) = initializer.split_once(" => ")?;
+    let own_arrow = if parameters.starts_with('(') {
+        !parameters.contains(['"', '\'', '`'])
+            && !parameters.contains(" ? ")
+            && parameters_close_before_annotation(parameters)
+    } else {
+        !parameters.is_empty()
+            && parameters
+                .chars()
+                .all(|ch| ch.is_alphanumeric() || matches!(ch, '_' | '$'))
+    };
+    if !own_arrow {
+        return None;
+    }
+    // A block body returns nothing here, and a curried arrow's body is
+    // another function, not the conditional.
+    let body = body.trim_start();
+    let curried = body
+        .split_once(" ? ")
+        .map_or(body, |(before, _)| before)
+        .contains(" => ");
+    (!body.starts_with('{') && !curried).then_some(body)
 }
 
 pub(crate) fn typescript_return_value_discriminator(line_text: &str) -> Option<String> {
