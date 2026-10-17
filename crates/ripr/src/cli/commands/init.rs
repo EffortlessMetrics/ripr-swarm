@@ -223,11 +223,19 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
     // as `create` while `create_dir_all` will fail — and because the config is
     // written first, the run would half-initialize the repo before failing.
     // Checking every target up front also means a doomed run writes nothing.
-    for path in std::iter::once(&config_path).chain(workflow_path.as_ref()) {
+    let mcp_path = options.mcp.then(|| options.root.join(MCP_CONFIG_FILE_NAME));
+
+    for path in std::iter::once(&config_path)
+        .chain(workflow_path.as_ref())
+        .chain(mcp_path.as_ref())
+    {
         ensure_creatable_parent(path)?;
     }
 
-    if path_is_occupied(&config_path)? && !options.force && options.ci.is_none() {
+    // `--ci` and `--mcp` add files; they keep an existing ripr.toml rather
+    // than refusing because it is already there.
+    let config_only = options.ci.is_none() && !options.mcp;
+    if path_is_occupied(&config_path)? && !options.force && config_only {
         return Err(existing_target_error(&config_path, &options.root, None));
     }
     if let Some(path) = workflow_path.as_ref().filter(|_| !options.force)
@@ -245,7 +253,7 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
     // `ripr doctor` recommends) must not reset a customized `ripr.toml`;
     // `ripr init --force` without `--ci` still resets the config.
     let config_action = if path_is_occupied(&config_path)? {
-        if options.force && options.ci.is_none() {
+        if options.force && config_only {
             InitAction::Overwrite
         } else {
             InitAction::LeaveUnchanged
@@ -270,7 +278,75 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
             body: generated_github_actions_workflow(),
         });
     }
+    if let Some(path) = mcp_path {
+        targets.push(plan_mcp_target(path, options.force)?);
+    }
     Ok(targets)
+}
+
+/// Project-scoped MCP client config that Claude Code reads from the repository
+/// root. Codex keeps its servers in user-global config, which `init` never
+/// writes; the follow-up note prints its command instead.
+const MCP_CONFIG_FILE_NAME: &str = ".mcp.json";
+const MCP_SERVER_NAME: &str = "ripr";
+
+fn ripr_mcp_server_entry() -> serde_json::Value {
+    serde_json::json!({ "command": "ripr", "args": ["mcp", "--stdio"] })
+}
+
+/// Plan the `.mcp.json` write: create it, add the `ripr` server beside the
+/// user's other servers, or leave an existing `ripr` entry alone unless
+/// `--force`. A file that is not a JSON object with an object `mcpServers`
+/// fails closed rather than being rewritten.
+fn plan_mcp_target(path: PathBuf, force: bool) -> Result<InitTarget, String> {
+    let shown = output::path::human_path(&path);
+    let render = |document: &serde_json::Value| {
+        let mut body = serde_json::to_string_pretty(document)
+            .map_err(|err| format!("render {shown} failed: {err}"))?;
+        body.push('\n');
+        Ok::<String, String>(body)
+    };
+    if !path_is_occupied(&path)? {
+        let document = serde_json::json!({
+            "mcpServers": { MCP_SERVER_NAME: ripr_mcp_server_entry() }
+        });
+        return Ok(InitTarget {
+            path,
+            action: InitAction::Create,
+            body: render(&document)?,
+        });
+    }
+    let text = std::fs::read_to_string(&path)
+        .map_err(|err| format!("cannot read existing {shown}: {err}"))?;
+    let mut document: serde_json::Value = serde_json::from_str(&text).map_err(|err| {
+        format!(
+            "existing {shown} is not valid JSON ({err}); fix it or remove it, nothing was written"
+        )
+    })?;
+    let servers = document
+        .as_object_mut()
+        .ok_or_else(|| format!("existing {shown} is not a JSON object; nothing was written"))?
+        .entry("mcpServers")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or_else(|| {
+            format!(
+                "existing {shown} has a `mcpServers` that is not an object; nothing was written"
+            )
+        })?;
+    if servers.contains_key(MCP_SERVER_NAME) && !force {
+        return Ok(InitTarget {
+            path,
+            action: InitAction::LeaveUnchanged,
+            body: text,
+        });
+    }
+    servers.insert(MCP_SERVER_NAME.to_string(), ripr_mcp_server_entry());
+    Ok(InitTarget {
+        path,
+        action: InitAction::Overwrite,
+        body: render(&document)?,
+    })
 }
 
 /// Refusal retries must target the same directory as the refused plan, even
@@ -419,6 +495,17 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
         let root_arg = crate::agent::loop_commands::shell_arg(&root_display);
         let doctor = format!("ripr doctor --root {root_arg}");
         let check = format!("ripr check --root {root_arg}");
+        if plan.iter().any(|target| {
+            target
+                .path
+                .file_name()
+                .is_some_and(|name| name == MCP_CONFIG_FILE_NAME)
+        }) {
+            println!();
+            println!(
+                "Claude Code reads `{MCP_CONFIG_FILE_NAME}` and asks you to approve the project server before its tools appear. For Codex run `codex mcp add {MCP_SERVER_NAME} -- ripr mcp --stdio`."
+            );
+        }
         println!();
         println!(
             "Next: run `{doctor}` to verify your setup, then `{check}` to analyze your branch against its default branch."
@@ -500,6 +587,7 @@ pub(super) fn parse_init_options(args: &[String]) -> Result<InitOptions, String>
         dry_run: false,
         force: false,
         ci: None,
+        mcp: false,
     };
     let mut i = 0usize;
     while i < args.len() {
@@ -512,6 +600,7 @@ pub(super) fn parse_init_options(args: &[String]) -> Result<InitOptions, String>
                 i += 1;
                 options.ci = Some(parse_init_ci(expect_value(args, i, "--ci")?)?);
             }
+            "--mcp" => options.mcp = true,
             "--dry-run" => options.dry_run = true,
             "--force" => options.force = true,
             other => return Err(unknown_argument("init", other)),
@@ -978,11 +1067,111 @@ mod tests {
             dry_run: false,
             force: false,
             ci: None,
+            mcp: false,
         }
     }
 
     fn write(path: &Path, text: &str) -> Result<(), String> {
         std::fs::write(path, text).map_err(|err| format!("write {} failed: {err}", path.display()))
+    }
+
+    fn mcp_options(root: &Path, force: bool) -> InitOptions {
+        InitOptions {
+            mcp: true,
+            force,
+            ..options(root)
+        }
+    }
+
+    fn mcp_target(plan: &[InitTarget]) -> Result<&InitTarget, String> {
+        plan.iter()
+            .find(|target| target.path.ends_with(".mcp.json"))
+            .ok_or_else(|| "plan has no .mcp.json target".to_string())
+    }
+
+    fn parsed(body: &str) -> Result<serde_json::Value, String> {
+        serde_json::from_str(body).map_err(|err| format!("body is not JSON: {err}\n{body}"))
+    }
+
+    const RIPR_ENTRY: &str = r#"{"command":"ripr","args":["mcp","--stdio"]}"#;
+
+    #[test]
+    fn mcp_plan_creates_project_config_and_keeps_an_existing_ripr_toml() -> Result<(), String> {
+        let root = temp_root("mcp-create")?;
+        write(&root.join("ripr.toml"), "[analysis]\n")?;
+        let plan = init_plan(&mcp_options(&root, false))?;
+        let target = mcp_target(&plan)?;
+        assert_eq!(target.action, InitAction::Create);
+        assert_eq!(
+            parsed(&target.body)?,
+            serde_json::json!({ "mcpServers": { "ripr": parsed(RIPR_ENTRY)? } })
+        );
+        assert!(target.body.ends_with("}\n"), "{}", target.body);
+        let config = plan
+            .iter()
+            .find(|target| target.path.ends_with("ripr.toml"))
+            .ok_or("plan has no ripr.toml target")?;
+        assert_eq!(config.action, InitAction::LeaveUnchanged);
+        std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))
+    }
+
+    #[test]
+    fn mcp_plan_adds_ripr_beside_other_servers() -> Result<(), String> {
+        let root = temp_root("mcp-merge")?;
+        write(
+            &root.join(".mcp.json"),
+            r#"{"mcpServers":{"other":{"command":"x"}},"extra":1}"#,
+        )?;
+        let plan = init_plan(&mcp_options(&root, false))?;
+        let target = mcp_target(&plan)?;
+        assert_eq!(target.action, InitAction::Overwrite);
+        assert_eq!(
+            parsed(&target.body)?,
+            serde_json::json!({
+                "mcpServers": { "other": { "command": "x" }, "ripr": parsed(RIPR_ENTRY)? },
+                "extra": 1
+            })
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))
+    }
+
+    #[test]
+    fn mcp_plan_keeps_a_customized_ripr_entry_unless_forced() -> Result<(), String> {
+        let root = temp_root("mcp-existing")?;
+        let custom = r#"{"mcpServers":{"ripr":{"command":"/opt/ripr","args":["mcp"]}}}"#;
+        write(&root.join(".mcp.json"), custom)?;
+        let kept = init_plan(&mcp_options(&root, false))?;
+        assert_eq!(mcp_target(&kept)?.action, InitAction::LeaveUnchanged);
+        let forced = init_plan(&mcp_options(&root, true))?;
+        let target = mcp_target(&forced)?;
+        assert_eq!(target.action, InitAction::Overwrite);
+        assert_eq!(
+            parsed(&target.body)?,
+            serde_json::json!({ "mcpServers": { "ripr": parsed(RIPR_ENTRY)? } })
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))
+    }
+
+    #[test]
+    fn mcp_plan_fails_closed_on_unusable_existing_config() -> Result<(), String> {
+        let root = temp_root("mcp-malformed")?;
+        for (text, needle) in [
+            ("{not json", "not valid JSON"),
+            ("[]", "not a JSON object"),
+            (r#"{"mcpServers":[]}"#, "`mcpServers` that is not an object"),
+        ] {
+            write(&root.join(".mcp.json"), text)?;
+            let err = init_plan(&mcp_options(&root, true))
+                .err()
+                .ok_or_else(|| format!("{text} should be refused"))?;
+            assert!(err.contains(needle), "{text}: {err}");
+            assert_eq!(
+                std::fs::read_to_string(root.join(".mcp.json")).map_err(|e| e.to_string())?,
+                text,
+                "planning must not touch the file"
+            );
+        }
+        std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))
     }
 
     #[test]
