@@ -49,7 +49,7 @@ By board, so the weak areas show before the full table:
 | Trust | Commands that exit 0 when pointed at a missing repository | 0 commands | <= 0 commands | meets the bar | -2 commands since c6ccf9d (was 2 commands) |
 | Trust | Hostile-repository journeys (odd file names, symlink loops, shallow clones, submodules) where ripr neither finds nor refuses cleanly | 0 journeys | <= 0 journeys | meets the bar | no earlier measurement |
 | Trust | Findings or seams whose own evidence contradicts itself | 0 findings | <= 0 findings | meets the bar | -1 finding since c6ccf9d (was 1 finding) |
-| Trust | Wrong verdicts on hand-checked changes from real repositories | **5.6%** | <= 5.0% | below the bar | first receipt (verdict corpus, upstream cases only; all 488 cases: 2.7%) |
+| Trust | Wrong verdicts on hand-checked changes from real repositories | **5.6%** | <= 5.0% | below the bar | first receipt (verdict corpus, upstream cases only; all 488 cases: 2.5%) |
 | Trust | Hand-checked edits the crate's tests fully catch that ripr still flags as a gap | **11.0%** | <= 5.0% | below the bar | no earlier measurement (observed at 2af3f38) |
 | Trust | Hand-checked edits where ripr gives no specific verdict | **37.1%** | <= 20.0% | below the bar | no earlier measurement (observed at 2af3f38) |
 | Trust | Hand-checked edits the crate's tests miss that ripr reports as fine (counterweight to abstaining less) | 0.0% | <= 0.0% | meets the bar | no earlier measurement (observed at 2af3f38) |
@@ -164,11 +164,11 @@ Only the upstream cases come from real repositories. The authored cases were wri
 
 | Rate | All cases | Upstream (real repositories) | Authored |
 | --- | --- | --- | --- |
-| False verdicts (all cases) | 13/488 (2.7%) | 2/36 (5.6%) | 11/452 (2.4%) |
+| False verdicts (all cases) | 12/488 (2.5%) | 2/36 (5.6%) | 10/452 (2.2%) |
 | False actionable (of discriminated) | 12/239 (5.0%) | 2/22 (9.1%) | 10/217 (4.6%) |
-| False exposed (of not fully discriminated) | 1/249 (0.4%) | 0/14 (0.0%) | 1/235 (0.4%) |
+| False exposed (of not fully discriminated) | 0/249 (0.0%) | 0/14 (0.0%) | 0/235 (0.0%) |
 | False silent (of not fully discriminated) | 0/249 (0.0%) | 0/14 (0.0%) | 0/235 (0.0%) |
-| Ideal verdict | 300/488 (61.5%) | 7/36 (19.4%) | 293/452 (64.8%) |
+| Ideal verdict | 301/488 (61.7%) | 7/36 (19.4%) | 294/452 (65.0%) |
 | Abstained (limited or silent where acceptable) | 175/488 (35.9%) | 27/36 (75.0%) | 148/452 (32.7%) |
 | Findings with a contradiction | 0/628 (0.0%) | not split by origin | not split by origin |
 
@@ -563,7 +563,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `spec0231-oracle-err-underscore-binding` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `spec0231-oracle-events-not-empty` | authored | partially_discriminated | gap | limited | propagation_unknown | abstained | none |
 | `spec0231-oracle-events-sent-contains` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `spec0231-oracle-events-sent-len-eq` | authored | partially_discriminated | gap | credited | exposed | false_exposed | none |
+| `spec0231-oracle-events-sent-len-eq` | authored | partially_discriminated | gap | gap | exposed, weakly_exposed | ideal | none |
 | `spec0231-oracle-helper-assert-json-eq` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
 | `spec0231-oracle-helper-assert-not-equal` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `spec0231-oracle-is-ok-or-is-err` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
