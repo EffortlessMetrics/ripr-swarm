@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- TypeScript preview now relates a class-method owner to a test that constructs the receiver inline (`new Clamp(0, 10).limit(50)`) or declares it inside a one-line test body (`it("x", () => { const c = new Clamp(); ... })`), instead of reporting a false `no_static_path`. The class must still resolve to the owner through the test's own imports; a different class, a longer method name, comments and `.new` stay unrelated (#8353).
