@@ -39,6 +39,9 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// Run-scoped #5830 caller-walk memo, shared across all probes;
     /// `None` (unit-test contexts) walks per probe.
     pub owner_caller_names: Option<&'a super::super::classifier::OwnerCallerNames>,
+    /// Tests the diff adds or changes (#8387); ranking only. `None`
+    /// (unit-test contexts) ranks nothing first.
+    pub diff_touched: Option<&'a super::DiffTouchedTests>,
 }
 
 impl<'a> ProbeContext<'a> {
@@ -64,6 +67,7 @@ impl<'a> ProbeContext<'a> {
             owner_pin_syntax: None,
             unseen_reach_names: None,
             owner_caller_names: None,
+            diff_touched: None,
         }
     }
 
@@ -105,6 +109,16 @@ impl<'a> ProbeContext<'a> {
         test_value_facts: &'a TestValueFacts,
     ) -> Self {
         self.test_value_facts = Some(test_value_facts);
+        self
+    }
+
+    /// Share the run's diff-touched test set so the finalized related-test
+    /// list leads with tests the diff adds or changes (#8387).
+    pub(in crate::analysis) fn with_diff_touched(
+        mut self,
+        diff_touched: &'a super::DiffTouchedTests,
+    ) -> Self {
+        self.diff_touched = Some(diff_touched);
         self
     }
 

@@ -710,6 +710,7 @@ impl ClassifiedProbeEvidence {
                 },
             },
             arm_selector.as_ref(),
+            context.diff_touched,
         );
         let (observe, discriminate, related_tests, matched_total) = (
             reveal.observe,

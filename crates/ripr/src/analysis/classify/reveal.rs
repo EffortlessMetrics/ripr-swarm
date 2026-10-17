@@ -216,6 +216,7 @@ fn reveal_evidence_with_expression(
         cross_package_name_defeats,
         return_admission,
         arm_selector,
+        None,
     );
     (
         outcome.observe,
@@ -252,6 +253,7 @@ pub(in crate::analysis) fn reveal_outcome(
     cross_package_name_defeats: &dyn Fn(&TestSummary, &str) -> bool,
     return_admission: &ReturnOracleAdmission<'_>,
     arm_selector: Option<&ArmSelector>,
+    diff_touched: Option<&super::DiffTouchedTests>,
 ) -> RevealOutcome {
     if related_tests.is_empty() {
         return RevealOutcome {
@@ -281,7 +283,7 @@ pub(in crate::analysis) fn reveal_outcome(
         return_admission,
         arm_selector,
     );
-    let (related, related_tests_total) = finalize_related_tests(analysis.related);
+    let (related, related_tests_total) = finalize_related_tests(analysis.related, diff_touched);
     let observe = build_observe_evidence(analysis.matched_any, analysis.refused_context);
     let discriminate = if analysis.refused_context && !analysis.matched_any {
         StageEvidence::new(
@@ -4294,13 +4296,31 @@ pub(in crate::analysis) fn contains_as_whole_word(text: &str, token: &str) -> bo
     false
 }
 
-fn finalize_related_tests(mut related: Vec<RelatedTest>) -> (Vec<RelatedTest>, usize) {
+/// Dedup, rank and cap the related-test rows.
+///
+/// #8387: tests the diff touches may now lead the capped render window ahead
+/// of untouched tests in the same confidence tier, so the primary related
+/// test and the repair target can change by design. No row is added or
+/// lifted a tier.
+fn finalize_related_tests(
+    mut related: Vec<RelatedTest>,
+    diff_touched: Option<&super::DiffTouchedTests>,
+) -> (Vec<RelatedTest>, usize) {
     related.sort_by(|a, b| a.name.cmp(&b.name).then(a.line.cmp(&b.line)));
     related.dedup_by(|a, b| a.name == b.name && a.oracle == b.oracle);
     // Renderers present the first entry as the primary related test, so the
     // strongest relation leads. The sort is stable: name and line order holds
     // within one confidence tier, and the dedup above is unchanged.
-    related.sort_by_key(|test| std::cmp::Reverse(related_test_rank(test)));
+    //
+    // #8387: within one confidence tier a test the diff itself adds or
+    // changes leads, ahead of name order and ahead of the render cap below.
+    // A test counts as touched when the diff adds a line inside its span
+    // (`line` is its start line; matching is span-aware). Ranking only: no
+    // row is added or lifted a tier.
+    let touched = |test: &RelatedTest| {
+        diff_touched.is_some_and(|touched| touched.touches(&test.file, test.line))
+    };
+    related.sort_by_key(|test| (std::cmp::Reverse(related_test_rank(test)), !touched(test)));
     // #5344: tests listed only as examined misses are packed separately and
     // only into slots the oracle rows leave free, so the oracle rows, their
     // order and their packing are exactly what they were before misses were
@@ -5349,29 +5369,32 @@ mod tests {
     /// the alphabetically first name.
     #[test]
     fn finalized_related_tests_lead_with_the_strongest_relation() {
-        let (finalized, _) = finalize_related_tests(vec![
-            related(
-                "a_same_file_neighbor",
-                3,
-                Some(RelationReason::SameTestFile),
-            ),
-            related("b_unknown_origin", 5, None),
-            related(
-                "c_direct_owner_call",
-                9,
-                Some(RelationReason::DirectOwnerCall),
-            ),
-            related(
-                "c_direct_owner_call",
-                9,
-                Some(RelationReason::DirectOwnerCall),
-            ),
-            related(
-                "d_direct_owner_call",
-                1,
-                Some(RelationReason::DirectOwnerCall),
-            ),
-        ]);
+        let (finalized, _) = finalize_related_tests(
+            vec![
+                related(
+                    "a_same_file_neighbor",
+                    3,
+                    Some(RelationReason::SameTestFile),
+                ),
+                related("b_unknown_origin", 5, None),
+                related(
+                    "c_direct_owner_call",
+                    9,
+                    Some(RelationReason::DirectOwnerCall),
+                ),
+                related(
+                    "c_direct_owner_call",
+                    9,
+                    Some(RelationReason::DirectOwnerCall),
+                ),
+                related(
+                    "d_direct_owner_call",
+                    1,
+                    Some(RelationReason::DirectOwnerCall),
+                ),
+            ],
+            None,
+        );
         let names: Vec<&str> = finalized.iter().map(|test| test.name.as_str()).collect();
         let ranks: Vec<u8> = finalized.iter().map(related_test_rank).collect();
         let mut descending = ranks.clone();
@@ -5380,6 +5403,66 @@ mod tests {
         assert_eq!(names.first(), Some(&"c_direct_owner_call"));
         assert_eq!(names.last(), Some(&"b_unknown_origin"));
         assert_eq!(names.len(), 4, "duplicate entries still dedup: {names:?}");
+    }
+
+    /// #8387: a test the diff adds or changes leads its confidence tier and
+    /// survives the render cap, but is never lifted above a higher tier.
+    #[test]
+    fn finalized_related_tests_lead_with_diff_touched_tests_within_a_tier() {
+        let mut input: Vec<_> = (0..10)
+            .map(|index| {
+                related(
+                    &format!("case_{index:02}"),
+                    10 + index,
+                    Some(RelationReason::WeakTokenSubstring),
+                )
+            })
+            .collect();
+        input.push(related(
+            "strong_direct_call",
+            1,
+            Some(RelationReason::DirectOwnerCall),
+        ));
+        let files = [crate::analysis::diff::ChangedFile {
+            path: input[9].file.clone(),
+            added_lines: vec![crate::analysis::diff::ChangedLine {
+                line: 19,
+                text: String::new(),
+                new_side_line: 19,
+            }],
+            removed_lines: Vec::new(),
+        }];
+        let tests = [TestSummary {
+            name: "case_09".to_string(),
+            file: input[9].file.clone(),
+            start_line: 19,
+            end_line: 25,
+            body: Default::default(),
+            calls: Vec::new(),
+            assertions: Vec::new(),
+            literals: Vec::new(),
+            attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+        }];
+        let touched =
+            crate::analysis::classify::DiffTouchedTests::from_changed_files(&files, &tests);
+        assert!(
+            touched.touches(&input[9].file, 19),
+            "setup: case_09 touched"
+        );
+
+        let (plain, _) = finalize_related_tests(input.clone(), None);
+        assert!(
+            plain.iter().all(|test| test.name != "case_09"),
+            "setup: without the diff signal the cap drops case_09: {plain:?}"
+        );
+
+        let (ranked, total) = finalize_related_tests(input, Some(&touched));
+        let names: Vec<&str> = ranked.iter().map(|test| test.name.as_str()).collect();
+        assert_eq!(total, 11);
+        assert_eq!(names[0], "strong_direct_call", "a higher tier still leads");
+        assert_eq!(names[1], "case_09", "the touched test leads its tier");
     }
 
     #[test]
@@ -5394,7 +5477,7 @@ mod tests {
                     )
                 })
                 .collect();
-            let (packed, total) = finalize_related_tests(input.clone());
+            let (packed, total) = finalize_related_tests(input.clone(), None);
             assert_eq!(total, count);
             assert_eq!(packed.len(), count.min(RELATED_TESTS_RENDER_CAP));
             let previous_prefix = if count > RELATED_TESTS_RENDER_CAP {
@@ -5422,7 +5505,7 @@ mod tests {
         let mut second_oracle = first;
         second_oracle.oracle = Some("assert_eq!(different_observer, 2);".to_string());
         input.push(second_oracle); // A distinct oracle row remains the count unit.
-        let (packed, total) = finalize_related_tests(input);
+        let (packed, total) = finalize_related_tests(input, None);
         assert_eq!(total, 10);
         assert_eq!(packed.len(), 8);
         assert_eq!(
@@ -6035,6 +6118,7 @@ mod tests {
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
                 },
+                None,
                 None,
             )
             .owner_pin_credited
