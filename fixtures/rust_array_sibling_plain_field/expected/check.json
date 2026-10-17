@@ -1,0 +1,219 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_array_sibling_plain_field/input",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":2,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:2fc246ee6db5f9afc816576ef94c64f217811f706b60e3145802856645e09f26","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:field_construction:d6d7c327",
+      "canonical_gap_id": "gap:rust:src/lib.rs:rows:field_construction:field_construction:total_a+b",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:rows:field_construction:field_construction:total_a+b",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "rows",
+        "behavior_kind": "field_construction",
+        "probe_kind": "field_construction",
+        "normalized_discriminator": "total_a+b"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:field_construction:d6d7c327",
+        "family": "field_construction",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 6,
+        "expression": "total: a + b"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach rows: pins_second_row"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches constructed field: total: a + b"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach rows: pins_second_row", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches constructed field: total: a + b", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches constructed field: total: a + b (line 6)", "related test src/lib.rs:14 pins_second_row uses strong exact value oracle: assert_eq!(rows[1].total, 33);", "source function argument value a = 30 at line 15", "source function argument value b = 3 at line 15", "source assertion argument value 33 at line 16"],
+      "flow_sinks": [
+        {"kind":"struct_field","text":"total: a + b","line":6}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches constructed field: total: a + b", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach rows: pins_second_row", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "15": "let rows = rows(30, 3);",
+        "16": "assert_eq!(rows[1].total, 33);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 15,
+            "value": "a = 30",
+            "context": "function_argument"
+          },
+          {
+            "line": 15,
+            "value": "b = 3",
+            "context": "function_argument"
+          },
+          {
+            "line": 16,
+            "value": "33",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 15,
+          "value": "a = 30",
+          "context": "function_argument"
+        },
+        {
+          "line": 15,
+          "value": "b = 3",
+          "context": "function_argument"
+        },
+        {
+          "line": 16,
+          "value": "33",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "pins_second_row",
+          "file": "src/lib.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(rows[1].total, 33);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:0587a603",
+      "canonical_gap_id": "gap:rust:src/lib.rs:rows:return_value:return_value:[row_total_a_row_total_a+b]",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:rows:return_value:return_value:[row_total_a_row_total_a+b]",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "rows",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "[row_total_a_row_total_a+b]"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:0587a603",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 6,
+        "expression": "[Row { total: a }, Row { total: a + b }]"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach rows: pins_second_row"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: [Row { total: a }, Row { total: a + b }]"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach rows: pins_second_row", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: [Row { total: a }, Row { total: a + b }]", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: [Row { total: a }, Row { total: a + b }] (line 6)", "related test src/lib.rs:14 pins_second_row uses strong exact value oracle: assert_eq!(rows[1].total, 33);", "source function argument value a = 30 at line 15", "source function argument value b = 3 at line 15", "source assertion argument value 33 at line 16"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"[Row { total: a }, Row { total: a + b }]","line":6}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: [Row { total: a }, Row { total: a + b }]", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach rows: pins_second_row", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "15": "let rows = rows(30, 3);",
+        "16": "assert_eq!(rows[1].total, 33);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 15,
+            "value": "a = 30",
+            "context": "function_argument"
+          },
+          {
+            "line": 15,
+            "value": "b = 3",
+            "context": "function_argument"
+          },
+          {
+            "line": 16,
+            "value": "33",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 15,
+          "value": "a = 30",
+          "context": "function_argument"
+        },
+        {
+          "line": 15,
+          "value": "b = 3",
+          "context": "function_argument"
+        },
+        {
+          "line": 16,
+          "value": "33",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "pins_second_row",
+          "file": "src/lib.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(rows[1].total, 33);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

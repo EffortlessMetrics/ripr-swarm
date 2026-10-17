@@ -324,6 +324,8 @@ pub(super) fn validate_launcher_sources(
 }
 
 const REQUIRED_EXECUTED_TESTS: &[&str] = &[
+    "non-executable native payload gives exact recovery for each POSIX target",
+    "public bin non-executable recovery survives a directory move and restores launch",
     "distinguishes native resolution failures from missing optional packages",
     "rejects non-object native manifests with a contextual typed error",
     "public bin identifies corrupt package metadata and recovers after restoration",
