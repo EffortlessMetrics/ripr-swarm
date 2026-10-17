@@ -5465,7 +5465,6 @@ fn standard_library_globs_are_not_foreign_macro_binding_sites() {
         "use other::io::prelude::*;\n",
         "use stdx::prelude::*;\n",
         "mod core {}\nuse core::prelude::*;\n",
-        "extern crate other as std;\nuse std::prelude::*;\n",
     ] {
         let found = sites(source);
         assert!(
@@ -5475,6 +5474,12 @@ fn standard_library_globs_are_not_foreign_macro_binding_sites() {
             "{source}"
         );
     }
+    // An alias taking the root is itself a site, wherever the glob is.
+    assert!(
+        sites("extern crate other as std;\nuse std::prelude::*;\n")
+            .iter()
+            .any(|(_, site)| matches!(site.kind, MacroBindingKind::MacroUse(_)))
+    );
     // The workspace-wide pass agrees: no refusal site for `assert_eq`
     // from a standard glob in another file, one from a foreign glob.
     for (glob, refused) in [
@@ -5496,6 +5501,26 @@ fn standard_library_globs_are_not_foreign_macro_binding_sites() {
                 .is_some(),
             refused,
             "{glob}"
+        );
+    }
+    // Cross-file: `extern crate other as std;` in one file replaces the
+    // standard root crate-wide, so `use core::*;` stays a standard glob but
+    // `use std::*;` in another file is foreign, and the alias is itself a
+    // site.
+    for (alias_file, glob_file, refused) in [
+        ("extern crate other as std;\n", "use std::*;\n", true),
+        ("extern crate other as core;\n", "use core::*;\n", true),
+        ("extern crate other as std;\n", "use core::*;\n", true),
+        ("extern crate std;\n", "use core::*;\n", false),
+    ] {
+        let index = index(&[(LIB, alias_file), ("src/globs.rs", glob_file)]);
+        let syntax = OwnerPinSyntax::default();
+        assert_eq!(
+            syntax
+                .workspace_macro_site("assert_eq", Some(Path::new(LIB)), &index)
+                .is_some(),
+            refused,
+            "{alias_file}{glob_file}"
         );
     }
 }

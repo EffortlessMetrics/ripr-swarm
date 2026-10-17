@@ -508,6 +508,9 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
                 names.extend(trusted(token.text()));
             }
         }
+        if standard_root_alias(&node).is_some() {
+            return MacroBindingCandidates::Any;
+        }
         if let Some(import) = ast::Use::cast(node) {
             let Some(tree) = import.use_tree() else {
                 return MacroBindingCandidates::Any;
@@ -560,6 +563,7 @@ fn macro_binding_ambiguities(
     if !(trusted.contains(&"json") && source.contains("serde_json")
         || source.contains("macro")
         || source.contains("use")
+        || source.contains("extern")
         || source.contains("no_implicit_prelude")
         || source.contains('!'))
     {
@@ -811,6 +815,9 @@ fn macro_binding_ambiguities(
                     ));
                 }
             }
+        }
+        if let Some(item) = standard_root_alias(&node) {
+            return all(line_of(&node), MacroBindingKind::MacroUse(item), true);
         }
         if let Some(import) = ast::Use::cast(node.clone()) {
             let Some(tree) = import.use_tree() else {
@@ -1321,6 +1328,18 @@ fn import_scope(import: &ast::Use) -> Option<SyntaxNode> {
         return None;
     }
     Some(scope)
+}
+
+/// #8388: `extern crate other as std;` (also `core`, `alloc`) replaces the
+/// standard root in the extern prelude of every module of the crate, so a
+/// `use std::*;` in *another* file is a foreign glob. The text is the item.
+fn standard_root_alias(node: &SyntaxNode) -> Option<String> {
+    let item = ast::ExternCrate::cast(node.clone())?;
+    let alias = item.rename()?.name()?;
+    let alias = alias.text().trim_start_matches("r#");
+    let target = item.name_ref().map(|name| name.text().to_string());
+    (matches!(alias, "std" | "core" | "alloc") && target.as_deref() != Some(alias))
+        .then(|| item.syntax().text().to_string())
 }
 
 /// Whether a macro definition can be named from another crate:
