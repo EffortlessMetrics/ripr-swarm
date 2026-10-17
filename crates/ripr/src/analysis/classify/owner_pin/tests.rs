@@ -4622,6 +4622,51 @@ fn any_mention_in_another_macros_arguments_stays_ambiguous() {
 }
 
 #[test]
+fn a_bound_trusted_macros_arguments_are_opaque_to_other_trusted_names() {
+    // #5941: a user-defined `vec!` is no longer std's, so `assert_eq!` named
+    // only inside its arguments can be defined by the expansion together with
+    // the module whose tests use it.
+    let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    let define = "macro_rules! vec { ($name:ident ! ($($rest:tt)*)) => { macro_rules! $name { ($a:expr, $b:expr) => {{ let _ = (&$a, &$b); }}; } $($rest)* }; }\n";
+    let refused = |other: &str| {
+        matches!(
+            weight_refusal(tests, &[("src/other.rs", other)]),
+            Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::MacroBinding(_)
+            ))
+        )
+    };
+    assert!(refused(&format!(
+        "{define}vec!(assert_eq!(#[cfg(test)] mod tests;));\n"
+    )));
+    // Fixpoint: `format!` becomes bound through `vec!`'s arguments, so its
+    // own arguments are opaque in turn.
+    assert!(refused(&format!(
+        "{define}vec!(format!(assert_eq!(1, 1)));\n"
+    )));
+    // Discriminating negatives: an unbound `vec!` keeps its arguments
+    // trusted, and a locally defined `vec!` whose expansion cannot bind a
+    // name stays transparent (#6648).
+    assert_eq!(
+        weight_refusal(
+            tests,
+            &[("src/other.rs", "fn f() { vec![assert_eq!(1, 1)]; }\n")]
+        ),
+        None
+    );
+    assert_eq!(
+        weight_refusal(
+            tests,
+            &[(
+                "src/other.rs",
+                "macro_rules! vec { ($e:expr) => { 0 }; }\nfn f() { vec![assert_eq!(1, 1)]; }\n"
+            )]
+        ),
+        None
+    );
+}
+
+#[test]
 fn a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted() {
     // #6648: the corpus subject's own `header_case!` wraps its argument in a
     // closure body; its expansion can define, import or export nothing, so
@@ -10225,10 +10270,16 @@ fn a_macro_body_that_binds_a_trusted_name_makes_it_ambiguous() {
     for other in [
         "macro_rules! m { (use other::assert_eq;) => {}; }\nm!();\n",
         "macro_rules! m { (use other::*) => {}; }\nm!();\n",
+    ] {
+        assert_eq!(refusal(other), None, "{other}");
+    }
+    // #5941: a trusted-named macro with a binding site is opaque, so its
+    // arguments name `assert_eq` as tokens even when the body only renames.
+    for other in [
         "macro_rules! vec { ($n:ident) => { use $n as check; }; }\nvec!(assert_eq);\n",
         "macro_rules! vec { ($n:ident) => { use $n::path; }; }\nvec!(assert_eq);\n",
     ] {
-        assert_eq!(refusal(other), None, "{other}");
+        assert!(refused(other), "{other}");
     }
     // A test-generating macro whose body only calls `assert_eq!`, renames it
     // away, or glob-imports this crate binds nothing.
