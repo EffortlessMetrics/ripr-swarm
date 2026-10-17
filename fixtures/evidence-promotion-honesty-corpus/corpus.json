@@ -286,6 +286,30 @@
       ]
     },
     {
+      "id": "rust_seeded_expectation_cannot_confirm_guarded_push",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/seeded_push_after_early_return",
+      "vector": "seeded_collection_expectation_restates_pre_push_state_after_early_exit",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "ts_reexported_expect_cannot_credit_local_rejection_helper",
       "language": "typescript",
       "tier": "pure",
