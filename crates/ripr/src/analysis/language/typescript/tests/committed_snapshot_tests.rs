@@ -480,3 +480,151 @@ fn hinted_snapshot_sharing_its_counter_stays_medium() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// Promote `test/price.test.ts` under `package_root` (which may sit inside a
+/// larger tree) and return the assertion strengths.
+fn strengths_at(package_root: &Path) -> Vec<OracleStrength> {
+    let relative = Path::new("test/price.test.ts");
+    let mut tests = extract_tests(relative, PRICE_TEST);
+    promote_committed_snapshots(package_root, relative, PRICE_TEST, &mut tests);
+    tests
+        .iter()
+        .flat_map(|test| &test.assertions)
+        .filter(|assertion| assertion.matcher == "toMatchSnapshot")
+        .map(|assertion| assertion.oracle_strength.clone())
+        .collect()
+}
+
+const RESOLVER_CONFIG: &str = "module.exports = { snapshotResolver: \"./r.js\" };";
+
+#[test]
+fn config_passed_by_path_or_custom_named_stays_medium() -> Result<(), String> {
+    let snap = jest_snap(&[("price 1", "140")]);
+    for (config, text) in [
+        (
+            "package.json",
+            "{ \"scripts\": { \"test\": \"jest --config config/jest.js\" } }",
+        ),
+        (
+            "package.json",
+            "{ \"scripts\": { \"test\": \"jest --config=config/jest.js\" } }",
+        ),
+        (
+            "package.json",
+            "{ \"scripts\": { \"test\": \"jest -c config/jest.js\" } }",
+        ),
+        (
+            "package.json",
+            "{ \"scripts\": { \"unit\": \"vitest --config vitest.unit.ts\" } }",
+        ),
+        ("jest.unit.config.js", RESOLVER_CONFIG),
+        (
+            "vitest.unit.config.ts",
+            "export default { test: { update: true } };",
+        ),
+    ] {
+        assert_eq!(
+            strengths(
+                "snap-by-path",
+                PRICE_TEST,
+                &[(SNAP_PATH, &snap), (config, text)]
+            )?,
+            vec![OracleStrength::Medium],
+            "{config}: {text}"
+        );
+    }
+    // A custom-named config that overrides nothing and a script without a
+    // config flag keep the credit.
+    for (config, text) in [
+        ("jest.unit.config.js", "module.exports = {};"),
+        (
+            "package.json",
+            "{ \"scripts\": { \"test\": \"jest --ci --coverage\" } }",
+        ),
+    ] {
+        assert_eq!(
+            strengths(
+                "snap-no-path",
+                PRICE_TEST,
+                &[(SNAP_PATH, &snap), (config, text)]
+            )?,
+            vec![OracleStrength::Strong],
+            "{config}: {text}"
+        );
+    }
+    Ok(())
+}
+
+/// A package at `packages/app` under a temp tree, with the snapshot and test
+/// written, and `marker` (when present) created at the tree's top.
+fn monorepo(label: &str, marker: Option<&str>) -> Result<(PathBuf, PathBuf), String> {
+    let outer = ts_unique_tempdir(label)?;
+    let package_root = outer.join("packages/app");
+    let snap = jest_snap(&[("price 1", "140")]);
+    ts_write_file(&package_root.join(SNAP_PATH), &snap)?;
+    ts_write_file(&package_root.join("test/price.test.ts"), PRICE_TEST)?;
+    if let Some(marker) = marker {
+        ts_write_file(&outer.join(marker), "x\n")?;
+    }
+    Ok((outer, package_root))
+}
+
+#[test]
+fn config_above_the_analysis_root_is_read_up_to_the_repository() -> Result<(), String> {
+    let (outer, package_root) = monorepo("snap-above-root", Some(".git/HEAD"))?;
+    let plain = strengths_at(&package_root);
+    let written = ts_write_file(&outer.join("jest.config.js"), RESOLVER_CONFIG);
+    let moved = strengths_at(&package_root);
+    let _ = std::fs::remove_dir_all(&outer);
+    written?;
+    assert_eq!(plain, vec![OracleStrength::Strong]);
+    assert_eq!(moved, vec![OracleStrength::Medium]);
+    Ok(())
+}
+
+#[test]
+fn directories_above_the_root_stop_at_the_repository_boundary() -> Result<(), String> {
+    let (outer, package_root) = monorepo("snap-boundary", Some(".git/HEAD"))?;
+    let reached: Vec<PathBuf> = directories_above_root(&package_root, 16)
+        .into_iter()
+        .map(Path::to_path_buf)
+        .collect();
+    // A marker beyond the look-up limit is not in reach, so nothing is read.
+    let beyond: Vec<PathBuf> = directories_above_root(&package_root, 1)
+        .into_iter()
+        .map(Path::to_path_buf)
+        .collect();
+    // The repository top itself has nothing above it to read.
+    let top = directories_above_root(&outer, 16).len();
+    let _ = std::fs::remove_dir_all(&outer);
+    assert_eq!(reached, vec![outer.join("packages"), outer.clone()]);
+    assert!(beyond.is_empty(), "{beyond:?}");
+    assert_eq!(top, 0);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_test_directory_stays_medium() -> Result<(), String> {
+    let (outer, package_root) = monorepo("snap-symlink-dir", None)?;
+    let plain = strengths_at(&package_root);
+    // A symlinked analysis root is the user's own checkout path and is kept.
+    let root_link = outer.join("pkg-link");
+    let root_linked =
+        std::os::unix::fs::symlink(&package_root, &root_link).map_err(|err| err.to_string());
+    let through_root_link = strengths_at(&root_link);
+    // A symlinked directory inside the root is refused.
+    let real_test = outer.join("real-test");
+    let test_dir = package_root.join("test");
+    let swapped = std::fs::rename(&test_dir, &real_test)
+        .and_then(|()| std::os::unix::fs::symlink(&real_test, &test_dir))
+        .map_err(|err| err.to_string());
+    let through_test_link = strengths_at(&package_root);
+    let _ = std::fs::remove_dir_all(&outer);
+    root_linked?;
+    swapped?;
+    assert_eq!(plain, vec![OracleStrength::Strong]);
+    assert_eq!(through_root_link, vec![OracleStrength::Strong]);
+    assert_eq!(through_test_link, vec![OracleStrength::Medium]);
+    Ok(())
+}
