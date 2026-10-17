@@ -9,8 +9,8 @@ name: Public Proof Drift
 # surfaced. It runs nightly, on demand, and when a pull request that touches a
 # source, a receipt or the page carries the merge-ready label. Verdict
 # corpus case PRs are left out on purpose: the page is a corpus snapshot that
-# a separate refresh PR updates, so case PRs share no generated line (#6660). A push after
-# the label reruns it. On failure the job
+# a separate refresh PR updates, so case PRs share no generated line (#6660). A later push does not
+# rerun it; re-apply the label. On failure the job
 # summary shows the changed page lines and the refresh commands.
 
 on:
