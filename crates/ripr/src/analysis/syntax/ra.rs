@@ -125,6 +125,20 @@ pub(crate) fn parser_oracles_for_function(
     function_text: &str,
     function_start_line: usize,
 ) -> Option<Vec<OracleFact>> {
+    // Pure in the text and start line; overlapping indexes of one diff run
+    // re-extract the same helpers (#5363).
+    super::run_memo::memoize(
+        super::run_memo::Product::FunctionOracles,
+        function_start_line,
+        function_text,
+        || parser_oracles_for_function_uncached(function_text, function_start_line),
+    )
+}
+
+fn parser_oracles_for_function_uncached(
+    function_text: &str,
+    function_start_line: usize,
+) -> Option<Vec<OracleFact>> {
     let parse = parse_clean_source_file(function_text)?;
     let function = parse
         .tree()

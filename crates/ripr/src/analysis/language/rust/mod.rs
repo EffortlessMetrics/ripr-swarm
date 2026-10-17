@@ -1848,6 +1848,7 @@ impl RustAdapter {
         enabled_languages: &[LanguageId],
         rust_config: &crate::config::RustLanguageConfig,
     ) -> Result<LanguageDiffResult, String> {
+        let _syntax_memo = crate::analysis::syntax::run_memo::enter();
         // Exclude conventional generated surfaces before hard line limits and
         // partial-diff budgeting so machine output cannot consume the budget
         // that protects actionable source analysis.
@@ -2708,6 +2709,7 @@ impl RustAdapter {
         oracle_policy: &OraclePolicy,
         rust_config: &crate::config::RustLanguageConfig,
     ) -> Result<LanguageRepoResult, String> {
+        let _syntax_memo = crate::analysis::syntax::run_memo::enter();
         let rust_files = workspace::discover_rust_files(&options.root)?;
         let generated_sources = GeneratedRustSources::for_repo(&options.root, rust_config);
         let skipped_files = rust_files
