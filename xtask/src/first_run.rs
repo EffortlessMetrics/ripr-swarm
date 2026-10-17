@@ -701,11 +701,39 @@ fn push_step(
 fn verdict_of(check_stdout: &str) -> Option<&'static str> {
     let start = check_stdout.find("Static exposure")?;
     let tail = &check_stdout[start..];
+    // The bounded default render speaks plain words (#8165), so the label line
+    // names the class without a wire token.
+    if let Some(plain) = tail
+        .strip_prefix("Static exposure: ")
+        .and_then(|rest| rest.lines().next())
+    {
+        let class = [
+            ("exposed", "exposed"),
+            ("weak", "weakly_exposed"),
+            ("unrevealed", "reachable_unrevealed"),
+            ("no path", "no_static_path"),
+            ("unknown", "static_unknown"),
+        ]
+        .into_iter()
+        .find(|(word, _)| {
+            plain
+                .strip_prefix(word)
+                .is_some_and(|after| after.is_empty() || after.starts_with(" ("))
+        });
+        // `unknown` covers three wire classes, so a token that follows still wins.
+        if let Some((_, class)) = class.filter(|(word, _)| *word != "unknown") {
+            return Some(class);
+        }
+    }
     VERDICT_CLASSES
         .iter()
         .filter_map(|class| tail.find(class).map(|at| (at, *class)))
         .min_by_key(|(at, _)| *at)
         .map(|(_, class)| class)
+        .or_else(|| {
+            tail.strip_prefix("Static exposure: unknown")
+                .map(|_| "static_unknown")
+        })
 }
 
 fn friction(result: &StepResult, workflow: Option<&str>) -> Vec<String> {
@@ -1090,6 +1118,14 @@ mod tests {
         let development = "Summary: 0 exposed, 1 infection_unknown\nStatic exposure: unknown (infection_unknown, warning)\n";
         assert_eq!(verdict_of(published), Some("reachable_unrevealed"));
         assert_eq!(verdict_of(development), Some("infection_unknown"));
+        // The bounded default render (#8165) leaves no wire token on the label line,
+        // and the summary line before it must not decide the verdict.
+        let plain = "Summary: 1 probe (0 exposed, 1 weak, 0 unrevealed, 0 no path)\n\nStart here:\n  Static exposure: weak (severity: warning, confidence 0.40)\n  Why: exposed to the next test\n";
+        assert_eq!(verdict_of(plain), Some("weakly_exposed"));
+        assert_eq!(
+            verdict_of("Static exposure: unrevealed (severity: warning)\n"),
+            Some("reachable_unrevealed")
+        );
         assert_eq!(verdict_of("No findings"), None);
     }
 
