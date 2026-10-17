@@ -325,6 +325,35 @@ fn production_manifestless_directories_keep_distinct_package_identity() -> Resul
     Ok(())
 }
 
+/// #8282: both repo seam-walk entry points must take their owner-pin syntax
+/// from the context's per-thread lease. Reintroducing a per-seam
+/// `OwnerPinSyntax::default()` at either site leaves this count unchanged.
+#[test]
+fn seam_walk_entry_points_lease_the_shared_pin_syntax() -> Result<(), String> {
+    let root = authority_fixture_root("pin-lease")?;
+    let (index, seam, _) = authority_fixture_target(&root)?;
+    let context = CompactGripContext::new(&index);
+
+    let before = pin_syntax_leases_taken();
+    let _ = evidence_for_seam_with_context(&seam, &context);
+    let after_full = pin_syntax_leases_taken();
+    if after_full != before + 1 {
+        return Err(format!(
+            "full evidence leased {} times",
+            after_full - before
+        ));
+    }
+    let _ = compact_evidence_for_seam(&seam, &context);
+    let after_compact = pin_syntax_leases_taken();
+    if after_compact != after_full + 1 {
+        return Err(format!(
+            "compact evidence leased {} times",
+            after_compact - after_full
+        ));
+    }
+    Ok(())
+}
+
 #[test]
 fn production_target_evidence_carries_portable_root_and_currentness_authority() -> Result<(), String>
 {

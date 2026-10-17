@@ -241,6 +241,15 @@ thread_local! {
     static THREAD_PIN_SYNTAX: std::cell::Cell<
         Option<(u64, crate::analysis::classify::OwnerPinSyntax)>,
     > = const { std::cell::Cell::new(None) };
+    /// Leases taken on this thread; lets tests pin the production call sites.
+    #[cfg(test)]
+    static LEASES_TAKEN: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// #8282 test witness: how many pin-syntax leases this thread has taken.
+#[cfg(test)]
+pub(in crate::analysis::test_grip_evidence) fn pin_syntax_leases_taken() -> u32 {
+    LEASES_TAKEN.with(std::cell::Cell::get)
 }
 
 /// One worker thread's [`OwnerPinSyntax`](crate::analysis::classify::OwnerPinSyntax)
@@ -651,6 +660,8 @@ impl<'a> CompactGripContext<'a> {
     /// Lease this worker thread's owner-pin syntax cache for one seam; it is
     /// kept for the thread's next seam when the lease drops (#8282).
     pub(in crate::analysis::test_grip_evidence) fn lease_pin_syntax(&self) -> PinSyntaxLease {
+        #[cfg(test)]
+        LEASES_TAKEN.with(|taken| taken.set(taken.get() + 1));
         let syntax = THREAD_PIN_SYNTAX.with(|slot| match slot.take() {
             Some((id, syntax)) if id == self.pin_syntax_id => syntax,
             _ => Default::default(),
