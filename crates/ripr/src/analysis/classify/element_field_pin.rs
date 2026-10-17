@@ -573,13 +573,16 @@ impl ReturnedArray {
                             .field_name()
                             .is_some_and(|name| name.text() == field.as_str())
                     })
-                    .and_then(|initializer| initializer.expr())
-                    .is_some_and(|expr| {
-                        integer_literal(&expr).is_some()
-                            || matches!(
-                                unwrap_parens(expr),
-                                ast::Expr::Literal(_) | ast::Expr::PathExpr(_)
-                            )
+                    .is_some_and(|initializer| match initializer.expr() {
+                        // Shorthand `Row { total }` reads the plain path.
+                        None => true,
+                        Some(expr) => {
+                            integer_literal(&expr).is_some()
+                                || matches!(
+                                    unwrap_parens(expr),
+                                    ast::Expr::Literal(_) | ast::Expr::PathExpr(_)
+                                )
+                        }
                     })
         });
         Some(Self {
@@ -1163,6 +1166,7 @@ mod tests {
         for array in [
             "[Row { total: a }, Row { total: a + b + 0 }]",
             "[Row { total: 7 }, Row { total: a + b + 0 }]",
+            "[Row { total }, Row { total: a + b + 0 }]",
         ] {
             let indexed = "        let rows = rows(30, 3);\n        assert_eq!(rows[1].total, 33);";
             if pinned(array, "#[test]", indexed)? != Some(true) {
