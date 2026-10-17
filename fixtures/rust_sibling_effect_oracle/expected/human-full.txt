@@ -1,0 +1,114 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_sibling_effect_oracle/input
+
+Summary: 2 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings).
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s).
+
+WARNING ./src/sensors/ripr_limits.rs:137
+  id: probe:src_sensors_ripr_limits.rs:call_deletion:11a3eb55
+
+Changed
+  before: .or_insert_with(BTreeSet::new)
+  expr:   .or_insert_with(BTreeSet::new)
+  source:  base_deleted — base-side evidence, not a candidate edit target
+
+Probe
+  family: call_deletion
+  delta:  effect
+  owner:  src/sensors/ripr_limits.rs::module_limit_evidence
+  canonical gap: gap:rust:src/sensors/ripr_limits.rs:module_limit_evidence:call_deletion:call_deletion:.or_insert_with_btreeset_new
+
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+
+Evidence
+  - reach yes: Related tests appear to reach module_limit_evidence: module_evidence_retains_single_pass_duplicates_benign_and_unavailable, module_note_line_byte_boundary_excludes_line_terminators, module_note_context_limit_counts_utf8_bytes
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Changed behavior appears to influence call effect: .or_insert_with(BTreeSet::new)
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - local flow reaches call effect: .or_insert_with(BTreeSet::new) (line 137)
+  - related test src/sensors/ripr_limits.rs:337 module_evidence_retains_single_pass_duplicates_benign_and_unavailable uses strong exact value oracle: assert_eq!(missing["sources"][0]["state"], "unavailable"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test src/sensors/ripr_limits.rs:194 module_note_line_byte_boundary_excludes_line_terminators uses weak relational check oracle: assert!(contexts.iter().all(|context| context.len() <= 1024)); misses: assertion too weak to tell the old behavior from the new
+  - related test src/sensors/ripr_limits.rs:268 module_note_context_limit_counts_utf8_bytes uses smoke smoke only oracle: assert!(parse_note(note(&exact_ascii).trim()).is_some()); misses: assertion too weak to tell the old behavior from the new
+  - related test src/sensors/ripr_limits.rs:283 module_note_contract_rejects_malformed_counts_reasons_and_paths uses strong exact value oracle: assert_eq!(
+            parse_note(note("tests/日本語.rs").trim()),
+            Some(vec![(
+                "tests/日本語.rs".into(),
+                "rust_module_ambiguous_parent".into()
+            )])
+        ); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test src/sensors/ripr_limits.rs:238 module_note_orientation_sentence_accepts_optional_next_step uses strong exact value oracle: assert_eq!(parse_note(&oriented), expected); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related tests (showing 5 of 53; more in --format json)
+  - source assertion argument value 1024 at line 209
+  - source assertion argument value 8192 at line 211
+  - source assertion argument value 8 at line 212
+  - source assertion argument value 8193 at line 215
+  - source assertion argument value 1024 at line 216
+  - source assertion argument value 8 at line 217
+  - source table row value "disclosed" at line 220
+  - source table row value 0 at line 220
+  - source values (showing 8 of 131; --format json keeps a ranked 32)
+
+Weakness
+  - No strong discriminator was detected
+
+Next step
+  Strengthen the related assertion so it discriminates the changed behavior.
+Drill in:
+  ripr explain --root <cwd>/fixtures/rust_sibling_effect_oracle/input --diff <cwd>/fixtures/rust_sibling_effect_oracle/diff.patch --mode fast probe:src_sensors_ripr_limits.rs:call_deletion:11a3eb55
+  ripr context --root <cwd>/fixtures/rust_sibling_effect_oracle/input --diff <cwd>/fixtures/rust_sibling_effect_oracle/diff.patch --mode fast --at probe:src_sensors_ripr_limits.rs:call_deletion:11a3eb55
+
+WARNING ./src/sensors/ripr_limits.rs:137
+  id: probe:src_sensors_ripr_limits.rs:side_effect:fd0a4cd3
+
+Changed
+  before: .or_insert_with(BTreeSet::new)
+  after:  .or_default()
+
+Probe
+  family: side_effect
+  delta:  effect
+  owner:  src/sensors/ripr_limits.rs::module_limit_evidence
+  canonical gap: gap:rust:src/sensors/ripr_limits.rs:module_limit_evidence:side_effect:side_effect:.or_default
+
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+
+Evidence
+  - reach yes: Related tests appear to reach module_limit_evidence: module_evidence_retains_single_pass_duplicates_benign_and_unavailable, module_note_line_byte_boundary_excludes_line_terminators, module_note_context_limit_counts_utf8_bytes
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Changed behavior appears to influence call effect: .or_default()
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - local flow reaches call effect: .or_default() (line 137)
+  - related test src/sensors/ripr_limits.rs:238 module_note_orientation_sentence_accepts_optional_next_step uses strong exact value oracle: assert_eq!(parse_note(&oriented), expected); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test src/sensors/ripr_limits.rs:238 module_note_orientation_sentence_accepts_optional_next_step uses strong whole object equality oracle: assert_eq!(
+            parse_note(&format!("{oriented} {MODULE_AMBIGUOUS_PARENT_NEXT_STEP}")),
+            expected
+        ); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test src/sensors/ripr_limits.rs:337 module_evidence_retains_single_pass_duplicates_benign_and_unavailable misses: asserts, but not on the changed value; checked `assert_eq!(missing["sources"][0]["state"], "unavailable")`
+  - related test src/sensors/ripr_limits.rs:194 module_note_line_byte_boundary_excludes_line_terminators misses: asserts, but not on the changed value; checked `assert!(contexts.iter().all(|context| context.len() <= 1024))`
+  - related test src/sensors/ripr_limits.rs:268 module_note_context_limit_counts_utf8_bytes misses: asserts, but not on the changed value; checked `assert!(parse_note(note(&exact_ascii).trim()).is_some())`
+  - related tests (showing 5 of 8; more in --format json)
+  - source assertion argument value 1024 at line 209
+  - source assertion argument value 8192 at line 211
+  - source assertion argument value 8 at line 212
+  - source assertion argument value 8193 at line 215
+  - source assertion argument value 1024 at line 216
+  - source assertion argument value 8 at line 217
+  - source table row value "disclosed" at line 220
+  - source table row value 0 at line 220
+  - source values (showing 8 of 131; --format json keeps a ranked 32)
+
+Weakness
+  - No strong discriminator was detected
+
+Next step
+  Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect.
+Drill in:
+  ripr explain --root <cwd>/fixtures/rust_sibling_effect_oracle/input --diff <cwd>/fixtures/rust_sibling_effect_oracle/diff.patch --mode fast probe:src_sensors_ripr_limits.rs:side_effect:fd0a4cd3
+  ripr context --root <cwd>/fixtures/rust_sibling_effect_oracle/input --diff <cwd>/fixtures/rust_sibling_effect_oracle/diff.patch --mode fast --at probe:src_sensors_ripr_limits.rs:side_effect:fd0a4cd3

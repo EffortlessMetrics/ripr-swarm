@@ -12,6 +12,8 @@ mod element_field_pin;
 mod flow;
 mod gap_admission;
 mod helper_transfer;
+mod implicit_effect;
+pub(in crate::analysis) use implicit_effect::{ImplicitExpansionContext, ImplicitExpansionMemo};
 mod infection;
 mod macro_item_names;
 mod match_transfer;

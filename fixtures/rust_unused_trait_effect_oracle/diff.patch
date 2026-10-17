@@ -1,0 +1,5 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -4,1 +4,1 @@
+-    output.borrow_mut().push(0);
++    output.borrow_mut().push(1);

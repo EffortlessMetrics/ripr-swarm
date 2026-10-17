@@ -1,0 +1,297 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_same_test_disconnected_effect_oracle/input",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":2,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:daeaebf47d27bc371b311bdd44a558b4257a82829f168b1b881102470721aa78","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:call_deletion:7fe87b48",
+      "canonical_gap_id": "gap:rust:src/lib.rs:record:call_deletion:call_deletion:output.borrow_mut_.push_1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:record:call_deletion:call_deletion:output.borrow_mut_.push_1",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "record",
+        "behavior_kind": "call_deletion",
+        "probe_kind": "call_deletion",
+        "normalized_discriminator": "output.borrow_mut_.push_1"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:call_deletion:7fe87b48",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/lib.rs",
+        "line": 4,
+        "expression": "output.borrow_mut().push(1)"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach record: direct_smoke, fresh_handle_after_dispatch, parser_before_dispatch"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence state write: output.borrow_mut().push(1)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach record: direct_smoke, fresh_handle_after_dispatch, parser_before_dispatch", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence state write: output.borrow_mut().push(1)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches state write: output.borrow_mut().push(1) (line 4)", "related test src/lib.rs:17 direct_smoke uses none unknown oracle", "related test src/lib.rs:37 fresh_handle_after_dispatch uses strong whole object equality oracle: assert_eq!(Observation { sink:fresh }, Observation { sink:Rc::new(RefCell::new(vec![7])) });", "related test src/lib.rs:31 parser_before_dispatch uses strong exact value oracle: assert_eq!(parse_note(\"x\"), expected);", "related test src/lib.rs:23 parser_only uses strong whole object equality oracle: assert_eq!(parse_note(&format!(\"{input}\")), expected);", "source assertion argument value \"{input}\" at line 27", "source assertion argument value \"x\" at line 33", "source assertion argument value 7 at line 40"],
+      "flow_sinks": [
+        {"kind":"state_write","text":"output.borrow_mut().push(1)","line":4}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence state write: output.borrow_mut().push(1)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach record: direct_smoke, fresh_handle_after_dispatch, parser_before_dispatch"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "27": "assert_eq!(parse_note(&format!(\"{input}\")), expected);",
+        "33": "assert_eq!(parse_note(\"x\"), expected);",
+        "40": "assert_eq!(Observation { sink:fresh }, Observation { sink:Rc::new(RefCell::new(vec![7])) });"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 27,
+            "value": "\"{input}\"",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 33,
+            "value": "\"x\"",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 40,
+            "value": "7",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 27,
+          "value": "\"{input}\"",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 33,
+          "value": "\"x\"",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 40,
+          "value": "7",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 4,
+      "related_tests": [
+        {
+          "name": "direct_smoke",
+          "file": "src/lib.rs",
+          "line": 17,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "no_assertion",
+          "why": "has no assertion"
+        },
+        {
+          "name": "fresh_handle_after_dispatch",
+          "file": "src/lib.rs",
+          "line": 37,
+          "oracle_strength": "strong",
+          "oracle_kind": "whole_object_equality",
+          "oracle": "assert_eq!(Observation { sink:fresh }, Observation { sink:Rc::new(RefCell::new(vec![7])) });",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "parser_before_dispatch",
+          "file": "src/lib.rs",
+          "line": 31,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(parse_note(\"x\"), expected);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "parser_only",
+          "file": "src/lib.rs",
+          "line": 23,
+          "oracle_strength": "strong",
+          "oracle_kind": "whole_object_equality",
+          "oracle": "assert_eq!(parse_note(&format!(\"{input}\")), expected);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "whole_object_equality",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:side_effect:7ea236c2",
+      "canonical_gap_id": "gap:rust:src/lib.rs:record:side_effect:side_effect:output.borrow_mut_.push_1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:record:side_effect:side_effect:output.borrow_mut_.push_1",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "record",
+        "behavior_kind": "side_effect",
+        "probe_kind": "side_effect",
+        "normalized_discriminator": "output.borrow_mut_.push_1"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:side_effect:7ea236c2",
+        "family": "side_effect",
+        "delta": "effect",
+        "file": "./src/lib.rs",
+        "line": 4,
+        "expression": "output.borrow_mut().push(1)"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach record: direct_smoke, fresh_handle_after_dispatch, parser_before_dispatch"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence state write: output.borrow_mut().push(1)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach record: direct_smoke, fresh_handle_after_dispatch, parser_before_dispatch", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence state write: output.borrow_mut().push(1)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches state write: output.borrow_mut().push(1) (line 4)", "related test src/lib.rs:17 direct_smoke uses none unknown oracle", "related test src/lib.rs:37 fresh_handle_after_dispatch uses strong whole object equality oracle: assert_eq!(Observation { sink:fresh }, Observation { sink:Rc::new(RefCell::new(vec![7])) });", "related test src/lib.rs:31 parser_before_dispatch uses strong exact value oracle: assert_eq!(parse_note(\"x\"), expected);", "related test src/lib.rs:23 parser_only uses strong whole object equality oracle: assert_eq!(parse_note(&format!(\"{input}\")), expected);", "source assertion argument value \"{input}\" at line 27", "source assertion argument value \"x\" at line 33", "source assertion argument value 7 at line 40"],
+      "flow_sinks": [
+        {"kind":"state_write","text":"output.borrow_mut().push(1)","line":4}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence state write: output.borrow_mut().push(1)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach record: direct_smoke, fresh_handle_after_dispatch, parser_before_dispatch"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "27": "assert_eq!(parse_note(&format!(\"{input}\")), expected);",
+        "33": "assert_eq!(parse_note(\"x\"), expected);",
+        "40": "assert_eq!(Observation { sink:fresh }, Observation { sink:Rc::new(RefCell::new(vec![7])) });"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 27,
+            "value": "\"{input}\"",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 33,
+            "value": "\"x\"",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 40,
+            "value": "7",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 27,
+          "value": "\"{input}\"",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 33,
+          "value": "\"x\"",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 40,
+          "value": "7",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 4,
+      "related_tests": [
+        {
+          "name": "direct_smoke",
+          "file": "src/lib.rs",
+          "line": 17,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "no_assertion",
+          "why": "has no assertion"
+        },
+        {
+          "name": "fresh_handle_after_dispatch",
+          "file": "src/lib.rs",
+          "line": 37,
+          "oracle_strength": "strong",
+          "oracle_kind": "whole_object_equality",
+          "oracle": "assert_eq!(Observation { sink:fresh }, Observation { sink:Rc::new(RefCell::new(vec![7])) });",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "parser_before_dispatch",
+          "file": "src/lib.rs",
+          "line": 31,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(parse_note(\"x\"), expected);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "parser_only",
+          "file": "src/lib.rs",
+          "line": 23,
+          "oracle_strength": "strong",
+          "oracle_kind": "whole_object_equality",
+          "oracle": "assert_eq!(parse_note(&format!(\"{input}\")), expected);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "whole_object_equality",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect.",
+      "suggested_next_action": "Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

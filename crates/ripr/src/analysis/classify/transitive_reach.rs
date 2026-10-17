@@ -893,6 +893,64 @@ pub(in crate::analysis) struct OwnerReach<'g, 'a> {
 }
 
 impl OwnerReach<'_, '_> {
+    /// Indexed implicit dispatch witnessed by this test, rather than a trait
+    /// declaration elsewhere on the reverse owner path. Unknown calls retain
+    /// reach uncertainty but cannot supply effect-observation authority.
+    pub(in crate::analysis) fn test_has_known_implicit_dispatch(
+        &self,
+        owner: &FunctionSummary,
+        test: &TestFact,
+    ) -> bool {
+        let dispatches = |function: &FunctionSummary| {
+            IMPLICIT_DISPATCH_METHODS.contains(&function.name.as_str())
+                && super::related_tests::test_dispatches_trait_impl(test, function)
+        };
+        dispatches(owner)
+            || self
+                .reaching
+                .iter()
+                .copied()
+                .filter(|name| *name != self.owner_name && IMPLICIT_DISPATCH_METHODS.contains(name))
+                .any(|name| {
+                    self.graph
+                        .by_name
+                        .get(name)
+                        .is_some_and(|functions| functions.len() == 1 && dispatches(functions[0]))
+                })
+    }
+
+    /// Assertion-local shared-sink authority; declaration/reach alone is
+    /// insufficient. The separate reach predicate keeps its uncertainty.
+    pub(in crate::analysis) fn assertion_has_known_implicit_observer(
+        &self,
+        owner: &FunctionSummary,
+        test: &TestFact,
+        assertion: &crate::analysis::facts::OracleFact,
+        expression: &str,
+        source: &str,
+        expansion: &super::ImplicitExpansionContext<'_>,
+    ) -> bool {
+        let observes = |function: &FunctionSummary| {
+            IMPLICIT_DISPATCH_METHODS.contains(&function.name.as_str())
+                && super::related_tests::test_dispatches_trait_impl(test, function)
+                && super::implicit_effect::assertion_observes_dispatch(
+                    function, owner, expression, test, assertion, source, expansion,
+                )
+        };
+        observes(owner)
+            || self
+                .reaching
+                .iter()
+                .copied()
+                .filter(|name| *name != self.owner_name && IMPLICIT_DISPATCH_METHODS.contains(name))
+                .any(|name| {
+                    self.graph
+                        .by_name
+                        .get(name)
+                        .is_some_and(|functions| functions.len() == 1 && observes(functions[0]))
+                })
+    }
+
     /// Whether `test` may run the owner, by name only (#6297). It may when
     /// it calls the owner, calls a production function that reaches the
     /// owner within `MAX_TRANSITIVE_DEPTH` hops, or calls a lower-case name
@@ -4211,6 +4269,10 @@ mod tests {
         );
         let plain_reach = TransitiveReachIndex::new(&plain);
         let reach = plain_reach.owner_reach("seconds");
+        assert!(!reach.test_has_known_implicit_dispatch(
+            &make_fn("seconds", vec![]),
+            &make_test("t", Vec::new())
+        ));
         assert!(!reach.test_may_reach(&make_test("t", vec!["from_str", "Ok"])));
         assert!(!reach.test_may_reach(&make_test("t", Vec::new())));
         assert!(reach.test_may_reach(&make_test("t", vec!["seconds_bridge"])));
@@ -4234,6 +4296,14 @@ mod tests {
             Vec::new(),
         );
         let display_reach = TransitiveReachIndex::new(&display);
+        assert!(
+            !display_reach
+                .owner_reach("seconds")
+                .test_has_known_implicit_dispatch(
+                    &make_fn("seconds", vec![]),
+                    &make_test("t", Vec::new())
+                )
+        );
         assert!(
             display_reach
                 .owner_reach("seconds")
@@ -4266,6 +4336,14 @@ mod tests {
         assert!(
             !named_reach
                 .owner_reach("seconds")
+                .test_has_known_implicit_dispatch(
+                    &make_fn("seconds", vec![]),
+                    &make_test("t", Vec::new())
+                )
+        );
+        assert!(
+            !named_reach
+                .owner_reach("seconds")
                 .test_may_reach(&make_test("t", Vec::new()))
         );
         let mut trait_fmt = make_fn("fmt", vec!["seconds"]);
@@ -4275,9 +4353,78 @@ mod tests {
         };
         let trait_only = index_with(vec![make_fn("seconds", vec![]), trait_fmt], Vec::new());
         assert!(
+            !TransitiveReachIndex::new(&trait_only)
+                .owner_reach("seconds")
+                .test_has_known_implicit_dispatch(
+                    &make_fn("seconds", vec![]),
+                    &make_test("t", Vec::new())
+                )
+        );
+        assert!(
             TransitiveReachIndex::new(&trait_only)
                 .owner_reach("seconds")
                 .test_may_reach(&make_test("t", Vec::new()))
+        );
+    }
+
+    #[test]
+    fn known_implicit_dispatch_requires_this_tests_receiver() {
+        let mut next = make_fn("next", vec!["record"]);
+        next.item.container = FunctionContainer::TraitImpl {
+            trait_path: "Iterator".to_string(),
+            self_ty: "Counter".to_string(),
+        };
+        let owner = make_fn("record", vec![]);
+        let index = index_with(vec![owner.clone(), next.clone()], Vec::new());
+        let graph = TransitiveReachIndex::new(&index);
+        let reach = graph.owner_reach("record");
+        for (body, expected) in [
+            ("let c = Counter { sink: 0 }; for _ in c {}", true),
+            ("let c = Counter { sink: 0 }; for\n _ in c {}", true),
+            ("let c = Counter { sink: 0 }; c.for_each(|_| {});", true),
+            (
+                "let c = Counter { sink: 0 }; while c.next().is_some() {}",
+                true,
+            ),
+            ("let c = Counter { sink: 0 };", false),
+            (
+                "let c = Other { sink: Counter { sink: 0 } }; for _ in c {}",
+                false,
+            ),
+            (
+                "let c = Counter { sink: 0 }; let c = Other {}; for _ in c {}",
+                false,
+            ),
+            ("for _ in c {} let c = Counter { sink: 0 };", false),
+            (
+                "let c = Other {}; let note = \"for _ in Counter {}\";",
+                false,
+            ),
+        ] {
+            let mut test = make_test("observer", Vec::new());
+            test.body = body.into();
+            assert_eq!(
+                reach.test_has_known_implicit_dispatch(&owner, &test),
+                expected,
+                "{body}"
+            );
+            let direct = graph.owner_reach("next");
+            assert_eq!(
+                direct.test_has_known_implicit_dispatch(&next, &test),
+                expected,
+                "{body}"
+            );
+        }
+        let mut test = make_test("observer", Vec::new());
+        test.body = "let c = Counter {}; for _ in c {}".into();
+        let ambiguous = index_with(
+            vec![owner.clone(), next, make_fn("next", vec![])],
+            Vec::new(),
+        );
+        assert!(
+            !TransitiveReachIndex::new(&ambiguous)
+                .owner_reach("record")
+                .test_has_known_implicit_dispatch(&owner, &test)
         );
     }
 
