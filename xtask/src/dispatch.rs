@@ -261,6 +261,33 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::WorkSelectionCheck(args) => {
             super::work_selection_identity::work_selection_check_command(&args)
         }
+        XtaskCommand::WorkResultCheck(args) => {
+            super::work_result_identity::work_result_check_command(&args)
+        }
+        XtaskCommand::WorkClaimCheck(args) => {
+            super::work_claim_identity::work_claim_check_command(&args)
+        }
+        XtaskCommand::WorkWaveCheck(args) => {
+            super::work_wave_identity::work_wave_check_command(&args)
+        }
+        XtaskCommand::WorkContextCheck(args) => {
+            super::work_context_identity::work_context_check_command(&args)
+        }
+        XtaskCommand::WorkSynthesisCheck(args) => {
+            super::work_synthesis_identity::work_synthesis_check_command(&args)
+        }
+        XtaskCommand::WorkBurndownCheck(args) => {
+            super::work_burndown_identity::work_burndown_check_command(&args)
+        }
+        XtaskCommand::WorkIntakeCheck(args) => {
+            super::work_intake_identity::work_intake_check_command(&args)
+        }
+        XtaskCommand::WorkPlanCheck(args) => {
+            super::work_plan_identity::work_plan_check_command(&args)
+        }
+        XtaskCommand::WorkAdapterCheck(args) => {
+            super::work_adapter_identity::work_adapter_check_command(&args)
+        }
         XtaskCommand::Help(args) => print_help_route(&args),
         XtaskCommand::Unknown(command) if matches!(command.as_str(), "--help" | "-h") => {
             front_door::print()

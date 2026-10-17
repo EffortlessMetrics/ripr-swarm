@@ -501,3 +501,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_return_value_shape (17)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless python_return_value_shape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

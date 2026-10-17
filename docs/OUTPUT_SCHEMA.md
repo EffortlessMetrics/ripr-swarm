@@ -442,7 +442,7 @@ document.
 | `unanalyzed_source_languages[]` | Source in languages no adapter reads: `language` and `file_count`. A non-coverage disclosure, never a finding. Omitted when no such source exists. |
 | `preview_language_gaps[]` | Detected preview languages `ripr check` skips until they are enabled: `config_entry` (what `[languages] enabled` accepts) and `detected_language` (the source it analyzes). The two differ for a JavaScript-only workspace, which the `typescript` entry analyzes. Omitted when there is no such gap. |
 | `config_defaults` | The effective configuration: `source_path` (`null` when the built-in defaults apply), `analysis_mode`, `lsp_seam_diagnostics`, `suppressions_path`, `bun_ub_profile_configured`, `bun_ub_test_roots[]`, `bun_ub_bridge_hints` (the bridge-hints path, `null` when the profile is absent). The whole field is `null` when the configuration could not be loaded, so it never claims a default the run did not verify. |
-| `cache` | Always an object in a released document, never `null`: `cache_dir`, `relocated_by_env` (whether `RIPR_CACHE_DIR` relocated it), `size_bytes`, `size_display`, and `artifact_ignore` (whether git ignore rules cover ripr's own artifact root `target/ripr`: `no_artifacts`, `ignored`, `not_checked`, or `unignored` with the exact warning line the human screen prints), and `artifact_tracked` (whether that root is already tracked in the git index, independent of ignore rules: `none_tracked`, `not_checked`, or `tracked` with the exact warning line naming `git rm --cached -r -- target/ripr`). `size_bytes` is `0` when the directory does not exist or cannot be read, which is a legitimate state, not a failed measurement. A producer that stopped reporting the cache fails the published schema instead of validating. |
+| `cache` | Always an object in a released document, never `null`: `cache_dir`, `relocated_by_env` (whether `RIPR_CACHE_DIR` relocated it), `size_bytes`, `size_display`, and `artifact_ignore` (whether git ignore rules cover ripr's own artifact root `target/ripr`: `no_artifacts`, `ignored`, `not_checked`, or `unignored` with the exact warning line the human screen prints), and `artifact_tracking` (whether git's index tracks files under `target/ripr`, independent of ignore rules: `untracked`, `not_checked`, or `tracked` with the exact warning line naming `git rm --cached -r -- target/ripr`). `size_bytes` is `0` when the directory does not exist or cannot be read, which is a legitimate state, not a failed measurement. A producer that stopped reporting the cache fails the published schema instead of validating. |
 | `test_surfaces[]` | One or more entries per detected language: `language`, `framework` (`null` when no framework marker was confirmed), and `evidence` (the exact `<language>: …` fragment the human screen prints). Perl carries its adapter, runner, and first-command status lines as additional entries. |
 | `perl_preview` | `null` when the marker scan found no Perl project. Otherwise `pm_files`, `pl_files`, `t_files`, `adapter_compiled`, `producer`, `ignored_configured_executable`, `exporter` (`state` of `compatible` / `incompatible` / `not_found`, plus `executable` and `version`), `expected_schema`, `test_roots[]`, `frameworks[]`, `runners[]`, and `next_command`. |
 
@@ -8199,7 +8199,11 @@ the result.
 
 Every successfully parsed execution attempt — including authorization and
 execution refusals — emits one typed JSON terminal result on stdout with a
-`disposition` field. Usage errors (a missing `--packet`, `--result-json`, or
+`disposition` field. A root that is missing or is not a directory retains
+operational exit `2` and its root diagnostic, with a schema `1`
+`verification_wrong_root` response, `executed: false`, and
+`result_committed: false`; no packet runs and no result is written.
+Usage errors (a missing `--packet`, `--result-json`, or
 `--json`, or a malformed `--cancel-after-ms`) remain plain usage errors on
 stderr and produce no disposition. The exit status distinguishes only whether
 RIPR
@@ -16350,6 +16354,16 @@ that observation only on success; classification errors retain their caveat.
 Header-only exclusions require available worktree bytes or an active
 committed-source overlay; pilot creates no new overlay and does not establish
 the header of a sparse missing file.
+
+Pilot's initial inventory, current-change supplement and diff-only follow-up
+selection use that same loaded change's generated-source context. The corpus is
+selected before indexing evidence or counting seams, so restoring only a vendor
+Rust file while its changed checksum remains sparse does not admit its seams or
+evidence. Ordinary repo exposure keeps its disk-based population and cache
+identity. Pilot recomputes contextual skip guidance and population comparability
+on every run/cache hit; it omits `artifact` identity whenever its selected source
+or evidence inputs differ from ordinary repo exposure. Identical selected bytes
+may still share a cache entry across marker disappearance and restoration.
 
 The terminal and Markdown "Inspected" block names each absent path, the
 `changed_file_absent_from_worktree` category, and the producer's recovery

@@ -300,7 +300,7 @@ fn cache_status(root: &Path) -> output::doctor::DoctorCacheStatus {
         size_bytes,
         size_display: format_bytes(size_bytes),
         artifact_ignore: ripr_artifact_ignore(root),
-        artifact_tracked: ripr_artifact_tracked(root),
+        artifact_tracking: ripr_artifact_tracking(root),
     }
 }
 
@@ -620,7 +620,7 @@ Point RIPR_CACHE_DIR at a writable directory.",
     if let output::doctor::DoctorArtifactIgnore::Unignored { warning } = &cache.artifact_ignore {
         lines.push(warning.clone());
     }
-    if let output::doctor::DoctorArtifactTracked::Tracked { warning } = &cache.artifact_tracked {
+    if let output::doctor::DoctorArtifactTracking::Tracked { warning } = &cache.artifact_tracking {
         lines.push(warning.clone());
     }
 
@@ -664,27 +664,11 @@ Point RIPR_CACHE_DIR at a writable directory.",
                 lines.push(format!(
                     "- Safe next action: {error}; restore access or select a lossless root alias, then rerun doctor."
                 ));
-            } else if !passed && matches!(first, output::doctor::DoctorFirstCommand::MissingRoot) {
-                lines.push(
-                    "- Safe next action: fix the selected root first (see below); no check command can run until it exists"
-                        .to_string(),
-                );
-            } else if !passed && matches!(first, output::doctor::DoctorFirstCommand::InvalidConfig)
+            } else if let Some(line) =
+                output::doctor::safe_next_action_recovery_line(report, first, root)
+                    .filter(|_| !passed)
             {
-                lines.push(
-                    "- Safe next action: correct `ripr.toml` so it loads; no check command can run until it does"
-                        .to_string(),
-                );
-            } else if !passed
-                && matches!(
-                    first,
-                    output::doctor::DoctorFirstCommand::FailedPrerequisites
-                )
-            {
-                lines.push(
-                    "- Safe next action: fix the `!` checks above; no check command can run until they pass"
-                        .to_string(),
-                );
+                lines.push(line.to_string());
             }
             lines.extend(first.recommendation_lines_for(root));
             if matches!(first, output::doctor::DoctorFirstCommand::Worktree) {
@@ -761,7 +745,7 @@ fn cache_detail_lines(cache: &output::doctor::DoctorCacheStatus) -> Vec<String> 
     if let output::doctor::DoctorArtifactIgnore::Unignored { warning } = &cache.artifact_ignore {
         lines.push(warning.clone());
     }
-    if let output::doctor::DoctorArtifactTracked::Tracked { warning } = &cache.artifact_tracked {
+    if let output::doctor::DoctorArtifactTracking::Tracked { warning } = &cache.artifact_tracking {
         lines.push(warning.clone());
     }
     lines
@@ -933,27 +917,11 @@ fn doctor_start_here_lines(
                 // The missing-root recommendation is a recovery action, not a
                 // runnable command (#5252 item 3): sending the reader to "run"
                 // it would prescribe the failure doctor just diagnosed.
-                if matches!(first, output::doctor::DoctorFirstCommand::MissingRoot) {
-                    lines.push(
-                        "- Safe next action: fix the selected root first (see below); no check command can run until it exists"
-                            .to_string(),
-                    );
-                } else if matches!(first, output::doctor::DoctorFirstCommand::InvalidConfig) {
-                    lines.push(
-                        "- Safe next action: correct `ripr.toml` so it loads; no check command can run until it does"
-                            .to_string(),
-                    );
-                } else if matches!(first, output::doctor::DoctorFirstCommand::FailedPrerequisites) {
-                    lines.push(
-                        "- Safe next action: fix the `!` checks above; no check command can run until they pass"
-                            .to_string(),
-                    );
-                } else {
-                    lines.push(
-                        "- Safe next action: run the recommended first command below; it produces the evidence the packet is composed from"
-                            .to_string(),
-                    );
-                }
+                lines.push(
+                    output::doctor::safe_next_action_recovery_line(report, first, root)
+                        .unwrap_or(output::doctor::SAFE_NEXT_ACTION_RUN_FIRST_LINE)
+                        .to_string(),
+                );
             }
             Err(error) => lines.push(format!(
                 "- Safe next action: {error}; restore access or select a lossless root alias, then rerun doctor."
@@ -1924,6 +1892,12 @@ fn path_command_candidates(
         } else {
             format!(".{}", ext.to_ascii_lowercase())
         };
+        // `CreateProcessW` (what process spawning uses) launches only these
+        // suffixes directly; interpreter-only entries such as `.PS1`, `.VBS`
+        // or `.JS` would be chosen first and then fail to start (#5351).
+        if !matches!(ext.as_str(), ".com" | ".exe" | ".bat" | ".cmd") {
+            continue;
+        }
         let candidate = dir.join(format!("{name}{ext}"));
         if !candidates.contains(&candidate) {
             candidates.push(candidate);
@@ -2471,28 +2445,31 @@ fn ripr_artifact_ignore(root: &Path) -> output::doctor::DoctorArtifactIgnore {
     }
 }
 
-/// The typed evidence on whether ripr's own artifacts are already tracked in
-/// the git index (#8276). An ignore rule never untracks files, so a repository
-/// can cover `/target/ripr/` while earlier reports stay tracked: `git add -A`
-/// keeps refreshing them and `ripr check` keeps diffing them. This is its own
-/// fact, not an arm of the ignore verdict. A non-zero git exit (not a
-/// repository, git unavailable, deadline) is `NotChecked`; only a positive
-/// listing warns.
-fn ripr_artifact_tracked(root: &Path) -> output::doctor::DoctorArtifactTracked {
-    use output::doctor::DoctorArtifactTracked;
-    let probe = match crate::git::run_git_output_with_deadline(
+/// The typed evidence on whether git's index tracks files under ripr's
+/// artifact root (#8276). An ignore rule never untracks files committed
+/// earlier, so a repository can cover `/target/ripr/` in `.gitignore` while
+/// `git add -A` keeps refreshing tracked reports and `ripr check` keeps
+/// diffing them. Only a positive non-empty `git ls-files --cached` answer
+/// warns; a missing repository, git failure, deadline, or output over the
+/// cap reports `NotChecked` rather than a fact doctor did not establish.
+fn ripr_artifact_tracking(root: &Path) -> output::doctor::DoctorArtifactTracking {
+    use output::doctor::DoctorArtifactTracking;
+    // The index can name tracked files whose directory was deleted from the
+    // worktree, so this probe does not depend on `target/ripr` existing.
+    let probe = match crate::git::run_git_output_with_deadline_and_limit(
         root,
         &["ls-files", "--cached", "-z", "--", "target/ripr"],
-        Some(std::time::Duration::from_secs(5)),
+        std::time::Duration::from_secs(5),
+        1024 * 1024,
     ) {
         Ok(probe) => probe,
-        Err(_) => return DoctorArtifactTracked::NotChecked,
+        Err(_) => return DoctorArtifactTracking::NotChecked,
     };
-    if probe.status.code() != Some(0) {
-        return DoctorArtifactTracked::NotChecked;
+    if !probe.status.success() {
+        return DoctorArtifactTracking::NotChecked;
     }
     if probe.stdout.is_empty() {
-        return DoctorArtifactTracked::NoneTracked;
+        return DoctorArtifactTracking::Untracked;
     }
     // Bind the remedy to the selected root: pasted from another directory, a
     // bare `git rm --cached` would untrack files in whatever repository the
@@ -2505,11 +2482,10 @@ fn ripr_artifact_tracked(root: &Path) -> output::doctor::DoctorArtifactTracked {
             crate::agent::loop_commands::shell_arg(&output::path::human_path(root))
         )
     };
-    DoctorArtifactTracked::Tracked {
+    DoctorArtifactTracking::Tracked {
         warning: format!(
-            "! ripr artifacts under target/ripr are tracked in the git index; \
-             `git add -A` keeps refreshing them and `ripr check` keeps diffing them. \
-             Untrack them with: {untrack}"
+            "! ripr artifacts under target/ripr are tracked by git; `git add -A` keeps \
+             refreshing them and `ripr check` diffs them. Untrack them with: {untrack}"
         ),
     }
 }
@@ -2954,7 +2930,7 @@ mod tests {
                     size_bytes: 0,
                     size_display: "0 B".to_string(),
                     artifact_ignore: output::doctor::DoctorArtifactIgnore::Ignored,
-                    artifact_tracked: output::doctor::DoctorArtifactTracked::NoneTracked,
+                    artifact_tracking: output::doctor::DoctorArtifactTracking::Untracked,
                 },
                 test_surfaces: Vec::new(),
                 perl_preview: None,
@@ -3839,12 +3815,11 @@ mod tests {
     }
 
     #[test]
-    fn ripr_artifact_tracked_is_independent_of_ignore_rules() -> Result<(), String> {
-        use output::doctor::{DoctorArtifactIgnore, DoctorArtifactTracked};
+    fn ripr_artifact_tracking_names_the_untrack_command() -> Result<(), String> {
+        use output::doctor::{DoctorArtifactIgnore, DoctorArtifactTracking};
         let root = unique_command_test_dir("artifact-tracked");
-        let artifact = root.join("target").join("ripr").join("pilot");
-        std::fs::create_dir_all(&artifact).map_err(|error| error.to_string())?;
-        std::fs::write(artifact.join("report.json"), "{}").map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        // Outside a repository nothing is established.
         let empty_excludes = root.join("empty-excludes");
         std::fs::write(&empty_excludes, "").map_err(|error| error.to_string())?;
         for args in [
@@ -3860,20 +3835,31 @@ mod tests {
         ] {
             crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
         }
-        // Present but untracked: nothing to untrack.
+        // A repository with an empty index is positively untracked.
         assert_eq!(
-            ripr_artifact_tracked(&root),
-            DoctorArtifactTracked::NoneTracked
+            ripr_artifact_tracking(&root),
+            DoctorArtifactTracking::Untracked
         );
-        crate::git::run_git(&root, &["add", "-f", "--", "target/ripr"])
-            .map_err(|error| error.to_string())?;
-        // Add the covering rule after tracking: the ignore verdict is
-        // satisfied while the tracked fact still warns (#8276).
+
+        let artifact = root.join("target").join("ripr").join("pilot");
+        std::fs::create_dir_all(&artifact).map_err(|error| error.to_string())?;
+        std::fs::write(artifact.join("report.json"), "{}").map_err(|error| error.to_string())?;
         std::fs::write(root.join(".gitignore"), "/target/ripr/\n")
             .map_err(|error| error.to_string())?;
+        // Ignored but never added: the ignore rule is not tracking.
         assert_eq!(ripr_artifact_ignore(&root), DoctorArtifactIgnore::Ignored);
-        match ripr_artifact_tracked(&root) {
-            DoctorArtifactTracked::Tracked { warning } => {
+        assert_eq!(
+            ripr_artifact_tracking(&root),
+            DoctorArtifactTracking::Untracked
+        );
+
+        // Force-add past the ignore rule: the exact state of an earlier
+        // commit that predates the rule. The ignore verdict stays Ignored.
+        crate::git::run_git(&root, &["add", "-f", "--", "target/ripr/pilot/report.json"])
+            .map_err(|error| error.to_string())?;
+        assert_eq!(ripr_artifact_ignore(&root), DoctorArtifactIgnore::Ignored);
+        match ripr_artifact_tracking(&root) {
+            DoctorArtifactTracking::Tracked { warning } => {
                 // A non-cwd root must be named in the remedy, so pasting it
                 // elsewhere cannot untrack another repository's files.
                 assert!(
@@ -3888,14 +3874,14 @@ mod tests {
             }
             other => return Err(format!("expected Tracked, got {other:?}")),
         }
-        // Untracking clears it.
-        crate::git::run_git(&root, &["rm", "--cached", "-r", "-q", "--", "target/ripr"])
-            .map_err(|error| error.to_string())?;
-        assert_eq!(
-            ripr_artifact_tracked(&root),
-            DoctorArtifactTracked::NoneTracked
-        );
         let _ = std::fs::remove_dir_all(&root);
+
+        // A root git cannot even run in establishes nothing: the spawn
+        // fails and doctor reports NotChecked rather than a verdict.
+        assert_eq!(
+            ripr_artifact_tracking(&root),
+            DoctorArtifactTracking::NotChecked
+        );
         Ok(())
     }
 
@@ -4539,6 +4525,34 @@ mod tests {
             bare_only,
             Some(bare),
             "extensionless PATH prove remains a fallback: {bare_only:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn path_command_in_windows_skips_interpreter_only_pathext() -> Result<(), String> {
+        // Customized PATHEXT lists `.PS1` ahead of `.EXE`; `perllsp.ps1` cannot
+        // be spawned directly, so the working `perllsp.exe` must win (#5351).
+        let path_dir = PathBuf::from("bin");
+        let ps1 = path_dir.join("perllsp.ps1");
+        let exe = path_dir.join("perllsp.exe");
+        let path = joined_path(&[path_dir.to_str().ok_or("path dir utf-8")?])?;
+        let pathext = Some(".PS1;.VBS;.JS;.COM;.EXE;.BAT;.CMD");
+        let found = path_command_in("perllsp", &path, pathext, true, &|candidate| {
+            candidate == ps1.as_path() || candidate == exe.as_path()
+        });
+        assert_eq!(found, Some(exe), "perllsp.exe must beat .ps1: {found:?}");
+        let ps1_only = path_command_in("perllsp", &path, pathext, true, &|candidate| {
+            candidate == ps1.as_path()
+        });
+        assert_eq!(
+            ps1_only, None,
+            "interpreter-only script is not launchable: {ps1_only:?}"
+        );
+        let candidates = path_command_candidates(&path_dir, "perllsp", pathext, true);
+        assert!(
+            !candidates.contains(&ps1),
+            "candidates must exclude .ps1: {candidates:?}"
         );
         Ok(())
     }

@@ -119,14 +119,11 @@ impl ExposureClass {
         }
     }
 
-    /// `plain word (schema value, ` for human lines, or just `plain word (`
-    /// when the two are the same (`exposed`), so the value is never repeated.
+    /// `plain word (` for the bounded (default) human digest (#8165): the
+    /// schema value (`as_str`) is not repeated here; it stays available in
+    /// `--format human-full`, JSON, and `ripr explain`.
     pub(crate) fn human_lead(&self) -> String {
-        if self.plain_label() == self.as_str() {
-            format!("{} (", self.as_str())
-        } else {
-            format!("{} ({}, ", self.plain_label(), self.as_str())
-        }
+        format!("{} (", self.plain_label())
     }
 }
 

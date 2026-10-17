@@ -79,3 +79,19 @@ Provenance: local build of the PR head tree, regenerated with the same
 commands the CLI-control test executes, with `--root` relative to the
 workspace root. As above, these are provisional local bytes; the routed
 hosted run on the same head is the binding byte-compare.
+
+## 2026-10-16 refresh — plain-language bounded output (#8165, PR #8275)
+
+The fourteen `human.txt` reports were regenerated because #8165 changes
+the bounded renderer on purpose: the summary names classes in plain words
+with the three unknown classes summed as one `unknown` bucket, the
+analysis outcome drops its kind token, the triage state drops its
+parenthesized token, and the digest lead drops the duplicate schema
+token. `check.json` and every `human-full.txt` are byte-identical to the
+2026-10-07 bytes, so classifications, counts, probe families, oracle
+kinds/strengths and consumers are unchanged.
+
+Provenance: local build of the PR head tree, regenerated with the same
+commands the CLI-control test executes, with `--root` relative to the
+workspace root. As above, these are provisional local bytes; the routed
+hosted run on the same head is the binding byte-compare.
