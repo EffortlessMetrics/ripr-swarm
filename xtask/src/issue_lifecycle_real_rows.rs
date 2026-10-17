@@ -626,6 +626,30 @@ pub(crate) fn verify_fresh_root_receipt(
                 row.lifecycle_id
             ));
         }
+        // Bind the live-observed merge commits to the committed corpus merge
+        // identities (normalising the `gh-merge-commit:` prefix): a receipt
+        // whose live PR merge commit drifted from the corpus must reject
+        // here, not only against its own ancestry observation.
+        let live_merge_commit = match row.execution_refs.pr.as_deref() {
+            Some("pr:EffortlessMetrics/ripr-swarm#8285") => {
+                Some(facts.pr_8285.merge_commit.as_str())
+            }
+            Some("pr:EffortlessMetrics/ripr-swarm#8325") => {
+                Some(facts.pr_8325.merge_commit.as_str())
+            }
+            _ => None,
+        };
+        let corpus_merge_commit = row.execution_refs.merge.as_deref().map(|identity| {
+            identity
+                .strip_prefix("gh-merge-commit:")
+                .unwrap_or(identity)
+        });
+        if live_merge_commit != corpus_merge_commit {
+            return Err(format!(
+                "fresh-root receipt live merge commit for `{}` must match the committed corpus merge identity",
+                row.lifecycle_id
+            ));
+        }
         let assessment = assess_issue_lifecycle_attempt(row);
         if assessment.disposition != Some(entry.reconstructed_disposition) {
             return Err(format!(
@@ -1112,5 +1136,26 @@ mod tests {
             return Err(format!("expected a predates rejection, got: {error}"));
         }
         Ok(())
+    }
+
+    /// Fail-closed live identity: a receipt whose observed PR merge commit
+    /// drifted from the committed corpus merge identity — kept self-consistent
+    /// with its own ancestry observation — must still reject on the corpus
+    /// binding (review follow-up: the live-fact merge commits must be bound
+    /// to the rows, not only to the receipt's own ancestry fields).
+    #[test]
+    fn fresh_root_receipt_with_live_merge_commit_drift_rejects() -> Result<(), String> {
+        let corpus = load_real_rows_corpus()?;
+        let provenance = load_real_rows_provenance()?;
+        let mut receipt = load_fresh_root_receipt()?;
+        let drifted = "0000000000000000000000000000000000000000".to_string();
+        receipt.live_facts.pr_8325.merge_commit = drifted.clone();
+        receipt.live_facts.row_b_merge_ancestry.merge_base = drifted;
+        match verify_fresh_root_receipt(&corpus, &provenance, &receipt) {
+            Ok(()) => Err(
+                "a receipt whose live merge commit drifted from the corpus must reject".to_string(),
+            ),
+            Err(_) => Ok(()),
+        }
     }
 }
