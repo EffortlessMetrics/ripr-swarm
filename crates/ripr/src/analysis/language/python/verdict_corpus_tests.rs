@@ -1078,6 +1078,51 @@ fn a_removed_term_that_every_asserted_input_makes_zero_is_not_discriminated() ->
     Ok(())
 }
 
+#[test]
+fn an_unasserted_owner_call_does_not_block_an_inactive_term() -> Result<(), String> {
+    // #7562: `quote(1000)` is a discarded expression statement (fee 499), but
+    // the only strong assertion observes `quote(6000)` where the fee is 0.
+    // Removing the term still passes the test, so the finding should
+    // downgrade. An asserted nonzero fee must still block. Assigned, nested,
+    // or passed-on calls are unclear and still block.
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    quote(1000)\n    assert quote(6000)[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::WeaklyExposed
+    );
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    quote(1000)\n    result = quote(6000)\n    assert result[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::WeaklyExposed
+    );
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    assert quote(6000)[\"total_cents\"] == 6000\n    assert quote(1000)[\"total_cents\"] == 1499\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    unused = quote(1000)\n    assert quote(6000)[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    print(quote(1000))\n    assert quote(6000)[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
 const BIG: &str = "def check(n):\n    if n > 10:\n        raise KeyError(\"big\")\n    return n\n";
 const BIG_OLD: &str = "    if n >= 10:";
 
