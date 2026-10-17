@@ -1361,3 +1361,32 @@ fn one_walk_cfg_test_table_answers_like_each_prefix_walk() -> Result<(), Box<dyn
     assert!(checked > 20, "only {checked} files checked");
     Ok(())
 }
+
+#[test]
+fn direct_cfg_helpers_have_evidence_role_on_parser_and_lexical_paths() -> Result<(), String> {
+    let source = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/source-role-corpus/cases/direct_cfg_helpers/src/lib.rs"
+    ));
+    for adapter in [
+        &RaRustSyntaxAdapter as &dyn RustSyntaxAdapter,
+        &LexicalRustSyntaxAdapter as &dyn RustSyntaxAdapter,
+    ] {
+        let mut facts = adapter.summarize_file(Path::new("src/lib.rs"), source)?;
+        normalize_file_test_styles(&mut facts)?;
+        assert_eq!(test_names(&facts), ["fixture_contracts"]);
+        assert_non_test_functions(
+            &facts,
+            &[
+                "production_lease",
+                "alternative_control",
+                "nontest_control",
+                "lookalike_control",
+            ],
+        );
+        for name in ["standalone_helper", "conjunct_helper"] {
+            assert_evidence_only_dead_test(&facts, name);
+        }
+    }
+    Ok(())
+}

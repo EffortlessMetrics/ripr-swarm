@@ -130,6 +130,9 @@ pub(crate) fn mutation_spot_check(args: &[String]) -> Result<(), String> {
             crate::ripr_debug_binary()
         }
     };
+    // Read before the long runs so a binary that cannot identify itself fails
+    // fast, and the recorded build is the one that does the classifying.
+    let analyzer = analyzer_version(&binary)?;
     for (name, checkout) in &options.repos {
         reject_checkout_inside_workspace(name, checkout)?;
     }
@@ -143,7 +146,7 @@ pub(crate) fn mutation_spot_check(args: &[String]) -> Result<(), String> {
             &binary, &scratch, name, checkout, &options,
         )?);
     }
-    let report = build_report(&repos, options.examples);
+    let report = build_report(&repos, options.examples, &analyzer);
     let json_text = serde_json::to_string_pretty(&report)
         .map_err(|err| format!("serialize mutation spot check: {err}"))?;
     crate::write_report("mutation-spot-check.json", &format!("{json_text}\n"))?;
@@ -1000,7 +1003,30 @@ fn agreement(family: &str, outcome: &str) -> &'static str {
     }
 }
 
-fn build_report(repos: &[RepoRun], examples: usize) -> Value {
+/// Identity of the ripr build that produced the static classifications: the
+/// binary's own `--version` line (version plus commit). A binary that cannot
+/// report one fails the run, so a receipt never carries an unidentifiable
+/// build (#5982).
+fn analyzer_version(binary: &Path) -> Result<String, String> {
+    let output =
+        crate::run::run_output_owned(&binary.display().to_string(), &["--version".to_string()])
+            .map_err(|err| {
+                format!(
+                    "could not read the analyzer version from {}: {err}",
+                    binary.display()
+                )
+            })?;
+    let version = output.trim();
+    if version.is_empty() {
+        return Err(format!(
+            "{} printed an empty --version, so the receipt cannot record the analyzer build",
+            binary.display()
+        ));
+    }
+    Ok(version.to_string())
+}
+
+fn build_report(repos: &[RepoRun], examples: usize, analyzer: &str) -> Value {
     let mut by_disposition: BTreeMap<String, BTreeMap<String, BTreeMap<String, usize>>> =
         BTreeMap::new();
     // Both families are always reported, so a run that scores only one
@@ -1079,6 +1105,7 @@ fn build_report(repos: &[RepoRun], examples: usize) -> Value {
     json!({
         "schema_version": SCHEMA_VERSION,
         "status": "advisory",
+        "analyzer_version": analyzer,
         "claim_boundary": "Agreement is scored only on canonical_precise records: a BinaryOperator or UnaryOperator mutant that ripr calibrate joined by seam_id or by unique span containment to a predicate_boundary or return_value seam, with a caught or missed outcome. File/line fallback joins, span-overlap ties, unmatched records, and unsupported genres, seam kinds or outcomes are counted as exclusions and never scored. Claims are limited to the recorded checkout revisions, cargo-mutants versions, and this join rule; this is not a suite adequacy measure.",
         "repos": repos.iter().map(|repo| json!({
             "name": repo.name,
@@ -1663,7 +1690,7 @@ mod tests {
         let records = classify_records(&calibration, &exposure, &genres)?;
         assert_eq!(records[0].disposition, "canonical_precise");
         assert_eq!(records[0].operator_token, "absent");
-        let report = build_report(&[repo_run(records)], 5);
+        let report = build_report(&[repo_run(records)], 5, TEST_ANALYZER);
         assert_eq!(
             report["scored_families"]["claims_no_discriminator"]["counts"]["false_gap"],
             1
@@ -1772,6 +1799,24 @@ mod tests {
         })
     }
 
+    const TEST_ANALYZER: &str = "ripr 0.11.0 (0123456789abcdef)";
+
+    #[test]
+    fn report_records_the_analyzer_build() {
+        let report = build_report(&[repo_run(Vec::new())], 5, TEST_ANALYZER);
+        assert_eq!(report["analyzer_version"], TEST_ANALYZER);
+    }
+
+    #[test]
+    fn analyzer_version_refuses_a_binary_that_cannot_identify_itself() -> Result<(), String> {
+        let missing = Path::new("/nonexistent/ripr-for-5982");
+        match analyzer_version(missing) {
+            Ok(version) => Err(format!("a missing binary reported `{version}`")),
+            Err(err) if err.contains("could not read the analyzer version") => Ok(()),
+            Err(err) => Err(format!("unexpected refusal: {err}")),
+        }
+    }
+
     fn repo_run(records: Vec<Record>) -> RepoRun {
         RepoRun {
             name: "demo".to_string(),
@@ -1830,7 +1875,7 @@ mod tests {
         .collect();
         let mut run = repo_run(classify_records(&calibration, &exposure, &genres)?);
         run.metrics = json!({"mutants_total": 1});
-        let report = build_report(&[run], 5);
+        let report = build_report(&[run], 5, TEST_ANALYZER);
         let clean = &report["scored_families"]["claims_discriminator"];
         assert_eq!(clean["mutants_scored"], 0);
         assert!(clean["agreement_rate"].is_null());
@@ -1894,7 +1939,7 @@ mod tests {
         run.pilot = Ok(vec![
             json!({"verdict": "refuted", "tier": "line", "grip_class": "weakly_gripped"}),
         ]);
-        let report = build_report(&[run], 5);
+        let report = build_report(&[run], 5, TEST_ANALYZER);
 
         let pairings = &report["repos"][0]["pairings"];
         assert_eq!(pairings["records_total"], 8);
@@ -1970,7 +2015,7 @@ mod tests {
             &fixture(dir, "repo-exposure.json")?,
             &fixture_genres(dir)?,
         )?;
-        let report = build_report(&[repo_run(records)], 10);
+        let report = build_report(&[repo_run(records)], 10, TEST_ANALYZER);
         let pairings = &report["repos"][0]["pairings"];
         assert_eq!(pairings["records_total"], 27);
         assert_eq!(pairings["canonical_precise"], 7);
@@ -2033,7 +2078,7 @@ mod tests {
             &fixture(dir, "repo-exposure.json")?,
             &fixture_genres(dir)?,
         )?;
-        let report = build_report(&[repo_run(records)], 10);
+        let report = build_report(&[repo_run(records)], 10, TEST_ANALYZER);
         let pairings = &report["repos"][0]["pairings"];
         assert_eq!(pairings["records_total"], 2);
         assert_eq!(pairings["canonical_precise"], 0);

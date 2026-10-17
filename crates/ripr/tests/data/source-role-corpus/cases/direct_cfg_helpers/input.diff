@@ -1,0 +1,11 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -6 +6 @@
+-        value: Some(1),
++        value: None,
+@@ -13 +13 @@
+-        value: Some(1),
++        value: None,
+@@ -23 +23 @@
+-            value: Some(1),
++            value: None,
