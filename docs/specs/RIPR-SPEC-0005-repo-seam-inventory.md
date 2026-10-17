@@ -273,8 +273,13 @@ alone does not establish discrimination (#3161/#6642). A supported immediate
 snapshot statement must observe the whole direct owner call or a plain local
 captured from that owner through the shared free-call identity authority.
 Parentheses and immutable borrowing preserve that subject; snapshot names and
-inline expected strings do not supply it. Shadowed, reassigned, mutably borrowed
-or escaped result bindings remain weak. Raw snapshot observations remain
+inline expected strings do not supply it, and literal commas remain part of
+their Rust tokens. Shadowed, reassigned, mutably borrowed or escaped result
+bindings (including immutable aliases to interior-mutable results) remain weak.
+Inline owner calls refuse control transfer and opaque macro arguments. Their
+shared identity check excludes only the exact admitted snapshot wrapper from
+macro-binding ambiguity, using an isolated memoization view; nested opaque
+macros and visible local snapshot lookalikes still refuse. Raw snapshot observations remain
 visible, and an independent exact equality or existing expect-test equality
 can still supply strong discrimination. This subject-only gate reuses the
 run-scoped parser and binding invalidation owner; it does not read expected

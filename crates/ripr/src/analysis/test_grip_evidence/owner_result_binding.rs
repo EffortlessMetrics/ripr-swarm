@@ -11,6 +11,7 @@
 
 mod return_snapshot;
 
+pub(super) use return_snapshot::snapshot_macro_is_unambiguous;
 pub(super) use return_snapshot::snapshot_observes_owner;
 
 use super::record_field_name;

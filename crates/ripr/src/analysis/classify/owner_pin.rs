@@ -158,6 +158,10 @@ impl StdRootedCalls {
 /// No cache outlives that immutable index; no public/file facts are changed.
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct OwnerPinSyntax {
+    /// One parser-validated snapshot wrapper may not bind an operand's name.
+    /// A fresh view owns this exception, so ordinary memoized verdicts cannot
+    /// leak into it or receive its results. Nested invocations stay opaque.
+    snapshot_operand: Option<SnapshotOperand>,
     /// Per test file, its `std`/`core`-rooted `assert_eq!` calls and which
     /// of those roots the file itself leaves unrebound (#7857). Parsed once
     /// per file, not once per assertion.
@@ -223,6 +227,13 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// [`FieldIntegerKey`]; the index is immutable, so none goes stale.
     field_integer_memo: RefCell<BTreeMap<FieldIntegerKey, Option<&'static str>>>,
     withheld: WithheldMacroBindings,
+}
+
+#[derive(Clone, Debug)]
+struct SnapshotOperand {
+    file: PathBuf,
+    delimiter: usize,
+    body_start: usize,
 }
 
 /// #7097: a bare-call binding verdict key: owner file, owner line, owner
@@ -344,6 +355,36 @@ fn withheld_crate_root(path: &Path) -> Option<PathBuf> {
 }
 
 impl OwnerPinSyntax {
+    /// Borrow the existing name-resolution authority for exactly one known,
+    /// eager snapshot invocation. The caller establishes its operand grammar
+    /// and macro provenance before constructing this isolated view.
+    pub(in crate::analysis) fn for_snapshot_operand(
+        file: &Path,
+        delimiter: ra_ap_syntax::TextSize,
+        body_start: ra_ap_syntax::TextSize,
+    ) -> Self {
+        Self {
+            snapshot_operand: Some(SnapshotOperand {
+                file: file.to_owned(),
+                delimiter: usize::from(delimiter),
+                body_start: usize::from(body_start),
+            }),
+            ..Self::default()
+        }
+    }
+
+    fn snapshot_delimiter(&self, file: &Path, in_body: bool) -> Option<usize> {
+        let operand = self
+            .snapshot_operand
+            .as_ref()
+            .filter(|item| item.file == file)?;
+        if in_body {
+            operand.delimiter.checked_sub(operand.body_start)
+        } else {
+            Some(operand.delimiter)
+        }
+    }
+
     /// The run's memo of a whole-index verdict that `compute` reads once.
     pub(in crate::analysis) fn iteration_closed(&self, compute: impl FnOnce() -> bool) -> bool {
         *self.iteration_closed.get_or_init(compute)
@@ -509,7 +550,11 @@ impl OwnerPinSyntax {
             || index.files().iter().any(|(path, facts)| {
                 facts.source.contains(name)
                     && roots.root(path, index).as_deref() == Some(owner_root)
-                    && bound_by_macro(&mask_comments_and_strings(&facts.source), name)
+                    && bound_by_macro_except(
+                        &mask_comments_and_strings(&facts.source),
+                        name,
+                        self.snapshot_delimiter(path, false),
+                    )
             });
         self.path_memo.borrow_mut().hidden.insert(key, hidden);
         hidden
@@ -7128,9 +7173,15 @@ fn is_assert_eq_over(text: &str, expansion: &str) -> bool {
 /// its arguments: `let_assert!(Ok(p) = ..)` and similar macros bind
 /// patterns ripr does not read.
 fn bound_by_macro(masked: &str, name: &str) -> bool {
+    bound_by_macro_except(masked, name, None)
+}
+
+fn bound_by_macro_except(masked: &str, name: &str, delimiter: Option<usize>) -> bool {
     macro_invocations(masked)
         .into_iter()
-        .filter(|(macro_name, _)| !is_bounded_macro(macro_name))
+        .filter(|(macro_name, opening)| {
+            Some(*opening) != delimiter && !is_bounded_macro(macro_name)
+        })
         .any(|(_, delimiter)| {
             let (open, close) = match masked.as_bytes()[delimiter] {
                 b'(' => (b'(', b')'),
@@ -7312,7 +7363,11 @@ pub(in crate::analysis) fn targeted_free_call_reaches_owner(
         && !syntax.file_cfg_gated(index, &owner.file)
         && !test_body_shadows_owner(test, &owner.name)
         && !binds_outside_let(&masked_body, &owner.name)
-        && !bound_by_macro(&masked_body, &owner.name)
+        && !bound_by_macro_except(
+            &masked_body,
+            &owner.name,
+            syntax.snapshot_delimiter(&test.file, true),
+        )
         && !file_renames_to(&facts.source, &owner.name)
         && binding.bare_call_reaches_owner(test, &facts.source, index, syntax)
 }

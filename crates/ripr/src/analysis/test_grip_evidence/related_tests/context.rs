@@ -50,6 +50,7 @@ pub(crate) struct CompactGripContext<'a> {
     /// parse, its line index, and its test-function lookup, built once per
     /// file instead of once per seam and related test.
     parsed_sources: Mutex<BTreeMap<&'a Path, Option<Arc<ParsedTestFile>>>>,
+    snapshot_macro_admissions: Mutex<BTreeMap<String, bool>>,
     /// Per production file: the parser-backed module layout new-test-target
     /// admission reads. File-bounded and small, so it survives windows.
     pub(in crate::analysis::test_grip_evidence) inline_unit_layouts:
@@ -594,6 +595,7 @@ impl<'a> CompactGripContext<'a> {
             source_digest_cache: Mutex::new(BTreeMap::new()),
             evidence_functions_by_line_cache: Mutex::new(BTreeMap::new()),
             parsed_sources: Mutex::new(BTreeMap::new()),
+            snapshot_macro_admissions: Mutex::new(BTreeMap::new()),
             inline_unit_layouts: Default::default(),
             owner_lookups: Mutex::new(BTreeMap::new()),
             fixture_names: Mutex::new(BTreeMap::new()),
@@ -712,6 +714,20 @@ impl<'a> CompactGripContext<'a> {
             .map(|parse| Arc::new(ParsedTestFile::new(parse, &facts.source)));
         memo(&self.parsed_sources).insert(path.as_path(), parsed.clone());
         parsed
+    }
+
+    /// Snapshot binding admission is immutable for this index and path.
+    /// Share the existing parser cache and settle each spelling once.
+    pub(in crate::analysis::test_grip_evidence) fn snapshot_macro_binding_is_unambiguous(
+        &self,
+        path: &str,
+    ) -> bool {
+        if let Some(cached) = memo(&self.snapshot_macro_admissions).get(path) {
+            return *cached;
+        }
+        let admitted = crate::analysis::test_grip_evidence::owner_result_binding::snapshot_macro_is_unambiguous(path, self);
+        memo(&self.snapshot_macro_admissions).insert(path.to_owned(), admitted);
+        admitted
     }
 
     /// Innermost indexed function containing `line` of `file`; the same

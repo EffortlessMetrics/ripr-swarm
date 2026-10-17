@@ -38,6 +38,18 @@ pub(in crate::analysis::test_grip_evidence) fn snapshot_observes_owner(
     let [call] = calls.as_slice() else {
         return false;
     };
+    let Some(path) = call.path() else {
+        return false;
+    };
+    let path: String = path
+        .syntax()
+        .text()
+        .to_string()
+        .split_whitespace()
+        .collect();
+    if !context.snapshot_macro_binding_is_unambiguous(&path) {
+        return false;
+    }
     let Some(subject) = snapshot_subject(call).and_then(|text| value_expression(&text)) else {
         return false;
     };
@@ -49,17 +61,61 @@ pub(in crate::analysis::test_grip_evidence) fn snapshot_observes_owner(
     {
         return false;
     }
-    if owner_call(&subject, test, owner, context, syntax) {
+    let Some(body_start) = function.fn_token().map(|token| token.text_range().start()) else {
+        return false;
+    };
+    let Some(delimiter) = call
+        .token_tree()
+        .map(|tree| tree.syntax().text_range().start())
+    else {
+        return false;
+    };
+    let snapshot_syntax = crate::analysis::classify::OwnerPinSyntax::for_snapshot_operand(
+        &test.file, delimiter, body_start,
+    );
+    if owner_call(&subject, test, owner, context, syntax, &snapshot_syntax) {
         return true;
     }
     direct_result_bindings(&function, &parsed.lines, |initializer| {
-        owner_call(initializer, test, owner, context, syntax)
+        owner_call(initializer, test, owner, context, syntax, &snapshot_syntax)
     })
     .iter()
     .any(|binding| {
         path_is_binding(&subject, &binding.name)
             && !binding_invalidated_before_offset(&function, binding, cutoff)
             && !binding_escapes_before(&function, binding, cutoff)
+    })
+}
+
+/// Do not treat a local lookalike macro or `insta` module as the external
+/// assertion. This is a conservative source boundary, not macro expansion.
+pub(in crate::analysis::test_grip_evidence) fn snapshot_macro_is_unambiguous(
+    text: &str,
+    context: &CompactGripContext<'_>,
+) -> bool {
+    let leaf = text.rsplit("::").next().unwrap_or_default();
+    let qualified = text.trim_start_matches("::").starts_with("insta::");
+    context.index.files().iter().all(|(file, facts)| {
+        if facts.used_lexical_fallback {
+            return false;
+        }
+        if !facts.source.contains(leaf) && (!qualified || !facts.source.contains("insta")) {
+            return true;
+        }
+        let Some(parsed) = context.parsed_test_file(file) else {
+            return false;
+        };
+        !parsed.parse.tree().syntax().descendants().any(|node| {
+            ast::MacroRules::cast(node.clone())
+                .and_then(|item| item.name())
+                .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()))
+                .is_some_and(|name| name.text().trim_start_matches("r#") == leaf)
+                || (qualified
+                    && ast::Module::cast(node)
+                        .and_then(|item| item.name())
+                        .is_some_and(|name| name.text().trim_start_matches("r#") == "insta"))
+        }) && (!qualified
+            || !crate::analysis::syntax::source_declares_value_name(&facts.source, "insta"))
     })
 }
 
@@ -117,15 +173,7 @@ fn snapshot_subject(call: &ast::MacroCall) -> Option<String> {
     ) {
         return None;
     }
-    let tokens = call.token_tree()?.syntax().text().to_string();
-    let inner = super::super::delimited_contents_at(&tokens, 0)?;
-    let mut arguments = super::super::split_top_level_commas(&inner);
-    if arguments
-        .last()
-        .is_some_and(|argument| argument.trim().is_empty())
-    {
-        arguments.pop();
-    }
+    let arguments = snapshot_arguments(&call.token_tree()?)?;
     let first = arguments.first()?;
     if arguments.len() == 1 {
         return Some(first.clone());
@@ -141,6 +189,34 @@ fn snapshot_subject(call: &ast::MacroCall) -> Option<String> {
         3 if inline_expected(&arguments[2]) => Some(arguments[1].clone()),
         _ => None,
     }
+}
+
+/// Rust token trees keep quoted commas, raw strings and nested groups intact.
+/// Empty operands refuse; a final comma is accepted by Insta.
+fn snapshot_arguments(tree: &ast::TokenTree) -> Option<Vec<String>> {
+    let mut elements: Vec<_> = tree.syntax().children_with_tokens().collect();
+    if elements.len() < 2 {
+        return None;
+    }
+    elements.remove(0);
+    elements.pop();
+    let mut arguments = Vec::new();
+    let mut current = String::new();
+    for element in elements {
+        if element.kind() == ra_ap_syntax::SyntaxKind::COMMA {
+            if current.trim().is_empty() {
+                return None;
+            }
+            arguments.push(current.trim().to_owned());
+            current.clear();
+        } else {
+            current.push_str(&element.to_string());
+        }
+    }
+    if !current.trim().is_empty() {
+        arguments.push(current.trim().to_owned());
+    }
+    Some(arguments)
 }
 
 fn string_literal(text: &str) -> bool {
@@ -181,10 +257,22 @@ fn owner_call(
     owner: &FunctionSummary,
     context: &CompactGripContext<'_>,
     syntax: &crate::analysis::classify::OwnerPinSyntax,
+    snapshot_syntax: &crate::analysis::classify::OwnerPinSyntax,
 ) -> bool {
     let ast::Expr::CallExpr(call) = expression else {
         return false;
     };
+    // Macro operands are separately parsed: the test AST cannot see an early
+    // return (or opaque macro expansion) hidden inside this call's arguments.
+    if expression.syntax().descendants().any(|node| {
+        ast::ReturnExpr::can_cast(node.kind())
+            || ast::BreakExpr::can_cast(node.kind())
+            || ast::ContinueExpr::can_cast(node.kind())
+            || ast::TryExpr::can_cast(node.kind())
+            || ast::MacroExpr::can_cast(node.kind())
+    }) {
+        return false;
+    }
     let Some(ast::Expr::PathExpr(path)) = call.expr() else {
         return false;
     };
@@ -201,13 +289,19 @@ fn owner_call(
         .rsplit_once("::")
         .map_or((None, text.as_str()), |(prefix, name)| (Some(prefix), name));
     name == owner.name
-        && crate::analysis::classify::targeted_free_call_reaches_owner(
+        && (crate::analysis::classify::targeted_free_call_reaches_owner(
             test,
             owner,
             prefix,
             context.index,
             syntax,
-        )
+        ) || crate::analysis::classify::targeted_free_call_reaches_owner(
+            test,
+            owner,
+            prefix,
+            context.index,
+            snapshot_syntax,
+        ))
 }
 
 fn binding_escapes_before(
@@ -229,13 +323,12 @@ fn binding_escapes_before(
                     matches!(value, ast::Expr::PathExpr(_) | ast::Expr::Literal(_))
                 });
         }
-        (ast::CallExpr::can_cast(node.kind()) || ast::MethodCallExpr::can_cast(node.kind()))
-            && node
-                .descendants()
-                .filter_map(ast::PathExpr::cast)
-                .any(|path| {
-                    direct_name(&ast::Expr::PathExpr(path)).as_deref()
-                        == Some(binding.name.as_str())
-                })
+        // Even an immutable alias can mutate Cell/RefCell-style return values.
+        // Until alias provenance is proved, any intervening use escapes this
+        // narrow direct-binding admission (earlier simple snapshots above are
+        // token trees and do not manufacture parsed path expressions).
+        ast::PathExpr::cast(node).is_some_and(|path| {
+            direct_name(&ast::Expr::PathExpr(path)).as_deref() == Some(binding.name.as_str())
+        })
     })
 }

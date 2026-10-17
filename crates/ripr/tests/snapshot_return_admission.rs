@@ -14,6 +14,10 @@ struct Fixture(PathBuf);
 
 impl Fixture {
     fn new(body: &str) -> Result<Self, String> {
+        Self::with_source(SOURCE, body)
+    }
+
+    fn with_source(source: &str, body: &str) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let parent = std::env::temp_dir();
         std::fs::create_dir_all(&parent).map_err(|error| error.to_string())?;
@@ -31,10 +35,10 @@ impl Fixture {
             "[package]\nname=\"return_snapshot_admission\"\nversion=\"0.0.0\"\nedition=\"2024\"\n[workspace]\n[dev-dependencies]\ninsta={version=\"=1.49.0\",features=[\"json\"]}\nexpect-test=\"1\"\n",
         )
         .map_err(|error| error.to_string())?;
-        assert_eq!(SOURCE.matches("__BODY__").count(), 1);
+        assert_eq!(source.matches("__BODY__").count(), 1);
         std::fs::write(
             fixture.0.join("src/lib.rs"),
-            SOURCE.replace("__BODY__", body),
+            source.replace("__BODY__", body),
         )
         .map_err(|error| error.to_string())?;
         std::fs::write(
@@ -76,7 +80,10 @@ impl Drop for Fixture {
 }
 
 fn weak(body: &str) -> Result<(), String> {
-    let seam = Fixture::new(body)?.seam()?;
+    assert_weak(Fixture::new(body)?.seam()?)
+}
+
+fn assert_weak(seam: Value) -> Result<(), String> {
     assert_eq!(seam["evidence"]["reach"], "yes");
     assert_eq!(seam["evidence"]["activate"], "yes");
     assert_eq!(
@@ -116,6 +123,8 @@ fn direct_owner_result_snapshots_keep_their_grade() -> Result<(), String> {
         "insta::assert_json_snapshot!(actual);",
         "insta::assert_snapshot!(actual, @\"2\");",
         "insta::assert_debug_snapshot!(\"named\", &actual);",
+        "insta::assert_debug_snapshot!(\"count,snapshot\", &actual);",
+        "insta::assert_debug_snapshot!(r#\"count, (snapshot)\"#, &actual,);",
         "insta::assert_json_snapshot!(make_count(2));",
         "insta::assert_json_snapshot!(crate::make_count(2));",
     ] {
@@ -165,4 +174,61 @@ fn changed_or_escaped_result_bindings_cannot_supply_snapshot_credit() -> Result<
         weak(body)?;
     }
     Ok(())
+}
+
+#[test]
+fn macro_operand_control_flow_cannot_supply_snapshot_credit() -> Result<(), String> {
+    strong(
+        "let _actual = make_count(2);\n        insta::assert_snapshot!(make_count({ 2 }), @\"2\");",
+    )?;
+    for operand in [
+        "make_count({ return; 2 })",
+        "crate::make_count({ return; 2 })",
+        "make_count(rewrite!())",
+    ] {
+        weak(&format!(
+            "let _actual = make_count(2);\n        insta::assert_snapshot!({operand}, @\"2\");"
+        ))?;
+    }
+    Ok(())
+}
+
+#[test]
+fn immutable_alias_cannot_hide_interior_result_mutation() -> Result<(), String> {
+    let source = SOURCE.replace(
+        "-> usize {\n    count + 0",
+        "-> std::cell::Cell<usize> {\n    std::cell::Cell::new(count + 0)",
+    );
+    assert_weak(Fixture::with_source(&source, "let actual = make_count(2);\n        let alias = &actual;\n        alias.set(2);\n        insta::assert_compact_debug_snapshot!(actual, @\"Cell { value: 2 }\");")?.seam()?)
+}
+
+#[test]
+fn inline_string_commas_keep_direct_snapshot_credit() -> Result<(), String> {
+    let source = SOURCE.replace(
+        "-> usize {\n    count + 0",
+        "-> String {\n    (count + 0).to_string() + \",done\"",
+    );
+    for assertion in [
+        "insta::assert_snapshot!(actual, @\"2,done\");",
+        "insta::assert_snapshot!(actual, @r#\"2,done\"#);",
+    ] {
+        let seam = Fixture::with_source(
+            &source,
+            &format!("let actual = make_count(2);\n        {assertion}"),
+        )?
+        .seam()?;
+        assert_eq!(seam["grip_class"], "strongly_gripped");
+        assert_eq!(seam["evidence"]["discriminate"], "yes");
+    }
+    Ok(())
+}
+
+#[test]
+fn local_snapshot_lookalikes_cannot_borrow_the_operand_exception() -> Result<(), String> {
+    weak(
+        "macro_rules! assert_snapshot { ($($tt:tt)*) => {} }\n        let actual = make_count(2);\n        assert_snapshot!(actual);",
+    )?;
+    weak(
+        "macro_rules! ignored { ($($tt:tt)*) => {} }\n        mod insta { pub(crate) use ignored as assert_snapshot; }\n        let actual = make_count(2);\n        insta::assert_snapshot!(make_count(2), @\"2\");",
+    )
 }

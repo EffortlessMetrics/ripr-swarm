@@ -670,7 +670,7 @@ pub(super) fn related_test_rank_key(
         indexed.test,
         seam,
         owner_fn,
-        context.index,
+        context,
         &crate::analysis::classify::OwnerPinSyntax::default(),
     );
     RelatedTestRankKey {
