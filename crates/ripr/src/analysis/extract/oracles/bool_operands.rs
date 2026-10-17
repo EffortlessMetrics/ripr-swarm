@@ -779,6 +779,11 @@ fn sequence_elements(side: &str) -> Option<Vec<String>> {
     let array = side.strip_prefix("vec!").map_or(side, str::trim_start);
     let contents = super::arguments::delimited_contents_at(array, 0)
         .filter(|contents| array.starts_with('[') && contents.len() + 2 == array.len())?;
+    // A repeat array holds one value (`[x; 2]`), compared with the other
+    // side's repeated value.
+    if let Some(at) = top_level_semicolon(&mask_comments_and_strings(&contents)) {
+        return Some(vec![contents.get(..at)?.to_string()]);
+    }
     Some(super::arguments::split_top_level_commas(&contents))
 }
 
