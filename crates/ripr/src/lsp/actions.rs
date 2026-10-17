@@ -2455,7 +2455,7 @@ mod tests {
     fn receipt_command_falls_back_past_a_route_it_cannot_bind() {
         // #4001: a safe receipt route the binder withholds does not hide a
         // later bindable candidate. The `--root=.` spelling is withheld on
-        // every host, so the fallback is proven on every host (#8499).
+        // every host, so the fallback is demonstrated on every host (#8499).
         let root = std::env::temp_dir().join("ripr-receipt-fallback");
         let bound = crate::agent::loop_commands::shell_arg(
             &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
