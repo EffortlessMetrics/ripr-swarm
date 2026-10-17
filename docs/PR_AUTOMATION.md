@@ -517,7 +517,13 @@ latest reviews, and Droid-related checks, then writes
 checks, failed checks, behind-main state, review status, Droid status, and a
 safe next action: `wait`, `inspect integration`, `inspect failure`, or `merge`.
 `BEHIND` requests integration judgment after Draft, review-required and pending
-waits; it does not establish that a branch update is needed. It is advisory and
+waits; it does not establish that a branch update is needed. The packet retains the current head commit and each latest review's original
+commit, with `current_head`, `stale_for_head`, or `subject_unavailable` attribution.
+An `APPROVED` aggregate without an exact-head latest approval recommends `wait`.
+The CLI's `latestReviews` summaries are joined by author, submission time, and
+state to the full `reviews` subjects; missing or ambiguous identity stays unknown.
+This attribution does not establish review substance, independence, approval
+quotas, integration qualification, or protection satisfaction. It is advisory and
 never updates the branch, comments, approves, or merges.
 The provider-response section retains known quota notices and unknown substance
 from returned reviews/comments without treating either as review completion.

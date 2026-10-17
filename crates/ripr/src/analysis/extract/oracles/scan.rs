@@ -7,9 +7,10 @@ use super::arguments::{
 };
 use super::classify::classify_assertion;
 use super::patterns::{
-    contains_macro_invocation, contains_named_enum_variant, has_argument_tokens,
+    ExpectErrForm, contains_macro_invocation, contains_named_enum_variant, has_argument_tokens,
     is_custom_assertion_helper, is_mock_expectation_line, is_side_effect_observer_assertion,
-    is_snapshot_assertion, is_unwrap_err_bound_error_assertion, without_expect_err,
+    is_snapshot_assertion, is_unwrap_err_bound_error_assertion, next_expect_err_open,
+    without_expect_err,
 };
 use crate::analysis::extract::ShadowAuthority;
 use crate::analysis::extract::text::extract_identifier_tokens;
@@ -2848,18 +2849,35 @@ fn is_call_path(callee: &str) -> bool {
 /// returns, and `find(x).ok_or(E).unwrap_err()` reads an `Option`.
 fn receiver_keeps_call_error(masked: &str) -> bool {
     let masked = masked.trim_end();
-    let receiver = masked.strip_suffix(".unwrap_err()").or_else(|| {
-        // `.expect_err(<message>)` must be the last call: its argument
-        // group closes the expression. The first such call is the outer
-        // one, so an `expect_err` nested in the message is not mistaken
-        // for it.
-        masked
-            .match_indices(".expect_err(")
-            .map(|(start, call)| (start, start + call.len() - 1))
-            .find(|&(_, open)| group_end(masked, open) == Some(masked.len() - 1))
-            .map(|(start, _)| &masked[..start])
-    });
+    let receiver = masked
+        .strip_suffix(".unwrap_err()")
+        .or_else(|| trailing_expect_err_receiver(masked));
     receiver.is_some_and(|receiver| keeps_call_result(receiver, 0))
+}
+
+/// Receiver of a trailing `expect_err` whose argument group closes `masked`.
+/// Method form uses the expression before `.expect_err`; UFCS uses the first
+/// argument of `Result::expect_err(<call>, <msg>)`.
+fn trailing_expect_err_receiver(masked: &str) -> Option<&str> {
+    let close = masked.len().saturating_sub(1);
+    let mut search = 0;
+    while let Some(found) = next_expect_err_open(masked, search) {
+        if group_end(masked, found.open) == Some(close) {
+            return match found.form {
+                ExpectErrForm::Method => Some(&masked[..found.start]),
+                ExpectErrForm::ResultUfcs => ufcs_expect_err_result_arg(masked, found.open, close),
+            };
+        }
+        search = found.open + 1;
+    }
+    None
+}
+
+fn ufcs_expect_err_result_arg(masked: &str, open: usize, close: usize) -> Option<&str> {
+    let args = masked.get(open + 1..close)?;
+    let comma = top_level_comma(args, 0)?;
+    let first = args[..comma].trim();
+    (!first.is_empty()).then_some(first)
 }
 
 /// Whether `expr` is a call followed only by Ok-preserving adapters. A
@@ -2938,22 +2956,27 @@ fn ends_with_unwrap_err(expr: &str) -> bool {
 }
 
 fn ends_with_expect_err(expr: &str) -> bool {
-    // `.expect_err(<message>)` whose argument group closes `expr`. An empty
-    // group (`expect_err()`, `expect_err( )`) is a mock's expectation for a
+    // `.expect_err(<message>)` or `Result::expect_err(<call>, <msg>)` whose
+    // argument group closes `expr`. An empty group (`expect_err()`,
+    // `expect_err( )`, `expect_err ()`) is a mock's expectation for a
     // method named `err`, not `Result::expect_err`; `without_expect_err`
     // applies the same rule, so both adapters agree on it.
     // Masking keeps byte offsets, and blanks a message's quotes, so the
     // arguments are read back from `expr` itself, by the same rule
-    // `without_expect_err` applies.
+    // `without_expect_err` applies. Optional whitespace between
+    // `expect_err` and `(` is still the Result read (#7979).
     let expr = expr.trim_end();
     let masked = mask_comments_and_strings(expr);
     let masked = masked.trim_end();
     let close = masked.len().saturating_sub(1);
-    masked
-        .match_indices(".expect_err(")
-        .map(|(start, call)| start + call.len() - 1)
-        .find(|&open| group_end(masked, open) == Some(close))
-        .is_some_and(|open| has_argument_tokens(&expr[open + 1..close]))
+    let mut search = 0;
+    while let Some(found) = next_expect_err_open(masked, search) {
+        if group_end(masked, found.open) == Some(close) {
+            return has_argument_tokens(&expr[found.open + 1..close]);
+        }
+        search = found.open + 1;
+    }
+    false
 }
 
 pub(crate) fn extract_line_scanned_oracles(body: &str, start_line: usize) -> Vec<OracleFact> {
