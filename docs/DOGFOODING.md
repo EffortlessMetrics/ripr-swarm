@@ -42,8 +42,20 @@ recorded line, so version drift fails the walk instead of changing the subject.
 
 ```bash
 cargo xtask first-run --install-published       # install ripr from crates.io, then walk
+cargo xtask first-run --install-archive 0.10.0  # download, checksum and extract the release archive, then walk
 cargo xtask first-run --ripr path/to/ripr       # walk a built binary (a release candidate)
 ```
+
+`--install-archive VERSION` is the README's prebuilt route with no Rust
+toolchain: it downloads the server archive for this host from the GitHub
+release, verifies it against its `.sha256` sidecar, extracts only the root
+`ripr` into the walk's own directory, and runs that executable by path. A
+checksum mismatch, missing asset, unsupported host, or an executable that does
+not report `ripr VERSION` fails the install step. The step is recorded as
+`install_archive` and `first-run.json` names the route, asset, SHA-256 and
+executable under `install`. The scoreboard keeps it apart from the source
+route: it does not feed `first_run.install_seconds`. The three routes
+(`--ripr`, `--install-published`, `--install-archive`) are mutually exclusive.
 
 Per crate it times `ripr doctor`, `ripr check`, `ripr check --format json`,
 `ripr pilot --root .`, the `ripr explain` command `check` printed (run as

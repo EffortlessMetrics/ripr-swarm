@@ -611,3 +611,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_return_value_shape (19)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless typescript_return_value_shape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

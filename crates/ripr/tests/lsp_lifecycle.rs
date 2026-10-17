@@ -162,6 +162,9 @@ impl LspSession {
         let binary = env!("CARGO_BIN_EXE_ripr");
         let mut child = Command::new(binary)
             .args(["lsp", "--stdio"])
+            // Cases already run in parallel. Keep a real multi-thread runtime
+            // without multiplying host-sized or inherited scheduler pools.
+            .env("TOKIO_WORKER_THREADS", "2")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             // Tracing output is not part of the wire contract; dropping

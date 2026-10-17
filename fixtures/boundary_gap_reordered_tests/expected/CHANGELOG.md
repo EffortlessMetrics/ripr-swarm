@@ -435,6 +435,19 @@ Reason:
 RIPR-SPEC-0001: bounded human check drill-down prints the eligible seam repair line (ripr repair <seam-id>, #8166 Slice C); fixture seam is the repair-eligible weakly gripped boundary gap
 
 Command:
+`cargo xtask goldens bless --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
 `cargo xtask goldens bless boundary_gap_reordered_tests --reason "..."`
 
 Updated:

@@ -55,6 +55,9 @@ mod init_followups;
 #[path = "cli_smoke/javascript_awaited_roots.rs"]
 mod javascript_awaited_roots;
 #[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/mixed_quote_rename.rs"]
+mod mixed_quote_rename;
+#[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/native_fanout.rs"]
 mod native_fanout;
 #[path = "cli_smoke/next_action.rs"]
@@ -122,6 +125,9 @@ mod unsupported_check_exit;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unsupported_diff_exit.rs"]
 mod unsupported_diff_exit;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/verify_execute_root.rs"]
+mod verify_execute_root;
 #[cfg(unix)]
 #[path = "cli_smoke/workflow_directory.rs"]
 mod workflow_directory;

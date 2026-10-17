@@ -42,7 +42,8 @@
     "relocated_by_env": false,
     "size_bytes": 2048,
     "size_display": "2.00 KB",
-    "artifact_ignore": "ignored"
+    "artifact_ignore": "ignored",
+    "artifact_tracking": "untracked"
   },
   "test_surfaces": [
     { "language": "rust", "framework": "cargo test", "evidence": "rust: cargo test (#[cfg(test)])" },

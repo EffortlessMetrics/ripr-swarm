@@ -136,11 +136,9 @@ pub(crate) fn render_human_triage(
     provenance: CheckDiffProvenance,
 ) {
     out.push_str("Start here:\n");
-    out.push_str(&format!(
-        "  State: {} ({})\n",
-        triage.state.plain_label(),
-        triage.state.as_str()
-    ));
+    // #8165: the default (bounded) human render speaks plain language only;
+    // the `HumanTriageState` schema token stays in machine surfaces.
+    out.push_str(&format!("  State: {}\n", triage.state.plain_label()));
     // The canonical decision (#6304) selects the line family; the prose
     // below is unchanged, so the decision has one authority while rendered
     // bytes stay put.
@@ -403,7 +401,7 @@ pub(crate) fn render_human_triage(
                 "    - {}:{} ({}{})\n",
                 crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
                 finding.probe.location.line,
-                finding.class.as_str(),
+                finding.class.plain_label(),
                 currentness
             ));
         }
@@ -1626,15 +1624,15 @@ mod tests {
         ]);
         let rendered = super::super::render(&output);
         assert!(
-            rendered.contains("    - src/sample.rs:7 (weakly_exposed, lower-priority candidate)\n"),
+            rendered.contains("    - src/sample.rs:7 (weak, lower-priority candidate)\n"),
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/lib.rs:26 (weakly_exposed, base-side)\n"),
+            rendered.contains("    - src/lib.rs:26 (weak, base-side)\n"),
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/lib.rs:31 (weakly_exposed, unresolved currentness)\n"),
+            rendered.contains("    - src/lib.rs:31 (weak, unresolved currentness)\n"),
             "{rendered}"
         );
     }
@@ -1654,15 +1652,12 @@ mod tests {
         // the count line already named the single category.
         assert_eq!(rendered.matches("\n    - src/").count(), 1, "{rendered}");
         assert!(
-            !rendered.contains("(weakly_exposed, lower-priority candidate)"),
+            !rendered.contains("(weak, lower-priority candidate)"),
             "{rendered}"
         );
+        assert!(!rendered.contains("(weak, base-side)"), "{rendered}");
         assert!(
-            !rendered.contains("(weakly_exposed, base-side)"),
-            "{rendered}"
-        );
-        assert!(
-            !rendered.contains("(weakly_exposed, unresolved currentness)"),
+            !rendered.contains("(weak, unresolved currentness)"),
             "{rendered}"
         );
     }
