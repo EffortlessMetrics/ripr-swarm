@@ -99,7 +99,13 @@ fn inventory_preserves_versions_and_multiple_feature_variants() -> Result<(), St
         Some(&BTreeSet::from(["serde,std".to_owned()]))
     );
     assert!(variants.contains_key("ripr v1 (path|with-pipe)"));
-    assert!(feature_variants("malformed").is_err());
-    assert!(feature_variants("|std").is_err());
+    assert_eq!(
+        feature_variants("malformed").unwrap_err(),
+        "Cargo feature row has no separator: malformed"
+    );
+    assert_eq!(
+        feature_variants("|std").unwrap_err(),
+        "Cargo feature row has no package identity"
+    );
     Ok(())
 }
