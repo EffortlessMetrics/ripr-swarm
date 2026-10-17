@@ -1,3 +1,10 @@
+//! Human (terminal) rendering of `ripr check` output.
+//!
+//! Renders a `CheckOutput` as bounded or full text: header summary, analysis
+//! outcome disclosures (working-tree, committed-history, unanalyzed scope),
+//! and per-finding drill-in. Classification lives upstream; triage and
+//! next-action selection are delegated to the `triage` submodule and `domain`.
+
 use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn, FindingNavigation};
 use crate::config::RiprConfig;
 use crate::domain::Finding;
