@@ -367,7 +367,7 @@ mod tests {
         for source in [
             "emit!(fn name() {});\n",
             "emit!(fn name(x: u8) -> u8 { x });\n",
-            "emit!(#[allow(dead_code)] fn name() {});\n",
+            "emit!(#[inline] fn name() {});\n",
             "emit!(pub const fn name() {});\n",
         ] {
             assert!(macro_may_define_item_named(source, "name"), "{source}");
