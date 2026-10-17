@@ -371,6 +371,35 @@ fn issue7507_genuine_namespace_call_stays_exposed() -> Result<(), String> {
     Ok(())
 }
 
+/// A body-local `ns` shadows the namespace import, so `ns.price(...)` is
+/// not an owner call. A real `price(...)` smoke call keeps the test
+/// related; the pin must not confirm `exposed`.
+#[test]
+fn issue7507_shadowed_namespace_call_is_not_exposed() -> Result<(), String> {
+    let owners = owners_of_lib(&named_lib());
+    let owner = price_owner_named(&owners)?.clone();
+    let source = "import * as ns from '../src/lib';\nimport { price } from '../src/lib';\ntest('p', () => {\n  const ns = fakeLib();\n  price(150);\n  expect(ns.price(150)).toBe(140);\n});\n";
+    let tests = tests_of(source);
+    assert_single_strong_exact(&tests, "ns.price(150)")?;
+    if !local_identifier_declared_in_test_body(&tests[0].body_text, "ns") {
+        return Err("body-local `ns` must read as a shadow".to_string());
+    }
+    if !relations_of(&owner, &tests)
+        .iter()
+        .any(|relation| relation.uses_oracle())
+    {
+        return Err(format!(
+            "real owner smoke call must keep a trusted relation: {:?}",
+            relations_of(&owner, &tests)
+        ));
+    }
+    let finding = classify_at_changed(&owners, &tests)?;
+    if matches!(finding.class, ExposureClass::Exposed) {
+        return Err("shadowed-namespace pin must not read exposed".to_string());
+    }
+    Ok(())
+}
+
 /// A test-local `function price(a) { ... }` declaration shadows the owner
 /// even though its declarator carries a body brace.
 #[test]
