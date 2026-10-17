@@ -354,6 +354,7 @@ fn const_consumer_route(
 ) -> Option<StubRouteDecision> {
     let source = std::fs::read_to_string(root.join(file)).ok()?;
     let lines = source.lines().collect::<Vec<_>>();
+    let code = code_lines_of(&source);
     // Test modules (the parser's governed `cfg(test)` inventory) are never
     // stub targets; an unparsed file has no consumer to find anyway.
     let test_start = analysis::governed_cfg_test_modules(&source)?
@@ -363,9 +364,14 @@ fn const_consumer_route(
         .unwrap_or(lines.len() + 1);
     let mut seen_fns: Vec<(usize, usize)> = Vec::new();
     let mut first_refusal = None;
-    for (index, text) in lines.iter().enumerate() {
+    for index in 0..lines.len() {
         let line = index + 1;
-        if line == const_line || line >= test_start || !names_identifier(&code_of(text), name) {
+        if line == const_line
+            || line >= test_start
+            || !code
+                .get(index)
+                .is_some_and(|code| names_identifier(code, name))
+        {
             continue;
         }
         if seen_fns
@@ -407,39 +413,56 @@ fn const_consumer_route(
     first_refusal
 }
 
-/// `line` with string literals and a trailing `//` comment blanked, and a
-/// block-comment line emptied, so a name inside them is not a use.
-fn code_of(line: &str) -> String {
-    let trimmed = line.trim_start();
-    if trimmed.starts_with("/*") || trimmed.starts_with('*') {
-        return String::new();
-    }
-    let mut code = String::new();
-    let mut in_string = false;
-    let mut escaped = false;
-    let mut previous = '\0';
-    for c in line.chars() {
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if c == '\\' {
-                escaped = true;
-            } else if c == '"' {
-                in_string = false;
+/// `source` with string literals and comments blanked, keeping every newline
+/// so line numbers hold. Block comments nest and strings and block comments
+/// may span lines; a leading `*` is code (a dereference) unless a block
+/// comment is open. Raw strings are not recognised.
+fn code_lines_of(source: &str) -> Vec<String> {
+    let mut out = String::with_capacity(source.len());
+    let mut chars = source.chars().peekable();
+    let (mut block_depth, mut in_string, mut in_line_comment) = (0usize, false, false);
+    while let Some(c) = chars.next() {
+        if c == '\n' {
+            in_line_comment = false;
+            out.push('\n');
+        } else if in_line_comment {
+            out.push(' ');
+        } else if block_depth > 0 {
+            if c == '*' && chars.peek() == Some(&'/') {
+                chars.next();
+                block_depth -= 1;
+                out.push_str("  ");
+            } else if c == '/' && chars.peek() == Some(&'*') {
+                chars.next();
+                block_depth += 1;
+                out.push_str("  ");
+            } else {
+                out.push(' ');
             }
-            code.push(' ');
+        } else if in_string {
+            if c == '\\' && chars.peek().is_some_and(|next| *next != '\n') {
+                chars.next();
+                out.push_str("  ");
+            } else {
+                in_string = c != '"';
+                out.push(' ');
+            }
         } else if c == '"' {
             in_string = true;
-            code.push(' ');
-        } else if c == '/' && previous == '/' {
-            code.pop();
-            break;
+            out.push(' ');
+        } else if c == '/' && chars.peek() == Some(&'/') {
+            chars.next();
+            in_line_comment = true;
+            out.push_str("  ");
+        } else if c == '/' && chars.peek() == Some(&'*') {
+            chars.next();
+            block_depth += 1;
+            out.push_str("  ");
         } else {
-            code.push(c);
+            out.push(c);
         }
-        previous = c;
     }
-    code
+    out.lines().map(str::to_string).collect()
 }
 
 /// Whether the function starting at `start` (1-based) carries `#[test]`.
@@ -806,17 +829,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn code_of_blanks_strings_comments_and_block_comment_lines() {
-        assert!(!names_identifier(&code_of("let s = \"CAP\";"), "CAP"));
-        assert!(!names_identifier(&code_of("let s = \"a\\\"CAP\";"), "CAP"));
-        assert!(!names_identifier(&code_of("x + 1 // CAP"), "CAP"));
-        assert!(!names_identifier(&code_of("    * the CAP applies"), "CAP"));
-        assert!(!names_identifier(&code_of("/* CAP */"), "CAP"));
-        assert!(names_identifier(&code_of("x.min(CAP) // cap"), "CAP"));
-        assert!(names_identifier(
-            &code_of("let s = \"x\"; y.min(CAP)"),
-            "CAP"
-        ));
+    fn code_lines_blank_strings_and_comments_but_keep_dereferences() {
+        let uses =
+            |source: &str, line: usize| names_identifier(&code_lines_of(source)[line - 1], "CAP");
+        assert!(!uses("let s = \"CAP\";", 1));
+        assert!(!uses("let s = \"a\\\"CAP\";", 1));
+        assert!(!uses("x + 1 // CAP", 1));
+        assert!(!uses("/* CAP */", 1));
+        assert!(!uses("/*\n * the CAP applies\n */\nlet x = 1;", 2));
+        assert!(!uses("/* a /* b */ CAP */", 1));
+        assert!(!uses("let s = \"line one\nCAP two\";", 2));
+        assert!(uses("x.min(CAP) // cap", 1));
+        assert!(uses("let s = \"x\"; y.min(CAP)", 1));
+        assert!(uses("*total += CAP;", 1));
+        assert!(uses("let y = a\n    * CAP;", 2));
+        assert!(uses("/* c */ CAP", 1));
+        assert_eq!(code_lines_of("a\n// b\nc").len(), 3);
     }
 
     #[test]
