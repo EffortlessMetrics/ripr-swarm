@@ -236,10 +236,7 @@ fn test_data_ts_stays_production_and_emits_a_finding() -> Result<(), String> {
                 .and_then(|value| value.as_str())
         })
         .collect();
-    if !classifications
-        .iter()
-        .any(|class| *class == "no_static_path")
-    {
+    if !classifications.contains(&"no_static_path") {
         return Err(format!(
             "setup: expected a no_static_path production finding, got {classifications:?} in {document}"
         ));
