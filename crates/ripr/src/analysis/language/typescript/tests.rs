@@ -1978,6 +1978,61 @@ test("cart total through dynamic method stays ambiguous", () => {
 }
 
 #[test]
+fn find_related_tests_relates_inline_and_one_line_constructed_receivers() {
+    let owner = TypeScriptOwner {
+        name: "total".to_string(),
+        file: PathBuf::from("src/owners.ts"),
+        start_line: 5,
+        end_line: 8,
+        owner_kind: OwnerKind::Method,
+        class_name: Some("Cart".to_string()),
+        decorated: false,
+        exported_as_default: false,
+        class_default_export: false,
+        module_entries: Vec::new(),
+        arity: None,
+        params: Vec::new(),
+        source_text: None,
+        imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
+    };
+    let cases = [
+        (
+            "import { Cart } from \"../src/owners\";\ntest(\"a\", () => {\n  expect(new Cart().total()).toBe(1);\n});\n",
+            true,
+        ),
+        (
+            "import { Cart } from \"../src/owners\";\ntest(\"a\", () => { const c = new Cart(); expect(c.total()).toBe(1); });\n",
+            true,
+        ),
+        // Same class name from an unrelated module.
+        (
+            "import { Cart } from \"../src/other\";\ntest(\"a\", () => {\n  expect(new Cart().total()).toBe(1);\n});\n",
+            false,
+        ),
+        // The owner's module is mocked.
+        (
+            "import { Cart } from \"../src/owners\";\nvi.mock(\"../src/owners\");\ntest(\"a\", () => {\n  expect(new Cart().total()).toBe(1);\n});\n",
+            false,
+        ),
+        // A different method, and a commented-out call.
+        (
+            "import { Cart } from \"../src/owners\";\ntest(\"a\", () => {\n  expect(new Cart().count()).toBe(1);\n});\n",
+            false,
+        ),
+        (
+            "import { Cart } from \"../src/owners\";\ntest(\"a\", () => {\n  setup(); // new Cart().total()\n});\n",
+            false,
+        ),
+    ];
+    for (source, expected) in cases {
+        let tests = extract_tests(Path::new("tests/owners.test.ts"), source);
+        let related = find_related_tests(&owner, &tests, None, &ReExportIndex::empty(), None);
+        assert_eq!(!related.is_empty(), expected, "{source}");
+    }
+}
+
+#[test]
 fn find_related_tests_keeps_mocked_method_receiver_calls_unrelated() {
     let owner = TypeScriptOwner {
         name: "total".to_string(),

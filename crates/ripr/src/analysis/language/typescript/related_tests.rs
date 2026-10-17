@@ -1025,6 +1025,7 @@ pub(crate) fn receiver_owner_call_relation(
     if receiver_names
         .iter()
         .any(|receiver| contains_member_call_name(&test.body_text, receiver, &owner.name))
+        || contains_inline_new_member_call(&test.body_text, &constructor_names, &owner.name)
     {
         return true;
     }
@@ -1153,30 +1154,112 @@ pub(crate) fn receiver_names_for_constructor_calls(
 ) -> Vec<String> {
     let mut receiver_names = Vec::new();
     for line in body_text.lines() {
+        let line = strip_trailing_line_comment(line);
         let trimmed = line.trim_start();
         if trimmed.starts_with("//") {
             continue;
         }
-        let Some(after_keyword) = ["const ", "let ", "var "]
-            .into_iter()
-            .find_map(|keyword| trimmed.strip_prefix(keyword))
-        else {
-            continue;
-        };
-        let Some((declaration, initializer)) = after_keyword.split_once('=') else {
-            continue;
-        };
-        let Some(receiver_name) = receiver_name_from_declaration(declaration) else {
-            continue;
-        };
-        if constructor_names
-            .iter()
-            .any(|constructor| contains_new_constructor_call(initializer, constructor))
-        {
-            push_unique_string(&mut receiver_names, receiver_name);
+        // A declaration is a statement, not a line: one-line tests
+        // (`it("x", () => { const c = new C(); ... })`) and `a; const c =
+        // new C()` open it after a `{` or `;` boundary.
+        for statement in trimmed.split([';', '{', '}']) {
+            if let Some(receiver_name) =
+                constructed_receiver_declaration(statement, constructor_names)
+            {
+                push_unique_string(&mut receiver_names, receiver_name);
+            }
         }
     }
     receiver_names
+}
+
+/// `line` without a trailing `// comment` (a `//` outside any quote). An
+/// unquoted URL scheme separator is stripped too, which can only withhold credit. Quote
+/// tracking is per line, so a quote
+/// opened earlier on a multi-line template leaves the text untouched: the
+/// result only ever drops text, which can withhold credit but not grant it.
+fn strip_trailing_line_comment(line: &str) -> &str {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut previous = '\0';
+    for (idx, ch) in line.char_indices() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+        } else if matches!(ch, '"' | '\'' | '`') {
+            quote = Some(ch);
+        } else if ch == '/' && previous == '/' {
+            return &line[..idx - 1];
+        }
+        previous = ch;
+    }
+    line
+}
+
+fn constructed_receiver_declaration(
+    statement: &str,
+    constructor_names: &[String],
+) -> Option<String> {
+    let trimmed = statement.trim_start();
+    {
+        let after_keyword = ["const ", "let ", "var "]
+            .into_iter()
+            .find_map(|keyword| trimmed.strip_prefix(keyword))?;
+        let (declaration, initializer) = after_keyword.split_once('=')?;
+        let receiver_name = receiver_name_from_declaration(declaration)?;
+        constructor_names
+            .iter()
+            .any(|constructor| contains_new_constructor_call(initializer, constructor))
+            .then_some(receiver_name)
+    }
+}
+
+/// `true` when the body calls `method_name` directly on a freshly constructed
+/// instance (`new Cart(0, 10).total(`): the receiver's class is explicit in
+/// the expression, so it is the same identity evidence as a bound
+/// `const cart = new Cart()` receiver.
+fn contains_inline_new_member_call(
+    body_text: &str,
+    constructor_names: &[String],
+    method_name: &str,
+) -> bool {
+    if !is_safe_javascript_identifier(method_name) {
+        return false;
+    }
+    let body_text = &body_text
+        .lines()
+        .map(strip_trailing_line_comment)
+        .collect::<Vec<_>>()
+        .join("\n");
+    constructor_names.iter().any(|constructor| {
+        let needle = format!("new {constructor}(");
+        body_text.match_indices(&needle).any(|(idx, _)| {
+            let boundary_ok = body_text[..idx]
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !is_javascript_identifier_char(ch) && ch != '.')
+                && !line_prefix_looks_like_comment_or_string(body_text, idx)
+                && !inside_block_comment(body_text, idx);
+            if !boundary_ok {
+                return false;
+            }
+            let args_start = idx + needle.len();
+            let Some(close) = super::classifier::balanced_close_offset(&body_text[args_start..])
+            else {
+                return false;
+            };
+            // A wrapped chain (`new C()\n  .m()`) or a spaced one is still the call.
+            let rest = body_text[args_start + close + 1..].trim_start();
+            let rest = rest.strip_prefix("?.").or_else(|| rest.strip_prefix('.'));
+            rest.and_then(|rest| rest.strip_prefix(method_name))
+                .is_some_and(|after| after.starts_with('('))
+        })
+    })
 }
 
 pub(crate) fn receiver_name_from_declaration(declaration: &str) -> Option<String> {
@@ -3823,6 +3906,66 @@ mod spread_call_boundary_tests {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod constructed_receiver_tests {
+    use super::*;
+
+    fn names(items: &[&str]) -> Vec<String> {
+        items.iter().map(|item| (*item).to_string()).collect()
+    }
+
+    #[test]
+    fn declarations_after_statement_boundaries_bind_receivers() {
+        let ctors = names(&["Clamp"]);
+        let cases = [
+            ("const c = new Clamp(0, 10);", true),
+            (
+                "it('a', () => { const c = new Clamp(0, 10); c.limit(1); });",
+                true,
+            ),
+            ("setup(); let c = new Clamp(0, 10);", true),
+            ("const c = new Other(0, 10);", false),
+            ("// const c = new Clamp(0, 10);", false),
+            ("const c = makeClamp(); // new Clamp(0, 10)", false),
+            ("const c = makeClamp() // new Clamp(0, 10)", false),
+        ];
+        for (body, expected) in cases {
+            let bound = !receiver_names_for_constructor_calls(body, &ctors).is_empty();
+            assert_eq!(bound, expected, "{body}");
+        }
+    }
+
+    #[test]
+    fn inline_new_member_call_requires_the_named_class_and_method() {
+        let ctors = names(&["Clamp"]);
+        let cases = [
+            ("expect(new Clamp(0, 10).limit(50)).toBe(10)", true),
+            (
+                "expect(new Clamp(clampArgs(1), 10)?.limit(50)).toBe(10)",
+                true,
+            ),
+            ("expect(new Clamp(0, 10).other(50)).toBe(10)", false),
+            ("expect(new Clamp(0, 10).limits(50)).toBe(10)", false),
+            ("expect(new Other(0, 10).limit(50)).toBe(10)", false),
+            ("expect(new Clamp(0, 10)).toBeDefined()", false),
+            ("expect(new Clamp(0, 10) .limit(50))", true),
+            ("expect(new Clamp(0, 10)\n    .limit(50))", true),
+            ("expect(new Clamp(0, 10) .limits(50))", false),
+            ("expect(factory.new Clamp(0, 10).limit(50))", false),
+            ("// new Clamp(0, 10).limit(50)", false),
+            ("setup(); // new Clamp(0, 10).limit(50)", false),
+            ("go('//'); expect(new Clamp(0, 10).limit(50))", true),
+        ];
+        for (body, expected) in cases {
+            assert_eq!(
+                contains_inline_new_member_call(body, &ctors, "limit"),
+                expected,
+                "{body}"
+            );
+        }
     }
 }
 
