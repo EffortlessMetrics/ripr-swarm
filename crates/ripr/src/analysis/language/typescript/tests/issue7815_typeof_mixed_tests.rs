@@ -281,6 +281,25 @@ fn issue7815_mixed_typeof_plus_member_stays_non_value() -> Result<(), String> {
     Ok(())
 }
 
+/// `typeof ns.price(150)` observes the type of the return, not the returned
+/// number. The namespaced call matcher must not treat the typeof operand as
+/// a value witness (the dual of `issue7815_typeof_of_call_stays_non_value`).
+#[test]
+fn issue7815_namespaced_typeof_of_call_stays_non_value() -> Result<(), String> {
+    let lib = named_lib();
+    let owners = owners_of_lib(&lib);
+    let owner = price_owner_named(&owners)?;
+    let source = "import * as ns from '../src/lib';\ntest('p', () => {\n  expect(typeof ns.price(150)).toBe('number');\n});\n";
+    let tests = tests_of(source);
+    assert_single_strong_exact(&tests, "typeof ns.price(150)")?;
+    assert_trusted_relation(owner, &tests)?;
+    let finding = classify_at_changed(&lib, &owners, &tests)?;
+    if matches!(finding.class, ExposureClass::Exposed) {
+        return Err("namespaced typeof of the owner call must not read exposed".to_string());
+    }
+    Ok(())
+}
+
 /// Aliasing a typeof-only initializer must not invent a value witness.
 #[test]
 fn issue7815_typeof_only_alias_stays_non_value() -> Result<(), String> {

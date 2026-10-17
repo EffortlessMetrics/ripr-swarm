@@ -562,7 +562,12 @@ fn ts_masked_observes_owner(
     owner_is_method: bool,
     namespace_receivers: &[String],
 ) -> bool {
-    let masked = ts_mask_typeof_consumed_owner_names(masked, owner_names);
+    let masked = ts_mask_typeof_consumed_owner_names(
+        masked,
+        owner_names,
+        owner_is_method,
+        namespace_receivers,
+    );
     if owner_is_method {
         owner_names
             .iter()
@@ -678,13 +683,93 @@ fn ts_observed_namespaced_owner_call(
     })
 }
 /// Blank owner-name occurrences that are the operand of `typeof`
-/// (`typeof cost`, `typeof(cost)`; #7507, #7815). A type string is not the
-/// changed value, but a later non-typeof occurrence in the same expression
-/// still can be. Identifiers that merely start with `typeof` (`typeofprice`)
-/// are not the operator.
-fn ts_mask_typeof_consumed_owner_names(masked_observed: &str, owner_names: &[&str]) -> String {
+/// (`typeof cost`, `typeof(cost)`, `typeof ns.price`; #7507, #7815). A type
+/// string is not the changed value, but a later non-typeof occurrence in
+/// the same expression still can be. Identifiers that merely start with
+/// `typeof` (`typeofprice`) are not the operator. Receiver-qualified
+/// operands mask only the owner segment, and only when a later matcher
+/// would otherwise treat that same operand as a value witness: a
+/// namespace receiver for bare-call owners, or an identifier receiver
+/// chain for method owners.
+fn ts_mask_typeof_consumed_owner_names(
+    masked_observed: &str,
+    owner_names: &[&str],
+    owner_is_method: bool,
+    namespace_receivers: &[String],
+) -> String {
     fn is_ident_char(c: char) -> bool {
         c.is_alphanumeric() || c == '_' || c == '$'
+    }
+    fn first_ident(s: &str) -> Option<&str> {
+        let mut end = 0usize;
+        for (i, c) in s.char_indices() {
+            if is_ident_char(c) {
+                end = i + c.len_utf8();
+            } else {
+                break;
+            }
+        }
+        (end > 0).then_some(&s[..end])
+    }
+    fn member_punct(s: &str) -> Option<&str> {
+        if s.starts_with("?.") {
+            Some("?.")
+        } else if s.starts_with("!.") {
+            Some("!.")
+        } else if s.starts_with("...") {
+            None
+        } else if s.starts_with('.') {
+            Some(".")
+        } else {
+            None
+        }
+    }
+    fn owner_name_len(s: &str, owner_names: &[&str]) -> Option<usize> {
+        owner_names.iter().copied().find_map(|name| {
+            if name.is_empty() {
+                return None;
+            }
+            s.strip_prefix(name).and_then(|tail| {
+                tail.chars()
+                    .next()
+                    .is_none_or(|c| !is_ident_char(c))
+                    .then_some(name.len())
+            })
+        })
+    }
+    fn qualified_owner_span(
+        inner: &str,
+        owner_names: &[&str],
+        owner_is_method: bool,
+        namespace_receivers: &[String],
+    ) -> Option<(usize, usize)> {
+        let receiver = first_ident(inner)?;
+        let after_recv = &inner[receiver.len()..];
+        if owner_is_method {
+            let mut cursor = after_recv;
+            let mut last = None;
+            loop {
+                let punct = member_punct(cursor)?;
+                cursor = &cursor[punct.len()..];
+                let ident_start = inner.len() - cursor.len();
+                let ident = first_ident(cursor)?;
+                if owner_names.contains(&ident) {
+                    last = Some((ident_start, ident.len()));
+                }
+                cursor = &cursor[ident.len()..];
+                if member_punct(cursor).is_none() {
+                    break;
+                }
+            }
+            last
+        } else if namespace_receivers.iter().any(|name| name == receiver) {
+            let punct = member_punct(after_recv)?;
+            let after_punct = &after_recv[punct.len()..];
+            let name_len = owner_name_len(after_punct, owner_names)?;
+            Some((receiver.len() + punct.len(), name_len))
+        } else {
+            None
+        }
     }
     let mut out = masked_observed.to_string();
     let mut from = 0usize;
@@ -714,17 +799,13 @@ fn ts_mask_typeof_consumed_owner_names(masked_observed: &str, owner_names: &[&st
                     (inner, 1 + (after_paren.len() - inner.len()))
                 })
                 .unwrap_or((trimmed, 0));
-            owner_names.iter().copied().find_map(|name| {
-                if name.is_empty() {
-                    return None;
-                }
-                inner.strip_prefix(name).and_then(|tail| {
-                    tail.chars()
-                        .next()
-                        .is_none_or(|c| !is_ident_char(c))
-                        .then_some((after_kw + leading_ws + extra, name.len()))
+            let inner_at = after_kw + leading_ws + extra;
+            owner_name_len(inner, owner_names)
+                .map(|name_len| (inner_at, name_len))
+                .or_else(|| {
+                    qualified_owner_span(inner, owner_names, owner_is_method, namespace_receivers)
+                        .map(|(rel, len)| (inner_at + rel, len))
                 })
-            })
         };
         if let Some((name_at, name_len)) = consumed {
             out.replace_range(name_at..name_at + name_len, &" ".repeat(name_len));
