@@ -1187,6 +1187,28 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
             &weak,
         ),
         ("assert_eq!([x == 3; 2], [true; 2]);", &exact),
+        // Review of 6b1c3c4: an empty or unknown-length repeat holds no read
+        // value, a mismatched or arbitrary constructor pins nothing, and a
+        // repeat checked against a list of names compares the test with a
+        // non-literal.
+        ("assert_eq!([x == 3; 0], [true; 0]);", &weak),
+        ("assert_eq!([r == Err(E::Bad); n], [true; n]);", &weak),
+        (
+            "assert_eq!(Wrapper(matches!(r, Ok(3))), Other(true));",
+            &weak,
+        ),
+        (
+            "assert_eq!(Foo::new(matches!(r, Ok(3))), Foo::new(true));",
+            &weak,
+        ),
+        (
+            "assert_eq!(Foo::new(matches!(r, Ok(3))).unwrap(), true);",
+            &weak,
+        ),
+        (
+            "assert_eq!([r == Err(E::Bad); 2], [expected, other]);",
+            &weak,
+        ),
         ("assert_eq!(Some(r), Some(Err(E::Bad)));", &err),
         ("assert_eq!(Some(x), Some(3));", &exact),
         ("assert_eq!(Some(is_valid(x)), Some(false));", &exact),

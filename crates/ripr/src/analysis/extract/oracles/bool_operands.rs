@@ -66,10 +66,11 @@ pub(super) fn bool_literal_comparison_reading(line: &str) -> Option<BoolOperandR
             operand = unwrap_parentheses(inner.trim());
         } else if let Some(inner) = passthrough_receiver(literal_side) {
             literal_side = unwrap_parentheses(inner.trim());
-        } else if let (Some(inner), Some(literal_inner)) = (
-            value_wrapper_argument(operand),
-            value_wrapper_argument(literal_side),
-        ) {
+        } else if let (Some((inner, shape)), Some((literal_inner, literal_shape))) = (
+            shaped_wrapper_argument(operand),
+            shaped_wrapper_argument(literal_side),
+        ) && shape == literal_shape
+        {
             operand = unwrap_parentheses(inner.trim());
             literal_side = unwrap_parentheses(literal_inner.trim());
         } else {
@@ -633,7 +634,41 @@ fn unwrapped_wrapper_argument(text: &str) -> Option<&str> {
     if !(method.starts_with(".unwrap") || method.starts_with(".expect")) {
         return None;
     }
+    // Only the standard wrappers' `unwrap` is known to return what they
+    // hold (review of 6b1c3c4).
+    let callee = mask_comments_and_strings(receiver);
+    let callee = callee.trim_start();
+    if !(callee.starts_with("Some") || callee.starts_with("Ok")) {
+        return None;
+    }
     value_wrapper_argument(receiver)
+}
+
+/// The value a wrapper around `text` holds, with the wrapper's own text
+/// around it (whitespace dropped and the value replaced by `_`), so two
+/// sides can be checked for the same wrapper (`Some(_)`, `[_;2]`). A
+/// `new` or `from` call other than `Box`, `Rc` or `Arc` may discard its
+/// argument, so it is no such wrapper (review of 6b1c3c4).
+fn shaped_wrapper_argument(text: &str) -> Option<(&str, String)> {
+    let inner = value_wrapper_argument(text)?;
+    let start = (inner.as_ptr() as usize).checked_sub(text.as_ptr() as usize)?;
+    let before = mask_comments_and_strings(text.get(..start)?);
+    let after = mask_comments_and_strings(text.get(start + inner.len()..)?);
+    let squeeze = |part: &str| {
+        part.chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect::<String>()
+    };
+    let head = squeeze(&before);
+    let callee = head.trim_end_matches('(');
+    let associated = callee.ends_with("::new") || callee.ends_with("::from");
+    let standard = ["Box::new", "Rc::new", "Arc::new"]
+        .iter()
+        .any(|known| callee == *known || callee.ends_with(&format!("::{known}")));
+    if associated && !standard {
+        return None;
+    }
+    Some((inner, format!("{head}_{}", squeeze(&after))))
 }
 
 /// The one expression `element` holds: no top-level comma, and the
@@ -641,10 +676,29 @@ fn unwrapped_wrapper_argument(text: &str) -> Option<&str> {
 fn single_element(element: &str) -> Option<&str> {
     let masked = mask_comments_and_strings(element);
     let value = match top_level_semicolon(&masked) {
-        Some(at) => element.get(..at)?,
+        Some(_) => repeated_value(element)?,
         None => element,
     };
     (split_top_level_commas(value).len() == 1).then_some(value)
+}
+
+/// The repeated value of repeat-array contents (`x` in `x; 3`) when the
+/// count is a nonzero integer literal. An empty or unknown-length repeat
+/// may hold nothing, so it compares equal whatever the value is (review
+/// of 6b1c3c4).
+fn repeated_value(contents: &str) -> Option<&str> {
+    let at = top_level_semicolon(&mask_comments_and_strings(contents))?;
+    let count = contents.get(at + 1..)?.trim().replace('_', "");
+    let digits = [
+        "usize", "isize", "u64", "u32", "u16", "u8", "i64", "i32", "i16", "i8",
+    ]
+    .iter()
+    .find_map(|suffix| count.strip_suffix(suffix))
+    .unwrap_or(&count);
+    let nonzero = !digits.is_empty()
+        && digits.bytes().all(|byte| byte.is_ascii_digit())
+        && digits.bytes().any(|byte| byte != b'0');
+    nonzero.then(|| contents.get(..at)).flatten()
 }
 
 /// Where masked `text` has a `;` outside any brackets (`[x; 3]`).
@@ -742,11 +796,19 @@ fn sides_compare_test_with_non_literal<'a>(mut left: &'a str, mut right: &'a str
         // pair is, so each pair is read on its own
         // (`vec![r == Err(E::Bad)]` against `vec![expected]`; #8101).
         if let (Some(left), Some(right)) = (sequence_elements(left), sequence_elements(right)) {
-            return left.len() == right.len()
-                && left
+            // Sequences of different lengths (a repeat array against a list)
+            // pair no elements, so any test in them fails closed (review of
+            // 6b1c3c4).
+            if left.len() != right.len() {
+                return left
                     .iter()
-                    .zip(&right)
-                    .any(|(left, right)| sides_compare_test_with_non_literal(left, right));
+                    .chain(&right)
+                    .any(|element| is_bool_test(element));
+            }
+            return left
+                .iter()
+                .zip(&right)
+                .any(|(left, right)| sides_compare_test_with_non_literal(left, right));
         }
         let other = match (literal(left), literal(right)) {
             (false, false) => {
@@ -781,8 +843,8 @@ fn sequence_elements(side: &str) -> Option<Vec<String>> {
         .filter(|contents| array.starts_with('[') && contents.len() + 2 == array.len())?;
     // A repeat array holds one value (`[x; 2]`), compared with the other
     // side's repeated value.
-    if let Some(at) = top_level_semicolon(&mask_comments_and_strings(&contents)) {
-        return Some(vec![contents.get(..at)?.to_string()]);
+    if let Some(value) = repeated_value(&contents) {
+        return Some(vec![value.to_string()]);
     }
     Some(super::arguments::split_top_level_commas(&contents))
 }
