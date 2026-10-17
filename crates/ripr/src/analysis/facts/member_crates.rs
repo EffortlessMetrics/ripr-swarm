@@ -181,6 +181,196 @@ impl MemberCrates {
         });
         !lib_moved && !target_moved
     }
+
+    /// Whether the packages holding `files` (root-relative) depend on no
+    /// crate outside them: every dependency of every table is a plain
+    /// `path` dependency, directly or through `[workspace.dependencies]`,
+    /// on another of those packages, none is a proc-macro library, and no
+    /// `.cargo` configuration sits between them and the root. A renamed or
+    /// outside crate could otherwise bring a trait under a name the source
+    /// reads as the standard library's or the workspace's own (#8059
+    /// review). Without manifest authority nothing is closed.
+    pub(crate) fn is_dependency_closed<'a>(
+        &self,
+        files: impl IntoIterator<Item = &'a PathBuf>,
+    ) -> bool {
+        let Some(root) = &self.root else {
+            return false;
+        };
+        let root = lexical(root);
+        let mut packages: Vec<(Package, Vec<PathBuf>)> = Vec::new();
+        let mut indexed = std::collections::BTreeSet::new();
+        for file in files {
+            let file = lexical(&root.join(file));
+            indexed.insert(file.clone());
+            let Some(directory) = file.parent() else {
+                return false;
+            };
+            if packages
+                .iter()
+                .any(|(_, chain)| chain.first().is_some_and(|known| known == directory))
+            {
+                continue;
+            }
+            let Some(found) = nearest_package(&root, directory) else {
+                return false;
+            };
+            if !packages
+                .iter()
+                .any(|(known, _)| known.directory == found.0.directory)
+            {
+                packages.push(found);
+            }
+        }
+        let directories: Vec<&Path> = packages
+            .iter()
+            .map(|(package, _)| package.directory.as_path())
+            .collect();
+        packages.iter().all(|(package, chain)| {
+            let manifest = &package.manifest;
+            // A target `path` may put a crate root outside the package, and
+            // a Rust file the index skipped (`fixtures/`, `node_modules/`)
+            // may still be a module some root compiles (#8059 re-review).
+            let moved = ["lib", "bin", "test", "bench", "example"]
+                .iter()
+                .any(|kind| {
+                    manifest
+                        .get(*kind)
+                        .is_some_and(|targets| match targets.as_array() {
+                            Some(targets) => {
+                                targets.iter().any(|target| target.get("path").is_some())
+                            }
+                            None => targets.get("path").is_some(),
+                        })
+                });
+            if moved || !rust_files_indexed(&package.directory, &indexed) {
+                return false;
+            }
+            if manifest.get("lib").is_some_and(|lib| {
+                lib.get("proc-macro").is_some() || lib.get("proc_macro").is_some()
+            }) || chain.iter().any(|directory| {
+                ["config.toml", "config"]
+                    .iter()
+                    .any(|name| directory.join(".cargo").join(name).exists())
+            }) {
+                return false;
+            }
+            let Some(manifests) = ancestor_manifests(chain) else {
+                return false;
+            };
+            if manifests.iter().any(|(_, manifest)| {
+                manifest.contains_key("patch") || manifest.contains_key("replace")
+            }) {
+                return false;
+            }
+            let workspace = manifests.iter().find_map(|(directory, manifest)| {
+                manifest
+                    .get("workspace")
+                    .and_then(toml::Value::as_table)
+                    .map(|workspace| (directory.as_path(), workspace))
+            });
+            all_dependency_tables(&package.manifest)
+                .iter()
+                .flat_map(|table| table.iter())
+                .all(|(key, spec)| {
+                    internal_path(key, spec, &package.directory, workspace)
+                        .is_some_and(|target| directories.contains(&target.as_path()))
+                })
+        })
+    }
+}
+
+/// Whether every `.rs` file under `directory` is in `indexed`, the package's
+/// own `target/` excepted. A symbolic link or an unreadable directory
+/// answers no.
+fn rust_files_indexed(directory: &Path, indexed: &std::collections::BTreeSet<PathBuf>) -> bool {
+    let mut pending = vec![directory.to_path_buf()];
+    while let Some(current) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&current) else {
+            return false;
+        };
+        for entry in entries {
+            let Ok(entry) = entry else {
+                return false;
+            };
+            let Ok(kind) = entry.file_type() else {
+                return false;
+            };
+            let path = lexical(&entry.path());
+            if kind.is_symlink() {
+                return false;
+            }
+            if kind.is_dir() {
+                if !(current == directory && entry.file_name() == "target") {
+                    pending.push(path);
+                }
+            } else if path.extension().is_some_and(|extension| extension == "rs")
+                && !indexed.contains(&path)
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Every dependency table of `manifest`, build dependencies and `[target.*]`
+/// tables included.
+fn all_dependency_tables(manifest: &toml::Table) -> Vec<&toml::Table> {
+    const TABLES: &[&str] = &[
+        "dependencies",
+        "dev-dependencies",
+        "dev_dependencies",
+        "build-dependencies",
+        "build_dependencies",
+    ];
+    let direct = TABLES
+        .iter()
+        .filter_map(|name| manifest.get(*name).and_then(toml::Value::as_table));
+    let targets = manifest
+        .get("target")
+        .and_then(toml::Value::as_table)
+        .into_iter()
+        .flat_map(|targets| targets.values())
+        .filter_map(toml::Value::as_table)
+        .flat_map(|target| {
+            TABLES
+                .iter()
+                .filter_map(|name| target.get(*name).and_then(toml::Value::as_table))
+        });
+    direct.chain(targets).collect()
+}
+
+/// The directory a plain, unrenamed `path` dependency entry names.
+fn internal_path(
+    key: &str,
+    spec: &toml::Value,
+    directory: &Path,
+    workspace: Option<(&Path, &toml::Table)>,
+) -> Option<PathBuf> {
+    let spec = spec.as_table()?;
+    let (source, base) = if spec.get("workspace").and_then(toml::Value::as_bool) == Some(true) {
+        if spec.contains_key("package") || spec.contains_key("path") {
+            return None;
+        }
+        let (directory, workspace) = workspace?;
+        let inherited = workspace
+            .get("dependencies")
+            .and_then(toml::Value::as_table)?
+            .get(key)?
+            .as_table()?;
+        (inherited, directory)
+    } else {
+        (spec, directory)
+    };
+    if ["git", "registry", "package"]
+        .iter()
+        .any(|field| source.contains_key(*field))
+    {
+        return None;
+    }
+    let path = source.get("path")?.as_str()?;
+    Some(lexical(&base.join(path)))
 }
 
 /// One package manifest: its directory and parsed table.

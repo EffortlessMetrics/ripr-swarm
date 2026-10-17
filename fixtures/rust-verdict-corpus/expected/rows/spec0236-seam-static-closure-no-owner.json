@@ -1,0 +1,23 @@
+{
+  "case_id": "spec0236-seam-static-closure-no-owner",
+  "subject_id": "authored-spec0236-25",
+  "origin": "authored",
+  "anchor": "src/lib.rs:1",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "static_closure_exact_assert",
+  "hard_case": true,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "infection_unknown",
+    "static_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

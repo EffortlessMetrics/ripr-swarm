@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-pub(crate) const GAP_LIST_SCHEMA_VERSION: &str = "ripr-mcp-gap-list-v1";
+pub(crate) const GAP_LIST_SCHEMA_VERSION: &str = "ripr-mcp-gap-list-v2";
 pub(crate) const GAP_SCHEMA_VERSION: &str = "ripr-mcp-gap-v1";
 
 /// `ripr_get_gap` / `ripr://gap/{canonical_id}` never authorizes an
@@ -178,9 +178,20 @@ pub(crate) struct GapItem {
     pub(crate) canonical_id: String,
     pub(crate) finding_id: String,
     pub(crate) file: String,
+    /// Exposure class wire token (`exposed`, `weakly_exposed`, ...) captured
+    /// at projection time, so list filters re-read stored facts (#7464).
+    class: String,
+    /// Language wire string (`rust`, `python`, ...) or `None` when the
+    /// producer populated no language; stored for the same filter route.
+    language: Option<String>,
     /// Small deterministic document used by `ripr_list_gaps`; its serialized
-    /// byte length is the item's budget payload bytes. Class, language, and
-    /// line live here (and in the evidence core), not as duplicated fields.
+    /// byte length is the item's budget payload bytes. It projects stored
+    /// class/language facts and the source line alongside the evidence core.
+    /// The summary also carries the commit-time repair-readiness projection
+    /// (`repair_packet_ready` plus the typed first-failing-gate
+    /// `repair_ineligibility`, null when ready), so agents can sort
+    /// actionable items without one `ripr_get_gap` call per candidate
+    /// (#7464).
     pub(crate) list_summary: Value,
     list_summary_bytes: usize,
     /// Complete bounded evidence document (without the per-request snapshot
@@ -221,22 +232,26 @@ impl GapItem {
             .map(|language| language.as_str().to_string());
         let line = finding.probe.location.line;
 
+        let repair_readiness = RepairReadiness::from_finding(finding, root);
         let list_summary = json!({
             "canonical_id": canonical_id,
             "class": class,
             "language": language,
             "file": file,
             "line": line,
+            "repair_packet_ready": repair_readiness.ready,
+            "repair_ineligibility": repair_readiness.ineligibility,
         });
         let list_summary_bytes = serialized_bytes(&list_summary)?;
 
         let evidence_core = gap_evidence_core(finding, &canonical_id, root)?;
         let (evidence_bytes, evidence_sha256) = serialized_evidence_identity(&evidence_core)?;
-        let repair_readiness = RepairReadiness::from_finding(finding, root);
         Ok(Self {
             canonical_id,
             finding_id: finding.id.clone(),
             file,
+            class,
+            language,
             list_summary,
             list_summary_bytes,
             evidence_core,
@@ -245,6 +260,21 @@ impl GapItem {
             evidence_sha256,
             repair_readiness,
         })
+    }
+
+    pub(crate) fn class(&self) -> &str {
+        &self.class
+    }
+
+    pub(crate) fn language(&self) -> Option<&str> {
+        self.language.as_deref()
+    }
+
+    /// Commit-time repair readiness: `true` only when every producer gate
+    /// was established. Matches the `readiness.repair_packet_ready` fact the
+    /// same item's `ripr_get_gap` document reports (#7464).
+    pub(crate) fn repair_ready(&self) -> bool {
+        self.repair_readiness.ready
     }
 
     pub(crate) fn list_summary_bytes(&self) -> usize {

@@ -247,7 +247,130 @@ Two pattern terms are used below.
    reads `exact_value` / strong). A `||` inside a call argument, closure or pattern
    does not decide the condition
    (`assert!(matches!(pick(|x| x > 1 || x < 0), Ok(3)))` keeps
-   `exact_value`). At
+   `exact_value`). A boolean-valued operand compared with a boolean
+   literal is read as what it asserts (#7598): in an equality macro with
+   one boolean-literal operand (`assert_eq!(X, true)`, `assert_ne!(false,
+   X)` and the `debug_` and `prop_` spellings), or a boolean assertion
+   whose whole condition is such a comparison (`ensure!((a == b) ==
+   false)`), when `X` has a top-level `==`, `!=`, `<`, `>`, `<=` or `>=` (a
+   turbofish, `->`, `=>` and a shift are not comparisons), `||` or `&&`
+   (through any `!`, `.not()` or comparison with a boolean literal, read
+   first: `x != true` is `!x` and pins a bool value), an `X` asserted false,
+   an `X` with a deciding `||`, and an `X` whose comparison is `!=` or
+   relational all cap the reading at `relational_check` / weak (a `<`
+   that opens the operand or follows `::` opens a path, not a comparison:
+   `<T as Tr>::f(x) == y`). An `&&`
+   chain asserted true with a `matches!` conjunct and no pinning `==`
+   conjunct reads like the same chain in `assert!` (rule 3); with no
+   pinning `==` conjunct, a negated test (`!matches!(..)`, `!(a == b)`,
+   `(a == b) == false`) or a `!=` or relational comparison as a conjunct,
+   through any literal comparison (`(r != Err(E::Bad)) == true`), caps
+   before the chain is read (`assert_eq!(score(2) != 0 && flag, true)`,
+   `assert_eq!(flag && !matches!(r, Err(E::Bad)), true)`); a bool value
+   compared with `false` pins it like `!x`. With a pinning `==` conjunct,
+   the relation-only conjuncts lend the chain no kind: it reads as the same
+   equality assertion over its other conjuncts, never higher than the whole
+   (`assert_eq!(a == b && r != Err(E::Bad), true)` reads as
+   `assert_eq!(a == b, true)`; #7947). A leading `!`
+   negates only its own operand (`!flag && matches!(..)` is a chain). A comparison
+   asserted true (`assert_eq!(r == Err(E::Bad), true)`), a bare value or
+   call (`assert_eq!(!is_valid(x), true)` pins a bool result) and a whole
+   `matches!` (the polarity rule above) keep their readings. Spellings that
+   keep a comparison or a literal read the same way (#7931): a comparison
+   method on a receiver or a two-argument path call to it
+   (`r.eq(&Err(E::Bad))`, `score(2).ne(&0)`, `PartialEq::eq(&r, &x)`,
+   `Result::eq(&r, &x)`, `<_ as PartialEq>::eq(&r, &x)`; #7993;
+   `.lt`, `.le`, `.gt`, `.ge`) reads like its operator, so only `eq`
+   asserted true may pin, and an `eq` or `ne` with a literal side is that
+   literal comparison (`(r == Err(E::Bad)).eq(&false)` is `== false`); a
+   literal behind `&`, a one-expression block, `as bool` or
+   `bool::from(..)` is that literal, and a `!` over such a spelling negates
+   it (`!&true` is `false`; #7993); and the operand through a
+   one-expression block, `&`, `as bool` or `bool::from(..)` is the operand
+   (`assert_eq!({ r == Err(E::Bad) }, false)`,
+   `assert_eq!(bool::from(r == Err(E::Bad)), false)`). Grouping
+   parentheses around these spellings change nothing (`(false as bool)`). A
+   method call binds tighter than any operator, so its receiver is one
+   operand: `flag && r.eq(&x).eq(&false)` is a chain whose last conjunct is
+   the call. Peeling a spelling can raise a doubled negation to the
+   comparison's own reading (`assert_eq!((r == Err(E::Bad)) == false as bool,
+   false)` and `assert_eq!(&(r == Err(E::Bad)) == &false, false)` assert
+   `r == Err(E::Bad)`). A test (a comparison, `||`, `&&`, comparison call, whole
+   `matches!`, or `^`, `|` or `&` over a comparison or pattern, through the
+   spellings above; a bitwise operator over plain values is no test)
+   compared by an equality macro or a whole `==` or `!=` condition with a
+   side that is no boolean literal caps, because that side may be `false`
+   (`assert_eq!(r == Err(E::Bad), expected)`,
+   `assert_eq!(matches!(r, Err(E::Bad)).eq(&true), expected)`; #8006); a
+   bool value compared with one still pins (`assert_eq!(is_valid(x),
+   expected)`). A cast of a test to an integer type, or `u8::from` and the
+   other integer `From` calls, carries the test, and an integer is no boolean
+   literal, so `0`, `1` or a variable on the other side caps
+   (`assert_eq!((r == Err(E::Bad)) as u8, 0)`,
+   `assert_eq!(u8::from(r == Err(E::Bad)), n)`; #8093), and so do the
+   `From`/`Into` path spellings of that conversion (`From::from(..)`,
+   `<u8 as From<bool>>::from(..)`, `Into::<u8>::into(..)`,
+   `std::primitive::u8::from(..)`; #8101); a cast of a value
+   still pins (`assert_eq!(x as u8, 3)`). The same one-argument constructor
+   (`Some`, `Ok` or `Err`) around both sides compares what it wraps, so a
+   test compared with a non-literal through it caps
+   (`assert_eq!(Some(r == Err(E::Bad)), Some(expected))`; #8101). Such a comparison asserted by a
+   boolean literal caps the same way (`assert_eq!((r == Err(E::Bad)) as u8
+   == 0, true)`, `assert_eq!((r == Err(E::Bad)) == flag, true)`), and a
+   path call to `not` negates like `!` (`assert_eq!(Not::not(r ==
+   Err(E::Bad)), true)`, `bool::not(..)`; any path, because a function named
+   `not` most likely inverts and the reading only lowers). A negation of a whole boolean
+   assertion condition that holds a `matches!`, through grouping, a
+   one-expression block, `.not()`, a `Not::not(..)` path call or a negating
+   literal call on any wrapper, caps (`!(flag || matches!(..))`,
+   `!{ matches!(..) }`, `Some(matches!(..)).unwrap().not()`,
+   `(matches!(..),).0.eq(&false)`; #8006; `Not::not(flag || matches!(..))`;
+   #8101), and a one-expression block
+   passes a pattern through to `^` or `|` (`flag ^ { matches!(..) }`).
+   `^` and a
+   single `|` over an operand holding a `matches!` or a comparison, in
+   operator or call spelling, with no top-level comparison of their own,
+   also cap (`assert_eq!((r == Err(E::Bad)) ^ true, true)`,
+   `assert_eq!(flag ^ r.ne(&Err(E::Bad)), true)`); over plain bool values (`is_a(x) ^ true`)
+   they still pin a bool result. A top-level single `&` over booleans is a
+   conjunction and reads like `&&`; beside a top-level comparison it is a
+   bitwise operand (`a & mask == b`). A string or char literal before `<`
+   is an operand (`"x+" < s` compares). In a boolean assertion condition, or an
+   equality-macro operand compared with a boolean literal, a `matches!`
+   that is an operand of `^`, `|`, `<`, `>`, `<=` or `>=` (on either
+   side; a closure's parameter bars are not `|`), cast with `as`, the
+   receiver of a method call through only grouping parentheses or
+   one-expression blocks
+   (`matches!(..).eq(&false)`, `({ matches!(..) }).then(|| false).unwrap_or(true)`;
+   a method after a call or closure that takes the `matches!` is the call's,
+   and an `eq`/`ne` chain against literals that keeps the pattern's polarity,
+   `matches!(..).eq(&true)`, asserts the pattern when it is the whole
+   condition; asserted false, behind a call or inside a chain it caps), an
+   argument at any position of a call that is the whole condition
+   (`std::ops::Not::not(matches!(..))`, `check::<bool>(1, matches!(..))`,
+   directly or through nested calls; a call's own parenthesis, turbofish
+   included, is no grouping, so `foo::<T>(matches!(..)).is_ok()` reads as
+   `foo(matches!(..)).is_ok()` does, and a comparison inside a call's
+   arguments is not the operand's own test, so `flags | compute(|v| v == 1)`
+   still pins; #8101), or inside the condition or
+   scrutinee of an `if`, `while` or `match` anywhere in the condition
+   (`flag == if ready && matches!(..) { false } else { true }`; a guard
+   inside an earlier `matches!(..)` and a raw `r#match` are not such
+   keywords) may be inverted or
+   discarded, so it caps the reading like a negated pattern. In a boolean
+   assertion's top-level `&&` chain with no top-level `||` its conjunct
+   drops out and the other conjuncts decide
+   (`ensure!(check(matches!(r, Ok(3))) && score == 4)` reads as
+   `ensure!(score == 4)`); in the equality-macro form the whole compared
+   operand caps (`assert_eq!(score == 4 && check(matches!(r, Ok(3))),
+   true)` reads `relational_check` / weak). A call whose result is read again
+   (`foo(matches!(..)).is_ok()`, `Some(true) == Some(matches!(..))`), a
+   `matches!` scrutinee (`matches!(build(matches!(..)), Ok(_))`) and a
+   closure body (`xs.iter().any(|x| f(matches!(x, Some(3))))`) keep their
+   readings. A whole condition or equality-macro operand compared with a
+   literal whose operand is an `&&` chain with a `matches!` conjunct keeps
+   the compared-pattern cap above
+   (`assert_eq!((flag && matches!(r, Ok(3))) == true, true)`). At
    step 4, every `assert_ne!` assigns weak strength: a struct-literal
    operand keeps the `whole_object_equality` kind, as RIPR-SPEC-0225 says,
    with no field credit; any other `{` (a closure or block operand) assigns
@@ -313,6 +436,18 @@ Two pattern terms are used below.
    that value; a self-comparison (`value == value`) pins nothing and
    neither exempts the chain nor earns rule 1's exact credit.
    `prop_assert!` reads a whole `matches!` condition as `assert!` does.
+   Outside those whole forms, a `matches!` invocation earns no exact credit
+   from its text alone. One nested in a call or closure
+   (`xs.iter().any(|x| matches!(x, Some(_)))`) or compared with a bool
+   (`matches!(r, Ok(_)) == true`, with or without redundant parentheses,
+   which is no pinning `==` either) is credited only when its own pattern
+   pins a value or a pinning `==` conjunct keeps the chain (#7715). A
+   `matches!` named only in a comment or string is no invocation and earns
+   nothing, and a comment around the pattern's constructor
+   (`matches!(x, /* , */ Some(_))`) does not hide it (#7772). A user macro, by path (`custom::matches!`,
+   `helpers::std::matches!`) or by name (`expect_matches!`), keeps today's
+   reading; only `matches!`, `std::matches!` and `core::matches!` (with an
+   optional leading `::`) are the std pattern test.
 4. **Method checks match whole method names.** At steps 0 and 7, `is_ok`,
    `is_some` and `is_none` count only as a method-call segment (`.is_ok(`,
    `Option::is_some(`), not as a substring of another identifier such as
@@ -383,8 +518,42 @@ Two pattern terms are used below.
    - The grade is classification input, not confirmation: reveal's token
      and effect-observer rules still decide whether a strong oracle
      observes the changed sink, so an admitted assertion on an
-     unconfirmed probe keeps its gap (as `cell-0096-log-info-captured`
-     does until a confirmation rule covers captured-sink membership).
+     unconfirmed probe keeps its gap. `cell-0096-log-info-captured` no
+     longer does: since #7133 a captured-log assertion withholds the gap as
+     `static_unknown` under `rust_log_capture_unresolved` (see
+     `docs/STATIC_LIMITS.md`), because ripr does not resolve the logger or
+     the log format.
+
+### Reveal admission of an excluded sibling
+
+Rule 1 sets the kind and strength of an inequality; reveal still decides
+whether it observes the change. When the changed line constructs an error
+variant (`return Err(E::Big)`), RIPR-SPEC-0106 Part B refuses an assertion
+that names the enum only through sibling variants, because the shared
+qualifier is not the changed error's identity. An inequality is the
+exception (examples 19 and 20): `assert_ne!(check(20), Err(E::Bad))` or
+`assert!(!matches!(check(20), Err(E::Bad)))` excludes the sibling from the
+owner's own result, so a change that returned `E::Bad` would fail it.
+Reveal admits it as `relational_check` / weak for every family, whatever
+the classifier read, when all of these hold:
+
+- the assertion is `assert_ne!` with one of its two operands exactly a
+  bare call to the changed owner, or `assert!` whose whole condition is one negated `matches!` with
+  that call as the whole scrutinee and an unguarded pattern (message
+  arguments never count, and nothing such as `||` or `^` may sit beside
+  the `matches!`);
+- no foreign import, same-named function in the test's package, nested
+  `fn` or local binding of the owner's name makes the call ambiguous;
+- no binding visible to the test (a `macro_rules!`, an import or a
+  `macro_use`) may rebind `assert!`, `assert_ne!` or `matches!`, and the
+  test's file and module chain pass the shared assertion-context gates;
+- the other operand, or the pattern, names the changed error's enum only
+  through sibling variants.
+
+Any other sibling-only assertion stays refused, so an inequality on a value
+that is not the owner's result shares only the enum qualifier and observes
+nothing. The admitted oracle is weak, so the finding reads
+`weakly_exposed`, never `exposed`.
 
 ### Decisions
 
@@ -423,7 +592,14 @@ rejected alternative. Any can be reversed later without touching the rest.
    its probe-relative strength, because the assert fixes the owner's whole
    two-valued result. `owner_pin` is the authority for that shape and its
    runtime controls (`bool_owner_assert_pin_matched_static_and_runtime_controls`)
-   back it. Rejected: requiring the classifier to read that shape as
+   back it. The same holds for RIPR-SPEC-0197's inline and golden-file
+   expect-test pins (`expect![["text"]].assert_eq(&owner(..))` and
+   `expect_file!["path"].assert_eq(&owner(..))`, #6578): the oracle keeps
+   step 6's `snapshot` / medium kind, and only an owner pin that admits that
+   exact spelling raises its probe-relative strength; `insta` and
+   `assert_debug_eq` snapshots never pin
+   (`pin_strength_gate_keeps_exact_pins_strong_and_defers_bool_pins_to_owner_pin`).
+   Rejected: requiring the classifier to read that shape as
    `exact_value` / strong, which would duplicate the owner-identity gates
    in the oracle extractor. Rejected: a new kind for weak whole-object
    inequality (decision 1).
@@ -469,8 +645,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 - Rule 7 moves no verdict-corpus row: the full corpus before/after delta
   is empty (283 cases), with zero new `false_exposed` rows, and
   `cargo xtask check-evidence-promotion-honesty` passes. In particular
-  `cell-0096-log-info-captured` keeps its gap verdict while the
-  golden fixture `exact_any_membership_oracle` pins the fixed grade
+  `cell-0096-log-info-captured` kept its gap verdict (it abstains as
+  `limited` since #7133) while the golden fixture `exact_any_membership_oracle` pins the fixed grade
   (`exact_value` / strong in `related_tests[]`): the grade is fixed,
   and the remaining gap is reveal observation confirmation, owned
   outside this spec.
@@ -481,7 +657,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 - No resolution of custom helper bodies (RIPR-SPEC-0120 owns macro-wrapped
   assertions).
 - No change to reveal's token or owner-pin confirmation, except that an
-  exact owner pin needs a strong oracle (decision 4).
+  exact owner pin needs a strong oracle, apart from the bool-owner and
+  inline and golden-file expect-test pins (decision 4).
 - No change to TypeScript or Python oracle classification.
 
 ## Acceptance Examples
@@ -611,6 +788,27 @@ rejected alternative. Any can be reversed later without touching the rest.
     text alone. A binding in another file reached through a glob import, and
     a Cargo package rename, are not detected.
 
+31. `assert_eq!(score(2) != 0, true)`, `assert_eq!(check(20) == Err(E::Bad),
+    false)`, `ensure!((score(2) == 4) == false)`,
+    `assert!((matches!(check(5), Ok(5)) || ready) == true)`,
+    `assert_eq!(ready && matches!(check(5), Ok(_)), true)` and
+    `assert!(std::ops::Not::not(matches!(check(20), Err(E::Bad))))`:
+    `relational_check` / weak (all `exact_value` or `exact_error_variant` /
+    strong before #7598). `assert_eq!(check(20) == Err(E::Bad), true)` and
+    `assert_eq!(!is_valid(5), true)` keep their exact readings.
+32. `assert_eq!(score(2).ne(&0), true)`, `assert_eq!(check(20).eq(&Err(E::Bad)),
+    false)`, `assert_eq!(check(20) == Err(E::Bad), false as bool)`,
+    `assert_eq!({ check(20) == Err(E::Bad) }, false)` and
+    `assert!(matches!(check(20), Err(E::Bad)).then(|| false).unwrap_or(true))`:
+    `relational_check` / weak (all `exact_value` or `exact_error_variant` /
+    strong before #7931). `assert_eq!(check(20).eq(&Err(E::Bad)), true)`
+    keeps `exact_error_variant`.
+33. `assert_eq!(score(2) == 4 && check(2) != Err(E::Bad), true)` and
+    `assert_eq!(score(2) == 4 && !matches!(check(2), Err(E::Bad)), true)`:
+    `exact_value` / strong from `score(2) == 4` (both read
+    `exact_error_variant` / strong before #7947, a kind the excluded variant
+    never earns).
+
 ## Test Mapping
 
 - Existing: `crates/ripr/src/analysis/extract/oracles/classify.rs` unit tests.
@@ -622,6 +820,14 @@ rejected alternative. Any can be reversed later without touching the rest.
 - Existing: `relational_tests.rs::a_matches_conjunct_reads_no_stronger_than_its_pattern`
   and the corpus case `spec0231-matches-wildcard-conjunct` (the `&&` chain
   forms of example 7, #7695).
+- Existing: `relational_tests.rs::compound_matches_forms_read_no_stronger_than_their_pattern`
+  and the corpus case `spec0231-matches-nested-wildcard` (the nested,
+  commented and bool-compared forms of example 7, #7715).
+- Existing: `relational_tests.rs::bool_valued_operands_read_as_what_they_assert`
+  and the corpus cases `spec0231-bool-compared-inequality` (example 31,
+  #7598), `spec0231-bool-method-inequality` (example 32's method
+  spelling, #7931) and `spec0231-pinning-chain-relation-kind` (example 33,
+  #7947).
 - Existing: `pattern_admission.rs::tests::spec_0231_rules_2_and_3_read_the_pattern`
   (the pattern forms of examples 3, 4, 7, 17, 18 and 21 to 26, the pinning
   controls 6, 22 and 23, and decision 7's guards).
@@ -673,6 +879,12 @@ rejected alternative. Any can be reversed later without touching the rest.
   the polarity rule in every operand order and macro form, the
   `prop_assert*`, `assert_not_matches!` and `.not()` spellings, and the
   name-and-receiver-only observer exemption.
+- Reveal admission of an excluded sibling (examples 19 and 20):
+  `crates/ripr/tests/error_path_sibling_variant.rs::spec_0231_inequality_excluding_a_sibling_reads_relational_weak`
+  and its control `spec_0231_sibling_inequality_off_the_owner_call_stays_refused`.
+  Corpus: `spec0231-oracle-assert-ne-err-variant` and
+  `spec0231-oracle-negated-matches-err-variant` read `relational_check` /
+  weak in their `oracle` rows.
 - Rule 7: `exact_membership_any_assertion_admits_exact_equality` and
   `exact_membership_any_assertion_rejects_non_exact_shapes` in
   `classify.rs` pin examples 27 to 29 at the classifier; example 27 is
@@ -695,6 +907,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 - `crates/ripr/src/analysis/classify/reveal.rs`: the per-family strength
   override is a cap that never raises a classifier-weakened strength, and an
   exact owner pin needs a strong oracle (decision 4; `pin_strength_admits`).
+  `excludes_only_sibling_variant` admits an excluded sibling as
+  `relational_check` / weak.
 
 ## Metrics
 

@@ -119,6 +119,29 @@ fn turbofish_err_open(text: &str) -> Option<usize> {
     None
 }
 
+/// #7063: whether some spelling of the error variant `variant_path`
+/// (`ConfigError::MissingEquals`) in `text` carries a payload, a `(..)` or
+/// `{ .. }` right after the path. A changed construction that carries one may
+/// change only that payload, which a variant-only oracle cannot see. The read
+/// is a superset on purpose: any payload-carrying spelling counts, so a
+/// caller that withholds variant-only credit on a payload fails closed.
+pub(in crate::analysis) fn variant_carries_payload(text: &str, variant_path: &str) -> bool {
+    let Some(variant) = variant_path.rsplit("::").next().filter(|v| !v.is_empty()) else {
+        return false;
+    };
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    masked.match_indices(variant).any(|(start, _)| {
+        let end = start + variant.len();
+        let before_ok = !masked[..start]
+            .chars()
+            .next_back()
+            .is_some_and(continues_identifier);
+        let after = &masked[end..];
+        let after_ok = !after.chars().next().is_some_and(continues_identifier);
+        before_ok && after_ok && after.trim_start().starts_with(['(', '{'])
+    })
+}
+
 /// The error variant a statement-level `?` returns from an `Option`
 /// conversion (#6695): `<receiver>.ok_or(Type::Variant)?` or
 /// `<receiver>.ok_or_else(|| Type::Variant)?`, optionally bound

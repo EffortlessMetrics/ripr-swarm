@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 1c7dba2..c34555e 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,7 +1,7 @@
+ /// Records every depth past 3 while walking down to depth 5.
+ pub fn walk(v: &mut Vec<u32>, depth: u32) {
+     if depth > 3 {
+-        v.push(depth);
++        v.push(depth * 1);
+     }
+     if depth < 5 {
+         walk(v, depth + 1);

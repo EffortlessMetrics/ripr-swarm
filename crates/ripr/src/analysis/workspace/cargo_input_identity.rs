@@ -26,6 +26,13 @@ fn cargo_input_identity_with_env(root: &Path, env: &dyn home::env::Env) -> Optio
         // metadata command's cwd, which can differ from the RIPR caller's cwd.
         root.join(cargo_home)
     };
+    // Config-relative paths are based on the home's parent. Preserve that
+    // authority before resolving the home itself (which may be a symlink).
+    let cargo_home_parent = cargo_home.parent().unwrap_or(&cargo_home).to_path_buf();
+    let cargo_home_parent = cargo_home_parent
+        .canonicalize()
+        .unwrap_or(cargo_home_parent);
+    let cargo_home = cargo_home.canonicalize().unwrap_or(cargo_home);
     let mut environment = std::env::vars_os()
         .filter_map(|(name, value)| {
             selected_environment_name(name.as_encoded_bytes(), cfg!(windows))
@@ -35,6 +42,10 @@ fn cargo_input_identity_with_env(root: &Path, env: &dyn home::env::Env) -> Optio
     environment.sort();
     let mut identity = Vec::new();
     append(&mut identity, b"cargo-metadata-configuration-v1");
+    append(
+        &mut identity,
+        cargo_home_parent.as_os_str().as_encoded_bytes(),
+    );
     for (name, value) in environment {
         append(&mut identity, &name);
         append(&mut identity, &value);
@@ -238,6 +249,185 @@ mod tests {
             "relative and absolute explicit Cargo homes have the same authority"
         );
         std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    fn check_home_directory_authority(
+        aliases: impl FnOnce(&Path) -> Result<Vec<PathBuf>, String>,
+    ) -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-home-authority-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos()
+        ));
+        for directory in ["home", "other-home", "anchor"] {
+            std::fs::create_dir_all(root.join(directory)).map_err(|error| error.to_string())?;
+        }
+        let config = root.join("home/config.toml");
+        let bytes = "[build]\njobs=1\n";
+        std::fs::write(&config, bytes).map_err(|error| error.to_string())?;
+        std::fs::write(root.join("other-home/config.toml"), bytes)
+            .map_err(|error| error.to_string())?;
+        // Mock only discovery. Raw command-environment bytes remain fixed and
+        // still participate in the complete identity.
+        let snapshot = |home: PathBuf| {
+            cargo_input_identity_with_env(
+                &root,
+                &HomeEnvironment {
+                    cargo_home: Some(home.into_os_string()),
+                    home: None,
+                    caller_cwd: root.join("anchor"),
+                },
+            )
+            .ok_or("existing home identity".to_string())
+        };
+        let expected = snapshot(root.join("home"))?;
+        assert_ne!(
+            expected,
+            snapshot(root.join("other-home"))?,
+            "distinct homes with identical bytes remain distinct"
+        );
+        for alias in aliases(&root)? {
+            assert_eq!(
+                expected,
+                snapshot(alias.clone())?,
+                "equivalent home directory: {alias:?}"
+            );
+            std::fs::write(&config, "[build]\njobs=2\n").map_err(|error| error.to_string())?;
+            assert_ne!(
+                expected,
+                snapshot(alias.clone())?,
+                "configuration edits invalidate identity"
+            );
+            std::fs::write(&config, bytes).map_err(|error| error.to_string())?;
+            assert_eq!(
+                expected,
+                snapshot(alias)?,
+                "configuration revert restores identity"
+            );
+        }
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn cargo_home_parent_alias_preserves_directory_authority() -> Result<(), String> {
+        check_home_directory_authority(|root| Ok(vec![root.join("anchor/../home")]))
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cargo_home_windows_relative_absolute_and_verbatim_preserve_directory_authority()
+    -> Result<(), String> {
+        check_home_directory_authority(|root| {
+            let verbatim = root
+                .join("home")
+                .canonicalize()
+                .map_err(|error| error.to_string())?;
+            let mut components = verbatim.components();
+            let Some(std::path::Component::Prefix(prefix)) = components.next() else {
+                return Err("Windows fixture needs a rooted directory".to_string());
+            };
+            let mut absolute = match prefix.kind() {
+                std::path::Prefix::VerbatimDisk(drive) => {
+                    PathBuf::from(format!("{}:", char::from(drive)))
+                }
+                std::path::Prefix::VerbatimUNC(server, share) => {
+                    PathBuf::from(r"\\").join(server).join(share)
+                }
+                _ => return Err("Windows fixture needs a verbatim drive or UNC root".to_string()),
+            };
+            for component in components {
+                absolute.push(component.as_os_str());
+            }
+            assert_eq!(
+                absolute.canonicalize().map_err(|error| error.to_string())?,
+                verbatim,
+                "fixture spellings must resolve to the same directory"
+            );
+            assert_ne!(
+                absolute.as_os_str(),
+                verbatim.as_os_str(),
+                "fixture must exercise distinct Windows path spellings"
+            );
+            Ok(vec![PathBuf::from("home"), absolute, verbatim])
+        })
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cargo_home_unix_literal_backslashes_remain_distinct() -> Result<(), String> {
+        check_home_directory_authority(|root| {
+            let literal_name = Path::new(r"\\?\home");
+            assert!(
+                literal_name.is_relative(),
+                "Unix backslashes are not path separators"
+            );
+            let literal = root.join(literal_name);
+            std::fs::create_dir_all(&literal).map_err(|error| error.to_string())?;
+            let config = literal.join("config.toml");
+            std::fs::write(&config, "[build]\njobs=1\n").map_err(|error| error.to_string())?;
+            let env = HomeEnvironment {
+                cargo_home: Some(literal.into_os_string()),
+                home: None,
+                caller_cwd: root.to_path_buf(),
+            };
+            let ordinary = HomeEnvironment {
+                cargo_home: Some(root.join("home").into_os_string()),
+                ..env.clone()
+            };
+            let literal =
+                cargo_input_identity_with_env(root, &env).ok_or("literal home identity")?;
+            let ordinary =
+                cargo_input_identity_with_env(root, &ordinary).ok_or("ordinary home identity")?;
+            assert_ne!(
+                literal, ordinary,
+                "Unix backslashes are literal filename bytes"
+            );
+            std::fs::write(&config, "[build]\njobs=2\n").map_err(|error| error.to_string())?;
+            let edited =
+                cargo_input_identity_with_env(root, &env).ok_or("edited literal-home identity")?;
+            assert_ne!(
+                literal, edited,
+                "literal-home configuration edits invalidate identity"
+            );
+            std::fs::write(&config, "[build]\njobs=1\n").map_err(|error| error.to_string())?;
+            let reverted = cargo_input_identity_with_env(root, &env)
+                .ok_or("reverted literal-home identity")?;
+            assert_eq!(
+                literal, reverted,
+                "literal-home configuration revert restores identity"
+            );
+            Ok(vec![PathBuf::from("home")])
+        })
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cargo_home_symlink_keeps_configuration_parent_authority() -> Result<(), String> {
+        check_home_directory_authority(|root| {
+            let linked = root.join("anchor/linked-home");
+            std::os::unix::fs::symlink(root.join("home"), &linked)
+                .map_err(|error| error.to_string())?;
+            let snapshot = |home: PathBuf| {
+                cargo_input_identity_with_env(
+                    root,
+                    &HomeEnvironment {
+                        cargo_home: Some(home.into_os_string()),
+                        home: None,
+                        caller_cwd: root.to_path_buf(),
+                    },
+                )
+                .ok_or("symlink home identity")
+            };
+            assert_ne!(
+                snapshot(root.join("home"))?,
+                snapshot(linked)?,
+                "same files through different config-relative parents remain distinct"
+            );
+            Ok(vec![PathBuf::from("home")])
+        })
     }
 
     #[test]

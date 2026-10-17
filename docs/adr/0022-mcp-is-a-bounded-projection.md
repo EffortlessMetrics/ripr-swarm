@@ -119,10 +119,13 @@ It does not join that blocking worker or qualify repeated embedded sessions;
 the public argument-taking entry point adds no embedding lifecycle promise.
 
 The SDK maps resource-miss codes by negotiated version and preserves the
-adapter's message and data. Both lifecycles now use the bounded message
-`unknown resource; available: ripr://workspace/status` and the available URI
-data. This replaces the original adapter's legacy-only `Resource not found`
-message without maintaining an application version gate or dispatcher.
+adapter's message and data. Both lifecycles use a bounded unknown-resource
+message naming `ripr://workspace/status` and all five resource templates,
+with the same routes in `error.data.available` and
+`error.data.resource_templates`. Recognized unavailable resources retain their
+typed errors; a listed template does not establish an existing resource identity.
+This replaces the original adapter's legacy-only `Resource not found` message
+without maintaining an application version gate or dispatcher.
 
 The pre-migration 21 local controls have explicit dispositions below. This
 mapping specifies successor proof; it does not claim that it has run.

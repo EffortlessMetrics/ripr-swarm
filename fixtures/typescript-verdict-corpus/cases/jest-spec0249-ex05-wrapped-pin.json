@@ -1,0 +1,62 @@
+{
+  "case_id": "jest-spec0249-ex05-wrapped-pin",
+  "subject_id": "authored-ts-jest-mined",
+  "diff": "cases/jest-spec0249-ex05-wrapped-pin.diff",
+  "anchor": {
+    "file": "src/errorsWrap.ts",
+    "line": 5
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate",
+  "test_shape": "jest_tobeinstanceof_wrapped_owner_call",
+  "hard_case": "the boundary pin observes `wrap(errorForWrap(404))`, not the owner call itself; the spec credits it only because `wrap` is a test-local identity helper (`return err;`)",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9.3; the StrykerJS mutant set listed for the same `if` line in jest-mined-tobeinstanceof, hand-applied, and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "if (true) {",
+        "mutated_line": "if (true) {",
+        "outcome": "tests_failed",
+        "failing_test": "wrapped status codes map to error classes",
+        "equivalence_review": "not equivalent: `errorForWrap(403)` returns a `NotFound`, which is not a `Forbidden`"
+      },
+      {
+        "replacement": "if (false) {",
+        "mutated_line": "if (false) {",
+        "outcome": "tests_failed",
+        "failing_test": "wrapped status codes map to error classes",
+        "equivalence_review": "not equivalent: `errorForWrap(404)` returns a `Forbidden`, which the wrapped pin rejects"
+      },
+      {
+        "replacement": "if (404 !== status) {",
+        "mutated_line": "if (404 !== status) {",
+        "outcome": "tests_failed",
+        "failing_test": "wrapped status codes map to error classes",
+        "equivalence_review": "not equivalent: both calls take the other branch"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`if (status === 404)` becomes `if (404 === status)`. The test pins `expect(wrap(errorForWrap(404))).toBeInstanceOf(NotFound)`, where the test-local `wrap` returns its argument, and `expect(errorForWrap(403)).toBeInstanceOf(Forbidden)`; all three listed mutants fail the test. RIPR-SPEC-0249 example 5, amended 2026-10-15: a pin on `wrap(errorFor(404))` is credited when `wrap` is a top-level, unexported one-parameter function whose body is exactly `return err;` and whose name the file uses only as a direct call. `wrap` qualifies here, so the 404 pin reads `exact_value` / strong at the changed boundary and ripr reports `exposed`, matching the discriminated truth.",
+  "labeling_observation": {
+    "ripr_commit": "3480fb2",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0249#5"
+  ]
+}

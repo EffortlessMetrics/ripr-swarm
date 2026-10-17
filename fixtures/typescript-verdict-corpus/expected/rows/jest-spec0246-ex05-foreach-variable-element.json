@@ -1,0 +1,22 @@
+{
+  "case_id": "jest-spec0246-ex05-foreach-variable-element",
+  "subject_id": "authored-ts-jest-oracles",
+  "origin": "authored",
+  "anchor": "src/capPriceVar.ts:3",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "jest_foreach_array_with_variable_element",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

@@ -5,6 +5,7 @@ use super::reveal::FileUseStatements;
 use crate::domain::{Probe, RelationReason};
 
 pub(in crate::analysis) struct ProbeContext<'a> {
+    pub propagation_origin: Option<&'a crate::analysis::diff::ChangedLine>,
     pub probe: &'a Probe,
     pub owner_fn: Option<&'a FunctionSummary>,
     /// Related tests paired with their relation reason so `reveal_evidence`
@@ -33,6 +34,8 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     pub test_value_facts: Option<&'a TestValueFacts>,
     /// Run-scoped private assertion context, shared across all probes.
     pub owner_pin_syntax: Option<&'a super::OwnerPinSyntax>,
+    /// Run-scoped unseen-reach scan, shared across all probes.
+    pub unseen_reach_names: Option<&'a super::UnseenReachNames>,
     /// Run-scoped #5830 caller-walk memo, shared across all probes;
     /// `None` (unit-test contexts) walks per probe.
     pub owner_caller_names: Option<&'a super::super::classifier::OwnerCallerNames>,
@@ -48,6 +51,7 @@ impl<'a> ProbeContext<'a> {
         workspace_complete: bool,
     ) -> Self {
         Self {
+            propagation_origin: None,
             probe,
             owner_fn,
             related_tests,
@@ -58,6 +62,7 @@ impl<'a> ProbeContext<'a> {
             file_use_statements: None,
             test_value_facts: None,
             owner_pin_syntax: None,
+            unseen_reach_names: None,
             owner_caller_names: None,
         }
     }
@@ -77,6 +82,21 @@ impl<'a> ProbeContext<'a> {
     ) -> Self {
         self.owner_pin_syntax = Some(syntax);
         self
+    }
+
+    pub(in crate::analysis) fn with_unseen_reach_names(
+        mut self,
+        names: &'a super::UnseenReachNames,
+    ) -> Self {
+        self.unseen_reach_names = Some(names);
+        self
+    }
+
+    pub(in crate::analysis) fn owner_may_be_reached_unseen(&self, owner: &FunctionSummary) -> bool {
+        match self.unseen_reach_names {
+            Some(names) => names.may_reach_unseen(owner),
+            None => super::owner_may_be_reached_unseen(owner, self.index),
+        }
     }
 
     /// Share one classification run's per-test value facts across probes.

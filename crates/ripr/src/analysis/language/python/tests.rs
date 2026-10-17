@@ -86,8 +86,8 @@ fn detect_python_test_framework_recognizes_from_unittest_import() -> Result<(), 
 
 #[test]
 fn detect_python_test_framework_rejects_lookalike_and_commented_imports() -> Result<(), String> {
-    // Negative fixtures (#2106 review): a lookalike identifier and a
-    // commented-out import must NOT report unittest.
+    // Negative fixtures (#2106 review / #7662): a lookalike identifier and a
+    // commented-out import must NOT report unittest or pytest.
     let root = unique_test_root("lookalike");
     std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
     std::fs::write(root.join("test_lookalike.py"), "import unittesting\n")
@@ -100,6 +100,403 @@ fn detect_python_test_framework_rejects_lookalike_and_commented_imports() -> Res
     std::fs::write(root.join("test_commented.py"), "# import unittest\n")
         .map_err(|err| format!("write test file: {err}"))?;
     assert_eq!(super::detect_python_test_framework(&root), None);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let root = unique_test_root("pytest-lookalike");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("test_lookalike.py"), "import pytesting\n")
+        .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_framework(&root), None);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let root = unique_test_root("pytest-commented");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("test_commented.py"), "# import pytest\n")
+        .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_framework(&root), None);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_framework_detects_pytest_from_test_file_import() -> Result<(), String> {
+    // #7662: a zero-config pytest repo (bare test_*.py + `import pytest`,
+    // no pytest.ini/conftest/section marker) is pytest evidence.
+    let root = unique_test_root("pytest-import");
+    let tests_dir = root.join("tests");
+    std::fs::create_dir_all(&tests_dir).map_err(|err| format!("create tests dir: {err}"))?;
+    std::fs::write(
+        tests_dir.join("test_module.py"),
+        "import pytest\n\n@pytest.mark.parametrize('n', [1])\ndef test_n(n):\n    assert n == 1\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_framework_recognizes_from_pytest_import() -> Result<(), String> {
+    let root = unique_test_root("from-pytest");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(
+        root.join("test_pricing.py"),
+        "from pytest import mark\n\n@mark.parametrize('n', [1])\ndef test_n(n):\n    assert n == 1\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_framework_prefers_config_markers_over_unittest_imports() -> Result<(), String>
+{
+    // Primary-of-set stays pytest (#7662): a pytest.ini repo that also has
+    // unittest imports still returns pytest from the singular detector so
+    // adapter repo-input does not flip. The full set is #7664.
+    let root = unique_test_root("config-first");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("pytest.ini"), "[pytest]\n")
+        .map_err(|err| format!("write pytest.ini: {err}"))?;
+    std::fs::write(
+        root.join("test_pricing.py"),
+        "import unittest\n\nclass TestPricing(unittest.TestCase):\n    pass\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_frameworks_reports_both_on_mixed_import_evidence() -> Result<(), String> {
+    // #7664: zero-config mixed imports must not collapse to a single winner.
+    let root = unique_test_root("mixed-imports");
+    let tests_dir = root.join("tests");
+    std::fs::create_dir_all(&tests_dir).map_err(|err| format!("create tests dir: {err}"))?;
+    std::fs::write(
+        tests_dir.join("test_pytest_style.py"),
+        "import pytest\n\ndef test_multiply():\n    assert 2 * 3 == 6\n",
+    )
+    .map_err(|err| format!("write pytest file: {err}"))?;
+    std::fs::write(
+        tests_dir.join("test_unit_style.py"),
+        "import unittest\n\nclass TestClamp(unittest.TestCase):\n    def test_clamp_lower(self):\n        self.assertEqual(1, 1)\n",
+    )
+    .map_err(|err| format!("write unittest file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["pytest", "unittest"]
+    );
+    assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_frameworks_reports_both_when_config_and_unittest_coexist()
+-> Result<(), String> {
+    // #7664: config markers add pytest; they must not skip unittest.
+    let root = unique_test_root("mixed-config");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("pytest.ini"), "[pytest]\n")
+        .map_err(|err| format!("write pytest.ini: {err}"))?;
+    std::fs::write(
+        root.join("test_pricing.py"),
+        "import unittest\n\nclass TestPricing(unittest.TestCase):\n    pass\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["pytest", "unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_frameworks_ignores_unittest_mock_only_imports() -> Result<(), String> {
+    // #7664 review: pytest.ini + unittest.mock is not a mixed test surface.
+    let root = unique_test_root("mock-only");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("pytest.ini"), "[pytest]\n")
+        .map_err(|err| format!("write pytest.ini: {err}"))?;
+    std::fs::write(
+        root.join("test_api.py"),
+        "from unittest import mock\n\ndef test_api():\n    assert True\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let root = unique_test_root("mock-and-testcase");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(
+        root.join("test_api.py"),
+        "from unittest import mock, TestCase\n\nclass ApiTest(TestCase):\n    pass\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    // Parentheses must not turn mock-only into unittest (#7664 review).
+    let root = unique_test_root("mock-paren");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("pytest.ini"), "[pytest]\n")
+        .map_err(|err| format!("write pytest.ini: {err}"))?;
+    std::fs::write(
+        root.join("test_api.py"),
+        "from unittest import (mock)\n\ndef test_api():\n    assert True\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let root = unique_test_root("mock-paren-multiline");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("pytest.ini"), "[pytest]\n")
+        .map_err(|err| format!("write pytest.ini: {err}"))?;
+    std::fs::write(
+        root.join("test_api.py"),
+        "from unittest import (\n    mock,\n)\n\ndef test_api():\n    assert True\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let root = unique_test_root("mock-paren-comment");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("pytest.ini"), "[pytest]\n")
+        .map_err(|err| format!("write pytest.ini: {err}"))?;
+    std::fs::write(
+        root.join("test_api.py"),
+        "from unittest import (\n    mock,  # patching\n)\n\ndef test_api():\n    assert True\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let root = unique_test_root("mock-backslash");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("pytest.ini"), "[pytest]\n")
+        .map_err(|err| format!("write pytest.ini: {err}"))?;
+    std::fs::write(
+        root.join("test_api.py"),
+        "from unittest import \\\n    mock\n\ndef test_api():\n    assert True\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let root = unique_test_root("testcase-backslash");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(
+        root.join("test_api.py"),
+        "from unittest import \\\n    TestCase\n\nclass ApiTest(TestCase):\n    pass\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let root = unique_test_root("testcase-paren-multiline");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(
+        root.join("test_api.py"),
+        "from unittest import (\n    mock,\n    TestCase,\n)\n\nclass ApiTest(TestCase):\n    pass\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_frameworks_does_not_complete_a_truncated_import() -> Result<(), String> {
+    // Prefix contract (#7664 review): if byte 4096 cuts `import unittest_extra`
+    // after `import unittest`, the incomplete line is not framework evidence.
+    const PREFIX: usize = 4096;
+    const UNITTEST_IMPORT: &str = "import unittest";
+
+    let root = unique_test_root("prefix-truncated-lookalike");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    let mut lookalike = "x".repeat(PREFIX - UNITTEST_IMPORT.len() - 1);
+    lookalike.push('\n');
+    lookalike.push_str("import unittest_extra\n");
+    std::fs::write(root.join("test_truncated.py"), lookalike)
+        .map_err(|err| format!("write truncated lookalike: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        Vec::<&str>::new()
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    // The genuine import whose trailing newline sits in the extra byte
+    // is still complete and must count.
+    let root = unique_test_root("prefix-newline-in-lookahead");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    let mut newline_in_extra = "x".repeat(PREFIX - UNITTEST_IMPORT.len() - 1);
+    newline_in_extra.push('\n');
+    newline_in_extra.push_str("import unittest\n");
+    std::fs::write(root.join("test_newline_extra.py"), newline_in_extra)
+        .map_err(|err| format!("write newline-in-extra: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    // A newline-terminated import that ends exactly at the prefix, with
+    // more bytes after it, still counts.
+    let root = unique_test_root("prefix-complete-at-bound");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    let complete = format!("{UNITTEST_IMPORT}\n");
+    let mut at_bound = "x".repeat(PREFIX - complete.len() - 1);
+    at_bound.push('\n');
+    at_bound.push_str(&complete);
+    at_bound.push_str("trailing source after the inspection window\n");
+    std::fs::write(root.join("test_complete_bound.py"), at_bound)
+        .map_err(|err| format!("write complete-at-bound: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_frameworks_reads_only_the_file_prefix() -> Result<(), String> {
+    // Prefix contract (#7664 review): an import after 4096 bytes is ignored,
+    // and an import at the start of a larger file still counts.
+    let root = unique_test_root("prefix-late");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    let mut late = " ".repeat(4096);
+    late.push_str("import unittest\n");
+    std::fs::write(root.join("test_late.py"), late)
+        .map_err(|err| format!("write late file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        Vec::<&str>::new()
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let root = unique_test_root("prefix-early");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    let mut early = String::from("import unittest\n");
+    early.push_str(&" ".repeat(8192));
+    std::fs::write(root.join("test_early.py"), early)
+        .map_err(|err| format!("write early file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_frameworks_reports_both_when_one_file_imports_both() -> Result<(), String> {
+    let root = unique_test_root("same-file-both");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(
+        root.join("test_mixed.py"),
+        "import pytest\nimport unittest\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["pytest", "unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_frameworks_admits_django_tests_py_modules() -> Result<(), String> {
+    // #7706: `is_test_file` already indexes Django-conventional `tests.py` /
+    // `test.py` (#7385); the framework detector must read the same paths on
+    // the same terms, including one level into app directories.
+    let root = unique_test_root("django-app-tests-py");
+    let blog = root.join("blog");
+    std::fs::create_dir_all(&blog).map_err(|err| format!("create blog dir: {err}"))?;
+    std::fs::write(
+        blog.join("tests.py"),
+        "import unittest\n\nclass PostTests(unittest.TestCase):\n    pass\n",
+    )
+    .map_err(|err| format!("write tests.py: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"]
+    );
+    assert_eq!(super::detect_python_test_framework(&root), Some("unittest"));
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    // `test.py` at the root on the same terms.
+    let root = unique_test_root("django-root-test-py");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(
+        root.join("test.py"),
+        "from unittest import TestCase\n\nclass PricingTests(TestCase):\n    pass\n",
+    )
+    .map_err(|err| format!("write test.py: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    // A Django app directory can carry pytest-style test files too.
+    let root = unique_test_root("django-app-pytest");
+    let shop = root.join("shop");
+    std::fs::create_dir_all(&shop).map_err(|err| format!("create shop dir: {err}"))?;
+    std::fs::write(shop.join("test_pricing.py"), "import pytest\n")
+        .map_err(|err| format!("write test_pricing.py: {err}"))?;
+    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    // A `*_test.py` sibling at the root is admitted as well.
+    let root = unique_test_root("sibling-test-suffix");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("pricing_test.py"), "import pytest\n")
+        .map_err(|err| format!("write pricing_test.py: {err}"))?;
+    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_frameworks_rejects_lookalike_imports_in_tests_py() -> Result<(), String> {
+    // #7706 negative controls: the Django-conventional names must keep the
+    // same token-boundary discipline as the `test_*.py` scan.
+    let root = unique_test_root("django-lookalike");
+    let blog = root.join("blog");
+    std::fs::create_dir_all(&blog).map_err(|err| format!("create blog dir: {err}"))?;
+    std::fs::write(blog.join("tests.py"), "import unittesting\n")
+        .map_err(|err| format!("write tests.py: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        Vec::<&str>::new()
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let root = unique_test_root("django-commented");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("tests.py"), "# import unittest\n")
+        .map_err(|err| format!("write tests.py: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        Vec::<&str>::new()
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
@@ -1223,6 +1620,133 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
             .iter()
             .all(|entry| !entry.starts_with("missing_discriminator:"))
     );
+    Ok(())
+}
+
+const SHOP_FEE_SOURCE: &str = "def fee(amount):\n    if amount < 0:\n        raise ValueError('negative')\n    return amount * 3\n";
+const SHOP_FEE_NEW_LINE: &str = "    return amount * 3";
+const SHOP_FEE_OLD_LINE: &str = "    return amount * 2";
+
+fn classify_shop_fee(test_source: &str) -> Result<crate::domain::Finding, String> {
+    let owners = extract_owners(Path::new("src/shop.py"), SHOP_FEE_SOURCE);
+    let tests = extract_tests(Path::new("tests/test_shop.py"), test_source);
+    classify_change_with_old(
+        Path::new("src/shop.py"),
+        4,
+        SHOP_FEE_NEW_LINE,
+        Some(SHOP_FEE_OLD_LINE),
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "changed shop.fee return should classify".to_string())
+}
+
+fn assert_shop_fee_exposed(finding: &crate::domain::Finding) {
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::ExactValue);
+    assert_eq!(
+        finding.related_tests[0].oracle_strength,
+        OracleStrength::Strong
+    );
+    assert!(
+        matches!(
+            finding.oracle_alignment.as_deref(),
+            Some("direct" | "alias")
+        ),
+        "unshadowed owner call must keep observation credit, got {:?}",
+        finding.oracle_alignment
+    );
+}
+
+fn assert_shop_fee_withholds_stand_in_credit(finding: &crate::domain::Finding, case: &str) {
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{case}: a locally rebound owner call must not be exposed"
+    );
+    assert!(
+        !matches!(
+            finding.oracle_alignment.as_deref(),
+            Some("direct" | "alias" | "changed_sink_token")
+        ),
+        "{case}: stand-in assertion must not observe the production return, got class={:?} alignment={:?} kind={:?} strength={:?}",
+        finding.class,
+        finding.oracle_alignment,
+        finding.related_tests.first().map(|test| &test.oracle_kind),
+        finding
+            .related_tests
+            .first()
+            .map(|test| &test.oracle_strength)
+    );
+}
+
+#[test]
+fn locally_rebound_owner_call_does_not_credit_exposed_exact_value() -> Result<(), String> {
+    // #8247: a test that imports the owner then rebinds that name to a
+    // stand-in (Mock, aliased Mock, lambda, local def) asserts a fixed
+    // payload. Native execution passes either production return; the
+    // assertion never observes `fee`.
+    let mock = classify_shop_fee(
+        "from unittest.mock import Mock\nfrom src.shop import fee\n\n\ndef test_fee():\n    fee = Mock(return_value=30)\n    assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_withholds_stand_in_credit(&mock, "Mock");
+
+    let aliased_mock = classify_shop_fee(
+        "from unittest.mock import Mock\nfrom src.shop import fee as price\n\n\ndef test_fee():\n    price = Mock(return_value=30)\n    assert price(10) == 30\n",
+    )?;
+    assert_shop_fee_withholds_stand_in_credit(&aliased_mock, "aliased Mock");
+
+    let lambda = classify_shop_fee(
+        "from src.shop import fee\n\n\ndef test_fee():\n    fee = lambda amount: 30\n    assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_withholds_stand_in_credit(&lambda, "lambda");
+
+    let local_def = classify_shop_fee(
+        "from src.shop import fee\n\n\ndef test_fee():\n    def fee(amount):\n        return 30\n    assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_withholds_stand_in_credit(&local_def, "local def");
+
+    let bare_shadow = classify_shop_fee(
+        "from src.shop import fee as price\n\n\ndef test_fee():\n    def fee(amount):\n        return 30\n    assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_withholds_stand_in_credit(&bare_shadow, "bare local def beside aliased import");
+
+    // Unshadowed control: the same assertion on the imported owner must
+    // keep exposed / exact_value / strong.
+    let control = classify_shop_fee(
+        "from src.shop import fee\n\n\ndef test_fee():\n    assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_exposed(&control);
+    Ok(())
+}
+
+#[test]
+fn nested_helper_local_shadow_keeps_outer_owner_credit() -> Result<(), String> {
+    // Binding `fee` only inside an uncalled helper does not shadow the
+    // test's own assertion, which still calls the imported owner.
+    let finding = classify_shop_fee(
+        "from src.shop import fee\n\n\ndef test_fee():\n    def helper():\n        fee = lambda amount: 30\n        return fee(10)\n    assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_exposed(&finding);
+    Ok(())
+}
+
+#[test]
+fn genuine_alias_local_import_and_unrelated_helper_keep_owner_credit() -> Result<(), String> {
+    let aliased = classify_shop_fee(
+        "from src.shop import fee as price\n\n\ndef test_fee():\n    assert price(10) == 30\n",
+    )?;
+    assert_shop_fee_exposed(&aliased);
+
+    let local_import = classify_shop_fee(
+        "def test_fee():\n    from src.shop import fee\n    assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_exposed(&local_import);
+
+    let unrelated = classify_shop_fee(
+        "from src.shop import fee\n\n\ndef test_fee():\n    def helper(amount):\n        return 30\n    assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_exposed(&unrelated);
     Ok(())
 }
 
@@ -5838,7 +6362,7 @@ fn diff_mode_emits_no_probe_for_structural_def_header_lines() -> Result<(), Stri
         ..PythonNoBehaviorContext::default()
     };
     let classify = |line: usize, text: &str, old: Option<&str>| {
-        classify_change_with_context(file, line, text, old, &owners, &[], context(line))
+        classify_change_with_context(file, line, text, old, &owners, &[], context(line), None)
     };
     assert!(classify(3, "        self,", None).is_none());
     assert!(classify(6, "    ):", None).is_none());
@@ -5942,7 +6466,7 @@ fn classify_multi_line_header_line(
         multi_line_def_header_line: true,
         ..PythonNoBehaviorContext::default()
     };
-    classify_change_with_context(file, line, text, None, &owners, tests, context)
+    classify_change_with_context(file, line, text, None, &owners, tests, context, None)
         .ok_or_else(|| format!("line {line} should classify"))
 }
 

@@ -4,12 +4,12 @@ root: fixtures/unwrap_err_variant_single_line/input
 
 Summary: 2 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s).
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
 
 Start here:
   State: a test gap to inspect or repair (top_gap)
-  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:12
   Static exposure: weak (weakly_exposed, warning, confidence 0.66)
   Why weak: a related test reaches this change, but the path from it to what the test checks is only partly traced
@@ -29,6 +29,6 @@ Write a test for it:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - fixtures/unwrap_err_variant_single_line/input/src/lib.rs:12 (weakly_exposed)
+    - ./src/lib.rs:12 (weakly_exposed)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

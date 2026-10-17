@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-matches-nested-wildcard",
+  "origin": "authored",
+  "version_label": "authored 2026-10-13 for #7715 (RIPR-SPEC-0231 rule 3: a matches! nested in a closure keeps its pattern's reading)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "6e53c51bef1d397d1f6f12ca4fb7a33f7294e0c6bca60b22e94c40fc65956f61"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "50da680196399d47895301fb35e88eeea1287c70258a2d3e8f522f81b3cc8cce"
+    }
+  ]
+}

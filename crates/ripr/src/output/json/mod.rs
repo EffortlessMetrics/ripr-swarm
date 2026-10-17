@@ -111,7 +111,7 @@ mod tests {
 
         let human = crate::output::human::render(&output);
         assert!(human.contains(
-            "Analysis outcome: the input is not supported (analysis incomplete; unsupported_input)."
+            "Analysis outcome: the input is not supported (analysis incomplete; unsupported_input)"
         ));
         assert!(!human.contains("Analysis outcome: \"unsupported_input\""));
         assert!(human.contains("analysis incomplete"));
@@ -487,6 +487,94 @@ mod tests {
                 Err(std::env::VarError::NotPresent),
             ),
             Ok(Some((999, FindingsBudgetSource::Default)))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn check_findings_completeness_at_byte_boundary() -> Result<(), String> {
+        use super::report::{FindingsBudgetSource, render_with_config};
+        use crate::config::RiprConfig;
+        let config = RiprConfig::default();
+        let mut output = three_finding_output();
+        for finding in &output.findings {
+            output.summary.increment_exposure_class(&finding.class);
+        }
+        let mut first = String::new();
+        super::report::finding_json(&mut first, &output.findings[0], 2);
+        let exact = first.len();
+        for (budget, expected) in [(exact - 1, 1usize), (exact, 2), (exact + 1, 2)] {
+            let raw = render_with_config(
+                &output,
+                &config,
+                Some((budget, FindingsBudgetSource::Configured)),
+            );
+            let value: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+            let rows = value["findings"].as_array().ok_or("findings missing")?;
+            assert_eq!(rows.len(), expected, "budget {budget}, first bytes {exact}");
+            assert_eq!(value["summary"]["findings"], 3);
+            assert_eq!(value["run_limitations"][0]["downstream_consumable"], false);
+            assert!(
+                value["run_limitations"][0]["message"]
+                    .as_str()
+                    .is_some_and(|m| m.contains(&format!("{expected} of 3")) && m.contains("=0"))
+            );
+            for (actual, original) in rows.iter().zip(&output.findings) {
+                assert_eq!(actual["id"], original.id);
+                assert_eq!(actual["classification"], original.class.as_str());
+            }
+            println!(
+                "BOUNDARY budget={budget} first_bytes={exact} rendered={expected} total=3 disclosed=true"
+            );
+        }
+        let mut empty = output.clone();
+        empty.findings.clear();
+        empty.summary = Summary::default();
+        let raw = render_with_config(&empty, &config, Some((1, FindingsBudgetSource::Configured)));
+        let value: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+        assert_eq!(value["findings"], serde_json::json!([]));
+        assert_eq!(value["summary"]["findings"], 0);
+        assert!(value.get("run_limitations").is_none());
+        let tiny = render_with_config(
+            &output,
+            &config,
+            Some((1, FindingsBudgetSource::Configured)),
+        );
+        let full = render_with_config(&output, &config, None);
+        let tiny: serde_json::Value = serde_json::from_str(&tiny).map_err(|e| e.to_string())?;
+        let full: serde_json::Value = serde_json::from_str(&full).map_err(|e| e.to_string())?;
+        assert_eq!(tiny["summary"], full["summary"]);
+        assert_eq!(full["findings"].as_array().map(Vec::len), Some(3));
+        let mut severe = output.clone();
+        severe.findings[2].class = ExposureClass::NoStaticPath;
+        severe.summary.static_unknown -= 1;
+        severe.summary.no_static_path = 1;
+        let bounded = render_with_config(
+            &severe,
+            &config,
+            Some((1, FindingsBudgetSource::Configured)),
+        );
+        let unbounded = render_with_config(&severe, &config, None);
+        let bounded: serde_json::Value =
+            serde_json::from_str(&bounded).map_err(|e| e.to_string())?;
+        let unbounded: serde_json::Value =
+            serde_json::from_str(&unbounded).map_err(|e| e.to_string())?;
+        assert_eq!(bounded["summary"]["no_static_path"], 1);
+        assert_eq!(bounded["findings"][0]["severity"], "note");
+        assert_eq!(unbounded["findings"][2]["severity"], "warning");
+        assert_eq!(unbounded["findings"][2]["id"], severe.findings[2].id);
+        assert_ne!(bounded["findings"][0]["id"], severe.findings[2].id);
+        assert_eq!(bounded["findings"].as_array().map(Vec::len), Some(1));
+        assert_eq!(
+            bounded["run_limitations"][0]["downstream_consumable"],
+            false
+        );
+        println!(
+            "SEVERE omitted warning identity={} preserved_total=1 disclosed=true recovered=true",
+            severe.findings[2].id
+        );
+        println!(
+            "EMPTY rendered=0 total=0 limited=false; FULL rendered=3 total=3; SUMMARY unchanged"
         );
         Ok(())
     }

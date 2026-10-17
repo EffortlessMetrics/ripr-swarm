@@ -63,8 +63,10 @@ pub(super) struct PythonTermFacts {
     bound_names: Option<Vec<String>>,
     /// The parameter the function hands back: its one `return` is the last
     /// statement, `return <parameter>`, the parameter is never rebound, and
-    /// the function is undecorated and not a generator. A caller's result is
-    /// then the very object it passed (RIPR-SPEC-0238 rule 17, #7586).
+    /// the function is not a generator and has no decorator other than
+    /// `@classmethod` or `@staticmethod`, which only bind the call. A caller's
+    /// result is then the very object it passed (RIPR-SPEC-0238 rule 17,
+    /// #7586, #7634).
     returned_parameter: Option<String>,
 }
 
@@ -81,6 +83,8 @@ pub(super) fn term_facts(
     parameters: &[PythonParameter],
     owner_text: &str,
     wrapped: bool,
+    // Synchronous, with every decorator `@classmethod` or `@staticmethod`.
+    binding_only: bool,
 ) -> PythonTermFacts {
     let bound_names = body_bound_names(body);
     let opaque_scope = ["lambda", "for", "async", "await", ":="]
@@ -97,7 +101,7 @@ pub(super) fn term_facts(
     let returned_parameter = match body.last() {
         Some(Stmt::Return(ast::StmtReturn {
             value: Some(value), ..
-        })) if !wrapped
+        })) if binding_only
             && code_mention_count(owner_text, "return") == 1
             && code_mention_count(owner_text, "yield") == 0 =>
         {

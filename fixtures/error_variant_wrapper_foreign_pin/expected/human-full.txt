@@ -4,8 +4,8 @@ root: fixtures/error_variant_wrapper_foreign_pin/input
 
 Summary: 2 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 2 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s).
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
 
 WARNING ./src/lib.rs:39
   id: probe:src_lib.rs:call_deletion:07741fa8
@@ -39,7 +39,7 @@ Weakness
   - No strong discriminator was detected
 
 Next step
-  ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.
+  ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists
 Drill in:
   ripr explain --root <cwd>/fixtures/error_variant_wrapper_foreign_pin/input --diff <cwd>/fixtures/error_variant_wrapper_foreign_pin/diff.patch --mode fast probe:src_lib.rs:call_deletion:07741fa8
   ripr context --root <cwd>/fixtures/error_variant_wrapper_foreign_pin/input --diff <cwd>/fixtures/error_variant_wrapper_foreign_pin/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:07741fa8
@@ -81,7 +81,7 @@ Weakness
   - Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
 
 Next step
-  ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.
+  ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists
 Drill in:
   ripr explain --root <cwd>/fixtures/error_variant_wrapper_foreign_pin/input --diff <cwd>/fixtures/error_variant_wrapper_foreign_pin/diff.patch --mode fast probe:src_lib.rs:error_path:edac60ec
   ripr context --root <cwd>/fixtures/error_variant_wrapper_foreign_pin/input --diff <cwd>/fixtures/error_variant_wrapper_foreign_pin/diff.patch --mode fast --at probe:src_lib.rs:error_path:edac60ec

@@ -38,6 +38,19 @@ fn is_preview_language(language: LanguageId) -> bool {
     )
 }
 
+#[cfg(test)]
+static DIFF_PIPELINE_ENTRIES: std::sync::Mutex<
+    std::collections::BTreeMap<std::path::PathBuf, usize>,
+> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+#[cfg(test)]
+pub(crate) fn diff_pipeline_entry_count(root: &std::path::Path) -> Result<usize, String> {
+    let counts = DIFF_PIPELINE_ENTRIES
+        .lock()
+        .map_err(|_poisoned| "diff pipeline counter lock poisoned")?;
+    Ok(counts.get(root).copied().unwrap_or(0))
+}
+
 pub(crate) fn run_diff_pipeline_with_oracle_policy(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
@@ -59,6 +72,13 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
     rust_config: &crate::config::RustLanguageConfig,
     language_config: &crate::config::LanguagesConfig,
 ) -> Result<AnalysisResult, CoreError> {
+    #[cfg(test)]
+    {
+        let mut counts = DIFF_PIPELINE_ENTRIES
+            .lock()
+            .map_err(|_poisoned| "diff pipeline counter lock poisoned".to_string())?;
+        *counts.entry(options.root.clone()).or_default() += 1;
+    }
     // Immutable Git candidate subject (#3237 / #3277): resolve the
     // bound identity through object plumbing, derive the exact
     // base→candidate diff, and analyze the materialized candidate root.
@@ -140,16 +160,25 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
     // analysis result is evaluated only after the join, so a worker panic
     // cannot ride the scope destructor through an early error return.
     let probe_base = loaded.effective_base.clone();
+    let loaded_base_commit = loaded.resolved_base_commit.clone();
     let probe_token = cancellation::current_token();
     std::thread::scope(|scope| {
         let probes = probe_base.as_deref().map(|base| {
             scope.spawn(move || {
                 cancellation::with_optional_token(probe_token.as_ref(), || {
+                    // The loader already resolved the base commit while
+                    // verifying it; reuse that id instead of spawning the
+                    // identical `rev-parse` again (#7716). A committed-history
+                    // diff runs `git diff <base>...HEAD`, so its merge base
+                    // was never computed by the loader and the probe keeps
+                    // deriving it (passing `None`).
                     diff::resolve_analyzed_revisions(
                         &options.root,
                         base,
                         false,
                         options.git_timeout,
+                        loaded_base_commit.as_deref(),
+                        None,
                     )
                 })
             })
@@ -237,6 +266,7 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
     languages: &[LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
     language_config: &crate::config::LanguagesConfig,
+    disclosure_probes: super::DisclosureProbes,
 ) -> Result<AnalysisResult, CoreError> {
     if options.diff_file.is_some() {
         return Err("worktree diff mode cannot be combined with --diff"
@@ -262,6 +292,28 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
         options.git_timeout,
     )?;
     cancellation::checkpoint()?;
+    // #7716: consumers that render neither the untracked-routed-files
+    // naming (RIPR-SPEC-0116) nor the analyzed-revisions naming (#5997) —
+    // the LSP diagnostics refresh — run no probe worker at all. The
+    // #7292 overlap hides the probes behind the analysis only while the
+    // analysis keeps the cores; on a loaded host the worker loses that
+    // race and the join extends every refresh by the probes' full wall
+    // time (measured: four git children, ~2.2s of the didOpen →
+    // first-publish window). The disclosure fields stay empty here, which
+    // is honest because this consumer renders neither field; the check
+    // output surfaces (CLI, MCP) keep `Run` and their disclosures.
+    if disclosure_probes == super::DisclosureProbes::Skip {
+        let mut result = run_pipeline_for_diff_text_with_language_config(
+            options,
+            oracle_policy,
+            languages,
+            rust_config,
+            language_config,
+            &loaded.text,
+        )?;
+        bind_effective_base(&mut result, loaded.effective_base)?;
+        return Ok(result);
+    }
     // #7292: the untracked-routed-files probe and the analyzed-revisions
     // resolution read the repository without depending on the analysis
     // result. Run them on a worker thread DURING the analysis instead of
@@ -275,25 +327,48 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
     // after the join, so a worker panic cannot ride the scope destructor
     // through an early error return.
     let probe_base = loaded.effective_base.clone();
+    let loaded_base_commit = loaded.resolved_base_commit.clone();
+    let loaded_merge_base = loaded.merge_base_origin.clone();
     let probe_token = cancellation::current_token();
+    // #7716 review: capture THIS invocation's test observer on the invoking
+    // thread, before the worker exists. Ordinary `Run` invocations running
+    // in sibling test threads have no observer registered, so their workers
+    // can never signal (or be waited on by) this test's seam — the seam is
+    // invocation-scoped, not process-global (#7799).
+    #[cfg(test)]
+    let probe_worker_observer = current_probe_worker_observer();
+    #[cfg(test)]
+    let observer_for_worker = probe_worker_observer.clone();
     std::thread::scope(|scope| {
         let probes = scope.spawn(move || {
             cancellation::with_optional_token(probe_token.as_ref(), || {
                 #[cfg(test)]
-                PROBE_OVERLAP_WORKER_STARTED.store(true, std::sync::atomic::Ordering::Release);
+                if let Some(observer) = observer_for_worker.as_ref() {
+                    observer.observe_worker_started();
+                }
                 // RIPR-SPEC-0116: the working-tree diff covers tracked files
                 // only; name the untracked routed files it cannot contain so
                 // the output can say so.
                 let untracked =
                     committed_source::untracked_routed_paths(&options.root, options.git_timeout);
                 let analyzed = probe_base.as_deref().map(|base| {
-                    diff::resolve_analyzed_revisions(&options.root, base, true, options.git_timeout)
+                    // The loader already resolved the base commit and this
+                    // diff's merge-base origin; reuse both instead of
+                    // spawning the identical probes again (#7716).
+                    diff::resolve_analyzed_revisions(
+                        &options.root,
+                        base,
+                        true,
+                        options.git_timeout,
+                        loaded_base_commit.as_deref(),
+                        loaded_merge_base.as_deref(),
+                    )
                 });
                 (untracked, analyzed)
             })
         });
         #[cfg(test)]
-        wait_for_probe_worker_for_test();
+        wait_for_probe_worker_for_test(probe_worker_observer.as_deref());
         let result = run_pipeline_for_diff_text_with_language_config(
             options,
             oracle_policy,
@@ -322,29 +397,108 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
     })
 }
 
-/// #7292 test seam: when the wait flag is set, the worktree pipeline's
-/// analysis phase spins (bounded) until the disclosure-probe worker has
-/// started. Before the overlap fix the probes ran only after the analysis
-/// returned, so the flag stayed unset for the whole bound and the overlap
-/// test failed; with the overlap the worker starts immediately and the
-/// wait exits at once. Test-only: the flag is never set outside tests.
+/// #7292/#7716 test seam, invocation-scoped: the probe-worker observer the
+/// driving test installs on its own thread. The worktree pipeline captures
+/// the observer from the invoking thread before spawning the worker, so a
+/// worker signals only the observer of the invocation that spawned it — an
+/// ordinary parallel `Run` test registers nothing, and its worker can never
+/// satisfy (or be waited on by) another test's seam. This replaces the
+/// earlier process-global flag pair, whose unconditional worker-body store
+/// let sibling `Run` invocations flip a `Skip` test's "never started"
+/// assertion (P1 review on #7757, reproduction in #7799).
 #[cfg(test)]
-pub(crate) static PROBE_OVERLAP_WAIT_FOR_WORKER: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-#[cfg(test)]
-pub(crate) static PROBE_OVERLAP_WORKER_STARTED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+#[derive(Default)]
+pub(crate) struct ProbeWorkerObserver {
+    /// When set, the pipeline's analysis phase spins (bounded) until the
+    /// worker of THIS invocation reports started — the pre-overlap behavior
+    /// left it unset for the whole bound and failed the overlap test.
+    wait_for_worker: std::sync::atomic::AtomicBool,
+    worker_started: std::sync::atomic::AtomicBool,
+}
 
 #[cfg(test)]
-fn wait_for_probe_worker_for_test() {
-    use std::sync::atomic::Ordering;
-    use std::time::{Duration, Instant};
-    if !PROBE_OVERLAP_WAIT_FOR_WORKER.load(Ordering::Acquire) {
-        return;
+impl ProbeWorkerObserver {
+    /// An observer whose test requires the probes to overlap the analysis.
+    pub(crate) fn demanding_overlap() -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            wait_for_worker: std::sync::atomic::AtomicBool::new(true),
+            worker_started: std::sync::atomic::AtomicBool::new(false),
+        })
     }
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while !PROBE_OVERLAP_WORKER_STARTED.load(Ordering::Acquire) && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(5));
+
+    /// An observer that only records whether this invocation's worker
+    /// started; the pipeline never waits on it.
+    pub(crate) fn observe_only() -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self::default())
+    }
+
+    fn observe_worker_started(&self) {
+        self.worker_started
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Whether the worker of the observed invocation started.
+    pub(crate) fn worker_started(&self) -> bool {
+        self.worker_started
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    fn wait_requested(&self) -> bool {
+        self.wait_for_worker
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static PROBE_WORKER_OBSERVER: std::cell::RefCell<
+        Option<std::sync::Arc<ProbeWorkerObserver>>,
+    > = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn current_probe_worker_observer() -> Option<std::sync::Arc<ProbeWorkerObserver>> {
+    PROBE_WORKER_OBSERVER.with(|slot| slot.borrow().clone())
+}
+
+/// Owned registration of an observer for the installing test's thread; the
+/// registration is removed on drop, including through `?` early returns, so
+/// a failed test cannot leak its observer into later invocations.
+#[cfg(test)]
+pub(crate) struct ProbeWorkerObserverGuard;
+
+#[cfg(test)]
+impl ProbeWorkerObserverGuard {
+    pub(crate) fn install(observer: std::sync::Arc<ProbeWorkerObserver>) -> Self {
+        PROBE_WORKER_OBSERVER.with(|slot| *slot.borrow_mut() = Some(observer));
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for ProbeWorkerObserverGuard {
+    fn drop(&mut self) {
+        PROBE_WORKER_OBSERVER.with(|slot| *slot.borrow_mut() = None);
+    }
+}
+
+/// How long the overlap seam waits for this invocation's worker. A
+/// pre-overlap regression keeps the worker unstarted for the whole bound and
+/// fails decisively; the bound is generous because a saturated host can
+/// delay the worker's first scheduling by tens of seconds without any
+/// overlap regression (#7799 validation).
+#[cfg(test)]
+const PROBE_WORKER_WAIT_BOUND: std::time::Duration = std::time::Duration::from_mins(2);
+
+#[cfg(test)]
+fn wait_for_probe_worker_for_test(observer: Option<&ProbeWorkerObserver>) {
+    use std::time::Instant;
+    let Some(observer) = observer.filter(|observer| observer.wait_requested()) else {
+        return;
+    };
+    let deadline = Instant::now() + PROBE_WORKER_WAIT_BOUND;
+    while !observer.worker_started() && Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
 }
 
@@ -749,7 +903,17 @@ fn run_pipeline_for_diff_text_with_language_config(
     diff_text: &str,
 ) -> Result<AnalysisResult, String> {
     let parsed_diff = diff::parse_unified_diff_bounded_with_metadata(diff_text)?;
-    let changed_files = parsed_diff.changed_files;
+    // #7663: ripr's own reports and caches under `target/ripr` are tool
+    // artifacts, not user source. Standard Python `.gitignore` templates do
+    // not cover `target/`, so `git add -A` can commit them; once committed,
+    // the next analysis would count ripr's own output as changed scope and
+    // inflate every downstream count. Partition them out at the intake so
+    // counts, adapter dispatch, and disclosures all see the same user
+    // scope, and disclose the exclusion by name below.
+    let (changed_files, own_artifact_files): (Vec<_>, Vec<_>) = parsed_diff
+        .changed_files
+        .into_iter()
+        .partition(|file| !diff::is_ripr_artifact_path(&file.path));
     let mut limitations = parsed_diff
         .limitations
         .into_iter()
@@ -988,6 +1152,17 @@ fn run_pipeline_for_diff_text_with_language_config(
     let preview_paths: Vec<&diff::ChangedFile> = analysis_changed_files
         .iter()
         .filter(|changed| {
+            // Source-adapter advisories describe the selected partition
+            // (#8210). Disabled languages retain enablement guidance; Perl
+            // keeps its caller-supplied packet scope (#5421).
+            if let Some(scope) = &partial_scope
+                && route(&changed.path).is_some_and(|language| {
+                    language != LanguageId::Perl && languages.contains(&language)
+                })
+                && !scope.selects(&changed.path)
+            {
+                return false;
+            }
             !absent_changed_paths.contains(super::workspace::normalize_path(&changed.path).as_str())
         })
         .collect();
@@ -1102,6 +1277,12 @@ fn run_pipeline_for_diff_text_with_language_config(
         eprintln!("{message}");
     });
 
+    // #7663: name every ripr-artifact file the intake dropped, so the counts
+    // below never silently disagree with the commit the diff came from.
+    if !own_artifact_files.is_empty() {
+        eprintln!("{}", ripr_artifact_disclosure(&own_artifact_files));
+    }
+
     if findings.is_empty()
         && rust_changed_files == 0
         && changed_files_by_language
@@ -1118,9 +1299,13 @@ fn run_pipeline_for_diff_text_with_language_config(
     // "0 probe(s)" output looks like a clean bill of health when the input
     // was garbage. This is the honesty complement to #2304: #2304 handles
     // "diff had files but no source"; this handles "diff had no files at all."
+    // A diff whose only files were ripr's own artifacts is not garbage: the
+    // artifact disclosure above already named it, so the garbage reading
+    // stays off (#7663).
     if findings.is_empty()
         && rust_changed_files == 0
         && changed_files.is_empty()
+        && own_artifact_files.is_empty()
         && deleted_file_count == 0
         && submodule_file_count == 0
         && renamed_file_count == 0
@@ -1149,6 +1334,7 @@ fn run_pipeline_for_diff_text_with_language_config(
 
     if !diff_text.trim().is_empty()
         && changed_files.is_empty()
+        && own_artifact_files.is_empty()
         && deleted_file_count == 0
         && submodule_file_count == 0
         && renamed_file_count == 0
@@ -1824,6 +2010,26 @@ fn bounded_path_listing(paths: &[String]) -> String {
     } else {
         listed
     }
+}
+
+/// The stderr line naming the ripr-artifact files the intake dropped from
+/// changed-scope accounting (#7663). Pure so the disclosure contract is
+/// testable without capturing stderr. The recovery names the exact
+/// `.gitignore` entry because the common trigger is a Python repo whose
+/// template `.gitignore` does not cover Rust-conventional `target/`.
+fn ripr_artifact_disclosure(own_artifact_files: &[diff::ChangedFile]) -> String {
+    let listed = bounded_path_listing(
+        &own_artifact_files
+            .iter()
+            .map(|file| file.path.to_string_lossy().replace('\\', "/"))
+            .collect::<Vec<_>>(),
+    );
+    format!(
+        "ripr: {count} ripr artifact file(s) under target/ripr are tool output, not user \
+         source, and were not counted as changed scope: {listed}. Add `/target/ripr/` to \
+         `.gitignore` to keep ripr's reports and caches out of commits.",
+        count = own_artifact_files.len()
+    )
 }
 
 /// Whether a changed preview-language path is refused by its adapter's own
@@ -2567,6 +2773,125 @@ mod tests {
             "{outcome:?}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn ripr_artifact_files_are_not_counted_as_changed_scope() -> Result<(), String> {
+        // #7663: a commit that swept ripr's own reports under target/ripr
+        // into history (Python .gitignore templates do not cover target/)
+        // must not inflate the changed-scope counts of the next analysis.
+        let root = temp_root("outcome-own-artifacts")?;
+        write(
+            root.join("src/lib.rs").as_path(),
+            "pub fn f(x: i32) -> bool { x >= 1 }\n",
+        )?;
+        write(
+            root.join("target/ripr/pilot/pilot-summary.md").as_path(),
+            "# pilot summary\nprevious run output\n",
+        )?;
+        write(
+            root.join("target/ripr/cache/repo-seam-facts/1.61/abc.json")
+                .as_path(),
+            "{}\n",
+        )?;
+        let diff = concat!(
+            "diff --git a/src/lib.rs b/src/lib.rs\n",
+            "--- a/src/lib.rs\n",
+            "+++ b/src/lib.rs\n",
+            "@@ -1,1 +1,1 @@\n",
+            "-pub fn f(x: i32) -> bool { x > 1 }\n",
+            "+pub fn f(x: i32) -> bool { x >= 1 }\n",
+            "diff --git a/target/ripr/pilot/pilot-summary.md b/target/ripr/pilot/pilot-summary.md\n",
+            "--- a/target/ripr/pilot/pilot-summary.md\n",
+            "+++ b/target/ripr/pilot/pilot-summary.md\n",
+            "@@ -1,2 +1,2 @@\n",
+            "-# pilot summary\n",
+            "-previous run output\n",
+            "+# pilot summary\n",
+            "+new run output\n",
+            "diff --git a/target/ripr/cache/repo-seam-facts/1.61/abc.json b/target/ripr/cache/repo-seam-facts/1.61/abc.json\n",
+            "--- a/target/ripr/cache/repo-seam-facts/1.61/abc.json\n",
+            "+++ b/target/ripr/cache/repo-seam-facts/1.61/abc.json\n",
+            "@@ -1,1 +1,1 @@\n",
+            "-{}\n",
+            "+{\"cached\": true}\n",
+        );
+        let result = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &crate::config::RustLanguageConfig::default(),
+            diff,
+        )?;
+        let outcome = result.analysis_outcome.ok_or("outcome must be projected")?;
+        assert_eq!(
+            outcome.counts.changed_file_count, 1,
+            "only src/lib.rs is user changed scope: {outcome:?}"
+        );
+        assert_eq!(
+            outcome.counts.changed_line_count, 2,
+            "artifact lines must not count: {outcome:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_artifact_only_diff_stays_a_no_scope_run_not_garbage() -> Result<(), String> {
+        // #7663: when the whole diff is ripr's own artifacts, the run is an
+        // honest no-scope result; the garbage/malformed-diff readings must
+        // stay off, and the artifact disclosure names the files.
+        let root = temp_root("outcome-artifacts-only")?;
+        write(
+            root.join("target/ripr/pilot/pilot-summary.md").as_path(),
+            "# pilot summary\nnew run output\n",
+        )?;
+        let diff = concat!(
+            "diff --git a/target/ripr/pilot/pilot-summary.md b/target/ripr/pilot/pilot-summary.md\n",
+            "--- a/target/ripr/pilot/pilot-summary.md\n",
+            "+++ b/target/ripr/pilot/pilot-summary.md\n",
+            "@@ -1,2 +1,2 @@\n",
+            "-# pilot summary\n",
+            "-previous run output\n",
+            "+# pilot summary\n",
+            "+new run output\n",
+        );
+        let result = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &crate::config::RustLanguageConfig::default(),
+            diff,
+        )?;
+        let outcome = result.analysis_outcome.ok_or("outcome must be projected")?;
+        assert_eq!(outcome.counts.changed_file_count, 0, "{outcome:?}");
+        assert_eq!(
+            outcome.kind,
+            AnalysisOutcomeKind::NoScope,
+            "artifact-only diff is no scope, not malformed: {outcome:?}"
+        );
+        assert!(
+            !outcome
+                .limitations
+                .iter()
+                .any(|limitation| limitation.kind == AnalysisLimitationKind::MalformedDiff),
+            "artifact-only diff must not read as garbage: {outcome:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_artifact_disclosure_names_files_and_gitignore_entry() {
+        let files = [
+            changed_file("target/ripr/pilot/pilot-summary.md"),
+            changed_file("target/ripr/cache/repo-seam-facts/1.61/abc.json"),
+        ];
+        let message = ripr_artifact_disclosure(&files);
+        assert!(message.contains("2 ripr artifact file(s)"), "{message}");
+        assert!(
+            message.contains("target/ripr/pilot/pilot-summary.md"),
+            "{message}"
+        );
+        assert!(message.contains("/target/ripr/"), "{message}");
     }
 
     #[test]
@@ -5758,7 +6083,14 @@ index 0000000..1111111 100644
         Ok(())
     }
 
-    fn fixture_git(root: &std::path::Path, args: &[&str]) -> Result<(), String> {
+    /// Run one fixture git command and return its full output, for tests
+    /// that must read what git printed (for example pinning a resolved
+    /// commit id). The file's single process spawn lives here, so both
+    /// setup and read-back go through this one policy-accounted helper.
+    fn fixture_git_output(
+        root: &std::path::Path,
+        args: &[&str],
+    ) -> Result<std::process::Output, String> {
         let output = std::process::Command::new("git")
             .current_dir(root)
             // A hook or caller carrying GIT_DIR/GIT_WORK_TREE would redirect
@@ -5770,6 +6102,11 @@ index 0000000..1111111 100644
             .args(args)
             .output()
             .map_err(|err| format!("run git {args:?}: {err}"))?;
+        Ok(output)
+    }
+
+    fn fixture_git(root: &std::path::Path, args: &[&str]) -> Result<(), String> {
+        let output = fixture_git_output(root, args)?;
         if !output.status.success() {
             return Err(format!(
                 "git {args:?} failed: {}",
@@ -5790,11 +6127,14 @@ index 0000000..1111111 100644
     #[test]
     fn worktree_pipeline_probes_overlap_the_analysis() -> Result<(), String> {
         use crate::config::RustLanguageConfig;
-        use std::sync::atomic::Ordering;
-        use std::time::{Duration, Instant};
+        use std::sync::Arc;
+        use std::time::Instant;
 
-        PROBE_OVERLAP_WAIT_FOR_WORKER.store(true, Ordering::Release);
-        PROBE_OVERLAP_WORKER_STARTED.store(false, Ordering::Release);
+        // Invocation-scoped seam (#7799): this observer belongs to THIS
+        // invocation only. Sibling tests running ordinary `Run` pipelines
+        // register no observer and cannot satisfy or wait on this one.
+        let observer = ProbeWorkerObserver::demanding_overlap();
+        let _seam_guard = ProbeWorkerObserverGuard::install(Arc::clone(&observer));
 
         let root = temp_root("probe-overlap")?;
         let result = (|| -> Result<(), String> {
@@ -5836,10 +6176,11 @@ index 0000000..1111111 100644
                 &[LanguageId::Rust],
                 &RustLanguageConfig::default(),
                 &crate::config::LanguagesConfig::default(),
+                crate::analysis::DisclosureProbes::Run,
             );
             let elapsed = started.elapsed();
 
-            let worker_started = PROBE_OVERLAP_WORKER_STARTED.load(Ordering::Acquire);
+            let worker_started = observer.worker_started();
             if !worker_started {
                 return Err(
                     "the probe worker never started during the analysis: the disclosure probes \
@@ -5847,10 +6188,13 @@ index 0000000..1111111 100644
                         .to_string(),
                 );
             }
-            // The seam's own bound is 30s; reaching it means the worker was
-            // still not observed while the analysis waited for it, which is
-            // the pre-fix behavior this test pins against.
-            if elapsed >= Duration::from_secs(25) {
+            // Elapsed past the seam's wait bound only when the wait provably
+            // expired without this invocation's worker starting — the
+            // pre-fix behavior this test pins against. Under a loaded host
+            // the wait can legitimately absorb tens of seconds before the
+            // worker is scheduled, so the threshold is the wait bound
+            // itself, not a smaller timing guess (#7799 validation).
+            if elapsed >= PROBE_WORKER_WAIT_BOUND {
                 return Err(format!(
                     "the analysis waited {:.1}s for the probe worker: the probes did not overlap \
                      the analysis",
@@ -5872,9 +6216,152 @@ index 0000000..1111111 100644
             if revisions.head_commit.is_none() || revisions.base_commit.is_none() {
                 return Err("resolved commits must be named".to_string());
             }
+            // #7716 de-dup pin: the named ids must be the repository's real
+            // commits. The base commit now comes from the loader's own
+            // verification probe and the merge base from the loader's diff
+            // origin, so a regression that names a different (or absent)
+            // commit fails here.
+            // Read through the file's one policy-accounted spawn helper
+            // (`fixture_git_output`) instead of spawning a second process.
+            let git_commit = |spec: &str| -> Result<String, String> {
+                let output =
+                    fixture_git_output(&root, &["rev-parse", "--verify", "--quiet", spec])?;
+                if !output.status.success() {
+                    return Err(format!("rev-parse {spec} did not resolve"));
+                }
+                String::from_utf8(output.stdout)
+                    .map_err(|error| format!("non-utf8 rev-parse output: {error}"))
+                    .map(|commit| commit.trim().to_string())
+            };
+            let expected_base = git_commit("HEAD~1^{commit}")?;
+            if revisions.base_commit.as_deref() != Some(expected_base.as_str()) {
+                return Err(format!(
+                    "base_commit must be the loader-verified commit {expected_base}, got {:?}",
+                    revisions.base_commit
+                ));
+            }
+            let expected_head = git_commit("HEAD^{commit}")?;
+            if revisions.head_commit.as_deref() != Some(expected_head.as_str()) {
+                return Err(format!(
+                    "head_commit must be the current HEAD {expected_head}, got {:?}",
+                    revisions.head_commit
+                ));
+            }
+            // Linear history with base `HEAD~1`: the merge base IS the base
+            // tip, and the naming contract keeps the field absent rather
+            // than repeating the base commit.
+            if revisions.merge_base_commit.is_some() {
+                return Err(format!(
+                    "merge_base_commit must stay absent when it equals the base commit, got {:?}",
+                    revisions.merge_base_commit
+                ));
+            }
             Ok(())
         })();
-        PROBE_OVERLAP_WAIT_FOR_WORKER.store(false, Ordering::Release);
+        let _ = fs::remove_dir_all(&root);
+        result
+    }
+
+    /// #7716 discriminating test: a consumer that renders neither disclosure
+    /// field (the LSP diagnostics refresh) runs no probe worker at all.
+    /// Before the skip existed, the #7292 worker spawned even for such
+    /// consumers and its four git children could lose the overlap race on a
+    /// loaded host, extending every refresh by the probes' full wall time.
+    /// With the skip THIS invocation's observer stays unsignaled while the
+    /// analysis completes, and the unrendered fields stay empty. The
+    /// observer is invocation-scoped (#7799), so an ordinary parallel `Run`
+    /// test starting its own worker cannot flip it.
+    #[test]
+    fn worktree_pipeline_skip_disclosure_probes_spawns_no_probe_worker() -> Result<(), String> {
+        use crate::config::RustLanguageConfig;
+        use std::sync::Arc;
+
+        // This observer would flip if, and only if, THIS invocation's
+        // pipeline started a probe worker (a regression of the Skip branch
+        // to the Run path), regardless of what sibling tests run.
+        let observer = ProbeWorkerObserver::observe_only();
+        let _seam_guard = ProbeWorkerObserverGuard::install(Arc::clone(&observer));
+
+        let root = temp_root("probe-skip")?;
+        let result = (|| -> Result<(), String> {
+            fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+            write(
+                &root.join("Cargo.toml"),
+                "[package]\nname = \"probe-skip-fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n",
+            )?;
+            write(
+                &root.join("src/lib.rs"),
+                "pub fn price(a: i32) -> i32 {\n    a - 1\n}\n",
+            )?;
+            fixture_git(&root, &["init", "--initial-branch", "main"])
+                .or_else(|_| fixture_git(&root, &["init"]))?;
+            fixture_git(&root, &["config", "user.email", "test@example.com"])?;
+            fixture_git(&root, &["config", "user.name", "Test"])?;
+            fixture_git(&root, &["config", "commit.gpgsign", "false"])?;
+            fixture_git(&root, &["add", "."])?;
+            fixture_git(&root, &["commit", "-m", "base"])?;
+            write(
+                &root.join("src/lib.rs"),
+                "pub fn price(a: i32) -> i32 {\n    a - 2\n}\n",
+            )?;
+            fixture_git(&root, &["add", "."])?;
+            fixture_git(&root, &["commit", "-m", "second"])?;
+            write(
+                &root.join("src/lib.rs"),
+                "pub fn price(a: i32) -> i32 {\n    a - 3\n}\n",
+            )?;
+
+            let mut options = draft_diff_options(root.clone());
+            options.base = Some("HEAD~1".to_string());
+            let analysis = run_worktree_pipeline_with_oracle_policy_and_rust_config(
+                &options,
+                &OraclePolicy::default(),
+                &[LanguageId::Rust],
+                &RustLanguageConfig::default(),
+                &crate::config::LanguagesConfig::default(),
+                crate::analysis::DisclosureProbes::Skip,
+            )
+            .map_err(|err| format!("worktree pipeline failed: {err}"))?;
+
+            if observer.worker_started() {
+                return Err(
+                    "the disclosure-probe worker started under Skip: a consumer that renders \
+                     neither disclosure field must run no probe worker"
+                        .to_string(),
+                );
+            }
+            if analysis.analyzed_revisions.is_some() {
+                return Err(
+                    "Skip must leave the analyzed-revisions naming absent; the consumer renders \
+                     it never"
+                        .to_string(),
+                );
+            }
+            if !analysis.untracked_source_paths.is_empty() {
+                return Err(
+                    "Skip must leave the untracked-routed-files naming empty; the consumer \
+                     renders it never"
+                        .to_string(),
+                );
+            }
+            // The analysis itself is unchanged: the live diff is still read
+            // and analyzed to a complete outcome.
+            let outcome = analysis
+                .analysis_outcome
+                .ok_or("the skipped-probe run must still carry its typed outcome")?;
+            if !matches!(
+                outcome.kind,
+                crate::analysis_outcome::AnalysisOutcomeKind::CompleteWithFindings
+                    | crate::analysis_outcome::AnalysisOutcomeKind::CompleteNoFindings
+                    | crate::analysis_outcome::AnalysisOutcomeKind::NoBehavioralCandidates
+            ) {
+                return Err(format!(
+                    "the skipped-probe run must stay a complete analysis, got {:?}",
+                    outcome.kind
+                ));
+            }
+            Ok(())
+        })();
         let _ = fs::remove_dir_all(&root);
         result
     }

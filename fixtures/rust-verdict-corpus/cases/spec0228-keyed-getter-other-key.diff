@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index c2a968f..93a65c2 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -19,7 +19,7 @@ impl Shelf {
+ 
+     /// Records a delivery for `sku`; the test reads back another SKU only.
+     pub fn deliver(&mut self, sku: &str, qty: u32) {
+-        self.stock.insert(sku.to_string(), qty);
++        self.stock.insert(sku.to_owned(), qty);
+     }
+ 
+     /// Sets the count for `sku`, refusing an empty delivery.

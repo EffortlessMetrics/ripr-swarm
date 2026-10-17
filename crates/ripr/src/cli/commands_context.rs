@@ -2,6 +2,33 @@ use crate::app::CheckInput;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
 use std::path::Path;
 
+/// A named refusal has already reached its decision. Reporting its optional
+/// stderr JSON must not replace that decision with an I/O panic. Preserve the
+/// renderers' newline conventions and JSON escaping; stdout stays separate.
+pub(super) fn write_stderr_refusal_json(document: String) {
+    use std::io::Write as _;
+    let document = crate::terminal_text::json_terminal_safe(document);
+    let newline = if document.ends_with('\n') { "" } else { "\n" };
+    let _ = write!(std::io::stderr().lock(), "{document}{newline}");
+}
+
+/// Map a producer outcome after its original report has reached stdout.
+/// Only the typed unsupported-input result fails; usable partial evidence
+/// stays advisory. The caller must not append a refusal to the report.
+pub(super) fn analysis_outcome_exit_result(
+    command_name: &str,
+    outcome: Option<&crate::analysis_outcome::AnalysisOutcome>,
+) -> Result<(), String> {
+    if outcome.is_some_and(|outcome| {
+        outcome.kind == crate::analysis_outcome::AnalysisOutcomeKind::UnsupportedInput
+    }) {
+        return Err(format!(
+            "{command_name}: analysis could not complete (unsupported_input); see the emitted report's limitations and recovery routes"
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn ensure_command_root(root: &Path, command_name: &str) -> Result<(), String> {
     // Detected once: every branch below keys on the same typed components.
     let stripped = windows_stripped_components(root);

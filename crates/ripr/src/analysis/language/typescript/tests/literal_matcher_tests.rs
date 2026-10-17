@@ -141,6 +141,308 @@ fn mock_payload_on_a_binding_the_owner_may_not_receive_is_not_credited() {
     }
 }
 
+/// RIPR-SPEC-0247 rule 1, amended 2026-10-15 (RIPR-SPEC-0243 example 30):
+/// `const db = makeDb();` reads the flat literal a test-file factory
+/// returns, so the payload pins the changed call as it does for an inline
+/// `{ write: jest.fn() }`; every other factory or binding shape refuses.
+#[test]
+fn mock_payload_on_a_test_file_factory_mock_is_credited() {
+    let facts = MockCallFacts::read(
+        "  db.write(v + 2);",
+        Some("function save(db: Db, v: number) {\n  db.write(v + 2);\n}"),
+        "save",
+        &params(&["db", "v"]),
+    );
+    let pin = "  const db = makeDb();\n  save(db, 1);\n  expect(db.write).toHaveBeenCalledWith(2);";
+    let file = |factory: &str, body: &str| {
+        format!(
+            "import {{ save }} from \"../src/save\";\n{factory}\ntest(\"save\", () => {{\n{body}\n}});\n"
+        )
+    };
+    let credited = |source: &str| -> Result<bool, String> {
+        let tests = extract_tests(Path::new("test/save.test.ts"), source);
+        let [test] = tests.as_slice() else {
+            return Err(format!("expected one test in {source}"));
+        };
+        Ok(facts.credits_with_factories(
+            &called_with("db.write", "2"),
+            &test.body_text,
+            &test.mock_factories_in_file,
+        ))
+    };
+    for factory in [
+        "function makeDb(): Db & { write: jest.Mock } {\n  return { write: jest.fn() };\n}",
+        "const makeDb = () => ({ write: jest.fn(), read: jest.fn() });",
+        "const makeDb = () => {\n  return { write: vi.fn() };\n};",
+        // A space before `()` is the same call (#8138).
+        "function makeDb() {\n  return { write: jest.fn () };\n}",
+    ] {
+        let source = file(factory, pin);
+        let tests = extract_tests(Path::new("test/save.test.ts"), &source);
+        assert_eq!(tests.len(), 1, "{factory}");
+        assert_eq!(
+            tests[0]
+                .mock_factories_in_file
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["makeDb"],
+            "{factory}"
+        );
+        assert_eq!(credited(&source), Ok(true), "{factory}");
+    }
+    // Without the factory reading the same test stays medium.
+    let plain = file(
+        "function makeDb() {\n  return { write: jest.fn() };\n}",
+        pin,
+    );
+    let tests = extract_tests(Path::new("test/save.test.ts"), &plain);
+    assert_eq!(tests.len(), 1);
+    assert!(!facts.credits(&called_with("db.write", "2"), &tests[0].body_text));
+
+    let factory = "function makeDb() {\n  return { write: jest.fn() };\n}";
+    for (label, source) in [
+        // The factory itself could return something else.
+        (
+            "spread",
+            file(
+                "function makeDb() {\n  return { write: jest.fn(), ...defaults };\n}",
+                pin,
+            ),
+        ),
+        (
+            "shared-value",
+            file("function makeDb() {\n  return { write: shared };\n}", pin),
+        ),
+        (
+            "parameter",
+            file(
+                "function makeDb(seed: number) {\n  return { write: jest.fn() };\n}",
+                pin,
+            ),
+        ),
+        (
+            "arrow-parameter",
+            file(
+                "const makeDb = (seed: number) => ({ write: jest.fn() });",
+                pin,
+            ),
+        ),
+        (
+            "async-arrow",
+            file("const makeDb = async () => ({ write: jest.fn() });", pin),
+        ),
+        (
+            "generator",
+            file(
+                "function* makeDb() {\n  return { write: jest.fn() };\n}",
+                pin,
+            ),
+        ),
+        // The mock value could record or return another mock's calls.
+        (
+            "implementation",
+            file(
+                "function recordTwo(this: Db) {\n  this.write(2);\n}\nfunction makeDb() {\n  return { write: jest.fn(recordTwo) };\n}",
+                pin,
+            ),
+        ),
+        (
+            "trailing-operator",
+            file(
+                "function makeDb() {\n  return { write: jest.fn() && pre.write };\n}",
+                pin,
+            ),
+        ),
+        (
+            "two-statements",
+            file(
+                "function makeDb() {\n  log();\n  return { write: jest.fn() };\n}",
+                pin,
+            ),
+        ),
+        (
+            "exported",
+            file(
+                "export function makeDb() {\n  return { write: jest.fn() };\n}",
+                pin,
+            ),
+        ),
+        (
+            "async",
+            file(
+                "async function makeDb() {\n  return { write: jest.fn() };\n}",
+                pin,
+            ),
+        ),
+        (
+            "let-arrow",
+            file("let makeDb = () => ({ write: jest.fn() });", pin),
+        ),
+        // The name can be rebound or reached without a direct call.
+        (
+            "reassigned",
+            file(
+                factory,
+                &format!("  makeDb = () => ({{ write: shared }});\n{pin}"),
+            ),
+        ),
+        (
+            "passed-on",
+            file(factory, &format!("  register(makeDb);\n{pin}")),
+        ),
+        (
+            "body-shadow",
+            file(
+                factory,
+                &format!("  function makeDb() {{\n    return {{ write: shared }};\n  }}\n{pin}"),
+            ),
+        ),
+        ("eval", file(factory, &format!("  eval(\"x\");\n{pin}"))),
+        // The binding is not exactly the factory's fresh result.
+        (
+            "member-of-result",
+            file(
+                factory,
+                "  const db = makeDb().inner;\n  save(db, 1);\n  expect(db.write).toHaveBeenCalledWith(2);",
+            ),
+        ),
+        // A line break does not end the statement before `.` or `&&`.
+        (
+            "member-next-line",
+            file(
+                factory,
+                "  const db = makeDb()\n    .inner;\n  save(db, 1);\n  expect(db.write).toHaveBeenCalledWith(2);",
+            ),
+        ),
+        (
+            "operator-next-line",
+            file(
+                factory,
+                "  const db = makeDb()\n    && pre;\n  save(db, 1);\n  expect(db.write).toHaveBeenCalledWith(2);",
+            ),
+        ),
+        (
+            "argument",
+            file(
+                factory,
+                "  const db = makeDb(1);\n  save(db, 1);\n  expect(db.write).toHaveBeenCalledWith(2);",
+            ),
+        ),
+        (
+            "other-factory",
+            file(
+                &format!("{factory}\nfunction otherDb() {{\n  return {{ write: shared }};\n}}"),
+                "  const db = otherDb();\n  save(db, 1);\n  expect(db.write).toHaveBeenCalledWith(2);",
+            ),
+        ),
+        (
+            "nested-binding",
+            file(
+                factory,
+                "  if (ready) {\n    const db = makeDb();\n  }\n  save(db, 1);\n  expect(db.write).toHaveBeenCalledWith(2);",
+            ),
+        ),
+        ("second-use", file(factory, &format!("{pin}\n  other(db);"))),
+        // The test's own call on the mock could satisfy the pin (#8140).
+        (
+            "own-member-call",
+            file(
+                factory,
+                "  const db = makeDb();\n  save(db, 1);\n  db.write(2);\n  expect(db.write).toHaveBeenCalledWith(2);",
+            ),
+        ),
+    ] {
+        assert_eq!(credited(&source), Ok(false), "{label}");
+    }
+}
+
+/// #8138: the mock binding must be exactly a fresh mock. A trailing
+/// operator or member can bind another object, a named or `function`
+/// implementation can record the asserted call through `this`, and a line
+/// break does not end a statement whose next line continues it.
+#[test]
+fn mock_payload_binding_must_be_exactly_a_fresh_mock() {
+    let facts = MockCallFacts::read(
+        "  db.write(v + 2);",
+        Some("function save(db: Db, v: number) {\n  db.write(v + 2);\n}"),
+        "save",
+        &params(&["db", "v"]),
+    );
+    let db_payload = called_with("db.write", "2");
+    for test in [
+        "const db = { write: jest.fn() }; save(db, 1);",
+        "const db = { write: jest.fn((v) => v) }; save(db, 1);",
+        "const db = { write: jest.fn(() => 2) }; save(db, 1);",
+        "const db = { write: jest.fn(async (v) => v) }; save(db, 1);",
+        "const db = { write: jest.fn(v => v) }; save(db, 1);",
+        // A space before the call's `(` is the same call.
+        "const db = { write: jest.fn () }; save(db, 1);",
+        "const db = { write: jest.fn ((v) => v) }; save(db, 1);",
+        // A `)` inside a string in the implementation is masked, so the
+        // call closes at its real parenthesis (#8148 review).
+        "const db = { write: jest.fn(() => \")\") }; save(db, 1);",
+        "const db = { write: vi.fn<(v: number) => void>() };\nsave(db, 1);",
+    ] {
+        assert!(facts.credits(&db_payload, test), "{test}");
+    }
+    for test in [
+        "const db = { write: jest.fn() && pre.write }; save(db, 1);",
+        "const db = { write: jest.fn(recordTwo) }; save(db, 1);",
+        "const db = { write: jest.fn(function (v) { this.write(2); }) }; save(db, 1);",
+        // A call or a conditional wrapping an arrow can evaluate to a named
+        // implementation (#8148 review); the arrow token inside it is not
+        // the implementation. A comma expression or a helper call that
+        // receives an arrow and returns a named function behaves the same.
+        "const db = { write: jest.fn((() => recordTwo)()) }; save(db, 1);",
+        "const db = { write: jest.fn(ready ? (v) => v : recordTwo) }; save(db, 1);",
+        "const db = { write: jest.fn((() => 0, recordTwo)) }; save(db, 1);",
+        "const db = { write: jest.fn(choose(() => 0)) }; save(db, 1);",
+        "const db = { write: jest.fn(), inner: pre }.inner; save(db, 1);",
+        "const db = { write: jest.fn() }\n  && pre;\nsave(db, 1);",
+        "const db = { write: jest.fn().mockName(\"w\") }; save(db, 1);",
+    ] {
+        assert!(!facts.credits(&db_payload, test), "{test}");
+    }
+
+    let send = |binding: &str| {
+        format!("{binding}\nannounce(7, send);\nexpect(send).toHaveBeenCalledWith(\"order 7\");")
+    };
+    for binding in [
+        "const send = jest.fn();",
+        "const send = jest.fn((m: string) => m);",
+        "const send = jest.fn(async (m: string) => m);",
+        // A space before the call's `(` is the same call.
+        "const send = jest.fn ();",
+        "const send = vi.fn<(m: string) => void>();",
+        // A line break before a new statement ends it.
+        "const send = jest.fn()",
+    ] {
+        assert!(
+            notify_facts(Some(NOTIFY_OWNER)).credits(&order_payload(), &send(binding)),
+            "{binding}"
+        );
+    }
+    for binding in [
+        "const send = jest.fn() && pre;",
+        "const send = jest.fn()\n  && pre;",
+        "const send = jest.fn()\n  .bind(pre);",
+        "const send = jest.fn()\n  instanceof Function;",
+        "const send = jest.fn()\n  (pre);",
+        "const send = jest.fn(record);",
+        "const send = jest.fn(function () {});",
+        // A wrapping call or conditional can hand back a named
+        // implementation (#8148 review).
+        "const send = jest.fn((() => recordTwo)());",
+        "const send = jest.fn(ready ? (m) => m : recordTwo);",
+    ] {
+        assert!(
+            !notify_facts(Some(NOTIFY_OWNER)).credits(&order_payload(), &send(binding)),
+            "{binding}"
+        );
+    }
+}
+
 #[test]
 fn mock_payload_another_call_could_satisfy_is_not_credited() {
     let payload = order_payload();
