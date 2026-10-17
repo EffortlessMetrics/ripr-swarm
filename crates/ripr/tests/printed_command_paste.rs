@@ -707,7 +707,9 @@ fn collect(fixture: &Fixture, subcommands: &BTreeSet<String>) -> Result<Collecte
                     "human-full",
                 ]),
             ),
-            ("doctor", 2, args(&["doctor", "--root", root])),
+            // Compact doctor prints one next command; `ripr first-pr` stays
+            // on the verbose packet dump (#8168).
+            ("doctor", 1, args(&["doctor", "--root", root])),
             ("pilot", 1, args(&["pilot", "--root", root])),
             (
                 "first-pr",

@@ -56,6 +56,11 @@ ripr baseline diff \
   --out-md target/ripr/reports/baseline-debt-delta.md
 ```
 
+Path options require an explicit value. Without a help request, a following
+`--option` token is a usage error (exit `2`) before either report is written.
+Prefix a literal filename beginning with `--` with `./`. Explicitly named unreadable inputs retain the
+advisory incomplete-report behavior described below.
+
 The command writes:
 
 ```text

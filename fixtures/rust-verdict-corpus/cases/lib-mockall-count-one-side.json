@@ -38,9 +38,9 @@
       "limited"
     ]
   },
-  "reasoning": "Under `<=` 30 would send, but no test passes 30, so the test passes; under `GRACE_DAYS + 1 <` the call at 31 no longer sends and times(1) fails on drop. Spec cell: RIPR-SPEC-0267 example 2.",
+  "reasoning": "Under `<=` 30 would send, but no test passes 30, so the test passes; under `GRACE_DAYS + 1 <` the call at 31 no longer sends and times(1) fails on drop. Spec cell: RIPR-SPEC-0279 example 2.",
   "labeling_observation": {
-    "ripr_commit": "98c8f172b + RIPR-SPEC-0267 candidate",
+    "ripr_commit": "98c8f172b + RIPR-SPEC-0279 candidate",
     "full_checkout_verdict": "gap",
     "full_checkout_classifications": [
       "weakly_exposed"
@@ -48,6 +48,6 @@
     "excerpt_parity": "matched"
   },
   "spec_examples": [
-    "RIPR-SPEC-0267#2"
+    "RIPR-SPEC-0279#2"
   ]
 }

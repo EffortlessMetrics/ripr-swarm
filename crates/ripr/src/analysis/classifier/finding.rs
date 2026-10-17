@@ -130,6 +130,11 @@ pub(in crate::analysis) fn build_finding(
     {
         Some(refused_assertion_next_step(
             evidence.assertion_refusal.as_ref(),
+            if context.probe.family == ProbeFamily::MatchArm {
+                "assert"
+            } else {
+                "assert_eq"
+            },
         ))
     } else if class == ExposureClass::WeaklyExposed
         && !wrapper_error_seam_expression(&[context.probe.expression.as_str()])
@@ -243,8 +248,13 @@ enum Unconfirmed {
 /// boundary value, or when no assertion pins the exact error variant or field
 /// value the change alters, and an oracle `reveal` left unconfirmed (see
 /// [`Unconfirmed`]) is not established to observe it.
-/// `exposed` and the unknown classes are left alone: ripr does not claim a
-/// miss it has not established.
+/// `exposed` and the unknown classes name one established miss: a matched
+/// oracle row whose relation is proximity-only never calls the owner, so
+/// next to a reaching row its identical "uses ... oracle" line would
+/// attribute part of the discrimination to a test whose assertion is about
+/// different code (#7642). Rows without a matched oracle, and rows with no
+/// recorded relation reason, stay unannotated: ripr does not claim a miss
+/// it has not established.
 fn annotate_related_test_misses(
     related_tests: &mut [RelatedTest],
     class: &ExposureClass,
@@ -308,7 +318,27 @@ fn annotate_related_test_misses(
                     None
                 }
             }
-            _ => None,
+            _ => {
+                // #7642: on `exposed` and the unknown classes a matched row
+                // whose relation reason does not establish reach
+                // (`establishes_reach`, the rule `reach_evidence` reads,
+                // #7531) never invokes the owner, so its oracle cannot
+                // discriminate this change no matter how strong the
+                // assertion. Annotate the established fact; the verdict is
+                // untouched because `miss` is evidence-only. A row without
+                // a matched oracle or without a recorded relation reason
+                // keeps the unknown: the pass must not claim what the
+                // relation layer did not establish.
+                if test.oracle.is_some()
+                    && test
+                        .relation_reason
+                        .is_some_and(|reason| !reason.establishes_reach(owner_is_function))
+                {
+                    Some(RelatedTestMiss::NoCallPath)
+                } else {
+                    None
+                }
+            }
         };
     }
 }
@@ -554,7 +584,7 @@ fn contains_token_sequence(text: &str, expected: &[String]) -> bool {
 }
 
 /// The next step for a gap whose oracle rests on a refused `assert_eq!`.
-fn refused_assertion_next_step(note: Option<&AssertionRefusalNote>) -> String {
+fn refused_assertion_next_step(note: Option<&AssertionRefusalNote>, macro_name: &str) -> String {
     match note {
         Some(note) if note.calls_owner && note.is_analyzer_limit => format!(
             "ripr did not credit the {}; the \"not credited\" note says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.",
@@ -564,7 +594,7 @@ fn refused_assertion_next_step(note: Option<&AssertionRefusalNote>) -> String {
         // not a limit of ripr's reading, so offering a static-limit
         // reading would let the reader dismiss a real gap.
         Some(note) if note.calls_owner => format!(
-            "ripr did not credit the {}; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
+            "ripr did not credit the {}; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `{macro_name}!`, in a test expected to pass.",
             note.location
         ),
         _ => "Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.".to_string(),
@@ -599,6 +629,107 @@ mod tests {
             relation_confidence: None,
             miss: None,
         }
+    }
+
+    #[test]
+    fn exposed_marks_proximity_only_oracle_rows_as_no_call_path() {
+        // #7642: on an exposed finding a matched oracle row linked by
+        // proximity only never invokes the owner, so it must not render as
+        // an unqualified oracle row next to the reaching test.
+        let row = |name: &str, reason: Option<RelationReason>| RelatedTest {
+            relation_reason: reason,
+            ..matched_row(name, OracleStrength::Strong)
+        };
+        let mut rows = vec![
+            row("reaches_owner", Some(RelationReason::DirectOwnerCall)),
+            row(
+                "sibling_asserts_elsewhere",
+                Some(RelationReason::SameTestFile),
+            ),
+            row("named_after_owner", Some(RelationReason::OwnerNamedTest)),
+            row(
+                "assertion_target",
+                Some(RelationReason::AssertionTargetAffinity),
+            ),
+            row("no_relation_recorded", None),
+        ];
+        annotate_related_test_misses(
+            &mut rows,
+            &crate::domain::ExposureClass::Exposed,
+            true,
+            &ProbeFamily::MatchArm,
+            &ActivationEvidence::default(),
+            Unconfirmed::Confirmed,
+        );
+        assert_eq!(
+            rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
+            vec![
+                None,
+                Some(crate::domain::RelatedTestMiss::NoCallPath),
+                Some(crate::domain::RelatedTestMiss::NoCallPath),
+                Some(crate::domain::RelatedTestMiss::NoCallPath),
+                None,
+            ]
+        );
+        // For an owner without a function, assertion-target affinity is how
+        // the owner is observed, so that row keeps no miss; file proximity
+        // still does not call the owner.
+        let mut module_rows = vec![
+            row(
+                "sibling_asserts_elsewhere",
+                Some(RelationReason::SameTestFile),
+            ),
+            row(
+                "assertion_target",
+                Some(RelationReason::AssertionTargetAffinity),
+            ),
+        ];
+        annotate_related_test_misses(
+            &mut module_rows,
+            &crate::domain::ExposureClass::Exposed,
+            false,
+            &ProbeFamily::MatchArm,
+            &ActivationEvidence::default(),
+            Unconfirmed::Confirmed,
+        );
+        assert_eq!(
+            module_rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
+            vec![Some(crate::domain::RelatedTestMiss::NoCallPath), None,]
+        );
+    }
+
+    #[test]
+    fn exposed_keeps_unmatched_and_oracle_free_rows_unannotated() {
+        // Rows reveal already annotated, and rows with no matched oracle,
+        // keep their existing state: the pass annotates matched oracle rows
+        // only.
+        let mut rows = vec![
+            RelatedTest {
+                miss: Some(crate::domain::RelatedTestMiss::AssertionNotObserving),
+                relation_reason: Some(RelationReason::SameTestFile),
+                ..matched_row("examined_only", OracleStrength::None)
+            },
+            RelatedTest {
+                oracle: None,
+                relation_reason: Some(RelationReason::SameTestFile),
+                ..matched_row("no_oracle_row", OracleStrength::None)
+            },
+        ];
+        annotate_related_test_misses(
+            &mut rows,
+            &crate::domain::ExposureClass::StaticUnknown,
+            true,
+            &ProbeFamily::MatchArm,
+            &ActivationEvidence::default(),
+            Unconfirmed::Confirmed,
+        );
+        assert_eq!(
+            rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
+            vec![
+                Some(crate::domain::RelatedTestMiss::AssertionNotObserving),
+                None,
+            ]
+        );
     }
 
     #[test]
@@ -1168,14 +1299,14 @@ mod tests {
             calls_owner,
             is_analyzer_limit,
         };
-        let limit = refused_assertion_next_step(Some(&note(true, true)));
+        let limit = refused_assertion_next_step(Some(&note(true, true)), "assert_eq");
         assert!(
             limit.contains("this is a static limit, not a missing test"),
             "{limit}"
         );
 
         // #6903: an `#[ignore]`d, cfg-off, conditional or rebound assertion.
-        let not_limit = refused_assertion_next_step(Some(&note(true, false)));
+        let not_limit = refused_assertion_next_step(Some(&note(true, false)), "assert_eq");
         assert!(
             not_limit.contains("this is not a static limit"),
             "{not_limit}"
@@ -1187,7 +1318,7 @@ mod tests {
 
         for unrelated in [Some(note(false, true)), Some(note(false, false)), None] {
             assert!(
-                refused_assertion_next_step(unrelated.as_ref())
+                refused_assertion_next_step(unrelated.as_ref(), "assert_eq")
                     .starts_with("Establish that the test is collected")
             );
         }

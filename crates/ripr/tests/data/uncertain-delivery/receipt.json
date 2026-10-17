@@ -1,0 +1,334 @@
+{
+  "producer_base": "459ad8f2c112f2a8592585413ca89b0e0e2c665d",
+  "producer_base_tree": "4ba07de65c7ba256ec097303f1d6de9e9c8ccd60",
+  "consumer_head": "bcc008f67cbe9753ede6daf8a2eb914de42adfad",
+  "consumer_base": "2b8e66ebe5f11608fb9e85da4af7c5747252f86f",
+  "consumer_tree": "3602047b0acb3ba3b566ae7dcbffbb5625380f36",
+  "source_blob": "e29796eaa0181ffb9a00e0462985e3c1ad72c857",
+  "source_sha256": "21554d1d76a91a14da6474006fb2ff443cddee9e6d721d875cbb72c032c1c836",
+  "diff_sha256": "f370c46cc27900d2258259eed94ac0c0f76f82243436f10c8cb15196a27632f9",
+  "command": "<producer> check --root /workspace/ub-helper-consumer --diff /workspace/scratch/ub1440-full.patch --mode ready --format json",
+  "scope": "same frozen full consumer workspace and full base..head diff; configured hosted gate is a separate merge-result receipt",
+  "native": {
+    "command": "cargo test --bin ub-review github_delivery::tests --locked",
+    "passed_before_and_after": 32,
+    "ignored": 0,
+    "mutation": "ignore errors from both production reserve_delivery_attempt calls",
+    "lost_response_mutant_exit": 101,
+    "receipt_failure_mutant_exit": 101,
+    "failure": "retry sent duplicate review",
+    "mutant_source_sha256": "42601c96333cd19d7b40f90a4844b646a8aa3e2603d1339405d87089c0181dd2",
+    "logs": {
+      "ub-helper-native": "94e393e4e3e60cf16b34e7432b26454175107120eed8cff46300dd8f49e1d654",
+      "ub-helper-mutant-lost": "a4831da5eb913a3a8ced68b6a282d6e374de67135670af6e5658488c1581c08a",
+      "ub-helper-mutant-receipt": "d6a4019f969bf5dffc9d8c0223ba21c1ab63ba12776fa854cbced1be82f77199",
+      "ub-helper-restored": "a1375c47e2aede4e6fd92dad2718e1094d22b45c9d887cd24f2610970d929873"
+    }
+  },
+  "comparisons": [
+    {
+      "producer": "current-main",
+      "binary_sha256": "41a6eba8886488042ea67d77c3f4451dfe6a02477c9748622ff47366aaf5c72d",
+      "report_sha256": "0db9acd1e210d112effd79a8a7eb1489ae10d6c4efc93516d63a6be466a6e3a1",
+      "exit": 0,
+      "total_findings": 40,
+      "helper_probe_count": 0,
+      "helper_construction_return_rows": []
+    },
+    {
+      "producer": "pinned-0100",
+      "binary_sha256": "9553dd1608a0c9486f38d6b156250b0c7847bb5f6df8d99633877e01d9d9fcc0",
+      "report_sha256": "69a250cdd22b947e50f1b2f44174ffb6ae0f72f05fa3de3b0bfc87e40684895f",
+      "exit": 0,
+      "total_findings": 145,
+      "helper_probe_count": 75,
+      "helper_construction_return_rows": [
+        {
+          "id": "probe:src_github_delivery.rs:return_value:1d1ef742",
+          "line": 1532,
+          "family": "return_value",
+          "expression": "Ok(ScriptedTransport {",
+          "related_test_count": 8
+        },
+        {
+          "id": "probe:src_github_delivery.rs:field_construction:c89c063a",
+          "line": 1533,
+          "family": "field_construction",
+          "expression": "gets: VecDeque::from([",
+          "related_test_count": 8
+        },
+        {
+          "id": "probe:src_github_delivery.rs:return_value:bf9d7761",
+          "line": 1533,
+          "family": "return_value",
+          "expression": "gets: VecDeque::from([",
+          "related_test_count": 8
+        },
+        {
+          "id": "probe:src_github_delivery.rs:field_construction:7768530b",
+          "line": 1534,
+          "family": "field_construction",
+          "expression": "serde_json::json!({\"head\": {\"sha\": HEAD}}),",
+          "related_test_count": 8
+        },
+        {
+          "id": "probe:src_github_delivery.rs:return_value:b3232eec",
+          "line": 1534,
+          "family": "return_value",
+          "expression": "serde_json::json!({\"head\": {\"sha\": HEAD}}),",
+          "related_test_count": 8
+        },
+        {
+          "id": "probe:src_github_delivery.rs:field_construction:54c60469",
+          "line": 1535,
+          "family": "field_construction",
+          "expression": "returned(\"exact body\"),",
+          "related_test_count": 8
+        },
+        {
+          "id": "probe:src_github_delivery.rs:return_value:229745b3",
+          "line": 1535,
+          "family": "return_value",
+          "expression": "returned(\"exact body\"),",
+          "related_test_count": 8
+        },
+        {
+          "id": "probe:src_github_delivery.rs:field_construction:7768530b.2",
+          "line": 1536,
+          "family": "field_construction",
+          "expression": "serde_json::json!({\"head\": {\"sha\": HEAD}}),",
+          "related_test_count": 8
+        },
+        {
+          "id": "probe:src_github_delivery.rs:return_value:b3232eec.2",
+          "line": 1536,
+          "family": "return_value",
+          "expression": "serde_json::json!({\"head\": {\"sha\": HEAD}}),",
+          "related_test_count": 8
+        },
+        {
+          "id": "probe:src_github_delivery.rs:field_construction:0f2afd77",
+          "line": 1537,
+          "family": "field_construction",
+          "expression": "]),",
+          "related_test_count": 8
+        },
+        {
+          "id": "probe:src_github_delivery.rs:return_value:ce95f93c",
+          "line": 1537,
+          "family": "return_value",
+          "expression": "]),",
+          "related_test_count": 8
+        },
+        {
+          "id": "probe:src_github_delivery.rs:field_construction:6ca7657f",
+          "line": 1538,
+          "family": "field_construction",
+          "expression": "sends: VecDeque::from([",
+          "related_test_count": 8
+        },
+        {
+          "id": "probe:src_github_delivery.rs:return_value:d983edfb",
+          "line": 1538,
+          "family": "return_value",
+          "expression": "sends: VecDeque::from([",
+          "related_test_count": 8
+        },
+        {
+          "id": "probe:src_github_delivery.rs:field_construction:ee491a1d",
+          "line": 1539,
+          "family": "field_construction",
+          "expression": "scripted_output(r#\"{\"id\":987}\"#, true)?,",
+          "related_test_count": 8
+        },
+        {
+          "id": "probe:src_github_delivery.rs:return_value:9095d579",
+          "line": 1539,
+          "family": "return_value",
+          "expression": "scripted_output(r#\"{\"id\":987}\"#, true)?,",
+          "related_test_count": 8
+        },
+        {
+          "id": "probe:src_github_delivery.rs:field_construction:83ee4cc2",
+          "line": 1540,
+          "family": "field_construction",
+          "expression": "scripted_output(r#\"{\"id\":987,\"state\":\"commented\"}\"#, true)?,",
+          "related_test_count": 8
+        },
+        {
+          "id": "probe:src_github_delivery.rs:return_value:bf9b065d",
+          "line": 1540,
+          "family": "return_value",
+          "expression": "scripted_output(r#\"{\"id\":987,\"state\":\"commented\"}\"#, true)?,",
+          "related_test_count": 8
+        },
+        {
+          "id": "probe:src_github_delivery.rs:field_construction:0f2afd77.2",
+          "line": 1541,
+          "family": "field_construction",
+          "expression": "]),",
+          "related_test_count": 8
+        },
+        {
+          "id": "probe:src_github_delivery.rs:return_value:ce95f93c.2",
+          "line": 1541,
+          "family": "return_value",
+          "expression": "]),",
+          "related_test_count": 8
+        },
+        {
+          "id": "probe:src_github_delivery.rs:return_value:21824605",
+          "line": 1542,
+          "family": "return_value",
+          "expression": "})",
+          "related_test_count": 8
+        },
+        {
+          "id": "probe:src_github_delivery.rs:return_value:099f212b",
+          "line": 1571,
+          "family": "return_value",
+          "expression": "Ok(())",
+          "related_test_count": 8
+        }
+      ]
+    }
+  ],
+  "historical_release_archive_sha256": "3a75096539009bbfca879de4b66aaf036004287a32348b7e224f90741255a742",
+  "hosted": {
+    "run": 38490221331,
+    "job": 115613391577,
+    "checkout": "64614cd226a65d3c0cb0fc6f5323071cf6560214",
+    "producer": "ripr 0.10.0",
+    "new_unsuppressed": 13,
+    "maximum": 0,
+    "artifact": 11861064638,
+    "artifact_sha256": "8c3187af64823a94d4cdd2a4cfa2bc1789e54d1d139164ffce0dc3aea29119f8",
+    "not_claimed": "same-input gate replay or current-main gate clearance",
+    "materialized_job_log_sha256": "6598a8abf87e64ab063430a154107aa08007659ce1040dca2608b9f6d8c5545e",
+    "artifact_bytes_inspected": false
+  },
+  "reduced_native_controls": [
+    {
+      "case": "direct-correct",
+      "source_sha256": "bcf60c60873600694f2426492a474cd961b47efb12dd838cda4545c1529a5b48",
+      "compile_exit": 0,
+      "run_exit": 0,
+      "tests": 1,
+      "ignored": 0
+    },
+    {
+      "case": "direct-mutant",
+      "source_sha256": "60ec803dd454596125966b0ea1a43d435dba843af24439194c123e18cf4cd7d0",
+      "compile_exit": 0,
+      "run_exit": 101,
+      "tests": 1,
+      "ignored": 0
+    },
+    {
+      "case": "plain-correct",
+      "source_sha256": "273dbe161a71c50f42be18c6784c801f7b67550e483564f1fbc7394caaf7bec6",
+      "compile_exit": 0,
+      "run_exit": 0,
+      "tests": 1,
+      "ignored": 0
+    },
+    {
+      "case": "plain-mutant",
+      "source_sha256": "2488429a75e83733a132446b4c6bdf7ad1d682a6353a5e9219b26ec3bcc01bd7",
+      "compile_exit": 0,
+      "run_exit": 101,
+      "tests": 1,
+      "ignored": 0
+    },
+    {
+      "case": "factory-correct",
+      "source_sha256": "07b630036a7dfbe80e5710e3d6380a2878f43d516e11dd2b84b716c20ced5c46",
+      "compile_exit": 0,
+      "run_exit": 0,
+      "tests": 1,
+      "ignored": 0
+    },
+    {
+      "case": "factory-mutant",
+      "source_sha256": "3be5b93395fb42086ab87e8e154ddafc312d6efc143be9fda45c9761310f1db9",
+      "compile_exit": 0,
+      "run_exit": 101,
+      "tests": 1,
+      "ignored": 0
+    },
+    {
+      "case": "sibling-correct",
+      "source_sha256": "0c6623c2da1e4ab0cd59db043b06463535c5ea1f64e4309311071501af7312ee",
+      "compile_exit": 0,
+      "run_exit": 0,
+      "tests": 1,
+      "ignored": 0
+    },
+    {
+      "case": "sibling-mutant",
+      "source_sha256": "593901f5cfe5be42c81b0d6ce59beaa1310db2ae39ecbece6199eebc4eea35f6",
+      "compile_exit": 0,
+      "run_exit": 101,
+      "tests": 1,
+      "ignored": 0
+    },
+    {
+      "case": "uninvoked-correct",
+      "source_sha256": "cde8eff3beaf38e2370a009572df48515282330c7f5c8ea672f4a6cf102b535e",
+      "compile_exit": 0,
+      "run_exit": 0,
+      "tests": 1,
+      "ignored": 0
+    },
+    {
+      "case": "uninvoked-mutant",
+      "source_sha256": "9a62d372ae9dfccf9fb81c10e1209754a285bf53cb64d847f0574ccfb17d8944",
+      "compile_exit": 0,
+      "run_exit": 0,
+      "tests": 1,
+      "ignored": 0
+    },
+    {
+      "case": "wrong_binding-correct",
+      "source_sha256": "db3b84df010019618f50e6c3ed5812d6f79e3819e4b20fb44af91ca8b33d0fc8",
+      "compile_exit": 0,
+      "run_exit": 0,
+      "tests": 1,
+      "ignored": 0
+    },
+    {
+      "case": "wrong_binding-mutant",
+      "source_sha256": "0e4185f4837459e77df1cb2af125d66626ffdd399fe17acee6bd6905a1288cab",
+      "compile_exit": 0,
+      "run_exit": 0,
+      "tests": 1,
+      "ignored": 0
+    },
+    {
+      "case": "wrong_binding_inline-correct",
+      "source_sha256": "4fbd38577b2f14a877965d6c48907a2d06458f25bd5ae8403018e6c897d1f78f",
+      "compile_exit": 0,
+      "run_exit": 0,
+      "tests": 1,
+      "ignored": 0
+    },
+    {
+      "case": "wrong_binding_inline-mutant",
+      "source_sha256": "9c93268d90b7cd604e7808e0689b1409e9d473c305199ae4e70a45047214d032",
+      "compile_exit": 0,
+      "run_exit": 0,
+      "tests": 1,
+      "ignored": 0
+    }
+  ],
+  "full_diff": "diff --git a/src/github_delivery.rs b/src/github_delivery.rs\nindex e024cd4..e29796e 100644\n--- a/src/github_delivery.rs\n+++ b/src/github_delivery.rs\n@@ -187,6 +187,9 @@ fn execute_pending_review_delivery_with_transport(\n     // has no new inline comments, deliver the replies directly and retain the\n     // exact current-head receipt packet without manufacturing a review id.\n     if !review.comments.is_empty() && remaining_inline.is_empty() {\n+        if !remaining_replies.is_empty() {\n+            reserve_delivery_attempt(args, api, repo, pull_number, &expected_head, api_payload)?;\n+        }\n         let replies = execute_reply_deliveries(\n             ReplyDeliveryContext {\n                 args,\n@@ -252,6 +255,7 @@ fn execute_pending_review_delivery_with_transport(\n     let pending_payload_path = args.out.join(\"delivery-pending-review-payload.json\");\n     write_json(&pending_payload_path, &pending_payload)?;\n \n+    reserve_delivery_attempt(args, api, repo, pull_number, &expected_head, api_payload)?;\n     let mut review_id = None;\n     let result = (|| -> Result<PendingReviewPostOutcome> {\n         let pending = transport.send_json(\n@@ -424,6 +428,49 @@ fn execute_pending_review_delivery_with_transport(\n     }\n }\n \n+// Reserve before the first remote write, retaining even a partial reservation\n+// after failure. An absent response cannot prove the server did not publish.\n+// Exact receipted reuse happens before this boundary; another write requires\n+// explicit reconciliation of the previous attempt, never an automatic retry.\n+fn reserve_delivery_attempt(\n+    args: &PostArgs,\n+    api: &str,\n+    repo: &str,\n+    pull_number: u64,\n+    exact_head_sha: &str,\n+    payload: &GitHubReviewPostPayload,\n+) -> Result<()> {\n+    use std::io::Write;\n+\n+    let reservation = serde_json::to_vec_pretty(&serde_json::json!({\n+        \"schema\": \"ub-review.delivery_attempt.v1\",\n+        \"api\": api,\n+        \"repo\": repo,\n+        \"pull_number\": pull_number,\n+        \"exact_head_sha\": exact_head_sha,\n+        \"payload_digest\": sha256_hex(&serde_json::to_vec(payload)?),\n+    }))?;\n+    fs::create_dir_all(&args.out)?;\n+    let path = args.out.join(\"delivery-attempt.json\");\n+    let mut file = fs::OpenOptions::new()\n+        .write(true)\n+        .create_new(true)\n+        .open(&path)\n+        .with_context(|| {\n+            format!(\n+                \"reserve {}; reconcile the previous delivery attempt before another GitHub write\",\n+                path.display()\n+            )\n+        })?;\n+    file.write_all(&reservation)?;\n+    file.sync_all()?;\n+    // Unix permits syncing the containing directory as well as the new file.\n+    // Other platforms retain process-retry safety without a crash guarantee.\n+    #[cfg(unix)]\n+    fs::File::open(&args.out)?.sync_all()?;\n+    Ok(())\n+}\n+\n fn load_claim_graph(args: &PostArgs) -> Result<serde_json::Value> {\n     let graph_path = args\n         .review_json\n@@ -628,6 +675,20 @@ fn prior_confirmed_deliveries(\n             receipts.extend(array.iter().cloned());\n         }\n     }\n+    let reserved_attempt = args.out.join(\"delivery-attempt.json\").exists();\n+    let transaction_path = args.out.join(\"delivery-transaction.json\");\n+    let inline_submission_confirmed = if reserved_attempt {\n+        if transaction_path.exists() {\n+            let value: serde_json::Value = serde_json::from_slice(&fs::read(&transaction_path)?)?;\n+            let transaction: DeliveryTransaction = serde_json::from_value(value.clone())?;\n+            transaction.state() == &DeliveryTransactionState::ReceiptsPersisted\n+                && value[\"exact_head_sha\"] == exact_head_sha\n+        } else {\n+            false\n+        }\n+    } else {\n+        true\n+    };\n     let mut confirmed = Vec::new();\n     for item in planned {\n         let identity = serde_json::to_value(item)?;\n@@ -647,7 +708,11 @@ fn prior_confirmed_deliveries(\n                     == Some(&serde_json::Value::String(exact_head_sha.to_owned()))\n                 && receipt.get(\"comment_id\").is_some()\n         });\n-        if current.is_some() && (receipt_match || item.action() == DeliveryAction::Reply) {\n+        if current.is_some()\n+            && ((receipt_match\n+                && (item.action() == DeliveryAction::Reply || inline_submission_confirmed))\n+                || (item.action() == DeliveryAction::Reply && !reserved_attempt))\n+        {\n             confirmed.push(item.clone());\n         }\n     }\n@@ -1441,6 +1506,192 @@ mod tests {\n         })\n     }\n \n+    #[test]\n+    fn lost_submission_response_retry_never_sends_another_review() -> Result<()> {\n+        uncertain_delivery_retry(false)\n+    }\n+\n+    #[test]\n+    fn receipt_write_failure_retry_never_sends_another_review() -> Result<()> {\n+        uncertain_delivery_retry(true)\n+    }\n+\n+    fn uncertain_delivery_retry(receipt_write_failure: bool) -> Result<()> {\n+        {\n+            let temp = tempfile::tempdir()?;\n+            fs::write(\n+                temp.path().join(\"claim_graph.json\"),\n+                serde_json::to_vec(&graph_for(\"src/lib.rs\", 12, \"inline\", HEAD))?,\n+            )?;\n+            let args = delivery_args(temp.path(), \"http://scripted\");\n+            if receipt_write_failure {\n+                fs::create_dir_all(args.out.join(\"post-stdout.json\"))?;\n+            }\n+            let (review, payload) = delivery_review();\n+            let make_transport = || -> Result<ScriptedTransport> {\n+                Ok(ScriptedTransport {\n+                    gets: VecDeque::from([\n+                        serde_json::json!({\"head\": {\"sha\": HEAD}}),\n+                        returned(\"exact body\"),\n+                        serde_json::json!({\"head\": {\"sha\": HEAD}}),\n+                    ]),\n+                    sends: VecDeque::from([\n+                        scripted_output(r#\"{\"id\":987}\"#, true)?,\n+                        scripted_output(r#\"{\"id\":987,\"state\":\"commented\"}\"#, true)?,\n+                    ]),\n+                })\n+            };\n+            let mut first = make_transport()?;\n+            if !receipt_write_failure {\n+                // The server accepted submission; its response was lost in transit.\n+                first.sends[1] = scripted_output(\"\", false)?;\n+                first.sends.push_back(scripted_output(\"\", false)?);\n+            }\n+            ensure!(\n+                execute_pending_review_delivery_with_transport(\n+                    &args, &review, &payload, &mut first\n+                )\n+                .is_err(),\n+                \"uncertain delivery claimed success\"\n+            );\n+            ensure!(!args.out.join(\"delivery-receipts.json\").exists());\n+            if receipt_write_failure {\n+                fs::remove_dir(args.out.join(\"post-stdout.json\"))?;\n+            }\n+            let mut retry = make_transport()?;\n+            let result = execute_pending_review_delivery_with_transport(\n+                &args, &review, &payload, &mut retry,\n+            );\n+            ensure!(\n+                retry.sends.len() == 2,\n+                \"retry sent duplicate review after receipt_write_failure={receipt_write_failure}\"\n+            );\n+            ensure!(result.is_err(), \"uncertain delivery retry claimed success\");\n+        }\n+        Ok(())\n+    }\n+\n+    #[test]\n+    fn delivery_reservation_is_exclusive_and_contains_no_token() -> Result<()> {\n+        let temp = tempfile::tempdir()?;\n+        let args = delivery_args(temp.path(), \"http://scripted\");\n+        let (_, payload) = delivery_review();\n+        reserve_delivery_attempt(&args, \"http://scripted\", \"owner/repo\", 42, HEAD, &payload)?;\n+        let bytes = fs::read(args.out.join(\"delivery-attempt.json\"))?;\n+        let value: serde_json::Value = serde_json::from_slice(&bytes)?;\n+        ensure!(\n+            value[\"schema\"] == \"ub-review.delivery_attempt.v1\",\n+            \"reservation schema changed\"\n+        );\n+        ensure!(value[\"api\"] == \"http://scripted\", \"reservation API changed\");\n+        ensure!(value[\"repo\"] == \"owner/repo\" && value[\"pull_number\"] == 42);\n+        ensure!(value[\"exact_head_sha\"] == HEAD);\n+        ensure!(value[\"payload_digest\"] == sha256_hex(&serde_json::to_vec(&payload)?));\n+        ensure!(!String::from_utf8_lossy(&bytes).contains(\"test-token\"));\n+        ensure!(\n+            reserve_delivery_attempt(&args, \"http://scripted\", \"owner/repo\", 42, HEAD, &payload)\n+                .is_err()\n+        );\n+        ensure!(fs::read(args.out.join(\"delivery-attempt.json\"))? == bytes);\n+        Ok(())\n+    }\n+\n+    #[test]\n+    fn body_only_delivery_retry_and_unwritable_reservation_never_post() -> Result<()> {\n+        for prior_success in [false, true] {\n+            let temp = tempfile::tempdir()?;\n+            let args = delivery_args(temp.path(), \"http://scripted\");\n+            let (mut review, mut payload) = delivery_review();\n+            review.comments.clear();\n+            payload.comments.clear();\n+            let mut first = ScriptedTransport {\n+                gets: VecDeque::from([\n+                    serde_json::json!({\"head\": {\"sha\": HEAD}}),\n+                    serde_json::json!([]),\n+                    serde_json::json!({\"head\": {\"sha\": HEAD}}),\n+                ]),\n+                sends: VecDeque::from([\n+                    scripted_output(r#\"{\"id\":987}\"#, true)?,\n+                    scripted_output(r#\"{\"id\":987,\"state\":\"commented\"}\"#, true)?,\n+                ]),\n+            };\n+            if prior_success {\n+                execute_pending_review_delivery_with_transport(\n+                    &args, &review, &payload, &mut first,\n+                )?;\n+                ensure!(first.sends.is_empty());\n+            } else {\n+                fs::create_dir_all(args.out.join(\"delivery-attempt.json\"))?;\n+            }\n+            let mut retry = ScriptedTransport {\n+                gets: VecDeque::from([\n+                    serde_json::json!({\"head\": {\"sha\": HEAD}}),\n+                    serde_json::json!([]),\n+                ]),\n+                sends: VecDeque::from([scripted_output(r#\"{\"id\":988}\"#, true)?]),\n+            };\n+            let result = execute_pending_review_delivery_with_transport(\n+                &args, &review, &payload, &mut retry,\n+            );\n+            ensure!(result.is_err());\n+            ensure!(result.err().is_some_and(|error| {\n+                format!(\"{error:#}\").contains(\"reconcile the previous delivery attempt\")\n+            }));\n+            ensure!(\n+                retry.sends.len() == 1,\n+                \"body-only retry created another review\"\n+            );\n+        }\n+        Ok(())\n+    }\n+\n+    #[test]\n+    fn unreceipted_reply_after_response_loss_cannot_claim_delivery() -> Result<()> {\n+        let temp = tempfile::tempdir()?;\n+        let args = delivery_args(temp.path(), \"http://scripted\");\n+        let mut graph = graph_for(\"src/lib.rs\", 12, \"reply\", HEAD);\n+        graph[\"topics\"][0][\"planned_thread_id\"] = serde_json::json!(\"123\");\n+        fs::write(\n+            temp.path().join(\"claim_graph.json\"),\n+            serde_json::to_vec(&graph)?,\n+        )?;\n+        let (review, payload) = delivery_review();\n+        let source = serde_json::json!({\n+            \"id\": 123, \"path\": \"src/lib.rs\", \"line\": 12, \"side\": \"RIGHT\",\n+            \"commit_id\": HEAD, \"body\": \"prior finding\"\n+        });\n+        let mut first = ScriptedTransport {\n+            gets: VecDeque::from([\n+                serde_json::json!({\"head\": {\"sha\": HEAD}}),\n+                serde_json::json!([source.clone()]),\n+            ]),\n+            sends: VecDeque::from([scripted_output(\"\", false)?]),\n+        };\n+        ensure!(\n+            execute_pending_review_delivery_with_transport(&args, &review, &payload, &mut first)\n+                .is_err()\n+        );\n+        ensure!(!args.out.join(\"delivery-reply-receipts.json\").exists());\n+        let mut retry = ScriptedTransport {\n+            gets: VecDeque::from([\n+                serde_json::json!({\"head\": {\"sha\": HEAD}}),\n+                serde_json::json!([source, {\n+                    \"id\": 456, \"path\": \"src/lib.rs\", \"line\": 12, \"side\": \"RIGHT\",\n+                    \"commit_id\": HEAD, \"body\": \"exact body\", \"in_reply_to_id\": 123\n+                }]),\n+                serde_json::json!({\"head\": {\"sha\": HEAD}}),\n+            ]),\n+            sends: VecDeque::from([scripted_output(\"\", false)?]),\n+        };\n+        ensure!(\n+            execute_pending_review_delivery_with_transport(&args, &review, &payload, &mut retry)\n+                .is_err(),\n+            \"response loss plus missing receipt was called delivered\"\n+        );\n+        ensure!(retry.sends.len() == 1, \"unreceipted reply was posted again\");\n+        Ok(())\n+    }\n+\n     #[test]\n     fn generic_transport_path_preserves_receipts_and_payload_boundaries() -> Result<()> {\n         let temp = tempfile::tempdir()?;\n@@ -2175,6 +2426,26 @@ mod tests {\n             prior_confirmed_deliveries(&args, &planned, Some(&current), HEAD)?.len() == 1,\n             \"exact current receipt was not reused\"\n         );\n+        let (_, payload) = delivery_review();\n+        reserve_delivery_attempt(&args, \"http://scripted\", \"owner/repo\", 42, HEAD, &payload)?;\n+        let mut transaction = DeliveryTransaction::new(HEAD, planned.clone())?;\n+        for state in [\n+            DeliveryTransactionState::PendingReviewCreated,\n+            DeliveryTransactionState::CommentsCreated,\n+            DeliveryTransactionState::CommentsReconciled,\n+            DeliveryTransactionState::HeadRevalidated,\n+        ] {\n+            transaction.transition(state)?;\n+        }\n+        write_transaction(&args.out, &transaction)?;\n+        ensure!(\n+            prior_confirmed_deliveries(&args, &planned, Some(&current), HEAD)?.is_empty(),\n+            \"pre-submission reconciliation was falsely reused as delivered\"\n+        );\n+        transaction.transition(DeliveryTransactionState::Submitted)?;\n+        transaction.transition(DeliveryTransactionState::ReceiptsPersisted)?;\n+        write_transaction(&args.out, &transaction)?;\n+        ensure!(prior_confirmed_deliveries(&args, &planned, Some(&current), HEAD)?.len() == 1);\n         let stale_current = serde_json::json!([{\n             \"id\": 456,\n             \"path\": \"src/lib.rs\",\n",
+  "current_main_repeat": {
+    "binary_sha256": "0b425edadb20a4f66297406771b7bce8d8dc889702016fc9f68fd0a710511410",
+    "report_sha256": "0db9acd1e210d112effd79a8a7eb1489ae10d6c4efc93516d63a6be466a6e3a1",
+    "total_findings": 40,
+    "helper_probe_count": 0,
+    "exit": 0,
+    "binary_retention": "readonly frozen executable, source rebuilt at exact clean producer base; initial41a6... executable was overwritten by Cargo, initial report retained",
+    "same_findings_as_initial": true
+  }
+}

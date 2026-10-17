@@ -60,37 +60,55 @@ mutants, and it does not prove that a test would fail.
 
 ## The first useful run
 
-Install the published CLI (the prebuilt archive below is faster and needs no Rust), then run it in a Rust repository on a branch with
+Install the published CLI, then run it in a Rust repository on a branch with
 committed changes. The 0.10 release resolves its default base by trying
 `origin/HEAD`, then `origin/main`, `origin/master`, `main`, and `master`; use
-`--base REF` to choose another existing branch or commit:
+`--base REF` to choose another existing branch or commit.
 
-```bash
-cargo install ripr
-ripr check
-```
-
-Faster, with no Rust toolchain: download the prebuilt 0.10.0
-archive (about a second here, against about two minutes to compile). This
-example is Linux x86-64; the release also has macOS and Windows archives
-([asset list](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.10.0)):
+The fastest route needs no Rust toolchain: download the checksummed prebuilt
+0.10.0 archive (about a second here, against about two minutes to compile
+0.10.0 from source). This example is Linux x86-64; the release also has macOS
+and Windows archives
+([asset list](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.10.0)).
+On macOS set `t=aarch64-apple-darwin` (Apple silicon) or
+`t=x86_64-apple-darwin` (Intel); macOS ships `shasum`, not `sha256sum`, so the
+verify step falls back to `shasum -a 256`:
 
 ```bash
 v=0.10.0; t=x86_64-unknown-linux-gnu; f=ripr-server-v$v-$t.tar.gz
 b=https://github.com/EffortlessMetrics/ripr/releases/download/v$v
 curl -fsSLO $b/$f && curl -fsSLO $b/$f.sha256
-echo "$(cat $f.sha256)  $f" | sha256sum -c - && tar xzf $f   # puts ./ripr here; move it onto your PATH
+echo "$(cat $f.sha256)  $f" | { sha256sum -c - || shasum -a 256 -c -; } && tar xzf $f \
+  && export PATH="$PWD:$PATH"   # ./ripr is now first on PATH for this shell
+ripr check
 ```
 
-Once the matching 0.11.0 release asset is published, the same URLs work with the
-new version and `cargo binstall ripr` downloads the archive. If the asset is not
-available, `cargo binstall` compiles from source, like `cargo install`.
+The macOS archives are not signed or notarized. A `curl` and `tar` download like
+the one above normally carries no quarantine attribute, so `./ripr` runs
+without a prompt. A browser, AirDrop or mail download of the archive is
+quarantined, and Gatekeeper then blocks the extracted `ripr` with a dialog such
+as "Apple could not verify "ripr" is free of malware" or ""ripr" cannot be
+opened because the developer cannot be verified". Verify the checksum first,
+then clear the attribute with `xattr -d com.apple.quarantine ./ripr` (or
+`xattr -dr com.apple.quarantine <extracted-dir>`). Do that only for an archive
+whose `.sha256` matched.
+
+`cargo xtask first-run --install-archive 0.10.0` replays this route end to end
+and times it. With Rust 1.95 or newer you can instead run `cargo install ripr`,
+which compiles from source. Once the matching 0.11.0 release asset is published,
+the same URLs work with the new version and `cargo binstall ripr` downloads the
+archive. If the asset is not available, `cargo binstall` compiles from source,
+like `cargo install`.
 
 Read the changed behavior, the related tests, and the recommended next test.
 No configuration file is required. `ripr check` is advisory: it exits 0 whether
 or not it finds a gap, and exit 2 means the analysis could not complete. On the
 base branch itself there are no changed files, and ripr says so. A result with
 no findings or limited evidence is not a clean bill of health.
+
+Use `ripr doctor` to diagnose setup when a check cannot complete; it is not a
+required step before analysis. For whole-repository exploration when there is
+no active diff, use `ripr pilot --root .` with the development build below.
 
 Cargo installation requires Rust 1.95 or newer; the diff workflow needs Git.
 See the [CLI quickstart](docs/QUICKSTART.md#cli-first-hour) for choosing a base,
@@ -106,9 +124,16 @@ shown above, `--worktree`, and the repair steps below need a development build:
 cargo install --locked --git https://github.com/EffortlessMetrics/ripr-swarm ripr
 ```
 
-This compiles from source in the workspace, with its fat-LTO release profile.
-A `cargo build --release` there took about 12 minutes (751 s) on a cold 4-core
-Linux container in October 2026 (`cargo install ripr` for 0.10.0 took about 2
+In this development build, `ripr check` uses uncommitted tracked edits when
+present, otherwise committed history against the default base. On a clean
+checkout of the base branch, edit a tracked source file, then run `ripr check`
+to inspect that change. Stage a new file with `git add -N PATH` to include it.
+No commit or configuration file is needed for this edit-and-check loop.
+
+Installing from Git compiles in the workspace, with its thin-LTO release profile
+(16 codegen units); a cold `cargo build --release` there took about 6 minutes
+(366 s) on a 4-core Linux container in October 2026, against 17 minutes (1037 s)
+for the earlier fat-LTO single-codegen-unit profile (`cargo install ripr` for 0.10.0 took about 2
 minutes on an earlier run). The packaged 0.11.0 crate drops that profile, so
 `cargo install ripr --locked` should build in about 4.6 minutes (275 s) once
 0.11.0 is on crates.io (measured by building the packaged crate with
@@ -142,14 +167,17 @@ complete paths, including read-only [MCP status](docs/interop/mcp.md).
 
 ```bash
 ripr check
-ripr pilot --root .
 ```
 
 `check` reports gaps in the current change and prints the `ripr explain` and
 `ripr context` commands for the top finding; add `--format json` for
 machine-readable results that embed the same bounded `canonical_next_action`
-(class, selected item, root, diff source, and followable route). `pilot`
-names one supported repair or explains why none is ready. Run the follow-up
+(class, selected item, root, diff source, and followable route).
+`ripr doctor --json` carries the same `canonical_next_action` when setup needs
+a precise recovery, matching the human Safe-next-action line.
+For whole-repository exploration or a supported repair route, use
+`ripr pilot --root .`; it names one supported repair or explains why none is
+ready. Run the follow-up
 commands ripr prints
 (`ripr explain`, `ripr context`, `ripr agent repair ...`) exactly as printed:
 their IDs belong to that run and cannot be copied from documentation.
@@ -204,7 +232,7 @@ a promise that every surface is available from the published package.
 | Rust | Static analysis and bounded test-only repair are `usable alpha`. Repairs require a valid route; ordinary real-repository route yield and success remain unestablished. |
 | Python | Analysis is `preview`. Selected pytest/unittest repair routes are `usable alpha`; a finding without a complete route has no repair card. |
 | TypeScript / JavaScript | Opt-in `preview` analysis. When a finding has a complete repair packet, `check` names the test file, the missing case, and the test command to run. |
-| Perl | `preview` / advisory development only. It needs a `lang-perl` build and the unpublished `perl-ripr-facts` exporter; no released build/exporter combination is usable yet. |
+| Perl | `preview` / advisory development only. It needs a `lang-perl` build and the unpublished `perl-ripr-facts` exporter (build it from `crates/perl-ripr-facts` in `EffortlessMetrics/perl-lsp` with `cargo build --release -p perl-ripr-facts`, put it on `PATH`, and set `[languages] enabled = ["perl"]` plus `[perl] producer = "perl-ripr-facts"`); no released build/exporter combination is usable yet. |
 
 With no `ripr.toml`, ripr analyzes Rust and also enables Python preview when
 it detects Python project markers or Python source under `src/` or `tests/`;

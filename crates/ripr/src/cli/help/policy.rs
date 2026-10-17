@@ -94,10 +94,11 @@ Options:
   --out-md PATH                       Markdown output path. Defaults to --out with .md extension.
 
 The gate evaluator is read-only policy over existing RIPR evidence. It writes
-JSON and Markdown before returning a non-zero exit for `blocked` or
-`config_error` decisions. A `--root` that does not exist or is not a directory
-fails closed with exit 2 and a message naming the root; evaluation does not
-start and no decision report is written. It does not post comments, edit source,
+JSON and Markdown before returning exit 3 for a completed `blocked` decision
+or exit 2 for a completed `config_error` (evaluation could not complete). A
+`--root` that does not exist or is not a directory fails closed with exit 2
+and a message naming the root; evaluation does not start and no decision
+report is written. It does not post comments, edit source,
 generate tests, run mutation testing, upload SARIF, mutate GitHub state, or
 change generated workflow defaults.
 

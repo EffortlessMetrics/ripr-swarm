@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 mod collection_argument;
-pub(in crate::analysis) use collection_argument::assertion_observes_collection_argument;
+pub(in crate::analysis) use collection_argument::{
+    assertion_observes_collection_argument, mutexed_assertion_observes_collection_argument,
+};
 
 const SCHEMA_VERSION: u16 = 1;
 
@@ -31,6 +33,9 @@ pub(in crate::analysis) struct PropagationWitnessV1 {
     /// Exact rule-7a observer provenance; absent preserves existing digests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(in crate::analysis) fallible_check: Option<super::FallibleCheckReceipt>,
+    /// Exact one-hop field/observer receipt; absent preserves previous digests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in crate::analysis) field_projection: Option<super::FieldProjectionReceipt>,
     pub(in crate::analysis) sink: PropagationEndpoint,
     pub(in crate::analysis) completeness: PathCompleteness,
     pub(in crate::analysis) limitations: Vec<String>,
@@ -128,9 +133,27 @@ impl PathCompleteness {
 /// exact owner, has a family-compatible kind, and shares a semantic token with
 /// the changed expression.  In particular, a compatible oracle or a sibling
 /// sink is not enough to manufacture a witness.
+///
+/// Test callers read it with no declared error variant
+/// ([`current_path_witness_with`]).
+#[cfg(test)]
 pub(in crate::analysis) fn current_path_witness(
     probe: &Probe,
     flow_sinks: &[FlowSinkFact],
+) -> Option<PropagationWitnessV1> {
+    current_path_witness_with(probe, flow_sinks, &|_| false)
+}
+
+/// [`current_path_witness`] with `declared_error_variant`: for an error
+/// variant path (`ConfigError::MissingEquals`), whether its qualifier
+/// resolves, in the owner's file, to a declared workspace enum that declares
+/// that variant. Only such a construction completes the #7063 on-line error
+/// witness ([`constructs_its_error_on_its_line`]); an alias, a `type` alias,
+/// `Self::` or a module path keeps the candidate witness.
+pub(in crate::analysis) fn current_path_witness_with(
+    probe: &Probe,
+    flow_sinks: &[FlowSinkFact],
+    declared_error_variant: &dyn Fn(&str) -> bool,
 ) -> Option<PropagationWitnessV1> {
     let owner = probe.owner.clone()?;
     // #6695: a statement-level `.ok_or(Type::Variant)?` returns exactly
@@ -167,13 +190,19 @@ pub(in crate::analysis) fn current_path_witness(
                     && source_sink_tokens_overlap(&probe.expression, &sink.text)
                     && !opaque_path_text(&probe.expression)
                     && !opaque_path_text(&sink.text)
-                    || unchanged_closure_tail(probe, sink)))
+                    || unchanged_closure_tail(probe, sink)
+                    // #7063: the payload-carrying source and its
+                    // variant-named sink share no path identity.
+                    || constructs_its_error_on_its_line(probe, sink, declared_error_variant)))
     })?;
 
     let edge_kind = edge_kind_for_sink(&sink.kind)?;
     let source_identity = normalize_semantic_text(&probe.expression);
     let sink_identity = normalize_semantic_text(&sink.text);
-    let edge_status = if is_question_mark_sink(sink) || returns_itself_on_its_line(probe, sink) {
+    let edge_status = if is_question_mark_sink(sink)
+        || returns_itself_on_its_line(probe, sink)
+        || constructs_its_error_on_its_line(probe, sink, declared_error_variant)
+    {
         EdgeStatus::Established
     } else {
         edge_status_for_kind(&edge_kind, &source_identity, &sink_identity)
@@ -211,6 +240,7 @@ pub(in crate::analysis) fn current_path_witness(
         },
         selected_helper_calls: Vec::new(),
         fallible_check: None,
+        field_projection: None,
         edges: vec![PropagationEdge {
             kind: edge_kind.clone(),
             status: edge_status,
@@ -268,6 +298,7 @@ pub(in crate::analysis) fn fallible_literal_witness(
         }],
         selected_helper_calls: Vec::new(),
         fallible_check: Some(receipt.clone()),
+        field_projection: None,
         sink: PropagationEndpoint {
             kind: sink.kind.as_str().into(),
             identity,
@@ -355,6 +386,7 @@ pub(in crate::analysis) fn constant_tail_witness(
         }],
         selected_helper_calls: Vec::new(),
         fallible_check: None,
+        field_projection: None,
         sink: PropagationEndpoint {
             kind: sink.kind.as_str().into(),
             identity,
@@ -484,6 +516,7 @@ pub(in crate::analysis) fn format_tail_witness(
         }],
         selected_helper_calls: Vec::new(),
         fallible_check: None,
+        field_projection: None,
         sink: PropagationEndpoint {
             kind: sink.kind.as_str().into(),
             identity,
@@ -611,6 +644,7 @@ pub(in crate::analysis) fn returned_ledger_witness(
         },
         selected_helper_calls: Vec::new(),
         fallible_check: None,
+        field_projection: None,
         edges: vec![PropagationEdge {
             kind: PropagationEdgeKind::StructField,
             status: EdgeStatus::Candidate,
@@ -740,6 +774,44 @@ fn returns_itself_on_its_line(probe: &Probe, sink: &FlowSinkFact) -> bool {
         })
 }
 
+/// #7063: `return Err(E::V { line: idx + 1 });` on the changed line is one
+/// expression whose error-variant sink the flow producer names by its variant
+/// alone (`Result::Err(E::V)`), so the payload-carrying source and the sink
+/// never share an identity. The edge is established exactly as for
+/// [`returns_itself_on_its_line`]: the sink is the error variant on the
+/// probe's own line, the source is one `Err(..)` constructor (optionally
+/// after `return`) whose exact variant is the sink's, and its payload is
+/// call-free (no call, macro, closure or `?` that may drop the changed
+/// value). Whether a test observes the payload is reveal's question: a
+/// variant-only oracle does not (`payload_pin_required` in reveal).
+fn constructs_its_error_on_its_line(
+    probe: &Probe,
+    sink: &FlowSinkFact,
+    declared_error_variant: &dyn Fn(&str) -> bool,
+) -> bool {
+    if sink.kind != FlowSinkKind::ErrorVariant || sink.line != probe.location.line {
+        return false;
+    }
+    let source = normalize_semantic_text(&probe.expression);
+    let source = source.trim().trim_end_matches(';').trim_end();
+    let payload = source.strip_prefix("return ").unwrap_or(source).trim();
+    let Some(inner) = payload
+        .strip_prefix("Err(")
+        .and_then(|rest| rest.strip_suffix(')'))
+    else {
+        return false;
+    };
+    let call_free = !inner.trim().is_empty()
+        && !inner.contains(['(', ')', '!', '|', '?', ';', '"', '\''])
+        && inner.matches('{').count() <= 1
+        && inner.matches('{').count() == inner.matches('}').count();
+    call_free
+        && super::text::exact_error_variant(payload).is_some_and(|variant| {
+            normalize_semantic_text(&sink.text) == format!("Result::Err({variant})")
+                && declared_error_variant(&variant)
+        })
+}
+
 fn canonical_error_identity(text: &str) -> String {
     let normalized_text = normalize_semantic_text(text);
     let normalized = without_err_turbofish(normalized_text.trim_start_matches("return "));
@@ -764,6 +836,10 @@ pub(in crate::analysis) fn complete_direct_witness(
     witness.digest_matches()
         && witness
             .fallible_check
+            .as_ref()
+            .is_none_or(|receipt| receipt.valid_for(probe))
+        && witness
+            .field_projection
             .as_ref()
             .is_none_or(|receipt| receipt.valid_for(probe))
         && witness.schema_version == SCHEMA_VERSION
@@ -812,6 +888,7 @@ pub(in crate::analysis) fn valid_owner_bound_partial_witness(
     };
     witness.digest_matches()
         && witness.fallible_check.is_none()
+        && witness.field_projection.is_none()
         && witness.schema_version == SCHEMA_VERSION
         && witness.behavior.owner == *owner
         && witness.behavior.family == probe.family.as_str()
@@ -897,9 +974,68 @@ pub(in crate::analysis) fn is_direct_collection_state_write(
 /// subject must be exactly `receiver`, `receiver[..]` (or another index that
 /// ends there), or `receiver.<value-read>(..)`. A trailing operator after the
 /// first read, or `capacity`, does not observe the collection (#7135).
+#[cfg(test)]
 pub(in crate::analysis) fn assertion_observes_direct_collection(
     assertion_text: &str,
     receiver: &str,
+) -> bool {
+    assertion_observes_direct_collection_with_start(assertion_text, receiver, false, true)
+}
+
+/// Like [`assertion_observes_direct_collection`], but the test `body` may
+/// prove the receiver started empty, in which case a first-element read
+/// does observe the pushed element and keeps its credit.
+#[cfg(test)]
+pub(in crate::analysis) fn assertion_observes_direct_collection_in_test(
+    assertion_text: &str,
+    receiver: &str,
+    body: &str,
+) -> bool {
+    assertion_observes_direct_collection_with_start(
+        assertion_text,
+        receiver,
+        receiver_starts_empty_in_body(body, receiver),
+        true,
+    )
+}
+
+/// #6640: like [`assertion_observes_direct_collection_in_test`], but a
+/// pure count observation (`.len()`, `.is_empty()`) confirms the pushed
+/// payload only when `count_reads` holds. A changed argument leaves the
+/// count alone, so count credit belongs to a deleted write
+/// (`CallDeletion`), not to a value or side-effect payload change —
+/// the direct-collection mirror of the field-path `count_reads` split
+/// in [`assertion_field_collection_reads`].
+pub(in crate::analysis) fn assertion_observes_direct_collection_in_test_for_probe(
+    assertion_text: &str,
+    receiver: &str,
+    body: &str,
+    count_reads: bool,
+) -> bool {
+    assertion_observes_direct_collection_with_start(
+        assertion_text,
+        receiver,
+        receiver_starts_empty_in_body(body, receiver),
+        count_reads,
+    )
+}
+
+/// #6640: count-aware form of [`assertion_observes_direct_collection`]
+/// without a test body; see
+/// [`assertion_observes_direct_collection_in_test_for_probe`].
+pub(in crate::analysis) fn assertion_observes_direct_collection_for_probe(
+    assertion_text: &str,
+    receiver: &str,
+    count_reads: bool,
+) -> bool {
+    assertion_observes_direct_collection_with_start(assertion_text, receiver, false, count_reads)
+}
+
+fn assertion_observes_direct_collection_with_start(
+    assertion_text: &str,
+    receiver: &str,
+    starts_empty: bool,
+    count_reads: bool,
 ) -> bool {
     if !is_bare_ident(receiver) {
         return false;
@@ -908,6 +1044,224 @@ pub(in crate::analysis) fn assertion_observes_direct_collection(
         return false;
     };
     subject_names_collection(&subject, receiver)
+        && (count_reads || !reads_only_count(&subject))
+        && (starts_empty || !reads_only_first_element(&subject, receiver))
+}
+
+/// True when `body` proves `receiver` started empty: every assignment to
+/// it is a narrow empty construction (`Vec::new()`, `vec![]`,
+/// `Vec::with_capacity(..)`, `Vec::default()`, `VecDeque::new()`), at
+/// least one such assignment exists, the test never seeds the receiver
+/// itself (no push/extend/insert-style call or index write on it), and
+/// the receiver escapes as `&mut receiver` at most once (the owner call
+/// itself; a second mutable escape could seed it opaquely). Anything
+/// else is not proof.
+fn receiver_starts_empty_in_body(body: &str, receiver: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let bound_at = |at: usize| {
+        masked[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|before| !(ident(before) || before == '.'))
+    };
+    let name_ends = |at: usize| masked[at..].chars().next().is_none_or(|next| !ident(next));
+    let empty_start = |expr: &str| {
+        let expr = expr.trim().trim_start_matches('&').trim();
+        // The construction must be the whole right-hand side, not the head
+        // of a method chain that could seed the collection afterwards.
+        let whole = |pat: &str| {
+            expr.strip_prefix(pat).is_some_and(|after| {
+                let after = after.trim_start();
+                after.is_empty()
+                    || after.starts_with(';')
+                    || after.starts_with(',')
+                    || after.starts_with(')')
+                    || after.starts_with('}')
+            })
+        };
+        // `Vec::with_capacity(..)` must likewise be the whole right-hand
+        // side: its closing paren must end the statement, not open a
+        // method chain that could seed the collection afterwards.
+        let with_capacity = expr
+            .strip_prefix("Vec::with_capacity(")
+            .is_some_and(|rest| {
+                let mut depth = 1i32;
+                for (at, ch) in rest.char_indices() {
+                    match ch {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                let after = rest[at + 1..].trim_start();
+                                return after.is_empty()
+                                    || after.starts_with(';')
+                                    || after.starts_with(',')
+                                    || after.starts_with(')')
+                                    || after.starts_with('}');
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                false
+            });
+        whole("Vec::new()")
+            || whole("vec![]")
+            || with_capacity
+            || whole("Vec::default()")
+            || whole("VecDeque::new()")
+    };
+    let mut saw_empty_assignment = false;
+    let mut mutable_escapes = 0usize;
+    for (at, _) in masked.match_indices(receiver) {
+        if !bound_at(at) || !name_ends(at + receiver.len()) {
+            continue;
+        }
+        let before = masked[..at].trim_end();
+        let deref_escape = before.strip_suffix('*').is_some_and(|head| {
+            head.trim_end().ends_with("&mut") || head.trim_end().ends_with("& mut")
+        });
+        if before.ends_with("&mut") || before.ends_with("& mut") || deref_escape {
+            mutable_escapes += 1;
+            if mutable_escapes > 1 {
+                return false;
+            }
+        }
+        let rest = masked[at + receiver.len()..].trim_start();
+        // A seeding call or index write on the receiver defeats the proof.
+        if let Some(after_dot) = rest.strip_prefix('.') {
+            let method: String = after_dot.chars().take_while(|ch| ident(*ch)).collect();
+            if matches!(
+                method.as_str(),
+                "push"
+                    | "push_front"
+                    | "push_back"
+                    | "extend"
+                    | "extend_from_slice"
+                    | "insert"
+                    | "append"
+                    | "splice"
+                    | "resize"
+                    | "resize_with"
+            ) {
+                return false;
+            }
+        }
+        if rest.starts_with('[')
+            && rest.split(']').nth(1).is_some_and(|after| {
+                let after = after.trim_start();
+                after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>")
+            })
+        {
+            return false;
+        }
+        // An assignment (optionally through a type annotation) must be a
+        // narrow empty construction; any other binding is not proof.
+        let assigned = if let Some(annotated) = rest.strip_prefix(':') {
+            annotated
+                .split_once('=')
+                .filter(|(_, after)| !after.starts_with('=') && !after.starts_with('>'))
+                .map(|(_, after)| after)
+        } else if rest.starts_with('=') && !rest.starts_with("==") && !rest.starts_with("=>") {
+            Some(&rest[1..])
+        } else {
+            None
+        };
+        if let Some(expr) = assigned {
+            if !empty_start(expr) {
+                return false;
+            }
+            saw_empty_assignment = true;
+        }
+    }
+    saw_empty_assignment
+}
+
+/// #8203: true when `subject` reads only element zero of `receiver`
+/// (`receiver.first()`, `receiver.get(0)`, `receiver[0]`). A `push`
+/// appends, so element zero is the pushed element only when the
+/// collection started empty; without proof of that, a first-element
+/// read observes whatever was already there and cannot confirm the
+/// push. Reads of the whole collection, the last element, or a
+/// non-zero index are unaffected.
+fn reads_only_first_element(subject: &str, receiver: &str) -> bool {
+    let mut bare = subject.trim();
+    bare = bare.strip_prefix('&').map_or(bare, str::trim);
+    bare = bare.strip_prefix("mut ").map_or(bare, str::trim);
+    let Some(rest) = bare.strip_prefix(receiver) else {
+        return false;
+    };
+    let compact: String = rest.chars().filter(|ch| !ch.is_whitespace()).collect();
+    if compact == ".first()" {
+        return true;
+    }
+    let zero = |inner: &str| {
+        let cleaned: String = inner.chars().filter(|ch| *ch != '_').collect();
+        cleaned == "0"
+            || cleaned == "0x0"
+            || cleaned.strip_prefix('0').is_some_and(|suffix| {
+                matches!(
+                    suffix,
+                    "usize"
+                        | "isize"
+                        | "u8"
+                        | "u16"
+                        | "u32"
+                        | "u64"
+                        | "u128"
+                        | "i8"
+                        | "i16"
+                        | "i32"
+                        | "i64"
+                        | "i128"
+                )
+            })
+    };
+    let one = |inner: &str| {
+        let cleaned: String = inner.chars().filter(|ch| *ch != '_').collect();
+        cleaned == "1"
+            || cleaned.strip_prefix('1').is_some_and(|suffix| {
+                matches!(
+                    suffix,
+                    "usize"
+                        | "isize"
+                        | "u8"
+                        | "u16"
+                        | "u32"
+                        | "u64"
+                        | "u128"
+                        | "i8"
+                        | "i16"
+                        | "i32"
+                        | "i64"
+                        | "i128"
+                )
+            })
+    };
+    // A range that ends at the first element (`..1`, `0..1`, `..=0`,
+    // `0..=0`) reads only element zero, like an index of zero.
+    let first_range = |inner: &str| {
+        if let Some(end) = inner.strip_prefix("..=") {
+            zero(end)
+        } else if let Some(end) = inner.strip_prefix("..") {
+            !end.is_empty() && one(end)
+        } else if let Some((start, end)) = inner.split_once("..=") {
+            (start.is_empty() || zero(start)) && zero(end)
+        } else if let Some((start, end)) = inner.split_once("..") {
+            (start.is_empty() || zero(start)) && one(end)
+        } else {
+            false
+        }
+    };
+    compact
+        .strip_prefix(".get(")
+        .and_then(|inner| inner.strip_suffix(')'))
+        .is_some_and(|inner| zero(inner) || first_range(inner))
+        || compact
+            .strip_prefix('[')
+            .and_then(|inner| inner.strip_suffix(']'))
+            .is_some_and(|inner| zero(inner) || first_range(inner))
 }
 
 /// The field path of a collection write on `self` (`log` for
@@ -923,6 +1277,22 @@ pub(in crate::analysis) fn field_collection_write_path(expression: &str) -> Opti
     (matches!(method.trim(), "push" | "insert")
         && path.split('.').all(|segment| is_bare_ident(segment.trim())))
     .then_some(path)
+}
+
+/// Whether a field collection write (`self.<path>.<method>(..)`) appends:
+/// `push` does; `insert` places its element at its key or index, so a
+/// first-element read can observe the inserted element itself.
+pub(in crate::analysis) fn field_collection_write_appends(expression: &str) -> bool {
+    let trimmed = expression.trim().trim_end_matches([';', ',']).trim();
+    let Some(rest) = trimmed.strip_prefix("self.") else {
+        return false;
+    };
+    let Some((target, _)) = rest.split_once('(') else {
+        return false;
+    };
+    target
+        .rsplit_once('.')
+        .is_some_and(|(_, method)| method.trim() == "push")
 }
 
 /// How an assertion's primary subject reads the field collection `path`:
@@ -948,6 +1318,7 @@ pub(in crate::analysis) fn assertion_field_collection_reads(
     assertion_text: &str,
     path: &str,
     count_reads: bool,
+    append_write: bool,
 ) -> Vec<FieldCollectionRead> {
     let subjects = compared_sides(assertion_text);
     subjects
@@ -956,6 +1327,18 @@ pub(in crate::analysis) fn assertion_field_collection_reads(
         .filter(|(_, subject)| count_reads || !reads_only_count(subject))
         .filter_map(|(index, subject)| {
             let read = subject_field_collection_read(subject, path)?;
+            // #8203: a first-element read of the field collection does
+            // not confirm an appending push (see `reads_only_first_element`).
+            // An `insert` write is not an append, so it keeps prior credit.
+            // A getter that returns the field (`inv.history().first()`)
+            // reads the same element zero, so it is demoted the same way.
+            let receiver = match &read.getter {
+                Some(getter) => format!("{}.{getter}()", read.binding),
+                None => format!("{}.{path}", read.binding),
+            };
+            if append_write && reads_only_first_element(subject, &receiver) {
+                return None;
+            }
             let other = subjects
                 .get(1 - index.min(1))
                 .filter(|_| subjects.len() == 2);
@@ -1341,6 +1724,319 @@ pub(in crate::analysis) fn assertion_expects_default_like(assertion: &str) -> bo
         .any(|operand| is_default_like(operand))
 }
 
+/// #8051: whether an assertion expects a collection to be empty
+/// (`assert_eq!(p.log, vec![])`, `assert!(p.log.is_empty())`,
+/// `assert_eq!(p.log.len(), 0)`). A test that passes with an empty
+/// collection after the owner call never ran the owner's push on that path,
+/// so deleting or changing the push leaves the test passing: the assertion
+/// cannot discriminate it.
+pub(in crate::analysis) fn assertion_expects_empty_collection(assertion: &str) -> bool {
+    let text = assertion.trim().trim_end_matches(';').trim_end();
+    if let Some(at) = text.find("assert_eq!") {
+        let operands = super::reveal::macro_arguments(&text[at + "assert_eq!".len()..]);
+        let empty = |operand: &str| {
+            is_empty_collection_literal(operand.trim().trim_start_matches('&').trim())
+        };
+        let zero_len =
+            |pair: [&str; 2]| pair[0].trim().ends_with(".len()") && pair[1].trim() == "0";
+        return match operands.as_slice() {
+            [left, right, ..] => {
+                empty(left) || empty(right) || zero_len([left, right]) || zero_len([right, left])
+            }
+            _ => false,
+        };
+    }
+    let Some(at) = text.find("assert!") else {
+        return false;
+    };
+    super::reveal::macro_arguments(&text[at + "assert!".len()..])
+        .first()
+        .is_some_and(|condition| {
+            let condition = condition.trim();
+            !condition.starts_with('!')
+                && condition
+                    .strip_suffix(".is_empty()")
+                    .is_some_and(|receiver| !receiver.contains(['&', '|', '=', '<', '>']))
+        })
+}
+
+/// #8205: whether `assertion` expects exactly the collection state the
+/// test seeded before the owner call, so an owner that may exit before
+/// its push leaves the assertion passing without the push ever running.
+/// `collection` names the written collection as the assertion reads it:
+/// the field path (`log` for `p.log`) or the bare receiver (`items`).
+/// The seeded state comes from the binding's own construction in `body`
+/// (a struct-literal field or a direct assignment); anything else is not
+/// evidence, and a different expectation (including the seeded state
+/// plus the pushed element) keeps its credit.
+pub(in crate::analysis) fn assertion_restates_seeded_collection(
+    assertion: &str,
+    body: &str,
+    collection: &str,
+    field_path: Option<&str>,
+) -> bool {
+    let text = assertion.trim().trim_end_matches(';').trim_end();
+    let Some(at) = text.find("assert_eq!") else {
+        return false;
+    };
+    let operands = super::reveal::macro_arguments(&text[at + "assert_eq!".len()..]);
+    let [left, right, ..] = operands.as_slice() else {
+        return false;
+    };
+    let plain = |side: &str| side.trim().trim_start_matches('&').trim().to_string();
+    let names_collection = |side: &str| {
+        let side = plain(side);
+        match field_path {
+            Some(path) => side
+                .rsplit_once('.')
+                .is_some_and(|(_, last)| last.trim() == path),
+            None => side == collection,
+        }
+    };
+    let (receiver, expected) = if names_collection(left) {
+        (plain(left), plain(right))
+    } else if names_collection(right) {
+        (plain(right), plain(left))
+    } else {
+        return false;
+    };
+    let Some(binding) = receiver.split('.').next().map(str::trim) else {
+        return false;
+    };
+    let Some((seeded, construction_end)) = seeded_collection_state(body, binding, field_path)
+    else {
+        return false;
+    };
+    // The construction is the pre-call state only if nothing in the test
+    // writes the collection directly between construction and this
+    // assertion; a clear/reassignment/direct push in between makes the
+    // asserted state discriminating again, so the cap declines.
+    // The stored assertion text can differ from the body (lexical
+    // extraction rejoins multiline assertions); when it cannot be
+    // located, the pre-call interval is unknown and the cap declines.
+    let Some(assertion_at) = body
+        .get(construction_end..)
+        .and_then(|tail| tail.find(&text[at..]))
+        .map(|offset| construction_end + offset)
+    else {
+        return false;
+    };
+    if collection_written_between(body, construction_end, assertion_at, &receiver) {
+        return false;
+    }
+    let normalize = |expr: &str| -> String {
+        expr.chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect::<String>()
+            .trim_end_matches(',')
+            .to_string()
+    };
+    !expected.is_empty() && normalize(&expected) == normalize(&seeded)
+}
+
+/// The collection state `body` gives `binding` at construction: for a
+/// field path, the `<path>: <expr>` entry of the struct literal the
+/// binding is assigned; for a bare receiver, the assignment right-hand
+/// side itself. Also returns the byte offset just past the construction
+/// statement. `None` when no such construction is spelled out.
+fn seeded_collection_state(
+    body: &str,
+    binding: &str,
+    field_path: Option<&str>,
+) -> Option<(String, usize)> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    for (at, _) in masked.match_indices(binding) {
+        let bound = masked[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|before| !(ident(before) || before == '.'));
+        let ends = masked[at + binding.len()..]
+            .chars()
+            .next()
+            .is_none_or(|next| !ident(next));
+        if !bound || !ends {
+            continue;
+        }
+        let rest = masked[at + binding.len()..].trim_start();
+        let Some(rhs) = rest
+            .strip_prefix('=')
+            .filter(|after| !after.starts_with('=') && !after.starts_with('>'))
+        else {
+            continue;
+        };
+        let rhs_start = masked.len() - rhs.len();
+        let statement = top_level_slice(rhs, ';');
+        let construction_end = rhs_start + statement.len();
+        let Some(path) = field_path else {
+            return Some((
+                body.get(rhs_start..construction_end)
+                    .unwrap_or(statement)
+                    .trim()
+                    .to_string(),
+                construction_end,
+            ));
+        };
+        // Find `<path>:` inside the construction and take its value up to
+        // the entry's top-level comma or the literal's closing brace.
+        // The masked text fixes the span; the value itself is read from
+        // the unmasked body at the same offsets. The field name must be a
+        // whole identifier followed by a single colon, so `backlog:` or
+        // a `log::` path never supplies the seed for `log`.
+        let needle = format!("{path}:");
+        let field_at = statement.match_indices(&needle).find(|(at, _)| {
+            let before_ok = statement[..*at]
+                .chars()
+                .next_back()
+                .is_none_or(|before| !(ident(before) || before == '.'));
+            let after_ok = !statement[at + needle.len()..].starts_with(':');
+            before_ok && after_ok
+        });
+        if let Some((field_at, _)) = field_at {
+            let value = &statement[field_at + needle.len()..];
+            let value = top_level_slice(value, ',');
+            let value = value.trim_end().trim_end_matches('}').trim_end();
+            let start = rhs_start + field_at + needle.len();
+            return Some((
+                body.get(start..start + value.len())
+                    .unwrap_or(value)
+                    .trim()
+                    .to_string(),
+                construction_end,
+            ));
+        }
+    }
+    None
+}
+
+/// Whether `body[start..end]` writes the asserted collection directly:
+/// a mutating method call on the receiver (`clear`, `push`, `pop`, ...)
+/// or a reassignment of the receiver. Owner calls (`p.beat()`) are not
+/// writes to the collection itself and do not decline the cap.
+fn collection_written_between(body: &str, start: usize, end: usize, receiver: &str) -> bool {
+    let Some(span) = body.get(start..end) else {
+        return false;
+    };
+    let masked = crate::analysis::extract::mask_comments_and_strings(span);
+    const WRITE_METHODS: &[&str] = &[
+        "clear",
+        "push",
+        "pop",
+        "truncate",
+        "retain",
+        "drain",
+        "remove",
+        "insert",
+        "extend",
+        "resize",
+        "sort",
+        "reverse",
+        "dedup",
+        "append",
+        "swap_remove",
+        "fill",
+    ];
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    for (at, _) in masked.match_indices(receiver) {
+        // The receiver must match as a whole path, not inside a longer
+        // identifier (`other_items.clear()`, `pp.log.clear()`).
+        let bound = masked[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|before| !(ident(before) || before == '.'));
+        let ends = masked[at + receiver.len()..]
+            .chars()
+            .next()
+            .is_none_or(|next| !ident(next));
+        if !bound || !ends {
+            continue;
+        }
+        let after = masked[at + receiver.len()..].trim_start();
+        if let Some(call) = after.strip_prefix('.') {
+            let method: String = call
+                .chars()
+                .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
+                .collect();
+            if WRITE_METHODS.contains(&method.as_str())
+                && call[method.len()..].trim_start().starts_with('(')
+            {
+                return true;
+            }
+        }
+        if after
+            .strip_prefix('=')
+            .is_some_and(|assign| !assign.starts_with('=') && !assign.starts_with('>'))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// `text` up to the first `separator` at bracket depth zero.
+fn top_level_slice(text: &str, separator: char) -> &str {
+    let mut depth = 0i32;
+    for (at, ch) in text.char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            _ if ch == separator && depth == 0 => return &text[..at],
+            _ => {}
+        }
+    }
+    text
+}
+
+/// An empty `Vec` or slice literal: `vec![]`, `Vec::new()`,
+/// `Vec::<T>::new()`, `[]`.
+fn is_empty_collection_literal(operand: &str) -> bool {
+    matches!(operand, "vec![]" | "Vec::new()" | "[]")
+        || (operand.starts_with("Vec::<") && operand.ends_with(">::new()"))
+}
+
+/// #8051: whether the owner whose source text `owner_body` starts at file
+/// line `owner_start_line` may leave before the changed `expression` on file
+/// line `line` (see [`may_exit_early`]). The scan runs to the expression's
+/// first occurrence on that line, so a guard sharing the line
+/// (`if self.locked { return; } self.log.push(1);`) still counts; when the
+/// expression does not appear on the line, only the lines before it do.
+pub(in crate::analysis) fn owner_may_exit_before_line(
+    owner_body: &str,
+    owner_start_line: usize,
+    line: usize,
+    expression: &str,
+) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(owner_body);
+    let Some(lines_before) = line.checked_sub(owner_start_line) else {
+        return false;
+    };
+    let line_at: usize = masked
+        .split_inclusive('\n')
+        .take(lines_before)
+        .map(str::len)
+        .sum();
+    let line_end = masked[line_at..]
+        .find('\n')
+        .map_or(masked.len(), |nl| line_at + nl);
+    // #8141 review: a guard on the changed line but before the changed
+    // expression still lets the owner skip it. The mask blanks string and
+    // comment bytes in place (one space per byte), so the expression is
+    // located in the owner body itself and its offset reads the same in
+    // `masked`; a candidate whose first byte the mask blanked sits inside
+    // a string or comment and is skipped, and no executable occurrence on
+    // the line keeps the line-start scan.
+    let owner_line = &owner_body[line_at..line_end];
+    let masked_line = &masked[line_at..line_end];
+    let at = owner_line
+        .match_indices(expression)
+        .find(|(at, _)| owner_line.as_bytes()[*at] == masked_line.as_bytes()[*at])
+        .map_or(line_at, |(at, _)| line_at + at);
+    masked
+        .find('{')
+        .filter(|open| *open < at)
+        .is_some_and(|open| may_exit_early(&masked[open..at]))
+}
+
 fn is_default_like(operand: &str) -> bool {
     let operand = operand.trim().trim_start_matches('&').trim();
     // `0 as u32` reads as its value.
@@ -1350,10 +2046,9 @@ fn is_default_like(operand: &str) -> bool {
     if operand.ends_with("::MIN") || operand.ends_with("::ZERO") {
         return true;
     }
-    if matches!(
-        operand,
-        "false" | "None" | "\"\"" | "String::new()" | "Vec::new()" | "vec![]" | "[]"
-    ) || operand.ends_with("default()")
+    if matches!(operand, "false" | "None" | "\"\"" | "String::new()")
+        || is_empty_collection_literal(operand)
+        || operand.ends_with("default()")
     {
         return true;
     }
@@ -2067,6 +2762,10 @@ impl PropagationWitnessV1 {
             append_canonical_section_header(&mut canonical, "fallible-check", 1);
             append_canonical_field(&mut canonical, &receipt.semantic_digest);
         }
+        if let Some(receipt) = &self.field_projection {
+            append_canonical_section_header(&mut canonical, "field-projection", 1);
+            append_canonical_field(&mut canonical, &receipt.semantic_digest);
+        }
         append_canonical_field(&mut canonical, &self.sink.kind);
         append_canonical_field(&mut canonical, &self.sink.identity);
         append_canonical_section_header(&mut canonical, "path", 1);
@@ -2159,6 +2858,73 @@ mod tests {
             "Result::Err(E::Bad)"
         );
         Ok(())
+    }
+
+    /// #7063: `return Err(E::V { line: n });` on the changed line reaches its
+    /// own error-variant sink, which the flow producer names by the variant
+    /// alone. A sink on another line, a sibling variant, or a payload that
+    /// calls, closes over or `?`s something stays a candidate.
+    #[test]
+    fn a_payload_carrying_err_on_its_own_line_completes_the_error_witness() {
+        let complete_if = |expression: &str, sink_text: &str, sink_line: usize, declared: bool| {
+            current_path_witness_with(
+                &probe(ProbeFamily::ErrorPath, expression),
+                &[sink(FlowSinkKind::ErrorVariant, sink_text, sink_line)],
+                &|_| declared,
+            )
+            .is_some_and(|witness| {
+                witness.completeness == PathCompleteness::Complete
+                    && complete_direct_witness(
+                        &probe(ProbeFamily::ErrorPath, expression),
+                        Some(&witness),
+                    )
+            })
+        };
+        let complete = |expression: &str, sink_text: &str, sink_line: usize| {
+            complete_if(expression, sink_text, sink_line, true)
+        };
+        // A qualifier that names no declared workspace enum (an alias,
+        // `Self::`, a module path) keeps the candidate witness.
+        assert!(!complete_if(
+            "return Err(CE::MissingEquals { line: idx + 1 });",
+            "Result::Err(CE::MissingEquals)",
+            10,
+            false
+        ));
+        for expression in [
+            "return Err(ConfigError::MissingEquals { line: idx + 1 });",
+            "return Err(ConfigError::MissingEquals { line: line_no });",
+            "Err(ConfigError::MissingEquals { line: idx + 1 })",
+        ] {
+            assert!(
+                complete(expression, "Result::Err(ConfigError::MissingEquals)", 10),
+                "{expression}"
+            );
+        }
+        let changed = "return Err(ConfigError::MissingEquals { line: idx + 1 });";
+        // The same variant returned on another line is a different exit.
+        assert!(!complete(
+            changed,
+            "Result::Err(ConfigError::MissingEquals)",
+            11
+        ));
+        // A sibling variant's sink is not this construction's.
+        assert!(!complete(changed, "Result::Err(ConfigError::EmptyKey)", 10));
+        for expression in [
+            "return Err(ConfigError::MissingEquals { line: next(idx) });",
+            "return Err(ConfigError::MissingEquals { line: m!(idx) });",
+            "return Err(ConfigError::MissingEquals { line: f()? });",
+            "return Err(ConfigError::MissingEquals { line: (|| idx)() });",
+            "return Err(ConfigError::Bad { inner: Inner { line: idx } });",
+            // A tuple payload's parentheses read as a call: not established.
+            "return Err(ConfigError::MissingEquals(idx + 1));",
+            "return Err(error);",
+        ] {
+            assert!(
+                !complete(expression, "Result::Err(ConfigError::MissingEquals)", 10),
+                "{expression}"
+            );
+        }
     }
 
     /// The owner-checked `ok_or?` bypass keys on the probe line having no
@@ -3193,6 +3959,203 @@ mod tests {
     }
 
     #[test]
+    fn empty_collection_expectations_cannot_confirm_a_push() {
+        for assertion in [
+            "assert_eq!(p.log, vec![]);",
+            "assert_eq!(vec![], p.log)",
+            "assert_eq!(p.log, Vec::new());",
+            "assert_eq!(p.log, Vec::<Entry>::new());",
+            "assert_eq!(&p.log, &[]);",
+            "assert_eq!(p.log.len(), 0);",
+            "assert_eq!(0, p.log.len());",
+            "assert!(p.log.is_empty());",
+            "assert!(p.history().is_empty())",
+        ] {
+            assert!(assertion_expects_empty_collection(assertion), "{assertion}");
+        }
+        for assertion in [
+            "assert_eq!(p.log, vec![Entry::Beat { n: 1 }]);",
+            "assert_eq!(p.log.len(), 1);",
+            "assert_eq!(p.count, 0);",
+            "assert!(!p.log.is_empty());",
+            "assert!(p.log.is_empty() || p.locked);",
+            "assert!(p.locked || p.log.is_empty());",
+            "assert_ne!(p.log, vec![]);",
+            "assert!(p.log == vec![Entry::Beat { n: 1 }]);",
+        ] {
+            assert!(
+                !assertion_expects_empty_collection(assertion),
+                "{assertion}"
+            );
+        }
+    }
+
+    #[test]
+    fn seeded_collection_expectations_restate_the_pre_call_state() {
+        let seeded_body = "fn case() {\n    let mut p = Pulse { log: vec![Entry::Beat { n: 9 }], locked: true };\n    p.beat();\n    assert_eq!(p.log, vec![Entry::Beat { n: 9 }]);\n}";
+        assert!(assertion_restates_seeded_collection(
+            "assert_eq!(p.log, vec![Entry::Beat { n: 9 }]);",
+            seeded_body,
+            "log",
+            Some("log"),
+        ));
+        // The seeded state plus the pushed element is a real discriminator.
+        assert!(!assertion_restates_seeded_collection(
+            "assert_eq!(p.log, vec![Entry::Beat { n: 9 }, Entry::Beat { n: 1 }]);",
+            seeded_body,
+            "log",
+            Some("log"),
+        ));
+        // An expectation that differs from the seeded state discriminates:
+        // the skipped push leaves vec![8], not the asserted vec![9].
+        assert!(!assertion_restates_seeded_collection(
+            "assert_eq!(p.log, vec![9]);",
+            "fn case() {\n    let mut p = Pulse { log: vec![8], locked: true };\n    p.beat();\n    assert_eq!(p.log, vec![9]);\n}",
+            "log",
+            Some("log"),
+        ));
+        // A start-empty test expecting the pushed element is not a restate.
+        let empty_body = "fn case() {\n    let mut p = Pulse { log: vec![], locked: true };\n    p.beat();\n    assert_eq!(p.log, vec![Entry::Beat { n: 1 }]);\n}";
+        assert!(!assertion_restates_seeded_collection(
+            "assert_eq!(p.log, vec![Entry::Beat { n: 1 }]);",
+            empty_body,
+            "log",
+            Some("log"),
+        ));
+        // The pushed value may duplicate a seeded element: restating the
+        // seed still passes when the push is skipped or deleted.
+        assert!(assertion_restates_seeded_collection(
+            "assert_eq!(p.log, vec![9]);",
+            "fn case() {\n    let mut p = Pulse { log: vec![9], locked: true };\n    p.beat();\n    assert_eq!(p.log, vec![9]);\n}",
+            "log",
+            Some("log"),
+        ));
+        // Bare receiver: the assignment itself is the seeded state.
+        let bare_body = "fn case() {\n    let mut items = vec![9];\n    record(&mut items, 1);\n    assert_eq!(items, vec![9]);\n}";
+        assert!(assertion_restates_seeded_collection(
+            "assert_eq!(items, vec![9]);",
+            bare_body,
+            "items",
+            None,
+        ));
+        assert!(!assertion_restates_seeded_collection(
+            "assert_eq!(items, vec![9, 1]);",
+            bare_body,
+            "items",
+            None,
+        ));
+        // No spelled-out construction, no evidence: an expectation that
+        // merely looks seeded keeps its credit.
+        assert!(!assertion_restates_seeded_collection(
+            "assert_eq!(items, vec![9]);",
+            "fn case() {\n    record(&mut items, 1);\n}",
+            "items",
+            None,
+        ));
+        // A longer field name ending in the collection name must not
+        // supply the seed: `backlog: vec![1]` is not the `log` seed.
+        assert!(assertion_restates_seeded_collection(
+            "assert_eq!(p.log, vec![9]);",
+            "fn case() {\n    let mut p = Pulse { backlog: vec![1], log: vec![9], locked: true };\n    p.beat();\n    assert_eq!(p.log, vec![9]);\n}",
+            "log",
+            Some("log"),
+        ));
+        assert!(!assertion_restates_seeded_collection(
+            "assert_eq!(p.log, vec![1]);",
+            "fn case() {\n    let mut p = Pulse { backlog: vec![1], log: vec![9], locked: true };\n    p.beat();\n    assert_eq!(p.log, vec![1]);\n}",
+            "log",
+            Some("log"),
+        ));
+        // A direct write between construction and assertion makes the
+        // pre-call state uncertain, so the cap declines.
+        assert!(!assertion_restates_seeded_collection(
+            "assert_eq!(p.log, vec![9]);",
+            "fn case() {\n    let mut p = Pulse { log: vec![9], locked: false };\n    p.log.clear();\n    p.beat();\n    assert_eq!(p.log, vec![9]);\n}",
+            "log",
+            Some("log"),
+        ));
+    }
+
+    #[test]
+    fn owner_may_exit_before_line_reads_everything_before_the_changed_expression() {
+        let owner = "fn beat(&mut self) {\n    if self.locked {\n        return;\n    }\n    self.log.push(1);\n}";
+        assert!(owner_may_exit_before_line(
+            owner,
+            10,
+            14,
+            "self.log.push(1)"
+        ));
+        // The guard sits after line 11, so the first statement cannot skip.
+        assert!(!owner_may_exit_before_line(owner, 10, 11, "self.locked"));
+        let plain = "fn add(&mut self, x: u32) {\n    self.items.push(x);\n}";
+        assert!(!owner_may_exit_before_line(
+            plain,
+            10,
+            11,
+            "self.items.push(x)"
+        ));
+        let fallible = "fn ship(&mut self) -> Result<(), E> {\n    let n = self.next()?;\n    self.log.push(n);\n    Ok(())\n}";
+        assert!(owner_may_exit_before_line(
+            fallible,
+            10,
+            12,
+            "self.log.push(n)"
+        ));
+        // A line before the owner starts reads nothing.
+        assert!(!owner_may_exit_before_line(
+            plain,
+            10,
+            9,
+            "self.items.push(x)"
+        ));
+        // #8141 review: a guard sharing the changed line still lets the
+        // owner skip the push, so the prefix before the expression counts.
+        let inline = "fn beat(&mut self) { if self.locked { return; } self.log.push(1); }";
+        assert!(owner_may_exit_before_line(
+            inline,
+            10,
+            10,
+            "self.log.push(1)"
+        ));
+        // A guard after the push on the same line cannot skip it.
+        let guarded_after = "fn beat(&mut self) { self.log.push(1); if self.locked { return; } }";
+        assert!(!owner_may_exit_before_line(
+            guarded_after,
+            10,
+            10,
+            "self.log.push(1)"
+        ));
+        // A string literal is blanked in the masked body, so the expression
+        // is located in the owner body itself: a same-line guard before a
+        // quoted-argument push is still found.
+        let quoted_inline =
+            "fn tag(&mut self) { if self.locked { return; } self.log.push(\"x\"); }";
+        assert!(owner_may_exit_before_line(
+            quoted_inline,
+            10,
+            10,
+            "self.log.push(\"x\")"
+        ));
+        // A quoted argument without an earlier exit keeps the rule off.
+        let quoted = "fn tag(&mut self) {\n    self.log.push(\"x\");\n}";
+        assert!(!owner_may_exit_before_line(
+            quoted,
+            10,
+            11,
+            "self.log.push(\"x\")"
+        ));
+        // An earlier string containing the expression is skipped: only the
+        // executable occurrence after the guard positions the scan.
+        let decoy = "fn beat(&mut self) { let s = \"self.log.push(1)\"; if self.locked { return; } self.log.push(1); }";
+        assert!(owner_may_exit_before_line(
+            decoy,
+            10,
+            10,
+            "self.log.push(1)"
+        ));
+    }
+
+    #[test]
     fn default_like_expected_values_do_not_confirm_a_field_assignment() {
         for assertion in [
             "assert_eq!(c.count, 0);",
@@ -3463,11 +4426,45 @@ mod tests {
                 getter: Some(getter.to_string()),
             }]
         };
-        let reads = |text: &str| assertion_field_collection_reads(text, "log", false);
+        let reads = |text: &str| assertion_field_collection_reads(text, "log", false, true);
         assert_eq!(reads("assert_eq!(inv.log, vec![1]);"), direct("inv"));
-        assert_eq!(reads("assert_eq!(&inv.log[0], &1);"), direct("inv"));
+        assert_eq!(
+            reads("assert_eq!(inv.log.last(), Some(&1));"),
+            direct("inv")
+        );
+        assert_eq!(reads("assert_eq!(&inv.log[1], &1);"), direct("inv"));
+        // #8203: element zero may predate the push, so it reads nothing.
+        for first in [
+            "assert_eq!(inv.log.first(), Some(&9));",
+            "assert_eq!(inv.log.get(0), Some(&9));",
+            "assert_eq!(inv.log.get(0usize), Some(&9));",
+            "assert_eq!(inv.log.get(0_usize), Some(&9));",
+            "assert_eq!(&inv.log[0], &9);",
+            "assert_eq!(&inv.log[0usize], &9);",
+            "assert_eq!(&inv.log[0_usize], &9);",
+            "assert_eq!(&inv.log[..1], &[9]);",
+            "assert_eq!(&inv.log[0..1], &[9]);",
+            "assert_eq!(inv.log.get(..1), Some(&[9]));",
+            "assert_eq!(inv.log.get(0..=0), Some(&[9]));",
+            "assert_eq!(inv.history().first(), Some(&9));",
+        ] {
+            assert!(reads(first).is_empty(), "{first}");
+        }
+        // A range covering the pushed element still reads it.
+        assert_eq!(reads("assert_eq!(&inv.log[0..2], &[9, 1]);"), direct("inv"));
+        assert_eq!(reads("assert_eq!(&inv.log[..], &[9, 1]);"), direct("inv"));
+        // An insert write is not an append: element zero can be the
+        // inserted element itself, so the read keeps its credit.
+        assert_eq!(
+            assertion_field_collection_reads("assert_eq!(&inv.log[0], &9);", "log", false, false),
+            direct("inv")
+        );
         assert_eq!(
             reads("assert_eq!(inv.history(), &[1]);"),
+            through("inv", "history")
+        );
+        assert_eq!(
+            reads("assert_eq!(inv.history().last(), Some(&1));"),
             through("inv", "history")
         );
         // Either side of an equality may hold the actual value.
@@ -3493,7 +4490,7 @@ mod tests {
         }
         // A deleted write changes the count, so a count reads it.
         assert_eq!(
-            assertion_field_collection_reads("assert_eq!(inv.log.len(), 1);", "log", true),
+            assertion_field_collection_reads("assert_eq!(inv.log.len(), 1);", "log", true, true),
             direct("inv")
         );
     }
@@ -3593,8 +4590,67 @@ mod tests {
             "an exact len() read must still observe the collection"
         );
         assert!(
-            assertion_observes_direct_collection("assert_eq!(items[0], 5);", "items"),
-            "an index into the collection must still observe it"
+            !assertion_observes_direct_collection("assert_eq!(items[0], 5);", "items"),
+            "element zero may predate the push and must not confirm it (#8203)"
+        );
+        assert!(
+            !assertion_observes_direct_collection("assert_eq!(items.first(), Some(&5));", "items"),
+            "a first-element read may predate the push and must not confirm it (#8203)"
+        );
+        assert!(
+            !assertion_observes_direct_collection("assert_eq!(items[0_usize], 5);", "items"),
+            "a typed-zero index may predate the push and must not confirm it (#8203)"
+        );
+        assert!(
+            !assertion_observes_direct_collection("assert_eq!(&items[..1], &[5]);", "items"),
+            "a first-element slice may predate the push and must not confirm it (#8203)"
+        );
+        // #8203: a provably empty start makes element zero the pushed
+        // element, so first-element reads keep their credit there.
+        for body in [
+            "let mut items = Vec::new(); record(&mut items, 20);",
+            "let mut items: Vec<u32> = vec![]; record(&mut items, 20);",
+            "let mut items = Vec::with_capacity(4); record(&mut items, 20);",
+        ] {
+            for assertion in [
+                "assert_eq!(items[0], 20);",
+                "assert_eq!(items.first(), Some(&20));",
+                "assert_eq!(items.get(0), Some(&20));",
+            ] {
+                assert!(
+                    assertion_observes_direct_collection_in_test(assertion, "items", body),
+                    "empty-start first-element read must observe the push: {body} {assertion}"
+                );
+            }
+        }
+        // Seeded or test-seeded starts are not proof of an empty start.
+        for body in [
+            "let mut items = vec![9]; record(&mut items, 20);",
+            "let mut items = Vec::new(); items.push(9); record(&mut items, 20);",
+            "let mut items = Vec::new(); items.extend([9]); record(&mut items, 20);",
+            "let mut items = Vec::new(); seed(&mut items); record(&mut items, 20);",
+            "let mut items = Vec::new(); seed(&mut *items); record(&mut items, 20);",
+            "let mut items = Vec::new().into_iter().chain([9]).collect(); record(&mut items, 20);",
+            "let mut items = Vec::with_capacity(1).into_iter().chain([9]).collect(); record(&mut items, 20);",
+            "let mut items = other; record(&mut items, 20);",
+            "record(&mut items, 20);",
+        ] {
+            assert!(
+                !assertion_observes_direct_collection_in_test(
+                    "assert_eq!(items[0], 9);",
+                    "items",
+                    body
+                ),
+                "seeded first-element read must not observe the push: {body}"
+            );
+        }
+        assert!(
+            assertion_observes_direct_collection("assert_eq!(items[1], 5);", "items"),
+            "a non-zero index into the collection must still observe it"
+        );
+        assert!(
+            assertion_observes_direct_collection("assert_eq!(items.last(), Some(&5));", "items"),
+            "the last element is the pushed element and must still observe it"
         );
         assert!(
             assertion_observes_direct_collection("assert_eq!(items[..], expected);", "items"),
@@ -3654,6 +4710,57 @@ mod tests {
             ),
             "a char-literal value-read argument must still observe the collection"
         );
+    }
+
+    /// #6640: a pure count read (`.len()`, `.is_empty()`) pins how many
+    /// elements were pushed, not which payload: it must not confirm a
+    /// value/side-effect payload change, while a deleted push
+    /// (`count_reads`, the CallDeletion credit) still changes the count.
+    /// Payload reads keep their credit on both sides of the split, and
+    /// wrong-receiver / expected-side count reads never confirm.
+    #[test]
+    fn direct_collection_count_read_confirms_only_a_deleted_push() {
+        for assertion in [
+            "assert_eq!(events.len(), 1);",
+            "assert!(events.is_empty());",
+            "assert_eq!(events.is_empty(), false);",
+        ] {
+            assert!(
+                !assertion_observes_direct_collection_for_probe(assertion, "events", false),
+                "count read must not confirm the pushed payload: {assertion}"
+            );
+            assert!(
+                assertion_observes_direct_collection_for_probe(assertion, "events", true),
+                "count read must still confirm a deleted push: {assertion}"
+            );
+        }
+        for assertion in [
+            "assert_eq!(events, vec![7]);",
+            "assert_eq!(events.contains(&7), true);",
+            "assert_eq!(events.last(), Some(&7));",
+        ] {
+            assert!(
+                assertion_observes_direct_collection_for_probe(assertion, "events", false),
+                "payload read must keep its credit without count credit: {assertion}"
+            );
+        }
+        // An empty start makes element zero the pushed element.
+        assert!(assertion_observes_direct_collection_in_test_for_probe(
+            "assert_eq!(events[0], 7);",
+            "events",
+            "let mut events = Vec::new(); send(&mut events, 7);",
+            false,
+        ));
+        assert!(!assertion_observes_direct_collection_for_probe(
+            "assert_eq!(other.len(), 1);",
+            "events",
+            true,
+        ));
+        assert!(!assertion_observes_direct_collection_for_probe(
+            "assert_eq!(1, events.len());",
+            "events",
+            true,
+        ));
     }
 
     #[test]

@@ -10,7 +10,7 @@ use self::finding::build_finding;
 use self::owner::resolve_owner_function;
 use super::classify::{
     DependencyEdgeContext, HelperChain, ProbeContext, RelatedTestCandidateIndex,
-    ambiguous_helper_entry_called_by_tests, confidence_score,
+    TransitiveReachIndex, ambiguous_helper_entry_called_by_tests, confidence_score,
     find_related_tests_with_candidate_index, is_assertion_shaped_owner,
 };
 use super::probes::parser_expression_for_probe;
@@ -25,12 +25,14 @@ pub fn classify_probe(
     dependency_edges: Option<&DependencyEdgeContext<'_>>,
 ) -> Finding {
     let candidate_index = RelatedTestCandidateIndex::new(index);
+    let transitive_reach = TransitiveReachIndex::new(index);
     classify_probe_with_candidate_index(
         probe,
         index,
         workspace_complete,
         dependency_edges,
         &candidate_index,
+        &transitive_reach,
         None,
     )
 }
@@ -41,6 +43,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     workspace_complete: bool,
     dependency_edges: Option<&DependencyEdgeContext<'_>>,
     candidate_index: &RelatedTestCandidateIndex,
+    transitive_reach: &TransitiveReachIndex<'_>,
     propagation_origin: Option<&crate::analysis::diff::ChangedLine>,
 ) -> Finding {
     let owner_fn = resolve_owner_function(probe, index);
@@ -78,8 +81,10 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     .with_helper_chain(helper_chain)
     .with_file_use_statements(candidate_index.file_use_statements())
     .with_owner_pin_syntax(candidate_index.owner_pin_syntax())
+    .with_unseen_reach_names(candidate_index.unseen_reach_names())
     .with_test_value_facts(candidate_index.test_value_facts())
-    .with_owner_caller_names(candidate_index.owner_caller_names());
+    .with_owner_caller_names(candidate_index.owner_caller_names())
+    .with_diff_touched(candidate_index.diff_touched());
     context.propagation_origin = propagation_origin;
     let reveal_expression = parser_expression_for_probe(
         index,
@@ -89,7 +94,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
         &probe.expression,
     )
     .unwrap_or(&probe.expression);
-    let evidence = ClassifiedProbeEvidence::gather(&context, reveal_expression);
+    let evidence = ClassifiedProbeEvidence::gather(&context, reveal_expression, transitive_reach);
     let class = evidence.classify(context.probe);
     // #7532: `build_finding` rewrites a `no_static_path` finding's misses;
     // keep reveal's so a withheld finding can report them again.
@@ -2377,7 +2382,9 @@ fn far_above_threshold_discounts() {
     }
 
     /// #7135: a trailing operator or `capacity` on a direct collection read
-    /// must not confirm the push. Ordinary `len()`, index, and whole-collection
+    /// must not confirm the push. #6640: a pure count read (`len()`) pins how
+    /// many elements were pushed, not the pushed payload, so it likewise
+    /// cannot confirm this side-effect probe. Index and whole-collection
     /// assertions keep credit.
     #[test]
     fn direct_collection_trailing_operator_and_capacity_stay_weakly_exposed() {
@@ -2385,6 +2392,7 @@ fn far_above_threshold_discounts() {
             "assert_eq!(items.capacity() >= 1, true);",
             "assert_eq!(items.is_empty() || true, true);",
             "assert_eq!(items.len() * 0, 0);",
+            "assert_eq!(items.len(), 1);",
         ] {
             let finding = collection_push_finding(assertion);
             assert_eq!(
@@ -2406,7 +2414,6 @@ fn far_above_threshold_discounts() {
         }
 
         for assertion in [
-            "assert_eq!(items.len(), 1);",
             "assert_eq!(items[0], 20);",
             "assert_eq!(items, vec![20u32]);",
         ] {

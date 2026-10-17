@@ -124,6 +124,8 @@ mod pr_comments_github;
 
 #[path = "commands/check.rs"]
 mod check;
+#[path = "commands/check_fanout.rs"]
+mod check_fanout;
 pub(super) use check::check;
 
 #[path = "commands/review_comments.rs"]
@@ -245,11 +247,9 @@ pub(super) fn zero(args: &[String]) -> Result<(), String> {
         help::print_zero_help();
         return Ok(());
     }
-    // The sole subcommand is implied when the command runs bare:
-    // `ripr <cmd>` behaves like `ripr <cmd> "status"` (#2013).
-    let (subcommand, rest) = match args.split_first() {
-        Some((subcommand, rest)) => (subcommand.as_str(), rest),
-        None => ("status", &[][..]),
+    let Some((subcommand, rest)) = args.split_first() else {
+        help::print_zero_help();
+        return Ok(());
     };
     if subcommand != "status" {
         return Err(format!(
@@ -265,10 +265,8 @@ pub(super) fn policy(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let Some((subcommand, rest)) = args.split_first() else {
-        return Err(
-            "policy requires subcommand `readiness`, `operations`, `history`, `promote`, `preview-promote`, `waiver-aging`, or `suppression-health`"
-                .to_string(),
-        );
+        help::print_policy_help();
+        return Ok(());
     };
     match subcommand.as_str() {
         "readiness" => policy_readiness(rest),
@@ -289,11 +287,9 @@ pub(super) fn pr_ledger(args: &[String]) -> Result<(), String> {
         help::print_pr_ledger_help();
         return Ok(());
     }
-    // The sole subcommand is implied when the command runs bare:
-    // `ripr <cmd>` behaves like `ripr <cmd> "record"` (#2013).
-    let (subcommand, rest) = match args.split_first() {
-        Some((subcommand, rest)) => (subcommand.as_str(), rest),
-        None => ("record", &[][..]),
+    let Some((subcommand, rest)) = args.split_first() else {
+        help::print_pr_ledger_help();
+        return Ok(());
     };
     if subcommand != "record" {
         return Err(format!(
@@ -329,11 +325,9 @@ pub(super) fn pr_review(args: &[String]) -> Result<(), String> {
         help::print_pr_review_help();
         return Ok(());
     }
-    // The sole subcommand is implied when the command runs bare:
-    // `ripr <cmd>` behaves like `ripr <cmd> "front-panel"` (#2013).
-    let (subcommand, rest) = match args.split_first() {
-        Some((subcommand, rest)) => (subcommand.as_str(), rest),
-        None => ("front-panel", &[][..]),
+    let Some((subcommand, rest)) = args.split_first() else {
+        help::print_pr_review_help();
+        return Ok(());
     };
     if subcommand != "front-panel" {
         return Err(format!(
@@ -348,11 +342,9 @@ pub(super) fn coverage_grip(args: &[String]) -> Result<(), String> {
         help::print_coverage_grip_help();
         return Ok(());
     }
-    // The sole subcommand is implied when the command runs bare:
-    // `ripr <cmd>` behaves like `ripr <cmd> "frontier"` (#2013).
-    let (subcommand, rest) = match args.split_first() {
-        Some((subcommand, rest)) => (subcommand.as_str(), rest),
-        None => ("frontier", &[][..]),
+    let Some((subcommand, rest)) = args.split_first() else {
+        help::print_coverage_grip_help();
+        return Ok(());
     };
     if subcommand != "frontier" {
         return Err(format!(
@@ -368,7 +360,8 @@ pub(super) fn assistant_loop(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let Some((subcommand, rest)) = args.split_first() else {
-        return Err("assistant-loop requires subcommand `proof` or `health`".to_string());
+        help::print_assistant_loop_help();
+        return Ok(());
     };
     match subcommand.as_str() {
         "proof" => assistant_loop_proof(rest),
@@ -491,10 +484,8 @@ pub(super) fn reports(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let Some((subcommand, rest)) = args.split_first() else {
-        return Err(
-            "reports requires subcommand `index`, `ci-packet`, `ci-summary`, `gap-ledger`, `ts-limitations`, or `ts-false-actionable`"
-                .to_string(),
-        );
+        help::print_reports_help();
+        return Ok(());
     };
     match subcommand.as_str() {
         "index" => report_packet_index(rest),
@@ -1178,7 +1169,8 @@ pub(super) fn calibrate(args: &[String]) -> Result<(), String> {
     }
 
     let Some((subcommand, rest)) = args.split_first() else {
-        return Err("calibrate requires subcommand `cargo-mutants`".to_string());
+        help::print_calibrate_help();
+        return Ok(());
     };
     if subcommand != "cargo-mutants" {
         return Err(format!(
@@ -1331,10 +1323,12 @@ enum SnapshotCaptureKind {
     CargoMutants,
 }
 
-fn snapshot_capture_hint(kind: SnapshotCaptureKind, displayed_path: &str) -> String {
-    // Quote after `display_path`: the NotFound prefix stays human-readable,
-    // but the pasted redirect must remain one shell token (#7349, #5188).
-    let quoted_path = crate::agent::loop_commands::shell_arg(displayed_path);
+fn snapshot_capture_hint(kind: SnapshotCaptureKind, path: &Path) -> String {
+    // Keep display-only normalization out of executable operands: on Unix a
+    // literal backslash is part of the filename, not a directory separator.
+    // CLI path arguments are UTF-8; retain their native spelling and quote it
+    // as one shell token (#7349, #5188).
+    let quoted_path = crate::agent::loop_commands::shell_arg(&path.to_string_lossy());
     match kind {
         SnapshotCaptureKind::Outcome => format!(
             "Run `ripr check --format repo-exposure-json > {quoted_path}` first, or pass a `ripr check --json` output."
@@ -1355,7 +1349,7 @@ fn read_calibration_text(path: &Path, kind: SnapshotCaptureKind) -> Result<Strin
         if err.kind() == std::io::ErrorKind::NotFound {
             format!(
                 "read {displayed} failed: not found. {}",
-                snapshot_capture_hint(kind, &displayed)
+                snapshot_capture_hint(kind, path)
             )
         } else {
             format!("read {displayed} failed: {err}")
@@ -4515,10 +4509,10 @@ mod tests {
     }
 
     #[test]
-    fn pr_review_bare_dispatches_to_front_panel() {
-        // Bare `ripr pr-review` is the `front-panel` alias (#2013).
+    fn pr_review_bare_shows_help_and_front_panel_requires_input() {
+        assert_eq!(pr_review(&args(&[])), Ok(()));
         assert_eq!(
-            pr_review(&args(&[])),
+            pr_review(&args(&["front-panel"])),
             Err("pr-review front-panel requires at least one explicit artifact input".to_string())
         );
         assert_eq!(
@@ -4567,9 +4561,9 @@ mod tests {
 
     #[test]
     fn ripr_zero_status_requires_inputs_and_rejects_unknown_args() {
-        // Bare `ripr zero` is the `status` alias (#2013).
+        assert_eq!(zero(&args(&[])), Ok(()));
         assert_eq!(
-            zero(&args(&[])),
+            zero(&args(&["status"])),
             Err("zero status requires --delta <path>".to_string())
         );
         assert_eq!(
@@ -4699,13 +4693,7 @@ mod tests {
 
     #[test]
     fn policy_readiness_rejects_unknown_args() {
-        assert_eq!(
-            policy(&args(&[])),
-            Err(
-                "policy requires subcommand `readiness`, `operations`, `history`, `promote`, `preview-promote`, `waiver-aging`, or `suppression-health`"
-                    .to_string()
-            )
-        );
+        assert_eq!(policy(&args(&[])), Ok(()));
         assert_eq!(
             policy(&args(&["unknown"])),
             Err(
@@ -5849,9 +5837,9 @@ language = "rust"
 
     #[test]
     fn pr_evidence_ledger_requires_identity_and_evidence() {
-        // Bare `ripr pr-ledger` is the `record` alias (#2013).
+        assert_eq!(pr_ledger(&args(&[])), Ok(()));
         assert_eq!(
-            pr_ledger(&args(&[])),
+            pr_ledger(&args(&["record"])),
             Err(
                 "pr-ledger record requires at least one of --gate, --baseline-delta, --zero-status, --pr-guidance, or --gap-ledger"
                     .to_string()
@@ -6561,9 +6549,9 @@ language = "rust"
 
     #[test]
     fn coverage_grip_frontier_requires_movement_input() {
-        // Bare `ripr coverage-grip` is the `frontier` alias (#2013).
+        assert_eq!(coverage_grip(&args(&[])), Ok(()));
         assert_eq!(
-            coverage_grip(&args(&[])),
+            coverage_grip(&args(&["frontier"])),
             Err(
                 "coverage-grip frontier requires at least one of --ledger, --baseline-delta, or --zero-status"
                     .to_string()
@@ -6704,47 +6692,15 @@ language = "rust"
             .ok_or_else(|| format!("TypeScript repair packet has no receipt_command: {packet}"))
     }
 
-    /// Split a copied bash command into argv the way a POSIX shell does for
-    /// the quoting `shell_arg` emits: whitespace-separated words, single-quoted
-    /// spans taken literally, and backslash escapes outside quotes. Any other
-    /// shell-active character fails instead of being guessed at.
+    /// Split a copied command into argv under the same contract the recovery
+    /// parser enforces for the quoting `shell_arg` emits on the running host
+    /// (#7729: POSIX single quotes off Windows, the Windows console form on
+    /// it; #8152 review: this helper reuses the shared parser instead of
+    /// forking a third one). Anything the parser fails closed on errors
+    /// instead of being guessed at.
     fn posix_words(command: &str) -> Result<Vec<String>, String> {
-        let mut words = Vec::new();
-        let mut current: Option<String> = None;
-        let mut chars = command.chars();
-        while let Some(ch) = chars.next() {
-            match ch {
-                '\'' => {
-                    let word = current.get_or_insert_with(String::new);
-                    loop {
-                        match chars.next() {
-                            Some('\'') => break,
-                            Some(inner) => word.push(inner),
-                            None => return Err(format!("unterminated quote in `{command}`")),
-                        }
-                    }
-                }
-                '\\' => {
-                    let escaped = chars
-                        .next()
-                        .ok_or_else(|| format!("dangling escape in `{command}`"))?;
-                    current.get_or_insert_with(String::new).push(escaped);
-                }
-                '"' | '$' | '`' | ';' | '&' | '|' | '<' | '>' | '(' | ')' => {
-                    return Err(format!("shell-active `{ch}` in `{command}`"));
-                }
-                ch if ch.is_whitespace() => {
-                    if let Some(word) = current.take() {
-                        words.push(word);
-                    }
-                }
-                ch => current.get_or_insert_with(String::new).push(ch),
-            }
-        }
-        if let Some(word) = current {
-            words.push(word);
-        }
-        Ok(words)
+        crate::agent::command_specs::shell_words_for(command, cfg!(windows))
+            .ok_or_else(|| format!("command is not parseable host shell text: `{command}`"))
     }
 
     /// #3906 / RIPR-SPEC-0079 `canonical_receipt_command` field rule: the
@@ -7032,11 +6988,8 @@ language = "rust"
     }
 
     #[test]
-    fn calibrate_requires_subcommand_and_inputs() {
-        assert_eq!(
-            calibrate(&args(&[])),
-            Err("calibrate requires subcommand `cargo-mutants`".to_string())
-        );
+    fn calibrate_bare_shows_help_and_requires_inputs() {
+        assert_eq!(calibrate(&args(&[])), Ok(()));
         assert_eq!(
             calibrate(&args(&["runtime"])),
             Err("unknown calibrate subcommand \"runtime\"; expected `cargo-mutants`".to_string())
@@ -7266,7 +7219,10 @@ language = "rust"
         assert_missing_snapshot_named_capture(
             &plain_message,
             &plain_display,
-            &format!("ripr check --format repo-exposure-json > {plain_display}"),
+            &format!(
+                "ripr check --format repo-exposure-json > {}",
+                plain.to_string_lossy()
+            ),
             &["cargo mutants"],
         );
         assert!(
@@ -7276,7 +7232,9 @@ language = "rust"
 
         let spaced = PathBuf::from("missing snapshot.json");
         let spaced_display = output::outcome::display_path(&spaced);
-        let quoted = shell_arg(&spaced_display);
+        // Executable redirect operands keep the native spelling; only prose uses
+        // `display_path`, which normalizes separators (#8240).
+        let quoted = shell_arg(&spaced.to_string_lossy());
         assert_ne!(
             quoted, spaced_display,
             "a space must force quoting of the redirect token"
@@ -7330,7 +7288,7 @@ language = "rust"
         std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
         let missing_before = dir.join("missing before.json");
         let displayed = output::outcome::display_path(&missing_before);
-        let quoted = shell_arg(&displayed);
+        let quoted = shell_arg(&missing_before.to_string_lossy());
         assert!(
             displayed.contains(' '),
             "CLI fixture path must contain a space: {displayed}"
@@ -7449,6 +7407,18 @@ language = "rust"
     }
 
     #[test]
+    fn init_parses_mcp_flag() {
+        assert_eq!(
+            parse_init_options(&args(&["--mcp"])).map(|options| options.mcp),
+            Ok(true)
+        );
+        assert_eq!(
+            parse_init_options(&args(&[])).map(|options| options.mcp),
+            Ok(false)
+        );
+    }
+
+    #[test]
     fn init_parses_root_dry_run_and_force() {
         assert_eq!(
             parse_init_options(&args(&[
@@ -7464,6 +7434,7 @@ language = "rust"
                 dry_run: true,
                 force: true,
                 ci: Some(InitCi::Github),
+                mcp: false,
             })
         );
     }

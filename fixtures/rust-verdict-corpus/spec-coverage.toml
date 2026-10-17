@@ -573,7 +573,7 @@ scope = "in"
 
 # Rust mock call-count side flip
 [[spec]]
-id = "RIPR-SPEC-0267"
+id = "RIPR-SPEC-0279"
 scope = "in"
 
 # TypeScript strict custom matcher
@@ -734,3 +734,15 @@ reason = "acceptance examples are prose, not numbered; corpus cases cite the spe
 [[unmeasured]]
 id = "RIPR-SPEC-0219"
 reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# Owner call shape projection for drill-in surfaces
+[[spec]]
+id = "RIPR-SPEC-0267"
+scope = "out"
+reason = "explain/context packet drill-in projection of an observed signature; not an analyzer verdict"
+
+# Flow-sink evidence row collapses restated labels
+[[spec]]
+id = "RIPR-SPEC-0268"
+scope = "out"
+reason = "render-only collapse of a duplicated evidence row; not an analyzer verdict"

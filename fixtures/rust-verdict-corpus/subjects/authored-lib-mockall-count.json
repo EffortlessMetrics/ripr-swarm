@@ -1,7 +1,7 @@
 {
   "subject_id": "authored-lib-mockall-count",
   "origin": "authored",
-  "version_label": "authored 2026-10-15 for RIPR-SPEC-0267 mock call-count shapes; labeled against mockall 0.13.1 from crates.io (not vendored)",
+  "version_label": "authored 2026-10-15 for RIPR-SPEC-0279 mock call-count shapes; labeled against mockall 0.13.1 from crates.io (not vendored)",
   "license": "MIT OR Apache-2.0",
   "shared_corpus": null,
   "retained_files": [

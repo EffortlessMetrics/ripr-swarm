@@ -1559,11 +1559,19 @@ fn path_part(raw: &str) -> &str {
 }
 
 pub(super) fn command_payload_is_safe(root: &Path, command: &str) -> bool {
+    command_payload_is_safe_for(root, command, cfg!(windows))
+}
+
+/// Pure host-parameterised core of [`command_payload_is_safe`]. `windows`
+/// selects the console quoting form the #7729 renderer emits; bash (`false`)
+/// keeps the existing single-quote tokenizer so Linux tests stay byte-stable
+/// (#8153).
+fn command_payload_is_safe_for(root: &Path, command: &str, windows: bool) -> bool {
     let trimmed = command.trim();
     if trimmed.is_empty() || trimmed.contains('\n') || trimmed.contains('\r') {
         return false;
     }
-    let Some(trimmed) = strip_workspace_redirect(root, trimmed) else {
+    let Some(trimmed) = strip_workspace_redirect_for(root, trimmed, windows) else {
         return false;
     };
     if trimmed
@@ -1572,13 +1580,13 @@ pub(super) fn command_payload_is_safe(root: &Path, command: &str) -> bool {
     {
         return false;
     }
-    if !literal_metacharacters_are_single_quoted(trimmed, &['$', '(', ')', '<', '>']) {
+    if !literal_metacharacters_are_quoted_for(trimmed, &['$', '(', ')', '<', '>'], windows) {
         return false;
     }
     if trimmed.contains("../") || trimmed.contains("..\\") {
         return false;
     }
-    let tokens = command_tokens(trimmed);
+    let tokens = command_tokens_for(trimmed, windows);
     if !command_program_is_allowed(&tokens) {
         return false;
     }
@@ -1612,25 +1620,37 @@ pub(super) fn command_payload_is_safe(root: &Path, command: &str) -> bool {
 /// withheld (`None`) rather than shown portable, since a pasted portable
 /// route analyzes whatever directory the terminal is in.
 pub(super) fn bind_portable_command(root: &Path, command: &str) -> Option<String> {
+    bind_portable_command_for(root, command, cfg!(windows))
+}
+
+/// Pure host-parameterised core of [`bind_portable_command`]. `windows`
+/// selects the #7729 console quoting form (`shell_arg_for`); bash stays on
+/// the existing tokenizer so a Linux run can prove both hosts (#8153).
+fn bind_portable_command_for(root: &Path, command: &str, windows: bool) -> Option<String> {
     let trimmed = command.trim();
-    if !command_payload_is_safe(root, trimmed) {
+    if !command_payload_is_safe_for(root, trimmed, windows) {
         return Some(command.to_string());
     }
     let (body, redirect) = split_producer_stdout_redirect(trimmed)?;
     // Only a top-level `--root .` pair is the route's root; the same text
     // inside a quoted argument (a recorded `--verify-command '...'`) is data.
     // A whole token written `'.'` is the same root once the shell unquotes it.
-    // The token scan does not decode `\` escapes (a producer's `'\''` for an
-    // apostrophe reopens a quote), so a body carrying one is not split: its
-    // `--root .` route, if any, is withheld rather than guessed at.
-    if body.contains('\\') {
+    // The bash token scan does not decode `\` escapes (a producer's `'\''` for
+    // an apostrophe reopens a quote), so a body carrying one is not split: its
+    // `--root .` route, if any, is withheld rather than guessed at. The
+    // Windows console form treats `\` as a literal separator, so a plain
+    // separator backslash does not trigger this withhold there (#8153). The
+    // `'\''` apostrophe escape is a bash quoting construct no Windows console
+    // reads either, and the scan cannot follow it on any host, so a body
+    // carrying it is withheld on both (#8509).
+    if body.contains('\\') && (!windows || body.contains("'\\''")) {
         // Literal forms catch producer `--root .` / simply quoted `.`. Mixed-quote
         // spellings such as `"--root"'' .` are not those substrings, so also
         // consult the same unquoted tokens `command_payload_is_safe` uses.
         let portable = ["--root .", "--root '.'", "--root \".\""]
             .iter()
             .any(|form| body.contains(form))
-            || command_tokens(body)
+            || command_tokens_for(body, windows)
                 .windows(2)
                 .any(|pair| pair[0] == "--root" && pair[1] == ".");
         return (!portable).then(|| command.to_string());
@@ -1645,7 +1665,9 @@ pub(super) fn bind_portable_command(root: &Path, command: &str) -> Option<String
     for pair in spans.windows(2) {
         let flag = &body[pair[0].clone()];
         let value = &body[pair[1].clone()];
-        if !token_unquotes_to(flag, "--root") || !token_unquotes_to(value, ".") {
+        if !token_unquotes_to_for(flag, "--root", windows)
+            || !token_unquotes_to_for(value, ".", windows)
+        {
             continue;
         }
         if literal_token(flag) == Some("--root") && literal_token(value) == Some(".") {
@@ -1661,7 +1683,7 @@ pub(super) fn bind_portable_command(root: &Path, command: &str) -> Option<String
     // is not rewritten, so its route is withheld rather than passed through.
     if spans
         .iter()
-        .any(|span| token_unquotes_to(&body[span.clone()], "--root=."))
+        .any(|span| token_unquotes_to_for(&body[span.clone()], "--root=.", windows))
     {
         return None;
     }
@@ -1698,7 +1720,7 @@ pub(super) fn bind_portable_command(root: &Path, command: &str) -> Option<String
     }) {
         return None;
     }
-    let bound_arg = crate::agent::loop_commands::shell_arg(&bound);
+    let bound_arg = crate::agent::loop_commands::shell_arg_for(&bound, windows);
     let (before, after) = (&body[..dot.start], &body[dot.end..]);
     let mut display = format!("{before}{bound_arg}{after}");
     // The bound root is renderer-owned and `shell_arg`-quoted, so a workspace
@@ -1706,16 +1728,17 @@ pub(super) fn bind_portable_command(root: &Path, command: &str) -> Option<String
     // root in its place. The anchored redirect is checked as rendered.
     let mut probe = format!("{before}.{after}");
     if let Some(tail) = redirect {
-        let target = shell_arg_token(tail)?;
-        let anchored = crate::agent::loop_commands::shell_arg(
+        let target = shell_arg_token_for(tail, windows)?;
+        let anchored = crate::agent::loop_commands::shell_arg_for(
             &crate::agent::loop_commands::anchored_redirect_target(&bound, target),
+            windows,
         );
         display.push_str(" > ");
         display.push_str(&anchored);
         probe.push_str(" > ");
         probe.push_str(&anchored);
     }
-    command_payload_is_safe(root, &probe).then_some(display)
+    command_payload_is_safe_for(root, &probe, windows).then_some(display)
 }
 
 /// Whether a command read back from editor data is safe to offer: either a
@@ -1723,12 +1746,19 @@ pub(super) fn bind_portable_command(root: &Path, command: &str) -> Option<String
 /// from one. Diagnostics data carries bound commands, and a workspace path's
 /// quoted `&` or `;` would fail the payload check on its own (#4001).
 pub(super) fn editor_command_is_safe(root: &Path, command: &str) -> bool {
-    if command_payload_is_safe(root, command) {
+    editor_command_is_safe_for(root, command, cfg!(windows))
+}
+
+fn editor_command_is_safe_for(root: &Path, command: &str, windows: bool) -> bool {
+    if command_payload_is_safe_for(root, command, windows) {
         return true;
     }
     let trimmed = command.trim();
     let bound = crate::agent::loop_commands::bound_root(&root.to_string_lossy());
-    let needle = format!(" --root {}", crate::agent::loop_commands::shell_arg(&bound));
+    let needle = format!(
+        " --root {}",
+        crate::agent::loop_commands::shell_arg_for(&bound, windows)
+    );
     let Some(at) = trimmed.find(&needle) else {
         return false;
     };
@@ -1737,8 +1767,8 @@ pub(super) fn editor_command_is_safe(root: &Path, command: &str) -> bool {
         &trimmed[..at],
         &trimmed[at + needle.len()..]
     );
-    command_payload_is_safe(root, &portable)
-        && bind_portable_command(root, &portable).as_deref() == Some(trimmed)
+    command_payload_is_safe_for(root, &portable, windows)
+        && bind_portable_command_for(root, &portable, windows).as_deref() == Some(trimmed)
 }
 
 /// Byte spans of the whitespace-separated shell tokens of `command`. A quoted
@@ -1786,8 +1816,8 @@ fn literal_token(token: &str) -> Option<&str> {
 /// Whether one top-level token unquotes to `expected` under the same quote
 /// pairing `command_tokens` / `command_payload_is_safe` use. Mixed quotes that
 /// collapse to a single word are visible here even when `literal_token` is not.
-fn token_unquotes_to(token: &str, expected: &str) -> bool {
-    matches!(command_tokens(token).as_slice(), [word] if word == expected)
+fn token_unquotes_to_for(token: &str, expected: &str, windows: bool) -> bool {
+    matches!(command_tokens_for(token, windows).as_slice(), [word] if word == expected)
 }
 
 /// Split off the one stdout redirect the producers append (#4306 persists
@@ -1797,15 +1827,24 @@ fn token_unquotes_to(token: &str, expected: &str) -> bool {
 /// is not exactly one trailing `> <target>` whose target is a single
 /// `shell_arg`-rendered token naming a file under `<root>/target/ripr/`.
 /// A command without `>` passes through unchanged.
+#[cfg(test)]
 fn strip_workspace_redirect<'a>(root: &Path, command: &'a str) -> Option<&'a str> {
+    strip_workspace_redirect_for(root, command, cfg!(windows))
+}
+
+fn strip_workspace_redirect_for<'a>(
+    root: &Path,
+    command: &'a str,
+    windows: bool,
+) -> Option<&'a str> {
     let (body, redirect) = split_producer_stdout_redirect(command)?;
-    if !literal_metacharacters_are_single_quoted(body, &['>']) {
+    if !literal_metacharacters_are_quoted_for(body, &['>'], windows) {
         return None;
     }
     let Some(tail) = redirect else {
         return Some(body);
     };
-    let target = shell_arg_token(tail)?;
+    let target = shell_arg_token_for(tail, windows)?;
     redirect_target_is_ripr_artifact(root, target).then_some(body)
 }
 
@@ -1839,9 +1878,17 @@ fn split_producer_stdout_redirect(command: &str) -> Option<(&str, Option<&str>)>
 }
 
 /// Undo `loop_commands::shell_arg` for one token: bare when every character is
-/// in `[A-Za-z0-9._/:-]`, otherwise one single-quoted span with no embedded
-/// quote (the `'\''` escape is refused rather than decoded).
+/// in `[A-Za-z0-9._/:-]`, otherwise one host-quoted span. Bash keeps the
+/// single-quoted form with no embedded quote (the `'\''` escape is refused
+/// rather than decoded). The Windows console form is one double-quoted span
+/// whose interior is a substring of the token: `""` doubling and a doubled
+/// trailing separator run need an owned decode, so those stay withheld
+/// here rather than growing a fourth parser (#8153).
 pub(super) fn shell_arg_token(token: &str) -> Option<&str> {
+    shell_arg_token_for(token, cfg!(windows))
+}
+
+fn shell_arg_token_for(token: &str, windows: bool) -> Option<&str> {
     let bare = |value: &str| {
         !value.is_empty()
             && value
@@ -1851,12 +1898,31 @@ pub(super) fn shell_arg_token(token: &str) -> Option<&str> {
     if bare(token) {
         return Some(token);
     }
+    if windows && let Some(inner) = windows_console_arg_token(token) {
+        return Some(inner);
+    }
+    // `$` / backtick values keep the single-quote form on Windows.
     let inner = token.strip_prefix('\'')?.strip_suffix('\'')?;
     // PowerShell also closes a `'` span on a typographic quote (U+2018-U+201F),
     // which would expose the rest of the target as commands; mirrors
     // `literal_metacharacters_are_single_quoted` and the VS Code client's `redirectTailPath`.
     if inner.is_empty()
         || inner.contains(['\'', '\0', '\n', '\r'])
+        || inner.contains(|ch: char| ('\u{2018}'..='\u{201f}').contains(&ch))
+    {
+        return None;
+    }
+    Some(inner)
+}
+
+/// Substring decode of a Windows console token that does not need owned
+/// recovery (`""` doubling or a doubled trailing `\` run). The recovery
+/// parser remains the authority for those shapes.
+fn windows_console_arg_token(token: &str) -> Option<&str> {
+    let inner = token.strip_prefix('"')?.strip_suffix('"')?;
+    if inner.is_empty()
+        || inner.contains(['"', '\0', '\n', '\r'])
+        || inner.ends_with('\\')
         || inner.contains(|ch: char| ('\u{2018}'..='\u{201f}').contains(&ch))
     {
         return None;
@@ -1893,12 +1959,31 @@ fn redirect_target_is_ripr_artifact(root: &Path, target: &str) -> bool {
 }
 
 /// Substitution punctuation and literal comparison operators in producer
-/// identities may appear only inside a single-quoted span, where `shell_arg`
-/// puts them (a gap id such as `'...:len(x)'` or `'...:amount>=threshold'`).
-/// That span is inert in bash, zsh, fish and PowerShell only
-/// when the command has no `"`, `\` or typographic quote, so those refuse the
+/// identities may appear only inside a quoted span, where `shell_arg` puts
+/// them (a gap id such as `'...:len(x)'` or `'...:amount>=threshold'`).
+///
+/// Bash: that span is inert in bash, zsh, fish and PowerShell only when the
+/// command has no `"`, `\` or typographic quote, so those refuse the
 /// allowance, as does an unterminated span. Mirrors the VS Code client's
 /// `hasUnsafeShellMetacharacter` (#4225, #4239).
+///
+/// Windows console form (#8153): `"` and `\` are the quoting/separator
+/// machinery, not automatic refuse. Quote tracking reuses the recovery
+/// parser's rules (literal backslashes, `""` doubling, even trailing
+/// separator runs). `$` inside double quotes is expansion, so it stays
+/// refused; `$` inside single quotes remains data (the renderer keeps that
+/// form for `$` / backtick values).
+fn literal_metacharacters_are_quoted_for(
+    command: &str,
+    characters: &[char],
+    windows: bool,
+) -> bool {
+    if !windows {
+        return literal_metacharacters_are_single_quoted(command, characters);
+    }
+    literal_metacharacters_are_windows_console_quoted(command, characters)
+}
+
 fn literal_metacharacters_are_single_quoted(command: &str, characters: &[char]) -> bool {
     let is_metacharacter = |character: char| characters.contains(&character);
     if !command.contains(is_metacharacter) {
@@ -1913,6 +1998,124 @@ fn literal_metacharacters_are_single_quoted(command: &str, characters: &[char]) 
             .iter()
             .step_by(2)
             .all(|span| !span.contains(is_metacharacter))
+}
+
+/// Windows console quote walk for [`literal_metacharacters_are_quoted_for`].
+/// Tracks regions with the same three recovery-parser rules as
+/// `command_specs::shell_words_for(..., true)`.
+fn literal_metacharacters_are_windows_console_quoted(command: &str, characters: &[char]) -> bool {
+    let is_metacharacter = |character: char| characters.contains(&character);
+    if !command.contains(is_metacharacter) {
+        return true;
+    }
+    if command.contains(|character: char| ('\u{2018}'..='\u{201f}').contains(&character)) {
+        return false;
+    }
+    let mut chars = command.chars().peekable();
+    let mut quote = None;
+    while let Some(character) = chars.next() {
+        match (quote, character) {
+            (Some('\''), '\'') => quote = None,
+            (Some('"'), '"') if chars.peek() == Some(&'"') => {
+                let _ = chars.next();
+            }
+            (Some('"'), '\\') => {
+                let mut run = 1;
+                while chars.peek() == Some(&'\\') {
+                    let _ = chars.next();
+                    run += 1;
+                }
+                if chars.peek() == Some(&'"') && run % 2 == 0 {
+                    quote = None;
+                    let _ = chars.next();
+                }
+            }
+            (Some(active), value) if value == active => quote = None,
+            (Some('"'), '$') if is_metacharacter('$') => return false,
+            (Some(_), value) if is_metacharacter(value) => {}
+            (Some(_), _) => {}
+            (None, '\'' | '"') => quote = Some(character),
+            (None, value) if is_metacharacter(value) => return false,
+            (None, _) => {}
+        }
+    }
+    quote.is_none()
+}
+
+/// Host-parameterised command words for the binder. Bash keeps
+/// [`command_tokens`] so existing tests stay byte-stable. Windows prefers
+/// the shared recovery parser and only falls back when that parser withholds
+/// quoted comparison operators that the binder treats as data (#8153).
+fn command_tokens_for(command: &str, windows: bool) -> Vec<String> {
+    if !windows {
+        return command_tokens(command);
+    }
+    crate::agent::command_specs::shell_words_for(command, true)
+        .unwrap_or_else(|| windows_console_words_allowing_quoted_operators(command))
+}
+
+/// Recovery-parser Windows console walk (`literal \\`, `""` doubling, even
+/// trailing-separator runs) without the quoted-operator abort.
+/// `shell_words_for(..., true)` returns `None` for quoted `>` / `$` / `()`;
+/// gap identities keep those as data. This is that parser's quote rules, not a
+/// fourth dialect.
+fn windows_console_words_allowing_quoted_operators(command: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut chars = command.chars().peekable();
+    while let Some(character) = chars.next() {
+        if escaped {
+            current.push(character);
+            escaped = false;
+            continue;
+        }
+        match (quote, character) {
+            (Some('\''), '\\') => current.push(character),
+            (Some('"'), '\\') => {
+                let mut run = 1;
+                while chars.peek() == Some(&'\\') {
+                    let _ = chars.next();
+                    run += 1;
+                }
+                if chars.peek() == Some(&'"') && run % 2 == 0 {
+                    current.push_str(&"\\".repeat(run / 2));
+                    quote = None;
+                    let _ = chars.next();
+                } else {
+                    current.push_str(&"\\".repeat(run));
+                }
+            }
+            (Some('"'), '"') if chars.peek() == Some(&'"') => {
+                current.push('"');
+                let _ = chars.next();
+            }
+            (_, '\\') => escaped = true,
+            (Some(active), value) if value == active => quote = None,
+            (Some(_), value) => current.push(value),
+            (None, '\'' | '"') => quote = Some(character),
+            (None, value) if value.is_whitespace() => {
+                if !current.is_empty() {
+                    words.push(std::mem::take(&mut current));
+                }
+            }
+            (None, '>') => {
+                if !current.is_empty() {
+                    words.push(std::mem::take(&mut current));
+                }
+                words.push(">".to_string());
+            }
+            (None, value) => current.push(value),
+        }
+    }
+    if escaped || quote.is_some() {
+        return Vec::new();
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    words
 }
 
 fn command_program_is_allowed(tokens: &[String]) -> bool {
@@ -3712,15 +3915,31 @@ mod tests {
             "cargo test foo\0bar",
             // Unterminated span: the `(` is not quoted.
             "cargo test 'foo (id",
-            // A `"` or `\\` elsewhere can end or escape the span in some shell.
-            "ripr receipt write --gap 'gap:len(x)' --out \"target/r.json\"",
-            "ripr receipt write --gap 'gap:len(x)' --out target\\r.json",
             // PowerShell closes a `'` span on U+2019, exposing `$(id)`.
             "ripr receipt write --gap 'gap:len(x)\u{2019} $(id) \u{2018}'",
         ] {
+            for windows in [false, true] {
+                assert!(
+                    !command_payload_is_safe_for(&workspace, command, windows),
+                    "windows={windows} accepted {command:?}"
+                );
+            }
+        }
+        // On the bash form a `"` or `\` elsewhere can end or escape the span.
+        // The Windows console form reads both literally (a double-quoted span
+        // is the renderer's own form, and `\` is a separator), so neither can
+        // substitute there (#8509).
+        for command in [
+            "ripr receipt write --gap 'gap:len(x)' --out \"target/r.json\"",
+            "ripr receipt write --gap 'gap:len(x)' --out target\\r.json",
+        ] {
             assert!(
-                !command_payload_is_safe(&workspace, command),
-                "accepted {command:?}"
+                !command_payload_is_safe_for(&workspace, command, false),
+                "bash accepted {command:?}"
+            );
+            assert!(
+                command_payload_is_safe_for(&workspace, command, true),
+                "windows refused {command:?}"
             );
         }
         for command in [
@@ -4344,7 +4563,6 @@ mod tests {
             "ripr receipt write --gap gap:amount>=threshold",
             "ripr receipt write --gap gap:amount<threshold",
             "ripr receipt write --gap 'gap:amount>=threshold",
-            "ripr receipt write --gap \"gap:amount>=threshold\"",
             "ripr receipt write --gap 'gap:amount>=threshold’'",
             "ripr receipt write --gap 'gap:amount>=threshold'\\\"",
             "ripr receipt write --gap \"$(echo injected)\"",
@@ -4356,11 +4574,19 @@ mod tests {
             "ripr agent verify --root . --json>target/ripr/verify.json",
             "ripr agent verify --root . --json > ../outside.json",
         ] {
-            assert!(
-                !command_payload_is_safe(root, command),
-                "active/ambiguous input must remain refused: {command:?}"
-            );
+            for windows in [false, true] {
+                assert!(
+                    !command_payload_is_safe_for(root, command, windows),
+                    "windows={windows}: active/ambiguous input must remain refused: {command:?}"
+                );
+            }
         }
+        // A `>` inside a double-quoted span is data on the Windows console
+        // form (it stays one argument in PowerShell and cmd) but an active
+        // redirect on the bash form (#8509).
+        let quoted = "ripr receipt write --gap \"gap:amount>=threshold\"";
+        assert!(!command_payload_is_safe_for(root, quoted, false));
+        assert!(command_payload_is_safe_for(root, quoted, true));
         assert!(!known_static_limit_kind("runtime_magic"));
         assert!(!known_static_limit_kind("python_arbitrary_new_limit"));
     }
@@ -4408,14 +4634,231 @@ mod tests {
             if let Some(target) = target {
                 // This is a lexical in-root target. No file is created, and
                 // it makes no claim that this filename is valid on Windows.
+                // The binder re-renders the anchored target with the host
+                // renderer, so the expected ending is that rendering, not a
+                // hard-coded quoting style (#8509).
+                let bound_root = crate::agent::loop_commands::bound_root(&root.to_string_lossy());
+                let rendered = crate::agent::loop_commands::shell_arg_for(
+                    &crate::agent::loop_commands::anchored_redirect_target(&bound_root, target),
+                    cfg!(windows),
+                );
                 assert!(
-                    bound.ends_with(&format!("/{target}'"))
-                        || (!target.contains('>') && bound.ends_with(&format!("/{target}"))),
+                    bound.ends_with(&format!("> {rendered}")),
                     "binding must preserve and anchor the whole target: {bound:?}"
                 );
             }
         }
         Ok(())
+    }
+
+    /// #8153: the binder's Windows core reuses recovery-parser console
+    /// quoting (literal `\`, `""` doubling, even trailing-separator runs)
+    /// so Linux CI covers the host that actually emits that form.
+    #[test]
+    fn command_tokens_for_windows_agrees_with_the_recovery_parser() -> Result<(), String> {
+        use crate::agent::command_specs::shell_words_for;
+        use crate::agent::loop_commands::shell_arg_for;
+
+        for value in [
+            format!("C:{}tmp{}probe win space", '\\', '\\'),
+            "with\"quote".to_string(),
+            format!("C:{}repo{}", '\\', '\\'),
+            "folder space\\".to_string(),
+        ] {
+            let rendered = shell_arg_for(&value, true);
+            let command = format!("ripr check --root {rendered} --base main");
+            let recovered = shell_words_for(&command, true)
+                .ok_or_else(|| format!("recovery parser withheld {command}"))?;
+            let binder = command_tokens_for(&command, true);
+            if binder != recovered {
+                return Err(format!(
+                    "binder Windows tokens must be the recovery parser, not a fourth dialect: {command} -> {binder:?} vs {recovered:?}"
+                ));
+            }
+            if !binder
+                .windows(2)
+                .any(|pair| pair == ["--root", value.as_str()])
+            {
+                return Err(format!(
+                    "Windows console token did not round-trip: {rendered} -> {binder:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// #8153: `items.len()` is `shell_arg_for`-quoted on Windows (`"...()"`),
+    /// which the bash-only metacharacter walk refused. The same double-quoted
+    /// form stays refused on the bash core.
+    #[test]
+    fn command_payload_is_safe_for_windows_console_len_identity() {
+        let workspace = root();
+        let gap = "gap:rust:src/lib.rs:total:predicate_boundary:items.len()";
+        let verify = "cargo test -p pricing total_boundary";
+        let out = "target/ripr/receipts/gap.json";
+        let windows_command = format!(
+            "ripr receipt write --gap {} --verify-command {} --status not_run --out {}",
+            crate::agent::loop_commands::shell_arg_for(gap, true),
+            crate::agent::loop_commands::shell_arg_for(verify, true),
+            crate::agent::loop_commands::shell_arg_for(out, true),
+        );
+        assert!(
+            command_payload_is_safe_for(&workspace, &windows_command, true),
+            "Windows console-quoted len() identity must be payload-safe: {windows_command}"
+        );
+        assert!(
+            !command_payload_is_safe_for(&workspace, &windows_command, false),
+            "bash core must keep refusing `\"` around substitution punctuation: {windows_command}"
+        );
+        let bash_command = format!(
+            "ripr receipt write --gap {} --verify-command {} --status not_run --out {}",
+            crate::agent::loop_commands::shell_arg_for(gap, false),
+            crate::agent::loop_commands::shell_arg_for(verify, false),
+            crate::agent::loop_commands::shell_arg_for(out, false),
+        );
+        assert!(
+            command_payload_is_safe_for(&workspace, &bash_command, false),
+            "bash single-quoted len() identity must stay payload-safe: {bash_command}"
+        );
+    }
+
+    /// #8153: a spaced root binds through the Windows console form, and the
+    /// bash core keeps single quotes. Both directions run on any host.
+    #[test]
+    fn bind_portable_command_for_is_host_aware() -> Result<(), String> {
+        let root = std::env::temp_dir().join("ripr bind win space");
+        let bound = crate::agent::loop_commands::bound_root(&root.to_string_lossy());
+        let portable = "ripr agent verify --root . --json";
+        for windows in [false, true] {
+            let expected_arg = crate::agent::loop_commands::shell_arg_for(&bound, windows);
+            let expected = format!("ripr agent verify --root {expected_arg} --json");
+            let once = bind_portable_command_for(&root, portable, windows);
+            if once.as_deref() != Some(expected.as_str()) {
+                return Err(format!(
+                    "windows={windows}: {portable:?} bound to {once:?}, expected {expected:?}"
+                ));
+            }
+            let twice = bind_portable_command_for(&root, &expected, windows);
+            if twice.as_deref() != Some(expected.as_str()) {
+                return Err(format!(
+                    "windows={windows}: binding is not idempotent: {expected:?} -> {twice:?}"
+                ));
+            }
+            if !editor_command_is_safe_for(&root, &expected, windows) {
+                return Err(format!(
+                    "windows={windows}: binder rendering must be editor-safe: {expected}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// #8153: a Windows-quoted comparison identity and redirect target with
+    /// `>` stay one token each; the portable `--root .` still binds.
+    #[test]
+    fn bind_portable_command_for_windows_preserves_quoted_comparison_and_redirect()
+    -> Result<(), String> {
+        let root = &TEST_ROOT;
+        let identity = "gap:python:comparison:amount > threshold";
+        let target = "target/ripr/receipt > data.json";
+        let quoted_identity = crate::agent::loop_commands::shell_arg_for(identity, true);
+        let quoted_target = crate::agent::loop_commands::shell_arg_for(target, true);
+        let command = format!(
+            "ripr receipt write --root . --gap {quoted_identity} --status not_run > {quoted_target}"
+        );
+        if !command_payload_is_safe_for(root, &command, true) {
+            return Err(format!(
+                "Windows-quoted comparison payload must be safe: {command}"
+            ));
+        }
+        let bound = bind_portable_command_for(root, &command, true)
+            .ok_or_else(|| format!("Windows-quoted portable route must bind: {command}"))?;
+        if bound.contains("--root .") || !bound.contains(&format!("--gap {quoted_identity}")) {
+            return Err(format!(
+                "binding must keep the quoted identity and select the root: {bound}"
+            ));
+        }
+        let bound_root = crate::agent::loop_commands::bound_root(&root.to_string_lossy());
+        let anchored = crate::agent::loop_commands::shell_arg_for(
+            &crate::agent::loop_commands::anchored_redirect_target(&bound_root, target),
+            true,
+        );
+        if !bound.ends_with(&anchored) {
+            return Err(format!(
+                "binding must preserve and anchor the whole Windows-quoted target: {bound}"
+            ));
+        }
+        if !editor_command_is_safe_for(root, &bound, true) {
+            return Err(format!(
+                "bound Windows command must be editor-safe: {bound}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #8509: the bash apostrophe escape `'\''` is withheld on both host
+    /// forms (no Windows console reads it, and the token scan cannot follow
+    /// it), while a plain separator backslash still binds on Windows (#8153).
+    #[test]
+    fn bind_portable_command_for_withholds_apostrophe_escape_on_both_hosts() {
+        let root = std::env::temp_dir().join("ripr-escape-root");
+        let escaped = "ripr receipt write --verify-command 'ripr check --note it'\\''s --root . --json' --root . --json";
+        for windows in [false, true] {
+            assert_eq!(
+                bind_portable_command_for(&root, escaped, windows),
+                None,
+                "windows={windows}"
+            );
+        }
+        let plain = "ripr agent verify --note 'path\\file' --root sub --json";
+        assert_eq!(
+            bind_portable_command_for(&root, plain, true),
+            Some(plain.to_string())
+        );
+    }
+
+    /// #8153: substring decode of a simple Windows console token; `""`
+    /// doubling stays with the recovery parser (owned decode) and is
+    /// withheld from this `&str` undo.
+    #[test]
+    fn shell_arg_token_for_undoes_simple_windows_console_quotes() {
+        assert_eq!(
+            shell_arg_token_for(r#""ws/probe win space""#, true),
+            Some("ws/probe win space")
+        );
+        assert_eq!(
+            shell_arg_token_for(r#""target/ripr/receipt > data.json""#, true),
+            Some("target/ripr/receipt > data.json")
+        );
+        assert_eq!(shell_arg_token_for(r#""a""b""#, true), None);
+        assert_eq!(
+            shell_arg_token_for("'gap:len(x):$(literal)'", true),
+            Some("gap:len(x):$(literal)")
+        );
+        assert_eq!(
+            shell_arg_token_for("'gap:len(x):$(literal)'", false),
+            Some("gap:len(x):$(literal)")
+        );
+        assert_eq!(shell_arg_token_for(r#""ws/probe win space""#, false), None);
+    }
+
+    /// #8153: unquoted substitution stays refused on both cores.
+    #[test]
+    fn command_payload_is_safe_for_still_refuses_unquoted_substitution_on_both_hosts() {
+        let workspace = root();
+        for windows in [false, true] {
+            for command in [
+                "cargo test $(id)",
+                "cargo test $HOME",
+                "ripr check --root . --json; echo pwned",
+                r#"ripr receipt write --gap "$(id)" --status not_run"#,
+            ] {
+                assert!(
+                    !command_payload_is_safe_for(&workspace, command, windows),
+                    "windows={windows} accepted {command:?}"
+                );
+            }
+        }
     }
 
     #[test]

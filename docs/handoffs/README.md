@@ -77,7 +77,6 @@ claim it closed.
 - [0.8.0 Ship Decision](2026-06-02-0.8.0-ship-decision.md)
 - [Python Repair Routing usable-alpha closeout](2026-05-31-python-repair-routing-usable-alpha-closeout.md)
 - [TypeScript Preview Completion closeout](2026-05-30-typescript-preview-completion-closeout.md)
-- [Adoption Integration Cleanup reconciliation](2026-05-23-adoption-integration-cleanup-reconciliation.md)
 - [First Useful PR Loop Continuation closeout](2026-05-23-first-useful-pr-loop-continuation-closeout.md)
 - [Actionable Surface Translation closeout](2026-05-23-actionable-surface-translation-closeout.md)
 - [Lane 1 Value Resolution Audit Fixes closeout](2026-05-23-lane1-value-resolution-audit-fixes-closeout.md)
@@ -86,7 +85,6 @@ claim it closed.
 - [Lane 1 Finding Alignment Burn-Down closeout](2026-05-22-lane1-finding-alignment-burndown-closeout.md)
 - [Start-Here Surface Convergence closeout](2026-05-22-start-here-surface-convergence-closeout.md)
 - [Start-Here Surface Convergence dogfood receipts](2026-05-22-start-here-surface-convergence-receipts.md)
-- [First Useful PR Loop closeout](2026-05-22-first-useful-pr-loop-closeout.md)
 - [0.7.0 Source Release Proof](2026-05-20-0.7.0-source-release-proof.md)
 - [0.7 Release Readiness closeout](2026-05-20-0.7-release-readiness-closeout.md)
 - [0.7 Swarm Repair Loop dogfood](2026-05-20-0.7-swarm-repair-loop-dogfood.md)
@@ -115,7 +113,6 @@ claim it closed.
 - [Editor Gap Cockpit closeout](2026-05-15-editor-gap-cockpit-closeout.md)
 - [Generated evidence discipline closeout](2026-05-14-generated-evidence-discipline-closeout.md)
 - [Lane 1 User-Visible Output Evidence closeout](2026-05-14-user-visible-output-evidence-closeout.md)
-- [Editor Gap Cockpit dogfood receipts](2026-05-14-editor-gap-cockpit-receipts.md)
 - [Presentation text consumer contract](2026-05-14-presentation-text-consumer-handoff.md)
 - [Policy Operations closeout](2026-05-13-policy-operations-closeout.md)
 - [Lane 1 Evidence Quality Leadership closeout](2026-05-13-lane-1-evidence-quality-leadership-closeout.md)
@@ -136,7 +133,6 @@ claim it closed.
 - [Campaign 21 closeout](2026-05-09-campaign-21-closeout.md)
 - [Campaign 20 closeout](2026-05-09-campaign-20-closeout.md)
 - [Test-oracle assistant dogfood receipt](2026-05-09-test-oracle-assistant-receipt.md)
-- [Campaign 19 closeout](2026-05-09-campaign-19-closeout.md)
 - [Campaign 18 closeout](2026-05-09-campaign-18-closeout.md)
 - [Campaign 17 closeout](2026-05-09-campaign-17-closeout.md)
 - [Editor Evidence UX closeout](2026-05-09-editor-evidence-ux-closeout.md)
@@ -147,16 +143,7 @@ claim it closed.
 - [Campaign 13 closeout](2026-05-08-campaign-13-closeout.md)
 - [PR Review Guidance audit](2026-05-08-pr-review-guidance-audit.md)
 - [Campaign 12 closeout](2026-05-08-campaign-12-closeout.md)
-- [Campaign 11 closeout](2026-05-07-campaign-11-closeout.md)
-- [Campaign 10 closeout](2026-05-07-campaign-10-closeout.md)
-- [Editor agent readiness proof](2026-05-07-editor-agent-readiness-proof.md)
-- [Editor agent integration contract audit](2026-05-07-editor-agent-integration-contract-audit.md)
-- [LLM work loop status report](2026-05-07-llm-work-loop-status.md)
 - [Campaign 7 closeout](2026-05-07-campaign-7-closeout.md)
-- [Campaign 8 closeout](2026-05-07-campaign-8-closeout.md)
-- [Hot sidecar latency audit](2026-05-07-hot-sidecar-latency-audit.md)
-- [Repo exposure latency report](2026-05-07-repo-exposure-latency-report.md)
-- [Repo exposure warm-path reuse](2026-05-07-repo-exposure-warm-path-reuse.md)
 
 ## Template
 
@@ -173,7 +160,7 @@ Latest merged PR: #NNN <title> (commit <sha>)
 
 ## Current work item
 
-<which manifest entry / which PR / which scope>
+<which issue / which PR / which scope — from live GitHub/worktree state, not a manifest>
 
 ## Next work item
 

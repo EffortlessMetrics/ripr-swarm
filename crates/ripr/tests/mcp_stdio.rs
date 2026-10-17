@@ -1761,7 +1761,14 @@ impl SequentialStdio {
 
 impl Drop for SequentialStdio {
     fn drop(&mut self) {
+        // Closing stdin lets the server exit on its own; give an exiting
+        // instrumented process time to finish writing its coverage profile
+        // before the owned kill, which would otherwise truncate it (#4978).
         self.stdin = None;
+        let grace = Instant::now() + Duration::from_secs(2);
+        while matches!(self.child.try_wait(), Ok(None)) && Instant::now() < grace {
+            std::thread::sleep(Duration::from_millis(10));
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
         if let Some(stdout) = self.stdout.take() {
@@ -2316,6 +2323,152 @@ fn long_request_ids_refuse_typed_before_the_wire_cap() -> Result<(), String> {
     let recovered = session.call_tool("outer-recovered", "ripr_list_gaps", json!({}), timeout)?;
     if structured_tool_success(&recovered, "outer-budget recovery")? != full {
         return Err("outer-budget refusals changed the completed snapshot or selection".into());
+    }
+    Ok(())
+}
+
+/// #7768: the original silent drop at the raw stdio boundary. A success
+/// document whose complete double-carry envelope exceeds the id-aware
+/// envelope budget used to ship as a text-only success —
+/// `structuredContent` silently absent although the tool advertises an
+/// `outputSchema`. Both stimulus ids are computed here from the
+/// `ripr_workspace_status` envelope actually measured on this session's
+/// wire: one puts the id-aware budget inside the refusal window (the
+/// structured envelope over it, the compact text under it) and must be
+/// answered with the typed `result_too_large` refusal carrying structured
+/// failure content; a shorter id one notch below keeps the budget above
+/// the structured envelope so the same call still ships its structured
+/// status. Reverting to the text-only fallback fails the window arm (it
+/// ships a success without `structuredContent`); a reservation large
+/// enough to refuse fitting envelopes fails the fit arm.
+#[test]
+fn window_sized_envelope_refuses_typed_instead_of_dropping_structured_content() -> Result<(), String>
+{
+    const RESPONSE_BOUND: usize = 128 * 1024;
+    const INPUT_CAP: usize = 256 * 1024;
+    const OUTER_RESERVE: usize = 128;
+    let timeout = Duration::from_secs(30);
+    let root = install_b4_repair_ready_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut session = SequentialStdio::spawn(&root)?;
+    let discovery = session.call("window-discover", "server/discover", json!({}), timeout)?;
+    if discovery.get("result").is_none() {
+        return Err("window fixture failed discovery".into());
+    }
+
+    // Measure the status envelope on the real wire with a short id. The
+    // semantic envelope is the reply's result member minus the `resultType`
+    // field the SDK adds after the semantic measurement.
+    let short = session.call_tool("window-short", "ripr_workspace_status", json!({}), timeout)?;
+    let document = structured_tool_success(&short, "window status measure")?;
+    let semantic = {
+        let mut result = short
+            .get("result")
+            .cloned()
+            .ok_or("window status measure lost its result")?;
+        if let Some(object) = result.as_object_mut() {
+            object.remove("resultType");
+        }
+        result
+    };
+    let structured_bytes = serde_json::to_vec(&semantic)
+        .map_err(|error| error.to_string())?
+        .len();
+    // The text-only envelope the removed fallback used to ship for the
+    // same document, measured locally from the double-carry reply.
+    let text = semantic
+        .pointer("/content/0/text")
+        .and_then(Value::as_str)
+        .ok_or("window status measure lost its text copy")?;
+    let text_only_bytes = serde_json::to_vec(&json!({
+        "content": [{ "type": "text", "text": text }],
+        "isError": false,
+    }))
+    .map_err(|error| error.to_string())?
+    .len();
+    if structured_bytes <= text_only_bytes || text_only_bytes < 1_000 {
+        return Err(format!(
+            "window measurement interval drifted: structured={structured_bytes}, text_only={text_only_bytes}"
+        ));
+    }
+
+    // Refusal stimulus: the id-aware budget sits strictly inside the
+    // window between the compact-text envelope and the structured one.
+    let window_budget = text_only_bytes + (structured_bytes - text_only_bytes) / 2;
+    let window_id_bytes = RESPONSE_BOUND - OUTER_RESERVE - window_budget;
+    if window_id_bytes + 128 > INPUT_CAP {
+        return Err("window refusal stimulus exceeds the input cap".into());
+    }
+    let window_quotes = (window_id_bytes - 2) / 2;
+    let window_id = "\"".repeat(window_quotes);
+    let actual_window_id_bytes = serde_json::to_vec(&json!(window_id))
+        .map_err(|error| error.to_string())?
+        .len();
+    let budget = RESPONSE_BOUND - OUTER_RESERVE - actual_window_id_bytes;
+    if budget <= text_only_bytes || budget >= structured_bytes {
+        return Err(format!(
+            "window stimulus missed its interval: budget={budget}, text_only={text_only_bytes}, structured={structured_bytes}"
+        ));
+    }
+    let refused = session.call_tool(&window_id, "ripr_workspace_status", json!({}), timeout)?;
+    if refused.get("error").is_some()
+        || refused.pointer("/result/isError") != Some(&json!(true))
+        || refused.pointer("/result/structuredContent/failure/code")
+            != Some(&json!("result_too_large"))
+    {
+        return Err(format!(
+            "a window-sized envelope must refuse typed with structured failure content, not drop structuredContent silently: isError={:?}, has_result={}, has_structured={}, code={:?}",
+            refused.pointer("/result/isError"),
+            refused.get("result").is_some(),
+            refused.pointer("/result/structuredContent").is_some(),
+            refused.pointer("/result/structuredContent/failure/code")
+        ));
+    }
+    let recovery = refused
+        .pointer("/result/structuredContent/failure/recovery")
+        .and_then(Value::as_str)
+        .ok_or("window refusal omitted recovery")?;
+    if !recovery.contains("no narrower status read") {
+        return Err(format!(
+            "window refusal lost the status recovery route: {recovery}"
+        ));
+    }
+    if serde_json::to_vec(&refused)
+        .map_err(|error| error.to_string())?
+        .len()
+        + 1
+        > RESPONSE_BOUND
+    {
+        return Err("the window refusal itself must fit the wire cap".into());
+    }
+
+    // Fit control one notch below: a shorter id keeps the budget above the
+    // structured envelope, so the same call still ships its structured
+    // status to this long id.
+    let fit_quotes = (RESPONSE_BOUND - OUTER_RESERVE - structured_bytes - 512 - 2) / 2;
+    let fit_id = "\"".repeat(fit_quotes);
+    let actual_fit_budget = RESPONSE_BOUND
+        - OUTER_RESERVE
+        - serde_json::to_vec(&json!(fit_id))
+            .map_err(|error| error.to_string())?
+            .len();
+    if actual_fit_budget < structured_bytes {
+        return Err(format!(
+            "fit stimulus must keep the structured status inside the budget: budget={actual_fit_budget}, structured={structured_bytes}"
+        ));
+    }
+    let fitted = session.call_tool(&fit_id, "ripr_workspace_status", json!({}), timeout)?;
+    let fitted_document = structured_tool_success(&fitted, "window fit status")?;
+    if fitted_document["schema_version"] != document["schema_version"] {
+        return Err("the fitting status lost its document shape".into());
+    }
+    if serde_json::to_vec(&fitted)
+        .map_err(|error| error.to_string())?
+        .len()
+        + 1
+        > RESPONSE_BOUND
+    {
+        return Err("the fitting status exceeded the wire cap".into());
     }
     Ok(())
 }

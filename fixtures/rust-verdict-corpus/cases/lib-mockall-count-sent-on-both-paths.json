@@ -37,9 +37,9 @@
       "limited"
     ]
   },
-  "reasoning": "Each call sends exactly once whichever side the guard takes, so both mutants keep two sends and the test passes. Spec cell: RIPR-SPEC-0267 example 4.",
+  "reasoning": "Each call sends exactly once whichever side the guard takes, so both mutants keep two sends and the test passes. Spec cell: RIPR-SPEC-0279 example 4.",
   "labeling_observation": {
-    "ripr_commit": "98c8f172b + RIPR-SPEC-0267 candidate",
+    "ripr_commit": "98c8f172b + RIPR-SPEC-0279 candidate",
     "full_checkout_verdict": "gap",
     "full_checkout_classifications": [
       "weakly_exposed"
@@ -47,6 +47,6 @@
     "excerpt_parity": "matched"
   },
   "spec_examples": [
-    "RIPR-SPEC-0267#4"
+    "RIPR-SPEC-0279#4"
   ]
 }

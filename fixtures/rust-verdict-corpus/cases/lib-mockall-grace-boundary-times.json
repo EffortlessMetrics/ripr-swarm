@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "predicate_boundary",
   "test_shape": "mockall_times_expectation_boundary",
-  "hard_case": "The boundary is pinned by a mockall .times(1) expectation plus assert!(remind(.., 31)) and assert!(!remind(.., 30)); the bool assertions alone are weak, and the call count is the discriminator (RIPR-SPEC-0267).",
+  "hard_case": "The boundary is pinned by a mockall .times(1) expectation plus assert!(remind(.., 31)) and assert!(!remind(.., 30)); the bool assertions alone are weak, and the call count is the discriminator (RIPR-SPEC-0279).",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",
@@ -50,6 +50,6 @@
     "excerpt_parity": "matched"
   },
   "spec_examples": [
-    "RIPR-SPEC-0267#1"
+    "RIPR-SPEC-0279#1"
   ]
 }

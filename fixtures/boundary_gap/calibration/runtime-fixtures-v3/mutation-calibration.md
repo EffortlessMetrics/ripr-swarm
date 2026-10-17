@@ -33,6 +33,8 @@ Precision notes:
 - static_gap_without_runtime_signal includes static gap seams with no matched runtime gap signal in this import
 - runtime records with a complete span join by span_containment to the unique innermost static seam whose span contains the mutated range; with no containing span they fall back to file and line over seams without a span, and records without a complete span join by file and line
 - ambiguous runtime gap signals (ambiguous_file_line: the file/line fallback found several seams on the line; ambiguous_span_overlap: equal or crossing innermost seam spans) are counted as runtime_inconclusive until a seam_id or unambiguous location is available
+- agreement buckets mix counting units: `static_gap_and_runtime_signal`, `static_gap_without_runtime_signal`, `static_clean_and_runtime_clean`, and `runtime_inconclusive` count static seams (with ambiguous records also counted in `runtime_inconclusive`), while `runtime_signal_without_static_gap` counts runtime gap-signal records, so the bucket column need not sum to `matched_total` or `mutants_total`
+- `runtime_signal_without_static_gap` includes 1 unmatched gap-signal record also counted in `unmatched_mutants_total`
 
 ### Runtime signals without static gaps
 

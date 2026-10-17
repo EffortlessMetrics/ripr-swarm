@@ -79,6 +79,8 @@ fn cache_usage() -> String {
         "  ripr cache, otherwise target/ripr/cache.",
         "  Relative paths, parent-directory traversal, symlink roots, near-root",
         "  paths, and ordinary directories are refused before any walk or delete.",
+        "  Only the registered producer layers directly under that root are",
+        "  inventoried; sibling files and unregistered directories are preserved.",
         "  Reports, receipts, PR/review artifacts, workflow artifacts, build output, and source files are ignored.",
         "",
         "Defaults:",
@@ -734,8 +736,18 @@ fn collect_cache_files(root: &Path, cache_root: &Path) -> Result<Vec<CacheFile>,
         return Ok(Vec::new());
     }
 
+    // Only registered producer layers directly under the root are owned.
+    // Sibling files and unregistered directories (reports, source, user data)
+    // never enter the inventory, so they can never enter a deletion plan.
     let mut files = Vec::new();
-    let mut stack = vec![cache_root.to_path_buf()];
+    let mut stack = Vec::new();
+    for &layer in cache_layer_names() {
+        let layer_path = cache_root.join(layer);
+        match fs::symlink_metadata(&layer_path) {
+            Ok(metadata) if metadata.file_type().is_dir() => stack.push(layer_path),
+            _ => {}
+        }
+    }
     while let Some(dir) = stack.pop() {
         for entry in
             fs::read_dir(&dir).map_err(|err| format!("failed to read {}: {err}", dir.display()))?
@@ -776,9 +788,6 @@ fn cache_root_from_env(root: &Path, env_value: Result<String, std::env::VarError
 }
 
 fn validate_scan_cache_root(cache_dir: &Path) -> Result<(), String> {
-    if is_default_cache_layout(cache_dir) {
-        return Ok(());
-    }
     let display = cache_dir.display();
     if cache_dir.as_os_str().is_empty() {
         return Err(format!(
@@ -799,10 +808,43 @@ fn validate_scan_cache_root(cache_dir: &Path) -> Result<(), String> {
              set {CACHE_DIR_ENV} to an absolute cache path without parent-directory traversal"
         ));
     }
+    reject_symlinked_ancestor(cache_dir)?;
     if normal_components(cache_dir).len() < 2 {
         return Err(format!(
             "refusing to scan {display}: a cache root must sit at least two directories below the filesystem root"
         ));
+    }
+    Ok(())
+}
+
+/// A real directory reached through an aliased ancestor (symlink or Windows
+/// junction/reparse point) would let the walk and delete leave the tree the
+/// caller named, so any aliased component refuses, matching public
+/// `ripr cache clear`. The default `target/ripr/cache` suffix grants
+/// recognition, not an exemption from this check.
+fn reject_symlinked_ancestor(cache_dir: &Path) -> Result<(), String> {
+    for ancestor in cache_dir.ancestors() {
+        if ancestor.as_os_str().is_empty() {
+            continue;
+        }
+        match fs::symlink_metadata(ancestor) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(format!(
+                    "refusing to scan {}: path component {} is a symlink; nothing was inspected or removed. \
+                     Set {CACHE_DIR_ENV} to the real (non-aliased) cache directory",
+                    cache_dir.display(),
+                    ancestor.display()
+                ));
+            }
+            Ok(_) => {}
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => {
+                return Err(format!(
+                    "failed to inspect cache path component {}: {err}",
+                    ancestor.display()
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -1153,7 +1195,10 @@ mod tests {
     fn cache_report_lists_families_and_largest_files() -> Result<(), String> {
         let root = temp_root("report")?;
         write_bytes(&root.join("target/ripr/cache/repo-seam-facts/v1/a.json"), 7)?;
-        write_bytes(&root.join("target/ripr/cache/file-facts/b.json"), 3)?;
+        write_bytes(
+            &root.join("target/ripr/cache/repo-compact-classified-seams/b.json"),
+            3,
+        )?;
         write_bytes(&root.join("target/ripr/reports/not-cache.json"), 100)?;
 
         let report = build_cache_report(&root)?;
@@ -1161,7 +1206,7 @@ mod tests {
         assert_eq!(report.total_bytes, 10);
         assert_eq!(report.families[0].name, "repo-seam-facts");
         assert_eq!(report.families[0].bytes, 7);
-        assert_eq!(report.families[1].name, "file-facts");
+        assert_eq!(report.families[1].name, "repo-compact-classified-seams");
         assert_eq!(
             report.largest_files[0].relative_path,
             rel(&["target", "ripr", "cache", "repo-seam-facts", "v1", "a.json"])
@@ -1652,6 +1697,125 @@ mod tests {
             }
             Err(_) => Ok(()),
         }
+    }
+
+    #[test]
+    fn cache_gc_confines_selection_to_registered_layers() -> Result<(), String> {
+        for relocated in [false, true] {
+            let workspace = temp_root("gc-mixed-ws")?;
+            let (cache, env) = if relocated {
+                let dir = temp_root("gc-mixed-cache")?;
+                let env = Ok(dir.display().to_string());
+                (dir, env)
+            } else {
+                (
+                    workspace.join("target/ripr/cache"),
+                    Err(std::env::VarError::NotPresent),
+                )
+            };
+            let layer = cache_layer_names()[0];
+            let owned = cache.join(layer).join("entry.json");
+            let keep_file = cache.join("KEEP.txt");
+            let keep_dir_file = cache.join("user-data/report.json");
+            write_bytes(&owned, 3)?;
+            write_bytes(&keep_file, 5)?;
+            write_bytes(&keep_dir_file, 7)?;
+            let options = GcOptions {
+                dry_run: false,
+                max_size_bytes: Some(0),
+                ttl_days: None,
+            };
+            let plan = build_gc_plan_from_env(
+                &workspace,
+                env,
+                &options,
+                SystemTime::now() + Duration::from_secs(1),
+            )?;
+            assert_eq!(plan.selected_files, 1, "relocated={relocated}");
+            assert_eq!(plan.selected_bytes, 3);
+            assert!(keep_file.exists() && keep_dir_file.exists());
+            cleanup(workspace)?;
+            if relocated {
+                cleanup(cache)?;
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cache_scan_refuses_symlinked_ancestor_even_for_default_suffix() -> Result<(), String> {
+        let base = temp_root("gc-alias")?;
+        let real = base.join("real");
+        let victim = real
+            .join("ripr/cache")
+            .join(cache_layer_names()[0])
+            .join("a.json");
+        write_bytes(&victim, 4)?;
+        let alias = base.join("alias");
+        std::os::unix::fs::symlink(&real, &alias).map_err(|err| format!("symlink: {err}"))?;
+        let result = build_gc_plan_from_env(
+            &base,
+            Ok(alias.join("ripr/cache").display().to_string()),
+            &GcOptions {
+                dry_run: true,
+                max_size_bytes: Some(0),
+                ttl_days: None,
+            },
+            SystemTime::now() + Duration::from_secs(1),
+        );
+        let report =
+            build_cache_report_from_env(&base, Ok(alias.join("ripr/cache").display().to_string()));
+        let persisted = victim.exists();
+        cleanup(base)?;
+        assert!(persisted);
+        match (result, report) {
+            (Err(gc), Err(rep)) if gc.contains("is a symlink") && rep.contains("is a symlink") => {
+                Ok(())
+            }
+            other => Err(format!("alias ancestor not refused by both: {other:?}")),
+        }
+    }
+
+    #[test]
+    fn default_suffix_no_longer_skips_root_safety_checks() {
+        let root = PathBuf::from("/workspace/ripr");
+        for bad in [
+            "target/ripr/cache",
+            "/tmp/x/../target/ripr/cache",
+            "./target/ripr/cache",
+        ] {
+            assert!(
+                build_cache_report_from_env(&root, Ok(bad.into())).is_err(),
+                "{bad} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn cache_gc_includes_sharded_layers_but_not_their_root_siblings() -> Result<(), String> {
+        let workspace = temp_root("gc-sharded")?;
+        let sharded = cache_layer_names()
+            .iter()
+            .find(|name| name.ends_with(super::SHARDED_CACHE_FAMILY_SUFFIX))
+            .copied()
+            .ok_or("no sharded layer registered")?;
+        let cache = workspace.join("target/ripr/cache");
+        write_bytes(&cache.join(sharded).join("gen-1/shard-0.bin"), 4)?;
+        write_bytes(&cache.join("stray.bin"), 9)?;
+        let plan = build_gc_plan(
+            &workspace,
+            &GcOptions {
+                dry_run: true,
+                max_size_bytes: Some(0),
+                ttl_days: None,
+            },
+            SystemTime::now() + Duration::from_secs(1),
+        )?;
+        assert_eq!(plan.selected_files, 1);
+        assert_eq!(plan.selected_bytes, 4);
+        cleanup(workspace)?;
+        Ok(())
     }
 
     fn temp_root(label: &str) -> Result<PathBuf, String> {

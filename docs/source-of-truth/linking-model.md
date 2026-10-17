@@ -3,7 +3,10 @@
 The source-of-truth stack is a graph, not a pile of documents. Each layer should
 link to the next layer that owns the more specific question.
 
-## Canonical chain
+## Current authority graph
+
+Use the [repo tracking model](../REPO_TRACKING_MODEL.md) to resolve each
+question to its owner. A typical set of links is:
 
 ```text
 Roadmap
@@ -11,15 +14,18 @@ Roadmap
     -> Spec
       -> ADR when a durable decision is needed
         -> Implementation plan
-          -> Active goal work item
-            -> PR / issue
-              -> Proof command
+          -> GitHub issue / scoped PR
+            -> PR-local implementation slice when applicable
+              -> Proof command and exact evidence
                 -> Support-tier or policy update when applicable
                   -> Closeout
 ```
 
-The chain is not mandatory for every small change. It is mandatory when a
-feature, claim, policy, or architecture decision would otherwise outlive the PR.
+This is a graph of applicable authorities, not a mandatory document chain.
+Durable behavior, claims, policy, and decisions need links to their owning
+artifacts; a change does not need every layer. Live work selection comes from
+GitHub issues, PRs, checks, reviews, and the local worktree. A PR-local slice
+records scope for already-selected work; it does not select or authorize work.
 
 ## Link fields
 
@@ -53,7 +59,8 @@ because the current slice has no impact.
 - Spec IDs use `RIPR-SPEC-NNNN`.
 - ADRs use the existing numeric ADR path under `docs/adr/`.
 - Plan work items use stable kebab-case IDs.
-- Active goal work items should reuse the plan work-item ID when practical.
+- PRs and PR-local slices should reference the relevant plan work-item ID when
+  applicable.
 - Closeouts should name the date and lane or goal ID.
 
 IDs are repo contracts. Renaming an accepted ID should be treated as a
@@ -61,16 +68,24 @@ compatibility change for links, reports, and agent handoff.
 
 ## Status rules
 
-Artifacts should use small, explicit status vocabularies:
+Status belongs to a specific object; there is no common lifecycle for every
+artifact. Keep these axes separate:
 
-- proposals, specs, and ADRs: `draft`, `proposed`, `accepted`,
-  `implemented`, `superseded`, `rejected`;
-- plan and goal work items: `ready`, `active`, `blocked`, `done`,
-  `superseded`;
-- active goals: `active`, `paused`, `closed`, `complete`, `archived`.
+| Concern | Authority |
+| --- | --- |
+| Spec document disposition | [Spec Format](../SPEC_FORMAT.md): `proposed`, `planned`, `accepted`, `deprecated` |
+| Proposal and ADR disposition | The respective document, template, and registered artifact schema |
+| Plan work-item progress | The plan's work items and dependencies; this does not select live work |
+| One-PR implementation claim | `ImplementationSliceV1` under [`.allow/spec-system/slices/`](../../.allow/spec-system/slices/) |
+| Evidence and proof currentness | Traceability/evidence edges and exact receipts |
+| Support claim | [Support tiers](../status/SUPPORT_TIERS.md), projecting capability authorities |
+| Live work | GitHub issues/PRs/checks/reviews and the local worktree |
 
-If a validator supports a smaller vocabulary, the validator is authoritative for
-that artifact until the schema changes.
+An accepted spec does not imply implemented behavior, sufficient evidence,
+promoted support, or active work. Validators enforce their registered schemas;
+this guide does not change validator semantics or introduce a shared status
+vocabulary. Retired active-goal lifecycle states belong to the historical
+model described in [Codex Goals](../CODEX_GOALS.md), not current work selection.
 
 ## Proof links
 
@@ -87,7 +102,7 @@ support-tier row, but the support-tier row owns the claim/proof mapping.
 
 ## Validator responsibilities
 
-The current validators split graph, goal, support-tier, and policy proof instead
+The current validators split document graph, support-tier, and policy proof instead
 of making one document or one check own every layer.
 
 `cargo xtask check-doc-artifacts` verifies registered document graph facts:
@@ -98,9 +113,14 @@ of making one document or one check own every layer.
 - accepted specs link to a proposal or record a standalone reason;
 - plans link to at least one proposal or spec;
 
-`cargo xtask check-goals` verifies active-goal and work-item shape, including
-proof commands and unsupported fields. `cargo xtask check-support-tiers`
-verifies support-tier proof-command references. Policy-specific ledgers and
+`cargo xtask check-support-tiers` verifies support-tier proof-command references.
+`cargo xtask check-doc-index` checks document indexes, and
+`cargo xtask check-doc-roles` checks the supported planning-document roles.
+`cargo xtask markdown-links` checks local Markdown links. Policy-specific ledgers and
 workflows own exception scope, owner, reason, and review posture.
 `cargo xtask repo-contract-report` composes these facts into an advisory graph
 packet; it is not a gate and does not infer product correctness.
+
+Historical `cargo xtask check-goals` instructions referred to the
+`.ripr/goals/` scheduler deleted in #1701. That command is retired; use live
+GitHub/worktree state and the current authorities above.

@@ -425,7 +425,7 @@ fn test_local_mock_binding(body: &str, name: &str) -> bool {
             let Some(rest) = rest.strip_prefix('=') else {
                 return false;
             };
-            starts_with_mock_factory(rest.trim_start())
+            closed_mock_call(rest.trim_start()).is_some_and(ends_statement)
                 && word_boundary_before(&masked, at)
                 && at_top_level(&masked, at)
         })
@@ -463,8 +463,10 @@ fn test_local_mock_property(
             };
             let rest = rest.trim_start();
             if let Some(literal) = rest.strip_prefix('{') {
-                return literal_body(literal).is_some_and(|literal| {
-                    keys_mock_once(literal, property, starts_with_mock_factory)
+                // `{ ... }.inner` or `{ ... } && other` binds something else.
+                return literal_body(literal).is_some_and(|body| {
+                    ends_statement(&literal[body.len() + 1..])
+                        && keys_mock_once(body, property, is_closed_mock_call)
                 });
             }
             factories.iter().any(|(name, returned)| {
@@ -496,11 +498,21 @@ fn factory_call_is_initializer(rest: &str, name: &str) -> bool {
 /// `true` when a factory literal's value is exactly a bare `jest.fn()` /
 /// `vi.fn()`: an implementation argument can call the mock through `this`
 /// and a trailing operator (`jest.fn() && shared`) can hand back another
-/// mock, so the factory path admits neither.
+/// mock, so the factory path admits neither. A space before `()` is the
+/// same call.
 fn is_bare_mock_factory(value: &str) -> bool {
-    MOCK_FACTORIES
-        .iter()
-        .any(|factory| value.trim_end().strip_prefix(factory) == Some("()"))
+    MOCK_FACTORIES.iter().any(|factory| {
+        value
+            .trim_end()
+            .strip_prefix(factory)
+            .is_some_and(|rest| rest.trim_start() == "()")
+    })
+}
+
+/// `true` when an inline literal's value is exactly one mock factory call
+/// with no implementation or an arrow one, and nothing after it.
+fn is_closed_mock_call(value: &str) -> bool {
+    closed_mock_call(value).is_some_and(|after| after.trim().is_empty())
 }
 
 /// `true` when every entry of a flat literal body is `key: value` with a
@@ -522,6 +534,87 @@ fn keys_mock_once(literal: &str, property: &str, is_mock: fn(&str) -> bool) -> b
         (keyed.next(), keyed.next()),
         (Some((_, value)), None) if is_mock(value)
     )
+}
+
+/// The text after a mock factory call `jest.fn(...)` / `vi.fn<T>(...)` that
+/// opens `text`, or `None` when `text` is not one whose implementation (if
+/// any) is an arrow function. A named or `function` implementation can be
+/// called with the mock object as `this` and record the asserted call on
+/// itself (#8138); an arrow's `this` is the test's. The argument must
+/// itself be the arrow: a wrapper that merely contains one (a call such as
+/// `(() => recordTwo)()`, a conditional such as
+/// `ready ? (v) => v : recordTwo`, a grouping) can evaluate to a named
+/// implementation, so it refuses too (#8148 review). A space between the
+/// factory or its type arguments and `(` is the same call, as in
+/// [`is_bare_mock_factory`]. String contents arrive masked (see
+/// `ts_mask_literals_and_comments`), so a `)` inside a string in the
+/// implementation never ends the call.
+fn closed_mock_call(text: &str) -> Option<&str> {
+    let rest = MOCK_FACTORIES
+        .iter()
+        .find_map(|factory| text.strip_prefix(factory))?;
+    let rest = rest.trim_start();
+    let rest = if rest.starts_with('<') {
+        &rest[closing_offset(rest, '<', '>')?..]
+    } else {
+        rest
+    };
+    let rest = rest.trim_start();
+    if !rest.starts_with('(') {
+        return None;
+    }
+    let end = closing_offset(rest, '(', ')')?;
+    let argument = rest[1..end - 1].trim();
+    let arrow = is_arrow_expression(argument)
+        && identifier_mentions(argument, "function") == 0
+        && identifier_mentions(argument, "this") == 0;
+    (argument.is_empty() || arrow).then(|| &rest[end..])
+}
+
+/// `true` when `text` is itself an arrow function expression: an optional
+/// `async`, then a parenthesized parameter list or a single identifier,
+/// followed by `=>`. A call (`(() => recordTwo)()`), a conditional
+/// (`ready ? (v) => v : recordTwo`) or any other wrapper can evaluate to a
+/// named or `function` implementation that records the asserted call
+/// (#8148 review), so a merely contained arrow refuses.
+fn is_arrow_expression(text: &str) -> bool {
+    let mut rest = text.trim_start();
+    if rest
+        .strip_prefix("async")
+        .is_some_and(|after| !after.starts_with(is_identifier_part))
+    {
+        rest = rest["async".len()..].trim_start();
+    }
+    if let Some(parameter_end) = rest
+        .starts_with('(')
+        .then(|| closing_offset(rest, '(', ')'))
+        .flatten()
+    {
+        return rest[parameter_end..].trim_start().starts_with("=>");
+    }
+    let word_end = rest
+        .find(|c: char| !is_identifier_part(c))
+        .unwrap_or(rest.len());
+    word_end > 0 && rest[word_end..].trim_start().starts_with("=>")
+}
+
+/// `true` when only whitespace stands before an explicit `;`, the block's
+/// `}` or the end of the text, or before a line break whose next line opens
+/// a new statement with a word. A line break does not end a statement whose
+/// next line opens with `.`, `[`, `(`, `&&`, `?` or a word operator such as
+/// `in` (#8138).
+fn ends_statement(after: &str) -> bool {
+    let next = after.trim_start();
+    if next.is_empty() || next.starts_with([';', '}']) {
+        return true;
+    }
+    let word: String = next
+        .chars()
+        .take_while(|c| is_identifier_part(*c))
+        .collect();
+    after[..after.len() - next.len()].contains('\n')
+        && next.starts_with(is_identifier_start)
+        && !matches!(word.as_str(), "in" | "instanceof" | "as" | "satisfies")
 }
 
 /// The non-empty comma-separated entries of a flat literal body, split only
@@ -650,18 +743,26 @@ fn without_closed_mock_factories(text: &str) -> String {
         let mut end = 0;
         if rest.starts_with('<') {
             match closing_offset(rest, '<', '>') {
-                Some(close) if rest[close..].starts_with('(') && type_like(&rest[1..close - 1]) => {
+                Some(close)
+                    if rest[close..].trim_start().starts_with('(')
+                        && type_like(&rest[1..close - 1]) =>
+                {
                     end = close
                 }
                 _ => continue,
             }
         }
-        if rest[end..].starts_with('(') {
-            let Some(close) = closing_offset(&rest[end..], '(', ')') else {
+        // A space between the factory or its type arguments and `(` is the
+        // same call, as in [`is_bare_mock_factory`] and
+        // [`closed_mock_call`].
+        let tail = &rest[end..];
+        let whitespace = tail.len() - tail.trim_start().len();
+        if tail[whitespace..].starts_with('(') {
+            let Some(close) = closing_offset(&tail[whitespace..], '(', ')') else {
                 kept.push_str(rest);
                 return kept;
             };
-            end += close;
+            end += whitespace + close;
         }
         rest = &rest[end..];
     }
@@ -1015,13 +1116,6 @@ fn word_boundary_before(text: &str, at: usize) -> bool {
         .chars()
         .next_back()
         .is_none_or(|c| !is_identifier_part(c) && c != '.')
-}
-
-fn starts_with_mock_factory(text: &str) -> bool {
-    MOCK_FACTORIES.iter().any(|factory| {
-        text.strip_prefix(factory)
-            .is_some_and(|rest| rest.starts_with('(') || rest.starts_with('<'))
-    })
 }
 
 /// The text of a flat object literal up to its closing brace; `None` when it

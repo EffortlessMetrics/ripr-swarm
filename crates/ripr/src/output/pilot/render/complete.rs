@@ -118,6 +118,21 @@ pub(crate) fn render_pilot_summary_json(
         "  \"actionable_seams_total\": {},\n",
         actionable_total
     ));
+    // #6739: a seam limit cut the classified seams before ranking, so the
+    // total above covers only the kept seams and is a lower bound.
+    out.push_str(&format!(
+        "  \"actionable_seams_total_is_lower_bound\": {},\n",
+        context.seam_limit.is_some()
+    ));
+    match context.seam_limit {
+        Some(limit) => out.push_str(&format!(
+            "  \"seam_limit\": {{\"analyzed\": {}, \"total\": {}, \"source\": \"{}\"}},\n",
+            limit.analyzed,
+            limit.total,
+            limit.source.as_str()
+        )),
+        None => out.push_str("  \"seam_limit\": null,\n"),
+    }
     out.push_str(&format!(
         "  \"withheld_static_limitations_total\": {},\n",
         withheld_static_limitations(classified)
@@ -483,7 +498,7 @@ pub(crate) fn render_pilot_summary_md(
             vec![&commands.after_snapshot, &commands.outcome]
         }
     };
-    out.push_str(super::COMMAND_SHELL_DISCLOSURE);
+    out.push_str(super::command_shell_disclosure());
     out.push_str("```bash\n");
     for command in &next_commands {
         out.push_str(command);

@@ -1,4 +1,4 @@
-//! RIPR-SPEC-0267: a mockall call-count expectation observes a guard's
+//! RIPR-SPEC-0279: a mockall call-count expectation observes a guard's
 //! side flip.
 //!
 //! ```text
@@ -57,13 +57,10 @@
 //! differing elsewhere. Any shape outside these rules leaves the evidence
 //! unchanged.
 
-use super::guard::{
-    INTEGER_TYPES, flipped, integer_literal, is_equality, line_of, may_leave, owner_file,
-    parameter_name, plain_related_tests, plain_test_statements,
-};
+use super::guard::{INTEGER_TYPES, flipped, integer_literal, is_equality, line_of, parameter_name};
 use super::*;
 
-pub(super) const MOCK_COUNT_SIDE_FLIP: &str = "A mock call-count expectation observes the guard's side flip: one test calls the owner on both sides of this guard's edge, and a mockall `times(N)` on the method only the guarded block calls fails when the edge moves (RIPR-SPEC-0267)";
+pub(super) const MOCK_COUNT_SIDE_FLIP: &str = "A mock call-count expectation observes the guard's side flip: one test calls the owner on both sides of this guard's edge, and a mockall `times(N)` on the method only the guarded block calls fails when the edge moves (RIPR-SPEC-0279)";
 
 /// mockall expectation-chain methods that configure matching or returned
 /// values and leave the call count alone. `times`, `once` and `never` are
@@ -107,7 +104,7 @@ pub(in crate::analysis::classifier::evidence) fn discrimination(
     if !gate.is_probe(context) || !old_condition_orders(context.probe.before.as_deref()?) {
         return None;
     }
-    plain_related_tests(context, &owner_name)
+    plain_related_tests(context, &owner_name, false)
         .any(|test| gate.counted_on_both_sides(&test, &owner_name))
         .then(|| StageEvidence::new(StageState::Yes, Confidence::High, MOCK_COUNT_SIDE_FLIP))
 }
