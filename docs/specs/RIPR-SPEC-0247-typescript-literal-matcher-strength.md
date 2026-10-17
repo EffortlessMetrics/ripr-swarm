@@ -85,7 +85,23 @@ all of these hold:
   shadow an outer `p`) with `const|let|var p = jest.fn(...)` or
   `vi.fn(...)`, or to a flat object literal whose `m` is such a call,
   whose keys are plain identifiers, which keys `m` once and which has no
-  spread that could replace it;
+  spread that could replace it; amended 2026-10-15 (#8138), the mock
+  call takes no argument or an arrow implementation that names neither
+  `function` nor `this` (optionally after `<T>` type arguments), the
+  literal's `m` value is that call and nothing more, and the call (or the
+  literal's closing `}`) ends the statement: `;`, the block's `}`, the
+  end of the body, or a line break before a line that opens with a word
+  other than `in`, `instanceof`, `as` or `satisfies`; amended
+  2026-10-15, `const|let|var p =
+  f();` also reads as such a literal when `f` is a top-level, unexported,
+  non-async, non-generator parameterless test-file factory whose whole
+  body returns that literal (`function f() { return { m: jest.fn() }; }`
+  or `const f = () => ({ m: jest.fn() });`) with `m` keyed to exactly a
+  bare `jest.fn()` or `vi.fn()` (no implementation argument, nothing
+  after it; `jest.fn ()` with a space is the same call), the file names `f` only in its declaration and direct calls
+  `f(`, `f()` is the whole initializer closed by `;` or the block's end
+  (a line break alone can continue the expression), and the file has no
+  `eval`, `with` or `\u` escape;
 - the test mentions `p` exactly twice outside `expect(p)` /
   `expect(p.m)`: its declaration and one argument of the test's only
   owner call, at `p`'s parameter position with no spread before it.
@@ -126,6 +142,51 @@ another spelling can equal, the assertion reads `exact_value` / strong:
 `true`, `false`, `null`, `undefined`, `NaN`, a variable, a call, a
 computed key, a spread, and an object literal under `equal` (a reference
 comparison) keep `relational_check` / weak.
+
+Amended 2026-10-14 (#6654): an expected identifier reads as the literal
+it is bound to when it names a `const` declared with a plain identifier
+at the top level of the test body (or of an awaited `t.test` subtest
+body), before the assertion, by the only top-level declaration of that
+name, and the assertion itself is a top-level statement of that body.
+The literal must be a string, template or number literal the rule above
+accepts, optionally parenthesized or under `as`. Object and array
+literals do not qualify even under `deepEqual`: `const` stops
+reassignment, not mutation, so `want.push(...)` or `want.total = ...`
+changes what the assertion compares. Any other variable keeps the weak
+reading: a `let` or `var`, a destructured, call-bound, object or array
+`const`, a `const` declared after the assertion or in an enclosing
+scope, and an assertion nested in a block, branch, loop, `try` or
+callback, where a nested declaration could shadow the name. A
+callback with a parameter that the reader takes as its own body (a
+returned or awaited `.then((value) => ...)`, or an inline
+`[...].forEach((value) => ...)`) reads its own top-level `const`s the
+same way, and never its parent's. A zero-parameter `.then(() => ...)`
+callback is walked as a nested block and reads no `const`, even its own;
+that is a known under-credit, not false credit.
+
+Amended 2026-10-14 (#6654, typed owner): `==` between two numbers
+answers as `===` does, so a finite number literal the list above refuses (`0`, `1`,
+`-0`, `1.0`), optionally negated, parenthesized or under `as`, also
+reads `exact_value` / strong when the owner's own source declares its
+return type as exactly `number` (`function f(...): number` or an arrow
+`(...): number =>`) and the assertion observes the whole result of one
+owner call through a binding the test file imports from the owner's
+module: `ns.f(...)` on a namespace import, `g(...)` on a renamed import
+`{ f as g }`, or, when the file imports `f` by name from that module,
+`f(...)` or a local bound once to it. A bare `f(...)` the file imports
+from another module never qualifies, even when a namespace call relates
+the test.
+A method owner, a generic, `async` or generator owner, any other
+annotation (`number | boolean`, `Promise<number>`, `number[]`) or none,
+a wrapped, compared or member-read result (`Math.min(f(x), 5)`,
+`f(x) > 0`, `f(x).toFixed(0)`), a test that declares its own `f`, a
+variable expected value (even a test-local `const one = 1`, which
+example 10 does not resolve because `1` is coercible), and chai's
+negated `.not.to.equal(1)` keep `relational_check` / weak. chai's TDD
+`assert.equal` is loose `==` too and qualifies. The declared type is
+trusted: an owner whose body returns a non-number despite it (an `any`
+cast, an implicitly `any` value such as `JSON.parse(s).count`) is out
+of scope, as it is for every other TypeScript type ripr reads.
 
 Known limit: `==` still equals a value of another type that converts to
 the literal: a number's own numeric string (`20 == "20"`), a BigInt
@@ -195,7 +256,61 @@ and the rejected alternative. Recorded on #6654.
    here. `nodetest-latefee-t-assert`, `jest-spec0234-ex03` and the other
    remaining false verdicts stay listed on #6654. Superseded for
    committed snapshots by RIPR-SPEC-0258, which credits
-   `jest-spec0234-ex03`.
+   `jest-spec0234-ex03`; for `t.assert.*` by RIPR-SPEC-0252, which
+   credits `nodetest-latefee-t-assert`; and for a same-file
+   strict-equality custom matcher by RIPR-SPEC-0262, which credits
+   `jest-cents-custom-matcher`.
+6. **Test-local literal `const` (rule 2, amended 2026-10-14).** Adopted:
+   a `const` bound once to a primitive literal at the top level of the
+   test body reads as that literal, because a primitive `const` can be
+   neither reassigned nor mutated, so the runtime comparison is the
+   inline literal's. Rejected after review: object and array `const`s,
+   which a test can fill in before the assertion (`want.push(...)`).
+   Rejected: keep every variable weak, which leaves
+   `nodetest-t-assert-equal-variable` (a discriminated test) a false gap.
+   Rejected: resolve any reachable binding (enclosing `describe`, module
+   scope, nested blocks), which needs scope analysis ripr does not do and
+   could read a shadowing declaration's value.
+7. **Typed number owner (rule 2, amended 2026-10-14).** Adopted: credit
+   `0` and `1` (and any other finite number literal) when the owner
+   declares `number` as its return type and the assertion observes the
+   whole owner result. The reading lives in the classifier
+   (`ts_typed_loose_number_facts`), which has the owner; extraction only
+   marks the candidate assertion (`loose_number_expected`), so chai's
+   negated `equal`, which shares the matcher name, is never a candidate.
+   Rejected: read every legacy `equal(x, 1)` strong, which credits
+   `assert.equal(isEmpty(x), 1)` against a boolean. Rejected: infer the
+   result type from the returned expression, which needs type inference
+   ripr does not do. Rejected: method owners, because the whole-result
+   check reads only `f(...)` and `ns.f(...)`, so a same-named free
+   function the test calls could borrow a method's annotation. Pins are
+   keyed by test file, line, observed expression, matcher and expected
+   value, so a second assertion on the same line with another expected
+   value does not share the credit. Rejected: keep `0` and `1` weak,
+   which leaves `nodetest-legacy-equal-literal-one` (a discriminated
+   test) a false gap.
+8. **Test-file mock factory (rule 1, amended 2026-10-15).** Adopted:
+   `const db = makeDb();` reads as the flat literal `makeDb` returns when
+   the factory has no parameters, its body is only that `return`, and the
+   file names it only as direct calls. Each call evaluates the literal
+   afresh, so the test's `db.write` is a new `jest.fn()` no other code
+   holds, exactly as with the inline literal. Rejected: factories with
+   parameters or statements before the `return`, which can hand back a
+   shared or caller-supplied mock, and a bare `const send = makeSend()`
+   returning a function mock, which this amendment does not need.
+   Rejected: keep every helper-made mock medium, which leaves
+   `jest-spec0243-ex30-factory-db` (a discriminated test) a false gap.
+9. **A mock binding is exactly a fresh mock (rule 1, amended
+   2026-10-15, #8138).** Adopted: the binding's value must be the mock
+   call alone, with no implementation or an arrow one, ended where the
+   statement ends. A named or `function` implementation can be called
+   with the mock object as `this` and record the asserted call on
+   itself, and a trailing `&& pre.write`, `.inner` or `.bind(pre)`
+   (including one on the next line) binds another object. Rejected:
+   refuse every implementation argument, which drops arrow
+   implementations (`jest.fn((m) => m)`) that cannot reach the mock.
+   Rejected: a full expression parse, which the text reader does not
+   have; the statement-end check reads only what can follow.
 
 ## Required Evidence
 
@@ -204,17 +319,30 @@ and the rejected alternative. Recorded on #6654.
 - On the TypeScript verdict corpus, false verdicts fall from 17/101 to
   10/101, seven Problem rows move to `credited` (all but
   `ts-vitest-checkout-notify`), and no other row moves.
+- Amended 2026-10-14: `nodetest-t-assert-equal-variable` moves from `gap`
+  to `credited` (false verdicts 7/127 to 5/127 together with the
+  RIPR-SPEC-0252 amendment), and no other row moves.
+- Amended 2026-10-14 (typed owner): `nodetest-legacy-equal-literal-one`
+  moves from `gap` to `credited`, and no other row moves.
+- Amended 2026-10-15 (mock factory): `jest-spec0243-ex30-factory-db`
+  moves from `gap` to `credited`, and no other row moves.
+- Amended 2026-10-15 (#8138, decision 9): no corpus row moves; the
+  tightened binding refuses only shapes no corpus case uses.
 
 ## Non-Goals
 
 - No credit for `toHaveBeenCalledWith` on a module mock, a spy, a mock
-  made by a helper, an object payload, a mock the owner reaches other
+  made by a helper (except the test-file mock factory of decision 8), an
+  object payload, a mock the owner reaches other
   than through a parameter of the same name, or any mock another call
   could reach.
 - No change to `toHaveBeenLastCalledWith`, `toHaveBeenNthCalledWith` or
   `toHaveBeenCalledTimes`.
-- No change to committed snapshot strength.
-- No change to `t.assert.*`, which still yields no assertion.
+- No change to committed snapshot strength, except the named committed
+  entry RIPR-SPEC-0258 reads as strong; every other committed snapshot
+  stays medium.
+- No change to `t.assert.*` here (superseded by RIPR-SPEC-0252, which
+  reads it as legacy `node:assert`).
 - No change to Rust or Python oracle classification.
 
 ## Acceptance Examples
@@ -236,7 +364,24 @@ and the rejected alternative. Recorded on #6654.
    `send.call(null, "order 7")`, or `announce(send, 7)`; or with the
    mock declared in a nested block (`if (ready) { const send = jest.fn() }`)
    or, for example 2, `{ write: jest.fn(), ...defaults }` or a second
-   `write` key: `weakly_exposed`.
+   `write` key: `weakly_exposed`. Amended 2026-10-15: example 2 with
+   `function makeDb() { return { write: jest.fn() }; }` in the test file
+   and `const db = makeDb();` is `exposed`; a factory with a parameter, a
+   spread, a second statement, an `export`, `async`, a generator, a
+   `let makeDb` binding, or a `write` value that is not a bare `jest.fn()`
+   (`jest.fn(function () { this.write(2); })`, `jest.fn() && pre.write`),
+   a file that reassigns, passes on or shadows `makeDb` or calls `eval`,
+   or a binding `makeDb().inner`, `makeDb()` continued on the next line
+   (`.inner`, `&& pre`) or `makeDb(1)` stays `weakly_exposed`, and so
+   does a test that also calls `db.write(2)` itself. Amended 2026-10-15
+   (#8138): `const send = jest.fn((m: string) => m)`,
+   `vi.fn<(m: string) => void>()`, or `jest.fn()` with no `;` before a
+   new statement on the next line still reads `exposed`;
+   `jest.fn() && pre`, `jest.fn(record)`, `jest.fn(function () {})`, a
+   next line opening with `&&`, `.bind(pre)`, `instanceof` or `(pre)`,
+   or for example 2 `{ write: jest.fn() }.inner`,
+   `{ write: jest.fn().mockName("w") }` or `{ write: jest.fn() && pre.write }`
+   stays `weakly_exposed`.
 5. As example 1 with `send` not an owner parameter, with
    `const send = jest.spyOn(mailer, "send")`, a `jest.mock` factory mock
    or `const send = makeSend()`, with an object payload `{ id: 7 }`, or
@@ -252,9 +397,12 @@ and the rejected alternative. Recorded on #6654.
    `"1e3"`, `"\uFEFF20"`, `"Infinity"`, `1.0`, `-0`, `true`, `null`,
    `undefined`, `{ a: "x" }` or `` `n=${n}` ``, and
    `assert.deepEqual(x, { count: 0, label: "x" })`, with a spread, with a
-   computed key, with a `__proto__` key, or against a variable:
-   `relational_check` / weak. chai `assert.equal(x, "silver")` reads
-   strong and `assert.equal(x, 1)` weak, as legacy `node:assert` does.
+   computed key, with a `__proto__` key, or against a variable other than
+   the test-local `const` of example 10: `relational_check` / weak.
+   chai `assert.equal(x, "silver")` reads strong and
+   `assert.equal(x, 1)` weak, as legacy `node:assert` does. Example 11
+   reads `0` and `1` (from either library) strong on the whole result
+   of an owner declared to return `number`.
 8. ``expect(summary(2)).toMatchInlineSnapshot(`"2 items"`)``, or a
    multi-line template holding an object's text: `snapshot` / strong,
    no `typescript_snapshot_discriminator_unresolved`.
@@ -262,27 +410,73 @@ and the rejected alternative. Recorded on #6654.
    snapshot with a property-matcher object, or `toMatchSnapshot()`:
    `snapshot` / medium. Amended by RIPR-SPEC-0258: `toMatchSnapshot()`
    whose committed entry the test file names reads `snapshot` / strong.
+10. `const want = 30;` (or `"silver"`, or `(30 as number)`) at the top
+    level of the test body, then `assert.equal(graceFee(10), want)`,
+    `assert.deepEqual(graceFee(10), want)` or
+    `t.assert.equal(graceFee(10), want)`: `exact_value` / strong,
+    expected value `30`. The same with `const want = 1`, `let want = 30`,
+    `const want = price(30)`, `const want = { total: 30 }` or `[]` (even
+    under `deepEqual`), `const want` declared after the assertion or
+    inside a block, or the assertion inside an `if`, a `try`, a returned
+    `.then` callback or a subtest that does not declare `want` itself:
+    `relational_check` / weak. A `.then((result) => { const want = 30;
+    assert.equal(result, want); })` or `[10].forEach((input) => { const
+    want = 30; assert.equal(tier(input), want); })` callback declares
+    `want` itself: `exact_value` / strong. The same own `const` in a
+    zero-parameter `.then(() => ...)` callback: `relational_check` / weak
+    (known under-credit).
+11. `export function lineCount(items: string[]): number` and
+    `assert.equal(lineCount(["a"]), 1)`, `assert.equal(lineCount([]), 0)`,
+    `assert.deepEqual(lineCount(["a"]), 1)` or
+    `const n = lineCount(["a"]); assert.equal(n, 1)`: `exact_value` /
+    strong, `exposed`. The same with no return annotation,
+    `: number | boolean`, `Math.min(lineCount(["a"]), 5)`,
+    `lineCount(["a"]) > 0` or `lineCount(["a"]).toFixed(0)` against `1`,
+    a test-local `lineCount`, or a class method owner
+    `lineCount(): number` (the whole-result check reads only a free call,
+    which a method's annotation does not cover): `relational_check` / weak.
 
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs`
-  pins examples 1 to 9 at the rule level.
+  pins examples 1 to 9 at the rule level;
+  `mock_payload_on_a_test_file_factory_mock_is_credited` pins the amended
+  example 4, and `mock_payload_binding_must_be_exactly_a_fresh_mock` pins
+  decision 9.
+- `fixtures/typescript-verdict-corpus` pins the amended example 4:
+  `jest-spec0243-ex30-factory-db` reads `credited`.
 - `crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs`
-  keeps the loose-equality grading with coercion-reachable literals.
+  keeps the loose-equality grading with coercion-reachable literals, and
+  `loose_equality_reads_a_test_local_literal_const` pins example 10.
+- `crates/ripr/src/analysis/language/typescript/tests/typed_loose_equality_tests.rs`
+  pins example 11.
+- `fixtures/typescript-verdict-corpus` pins example 11:
+  `nodetest-legacy-equal-literal-one` reads `credited`.
+- `fixtures/typescript-verdict-corpus` pins example 10:
+  `nodetest-t-assert-equal-variable` reads `credited`.
 - `fixtures/typescript-verdict-corpus` pins the eight Problem rows: seven
   `credited`, and `ts-vitest-checkout-notify` still `gap`.
 
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs`:
-  `MockCallFacts` (rule 1).
+  `MockCallFacts` (rule 1); `credits_with_factories`,
+  `factory_call_is_initializer` and `keys_mock_once` (decision 8),
+  `closed_mock_call` and `ends_statement` (decision 9), fed by
+  `crates/ripr/src/analysis/language/typescript/tests_extract.rs`:
+  `mock_factories`.
 - `crates/ripr/src/analysis/language/typescript/classifier.rs`:
   `strongest_family_matching_oracle` and `ts_changed_value_is_observed`
   read the credited payload as strong, and `project_credited_mock_rows`
   shows it as strong on the related-test row (rule 1).
 - `crates/ripr/src/analysis/language/typescript/literal_matcher_guard.rs`:
-  `loose_equality_pins_literal` (rule 2), `inline_snapshot_is_literal`
-  (rule 3).
+  `loose_equality_pins_literal` (rule 2), `loose_literal_consts` and
+  `resolve_loose_literal_const` (rule 2's test-local `const`),
+  `inline_snapshot_is_literal` (rule 3), `finite_number_literal_text`
+  (rule 2's typed owner).
+- `crates/ripr/src/analysis/language/typescript/typed_loose_equality_guard.rs`:
+  `ts_owner_declares_number_return` and `ts_typed_loose_number_facts`
+  (rule 2's typed owner), read by the classifier's pin facts.
 - `crates/ripr/src/analysis/language/typescript/oracle.rs`: assertion
   extraction applies rules 2 and 3; `mock_payload_from_assertion` records
   multi-argument literal payloads.

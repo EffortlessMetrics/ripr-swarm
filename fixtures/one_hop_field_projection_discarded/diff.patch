@@ -1,0 +1,6 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -5 +5 @@
+-        missing_duration_count: 0,
++        missing_duration_count: total - known,

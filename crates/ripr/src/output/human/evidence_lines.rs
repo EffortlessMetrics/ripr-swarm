@@ -128,12 +128,7 @@ fn evidence_path<T>(
 
     for sink in &finding.flow_sinks {
         lines.push(project(
-            format!(
-                "local flow reaches {}: {} (line {})",
-                sink.kind.label(),
-                sink.text,
-                sink.line
-            ),
+            crate::output::flow_sink_line::flow_sink_evidence_line(sink),
             EvidenceSource::Flow(sink),
         ));
     }

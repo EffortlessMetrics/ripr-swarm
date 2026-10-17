@@ -1,0 +1,52 @@
+{
+  "case_id": "rust-field-projected-collection-arg",
+  "subject_id": "authored-field-projected-collection-arg",
+  "diff": "cases/rust-field-projected-collection-arg.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 6
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect_push",
+  "test_shape": "direct_collection_equality_field_projection",
+  "hard_case": "Found while building the RIPR-SPEC-0263 example 6 AddAssign case: the direct-collection observer does not link a field-projected argument (`add(&mut b.0, 11)`) to an exact equality on the same projection (`assert_eq!(b.0, vec![11])`), so call_deletion and side_effect read weakly_exposed (observation_unverified). Tracked in #7966.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "v.push(x + 1);",
+        "mutated_line": "v.push(x + 1);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::records_into_the_bag",
+        "equivalence_review": "not equivalent: add(&mut b.0, 11) records 12"
+      },
+      {
+        "replacement": "let _ = x;",
+        "mutated_line": "let _ = x;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::records_into_the_bag",
+        "equivalence_review": "not equivalent: add(&mut b.0, 11) records nothing"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "records_into_the_bag passes &mut b.0 to add with 11 and pins b.0 to vec![11]; both mutants change b.0 and fail the equality.",
+  "labeling_observation": {
+    "ripr_commit": "46faff1e7",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -998,12 +998,16 @@ mod tests {
         match result {
             Ok(_) => Err("check_receipt should reject a receipt without current_head".to_string()),
             // #4737: the rejection names why (a pre-HEAD-binding receipt)
-            // and the rewrite command, not only the missing field.
+            // and the rewrite command, not only the missing field. The
+            // verify-command token is host-quoted (#7729).
             Err(err)
                 if err.contains("missing required field `current_head`")
                     && err.contains("ripr 0.10 or earlier")
                     && err.contains(
-                        "ripr receipt write --gap gap:test:aabbccdd --verify-command 'cargo test' --status <passed|failed|not_run|unknown>",
+                        &format!(
+                            "ripr receipt write --gap gap:test:aabbccdd --verify-command {} --status <passed|failed|not_run|unknown>",
+                            shell_arg("cargo test")
+                        ),
                     )
                     && err.ends_with(&out_arg) =>
             {

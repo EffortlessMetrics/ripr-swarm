@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "match_arm",
   "test_shape": "table_driven_loop",
-  "hard_case": "The loop assert_eq! is admitted, but its arguments are loop bindings, which RIPR-SPEC-0229 leaves unresolved, so the arm reads observation_unverified (#5328).",
+  "hard_case": "The loop assert_eq! is admitted, the match reads status / 100 and the diff only respells 3 as 0x3. Since #7989 (RIPR-SPEC-0229 decisions 6 and 7) the 301 row of the constant-row table selects the arm; before it the computed scrutinee never established and the loop binding was unresolved, so the arm read observation_unverified (#5328).",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

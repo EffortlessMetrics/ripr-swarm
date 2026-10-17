@@ -168,7 +168,7 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"unknown","confidence":"low","summary":"Assertions exist, but oracle strength is unknown"}
        },
-      "evidence_path": ["reach weak: No test is seen calling decode; tests share only its file or a name token: bare_decode_names_the_free_function, negative_input_exits_early", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink: unknown sink (line 7)", "related test tests/trap_tests.rs:4 bare_decode_names_the_free_function uses unknown exact value oracle: assert_eq!(decode(8), 9);", "related test tests/trap_tests.rs:15 negative_input_exits_early uses unknown exact error variant oracle: assert_eq!(checked_half(-4), Err(HalfError::Negative));", "source assertion argument value 9 at line 5", "source function argument value input = 8 at line 5", "source assertion argument value -4 at line 16", "source enum variant value HalfError::Negative at line 16"],
+      "evidence_path": ["reach weak: No test is seen calling decode; tests share only its file or a name token: bare_decode_names_the_free_function, negative_input_exits_early", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 7)", "related test tests/trap_tests.rs:4 bare_decode_names_the_free_function uses unknown exact value oracle: assert_eq!(decode(8), 9);", "related test tests/trap_tests.rs:15 negative_input_exits_early uses unknown exact error variant oracle: assert_eq!(checked_half(-4), Err(HalfError::Negative));", "source assertion argument value 9 at line 5", "source function argument value input = 8 at line 5", "source assertion argument value -4 at line 16", "source enum variant value HalfError::Negative at line 16"],
       "flow_sinks": [
         {"kind":"unknown","text":"unknown sink","line":7}
       ],
@@ -238,7 +238,9 @@
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(decode(8), 9);",
           "relation_reason": "weak_token_substring",
-          "relation_confidence": "low"
+          "relation_confidence": "low",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by name only"
         },
         {
           "name": "negative_input_exits_early",
@@ -248,7 +250,9 @@
           "oracle_kind": "exact_error_variant",
           "oracle": "assert_eq!(checked_half(-4), Err(HalfError::Negative));",
           "relation_reason": "weak_token_substring",
-          "relation_confidence": "low"
+          "relation_confidence": "low",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by name only"
         }
       ],
       "stop_reasons": ["static_probe_unknown"],
@@ -338,8 +342,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
-      "suggested_next_action": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
+      "recommended_next_step": "The related test `fixed_reader_overrides_next_word` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
+      "suggested_next_action": "The related test `fixed_reader_overrides_next_word` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
       "language": "rust",
       "source_currentness": "candidate_current"
     },
@@ -432,8 +436,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_error_variant",
       "oracle_strength": "strong",
-      "recommended_next_step": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
-      "suggested_next_action": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
+      "recommended_next_step": "The related test `negative_input_exits_early` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
+      "suggested_next_action": "The related test `negative_input_exits_early` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
       "language": "rust",
       "source_currentness": "candidate_current"
     },
@@ -526,8 +530,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
-      "suggested_next_action": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
+      "recommended_next_step": "The related test `local_scaled_binding_shadows_the_owner` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
+      "suggested_next_action": "The related test `local_scaled_binding_shadows_the_owner` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
       "language": "rust",
       "source_currentness": "candidate_current"
     },
@@ -563,7 +567,7 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"unknown","confidence":"low","summary":"Assertions exist, but oracle strength is unknown"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach scaled: local_scaled_binding_shadows_the_owner", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink: unknown sink (line 55)", "related test tests/trap_tests.rs:20 local_scaled_binding_shadows_the_owner uses unknown exact value oracle: assert_eq!(scaled(3), 30);", "source assertion argument value 30 at line 22", "source function argument value x = 3 at line 22"],
+      "evidence_path": ["reach yes: Related tests appear to reach scaled: local_scaled_binding_shadows_the_owner", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 55)", "related test tests/trap_tests.rs:20 local_scaled_binding_shadows_the_owner uses unknown exact value oracle: assert_eq!(scaled(3), 30);", "source assertion argument value 30 at line 22", "source function argument value x = 3 at line 22"],
       "flow_sinks": [
         {"kind":"unknown","text":"unknown sink","line":55}
       ],

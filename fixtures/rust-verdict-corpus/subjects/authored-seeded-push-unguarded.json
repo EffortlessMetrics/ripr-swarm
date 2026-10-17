@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-seeded-push-unguarded",
+  "origin": "authored",
+  "version_label": "authored 2026-10-16 for #8205 (seeded plus pushed collection, no early exit)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "e6e29dcd3c6b2d30719ecd0a43b03576b1636560f6f1fc71e90b3d51eebeabe7"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "c2793828d1031c20da1797cc81575f27e5bbbba250e6cb03ffa3b67ed1dfbd82"
+    }
+  ]
+}

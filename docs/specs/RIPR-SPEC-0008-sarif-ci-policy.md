@@ -24,6 +24,9 @@ classify findings or seams itself.
 
 The SARIF layer should:
 
+- declare `columnKind: "unicodeCodePoints"` on finding and repo-seam runs,
+  matching the producers' 1-based Unicode scalar-value columns (SARIF 2.1.0
+  section 3.14.27); the declaration is also valid when the result array is empty;
 - use stable rule IDs for every Finding exposure class and seam grip class;
 - map `ripr.toml` configured severity into SARIF result levels;
 - omit results whose configured severity is `off`;
@@ -34,7 +37,14 @@ The SARIF layer should:
 - preserve existing human, JSON, GitHub annotation, badge, LSP, and context
   schemas unless a later scoped PR explicitly changes them;
 - keep CI behavior advisory by default;
-- make baseline-aware blocking opt-in.
+- make baseline-aware blocking opt-in;
+- when the candidate-actionable filter (#3281 / RIPR-SPEC-0152) drops
+  findings from diff-scoped `results`, record
+  `runs[].properties.omitted_not_current` as that count so an all-omitted
+  complete run is not indistinguishable from a clean analysis (#5091).
+  The property is absent when the count is zero. Omitted findings stay
+  out of `results`; the property only discloses the filter, matching the
+  GitHub annotation denominator notice (#4393).
 
 ## Rule IDs
 
@@ -193,7 +203,10 @@ SARIF and CI policy evidence should cover:
 - baseline comparison passing when no new configured-warning results exist;
 - baseline comparison flagging new configured-warning results;
 - threshold handling that ignores notes when threshold is warning;
-- docs showing advisory upload and opt-in blocking.
+- docs showing advisory upload and opt-in blocking;
+- diff-scoped SARIF recording `omitted_not_current` when the
+  candidate-actionable filter drops findings, and omitting the property
+  on a zero-finding complete run.
 
 ## Non-Goals
 
@@ -233,6 +246,22 @@ when no baseline policy mode is requested,
 then CI artifact generation remains advisory and does not block by default.
 ```
 
+### Diff-scoped SARIF counts omitted not-current findings
+
+```text
+Given a complete analysis whose findings are all not candidate-actionable,
+when those findings are rendered as SARIF,
+then results is empty, run_status is complete, and
+runs[].properties.omitted_not_current equals the omitted count.
+```
+
+```text
+Given a complete analysis with zero findings,
+when it is rendered as SARIF,
+then results is empty, run_status is complete, and
+runs[].properties.omitted_not_current is absent.
+```
+
 ### Baseline policy flags new warnings
 
 ```text
@@ -255,6 +284,9 @@ Implemented renderer tests:
 - `crates/ripr/src/output/sarif.rs::tests::sarif_projects_python_repair_card_properties`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_projects_python_static_limit_no_action_properties`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_projects_python_ordinary_no_action_properties`
+- `crates/ripr/src/output/sarif.rs::tests::sarif_run_with_only_not_current_findings_records_omitted_property`
+- `crates/ripr/src/output/sarif.rs::tests::sarif_empty_findings_run_omits_omitted_not_current_property`
+- `crates/ripr/src/output/sarif.rs::tests::sarif_mixed_current_and_not_current_records_omitted_count_beside_results`
 
 Implemented policy tests:
 

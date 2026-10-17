@@ -1,0 +1,21 @@
+/// Records every depth past 3 while walking down to depth 5.
+pub fn walk(v: &mut Vec<u32>, depth: u32) {
+    if depth > 3 {
+        v.push(depth);
+    }
+    if depth < 5 {
+        walk(v, depth + 1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn walks_from_the_root() {
+        let mut v = Vec::new();
+        walk(&mut v, 0);
+        assert_eq!(v, vec![4, 5]);
+    }
+}

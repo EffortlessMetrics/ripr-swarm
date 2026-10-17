@@ -796,7 +796,7 @@ fn only_a_test_runner_expect_reads_jest_matchers() {
 /// literal coercion cannot reach (RIPR-SPEC-0247 rule 2).
 #[test]
 fn node_test_context_assert_reads_as_legacy_node_assert() {
-    let cases: [(&str, &str, OracleKind, OracleStrength, &str); 7] = [
+    let cases: [(&str, &str, OracleKind, OracleStrength, &str); 13] = [
         (
             "loose equal against a number",
             "t.assert.equal(lateFee(10), 20);",
@@ -819,8 +819,50 @@ fn node_test_context_assert_reads_as_legacy_node_assert() {
             "t.assert.deepStrictEqual(...)",
         ),
         (
-            "loose equal against a variable stays weak",
+            "loose equal against a test-local literal const",
             "const want = 20;\n  t.assert.equal(lateFee(10), want);",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+            "t.assert.equal(...)",
+        ),
+        (
+            "loose equal against a let variable stays weak",
+            "let want = 20;\n  t.assert.equal(lateFee(10), want);",
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+            "t.assert.equal(...)",
+        ),
+        (
+            "string-literal computed member",
+            "t[\"assert\"].equal(lateFee(10), 20);",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+            "t[\"assert\"].equal(...)",
+        ),
+        (
+            "single-quoted computed member",
+            "t['assert'].equal(lateFee(10), 20);",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+            "t[\"assert\"].equal(...)",
+        ),
+        (
+            "awaited subtest reads its own literal const",
+            "await t.test(\"sub\", (t2) => {\n    const want = 20;\n    t2.assert.equal(lateFee(10), want);\n  });",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+            "t2.assert.equal(...)",
+        ),
+        (
+            "awaited subtest does not read the parent's const",
+            "const want = 20;\n  await t.test(\"sub\", (t2) => {\n    t2.assert.equal(lateFee(10), want);\n  });",
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+            "t2.assert.equal(...)",
+        ),
+        (
+            "assertion inside try does not read the body's const",
+            "const want = 20;\n  try {\n    t.assert.equal(lateFee(10), want);\n  } finally {}",
             OracleKind::RelationalCheck,
             OracleStrength::Weak,
             "t.assert.equal(...)",
@@ -1005,9 +1047,19 @@ fn node_test_context_assert_needs_the_runner_receiver_and_a_known_method() {
             "t.assert.verifies(lateFee(10), 20);",
         ),
         (
-            "computed member",
+            "computed member through a variable key",
+            "import test from \"node:test\";\nconst key = \"assert\";",
+            "t[key].equal(lateFee(10), 20);",
+        ),
+        (
+            "string-literal key naming another member",
             "import test from \"node:test\";",
-            "t[\"assert\"].equal(lateFee(10), 20);",
+            "t[\"check\"].equal(lateFee(10), 20);",
+        ),
+        (
+            "computed member through a template key",
+            "import test from \"node:test\";",
+            "t[`assert`].equal(lateFee(10), 20);",
         ),
     ] {
         let source = format!(
@@ -1020,5 +1072,159 @@ fn node_test_context_assert_needs_the_runner_receiver_and_a_known_method() {
             "{label}: {:?}",
             tests[0].assertions
         );
+    }
+}
+
+/// RIPR-SPEC-0247 rule 2, amended: a loose equality whose expected value is
+/// a `const` the test body declares once, at its top level and before the
+/// assertion, bound to a literal coercion cannot reach, reads as that
+/// literal. Any other binding keeps the variable reading.
+#[test]
+fn loose_equality_reads_a_test_local_literal_const() {
+    for (label, body, credited, expected) in [
+        (
+            "string const",
+            "const want = \"silver\";\n  assert.equal(tier(10), want);",
+            true,
+            Some("\"silver\""),
+        ),
+        (
+            "number const",
+            "const want = 30;\n  assert.equal(tier(10), want);",
+            true,
+            Some("30"),
+        ),
+        (
+            "string const under deepEqual",
+            "const want = \"silver\";\n  assert.deepEqual(tier(10), want);",
+            true,
+            Some("\"silver\""),
+        ),
+        (
+            "parenthesized const with a type assertion",
+            "const want = (30 as number);\n  assert.equal(tier(10), want);",
+            true,
+            Some("30"),
+        ),
+        (
+            "object const under deepEqual can be mutated",
+            "const want = { total: 30 };\n  want.total = tier(10);\n  assert.deepEqual(tier(10), want);",
+            false,
+            None,
+        ),
+        (
+            "array const filled by the test",
+            "const want = [];\n  want.push(tier(10));\n  assert.deepEqual(tiers([10]), want);",
+            false,
+            None,
+        ),
+        (
+            "coercible number const",
+            "const want = 1;\n  assert.equal(tier(10), want);",
+            false,
+            None,
+        ),
+        (
+            "object const under equal compares references",
+            "const want = { total: 30 };\n  assert.equal(tier(10), want);",
+            false,
+            None,
+        ),
+        (
+            "let binding",
+            "let want = 30;\n  assert.equal(tier(10), want);",
+            false,
+            None,
+        ),
+        (
+            "const bound to a call",
+            "const want = price(30);\n  assert.equal(tier(10), want);",
+            false,
+            None,
+        ),
+        (
+            "const declared after the assertion",
+            "assert.equal(tier(10), want);\n  const want = 30;",
+            false,
+            None,
+        ),
+        (
+            "const declared in a nested block",
+            "{\n    const want = 30;\n    assert.equal(tier(10), want);\n  }",
+            false,
+            None,
+        ),
+        (
+            "assertion in a returned then callback",
+            "const want = 30;\n  return load().then(() => {\n    assert.equal(tier(10), want);\n  });",
+            false,
+            None,
+        ),
+        (
+            "const the then callback declares itself",
+            "return load().then((result) => {\n    const want = 30;\n    assert.equal(result, want);\n  });",
+            true,
+            Some("30"),
+        ),
+        (
+            "const a forEach callback declares itself",
+            "[10].forEach((input) => {\n    const want = 30;\n    assert.equal(tier(input), want);\n  });",
+            true,
+            Some("30"),
+        ),
+        (
+            "parent const in a forEach callback",
+            "const want = 30;\n  [10].forEach((input) => {\n    assert.equal(tier(input), want);\n  });",
+            false,
+            None,
+        ),
+        (
+            // Known under-credit: a zero-parameter callback is walked as a
+            // nested block, which reads no constants, even its own.
+            "own const in a zero-parameter then callback",
+            "return load().then(() => {\n    const want = 30;\n    assert.equal(tier(10), want);\n  });",
+            false,
+            None,
+        ),
+        (
+            "parent const in a then callback with a parameter",
+            "const want = 30;\n  return load().then((result) => {\n    assert.equal(result, want);\n  });",
+            false,
+            None,
+        ),
+        (
+            "assertion in a nested block a redeclaration could shadow",
+            "const want = 30;\n  if (ready) {\n    assert.equal(tier(10), want);\n  }",
+            false,
+            None,
+        ),
+    ] {
+        let source = format!(
+            "import assert from \"node:assert\";\nimport {{ tier }} from \"../src/tier\";\n\nit(\"tier\", () => {{\n  {body}\n}});\n"
+        );
+        let assertions = only_assertions("test/tier.test.ts", &source);
+        let [assertion] = assertions.as_slice() else {
+            assert_eq!(assertions.len(), 1, "{label}: {assertions:?}");
+            continue;
+        };
+        if credited {
+            assert_eq!(assertion.oracle_kind, OracleKind::ExactValue, "{label}");
+            assert_eq!(assertion.oracle_strength, OracleStrength::Strong, "{label}");
+            assert!(!assertion.has_dynamic_matcher_arg, "{label}");
+        } else {
+            assert_eq!(
+                assertion.oracle_kind,
+                OracleKind::RelationalCheck,
+                "{label}: {assertion:?}"
+            );
+            assert_eq!(assertion.oracle_strength, OracleStrength::Weak, "{label}");
+        }
+        if let Some(expected) = expected {
+            assert_eq!(
+                assertion.expected_value_or_variant.as_deref(),
+                Some(expected),
+                "{label}"
+            );
+        }
     }
 }

@@ -53,3 +53,10 @@ is missing. Delete the folded fragment files in that commit. The fold happens
 once, at the cut, never inside an ordinary PR. After the fold,
 `cargo xtask check-changelog-fragments --release-cut` must pass: it fails on
 any fragment still here.
+
+Both ordinary and `--release-cut` checks reject repeated column-zero
+`### <Section>` headings within the first `## Unreleased` block. The diagnostic
+names the first heading and each duplicate line. Combine those entries under
+one heading without dropping their text before folding new fragments. Use the
+canonical heading spelling above; indented entry examples and later versioned
+sections are not fold destinations (#7673).

@@ -275,15 +275,30 @@ fn publish_with(
         ".ripr-atomic-{}-{nanos}-{sequence}.tmp",
         std::process::id()
     ));
-    let result = (|| {
-        // `create_new` never opens an existing path, so a file or link
-        // planted at the temporary name cannot redirect the write.
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp_path)
-            .map_err(|err| fail(Stage::CreateTemp, &tmp_path, err))?;
-        fill(&mut file).map_err(|err| fail(Stage::Fill, &tmp_path, err))?;
+    publish_staged(path, &tmp_path, sync_before_publish, publish, fill)
+}
+
+fn publish_staged(
+    path: &Path,
+    tmp_path: &Path,
+    sync_before_publish: bool,
+    publish: Publish,
+    fill: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
+) -> Result<(), ReplaceFailure> {
+    let fail = |stage, subject: &Path, error| ReplaceFailure {
+        stage,
+        subject: subject.to_path_buf(),
+        error,
+    };
+    // Cleanup is ours only after exclusive creation succeeds. In particular,
+    // a collision must leave another writer's staging file untouched.
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(tmp_path)
+        .map_err(|err| fail(Stage::CreateTemp, tmp_path, err))?;
+    let result = (move || {
+        fill(&mut file).map_err(|err| fail(Stage::Fill, tmp_path, err))?;
         // Only an existing *file* has permissions to carry over. A directory
         // at the destination makes the rename below fail with the finalize
         // error; copying its attributes first would fail earlier on Windows,
@@ -302,23 +317,23 @@ fn publish_with(
         }
         if sync_before_publish {
             file.sync_all()
-                .map_err(|err| fail(Stage::Sync, &tmp_path, err))?;
+                .map_err(|err| fail(Stage::Sync, tmp_path, err))?;
         }
         drop(file);
         match publish {
             Publish::Replace => {
-                std::fs::rename(&tmp_path, path).map_err(|err| fail(Stage::Finalize, path, err))
+                std::fs::rename(tmp_path, path).map_err(|err| fail(Stage::Finalize, path, err))
             }
             Publish::NoReplace => {
-                std::fs::hard_link(&tmp_path, path)
+                std::fs::hard_link(tmp_path, path)
                     .map_err(|err| fail(Stage::Finalize, path, err))?;
-                let _ = std::fs::remove_file(&tmp_path);
+                let _ = std::fs::remove_file(tmp_path);
                 Ok(())
             }
         }
     })();
     if result.is_err() {
-        let _ = std::fs::remove_file(&tmp_path);
+        let _ = std::fs::remove_file(tmp_path);
     }
     result
 }
@@ -459,6 +474,102 @@ mod tests {
             }
         }
         Ok(names)
+    }
+
+    #[test]
+    fn occupied_staging_name_is_not_removed() -> Result<(), String> {
+        let dir = isolated_dir("occupied-staging");
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let path = dir.join("report.json");
+        let staging = dir.join("occupied.tmp");
+        std::fs::write(&path, b"previous").map_err(|err| err.to_string())?;
+        std::fs::write(&staging, b"another writer").map_err(|err| err.to_string())?;
+        let outcome = super::publish_staged(&path, &staging, true, super::Publish::Replace, |_| {
+            Err(std::io::Error::other("fill must not run"))
+        });
+        let staging_contents = std::fs::read(&staging);
+        let destination_contents = std::fs::read(&path);
+        let _ = std::fs::remove_dir_all(&dir);
+        let Err(failure) = outcome else {
+            return Err("occupied staging name was accepted".to_string());
+        };
+        assert!(matches!(failure.stage, super::Stage::CreateTemp));
+        assert_eq!(failure.error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            staging_contents.map_err(|err| err.to_string())?,
+            b"another writer"
+        );
+        assert_eq!(
+            destination_contents.map_err(|err| err.to_string())?,
+            b"previous"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn occupied_staging_symlink_is_not_removed_or_followed() -> Result<(), String> {
+        let dir = isolated_dir("occupied-staging-link");
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let target = dir.join("keep");
+        let staging = dir.join("occupied.tmp");
+        let destination = dir.join("report.json");
+        std::fs::write(&target, b"keep").map_err(|err| err.to_string())?;
+        std::os::unix::fs::symlink(&target, &staging).map_err(|err| err.to_string())?;
+        let outcome = super::publish_staged(
+            &destination,
+            &staging,
+            true,
+            super::Publish::NoReplace,
+            |_| Err(std::io::Error::other("fill must not run")),
+        );
+        let link_kept = staging
+            .symlink_metadata()
+            .is_ok_and(|metadata| metadata.is_symlink());
+        let target_contents = std::fs::read(&target);
+        let destination_created = destination.exists();
+        let _ = std::fs::remove_dir_all(&dir);
+        let Err(failure) = outcome else {
+            return Err("occupied staging symlink was accepted".to_string());
+        };
+        assert!(matches!(failure.stage, super::Stage::CreateTemp));
+        assert_eq!(failure.error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert!(link_kept, "another writer's staging symlink was removed");
+        assert_eq!(target_contents.map_err(|err| err.to_string())?, b"keep");
+        assert!(!destination_created);
+        Ok(())
+    }
+
+    #[test]
+    fn failed_stream_leaves_previous_or_absent_destination_and_no_partial() -> Result<(), String> {
+        use std::io::Write as _;
+        let dir = isolated_dir("failed-stream");
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        for existing in [false, true] {
+            let path = dir.join("report.json");
+            if existing {
+                std::fs::write(&path, b"previous").map_err(|err| err.to_string())?;
+            }
+            let outcome = super::replace_streamed(&path, |file| {
+                file.write_all(b"partial")?;
+                Err(std::io::Error::other("injected write failure"))
+            });
+            let Err(error) = outcome else {
+                return Err("failed stream was published".to_string());
+            };
+            assert_eq!(error.to_string(), "injected write failure");
+            if existing {
+                assert_eq!(
+                    std::fs::read(&path).map_err(|err| err.to_string())?,
+                    b"previous"
+                );
+            } else {
+                assert!(!path.exists(), "failed stream created a destination");
+            }
+            assert!(temp_leftovers(&dir)?.is_empty());
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
     }
 
     #[test]

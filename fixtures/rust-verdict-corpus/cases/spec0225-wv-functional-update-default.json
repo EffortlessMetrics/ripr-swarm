@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "field_construction_functional_update",
   "test_shape": "struct_literal_with_default_base",
-  "hard_case": "Runtime truth is discriminated while RIPR-SPEC-0225 expects not exposed. The spec withholds static credit for this shape, so ripr reads weakly_exposed and the report scores it false_actionable: a wrong actionable gap against discriminated truth. To keep the test passing the Default impl is manual and supplies retries: 4, so the functional-update base still pins retries at runtime.",
+  "hard_case": "Runtime truth is discriminated, but the test literal omits retries through a ..Config::default() base. To keep the test passing the Default impl is manual and supplies retries: 4, so the base still pins retries at runtime. Before RIPR-SPEC-0225 decision 7 ripr read weakly_exposed, a wrong actionable gap; decision 7 fills the omitted field from the manual Default's bare literal.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

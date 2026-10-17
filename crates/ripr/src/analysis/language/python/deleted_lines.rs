@@ -99,6 +99,10 @@ pub(super) fn deleted_line_findings(
             owners,
             tests,
             PythonNoBehaviorContext::default(),
+            // A deleted line is base-side evidence: the guarded-arm gate
+            // (#7392) reads new-side guards around a live line, so it stays
+            // off here.
+            None,
         ) else {
             continue;
         };

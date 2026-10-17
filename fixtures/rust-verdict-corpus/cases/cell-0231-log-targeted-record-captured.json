@@ -1,0 +1,52 @@
+{
+  "case_id": "cell-0231-log-targeted-record-captured",
+  "subject_id": "authored-log-template",
+  "diff": "cases/cell-0231-log-targeted-record-captured.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 12
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect",
+  "test_shape": "captured_log_record_assert",
+  "hard_case": "Twin of cell-0231-log-targeted-other-record: the changed record has a `target:` prefix and the test captures and asserts its exact text, so its template (\"opened {}\") must be read past the target.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "log::info!(target: \"open\", \"opened {}\", amount + 2);",
+        "mutated_line": "log::info!(target: \"open\", \"opened {}\", amount + 2);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::open_logs_the_doubled_amount",
+        "equivalence_review": "not equivalent: the logged amount changes"
+      },
+      {
+        "replacement": "(delete the line)",
+        "mutated_line": "",
+        "outcome": "tests_failed",
+        "failing_test": "tests::open_logs_the_doubled_amount",
+        "equivalence_review": "not equivalent: no record is logged"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "open_logs_the_doubled_amount captures the record and requires \"opened 8\", which both mutants change or remove. Spec cells: RIPR-SPEC-0096 log:: stays a capturable sink; RIPR-SPEC-0231 a targeted record binds through its template (#7133).",
+  "labeling_observation": {
+    "ripr_commit": "4711c122a",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

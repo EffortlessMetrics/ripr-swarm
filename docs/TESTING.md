@@ -32,7 +32,103 @@ fixture manifest. CI's Rust, coverage, analytics and advisory test paths run
 this step before offline checks. Missing preparation fails the positive; it is
 never treated as a skip or a reason to lower exposure assertions.
 
-Run everything:
+## Focused local iteration
+
+Select the package, Cargo target, and language features before applying a test
+name filter. A filter such as `structural_workspace_markers` selects tests to
+execute; by itself it does not limit which integration-test targets Cargo
+compiles. `--test cli_smoke` selects that integration target and its required
+product binary. Use `--lib` for library-only tests.
+
+Keep an isolated `CARGO_TARGET_DIR` stable for repeated runs of the same
+candidate. From the repository root in Bash, place it below the checkout's
+`target/` and create it before invoking Cargo:
+
+```bash
+export CARGO_TARGET_DIR="$PWD/target/contributor-rust"
+mkdir -p "$CARGO_TARGET_DIR"
+```
+
+This creates both the build-artifact directory and its parent `target/`.
+The repository's `.cargo/config.toml` forces `TEMP`, `TMP`, and `TMPDIR` to
+the checkout's `target/`, independently of `CARGO_TARGET_DIR`. If you place
+build artifacts outside the checkout, also run `mkdir -p target` from the
+repository root before building. Exporting another temporary directory does
+not override that forced setting. See the
+[workspace linker temp redirect](agent-context/validation.md#workspace-linker-temp-redirect)
+for the MSVC failure and recovery details.
+
+Record the package, target, profile, and effective features with each
+result: binary builds, test preparation, and Clippy can populate different build
+units even when they share that directory.
+
+For example, these commands prepare and exercise the Rust workspace-marker
+tests from the repository root:
+
+```bash
+cargo build --locked --offline -p ripr --bin ripr \
+  --no-default-features --features lang-rust --message-format=json
+cargo test --locked --offline -p ripr --test cli_smoke \
+  --no-default-features --features lang-rust --no-run --message-format=json
+cargo test --locked --offline -p ripr --test cli_smoke \
+  --no-default-features --features lang-rust structural_workspace_markers
+```
+
+These examples assume a prepared dependency registry. On first use, omit
+`--offline` so Cargo can download missing workspace dependencies; prepare the
+separate fixture dependency above when the selected tests require it. The JSON
+compiler output records emitted targets and effective features. `--no-run`
+separates preparation from execution; the final command can also prepare and
+run the selected target directly.
+
+Choose features for the behavior being tested. The example intentionally
+selects Rust only. For default-adapter coverage, omit both
+`--no-default-features` and `--features lang-rust`; defaults include Rust,
+TypeScript/JavaScript, and Python. Perl remains opt-in through `lang-perl`.
+Runtime language configuration is separate from compiled adapter availability;
+see the [language-adapter workflow](LANGUAGE_ADAPTER_PREVIEW.md#enable-preview-adapters).
+
+Keep `-p ripr` when a package-scoped feature check is intended. `xtask` depends
+on RIPR with default features enabled, so
+`cargo tree --locked --workspace --no-default-features --features ripr/lang-rust -e normal,build`
+still resolves the TypeScript and Python parsers through that dependency.
+Inspect the selected package instead with
+`cargo tree --locked -p ripr --no-default-features --features lang-rust -e normal,build`.
+For workflow-policy, agent-skill, and executable-file edits, use the existing
+[`cargo policy` frontdoor](../CONTRIBUTING.md#local-setup) for focused feedback.
+
+### Measured example and limits
+
+At `97cc171257fd76a1b3b9e79cc41ad949e0ecc861`, the three Cargo commands above were
+executed on Linux x86_64 with Rust/Cargo 1.95.0, `CARGO_BUILD_JOBS=2`, and an
+initially empty isolated `CARGO_TARGET_DIR`. The toolchain and registry were
+prepared before timing; commands ran sequentially and reused earlier outputs.
+
+| Command | Observed result |
+| --- | --- |
+| Explicit binary build | 115.23 s; RIPR library and binary, effective product features `["lang-rust"]`. |
+| `cli_smoke` preparation | 106.46 s following that build; one integration-test executable and its required product binary. |
+| Filtered `cli_smoke` execution | 0.42 s including Cargo; 3 passed, 476 filtered out. |
+
+At the same revision, `cargo tree -e normal,build` contained 113 distinct
+package/version identities for package-scoped Rust-only selection, 203 for
+package-scoped defaults, and 220 for workspace selection with
+`--no-default-features --features ripr/lang-rust`. These graph counts are not
+compiler-artifact counts or measurements of time saved. The timings are one
+prepared-registry sample, not cold onboarding, a default-build comparison,
+all-language coverage, or a complete qualification result. A passing filtered
+test does not establish that every internal fixture branch executed.
+
+Focused iteration leaves required broad qualification intact: retain the
+workspace/all-target checks, default and non-default feature obligations,
+fixtures and goldens, and the [nextest plus doctest contract](#ci-test-results).
+Select additional proof for the changed behavior before requesting qualification.
+
+## Full validation inventory
+
+The commands below inventory applicable checks. `cargo xtask ci-full` composes
+the complete local review/evidence/package pass; choose the aggregate for the
+intended proof without repeating its constituent commands.
 
 ```bash
 cargo xtask shape
@@ -211,7 +307,12 @@ The test suite:
 CI runs the suite headless with `xvfb-run -a npm run test:e2e`. The test
 runner stores downloaded VS Code archives under
 `target/ripr/vscode-test-cache` so generated editor-host state stays with the
-rest of the repo-local build output.
+rest of the repo-local build output. Isolated host user-data is
+`target/ripr/vscode-test-user-data`, with VS Code logs under `logs/`. A
+test-host failure copies a size-capped, redacted log subset into
+`target/ripr/vscode-test-host-diagnostics/`; CI uploads that folder only when
+the vscode job fails. Success runs do not retain the diagnostics copy, and
+collection cannot change the original test exit status.
 
 ## Golden Output
 
@@ -253,3 +354,30 @@ cargo test --workspace --doc
 
 The JUnit output path is configured in `.config/nextest.toml` at
 `target/nextest/ci/junit.xml`.
+
+## Unused suppression-policy disclosure
+
+The [repository configuration contract](specs/RIPR-SPEC-0007-repository-configuration.md#unused-default-suppression-disclosure-7759)
+is exercised by a genuine changed Rust fixture and the built CLI:
+
+```bash
+cargo test --locked -p ripr --test default_suppression_disclosure -- --test-threads=1
+```
+
+The suite distinguishes unused presence from explicit application/refusal,
+preserves complete stdout, and excludes foreign-CWD and directory false positives.
+
+## MCP unknown-resource recovery
+
+[RIPR-SPEC-0211](specs/RIPR-SPEC-0211-mcp-workspace-session-evidence.md#unknown-resource-recovery-7767)
+defines the message-only client's recovery contract. The raw stdio control
+pins literal prose and structured routes, preserves recognized-route failures,
+and follows the rejection with a valid status read on the same connection.
+Official SDK cases cover the negotiated lifecycle mapping independently.
+
+```bash
+cargo test --locked -p ripr --test mcp_stdio rejection_arms_survive_the_stdio_transport -- --exact
+cargo test --locked -p ripr --test mcp_sdk
+```
+
+These tests qualify wire behavior, not installation or every protocol version.

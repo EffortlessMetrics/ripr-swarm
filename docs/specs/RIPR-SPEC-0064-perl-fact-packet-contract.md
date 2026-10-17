@@ -817,6 +817,17 @@ Implementation PRs:
 - `cargo xtask check-fixture-contracts` when fixtures/goldens change;
 - `cargo xtask check-pr` before claiming a branch is review-ready.
 
+The optional two-binary integration harness bounds each exporter and consumer
+command to 30 seconds and each PATH lookup to five seconds. Capture must not
+wait indefinitely for a descendant after primary exit. Use the shared owned
+process authority, Unix process groups and Windows Job containment, clean and
+reap before removing capture files, and report incomplete cleanup as failure.
+Readback refuses streams above four MiB instead of returning truncated JSON;
+this is a readback limit, not an on-disk spool quota. Lookup failure or timeout
+must not become a missing-exporter skip. The existing three outcome assertions
+remain the real producer/consumer semantic proof; synthetic lifecycle controls
+do not qualify a Perl exporter or promote support tier.
+
 ## Later Amendment
 
 RIPR-SPEC-0235 (2026-10-04) defines how RIPR classifies packet relations,

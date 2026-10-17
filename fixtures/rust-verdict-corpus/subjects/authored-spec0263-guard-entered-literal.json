@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-spec0263-guard-entered-literal",
+  "origin": "authored",
+  "version_label": "authored 2026-10-14 for RIPR-SPEC-0263 acceptance example 2 (a guarded push the only test input enters)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "7b5c691a4bf0e19a99fa883018098c159e1caebd45ef7e50404256686a199be5"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "d11ab957dd9ff1e0702790cc4ac648b930445776ff12e413930461607d930ee5"
+    }
+  ]
+}
