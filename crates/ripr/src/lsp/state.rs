@@ -823,12 +823,16 @@ fn normalize_unavailable_adapter_path(path: &Path) -> String {
         .to_string()
 }
 
-/// Named-path membership for #7205. Windows file identity is
+/// Named-path membership for #7205. Windows and macOS file identity is
 /// case-insensitive at the URI layer (`file_uris_match`, root
 /// containment); Git/producer samples keep the on-disk casing while the
 /// editor URI may differ. Linux stays case-sensitive.
 fn unavailable_adapter_paths_eq(left: &str, right: &str) -> bool {
-    unavailable_adapter_paths_eq_impl(left, right, cfg!(windows))
+    unavailable_adapter_paths_eq_impl(
+        left,
+        right,
+        crate::output::path::host_paths_case_insensitive(),
+    )
 }
 
 fn unavailable_adapter_paths_eq_impl(left: &str, right: &str, ignore_ascii_case: bool) -> bool {
@@ -844,7 +848,10 @@ fn unavailable_adapter_paths_eq_impl(left: &str, right: &str, ignore_ascii_case:
 /// so named-path equality would otherwise never run. Fold only here; do
 /// not change the shared router.
 fn route_unavailable_adapter_document(relative: &Path) -> Option<LanguageId> {
-    route_unavailable_adapter_document_impl(relative, cfg!(windows))
+    route_unavailable_adapter_document_impl(
+        relative,
+        crate::output::path::host_paths_case_insensitive(),
+    )
 }
 
 fn route_unavailable_adapter_document_impl(
@@ -3360,7 +3367,8 @@ mod tests {
         };
         let outcome = python_unavailable_outcome()?;
         let mixed = coverage.not_enabled_language(Path::new("ZPY/Pricing.py"), Some(&outcome));
-        let expected = cfg!(windows).then_some(LanguageId::Python);
+        let expected =
+            crate::output::path::host_paths_case_insensitive().then_some(LanguageId::Python);
         if mixed != expected {
             return Err(format!(
                 "named-path mixed-case identity must follow host file identity, got {mixed:?}"
@@ -3417,7 +3425,8 @@ mod tests {
         };
         let outcome = python_unavailable_outcome()?;
         let mixed = coverage.not_enabled_language(Path::new("ZPY/Pricing.PY"), Some(&outcome));
-        let expected = cfg!(windows).then_some(LanguageId::Python);
+        let expected =
+            crate::output::path::host_paths_case_insensitive().then_some(LanguageId::Python);
         if mixed != expected {
             return Err(format!(
                 "uppercase-extension identity must follow host file identity, got {mixed:?}"

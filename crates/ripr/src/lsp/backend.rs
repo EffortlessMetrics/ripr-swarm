@@ -3637,11 +3637,23 @@ fn path_is_detectable_source_dir_python(root: &Path, path: &Path) -> bool {
 
 /// Root-relative components of `path` when `path` sits below `root`. Root
 /// components compare with the platform path rule (case-insensitive on
-/// Windows), mirroring the LSP URI authority's containment rule. `.` and
+/// Windows and macOS), mirroring the LSP URI authority's containment rule. `.` and
 /// `..` resolve on both sides first, including a root this process built
 /// with a relative join (`crates/ripr/../..`). A collapsed file URI and
 /// that uncollapsed root are the same directory.
 fn root_relative_components(root: &Path, path: &Path) -> Option<Vec<String>> {
+    root_relative_components_on(
+        root,
+        path,
+        crate::output::path::host_paths_case_insensitive(),
+    )
+}
+
+fn root_relative_components_on(
+    root: &Path,
+    path: &Path,
+    case_insensitive: bool,
+) -> Option<Vec<String>> {
     let root = super::uri::normalize_path(root);
     let path = super::uri::normalize_path(path);
     fn component_names(path: &Path) -> Vec<Option<String>> {
@@ -3665,7 +3677,7 @@ fn root_relative_components(root: &Path, path: &Path) -> Option<Vec<String>> {
         let (Some(expected), Some(actual)) = (expected, actual) else {
             return None;
         };
-        let matched = if cfg!(windows) {
+        let matched = if case_insensitive {
             expected.eq_ignore_ascii_case(actual)
         } else {
             expected == actual
@@ -3926,9 +3938,9 @@ mod workspace_input_tests {
         assert!(WorkspaceInputKind::PythonSourcePresence.reloads_repository_config());
         assert!(!WorkspaceInputKind::PythonSourcePresence.invalidates_workspace_graph());
 
-        if cfg!(windows) {
-            // Source-directory markers resolve through the Windows
-            // filesystem, so differently-cased components classify the same.
+        if crate::output::path::host_paths_case_insensitive() {
+            // Source-directory markers resolve through the case-insensitive
+            // host filesystem (Windows, macOS), so differently-cased components classify the same.
             let upper = root.join("SRC").join("app.py");
             assert_eq!(
                 workspace_input_kind(&root, &upper),
@@ -3936,6 +3948,21 @@ mod workspace_input_tests {
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn root_relative_components_follow_explicit_host_case_rule() {
+        let root = Path::new("/Work/Repo");
+        let path = Path::new("/work/repo/src/lib.rs");
+        assert_eq!(
+            root_relative_components_on(root, path, true),
+            Some(vec!["src".to_string(), "lib.rs".to_string()])
+        );
+        assert_eq!(root_relative_components_on(root, path, false), None);
+        assert_eq!(
+            root_relative_components_on(root, Path::new("/Work/Repo/src/Lib.rs"), false),
+            Some(vec!["src".to_string(), "Lib.rs".to_string()])
+        );
     }
 
     #[test]

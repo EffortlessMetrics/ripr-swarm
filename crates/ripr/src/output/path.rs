@@ -27,6 +27,14 @@ pub(crate) fn repository_display_path(root: &Path, file: &Path) -> String {
     displayed
 }
 
+/// Whether this host's default filesystem compares path names without regard
+/// to ASCII case: Windows (NTFS) and macOS (default APFS). Linux stays
+/// case-sensitive. This is the single host predicate for case-folding path
+/// identity; separator and verbatim-prefix handling stays keyed on Windows.
+pub(crate) const fn host_paths_case_insensitive() -> bool {
+    cfg!(any(windows, target_os = "macos"))
+}
+
 /// Render a finding's file root-relative for machine consumers, tolerating
 /// producer spelling drift: a canonicalized `\\?\X:` file still matches a
 /// plain `--root`, and drive-letter case drift matches on Windows, so
@@ -36,12 +44,25 @@ pub(crate) fn repository_display_path(root: &Path, file: &Path) -> String {
 /// keeps its spelling per [`repository_relative_path`]) falls back to the
 /// full stable spelling rather than inventing a location.
 pub(crate) fn repository_relative_path_text(root: &Path, file: &Path) -> String {
-    repository_relative_path_text_on(root, file, cfg!(windows))
+    repository_relative_path_text_with(root, file, cfg!(windows), host_paths_case_insensitive())
 }
 
 /// [`repository_relative_path_text`] with the host made explicit so both
 /// answers are testable anywhere (#4378).
+#[cfg(test)]
 pub(crate) fn repository_relative_path_text_on(root: &Path, file: &Path, windows: bool) -> String {
+    repository_relative_path_text_with(root, file, windows, windows)
+}
+
+/// [`repository_relative_path_text_on`] with case-insensitivity decoupled from
+/// the Windows separator/prefix rules, so a case-insensitive non-Windows host
+/// (macOS) is testable anywhere.
+pub(crate) fn repository_relative_path_text_with(
+    root: &Path,
+    file: &Path,
+    windows: bool,
+    case_insensitive: bool,
+) -> String {
     // Fast path: host-native exact prefix. A relative root keeps its spelling
     // (it already names a path under the invoking directory), and an empty
     // remainder (file == root) falls through to the full spelling. Rootedness
@@ -69,7 +90,41 @@ pub(crate) fn repository_relative_path_text_on(root: &Path, file: &Path, windows
         // matches every other path rendering.
         return display_path(&PathBuf::from(relative));
     }
+    if !windows
+        && case_insensitive
+        && let Some(relative) = strip_case_insensitive_root(root, file)
+    {
+        return display_path(&relative);
+    }
     display_path(file)
+}
+
+/// Component-wise, ASCII-case-insensitive root strip for an absolute
+/// non-Windows root. The remainder keeps the file's own spelling and must be
+/// non-empty and free of parent components.
+fn strip_case_insensitive_root(root: &Path, file: &Path) -> Option<PathBuf> {
+    if !root.is_absolute() || !file.is_absolute() {
+        return None;
+    }
+    let mut file_components = file.components();
+    for expected in root.components() {
+        let actual = file_components.next()?;
+        let same = match (expected, actual) {
+            (Component::Normal(left), Component::Normal(right)) => left
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&right.to_string_lossy()),
+            (left, right) => left == right,
+        };
+        if !same {
+            return None;
+        }
+    }
+    let relative: PathBuf = file_components.collect();
+    (!relative.as_os_str().is_empty()
+        && relative
+            .components()
+            .all(|component| matches!(component, Component::Normal(_))))
+    .then_some(relative)
 }
 
 /// Strip a Windows absolute root from a file across the spelling drift a
@@ -622,5 +677,41 @@ mod tests {
             ),
             verbatim_looking.replace('\\', "/")
         );
+    }
+
+    #[test]
+    fn case_insensitive_posix_host_strips_root_across_case_drift() {
+        use super::repository_relative_path_text_with as with;
+        let root = Path::new("/Srv/dev/Repo");
+        let file = Path::new("/srv/dev/repo/Src/lib.rs");
+        // macOS-style host: case drift strips; remainder keeps file spelling.
+        assert_eq!(with(root, file, false, true), "Src/lib.rs");
+        // Linux-style host: unchanged, falls back to the full spelling.
+        assert_eq!(with(root, file, false, false), "/srv/dev/repo/Src/lib.rs");
+        // Exact spelling strips on both.
+        let exact = Path::new("/Srv/dev/Repo/src/lib.rs");
+        assert_eq!(with(root, exact, false, true), "src/lib.rs");
+        assert_eq!(with(root, exact, false, false), "src/lib.rs");
+        // Escapes and non-prefixes stay refused even when folding.
+        let escape = Path::new("/srv/dev/repo/../outside.rs");
+        assert_eq!(
+            with(root, escape, false, true),
+            "/srv/dev/repo/../outside.rs"
+        );
+        let sibling = Path::new("/srv/dev/repository/x.rs");
+        assert_eq!(with(root, sibling, false, true), "/srv/dev/repository/x.rs");
+        assert_eq!(
+            with(root, Path::new("/srv/dev/repo"), false, true),
+            "/srv/dev/repo"
+        );
+    }
+
+    #[test]
+    fn host_predicate_matches_target_platform() {
+        assert_eq!(
+            super::host_paths_case_insensitive(),
+            cfg!(any(windows, target_os = "macos"))
+        );
+        assert!(!cfg!(target_os = "linux") || !super::host_paths_case_insensitive());
     }
 }
