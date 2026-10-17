@@ -721,7 +721,8 @@ identity agree and the analysis-outcome validator accepts the artifact.
     "no_static_path": 0,
     "infection_unknown": 0,
     "propagation_unknown": 0,
-    "static_unknown": 0
+    "static_unknown": 0,
+    "changed_files_by_language": [{ "language": "rust", "files": 1 }]
   },
   "analysis_outcome": {
     "analysis_complete": true,
