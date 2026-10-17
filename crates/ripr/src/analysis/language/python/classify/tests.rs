@@ -1941,3 +1941,148 @@ fn datetime_row_that_distinguishes_tm_year_modulo_stays_exposed() -> Result<(), 
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }
+
+// #6585 equality-predicate boundary (P4). Trailing block so it does not sit
+// next to #8521's equal-sibling classify tests.
+
+const EQ_SOURCE: &str = "def eq(n):\n    if n == 10:\n        return True\n    return False\n";
+
+/// Owner `if n == 10` mutated from `n == 11`, with `assert eq(20) == False`.
+/// Input 20 takes the else branch both ways, so a strong oracle must not
+/// credit `exposed`.
+#[test]
+fn equality_predicate_off_both_constants_is_weakly_exposed() -> Result<(), String> {
+    let finding = classify_case(
+        EQ_SOURCE,
+        "from src.subject import eq\n\ndef test_eq():\n    assert eq(20) == False\n",
+        2,
+        "    if n == 11:",
+        "    if n == 10:",
+    )?;
+    assert_owner(&finding, "eq");
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.ripr.infect.state, StageState::Weak);
+    assert_eq!(finding.ripr.reveal.observe.state, StageState::Yes);
+    assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Weak);
+    assert_eq!(
+        missing_boundary(&finding, "n == 10"),
+        Some(
+            "No strong related test call places n equal to 10 or n equal to 11; observed n values: 20"
+        )
+    );
+    assert!(observed(&finding, "n = 20"), "{finding:?}");
+    assert!(!observed(&finding, "n == 10"));
+    assert!(!observed(&finding, "n == 11"));
+    Ok(())
+}
+
+/// Calling at the new compared literal does discriminate `== 11` -> `== 10`.
+#[test]
+fn equality_predicate_at_new_constant_stays_exposed() -> Result<(), String> {
+    let finding = classify_case(
+        EQ_SOURCE,
+        "from src.subject import eq\n\ndef test_eq():\n    assert eq(10) == True\n",
+        2,
+        "    if n == 11:",
+        "    if n == 10:",
+    )?;
+    assert_owner(&finding, "eq");
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert!(finding.activation.missing_discriminators.is_empty());
+    assert!(observed(&finding, "n == 10"), "{finding:?}");
+    Ok(())
+}
+
+/// Calling at the pre-change compared literal also discriminates the mutation.
+#[test]
+fn equality_predicate_at_old_constant_stays_exposed() -> Result<(), String> {
+    let finding = classify_case(
+        EQ_SOURCE,
+        "from src.subject import eq\n\ndef test_eq():\n    assert eq(11) == False\n",
+        2,
+        "    if n == 11:",
+        "    if n == 10:",
+    )?;
+    assert_owner(&finding, "eq");
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert!(finding.activation.missing_discriminators.is_empty());
+    assert!(observed(&finding, "n == 11"), "{finding:?}");
+    Ok(())
+}
+
+/// `!=` and `is` stay outside this gate (handle `==` only). Complementary
+/// `!=` -> `==` still discriminates every input, so it must keep `exposed`.
+#[test]
+fn equality_predicate_gate_does_not_swallow_inequality_or_identity_forms() -> Result<(), String> {
+    let from_ne = classify_case(
+        "def is_zero(value):\n    if value == 0:\n        return True\n    return False\n",
+        "from src.subject import is_zero\n\ndef test_is_zero():\n    assert is_zero(5) == False\n",
+        2,
+        "    if value != 0:",
+        "    if value == 0:",
+    )?;
+    assert_eq!(from_ne.class, ExposureClass::Exposed);
+    assert!(from_ne.activation.observed_values.is_empty());
+
+    let ne_constant = classify_case(
+        "def ne(n):\n    if n != 10:\n        return True\n    return False\n",
+        "from src.subject import ne\n\ndef test_ne():\n    assert ne(20) == True\n",
+        2,
+        "    if n != 11:",
+        "    if n != 10:",
+    )?;
+    assert_eq!(ne_constant.class, ExposureClass::Exposed);
+
+    let identity = classify_case(
+        "def same(n):\n    if n is True:\n        return True\n    return False\n",
+        "from src.subject import same\n\ndef test_same():\n    assert same(20) == False\n",
+        2,
+        "    if n is False:",
+        "    if n is True:",
+    )?;
+    assert_eq!(identity.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+/// Literal `==` still uses the #4559 parametrize expansion: cases that miss
+/// both compared constants are weakly exposed; a case on either constant
+/// keeps credit.
+#[test]
+fn equality_predicate_parametrize_off_both_constants_is_weakly_exposed() -> Result<(), String> {
+    let finding = classify_case(
+        EQ_SOURCE,
+        "import pytest\nfrom src.subject import eq\n\n@pytest.mark.parametrize(\"n\", [20, 30])\ndef test_eq(n):\n    assert eq(n) == False\n",
+        2,
+        "    if n == 11:",
+        "    if n == 10:",
+    )?;
+    assert_owner(&finding, "eq");
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert_eq!(
+        missing_boundary(&finding, "n == 10"),
+        Some(
+            "No strong related test call places n equal to 10 or n equal to 11; observed n values: 20, 30"
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn equality_predicate_parametrize_on_either_constant_stays_exposed() -> Result<(), String> {
+    for cases in ["[20, 10]", "[11, 30]"] {
+        let tests = format!(
+            "import pytest\nfrom src.subject import eq\n\n@pytest.mark.parametrize(\"n\", {cases})\ndef test_eq(n):\n    assert eq(n) == False\n"
+        );
+        let finding = classify_case(EQ_SOURCE, &tests, 2, "    if n == 11:", "    if n == 10:")?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{cases}: {finding:?}"
+        );
+        assert!(
+            finding.activation.missing_discriminators.is_empty(),
+            "{cases}"
+        );
+    }
+    Ok(())
+}
