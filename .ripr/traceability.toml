@@ -12745,6 +12745,7 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs::boolean_helper_pins_require_the_existing_execution_and_identity_gates",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_early_err_variant_return_is_pinned_when_no_other_exit_builds_it",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_early_err_variant_pin_admits_only_its_variant_through_derived_equality",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_early_err_variant_pin_refuses_what_can_build_its_variant_unseen",
@@ -15196,6 +15197,13 @@ id = "RIPR-SPEC-0229"
 name = "Match-arm selection names the unselected arm"
 spec = "docs/specs/RIPR-SPEC-0229-match-arm-selection-discriminator.md"
 tests = [
+  "crates/ripr/src/output/schemas.rs::tests::corpus_consumer_versions_match_live_cache_identity",
+  "crates/ripr/tests/match_arm_assert_admission.rs::direct_and_eager_helper_assertions_remain_admitted",
+  "crates/ripr/tests/match_arm_assert_admission.rs::shadowed_and_skipped_assertions_are_refused",
+  "crates/ripr/tests/match_arm_assert_admission.rs::shadowed_and_deferred_helper_assertions_are_refused",
+  "crates/ripr/tests/match_arm_assert_admission.rs::unrelated_assertion_remains_unconfirmed",
+  "crates/ripr/tests/match_arm_assert_admission.rs::unestablished_plain_assertion_names_its_macro_in_human_and_json",
+  "crates/ripr/tests/match_arm_assert_admission.rs::shadowed_reachable_unrevealed_assertion_names_its_macro_in_all_formats",
   "crates/ripr/tests/field_match_selector.rs::field_match_selector_names_all_three_rows_without_credit_or_wire_shape_change",
   "crates/ripr/tests/field_match_selector.rs::field_match_selector_never_borrows_an_unrelated_or_overwritten_observation",
   "crates/ripr/tests/field_match_selector.rs::a_direct_parameter_match_keeps_its_genuine_unselected_arm_gap",
@@ -15312,11 +15320,16 @@ tests = [
   "crates/ripr/tests/match_guard_edit.rs::an_added_guard_conjunct_keeps_the_arm_head",
 ]
 fixtures = [
+  "fixtures/match_arm_shadowed_assert",
   "fixtures/match_arm_blind",
   "fixtures/match_arm_expected_side_trap",
   "fixtures/match_arm_selected_credit",
 ]
 code = [
+  "crates/ripr/src/analysis/classify/owner_pin.rs",
+  "crates/ripr/src/analysis/syntax/owner_pin.rs",
+  "crates/ripr/src/analysis/classify/gap_admission.rs",
+  "crates/ripr/src/domain/language.rs",
   "crates/ripr/src/analysis/classify/activation.rs",
   "crates/ripr/src/analysis/classify/arm_selection.rs",
   "crates/ripr/src/analysis/classify/infection.rs",
@@ -15329,6 +15342,8 @@ code = [
   "crates/ripr/src/output/human/explain.rs",
 ]
 outputs = [
+  "fixtures/match_arm_shadowed_assert/expected/check.json",
+  "fixtures/match_arm_shadowed_assert/expected/human-full.txt",
   "docs/specs/RIPR-SPEC-0229-match-arm-selection-discriminator.md",
   "fixtures/match_arm_blind/expected/check.json",
   "fixtures/match_arm_expected_side_trap/expected/check.json",

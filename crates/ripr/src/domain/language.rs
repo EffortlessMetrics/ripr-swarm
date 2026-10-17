@@ -437,6 +437,19 @@ pub enum StaticLimitKind {
 }
 
 impl StaticLimitKind {
+    /// Family-specific assertion spelling without changing the limit's identity.
+    pub(crate) fn describe_for_family(
+        &self,
+        family: &super::ProbeFamily,
+    ) -> std::borrow::Cow<'static, str> {
+        if *self == Self::RustAssertionContextUnresolved && *family == super::ProbeFamily::MatchArm
+        {
+            std::borrow::Cow::Owned(self.describe().replace("`assert_eq!`", "`assert!`"))
+        } else {
+            std::borrow::Cow::Borrowed(self.describe())
+        }
+    }
+
     /// Stable wire string used when this kind is serialized into the
     /// additive optional `static_limit_kind` output field.
     pub fn as_str(&self) -> &'static str {

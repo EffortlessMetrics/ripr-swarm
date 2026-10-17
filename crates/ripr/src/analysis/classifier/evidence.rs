@@ -944,7 +944,7 @@ impl ClassifiedProbeEvidence {
         };
         let mut evidence =
             evidence_summaries([&reach, &infect, &propagate, &observe, &discriminate]);
-        // Disclose a refused related `assert_eq!` whenever the refusal can
+        // Disclose a refused related assertion whenever the refusal can
         // matter: the reveal is not fully established. See
         // `preferred_refusal_note` for which one.
         let owner_name = context.owner_fn.map_or("", |owner| owner.name.as_str());
@@ -972,7 +972,12 @@ impl ClassifiedProbeEvidence {
                         let calls_owner = body_contains_owner_call(&assertion.text, owner_name);
                         let note = AssertionRefusalNote {
                             location: format!(
-                                "`assert_eq!` in {} at {}:{}",
+                                "`{}!` in {} at {}:{}",
+                                if context.probe.family == ProbeFamily::MatchArm {
+                                    "assert"
+                                } else {
+                                    "assert_eq"
+                                },
                                 test.name,
                                 test.file.display(),
                                 assertion.line
