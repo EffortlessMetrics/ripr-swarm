@@ -686,6 +686,10 @@ pub(crate) struct DoctorCacheStatus {
     /// same evidence; the typed field keeps `doctor --json` as complete as
     /// the human report (#8257 review).
     pub(crate) artifact_ignore: DoctorArtifactIgnore,
+    /// Whether ripr's own artifact root (`target/ripr`) has entries in the git
+    /// index (#8276). Ignore rules never untrack committed files, so this is
+    /// its own fact, not a fifth `artifact_ignore` verdict.
+    pub(crate) tracked_artifacts: DoctorTrackedArtifacts,
 }
 
 /// Whether git ignore rules cover ripr's own artifact root (`target/ripr`)
@@ -714,6 +718,31 @@ pub(crate) enum DoctorArtifactIgnore {
     /// Coverage could not be established: the root is not a git repository,
     /// git is unavailable, or the probe hit its deadline. Doctor stays quiet
     /// rather than claiming a checked fact it could not establish.
+    NotChecked,
+}
+
+/// Whether ripr's own artifact root (`target/ripr`) has entries in the git
+/// index (#8276).
+///
+/// A `.gitignore` rule does not untrack files committed earlier, so
+/// `git add -A` keeps refreshing them and `ripr check` keeps diffing them even
+/// when [`DoctorArtifactIgnore`] reports `Ignored`. Fail-closed: only a
+/// successful index probe produces `Tracked`.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DoctorTrackedArtifacts {
+    /// The index holds no entries under `target/ripr`.
+    None,
+    /// At least one entry under `target/ripr` is tracked. `warning` is the
+    /// exact line the human screen prints.
+    Tracked {
+        /// How many index entries are under `target/ripr`.
+        count: usize,
+        /// The actionable warning, including the exact remediation command.
+        warning: String,
+    },
+    /// The index could not be read: the root is not a git repository, git is
+    /// unavailable, or the probe hit its deadline.
     NotChecked,
 }
 
@@ -4202,6 +4231,7 @@ mod tests {
                 size_bytes: 0,
                 size_display: "0 B".to_string(),
                 artifact_ignore: DoctorArtifactIgnore::NoArtifacts,
+                tracked_artifacts: DoctorTrackedArtifacts::None,
             },
             test_surfaces: Vec::new(),
             perl_preview: None,
@@ -4261,6 +4291,10 @@ mod tests {
                 size_bytes: 1024,
                 size_display: "1.00 KB".to_string(),
                 artifact_ignore: DoctorArtifactIgnore::Ignored,
+                tracked_artifacts: DoctorTrackedArtifacts::Tracked {
+                    count: 2,
+                    warning: "! tracked".to_string(),
+                },
             },
             test_surfaces: vec![DoctorTestSurface {
                 language: "python".to_string(),
@@ -4294,6 +4328,7 @@ mod tests {
         );
         assert_eq!(parsed["cache"]["relocated_by_env"], true);
         assert_eq!(parsed["cache"]["artifact_ignore"], "ignored");
+        assert_eq!(parsed["cache"]["tracked_artifacts"]["tracked"]["count"], 2);
         assert_eq!(parsed["test_surfaces"][0]["framework"], "pytest");
         assert_eq!(parsed["test_surfaces"][0]["evidence"], "python: pytest");
         Ok(())

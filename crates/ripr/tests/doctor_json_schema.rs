@@ -494,6 +494,26 @@ fn published_doctor_schema_rejects_documents_the_schema_forbids() -> Result<(), 
         format!("a populated unignored artifact-ignore must stay legal: {error}")
     })?;
 
+    // #8276: `cache.tracked_artifacts` is its own `oneOf` union.
+    let mut unlisted_tracked = base.clone();
+    unlisted_tracked["cache"]["tracked_artifacts"] = Value::String("some".to_string());
+    assert_rejected(
+        "unlisted tracked-artifacts verdict",
+        &unlisted_tracked,
+        &schema,
+    )?;
+
+    let mut countless_tracked = base.clone();
+    countless_tracked["cache"]["tracked_artifacts"] =
+        serde_json::json!({"tracked": {"warning": "w"}});
+    assert_rejected("tracked without its count", &countless_tracked, &schema)?;
+
+    let mut populated_tracked = base.clone();
+    populated_tracked["cache"]["tracked_artifacts"] =
+        serde_json::json!({"tracked": {"count": 3, "warning": "! 3 tracked"}});
+    check(&populated_tracked, &schema, &schema, "doctor")
+        .map_err(|error| format!("a populated tracked-artifacts must stay legal: {error}"))?;
+
     let mut wrong_test_surface_type = base.clone();
     wrong_test_surface_type["test_surfaces"] = Value::String("rust".to_string());
     assert_rejected(
