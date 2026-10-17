@@ -7,10 +7,10 @@ name: Public Proof Drift
 # the page against its receipts only, so a PR that moves a scoreboard or the
 # corpus does not fail required CI. This lane is how the page's lag is
 # surfaced. It runs nightly, on demand, and when a pull request that touches a
-# source, a receipt or the page is opened ready or leaves draft. Verdict
+# source, a receipt or the page carries the merge-ready label. Verdict
 # corpus case PRs are left out on purpose: the page is a corpus snapshot that
-# a separate refresh PR updates, so case PRs share no generated line (#6660). A push after
-# that reruns it only through a draft-to-ready toggle. On failure the job
+# a separate refresh PR updates, so case PRs share no generated line (#6660). A later push does not
+# rerun it; re-apply the label. On failure the job
 # summary shows the changed page lines and the refresh commands.
 
 on:
@@ -18,7 +18,7 @@ on:
   schedule:
     - cron: "41 7 * * *"
   pull_request:
-    types: [opened, ready_for_review]
+    types: [opened, synchronize, reopened, labeled]
     paths:
       - "metrics/dx-scoreboard/baseline.json"
       - "benchmarks/rust_corpus/manifest.json"
@@ -30,13 +30,17 @@ on:
 permissions:
   contents: read
 
+# Only a `merge-ready` labeled request shares this group, so a re-applied label
+# supersedes the older run for the same PR. Every other pull_request event
+# (opened, synchronize, reopened, other labels) gets a unique group: its jobs
+# are skipped and it can neither cancel nor replace a pending merge-ready run.
 concurrency:
-  group: public-proof-${{ github.ref }}
-  cancel-in-progress: true
+  group: public-proof-${{ github.event.pull_request.number || github.ref }}-${{ (github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run' }}
+  cancel-in-progress: ${{ (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') || github.event_name != 'pull_request' }}
 
 jobs:
   drift:
-    if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft)
+    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

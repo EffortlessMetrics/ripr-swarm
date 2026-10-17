@@ -1510,6 +1510,41 @@ impl DocumentStore {
             .unwrap_or(false)
     }
 
+    /// Adopt the committed snapshot's analyzed identity for a just-opened
+    /// document whose saved bytes the snapshot already analyzed (a close and
+    /// reopen of an unchanged file, or a second changed file the refresh
+    /// covered before it was opened). Without it the fresh state carries no
+    /// analyzed identity and is quarantined as `NoAnalyzedSavedContent` even
+    /// though nothing changed since the analysis. Returns `false`, leaving
+    /// the state untouched, unless the buffer matches the saved bytes and
+    /// those bytes carry exactly the committed digest.
+    pub(super) fn adopt_committed_identity(
+        &mut self,
+        uri: &Uri,
+        committed_digest: &str,
+        input_identity: Option<String>,
+    ) -> bool {
+        let Some(state) = self.documents.get_mut(uri) else {
+            return false;
+        };
+        // Only `.rs` paths carry producer-captured consumed-input digests (see
+        // `pending_analyzed_digests`); other extensions keep their own basis.
+        if state
+            .path
+            .extension()
+            .is_none_or(|extension| extension != "rs")
+            || state.buffer_authority_unknown
+            || state.saved_digest.as_deref() != Some(committed_digest)
+            || state.buffer_digest() != committed_digest
+        {
+            return false;
+        }
+        state.analyzed_saved_digest = Some(committed_digest.to_string());
+        state.analyzed_input_identity = input_identity;
+        state.refresh_quarantine();
+        state.quarantine.is_none()
+    }
+
     pub(super) fn change(
         &mut self,
         params: DidChangeTextDocumentParams,
@@ -1904,6 +1939,52 @@ mod tests {
         };
         if quarantine.reason != DocumentStalenessReason::NoAnalyzedSavedContent {
             return Err("expected the no_analyzed_saved_content reason".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn adopting_the_committed_digest_lifts_never_analyzed_quarantine_only_for_matching_bytes()
+    -> Result<(), String> {
+        let uri = test_uri("file:///workspace/src/lib.rs")?;
+        let mut store = DocumentStore::default();
+        let mut state = clean_document_state(&uri, "fn saved() {}");
+        state.analyzed_saved_digest = None;
+        state.analyzed_input_identity = None;
+        state.refresh_quarantine();
+        store.documents.insert(uri.clone(), state);
+
+        let other = digest_of("fn other() {}");
+        if store.adopt_committed_identity(&uri, &other, Some("input:42".to_string())) {
+            return Err("a digest the saved bytes do not carry must not be adopted".to_string());
+        }
+        let quarantined = store
+            .state_for_uri(&uri)
+            .is_some_and(DocumentState::is_quarantined);
+        if !quarantined {
+            return Err("a refused adoption must leave the quarantine".to_string());
+        }
+
+        // A buffer that diverges from the saved bytes the snapshot analyzed
+        // stays quarantined even when the saved digest matches.
+        if let Some(state) = store.documents.get_mut(&uri) {
+            state.text = "fn edited() {}".to_string();
+        }
+        let saved = digest_of("fn saved() {}");
+        if store.adopt_committed_identity(&uri, &saved, Some("input:42".to_string())) {
+            return Err("a diverging buffer must not adopt the committed digest".to_string());
+        }
+        if let Some(state) = store.documents.get_mut(&uri) {
+            state.text = "fn saved() {}".to_string();
+        }
+        if !store.adopt_committed_identity(&uri, &saved, Some("input:42".to_string())) {
+            return Err("matching saved bytes must adopt the committed digest".to_string());
+        }
+        let Some(state) = store.state_for_uri(&uri) else {
+            return Err("expected the document state".to_string());
+        };
+        if state.is_quarantined() || state.analyzed_input_identity.as_deref() != Some("input:42") {
+            return Err("adoption must clear quarantine and record the input identity".to_string());
         }
         Ok(())
     }

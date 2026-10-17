@@ -26,6 +26,8 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/whole_value_string_from_shadow/input --diff <cwd>/fixtures/whole_value_string_from_shadow/diff.patch --mode fast probe:src_lib.rs:field_construction:e9de435c
   ripr context --root <cwd>/fixtures/whole_value_string_from_shadow/input --diff <cwd>/fixtures/whole_value_string_from_shadow/diff.patch --mode fast --at probe:src_lib.rs:field_construction:e9de435c
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/whole_value_string_from_shadow/input --at src/lib.rs:10 --kind field_construction
 
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.

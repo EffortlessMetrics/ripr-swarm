@@ -504,11 +504,32 @@ fn stub_body(
         ),
         _ => None,
     };
-    let return_type = signature
-        .return_type
-        .as_deref()
-        .map(|ty| concrete_type(ty, owner_self, owner_trait))
-        .ok_or(TestStubRefusal::NoReturnValue)?;
+    // An owner that returns `()` or `Result<(), _>` hands its changed value
+    // out through a `&mut` parameter or `&mut self` (#6300), so the stub
+    // asserts those after the call. Without one there is nothing to assert
+    // on: a bare `()` has no return value, and an unchanged `Ok(())` cannot
+    // tell a changed match arm from the old one.
+    let has_mut_target = signature.receiver == Some(OwnerReceiver::RefMut)
+        || signature
+            .params
+            .iter()
+            .any(|param| strip_mut_reference(&param.ty).is_some());
+    let return_type = match signature.return_type.as_deref() {
+        Some(ty) => concrete_type(ty, owner_self, owner_trait),
+        None if has_mut_target => "()".to_string(),
+        None => return Err(TestStubRefusal::NoReturnValue),
+    };
+    let unit_return = returns_unit(&return_type);
+    if unit_return && !has_mut_target {
+        if return_type.trim() == "()" {
+            return Err(TestStubRefusal::NoReturnValue);
+        }
+        if seam.kind() == SeamKind::MatchArm {
+            return Err(TestStubRefusal::ObserverRequired);
+        }
+        // Another kind on `Result<(), _>` (an error variant, a boundary that
+        // picks `Err`) is still told apart by the result itself.
+    }
     if return_type.contains("impl ") {
         return Err(TestStubRefusal::OpaqueReturn);
     }
@@ -623,8 +644,13 @@ fn stub_body(
         ),
         (None, None, None) => format!("{}({})", signature.name, arguments.join(", ")),
     };
-    lines.push(format!("let actual = {call};"));
+    if return_type.trim() == "()" {
+        lines.push(format!("{call};"));
+    } else {
+        lines.push(format!("let actual = {call};"));
+    }
 
+    let asserts_return = return_type.trim() != "()";
     let variant = match seam.required_discriminator() {
         RequiredDiscriminator::ErrorVariant { variant }
             if seam.kind() == SeamKind::ErrorVariant =>
@@ -635,6 +661,7 @@ fn stub_body(
         _ => None,
     };
     match variant {
+        _ if !asserts_return => {}
         Some(pattern) => {
             lines.push(format!(
                 "assert!(matches!(actual, Err({pattern})), \"expected Err({})\");",
@@ -680,11 +707,87 @@ fn stub_body(
             fill_ins.push(label);
         }
     }
+    if unit_return {
+        let mut targets = Vec::new();
+        if let (Some(OwnerReceiver::RefMut), Some(subject), Some(self_type)) =
+            (signature.receiver, receiver, self_type)
+        {
+            targets.push((subject.to_string(), self_type.to_string()));
+        }
+        for (index, param) in signature.params.iter().enumerate() {
+            let Some(inner) = strip_mut_reference(&param.ty) else {
+                continue;
+            };
+            let binding = param
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("arg{}", index + 1));
+            let ty = rebase_paths(
+                &concrete_type(inner.trim(), owner_self, owner_trait),
+                path_scope,
+            )
+            .ok_or(TestStubRefusal::ParameterUnsupported)?;
+            targets.push((binding, ty));
+        }
+        let hint = if derived_inputs.is_empty() {
+            discriminator_hint(seam)
+        } else {
+            format!(" for {}", derived_inputs.join(", "))
+        };
+        for (binding, ty) in targets {
+            let label = format!(
+                "ripr: write the value `{binding}` should hold after `{}` runs{hint}; delete the assertion for a `&mut` input the change does not reach",
+                signature.name
+            );
+            match value_traits(&ty, source) {
+                ValueTraits::PartialEqAndDebug => {
+                    lines.push(format!(
+                        "let expected_{binding}: {ty} = todo!(\"{}\");",
+                        escape(&label)
+                    ));
+                    lines.push(format!("assert_eq!({binding}, expected_{binding});"));
+                }
+                ValueTraits::Unknown => {
+                    lines.push(format!("let _ = &{binding};"));
+                    lines.push(format!("todo!(\"{}\");", escape(&label)));
+                }
+            }
+            fill_ins.push(label);
+        }
+    }
     Ok(StubBody {
         lines,
         fill_ins,
         derived_inputs,
     })
+}
+
+/// Whether `ty` is `()` or a `Result` whose success type is `()`, so the
+/// call's changed value can leave only through a `&mut` input.
+fn returns_unit(ty: &str) -> bool {
+    let ty = ty.trim();
+    if ty == "()" {
+        return true;
+    }
+    if !is_result_type(ty) {
+        return false;
+    }
+    let Some((_, rest)) = ty.split_once('<') else {
+        return false;
+    };
+    let mut depth = 0usize;
+    let mut first = String::new();
+    for c in rest.chars() {
+        match c {
+            '<' | '(' | '[' => depth += 1,
+            '>' | ')' | ']' if depth == 0 => break,
+            '>' | ')' | ']' => depth -= 1,
+            ',' if depth == 0 => break,
+            _ => {}
+        }
+        first.push(c);
+    }
+    first.trim() == "()"
 }
 
 fn render_test_fn(

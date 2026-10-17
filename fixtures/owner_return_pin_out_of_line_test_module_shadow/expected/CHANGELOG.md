@@ -76,3 +76,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_return_pin_out_of_line_test_module_shadow (7)
+
+Reason:
+RIPR-SPEC-0122: human check output prints the stub route or a No test stub here refusal for every probe family (#8412)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_out_of_line_test_module_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
