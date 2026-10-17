@@ -619,6 +619,13 @@ fn a_literal_none_match_checks_no_message_in_either_framework() -> Result<(), St
             ),
         )
     };
+    // A name bound exactly once to `None` reads as `None`.
+    assert_ne!(
+        parse_class(
+            "def test_parse():\n    pattern = None\n    with pytest.raises(ValueError, match=pattern):\n        parse(\"\")\n"
+        )?,
+        ExposureClass::Exposed
+    );
     assert_ne!(unittest("None")?, ExposureClass::Exposed);
     assert_ne!(unittest("expected_regex=None")?, ExposureClass::Exposed);
     assert_eq!(unittest("\"empty\"")?, ExposureClass::Exposed);
