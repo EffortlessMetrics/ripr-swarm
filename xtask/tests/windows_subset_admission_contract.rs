@@ -148,8 +148,54 @@ fn source_precheck_precedes_candidate_execution_and_keeps_source_receipt() -> Re
 const NATIVE: &str = include_str!("../../.github/workflows/routed-rust.yml");
 const RESULT_NAME: &str = "    name: ${{ ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}";
 
+fn native_program(source: &str, name: &str) -> Result<String, String> {
+    let (_, program) = source
+        .split_once(&format!("  {name}: |\n"))
+        .ok_or("missing native program")?;
+    Ok(program
+        .lines()
+        .take_while(|line| line.starts_with("    ") || line.is_empty())
+        .map(|line| line.strip_prefix("    ").unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n"))
+}
+
+fn subject_binding_is_current(source: &str) -> Result<bool, String> {
+    let program = native_program(source, "NATIVE_SUBJECT_JQ")?;
+    Ok([
+        "$p.headRefOid == $head",
+        "$p.baseRef.target.__typename == \"Commit\"",
+        "$r.ref.target.oid == $p.baseRef.target.oid",
+        "$p.potentialMergeCommit.oid == $merge",
+        "($p.potentialMergeCommit.tree.oid | oid)",
+        "$p.potentialMergeCommit.parents.pageInfo.hasNextPage == false",
+        "[$p.potentialMergeCommit.parents.nodes[].oid] == [$p.baseRef.target.oid,$head]",
+    ]
+    .iter()
+    .all(|guard| program.contains(guard))
+        && source
+            .matches("\"$NATIVE_SUBJECT_JQ\" <<< \"$frame\"")
+            .count()
+            == 2)
+}
+
+fn prior_request_binding_is_current(source: &str) -> Result<bool, String> {
+    let program = native_program(source, "NATIVE_PRIOR_REQUESTS_JQ")?;
+    let jobs = native_program(source, "NATIVE_PRIOR_JOBS_JQ")?;
+    Ok([
+        ".workflow_id == $workflow and .head_sha == $head",
+        ".repository.node_id == $repo_id",
+        ".event == \"pull_request\" and .run_number < $current",
+        ".display_title | startswith(\"Merge-ready \")",
+        ".id == $pr_database_id and .number == $number",
+    ].iter().all(|guard| program.contains(guard))
+        && jobs.contains(".run_id == $run and .head_sha == $head")
+        && source.contains("marker=\"Admitted v2 $identity run $prior_id attempt $attempt\"")
+        && source.contains("origin-proof-unavailable: same-attempt native producer receipt identities are not qualified; no reuse or replacement"))
+}
+
 #[test]
-fn native_request_and_nonrequest_names_are_event_bound() {
+fn native_request_and_nonrequest_names_are_event_bound() -> Result<(), String> {
     assert!(NATIVE.contains("  pull_request:\n    types: [labeled]"));
     assert!(!NATIVE.contains("    types: [ready_for_review]"));
     assert!(NATIVE.contains(RESULT_NAME));
@@ -159,8 +205,8 @@ fn native_request_and_nonrequest_names_are_event_bound() {
     assert!(NATIVE.contains(
         "format('qualification-{0}-{1}', github.repository, github.event.pull_request.number)"
     ));
-    assert!(NATIVE.contains(".run_number < $number"));
-    assert!(NATIVE.contains(".display_title == $key"));
+    assert!(prior_request_binding_is_current(NATIVE)?);
+    Ok(())
 }
 
 #[test]
@@ -171,18 +217,68 @@ fn static_required_name_mutation_is_rejected() {
 }
 
 #[test]
-fn requested_result_evaluates_admission_and_selected_obligations() {
+fn requested_result_evaluates_admission_and_selected_obligations() -> Result<(), String> {
+    assert!(subject_binding_is_current(NATIVE)?);
     assert!(NATIVE.contains("    if: always()"));
     for fragment in [
         "[ \"$ADMISSION_RESULT\" = success ]",
         "[ \"$WINDOWS_RESULT\" = success ]",
         "[ \"$PRIOR_RESULT\" = success ]",
-        ".head.sha == $head and .base.sha == $base",
-        ".merge_commit_sha == $subject",
+        "[ \"$PASTE_RESULT\" = success ]",
+        "[ \"$CI_RESULT\" = success ]",
+        "[ \"$WHEEL_RESULT\" = success ]",
     ] {
         assert!(
             NATIVE.contains(fragment),
             "missing required-result boundary {fragment}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn live_subject_and_prior_origin_controls_reject_missing_guards() -> Result<(), String> {
+    assert!(subject_binding_is_current(NATIVE)?);
+    assert!(prior_request_binding_is_current(NATIVE)?);
+    for guard in [
+        "$p.headRefOid == $head",
+        "$p.baseRef.target.__typename == \"Commit\"",
+        "$r.ref.target.oid == $p.baseRef.target.oid",
+        "$p.potentialMergeCommit.oid == $merge",
+        "($p.potentialMergeCommit.tree.oid | oid)",
+        "$p.potentialMergeCommit.parents.pageInfo.hasNextPage == false",
+        "[$p.potentialMergeCommit.parents.nodes[].oid] == [$p.baseRef.target.oid,$head]",
+    ] {
+        let changed = NATIVE.replace(guard, "true");
+        assert_ne!(changed, NATIVE);
+        assert!(
+            !subject_binding_is_current(&changed)?,
+            "missing live binding {guard} was accepted"
+        );
+    }
+    let changed = NATIVE.replacen(
+        "\"$NATIVE_SUBJECT_JQ\" <<< \"$frame\"",
+        "'true' <<< \"$frame\"",
+        1,
+    );
+    assert_ne!(changed, NATIVE);
+    assert!(
+        !subject_binding_is_current(&changed)?,
+        "one-phase subject bypass was accepted"
+    );
+    for guard in [
+        ".workflow_id == $workflow and .head_sha == $head",
+        ".repository.node_id == $repo_id",
+        ".event == \"pull_request\" and .run_number < $current",
+        ".id == $pr_database_id and .number == $number",
+        ".run_id == $run and .head_sha == $head",
+    ] {
+        let changed = NATIVE.replace(guard, "true");
+        assert_ne!(changed, NATIVE);
+        assert!(
+            !prior_request_binding_is_current(&changed)?,
+            "missing prior origin binding {guard} was accepted"
+        );
+    }
+    Ok(())
 }
