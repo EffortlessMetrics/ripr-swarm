@@ -3098,7 +3098,12 @@ fn saved_line_for_finding(root: &Path, finding: &Finding) -> Option<String> {
     let path = absolute_finding_path(root, finding);
     let contents = std::fs::read_to_string(path).ok()?;
     let line_index = finding.probe.location.line.saturating_sub(1);
-    contents.lines().nth(line_index).map(str::to_owned)
+    // The analysis counts lines at `\n`/`\r\n` only, while the editor also
+    // ends a line at a bare `\r`. A leftover `\r` means the two line models
+    // disagree for this file, so the "line" is not one editor line: fall back
+    // to the numeric location instead of searching it.
+    let line = contents.lines().nth(line_index)?;
+    (!line.contains('\r')).then(|| line.to_owned())
 }
 
 fn related_information_for_finding(
@@ -5423,6 +5428,34 @@ mod diagnostic_policy_tests {
         }
         if width_for(&PositionEncodingKind::UTF32)? != 4 {
             return Err("UTF-32 client did not receive a scalar-width finding span".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn saved_line_is_withheld_when_bare_cr_makes_the_line_models_disagree() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| format!("system clock before UNIX_EPOCH: {err}"))?
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("ripr-lsp-bare-cr-{}-{stamp}", std::process::id()));
+        let src = root.join("src");
+        std::fs::create_dir_all(&src).map_err(|err| format!("create src failed: {err}"))?;
+        let mut finding = policy_finding();
+        finding.probe.location.line = 2;
+
+        std::fs::write(src.join("pricing.rs"), "a\r\nlet total = 1;\r\nc\r\n")
+            .map_err(|err| format!("write crlf fixture failed: {err}"))?;
+        if saved_line_for_finding(&root, &finding).as_deref() != Some("let total = 1;") {
+            return Err("a CRLF file must still yield its exact saved line".to_string());
+        }
+
+        std::fs::write(src.join("pricing.rs"), "a\rlet total = 1;\rc\r")
+            .map_err(|err| format!("write bare-CR fixture failed: {err}"))?;
+        finding.probe.location.line = 1;
+        if let Some(line) = saved_line_for_finding(&root, &finding) {
+            return Err(format!("a bare-CR file leaked a multi-line text: {line:?}"));
         }
         Ok(())
     }
