@@ -1013,3 +1013,76 @@ fn long_deleted_function_records_nothing() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// Unspaced `length<3` is a comparison, not a type list: a later deleted
+/// method in the same object stays a removed header, not body of `api`.
+#[test]
+fn deleted_method_after_an_unspaced_length_comparison_is_not_stolen() -> Result<(), String> {
+    let findings = analyze(
+        "unspaced-length-comparison",
+        &[
+            " const items = [1, 2, 3];",
+            " export const api = {",
+            "-  cap: items.length<3,",
+            "-  save(id: string) {",
+            "-    audit(id);",
+            "-  },",
+            " };",
+        ],
+    )?;
+    let stolen = findings.iter().any(|finding| {
+        finding.source_currentness.is_base_side()
+            && finding
+                .probe
+                .before
+                .as_deref()
+                .is_some_and(|text| text.contains("save(id") || text.contains("audit(id)"))
+    });
+    assert!(!stolen, "save/audit joined into api: {findings:?}");
+    assert!(
+        findings
+            .iter()
+            .filter(|finding| finding.source_currentness.is_base_side())
+            .all(|finding| !finding.is_candidate_actionable()),
+        "base-side records must stay non-actionable: {findings:?}"
+    );
+    Ok(())
+}
+
+/// A nested function header inside a deleted `forEach(() => {` callback is
+/// its own removed owner: wrap-join must not swallow it into the live
+/// enclosing function.
+#[test]
+fn deleted_nested_header_inside_a_callback_is_not_stolen() -> Result<(), String> {
+    let findings = analyze(
+        "nested-header-in-callback",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "-  items.forEach((item) => {",
+            "-    function helper() {",
+            "-      audit(item);",
+            "-    }",
+            "-  });",
+            "   return items.length;",
+            " }",
+        ],
+    )?;
+    let stolen = findings.iter().any(|finding| {
+        finding.source_currentness.is_base_side()
+            && finding.probe.before.as_deref().is_some_and(|text| {
+                text.contains("function helper") || text.contains("audit(item)")
+            })
+    });
+    assert!(
+        !stolen,
+        "nested helper/audit joined into cappedTotal: {findings:?}"
+    );
+    assert!(
+        findings
+            .iter()
+            .filter(|finding| finding.source_currentness.is_base_side())
+            .all(|finding| !finding.is_candidate_actionable()),
+        "base-side records must stay non-actionable: {findings:?}"
+    );
+    Ok(())
+}

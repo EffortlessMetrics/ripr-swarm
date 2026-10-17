@@ -225,8 +225,10 @@ struct RemovedHeaders {
 /// destructured first line (`save({` / `id,` / `}) {`), or an Allman brace
 /// on its own line. Open parentheses and type-argument lists join until
 /// they close; a `{` inside still-open parens is a parameter object, not
-/// the body (#7705). Default-parameter callbacks opened with `=> {` stay
-/// on the later brace/comment slice, not this wrap-join.
+/// the body (#7705). A line that ends in `=> {` is a callback body: join
+/// stops so a nested deleted header is not swallowed. Unspaced `length<3`
+/// is a comparison, not a type list; unspaced `value<cap` vs `Promise<T`
+/// stays on the later lexer slice.
 fn removed_owner_headers(runs: &[Vec<RemovedCode<'_>>]) -> RemovedHeaders {
     owner_headers_from_code_runs(
         runs.iter()
@@ -267,8 +269,12 @@ fn owner_headers_from_code_runs<'a>(
         let mut paren_depth: isize = 0;
         let mut angle_depth: isize = 0;
         for (line, code) in run {
-            let continues =
-                !group.is_empty() && (paren_depth > 0 || angle_depth > 0 || code.trim() == "{");
+            let last_opened_callback = group
+                .last()
+                .is_some_and(|(_, prev)| line_opens_a_callback_body(prev));
+            let continues = !group.is_empty()
+                && !last_opened_callback
+                && (paren_depth > 0 || angle_depth > 0 || code.trim() == "{");
             if !continues {
                 close_header_group(&group, &mut headers);
                 group.clear();
@@ -463,17 +469,21 @@ fn paren_delta(code: &str) -> isize {
 }
 
 /// Opened minus closed type-argument angles on this line, given the
-/// still-open type lists from earlier header lines. Comparisons (`a < b`)
-/// and arrows (`=>`, `>=`, `<=`) are not type lists: a type opener sits
-/// immediately after an identifier, `)`, `]` or `>`. A `>` only closes
-/// when a type list is already open, so `a > b` cannot cancel an open `(`
-/// and `> | Array<` can close `Promise<` then open the next list (#7705).
+/// still-open type lists from earlier header lines. Comparisons (`a < b`,
+/// unspaced `length<3`) and arrows (`=>`, `>=`, `<=`) are not type lists:
+/// a type opener sits immediately after an identifier, `)`, `]` or `>`,
+/// and not before a digit. A `>` only closes when a type list is already
+/// open, so `a > b` cannot cancel an open `(` and `> | Array<` can close
+/// `Promise<` then open the next list (#7705).
 fn type_angle_delta(code: &str, incoming: isize) -> isize {
     let bytes = code.as_bytes();
     let mut depth = incoming;
     for at in 0..bytes.len() {
         match bytes[at] {
-            b'<' if bytes.get(at + 1) != Some(&b'=') && is_type_open_angle(bytes, at) => {
+            b'<' if bytes.get(at + 1) != Some(&b'=')
+                && !matches!(bytes.get(at + 1), Some(b'0'..=b'9'))
+                && is_type_open_angle(bytes, at) =>
+            {
                 depth += 1;
             }
             b'>' if bytes.get(at + 1) == Some(&b'=') || (at > 0 && bytes[at - 1] == b'=') => {}
@@ -489,6 +499,18 @@ fn is_type_open_angle(bytes: &[u8], at: usize) -> bool {
         return false;
     };
     prev.is_ascii_alphanumeric() || matches!(prev, b'_' | b'$' | b')' | b']' | b'>')
+}
+
+/// A `{` that closes `=>` is a callback body, not a destructured parameter
+/// (`save({`). Wrap-join stops there so a nested deleted header inside the
+/// callback is not swallowed (#7705). Default-parameter callback *body
+/// retention* stays on the later brace slice.
+fn line_opens_a_callback_body(code: &str) -> bool {
+    let trimmed = code.trim_end();
+    let Some(before_brace) = trimmed.strip_suffix('{') else {
+        return false;
+    };
+    before_brace.trim_end().ends_with("=>")
 }
 
 /// Keywords that open a block with a parenthesised head but no owner.
