@@ -115,6 +115,14 @@ runs:
                 "acceptance delta (one sentence)",
                 "acceptance delta",
             ),
+            "replacement": (
+                "proposed replacement of pr (if any; not yet accepted)",
+                "proposed replacement of pr",
+            ),
+            "winner": (
+                "accepted winner and losing candidate disposition (when decided)",
+                "accepted winner and losing candidate disposition",
+            ),
         }
         PLACEHOLDERS = {
             "", "n/a", "na", "none", "not applicable", "tbd", "todo",
@@ -126,7 +134,7 @@ runs:
             return " ".join(value.split()).casefold()
 
         def extract_fields(body: str) -> dict[str, str]:
-            found = {"claim": "", "delta": ""}
+            found = {"claim": "", "delta": "", "replacement": "", "winner": ""}
             for raw_line in (body or "").splitlines():
                 line = raw_line.strip()
                 folded = line.casefold()
@@ -143,6 +151,30 @@ runs:
         def invalid(value: str) -> bool:
             normalized = normalize(value)
             return normalized in PLACEHOLDERS or normalized.startswith("<")
+
+        def pr_refs(value: str) -> set[int]:
+            return {int(match) for match in re.findall(r"#(\d+)", value or "")}
+
+        def first_ref(value: str):
+            # The recorded winner is the first PR reference in the field.
+            found = re.search(r"#(\d+)", value or "")
+            return int(found.group(1)) if found else None
+
+        def reconciled(current: dict, peer: dict, fields: dict, peer_fields: dict) -> bool:
+            # The PR template records the relationship decision. A candidate
+            # that is the recorded winner, that names the peer as the proposed
+            # replacement target, or whose peer records another winner is not
+            # a competing duplicate. This lets exactly one of two Ready PRs
+            # proceed instead of refusing both.
+            number = int(current.get("number") or 0)
+            peer_number = int(peer.get("number") or 0)
+            winner = first_ref(fields.get("winner", ""))
+            if winner == number:
+                return True
+            if peer_number in pr_refs(fields.get("replacement", "")):
+                return True
+            peer_winner = first_ref(peer_fields.get("winner", ""))
+            return peer_winner is not None and peer_winner != peer_number
 
         def head_repository(pr: dict) -> str:
             return (((pr.get("head") or {}).get("repo") or {}).get("full_name") or "")
@@ -199,6 +231,8 @@ runs:
                     # acquire authority to block a complete candidate.
                     continue
                 if normalize(peer_fields["claim"]) == claim and normalize(peer_fields["delta"]) == delta:
+                    if reconciled(current, peer, fields, peer_fields):
+                        continue
                     exact_peers.append(int(peer["number"]))
 
             if exact_peers:
@@ -237,10 +271,11 @@ runs:
                 "deletions": deletions,
             }
 
-        def body(claim: str = "#2022", delta: str = "refuse duplicate candidate qualification") -> str:
+        def body(claim: str = "#2022", delta: str = "refuse duplicate candidate qualification", extra: str = "") -> str:
             return (
                 f"Governing issue or accepted claim: {claim}\n"
                 f"Acceptance delta (one sentence): {delta}\n"
+                f"{extra}"
             )
 
         if MODE == "self-test":
@@ -258,6 +293,12 @@ runs:
             assert decide(current, [current, fork_duplicate], head, False)["status"] == "admitted"
             other_base = fixture(number=16, body=body(), head="1" * 40, target="release")
             assert decide(current, [current, other_base], head, False)["status"] == "admitted"
+            winner = fixture(body=body(extra="Accepted winner and losing candidate disposition (when decided): #10 wins, #11 loses\n"), head=head)
+            assert decide(winner, [winner, duplicate], head, False)["status"] == "admitted"
+            loser = fixture(number=11, body=body(extra="Accepted winner and losing candidate disposition (when decided): #10 wins, #11 loses\n"), head="b" * 40)
+            assert decide(loser, [winner, loser], "b" * 40, False)["reason"] == "competing_candidate"
+            replaces = fixture(body=body(extra="Proposed replacement of PR (if any; not yet accepted): #11\n"), head=head)
+            assert decide(replaces, [replaces, duplicate], head, False)["status"] == "admitted"
             assert decide(fixture(body="", head=head), [], head, False)["reason"] == "claim_identity_missing"
             oversized = fixture(body=body(), head=head, changed_files=161)
             assert decide(oversized, [oversized], head, False)["reason"] == "qualification_scope_oversized"
@@ -265,7 +306,7 @@ runs:
             assert decide(current, [current], "b" * 40, False)["reason"] == "candidate_head_moved"
             print(json.dumps({
                 "status": "self_test_pass",
-                "reason": "ten_discriminating_controls_passed",
+                "reason": "thirteen_discriminating_controls_passed",
                 "claim": "",
                 "acceptance_delta": "",
                 "competing_prs": [],
@@ -327,7 +368,7 @@ runs:
         if [ "$status" = "refused" ]; then
           case "$reason" in
             competing_candidate)
-              echo "::error::candidate admission refused ($reason): reconcile trusted competing PRs ${competing_prs:-unknown} and record the accepted winner/losing disposition before qualification"
+              echo "::error::candidate admission refused ($reason): reconcile trusted competing PRs ${competing_prs:-unknown} and record the accepted winner/losing disposition (Accepted winner and losing candidate disposition, or Proposed replacement of PR, in the PR body) before qualification"
               ;;
             qualification_scope_oversized)
               echo "::error::candidate admission refused ($reason): split or recompose the candidate before ordinary qualification ($changed_files files, $changed_lines changed lines)"
