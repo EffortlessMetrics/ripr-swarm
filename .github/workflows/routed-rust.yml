@@ -178,7 +178,7 @@ jobs:
   rust-cx43:
     name: Ripr Rust Small on CX43
     needs: [admission, route, detect-docs-only]
-    if: needs.admission.result == 'success' && needs.route.outputs.router_target == 'cx43' && needs.detect-docs-only.outputs.docs_only != 'true'
+    if: needs.route.outputs.router_target == 'cx43' && needs.admission.result == 'success' && needs.detect-docs-only.outputs.docs_only != 'true'
     uses: ./.github/workflows/rust-gates.yml
     with:
       runner-config: '{"group":"em-ci-small","labels":["self-hosted","linux","x64","em-ci","cx43","rust-medium","trusted-pr"]}'
@@ -195,7 +195,7 @@ jobs:
   rust-cpx42:
     name: Ripr Rust Small on CPX42
     needs: [admission, route, detect-docs-only]
-    if: needs.admission.result == 'success' && needs.route.outputs.router_target == 'cpx42' && needs.detect-docs-only.outputs.docs_only != 'true'
+    if: needs.route.outputs.router_target == 'cpx42' && needs.admission.result == 'success' && needs.detect-docs-only.outputs.docs_only != 'true'
     uses: ./.github/workflows/rust-gates.yml
     with:
       runner-config: '{"group":"em-ci-small","labels":["self-hosted","linux","x64","em-ci","cpx42","rust-medium","rust-16gb","trusted-pr"]}'
@@ -212,7 +212,7 @@ jobs:
   rust-cx53:
     name: Ripr Rust Small on CX53
     needs: [admission, route, detect-docs-only]
-    if: needs.admission.result == 'success' && needs.route.outputs.router_target == 'cx53' && needs.detect-docs-only.outputs.docs_only != 'true'
+    if: needs.route.outputs.router_target == 'cx53' && needs.admission.result == 'success' && needs.detect-docs-only.outputs.docs_only != 'true'
     uses: ./.github/workflows/rust-gates.yml
     with:
       runner-config: '{"group":"em-ci-small","labels":["self-hosted","linux","x64","em-ci","cx53","rust-large","trusted-pr"]}'
