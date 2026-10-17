@@ -202,6 +202,7 @@ async function main() {
   );
   const userDataPath = resolveUserDataDir(artifactRoot);
   let error: unknown;
+  let multiRoot: { userDataDir: string; receiptPath: string } | undefined;
   try {
     resetHostLogDir(userDataPath);
     const extensionDevelopmentPath = path.resolve(
@@ -225,7 +226,8 @@ async function main() {
     const clipboardCapturePath = path.join(userDataPath, 'ripr-test-clipboard.txt');
     fs.rmSync(clipboardCapturePath, { force: true });
     process.env.RIPR_TEST_CLIPBOARD_CAPTURE_PATH = clipboardCapturePath;
-    if (workspaceTrustMode === 'trusted' && !process.env.RIPR_TEST_ACTIONABLE_QUEUE_ROOT) {
+    if (workspaceTrustMode === 'trusted' && process.env.RIPR_TEST_MULTIROOT_ONLY !== '1'
+      && !process.env.RIPR_TEST_ACTIONABLE_QUEUE_ROOT) {
       process.env.RIPR_TEST_ACTIONABLE_QUEUE_ROOT = stageGenuineActionableQueue(
         path.resolve(__dirname, '../../../../'), path.join(artifactRoot, `actionable-queue-${runId}`)
       );
@@ -285,6 +287,8 @@ async function main() {
         matrixRoot
       );
       const matrixUserData = path.join(userDataPath, 'multiroot');
+      multiRoot = { userDataDir: matrixUserData, receiptPath: path.join(matrixRoot, 'acceptance.json') };
+      resetHostLogDir(matrixUserData);
       fs.mkdirSync(path.join(matrixUserData, 'User'), { recursive: true });
       fs.writeFileSync(path.join(matrixUserData, 'User', 'settings.json'),
         `${JSON.stringify({
@@ -301,7 +305,7 @@ async function main() {
       process.env.RIPR_TEST_MULTIROOT = '1';
       process.env.RIPR_TEST_GREP = '^Real multi-root server acceptance';
       process.env.RIPR_TEST_MULTIROOT_PATH = matrixRoot;
-      process.env.RIPR_TEST_MULTIROOT_RECEIPT = path.join(matrixRoot, 'acceptance.json');
+      process.env.RIPR_TEST_MULTIROOT_RECEIPT = multiRoot.receiptPath;
       process.env.RIPR_TEST_CLIPBOARD_CAPTURE_PATH = path.join(matrixUserData, 'clipboard.txt');
       await runTests({
         vscodeExecutablePath,
@@ -320,6 +324,7 @@ async function main() {
   const { exitCode } = finalizeHostRun({
     artifactRoot,
     userDataDir: userDataPath,
+    multiRoot,
     error,
   });
   if (exitCode !== 0) {

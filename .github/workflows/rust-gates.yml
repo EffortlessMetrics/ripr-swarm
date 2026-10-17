@@ -3,6 +3,37 @@ name: Rust Gates
 on:
   workflow_call:
     inputs:
+      proof-profile:
+        type: string
+        required: true
+      head-sha:
+        type: string
+        required: false
+        default: ""
+      base-sha:
+        type: string
+        required: false
+        default: ""
+      subject-sha:
+        type: string
+        required: false
+        default: ""
+      subject-tree:
+        type: string
+        required: false
+        default: ""
+      workflow-generation:
+        type: string
+        required: false
+        default: ""
+      subject-json:
+        type: string
+        required: false
+        default: ""
+      subject-identity:
+        type: string
+        required: false
+        default: ""
       runner-config:
         description: JSON string or object accepted by jobs.<job_id>.runs-on.
         required: true
@@ -65,6 +96,50 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ inputs.subject-sha || github.sha }}
+
+      - name: Verify admitted integration before proof
+        id: admitted
+        env:
+          PROFILE: ${{ inputs.proof-profile }}
+          SUBJECT_JSON: ${{ inputs.subject-json }}
+          ADMITTED_HEAD: ${{ inputs.head-sha }}
+          ADMITTED_BASE: ${{ inputs.base-sha }}
+          ADMITTED_MERGE: ${{ inputs.subject-sha }}
+          ADMITTED_TREE: ${{ inputs.subject-tree }}
+          GENERATION: ${{ inputs.workflow-generation }}
+          IDENTITY: ${{ inputs.subject-identity }}
+          LEGACY_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          LEGACY_BASE: ${{ github.event.pull_request.base.sha }}
+          REPOSITORY_ID: ${{ github.event.repository.node_id }}
+          PR_ID: ${{ github.event.pull_request.node_id }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          case "$PROFILE" in
+            legacy)
+              for value in "$SUBJECT_JSON" "$ADMITTED_HEAD" "$ADMITTED_BASE" "$ADMITTED_MERGE" "$ADMITTED_TREE" "$GENERATION" "$IDENTITY"; do
+                [[ -z "$value" ]] || { echo 'Partial qualification cannot use legacy profile' >&2; exit 1; }
+              done
+              printf 'head=%s\nbase=%s\n' "$LEGACY_HEAD" "$LEGACY_BASE" >> "$GITHUB_OUTPUT"
+              ;;
+            qualification)
+              for value in "$ADMITTED_HEAD" "$ADMITTED_BASE" "$ADMITTED_MERGE" "$ADMITTED_TREE" "$GENERATION"; do [[ "$value" =~ ^[0-9a-f]{40}$ ]]; done
+              [[ "$IDENTITY" =~ ^[0-9a-f]{64}$ && "$GENERATION" == "$GITHUB_WORKFLOW_SHA" ]]
+              jq -e --arg repo "$GITHUB_REPOSITORY" --arg repo_id "$REPOSITORY_ID" --arg pr_id "$PR_ID" --argjson number "$PR_NUMBER" --arg head "$ADMITTED_HEAD" --arg base "$ADMITTED_BASE" --arg merge "$ADMITTED_MERGE" --arg tree "$ADMITTED_TREE" --arg generation "$GENERATION" '
+                .version == 2 and .repository == $repo and .repository_id == $repo_id and .pr_id == $pr_id and .pr_number == $number and
+                .destination_repository_id == $repo_id and .destination_ref == "refs/heads/main" and
+                .head == $head and .base == $base and .merge == $merge and .tree == $tree and
+                .parents == [$base,$head] and .workflow_generation == $generation' <<< "$SUBJECT_JSON" >/dev/null
+              canonical=$(jq -cS . <<< "$SUBJECT_JSON")
+              [[ "$(printf '%s' "$canonical" | sha256sum | cut -d ' ' -f1)" == "$IDENTITY" ]]
+              [[ "$(git cat-file -t HEAD)" == commit && "$(git rev-parse HEAD)" == "$ADMITTED_MERGE" ]]
+              [[ "$(git rev-parse 'HEAD^{tree}')" == "$ADMITTED_TREE" ]]
+              [[ "$(git show -s --format=%P HEAD)" == "$ADMITTED_BASE $ADMITTED_HEAD" ]]
+              printf 'head=%s\nbase=%s\nmerge=%s\ntree=%s\n' "$ADMITTED_HEAD" "$ADMITTED_BASE" "$ADMITTED_MERGE" "$ADMITTED_TREE" >> "$GITHUB_OUTPUT"
+              ;;
+            *) echo 'Unknown source profile' >&2; exit 1 ;;
+          esac
 
       # #3841: ownership and liveness of this job's per-run scratch trees come
       # from a kernel flock lease taken before any tree exists, never from a
@@ -315,8 +390,8 @@ jobs:
         id: pr_evidence
         if: github.event_name == 'pull_request'
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ steps.admitted.outputs.base }}
+          HEAD_SHA: ${{ steps.admitted.outputs.head }}
           GITHUB_PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           RIPR_REVIEW_COMMENTS_TIMEOUT_SECS: "60"
           # Raised from the 2000 default as the PR #3592 decision artifact, then
@@ -361,8 +436,8 @@ jobs:
       - name: Proof route dry-run (advisory)
         if: github.event_name == 'pull_request'
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ steps.admitted.outputs.base }}
+          HEAD_SHA: ${{ steps.admitted.outputs.head }}
         run: |
           cargo xtask proof route --base "$BASE_SHA" --head "$HEAD_SHA" || true
           { echo "### Proof Route (dry-run, advisory)"; echo ""; cat target/ripr/reports/proof-route.md; } >> "$GITHUB_STEP_SUMMARY" || true
@@ -384,7 +459,9 @@ jobs:
         id: gate_summary
         if: always()
         env:
-          SUBJECT_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          SUBJECT_HEAD: ${{ steps.admitted.outputs.head || github.event.pull_request.head.sha || github.sha }}
+          INTEGRATION_SUBJECT: ${{ inputs.subject-sha || github.sha }}
+          INTEGRATION_TREE: ${{ steps.admitted.outputs.tree }}
           EXECUTION_ROUTE: ${{ inputs.artifact-name }}
           FORMATTING_RESULT: ${{ steps.formatting.outcome }}
           PRECOMMIT_RESULT: ${{ steps.precommit.outcome }}
@@ -404,6 +481,7 @@ jobs:
         run: |
           {
             echo "## Rust gate outcomes"
+            printf -- '- Integration subject: `%s`\n- Integration tree: `%s`\n' "$INTEGRATION_SUBJECT" "$INTEGRATION_TREE"
             echo ""
             printf -- '- Workflow commit: `%s`\n- Subject head: `%s`\n- Run / attempt: `%s` / `%s`\n- Route: `%s`\n' "$GITHUB_SHA" "$SUBJECT_HEAD" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$EXECUTION_ROUTE"
             echo ""

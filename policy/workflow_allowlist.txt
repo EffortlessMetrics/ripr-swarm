@@ -14,7 +14,7 @@
 .github/actions/ripr-check/action.yml|7|Adoption composite action installs ripr when missing and runs one ripr check command (#2626).
 
 .github/workflows/badge-endpoints.yml|1|Badge endpoint refresh delegates generation to cargo xtask and opens a PR.
-.github/workflows/ci.yml|38|#4987: bounded event-head Rust surface detection; remaining CI blocks call direct Cargo or npm commands.
+.github/workflows/ci.yml|39|#4987: exact-subject callable guard/result and bounded legacy event-head Rust detection; unchanged feature/release payloads.
 .github/workflows/coverage.yml|1|Coverage workflow keeps each run block to one coverage command.
 .github/workflows/droid-security-scan.yml|20|Droid scheduled security scan writes local Factory BYOK settings, then uses reusable actions.
 .github/workflows/droid.yml|20|Droid tag-response workflow writes local Factory BYOK settings, then uses reusable actions.
@@ -26,12 +26,12 @@
 .github/workflows/npm-launcher.yml|1|Script-free npm launcher workflow delegates behavior and package-content proof to two single-command npm invocations.
 .github/workflows/pilot-ranking.yml|4|Pilot ranking answer key lane: one-command build, fetch and score steps, then one folded cargo xtask dx-scoreboard gate command.
 .github/workflows/pr-staleness-watchdog.yml|52|Scheduled watchdog finds open PR heads with no Ripr Rust Small Result check run on the head (#4937) and dispatches the workflow within a per-run cap; the sweep is pure gh api orchestration with its audit table, not product logic.
-.github/workflows/printed-command-paste.yml|1|Printed-command paste lane keeps each run block to one shell command; the harness and its verdict live in the printed_command_paste test.
+.github/workflows/printed-command-paste.yml|22|#4987: exact-subject Bash identity guard before unchanged printed_command_paste product payload; read-only Git checks, no admission or check-write authority.
 .github/workflows/public-proof.yml|9|Public proof drift lane: one cargo xtask public-proof --check command, then a failure-only step that copies its output into the job summary.
 .github/workflows/publish-extension.yml|20|Release workflow includes marketplace packaging and publishing orchestration.
 .github/workflows/python-wheel-qualification.yml|194|Read-only #4490 package rehearsal retains exact native and PEP 440 identities, wheel metadata/RECORD and two executable-integrity negative controls, plus isolated pip/uv Python preview journeys; static adapter and workflow-shape policy remains in Rust xtask and the workflow has no publication authority.
 .github/workflows/release-server-binaries.yml|1|Release workflow delegates server archive packaging, manifest generation, and release upload branching to Rust xtask commands.
-.github/workflows/routed-rust.yml|63|Routed Rust selects one trusted self-hosted runner or the hosted fallback, preserves normalized result semantics, and delegates implementation proof to the reusable Rust gate workflow.
+.github/workflows/routed-rust.yml|83|Routed Rust selects one trusted self-hosted runner or the hosted fallback, preserves normalized result semantics, and delegates implementation proof to the reusable Rust gate workflow.
 .github/workflows/rust-corpus.yml|4|Shared Rust corpus lane: one-command build, fetch and smoke steps, then one folded cargo xtask dx-scoreboard gate command.
 .github/workflows/rust-gates.yml|31|Reusable Rust gate implementation preserves scratch tempfail fallback, required proof, bounded PR evidence, and failure-only ordinary artifacts.
 .github/workflows/scratch-gc.yml|3|Scheduled scratch-GC lane reclaims terminal scratch through the shared ci-scratch-lease action (#3841), then trims sccache, reports disk, and keeps the hard-fail guard on a timer so disk recovery does not depend on PR traffic (#1028).
@@ -44,3 +44,5 @@
 .github/workflows/windows-packaged-qualification.yml|50|On-demand exact-candidate Windows package and VSIX rehearsal must retain identity checks, isolated CLI/editor journeys, and Actions-only receipts in one workflow.
 .github/workflows/python-wheelhouse-qualification.yml|50|On-demand local-wheelhouse pip/uv qualification writes isolation facts and a fail-closed aggregate; credential-free, artifact-only, no publication.
 .github/workflows/zed-extension.yml|1|Zed extension workflow keeps each run block to one Cargo command.
+
+.github/workflows/windows-subset-qualification.yml|437|Extracted #4987 native Windows subset retains the existing inline producer/oracles and bounded source precheck; no new write authority.

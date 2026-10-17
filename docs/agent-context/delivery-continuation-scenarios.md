@@ -91,13 +91,16 @@ Cases are independent. Use current instructions in the assigned repository.
     deterministic required-gate failure already owned by another open PR.
 15. **Composed review repairs.** Review found private-import placement and feature
     gating mistakes. Both repairs are committed in H2; only H has proof/review.
-16. **Qualification is next.** Draft H has dispositioned findings, independent
-    exact-head semantic review, applicable local proof and clean composition
-    against B. No applicable gate blocker is known. Only Ready-triggered proof
-    is missing. Main has moved solely in an unrelated document.
-17. **Existing qualification.** Ready H has a queued required run; no source or
-    finding changed. Another Ready transition would cancel that run.
-18. **Small post-Ready correction.** A source typo correction produces H2. Its
+16. **Qualification is next.** Selected Draft H has dispositioned findings,
+    independent exact-head source review, applicable warm local proof and clean
+    composition against B. No applicable gate blocker is known. Only the explicit
+    late qualification is missing; source review can be `SOURCE_REVIEW_READY`.
+    Main has moved solely in an unrelated document. Alternative Drafts are not selected.
+17. **Existing qualification.** Selected non-Draft H has a queued or running
+    explicit `merge-ready` request; no source or finding changed. The accountable
+    owner has an ordinary bounded window remaining. Another label request could
+    replace pending work; Ready alone is not a request.
+18. **Small post-request correction.** A source typo correction produces H2. Its
     changed compile dimension and review have not been refreshed.
 19. **Expectation consumer.** Changed corpus rows move matches/overclaims from
     26/34 and 5/34 to 31/34 and 0/34. The corpus check passes. An identified
@@ -109,7 +112,9 @@ Cases are independent. Use current instructions in the assigned repository.
     review and composition, all applicable available checks green, no known
     failure and no claim-essential native proof gap. The local toolchain is
     unavailable. An existing authorized narrow hosted route can establish the
-    remaining qualification, and green is reasonably expected.
+    remaining qualification, and green is reasonably expected. H is the selected
+    candidate; no current request exists. The local limit is documented, not
+    a known failure or unfinished executable check.
 22. **Failure is not unavailability.** Same as case 21, but an applicable test
     has a known deterministic failure on H's integration basis.
 23. **Unfinished work is not unavailability.** Same as case 21, but a required
@@ -126,7 +131,7 @@ Cases are independent. Use current instructions in the assigned repository.
     composition and available proof, no known applicable failure or material
     prerequisite/native gap, and an existing authorized expected-green hosted
     route. The permitted PR merge-ref read is unavailable; no hosted job has run.
-27. **Checkout differs after admission.** A pre-Ready merge-ref observation
+27. **Checkout differs after admission.** A pre-request merge-ref observation
     matched reviewed H plus required prerequisite P. The started run names H,
     but its actual job checkout omits P and differs from the reviewed tree.
 
@@ -151,12 +156,12 @@ These are examiner pins, withheld from decision workers.
 | 13 | Keep Draft; run independent exact-H review | A builder's final-head claim does not complete review |
 | 14 | Keep Draft; retain dependency, existing owner and resume event | No repeated known-red qualification or duplicate repair |
 | 15 | Keep Draft H2; refresh affected proof and review after composition | H's green does not qualify H2's changed dimensions |
-| 16 | Verify unchanged H and run state, then mark Ready | Missing hosted qualification is expected; no behind-only restack or merge-readiness claim |
-| 17 | Preserve current run; retain its exact link and yield | No re-toggle or resident polling worker |
-| 18 | Return to Draft; batch correction with affected proof/review before Ready | A small source change still invalidates affected evidence |
+| 16 | Verify selection and unchanged H/run state; publish exact warm proof and `SOURCE_REVIEW_READY`, then request one late qualification through actual `merge-ready` on non-Draft H | Ready alone requests nothing; no unselected-alternative CI, behind-only restack or final `REVIEW_READY` claim |
+| 17 | Preserve exact request/run/attempt; keep the same owner warm through the normal bounded wait, inspect actual results, then make the separate final judgment | No duplicate request, tight polling, auto-merge or compulsory context handoff; actual interruption gets an exact continuation |
+| 18 | Return to Draft; batch correction with affected proof/review before a new explicit request | A small source change still invalidates affected evidence |
 | 19 | Keep Draft; inspect and run the downstream consumer, resolving its literal expectation from the contract | No automatic tuple update or replacement with a production-derived oracle |
 | 20 | Keep Draft; inspect and run the relevant consumer/feature shape | Passing other features does not establish this one; no blanket full matrix |
-| 21 | Record the unavailable dimension/reason, available results and hosted route; verify live H/run state, then mark Ready | No local-pass claim; exact-head hosted proof and final review still precede merge |
+| 21 | Record the unavailable dimension/reason, available results and supported hosted route; verify selected H and absent request, publish source disposition/evidence, then explicitly request qualification | No local-pass claim or invented interface; actual hosted proof, current final review and separate judgment precede protected expected-head merge |
 | 22 | Keep Draft; repair or resume through the existing dependency owner | A known failure cannot be relabeled unavailable or rerun as qualification |
 | 23 | Keep Draft; finish the repair, run the available check and refresh affected review | Hosted fallback does not excuse unfinished applicable work |
 | 24 | Keep Draft; name the missing native proof, owner and supported route | Linux evidence cannot establish Windows semantics or generic fallback readiness |

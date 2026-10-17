@@ -40,50 +40,44 @@ hosted Actions or wheel qualification.
 
 ## Merge-ready label flow
 
-The non-required lanes gated by `merge-ready` do not run on a Draft or plain Ready
-PR without the label.
-Routed Rust Small, ub-review, the Python wheel workflow and source-of-truth still
-follow their own triggers until #4984/#8082 integrate them. Agents and authors prove
-the change locally ([validation](agent-context/validation.md#local-and-hosted-proof)),
-publish a Draft, and add the `merge-ready` label last. Adding `merge-ready`
-starts the non-required lanes once for the head it was applied to. A later push
-to a labeled PR does not rerun them: re-apply the label (remove it, then add it
-again) once the new head is ready to qualify. Removing the label does not cancel
-runs already in flight. Only a `merge-ready` labeled request shares a concurrency
-group, so re-applying the label supersedes the older run for that PR; a push or any
-other label event runs in its own group, skips its jobs, and neither cancels nor
-replaces a pending request. A push therefore does not cancel the older head's
-run: re-apply the label for the new head and let the older run finish or be
-superseded.
+Draft and Ready are review states. After warm local proof and independent source
+review, publish a current `SOURCE_REVIEW_READY` record and add `merge-ready` to
+the selected non-Draft head. This requests the required `Ripr Rust Small Result`
+and the optional lanes selected by the PR's labels. Before requesting work,
+inspect exact-subject runs and preserve a queued or running request. Follow the
+[qualification handoff](PR_AUTOMATION.md#draft-to-ready-handoff) for admission,
+failed proof, and changed-head repairs; do not cycle the label to refresh slow
+work or duplicate the same request.
+
+A later push does not request another qualification wave. Removing the label
+does not cancel running work. Only the explicit `merge-ready` labeled event
+shares request concurrency; ordinary pushes and other label events have distinct
+groups and do not cancel or replace a pending request.
 
 - Auxiliary labels (`full-ci`, `windows-ci`, `vscode`, `coverage`,
-  `clippy-future`, `release-check`) still select extra lanes, but only together
-  with `merge-ready`. Add them first; one added after `merge-ready` takes effect
-  only when `merge-ready` is re-applied.
-- Gated: `ci.yml` jobs, `coverage`, `test-analytics`, `future-clippy`,
-  `windows-advisory` (both jobs), `macos-advisory`, `security`, `printed-command-paste`,
-  `npm-launcher`, `zed-extension`, `pilot-ranking` and `public-proof`. Push,
-  schedule and manual runs are unchanged.
-- Not changed here: the required `Ripr Rust Small Result` (still requested by
-  `ready_for_review`), `ub-review` (its triggers are pinned by
-  `pr_readiness_workflow_contract`), the Python wheel workflow, and
-  `source-of-truth`. Their cutover is tracked under #4984.
+  `clippy-future`, `release-check`) select extra lanes. Set them before the
+  qualification request; adding one later does not itself request those lanes.
+- Ordinary PR gates cover the substantive jobs in `ci.yml`, `coverage`,
+  `test-analytics`, `future-clippy`, `windows-advisory`, `macos-advisory`,
+  `security`, `printed-command-paste`, `npm-launcher`, `zed-extension`,
+  `pilot-ranking` and `public-proof`. Callable leaves retain exact admitted
+  subject checks. The Windows diagnostic subset wrapper refuses PR events.
+- `ub-review`, the Python wheel workflow and `source-of-truth` retain their
+  independent triggers. Push, schedule and manual behavior remains explicit in
+  each workflow; qualification does not deploy or release.
 
-### What starts what (until #8082 lands)
+### What starts what
 
 | Action on a PR | Required `Ripr Rust Small Result` | Gated optional lanes |
 | --- | --- | --- |
 | Push to a Draft or Ready PR | no | no |
-| Draft -> Ready (`ready_for_review`) | yes, once for that head | no |
-| Add `merge-ready` (`labeled`) | no | yes, once for that head |
-| Push after Ready | no: re-toggle Draft -> Ready | no: re-apply `merge-ready` |
+| Draft -> Ready (`ready_for_review`) | no | no |
+| Add `merge-ready` (`labeled`) to a reviewed non-Draft head | yes, subject to admission | yes, where selected |
+| Push after a request | no new request | no new request |
 | Any other label | no | no |
 
-The required check is still requested by Draft -> Ready, not by the label.
-Moving it onto `merge-ready` is the #8082 cutover (its admission job); gating the
-required job by label in a separate change would let a skipped required job
-report success. A brief Draft flip followed by Ready on a PR is this re-toggle,
-not an error.
+The required result refreshes admission and selected proof before success. A
+skipped child or an advisory job's success does not replace its required evidence.
 
 ## Verification Economics Policy
 
@@ -664,6 +658,8 @@ fork or otherwise untrusted PR:
   GitHub-hosted only
 ```
 
+#### Deployed main behavior before staged activation
+
 Label events are not an implicit full-gate refresh, and Draft iteration does not
 allocate the heavy required gate (#4986):
 
@@ -741,6 +737,39 @@ needs its own evidence.
   rearming auto-merge.
 - Labels such as `full-ci` take effect at the next Ready transition, not when
   they are added.
+
+#### Staged exact-subject candidate; activation held
+
+Ordinary Draft/open/synchronize/Ready activity does not launch the routed gate.
+The explicit request is `pull_request:labeled` with event label `merge-ready`,
+for a currently reviewed non-Draft H. Live preflight binds H/base B/integration T
+and readiness; native run readback handles sequential duplicates. Other labels
+emit `Merge-ready Nonrequest`, never a skipped `Ripr Rust Small Result`.
+Qualification and per-run metadata concurrency are separate. Running work is
+preserved, but native default concurrency can replace a pending identical request;
+read back existing work before requesting again. There is no exactly-once claim.
+
+Existing Rust/docs producers and the extracted Windows subset feed the aggregate.
+The subset preserves advisory verdicts and mandatory status/log/nonempty execution,
+source/receipt/cleanup evidence. Its standalone wrapper runs the subset only for
+schedule/manual diagnostics. The full Windows suite and other feature/wheel/
+security/editor lanes remain separately owned; this bounded patch does not claim
+that every legacy automatic launch has migrated.
+
+No per-main routed full run or branch dispatch can impersonate the protected PR
+result. Cache acceleration may be cold/stale after retiring that writer; proof
+still executes and no warm-cache or <=20-minute result is assumed. Main-health
+sampling remains a separate proposal rather than a cutover prerequisite.
+
+Early UB review remains separate, including Drafts. Quota, skipped sensors,
+failed-to-review and missing provider output are not clean reviews. The
+[explicit request handoff](PR_AUTOMATION.md#draft-to-ready-handoff) binds source
+review before qualification and final REVIEW_READY/current-state decision after
+green. The result refreshes current readiness again; separate read/publication
+operations are not atomic. Protected expected-head squash and landed-tree readback
+retain current server enforcement, without a native merge queue or added settings.
+The known required mapping remains `Ripr Rust Small Result`, app15368; complete
+classic strictness is unreadable, not assumed absent and not a new settings gate.
 
 The router uses the repository or organization `EM_RUNNER_READ_TOKEN` secret
 when available. It selects a self-hosted runner only when the runner is idle and

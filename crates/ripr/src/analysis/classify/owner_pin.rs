@@ -140,8 +140,31 @@ const STD_ROOTED_ASSERT_EQ: [&str; 4] = [
     "::core::assert_eq",
 ];
 
+#[cfg(test)]
+thread_local! {
+    static PROJECTED_WORKSPACE_FILE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static PROJECTED_WORKSPACE_FILE_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static STD_ROOTED_FILE_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+impl OwnerPinSyntax {
+    pub(in crate::analysis) fn projected_workspace_counts() -> (usize, usize) {
+        (
+            PROJECTED_WORKSPACE_FILE_VISITS.with(std::cell::Cell::get),
+            PROJECTED_WORKSPACE_FILE_PARSES.with(std::cell::Cell::get),
+        )
+    }
+
+    pub(in crate::analysis) fn std_rooted_file_parse_count() -> usize {
+        STD_ROOTED_FILE_PARSES.with(std::cell::Cell::get)
+    }
+}
+
 impl StdRootedCalls {
     fn of(source: &str) -> Self {
+        #[cfg(test)]
+        STD_ROOTED_FILE_PARSES.with(|count| count.set(count.get() + 1));
         let Some(file) = parse_clean_source_file(source) else {
             return Self::default();
         };
@@ -167,6 +190,8 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// of those roots the file itself leaves unrebound (#7857). Parsed once
     /// per file, not once per assertion.
     std_rooted: RefCell<BTreeMap<PathBuf, StdRootedCalls>>,
+    /// Pure workspace-source checks for projected collection equality.
+    projected_collection_workspace: RefCell<ProjectedCollectionWorkspaceMemo>,
     fallible_dependencies:
         RefCell<BTreeMap<PathBuf, (String, Option<crate::analysis::workspace::AnyhowIdentity>)>>,
     ambiguous_macro_bindings: RefCell<Option<BTreeSet<String>>>,
@@ -203,6 +228,8 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// probe, test and assertion, and each input below scans the workspace,
     /// so every answer is kept for the run under the key it depends on.
     path_memo: RefCell<PathCallMemo>,
+    /// Compact pure file facts; source identity is checked before every hit.
+    item_nesting_files: RefCell<ItemNestingMemo>,
     /// #7097: per-file module scopes (direct `use`s and value-taking
     /// items), parsed once per run; `None` when the file does not parse.
     /// `Arc` so the run-scoped instance stays `Send` behind the seam
@@ -232,6 +259,63 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     withheld: WithheldMacroBindings,
 }
 
+/// Only pure workspace-source verdicts belong here. The retained strong
+/// references prevent address reuse from making a different source look equal.
+#[derive(Clone, Debug, Default)]
+struct ProjectedCollectionWorkspaceMemo {
+    sources: Vec<(PathBuf, std::sync::Arc<str>)>,
+    verdicts: BTreeMap<ProjectedCollectionWorkspaceKey, bool>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum ProjectedCollectionWorkspaceKey {
+    StandardRoots,
+    Constructor(PathBuf, String),
+}
+
+impl ProjectedCollectionWorkspaceMemo {
+    fn refresh(&mut self, index: &RustIndex) {
+        let files = index.files();
+        if self.sources.len() != files.len()
+            || !self
+                .sources
+                .iter()
+                .zip(files.iter())
+                .all(|((path, source), (file, facts))| {
+                    path == file && std::sync::Arc::ptr_eq(source, &facts.source)
+                })
+        {
+            self.sources = files
+                .iter()
+                .map(|(path, facts)| (path.clone(), facts.source.clone()))
+                .collect();
+            self.verdicts.clear();
+        }
+    }
+
+    fn verdict(
+        memo: &RefCell<Self>,
+        index: &RustIndex,
+        key: ProjectedCollectionWorkspaceKey,
+        scan: impl FnOnce() -> bool,
+    ) -> bool {
+        {
+            let mut memo = memo.borrow_mut();
+            memo.refresh(index);
+            if let Some(verdict) = memo.verdicts.get(&key) {
+                return *verdict;
+            }
+        }
+        // A resolver may itself consult syntax. Never hold a RefCell borrow
+        // while computing a miss, including a refused/invalid-source verdict.
+        let verdict = scan();
+        let mut memo = memo.borrow_mut();
+        memo.refresh(index);
+        memo.verdicts.insert(key, verdict);
+        verdict
+    }
+}
+
 /// #7097: a bare-call binding verdict key: owner file, owner line, owner
 /// name, test file, test line.
 type BareCallKey = (PathBuf, usize, String, PathBuf, usize);
@@ -246,9 +330,6 @@ struct PathCallMemo {
     /// Per (owner file, owner start line, owner name, path prefix, test
     /// file, test line): the verdict.
     verdicts: BTreeMap<(PathBuf, usize, String, String, PathBuf, usize), bool>,
-    /// Per (file, fn name, start line): the inline modules enclosing that
-    /// item, or `None` when ripr cannot place it.
-    nesting: BTreeMap<(PathBuf, String, usize), Option<ItemNesting>>,
     /// Per (owner crate root, owner name): whether the crate may hold an
     /// item of the name ripr cannot see.
     hidden: BTreeMap<(PathBuf, String), bool>,
@@ -427,7 +508,7 @@ impl OwnerPinSyntax {
         }
     }
 
-    /// #6974: [`item_nesting`], kept per (file, name, line).
+    /// #6974: reuse compact nesting facts only for the same retained source.
     fn item_nesting(
         &self,
         index: &RustIndex,
@@ -435,19 +516,12 @@ impl OwnerPinSyntax {
         name: &str,
         line: usize,
     ) -> Option<ItemNesting> {
-        let key = (file.to_path_buf(), name.to_string(), line);
-        if let Some(known) = self.path_memo.borrow().nesting.get(&key) {
-            return known.clone();
-        }
-        let nesting = index
-            .files()
-            .get(file)
-            .and_then(|facts| item_nesting(&facts.source, name, line));
-        self.path_memo
-            .borrow_mut()
-            .nesting
-            .insert(key, nesting.clone());
-        nesting
+        let Some(facts) = index.files().get(file) else {
+            self.item_nesting_files.borrow_mut().files.remove(file);
+            return None;
+        };
+        ItemNestingMemo::facts(&self.item_nesting_files, file, &facts.source)?
+            .query(name, line, false)
     }
 
     /// #7082: whether a `cfg` may drop `file` as a whole, kept per file: a
@@ -4227,7 +4301,7 @@ fn test_crate_may_bind(
 /// `None` when the file does not parse, no single such item is found, or
 /// it sits anywhere but directly in a module (a fn body, an `impl`).
 /// Where a `fn` sits among its file's inline modules (#6974).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct ItemNesting {
     /// The inline modules enclosing the `fn`, outermost first.
     modules: Vec<String>,
@@ -4238,8 +4312,119 @@ struct ItemNesting {
     cfg_gated: bool,
 }
 
-fn item_nesting(source: &str, name: &str, line: usize) -> Option<ItemNesting> {
-    item_nesting_with_impl(source, name, line, false)
+#[cfg(test)]
+thread_local! {
+    static ITEM_NESTING_FILE_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static ITEM_NESTING_NODE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[derive(Clone, Debug)]
+struct ItemNestingEntry {
+    start_line: usize,
+    end_line: usize,
+    requires_impl: bool,
+    nesting: Option<ItemNesting>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ItemNestingFile {
+    by_name: BTreeMap<String, Vec<ItemNestingEntry>>,
+}
+
+impl ItemNestingFile {
+    fn parse(source: &str) -> Option<Self> {
+        #[cfg(test)]
+        ITEM_NESTING_FILE_PARSES.with(|count| count.set(count.get() + 1));
+        let parsed = parse_clean_source_file(source)?;
+        let line_starts: Vec<usize> = std::iter::once(0)
+            .chain(source.match_indices('\n').map(|(offset, _)| offset + 1))
+            .collect();
+        let line_of = |offset: u32| line_starts.partition_point(|start| *start <= offset as usize);
+        let mut by_name: BTreeMap<String, Vec<ItemNestingEntry>> = BTreeMap::new();
+        for function in parsed
+            .tree()
+            .syntax()
+            .descendants()
+            .inspect(|_| {
+                #[cfg(test)]
+                ITEM_NESTING_NODE_VISITS.with(|count| count.set(count.get() + 1));
+            })
+            .filter_map(ast::Fn::cast)
+        {
+            let Some(name) = function.name() else {
+                continue;
+            };
+            let name = name.text();
+            let name = name.strip_prefix("r#").unwrap_or(name).to_owned();
+            let range = function.syntax().text_range();
+            let entry = ItemNestingEntry {
+                start_line: line_of(range.start().into()),
+                end_line: line_of(range.end().into()),
+                requires_impl: function
+                    .syntax()
+                    .ancestors()
+                    .skip(1)
+                    .any(|ancestor| ast::Impl::can_cast(ancestor.kind())),
+                nesting: item_nesting_of_function(&function, true),
+            };
+            // Illegal placements still participate in the query's ambiguity
+            // check, just as they do before ancestor validation in the parser.
+            by_name.entry(name).or_default().push(entry);
+        }
+        Some(Self { by_name })
+    }
+
+    fn query(&self, name: &str, line: usize, allow_impl: bool) -> Option<ItemNesting> {
+        let name = name.strip_prefix("r#").unwrap_or(name);
+        let mut found = self
+            .by_name
+            .get(name)?
+            .iter()
+            .filter(|entry| entry.start_line <= line && line <= entry.end_line);
+        let entry = found.next()?;
+        if found.next().is_some() || (!allow_impl && entry.requires_impl) {
+            return None;
+        }
+        entry.nesting.clone()
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CachedItemNestingFile {
+    source: std::sync::Arc<str>,
+    facts: Option<Arc<ItemNestingFile>>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ItemNestingMemo {
+    files: BTreeMap<PathBuf, CachedItemNestingFile>,
+}
+
+impl ItemNestingMemo {
+    fn facts(
+        memo: &RefCell<Self>,
+        path: &Path,
+        source: &std::sync::Arc<str>,
+    ) -> Option<Arc<ItemNestingFile>> {
+        {
+            let memo = memo.borrow();
+            if let Some(previous) = memo.files.get(path)
+                && std::sync::Arc::ptr_eq(&previous.source, source)
+            {
+                return previous.facts.clone();
+            }
+        }
+        // Parse outside the memo borrow. Keep no AST or borrowed source node.
+        let facts = ItemNestingFile::parse(source).map(Arc::new);
+        memo.borrow_mut().files.insert(
+            path.to_path_buf(),
+            CachedItemNestingFile {
+                source: source.clone(),
+                facts: facts.clone(),
+            },
+        );
+        facts
+    }
 }
 
 fn item_nesting_with_impl(
@@ -4272,9 +4457,14 @@ fn item_nesting_with_impl(
     if found.next().is_some() {
         return None;
     }
+    item_nesting_of_function(&function, allow_impl)
+}
+
+fn item_nesting_of_function(function: &ast::Fn, allow_impl: bool) -> Option<ItemNesting> {
+    let base = |text: String| text.strip_prefix("r#").map_or(text.clone(), str::to_string);
     let mut modules = Vec::new();
     // An inner `#![cfg]` in the body gates the whole fn too.
-    let mut cfg_gated = has_cfg_attr(&function)
+    let mut cfg_gated = has_cfg_attr(function)
         || function
             .body()
             .and_then(|body| body.stmt_list())
@@ -6016,20 +6206,12 @@ pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
         || !index
             .drop_in_manifests
             .unbound_standard_root(&test.file, "core")
-        || index.files().values().any(|facts| {
-            let masked = mask_comments_and_strings(&facts.source).replace("r#", "");
-            let modules = declared_module_names(&masked);
-            let imports = file_use_statements(&masked);
-            STD_ROOTS.iter().any(|root| {
-                modules.contains(root)
-                    || declares_type(&masked, root)
-                    || binds_extern_crate(&masked, root)
-                    || file_renames_to(&masked, root)
-                    || imports
-                        .iter()
-                        .any(|item| use_statement_binds_name(item, root))
-            })
-        })
+        || ProjectedCollectionWorkspaceMemo::verdict(
+            &syntax.projected_collection_workspace,
+            index,
+            ProjectedCollectionWorkspaceKey::StandardRoots,
+            || projected_standard_roots_shadowed(index),
+        )
     {
         return false;
     }
@@ -6048,74 +6230,12 @@ pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
     // tuple constructor. A competing local, function, constant or static
     // keeps this deliberately bounded binding unestablished.
     let names_constructor = |name: String| name.strip_prefix("r#").unwrap_or(&name) == constructor;
-    if index.files().iter().any(|(file, facts)| {
-        let masked = mask_comments_and_strings(&facts.source).replace("r#", "");
-        if file_aliases_type(&masked, constructor)
-            || file_renames_to(&masked, constructor)
-            || !fn_definition_offsets(&masked, constructor).is_empty()
-            || file_use_statements(&masked).iter().any(|import| {
-                ["test", "cfg"]
-                    .iter()
-                    .any(|name| use_statement_binds_name(import, name))
-            })
-            || flattened_use_paths(&masked).iter().any(|import| {
-                let segments: Vec<_> = import.path.trim_start_matches("::").split("::").collect();
-                if !segments
-                    .last()
-                    .is_some_and(|name| *name == constructor || *name == "*")
-                {
-                    return false;
-                }
-                // A constructor reached through another module may be a
-                // callable re-export whose defining bytes were not indexed.
-                // Only direct local namespace imports establish this bounded
-                // same-file construction; a missing companion cannot clear it.
-                !matches!(segments.as_slice(), ["crate" | "self" | "super", _])
-            })
-        {
-            return true;
-        }
-        let Some(parsed) = parse_clean_source_file(&facts.source) else {
-            return true;
-        };
-        parsed.tree().syntax().descendants().any(|node| {
-            // Attribute/derive expansion can also manufacture a binding.
-            // This bounded construction admits only the ordinary test
-            // harness attributes; expansion is not type-identity evidence.
-            ast::Attr::cast(node.clone()).is_some_and(|attr| {
-                let text = attr.syntax().text().to_string();
-                collapse_whitespace(&text) != "#[test]"
-                    && !crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate(&text)
-            }) ||
-            // Arbitrary expansion can introduce a constructor binding that
-            // the parsed item index never saw. The two observation macros
-            // still require their carried canonical binding authority.
-            ast::MacroCall::cast(node.clone()).is_some_and(|call| {
-                call.path().is_none_or(|path| {
-                    let path = collapse_whitespace(&path.syntax().text().to_string());
-                    !matches!(
-                        path.as_str(),
-                        "assert_eq" | "vec" | "std::vec" | "::std::vec"
-                    ) && !STD_ROOTED_ASSERT_EQ.contains(&path.as_str())
-                })
-            }) || (file != &test.file
-                && ast::Adt::cast(node.clone())
-                    .and_then(|item| item.name())
-                    .is_some_and(|name| names_constructor(name.text().to_string())))
-                || ast::Fn::cast(node.clone())
-                    .and_then(|item| item.name())
-                    .is_some_and(|name| names_constructor(name.text().to_string()))
-                || ast::Const::cast(node.clone())
-                    .and_then(|item| item.name())
-                    .is_some_and(|name| names_constructor(name.text().to_string()))
-                || ast::Static::cast(node.clone())
-                    .and_then(|item| item.name())
-                    .is_some_and(|name| names_constructor(name.text().to_string()))
-                || ast::IdentPat::cast(node)
-                    .and_then(|item| item.name())
-                    .is_some_and(|name| names_constructor(name.text().to_string()))
-        })
-    }) {
+    if ProjectedCollectionWorkspaceMemo::verdict(
+        &syntax.projected_collection_workspace,
+        index,
+        ProjectedCollectionWorkspaceKey::Constructor(test.file.clone(), constructor.to_owned()),
+        || projected_constructor_shadowed(constructor, &test.file, index),
+    ) {
         return false;
     }
     let definitions: Vec<_> = parse
@@ -6202,6 +6322,101 @@ pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
     standard_vec(&selected.ty)
         .zip(standard_vec(receiver_type))
         .is_some_and(|(field, receiver)| field == receiver)
+}
+
+fn projected_standard_roots_shadowed(index: &RustIndex) -> bool {
+    index.files().values().any(|facts| {
+        #[cfg(test)]
+        PROJECTED_WORKSPACE_FILE_VISITS.with(|count| count.set(count.get() + 1));
+        let masked = mask_comments_and_strings(&facts.source).replace("r#", "");
+        let modules = declared_module_names(&masked);
+        let imports = file_use_statements(&masked);
+        STD_ROOTS.iter().any(|root| {
+            modules.contains(root)
+                || declares_type(&masked, root)
+                || binds_extern_crate(&masked, root)
+                || file_renames_to(&masked, root)
+                || imports
+                    .iter()
+                    .any(|item| use_statement_binds_name(item, root))
+        })
+    })
+}
+
+fn projected_constructor_shadowed(constructor: &str, test_file: &Path, index: &RustIndex) -> bool {
+    let names_constructor = |name: String| name.strip_prefix("r#").unwrap_or(&name) == constructor;
+    index.files().iter().any(|(file, facts)| {
+        #[cfg(test)]
+        PROJECTED_WORKSPACE_FILE_VISITS.with(|count| count.set(count.get() + 1));
+        let masked = mask_comments_and_strings(&facts.source).replace("r#", "");
+        if file_aliases_type(&masked, constructor)
+            || file_renames_to(&masked, constructor)
+            || !fn_definition_offsets(&masked, constructor).is_empty()
+            || file_use_statements(&masked).iter().any(|import| {
+                ["test", "cfg"]
+                    .iter()
+                    .any(|name| use_statement_binds_name(import, name))
+            })
+            || flattened_use_paths(&masked).iter().any(|import| {
+                let segments: Vec<_> = import.path.trim_start_matches("::").split("::").collect();
+                if !segments
+                    .last()
+                    .is_some_and(|name| *name == constructor || *name == "*")
+                {
+                    return false;
+                }
+                // A constructor reached through another module may be a
+                // callable re-export whose defining bytes were not indexed.
+                // Only direct local namespace imports establish this bounded
+                // same-file construction; a missing companion cannot clear it.
+                !matches!(segments.as_slice(), ["crate" | "self" | "super", _])
+            })
+        {
+            return true;
+        }
+        #[cfg(test)]
+        PROJECTED_WORKSPACE_FILE_PARSES.with(|count| count.set(count.get() + 1));
+        let Some(parsed) = parse_clean_source_file(&facts.source) else {
+            return true;
+        };
+        parsed.tree().syntax().descendants().any(|node| {
+            // Attribute/derive expansion can also manufacture a binding.
+            // This bounded construction admits only the ordinary test
+            // harness attributes; expansion is not type-identity evidence.
+            ast::Attr::cast(node.clone()).is_some_and(|attr| {
+                let text = attr.syntax().text().to_string();
+                collapse_whitespace(&text) != "#[test]"
+                    && !crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate(&text)
+            }) ||
+            // Arbitrary expansion can introduce a constructor binding that
+            // the parsed item index never saw. The two observation macros
+            // still require their carried canonical binding authority.
+            ast::MacroCall::cast(node.clone()).is_some_and(|call| {
+                call.path().is_none_or(|path| {
+                    let path = collapse_whitespace(&path.syntax().text().to_string());
+                    !matches!(
+                        path.as_str(),
+                        "assert_eq" | "vec" | "std::vec" | "::std::vec"
+                    ) && !STD_ROOTED_ASSERT_EQ.contains(&path.as_str())
+                })
+            }) || (file != test_file
+                && ast::Adt::cast(node.clone())
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string())))
+                || ast::Fn::cast(node.clone())
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string()))
+                || ast::Const::cast(node.clone())
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string()))
+                || ast::Static::cast(node.clone())
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string()))
+                || ast::IdentPat::cast(node)
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string()))
+        })
+    })
 }
 
 /// RIPR-SPEC-0225 rule 4: whether a field type compares by value: a
@@ -11556,3 +11771,7 @@ const BY_VALUE_PRELUDE_METHODS: &[&str] = &[
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "owner_pin/tests/item_nesting_facts.rs"]
+mod item_nesting_facts_tests;

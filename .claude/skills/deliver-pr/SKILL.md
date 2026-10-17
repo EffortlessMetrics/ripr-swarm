@@ -113,7 +113,6 @@ Focused read-only agents may inspect authority, tests, correctness, security, co
 
 - `PR_MERGED`
 - `PR_IN_FLIGHT`
-- `AUTO_MERGE_ARMED`
 - `WAITING_REQUIRED_CHECKS`
 - `WAITING_EXTERNAL_REVIEW`
 - `WAITING_INTEGRATION_PROOF`
@@ -124,4 +123,4 @@ Focused read-only agents may inspect authority, tests, correctness, security, co
 - `NEEDS_OWNER_DECISION`
 - `NOT_ESTABLISHED`
 
-A remote-owned wait yields to the goal loop; it does not keep the root polling unchanged state.
+The accountable owner normally retains context through a bounded qualification wait, actual-result inspection, final judgment and protected merge. A real interruption or exhausted window yields an exact continuation to the goal loop; it does not require tight polling or a resident polling worker.

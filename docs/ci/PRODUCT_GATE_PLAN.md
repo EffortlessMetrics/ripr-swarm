@@ -137,6 +137,39 @@ This is observational groundwork. Existing workflows remain authoritative, and
 future migration must compare their selected rows with this plan before any
 required check is rerouted.
 
+### Immutable qualification and final integration judgment (#4836)
+
+Admission captures one coherent H/Bq/Iq/Tq tuple and its digest before allocating
+the existing selected portfolio. Every callable receives that exact subject.
+The final result verifies the admitted subject against the immutable Git commit,
+tree and complete ordered parents. Its admission request ID must equal the
+native run and attempt: rerunning only the result cannot consume an earlier
+attempt's successful admission and children as fresh qualification.
+
+The result still checks the current candidate head, open/non-Draft state,
+destination, request label, review disposition, resolved conversations and
+cancellation. It observes current main separately. Main movement does not erase
+completed Tq results or prove that they apply to the new integration. A refused
+current observation reports bounded boolean predicate reasons, not the raw API
+frame. The exact predicate behind an older run without that frame remains unknown.
+A passing
+required result describes qualification of Tq; it does not grant merge permission
+or assert current-main compatibility. The retained completion receipt explicitly
+sets `final_currentness_required=true` and `current_main_compatibility=not_asserted`.
+
+Before a protected expected-head squash, the accountable owner must inspect the
+actual intervening main delta, preserve unaffected proof on its original subject,
+and obtain affected API, behavior, feature, configuration or integration proof.
+Unknown applicability widens that proof or blocks the merge decision. This is
+the separate final judgment in #4836 and the repository finish procedure; an
+unrelated SHA change alone does not call for a full replay.
+
+This bounded separation does not implement cross-run evidence reuse or selective
+execution. Prior native requests still refuse unqualified producer origins; a
+completion receipt alone cannot bypass that refusal. The canonical plan remains
+observational, all selected obligations remain required, and the exact unfiltered
+nextest and Cargo doctest commands above are unchanged.
+
 ## Product-independent policy bootstrap (#7158)
 
 `cargo policy preflight` compiles only the unpublished `repo-policy` package and

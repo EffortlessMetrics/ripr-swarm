@@ -34,6 +34,7 @@ export interface RetainHostDiagnosticsInput {
   artifactRoot: string;
   userDataDir: string;
   failed: boolean;
+  multiRoot?: { userDataDir: string; receiptPath: string };
   error?: unknown;
   env?: NodeJS.ProcessEnv;
 }
@@ -103,8 +104,32 @@ export function retainHostDiagnostics(
   let bytesWritten = 0;
   const logBudget = MAX_HOST_DIAGNOSTICS_BYTES - MAX_HOST_DIAGNOSTICS_IDENTITY_BYTES;
   const logsRoot = path.join(diagnosticsDir, HOST_LOG_DIR_NAME);
+  const matrix = input.multiRoot;
+  const matrixReceipt = matrix === undefined ? undefined : retainMatrixReceipt(
+    input.artifactRoot, matrix.receiptPath, path.join(diagnosticsDir, 'multiroot', 'acceptance.json')
+  );
+  bytesWritten += matrixReceipt?.bytes ?? 0;
+  const matrixFiles: string[] = [];
+  // The failing second host must not be starved by verbose first-host logs.
+  // Both profiles share the existing cap; reserve half for each profile.
+  if (matrix !== undefined) {
+    const matrixLogDir = resolveLogDir(matrix.userDataDir);
+    if (ownedSource(input.artifactRoot, matrixLogDir) && fs.lstatSync(matrixLogDir).isDirectory()) {
+      for (const relative of listRelativeFiles(matrixLogDir)) {
+        const remaining = Math.floor(logBudget / 2) - bytesWritten;
+        if (remaining <= 0) { break; }
+        const copied = copyLogTail(path.join(matrixLogDir, relative),
+          path.join(diagnosticsDir, 'multiroot', HOST_LOG_DIR_NAME, relative),
+          Math.min(MAX_HOST_DIAGNOSTICS_FILE_BYTES, remaining));
+        if (copied > 0) {
+          matrixFiles.push(relative.split(path.sep).join('/'));
+          bytesWritten += copied;
+        }
+      }
+    }
+  }
 
-  if (fs.existsSync(logDir) && fs.statSync(logDir).isDirectory()) {
+  if (ownedSource(input.artifactRoot, logDir) && fs.lstatSync(logDir).isDirectory()) {
     for (const relative of listRelativeFiles(logDir)) {
       const remaining = logBudget - bytesWritten;
       if (remaining <= 0) {
@@ -128,7 +153,15 @@ export function retainHostDiagnostics(
     logDir,
     copiedFiles,
     error: input.error,
-    env: input.env ?? process.env
+    env: input.env ?? process.env,
+    multiRoot: matrix === undefined ? undefined : {
+      user_data_dir: clipField(matrix.userDataDir, MAX_IDENTITY_PATH_CHARS),
+      log_dir: clipField(resolveLogDir(matrix.userDataDir), MAX_IDENTITY_PATH_CHARS),
+      copied_files: matrixFiles.slice(0, MAX_COPIED_FILE_ENTRIES)
+        .map(name => clipField(name, MAX_IDENTITY_PATH_CHARS)),
+      copied_files_omitted: Math.max(0, matrixFiles.length - MAX_COPIED_FILE_ENTRIES),
+      receipt: matrixReceipt,
+    }
   });
   const identityPath = path.join(diagnosticsDir, HOST_DIAGNOSTICS_IDENTITY_FILE);
   fs.writeFileSync(identityPath, identity, 'utf8');
@@ -147,6 +180,7 @@ export function finalizeHostRun(input: {
   artifactRoot: string;
   userDataDir: string;
   error?: unknown;
+  multiRoot?: { userDataDir: string; receiptPath: string };
 }): { exitCode: number; retention: RetainHostDiagnosticsResult } {
   let retention: RetainHostDiagnosticsResult;
   try {
@@ -154,6 +188,7 @@ export function finalizeHostRun(input: {
       artifactRoot: input.artifactRoot,
       userDataDir: input.userDataDir,
       failed: input.error !== undefined,
+      multiRoot: input.multiRoot,
       error: input.error
     });
   } catch (retainErr) {
@@ -182,12 +217,14 @@ function serializeIdentity(input: {
   copiedFiles: string[];
   error: unknown;
   env: NodeJS.ProcessEnv;
+  multiRoot?: Record<string, unknown>;
 }): string {
   const copied = input.copiedFiles
     .slice(0, MAX_COPIED_FILE_ENTRIES)
     .map((name) => clipField(name, MAX_IDENTITY_PATH_CHARS));
   const body: Record<string, unknown> = {
     schema_version: '0.1',
+    multiroot: input.multiRoot,
     retained_because: 'test_host_failure',
     user_data_dir: clipField(input.userDataDir, MAX_IDENTITY_PATH_CHARS),
     log_dir: clipField(input.logDir, MAX_IDENTITY_PATH_CHARS),
@@ -210,6 +247,11 @@ function serializeIdentity(input: {
     return identity;
   }
   body.copied_files = [];
+  if (input.multiRoot !== undefined) {
+    body.multiroot = { ...input.multiRoot, copied_files: [],
+      copied_files_omitted: (input.multiRoot.copied_files as unknown[]).length
+        + (input.multiRoot.copied_files_omitted as number) };
+  }
   body.copied_files_omitted = input.copiedFiles.length;
   identity = redactHostDiagnosticsText(`${JSON.stringify(body, null, 2)}\n`);
   if (Buffer.byteLength(identity, 'utf8') <= MAX_HOST_DIAGNOSTICS_IDENTITY_BYTES) {
@@ -221,6 +263,38 @@ function serializeIdentity(input: {
     copied_file_count: input.copiedFiles.length,
     identity_truncated: true
   })}\n`;
+}
+
+// These inputs are lane-owned paths, never a request to follow a profile or
+// receipt symlink into another workspace. Ignore unowned sources explicitly.
+function ownedSource(root: string, source: string): boolean {
+  const relative = path.relative(path.resolve(root), path.resolve(source));
+  if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    return false;
+  }
+  let current = path.resolve(root);
+  for (const segment of relative.split(path.sep)) {
+    current = path.join(current, segment);
+    if (!fs.existsSync(current) || fs.lstatSync(current).isSymbolicLink()) { return false; }
+  }
+  return true;
+}
+
+// Keep the small structured teardown receipt whole; a truncated JSON tail would
+// disguise missing evidence. Missing/oversized/non-JSON receipts stay explicit.
+function retainMatrixReceipt(artifactRoot: string, source: string, destination: string): { state: string; bytes: number } {
+  if (!fs.existsSync(source)) { return { state: 'missing', bytes: 0 }; }
+  if (!ownedSource(artifactRoot, source)) { return { state: 'outside_root_or_symlink', bytes: 0 }; }
+  const stat = fs.lstatSync(source);
+  if (!stat.isFile()) { return { state: 'not_regular_file', bytes: 0 }; }
+  if (stat.size > MAX_HOST_DIAGNOSTICS_FILE_BYTES) { return { state: 'oversized', bytes: 0 }; }
+  const text = fs.readFileSync(source, 'utf8');
+  try { JSON.parse(text); } catch { return { state: 'invalid_json', bytes: 0 }; }
+  const encoded = Buffer.from(redactHostDiagnosticsText(text), 'utf8');
+  if (encoded.length > MAX_HOST_DIAGNOSTICS_FILE_BYTES) { return { state: 'oversized', bytes: 0 }; }
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  fs.writeFileSync(destination, encoded);
+  return { state: 'retained', bytes: encoded.length };
 }
 
 function serializeError(error: unknown): { message: string; stack?: string } | null {

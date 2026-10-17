@@ -1,4 +1,5 @@
 mod json_construction;
+mod projected_workspace_memo;
 
 use super::*;
 use crate::analysis::facts::{FunctionItemFact, SourceRoleProvenance, SourceRoleProvenanceEdge};

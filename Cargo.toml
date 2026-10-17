@@ -179,23 +179,40 @@ codegen-units = 16
 [profile.dev]
 debug = "line-tables-only"
 
-# Policy gates (`cargo xtask precommit`) and analyzer tests parse every Rust
-# source in the repo. Unoptimized rowan/rust-analyzer parsing dominated the
-# no-panic, source-role and public-api scans (20-30s each); optimizing just
-# this small parsing stack costs well under a minute of cold build.
-[profile.dev.package.ra_ap_syntax]
-opt-level = 2
+# Retained fixture integrity checks hash multi-megabyte archives repeatedly.
+# Optimize the SHA-2 compression dependency while keeping repository code in
+# the normal dev/test profile and preserving every byte-integrity check.
+[profile.dev.package.sha2]
+opt-level = 3
+
+# Optimize retained JSON parsing without changing repository code settings or
+# debug assertions in the normal dev and inherited test profiles.
+[profile.dev.package.serde_json]
+opt-level = 3
+
+# Policy scans retain complete Rust syntax trees and diagnostics. Optimize the
+# measured parser/tree dependencies while repository code keeps dev settings.
 [profile.dev.package.ra_ap_parser]
-opt-level = 2
+opt-level = 3
+
+[profile.dev.package.ra_ap_syntax]
+opt-level = 3
+
+[profile.dev.package.rowan]
+opt-level = 3
+
+# Additional small parsing-stack dependencies measured on the policy scans.
 [profile.dev.package.ra-ap-rustc_lexer]
 opt-level = 2
-[profile.dev.package.rowan]
-opt-level = 2
+
 [profile.dev.package.hashbrown]
 opt-level = 2
+
 [profile.dev.package.rustc-hash]
 opt-level = 2
+
 [profile.dev.package.memchr]
 opt-level = 2
+
 [profile.dev.package.smol_str]
 opt-level = 2
