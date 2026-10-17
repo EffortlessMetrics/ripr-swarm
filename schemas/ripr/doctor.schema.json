@@ -180,7 +180,7 @@
       "description": "Where the seam cache lives for this root and how large it is. `size_bytes` is 0 when the directory does not exist or cannot be read, which is a legitimate state, not a failed measurement. Never null: a released document always carries the cache the run resolved, so a producer that stopped reporting it fails this contract instead of passing it.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["cache_dir", "relocated_by_env", "size_bytes", "size_display", "artifact_ignore"],
+      "required": ["cache_dir", "relocated_by_env", "size_bytes", "size_display", "artifact_ignore", "artifact_tracked"],
       "properties": {
         "cache_dir": { "type": "string", "minLength": 1 },
         "relocated_by_env": {
@@ -189,7 +189,8 @@
         },
         "size_bytes": { "type": "integer", "minimum": 0 },
         "size_display": { "type": "string", "minLength": 1 },
-        "artifact_ignore": { "$ref": "#/$defs/artifact_ignore" }
+        "artifact_ignore": { "$ref": "#/$defs/artifact_ignore" },
+        "artifact_tracked": { "$ref": "#/$defs/artifact_tracked" }
       }
     },
     "artifact_ignore": {
@@ -204,6 +205,29 @@
           "required": ["unignored"],
           "properties": {
             "unignored": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["warning"],
+              "properties": {
+                "warning": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "artifact_tracked": {
+      "description": "Whether ripr's own artifact root (`target/ripr`) already has entries in the git index, independent of `artifact_ignore` (an ignore rule never untracks earlier commits). `untracked` (no artifact root, or no tracked entries) and `not_checked` (not a git repository, git unavailable, or the probe deadline passed) are plain string verdicts; `tracked` is an object carrying the exact warning line, which names the `git rm --cached -r -- target/ripr` remediation.",
+      "oneOf": [
+        {
+          "enum": ["untracked", "not_checked"]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tracked"],
+          "properties": {
+            "tracked": {
               "type": "object",
               "additionalProperties": false,
               "required": ["warning"],
