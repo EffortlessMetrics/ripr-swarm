@@ -1,0 +1,12 @@
+{
+ "schema_version": "work_intake_identity_provenance.v1",
+ "repository": "EffortlessMetrics/ripr-swarm",
+ "captured_at": "2026-10-09T12:00:00Z",
+ "capture_method": "authored issue-intake corpus for the RIPR-SPEC-0275 selected-work intake law checker against the committed RIPR-SPEC-0244 captured directories",
+ "files": [
+  {
+   "path": "corpus.json",
+   "sha256": "6203d4d82ed42185769cdc4866d4aa8dba2e2f39b69a5a405a34547d76be9045"
+  }
+ ]
+}
