@@ -832,7 +832,17 @@ fn macro_binding_ambiguities(
                 || packages
                     .iter()
                     .any(|package| package.replace('-', "_") == root);
+            // #8388: a glob from the standard distribution (`std`, `core`,
+            // `alloc`) lists only the standard macros, so it cannot bring
+            // in a *different* `assert_eq!`. A workspace package, a module
+            // or an alias taking the root's name could, so the same
+            // shadowing check the drop-in imports use keeps those foreign.
+            let standard_root =
+                matches!(root, "std" | "core" | "alloc") && !drop_in_shadowed(root, external);
             for item in tree.syntax().descendants().filter_map(ast::UseTree::cast) {
+                if item.star_token().is_some() && standard_root {
+                    continue;
+                }
                 if item.star_token().is_some() && !own {
                     let path = import.syntax().text().to_string();
                     let line = line_of(&node);
