@@ -104,6 +104,9 @@ mod repair_orderfile;
 #[path = "cli_smoke/rerun_ledger_recovery.rs"]
 mod rerun_ledger_recovery;
 #[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/retained_evidence_guidance.rs"]
+mod retained_evidence_guidance;
+#[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/same_line_owner_tail.rs"]
 mod same_line_owner_tail;
 #[path = "cli_smoke/sample_output.rs"]
