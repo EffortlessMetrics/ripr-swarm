@@ -78,6 +78,9 @@ mod parse_failure_path_outcome;
 ))]
 #[path = "cli_smoke/partial_preview_disclosure.rs"]
 mod partial_preview_disclosure;
+#[cfg(all(unix, feature = "lang-rust"))]
+#[path = "cli_smoke/pilot_timeout_retry.rs"]
+mod pilot_timeout_retry;
 #[cfg(all(feature = "lang-rust", feature = "lang-python"))]
 #[path = "cli_smoke/portable_diff_paths.rs"]
 mod portable_diff_paths;
@@ -101,12 +104,18 @@ mod repair_orderfile;
 #[path = "cli_smoke/rerun_ledger_recovery.rs"]
 mod rerun_ledger_recovery;
 #[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/retained_evidence_guidance.rs"]
+mod retained_evidence_guidance;
+#[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/same_line_owner_tail.rs"]
 mod same_line_owner_tail;
 #[path = "cli_smoke/sample_output.rs"]
 mod sample_output;
 #[path = "cli_smoke/shell_words.rs"]
 mod shell_words;
+#[cfg(all(unix, feature = "lang-rust"))]
+#[path = "cli_smoke/snapshot_recovery.rs"]
+mod snapshot_recovery;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/source_unicode.rs"]
 mod source_unicode;
@@ -13945,8 +13954,8 @@ fn doctor_missing_root_recommends_recovery_and_outside_git_recommends_runnable_c
     // resolve. `first_command_at` reproduces the same quoting.
     let physical = root.strip_prefix(r"\\?\").unwrap_or(&root).to_string();
     let result = if !stdout.contains(&format!(
-        "- Recommended first command: fix the Git check above, or scan without Git history: `{}`",
-        first_command_at(&physical, " --format repo-exposure-md")
+        "- Recommended first command: fix the Git check above, or explore the repository without Git history: `{}`",
+        first_pilot_command_at(&physical)
     )) || stdout.contains("- Recommended first command: ripr check\n")
         || stderr.contains("working-tree change probe failed")
     {
@@ -14190,22 +14199,29 @@ fn recommended_first_command_line(stdout: &str) -> Option<&str> {
 /// directory: `ripr check` defaults to `.`, so the root is named, quoted the
 /// way `agent::loop_commands::shell_arg` quotes it. `root` is absolute; on
 /// Windows command paths render with `/` separators.
-fn first_command_at(root: &str, flags: &str) -> String {
+fn quoted_first_root(root: &str) -> String {
     let root = if cfg!(windows) {
         root.replace('\\', "/")
     } else {
         root.to_string()
     };
-    let quoted = if !root.is_empty()
+    if !root.is_empty()
         && root
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '/' | '_' | '-' | ':'))
     {
-        root.to_string()
+        root
     } else {
         format!("'{}'", root.replace('\'', r"'\''"))
-    };
-    format!("ripr check --root {quoted}{flags}")
+    }
+}
+
+fn first_command_at(root: &str, flags: &str) -> String {
+    format!("ripr check --root {}{flags}", quoted_first_root(root))
+}
+
+fn first_pilot_command_at(root: &str) -> String {
+    format!("ripr pilot --root {}", quoted_first_root(root))
 }
 
 #[test]

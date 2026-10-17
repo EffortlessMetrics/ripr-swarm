@@ -44,3 +44,4 @@
 .github/workflows/windows-packaged-qualification.yml|50|On-demand exact-candidate Windows package and VSIX rehearsal must retain identity checks, isolated CLI/editor journeys, and Actions-only receipts in one workflow.
 .github/workflows/python-wheelhouse-qualification.yml|50|On-demand local-wheelhouse pip/uv qualification writes isolation facts and a fail-closed aggregate; credential-free, artifact-only, no publication.
 .github/workflows/zed-extension.yml|1|Zed extension workflow keeps each run block to one Cargo command.
+.github/workflows/contabo-qualification.yml|0|#4988/#7164 reviewed dispatch-only standard reusable consumer rehearsal; no shell, hosted fallback, or protected-context claim.

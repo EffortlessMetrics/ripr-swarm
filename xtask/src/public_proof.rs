@@ -743,19 +743,19 @@ fn derived(id: &str, r: &Receipts) -> Result<Option<Derived>, String> {
     })
 }
 
-/// Seam-precise joins and total mutants across the spot-check repositories.
+/// Canonical-precise joins and total mutants across the spot-check repositories.
 fn mutation_join_totals(mutation: &Value) -> Result<(f64, f64), String> {
     let mut precise = 0.0;
     let mut mutants = 0.0;
     for repo in req_arr(mutation, "repos", "mutation-spot-check")? {
         let ctx = "mutation-spot-check repo";
-        precise += req_f64(field(repo, "pairings"), "seam_precise", ctx)?;
+        precise += req_f64(field(repo, "pairings"), "canonical_precise", ctx)?;
         mutants += req_f64(field(repo, "calibration_metrics"), "mutants_total", ctx)?;
     }
     Ok((precise, mutants))
 }
 
-/// Basis text for an agreement bar: how many seam-precise mutants of the
+/// Basis text for an agreement bar: how many canonical-precise mutants of the
 /// grip class the rate actually scored, so an excluded outcome is visible.
 fn scored_basis(mutation: &Value, family: &str, grip_class: &str) -> Result<String, String> {
     let scored = req_f64(
@@ -765,19 +765,19 @@ fn scored_basis(mutation: &Value, family: &str, grip_class: &str) -> Result<Stri
     )?;
     let class = field(
         field(
-            field(mutation, "outcomes_by_pairing_and_grip_class"),
-            "seam_precise",
+            field(mutation, "outcomes_by_disposition_and_grip_class"),
+            "canonical_precise",
         ),
         grip_class,
     );
     let Some(counts) = class.as_object() else {
         return Err(format!(
-            "mutation-spot-check is missing seam_precise outcomes for {grip_class}"
+            "mutation-spot-check is missing canonical_precise outcomes for {grip_class}"
         ));
     };
     let total: f64 = counts.values().filter_map(Value::as_f64).sum();
     Ok(format!(
-        "mutation spot check, {} of {} seam-precise `{grip_class}` mutants scored; {} unscored",
+        "mutation spot check, {} of {} canonical-precise `{grip_class}` mutants scored; {} unscored",
         num(scored),
         num(total),
         num(total - scored)
@@ -1322,17 +1322,20 @@ fn shortfalls(page: &mut Page, r: &Receipts, bars: &[Bar]) -> Result<(), String>
         }
         seen
     };
+    let false_gap_examples = items(field(&r.mutation, "disagreement_examples"), "false_gap").len();
+    let example_note = if false_gap_repos.is_empty() {
+        "No false-gap examples are recorded.".to_string()
+    } else {
+        format!(
+            "The {false_gap_examples} recorded examples are all in: {}.",
+            false_gap_repos.join(", ")
+        )
+    };
     page.line(format!(
-        "- **Real mutants disagree with \"no test would notice\".** Of {} mutants on seams ripr called ungripped, real mutation testing caught {} that ripr said nothing would catch; ripr agreed on {}. The {} recorded examples are all in: {}.",
+        "- **Real mutants disagree with \"no test would notice\".** Of {} mutants on seams ripr called ungripped, real mutation testing caught {} that ripr said nothing would catch; ripr agreed on {}. {example_note}",
         agree + false_gap,
         false_gap,
         agree,
-        items(field(&r.mutation, "disagreement_examples"), "false_gap").len(),
-        if false_gap_repos.is_empty() {
-            "none recorded".to_string()
-        } else {
-            false_gap_repos.join(", ")
-        }
     ));
 
     let (precise, mutants) = mutation_join_totals(&r.mutation)?;
@@ -1563,9 +1566,11 @@ fn mutation_section(page: &mut Page, mutation: &Value) -> Result<(), String> {
             req_str(repo, "cargo_mutants_version", &rctx)?,
             req_u64(metrics, "mutants_total", &rctx)?.to_string(),
             req_u64(metrics, "matched_total", &rctx)?.to_string(),
-            req_u64(metrics, "ambiguous_file_line_total", &rctx)?.to_string(),
+            (req_u64(metrics, "ambiguous_file_line_total", &rctx)?
+                + req_u64(metrics, "ambiguous_span_overlap_total", &rctx)?)
+            .to_string(),
             req_u64(metrics, "unmatched_mutants_total", &rctx)?.to_string(),
-            req_u64(field(repo, "pairings"), "seam_precise", &rctx)?.to_string(),
+            req_u64(field(repo, "pairings"), "canonical_precise", &rctx)?.to_string(),
         ]);
     }
     page.table(
@@ -1577,14 +1582,14 @@ fn mutation_section(page: &mut Page, mutation: &Value) -> Result<(), String> {
             "Joined",
             "Ambiguous",
             "Unmatched",
-            "Seam-precise",
+            "Canonical-precise",
         ],
         &repo_rows,
     );
 
     let grip = field(
-        field(mutation, "outcomes_by_pairing_and_grip_class"),
-        "seam_precise",
+        field(mutation, "outcomes_by_disposition_and_grip_class"),
+        "canonical_precise",
     );
     let mut grip_rows: Vec<Vec<String>> = Vec::new();
     for (class, outcomes) in grip.as_object().into_iter().flatten() {
@@ -1599,19 +1604,25 @@ fn mutation_section(page: &mut Page, mutation: &Value) -> Result<(), String> {
     }
     if grip_rows.is_empty() {
         return Err(format!(
-            "{ctx}: `outcomes_by_pairing_and_grip_class.seam_precise` is missing or empty"
+            "{ctx}: `outcomes_by_disposition_and_grip_class.canonical_precise` is missing or empty"
         ));
     }
-    page.line("Real mutation outcomes by ripr grip class, seam-precise joins only:");
+    page.line("Real mutation outcomes by ripr grip class, canonical-precise joins only:");
     page.blank();
     page.table(&["Grip class", "Mutation outcomes"], &grip_rows);
 
-    let examples = items(field(mutation, "disagreement_examples"), "false_gap");
-    if !examples.is_empty() {
-        page.line("False-gap examples, as recorded:");
+    for (key, heading, label) in [
+        ("false_gap", "False-gap examples, as recorded:", "false-gap"),
+        ("overclaim", "Overclaim examples, as recorded:", "overclaim"),
+    ] {
+        let examples = items(field(mutation, "disagreement_examples"), key);
+        if examples.is_empty() {
+            continue;
+        }
+        page.line(heading);
         page.blank();
         for example in examples {
-            let ectx = format!("{ctx} false-gap example");
+            let ectx = format!("{ctx} {label} example");
             let mutant = req_str(example, "mutant", &ectx)?;
             page.line(format!(
                 "- {} `{}:{}` {} `{}` is `{}`; mutant `{}` was {}.",
@@ -2086,7 +2097,7 @@ fn reproduce(page: &mut Page) {
     page.line("cargo xtask public-proof --check             # fail if this page is stale");
     page.line("```");
     page.blank();
-    page.line("Receipts live in `metrics/public-proof/`. `dx-scoreboard.json`, `verdict-corpus.json` and `corpus-manifest.json` are copies of `metrics/dx-scoreboard/baseline.json`, the report `fixtures/rust-verdict-corpus/expected/rows/` describes (its summary derived from the row files, then the rows in file-name order) and `benchmarks/rust_corpus/manifest.json`; `--check` fails when a source moves ahead of its copy, and `--refresh-receipts` re-copies them. Verdict corpus case PRs do not refresh this page, so its corpus section is a snapshot that can trail the committed rows until the next refresh. Corpus and ranking scoreboard rows are read from `metrics/dx-scoreboard/corpus-full-baseline.json` (falling back to `corpus-fast-baseline.json`) and `metrics/dx-scoreboard/pilot-ranking-baseline.json` when the copied scoreboard receipt did not ingest those boards. The mutation, first-run, agent and install receipts have no in-repo source to compare against: they are committed copies of harness output from the revisions named in their sections, and `--check` cannot detect a hand edit to them. The mutation spot-check has no command in this repository yet.");
+    page.line("Receipts live in `metrics/public-proof/`. `dx-scoreboard.json`, `verdict-corpus.json` and `corpus-manifest.json` are copies of `metrics/dx-scoreboard/baseline.json`, the report `fixtures/rust-verdict-corpus/expected/rows/` describes (its summary derived from the row files, then the rows in file-name order) and `benchmarks/rust_corpus/manifest.json`; `--check` fails when a source moves ahead of its copy, and `--refresh-receipts` re-copies them. Verdict corpus case PRs do not refresh this page, so its corpus section is a snapshot that can trail the committed rows until the next refresh. Corpus and ranking scoreboard rows are read from `metrics/dx-scoreboard/corpus-full-baseline.json` (falling back to `corpus-fast-baseline.json`) and `metrics/dx-scoreboard/pilot-ranking-baseline.json` when the copied scoreboard receipt did not ingest those boards. The mutation, first-run, agent and install receipts have no in-repo source to compare against: they are committed copies of harness output from the revisions named in their sections, and `--check` cannot detect a hand edit to them. The mutation spot-check receipt is harness output from `cargo xtask mutation-spot-check`.");
 }
 
 fn lane_revision(receipt: &Value) -> String {
@@ -2228,13 +2239,13 @@ mod tests {
             .and_then(|repos| repos.get_mut(0))
             .and_then(|repo| repo.get_mut("pairings"))
             .and_then(Value::as_object_mut)
-            .and_then(|pairings| pairings.remove("seam_precise"));
-        assert!(removed.is_some(), "fixture lost seam_precise");
+            .and_then(|pairings| pairings.remove("canonical_precise"));
+        assert!(removed.is_some(), "fixture lost canonical_precise");
         let result = mutation_join_totals(&receipts.mutation);
-        assert!(result.is_err_and(|err| err.contains("seam_precise")));
+        assert!(result.is_err_and(|err| err.contains("canonical_precise")));
         let mut page = Page(String::new());
         let section = mutation_section(&mut page, &receipts.mutation);
-        assert!(section.is_err_and(|err| err.contains("seam_precise")));
+        assert!(section.is_err_and(|err| err.contains("canonical_precise")));
         Ok(())
     }
 
@@ -2261,20 +2272,25 @@ mod tests {
     #[test]
     fn mutation_section_says_when_the_analyzer_build_is_unrecorded() -> Result<(), String> {
         let receipts = load(&workspace_root())?;
+        let version = receipts
+            .mutation
+            .get("analyzer_version")
+            .and_then(Value::as_str)
+            .ok_or("committed mutation spot-check receipt must record analyzer_version")?
+            .to_string();
         let mut page = Page(String::new());
         mutation_section(&mut page, &receipts.mutation)?;
-        assert!(page.0.contains("does not record which ripr build produced"));
-        let mut recorded = receipts.mutation.clone();
-        if let Some(object) = recorded.as_object_mut() {
-            object.insert(
-                "analyzer_version".to_string(),
-                Value::from("ripr 0.11.0 (abc1234)"),
-            );
-        }
-        let mut page = Page(String::new());
-        mutation_section(&mut page, &recorded)?;
-        assert!(page.0.contains("produced by ripr 0.11.0 (abc1234)"));
+        assert!(page.0.contains(&format!("were produced by {version}")));
         assert!(!page.0.contains("does not record which ripr build"));
+        let mut unrecorded = receipts.mutation.clone();
+        let removed = unrecorded
+            .as_object_mut()
+            .and_then(|object| object.remove("analyzer_version"));
+        assert!(removed.is_some(), "fixture lost analyzer_version");
+        let mut page = Page(String::new());
+        mutation_section(&mut page, &unrecorded)?;
+        assert!(page.0.contains("does not record which ripr build produced"));
+        assert!(!page.0.contains("were produced by"));
         Ok(())
     }
 
