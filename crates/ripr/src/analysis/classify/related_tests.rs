@@ -2569,6 +2569,54 @@ fn initializer_type_head(expr: &str) -> Option<&str> {
     }
 }
 
+/// `Type::factory(..)` where the one workspace declaration of `factory` in
+/// `impl Type` is a plain associated fn returning `Self`/`Type` (#7415).
+/// The call spelling alone never names the result type.
+fn factory_call_names_type(
+    expr: &str,
+    impl_type: &str,
+    factory: &dyn Fn(&str, &str) -> bool,
+) -> bool {
+    matches!(
+        type_head(expr),
+        Some((segments, Some(b'(')))
+            if matches!(segments.as_slice(), [.., ty, name] if *ty == impl_type && factory(ty, name))
+    )
+}
+
+/// The only indexed `fn name` in an inherent `impl ty` block is a synchronous
+/// associated fn (no `self`) whose entire return type is `Self` or `ty`.
+/// Zero or several declarations, `Result<Self>`-style wrappers and `async`
+/// fail closed.
+fn associated_fn_returns_own_type(index: &RustIndex, ty: &str, name: &str) -> bool {
+    let mut declarations = index.functions().iter().filter(|function| {
+        function.name == name
+            && matches!(&function.item.container,
+                FunctionContainer::Inherent { self_ty } if self_ty == ty)
+    });
+    let (Some(function), None) = (declarations.next(), declarations.next()) else {
+        return false;
+    };
+    if function.item.has_self_param || !function.item.has_body {
+        return false;
+    }
+    let masked = mask_comments_and_strings(&function.body);
+    let Some(signature) = masked.split('{').next() else {
+        return false;
+    };
+    if signature
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .any(|word| word == "async")
+    {
+        return false;
+    }
+    let Some((_, returned)) = signature.rsplit_once("->") else {
+        return false;
+    };
+    let returned = returned.split("where").next().unwrap_or(returned).trim();
+    returned == "Self" || returned == ty
+}
+
 /// CamelCase final segment (`Circle`), read as an enum tuple variant.
 /// SCREAMING_CASE (`Site::FACTORY()`, a const fn pointer) fails closed.
 fn is_variant_name(name: &str) -> bool {
@@ -3113,8 +3161,11 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
             super::owner_pin::unit_struct_value(name, &test.file, index, &pin_syntax)
         })
     };
+    let factory = |ty: &str, name: &str| {
+        index.is_some_and(|index| associated_fn_returns_own_type(index, ty, name))
+    };
     executable_call_resolves(test, index, &pin_syntax, &|node, scope| {
-        inherent_call_node_resolves(node, scope, method, impl_type, &unit_struct)
+        inherent_call_node_resolves(node, scope, method, impl_type, &unit_struct, &factory)
     })
 }
 
@@ -3237,6 +3288,7 @@ fn inherent_call_node_resolves(
     method: &str,
     impl_type: &str,
     unit_struct: &dyn Fn(&str) -> bool,
+    factory: &dyn Fn(&str, &str) -> bool,
 ) -> bool {
     if !ast::MethodCallExpr::can_cast(node.kind()) && !ast::CallExpr::can_cast(node.kind()) {
         return false;
@@ -3261,6 +3313,7 @@ fn inherent_call_node_resolves(
                     original_scope.unwrap_or_else(|| call.syntax()),
                     impl_type,
                     unit_struct,
+                    factory,
                 )
             });
     }
@@ -3283,6 +3336,7 @@ fn inherent_call_node_resolves(
                     original_scope.unwrap_or_else(|| call.syntax()),
                     impl_type,
                     unit_struct,
+                    factory,
                 )
             })
 }
@@ -3365,6 +3419,7 @@ fn scoped_receiver_names_type(
     call: &SyntaxNode,
     impl_type: &str,
     unit_struct: &dyn Fn(&str) -> bool,
+    factory: &dyn Fn(&str, &str) -> bool,
 ) -> bool {
     // Parentheses and borrows preserve this bounded receiver identity.
     for _ in 0..32 {
@@ -3383,14 +3438,22 @@ fn scoped_receiver_names_type(
             let name = receiver.syntax().text().to_string();
             let name = name.trim();
             if !name.is_empty() && name.bytes().all(is_ident_byte) {
-                return visible_receiver_binding_names_type(name, call, impl_type, unit_struct);
+                return visible_receiver_binding_names_type(
+                    name,
+                    call,
+                    impl_type,
+                    unit_struct,
+                    factory,
+                );
             }
         }
         ast::Expr::CallExpr(_) | ast::Expr::RecordExpr(_) => {}
         _ => return false,
     }
     let text = mask_comments_and_strings(&receiver.syntax().text().to_string());
-    initializer_is_one_head_expr(&text) && initializer_type_head(&text) == Some(impl_type)
+    initializer_is_one_head_expr(&text)
+        && (initializer_type_head(&text) == Some(impl_type)
+            || factory_call_names_type(&text, impl_type, factory))
 }
 
 fn visible_receiver_binding_names_type(
@@ -3398,6 +3461,7 @@ fn visible_receiver_binding_names_type(
     call: &SyntaxNode,
     impl_type: &str,
     unit_struct: &dyn Fn(&str) -> bool,
+    factory: &dyn Fn(&str, &str) -> bool,
 ) -> bool {
     for ancestor in call.ancestors().skip(1) {
         // These patterns may bind the receiver. This small admission does not
@@ -3481,6 +3545,7 @@ fn visible_receiver_binding_names_type(
                     let text = mask_comments_and_strings(&initializer.syntax().text().to_string());
                     initializer_is_one_head_expr(&text)
                         && (initializer_type_head(&text) == Some(impl_type)
+                            || factory_call_names_type(&text, impl_type, factory)
                             // A bare type name is a value only for a verified
                             // unit struct, not a same-spelled constant/import.
                             || (text.trim() == impl_type && unit_struct(impl_type)))

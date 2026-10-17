@@ -34,3 +34,15 @@ Verification:
 
 Updated:
 - `expected/human.txt` (4 terminal periods)
+
+## Pending — inherent_receiver_dormant_body (4)
+
+Reason:
+RIPR-SPEC-0122: refresh to main's plain-language human output wording; no verdict or class change (#8004 merge)
+
+Command:
+`cargo xtask goldens bless inherent_receiver_dormant_body --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

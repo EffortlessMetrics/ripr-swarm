@@ -37,3 +37,16 @@ Verification:
 Updated:
 - `expected/human-full.txt` (5 terminal periods)
 - `expected/human.txt` (4 terminal periods)
+
+## Pending — inherent_receiver_foreign_helper (4)
+
+Reason:
+RIPR-SPEC-0122: refresh to main's plain-language human output wording; no verdict or class change (#8004 merge)
+
+Command:
+`cargo xtask goldens bless inherent_receiver_foreign_helper --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
