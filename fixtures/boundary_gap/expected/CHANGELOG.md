@@ -960,7 +960,7 @@ commitments and dependent verify/receipt byte hashes follow that exact change.
 Routing, unchanged movement, incomplete receipt and all tamper controls remain.
 The live producer normalization test validates this bounded fixture update.
 
-### Check-helper argument pins — classified-cache generation parity
+### #8592 — classified-cache generation parity
 
 The unchanged-after-attempt before/after corpus generation moves from 1.82 to
 1.83 for check-helper argument pins (RIPR-SPEC-0197). Content commitments and

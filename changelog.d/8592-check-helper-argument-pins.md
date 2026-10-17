@@ -4,4 +4,4 @@
   `let actual = format!("{{\"score\":{}}}", score(2));` and
   `let expected = String::from("{\"score\":4}");` reads as an exact pin on
   `score(2)`, and a `format!` template with fixed text around one `{}` now
-  pins a scalar owner directly too (RIPR-SPEC-0197, RIPR-SPEC-0231 example 12).
+  pins a scalar owner directly too (RIPR-SPEC-0197, RIPR-SPEC-0231 example 12; #8592).
