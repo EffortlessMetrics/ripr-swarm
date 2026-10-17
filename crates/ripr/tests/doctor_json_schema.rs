@@ -494,6 +494,34 @@ fn published_doctor_schema_rejects_documents_the_schema_forbids() -> Result<(), 
         format!("a populated unignored artifact-ignore must stay legal: {error}")
     })?;
 
+    // #8276: `cache.artifact_tracking` is its own union. An unlisted string,
+    // a `tracked` arm without its count, and a zero count all fail; the
+    // populated arm stays legal.
+    let mut unlisted_tracking = base.clone();
+    unlisted_tracking["cache"]["artifact_tracking"] = Value::String("maybe".to_string());
+    assert_rejected(
+        "unlisted artifact-tracking verdict",
+        &unlisted_tracking,
+        &schema,
+    )?;
+
+    let mut countless_tracked = base.clone();
+    countless_tracked["cache"]["artifact_tracking"] =
+        serde_json::json!({"tracked": {"warning": "w"}});
+    assert_rejected("tracked without its count", &countless_tracked, &schema)?;
+
+    let mut zero_tracked = base.clone();
+    zero_tracked["cache"]["artifact_tracking"] =
+        serde_json::json!({"tracked": {"count": 0, "warning": "w"}});
+    assert_rejected("tracked with a zero count", &zero_tracked, &schema)?;
+
+    let mut populated_tracked = base.clone();
+    populated_tracked["cache"]["artifact_tracking"] =
+        serde_json::json!({"tracked": {"count": 3, "warning": "! 3 file(s) tracked"}});
+    check(&populated_tracked, &schema, &schema, "doctor").map_err(|error| {
+        format!("a populated tracked artifact-tracking must stay legal: {error}")
+    })?;
+
     let mut wrong_test_surface_type = base.clone();
     wrong_test_surface_type["test_surfaces"] = Value::String("rust".to_string());
     assert_rejected(
