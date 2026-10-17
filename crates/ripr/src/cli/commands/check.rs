@@ -472,6 +472,23 @@ pub(super) fn machine_refusal_document(
 }
 
 pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
+    check_inner(args, None)
+}
+
+#[cfg(unix)]
+pub(in crate::cli) fn check_with_interrupt_flags(
+    args: &[String],
+    flags: crate::cli::interrupt::InterruptFlags,
+) -> Result<(), String> {
+    check_inner(args, Some(flags))
+}
+
+fn check_inner(
+    args: &[String],
+    interrupt_flags: Option<crate::cli::interrupt::InterruptFlags>,
+) -> Result<(), String> {
+    #[cfg(not(unix))]
+    let _ = interrupt_flags;
     let mut input = CheckInput {
         git_timeout: Some(app::default_cli_git_timeout()),
         ..CheckInput::default()
@@ -1093,6 +1110,22 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             )
         })?;
     }
+    // Blocking diff readers and separate file/fanout publication paths retain
+    // native interruption. Only ordinary resolved regular-file/live-Git input
+    // opts into cooperative analysis settlement (#7618).
+    #[cfg(unix)]
+    let _interrupt = if output_dir.is_none()
+        && write_artifact.is_none()
+        && gap_ledger.is_none()
+        && input.diff_file.as_deref().is_none_or(|path| {
+            path != Path::new("-") && std::fs::metadata(path).is_ok_and(|meta| meta.is_file())
+        }) {
+        interrupt_flags
+            .map(crate::cli::interrupt::SignalRegistration::create)
+            .transpose()?
+    } else {
+        None
+    };
     // #2644: `fast` is currently behaviorally identical to `draft`. The notice
     // fires on the EFFECTIVE mode after `apply_to_check_input`, not on argv
     // position, so a repo `ripr.toml` with `mode = "fast"` is disclosed too,
@@ -1279,6 +1312,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                         &config,
                     )?
                     .with_rust_corpus_key(report.corpus_key.as_ref());
+                analysis::cancellation::begin_cli_publication()?;
                 let stdout = std::io::stdout();
                 let mut handle = stdout.lock();
                 output::repo_exposure::write_repo_exposure_json_with_context(

@@ -127,6 +127,8 @@ mod check;
 #[path = "commands/check_fanout.rs"]
 mod check_fanout;
 pub(super) use check::check;
+#[cfg(unix)]
+pub(super) use check::check_with_interrupt_flags;
 
 #[path = "commands/review_comments.rs"]
 mod review_comments;

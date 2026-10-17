@@ -6112,6 +6112,14 @@ id = "RIPR-SPEC-0064"
 name = "Perl fact packet contract"
 spec = "docs/specs/RIPR-SPEC-0064-perl-fact-packet-contract.md"
 tests = [
+  "crates/ripr/tests/chaos_interrupted_runs.rs::managed_producer::interruption::managed_sigint_reaps_partial_and_repeats",
+  "crates/ripr/tests/chaos_interrupted_runs.rs::managed_producer::interruption::managed_sigint_reaps_ignoring_exporter",
+  "crates/ripr/tests/chaos_interrupted_runs.rs::managed_producer::interruption::managed_sigint_names_retained_directory",
+  "crates/ripr/tests/chaos_interrupted_runs.rs::managed_producer::interruption::native_sigint_interrupts_held_stdin",
+  "crates/ripr/tests/chaos_interrupted_runs.rs::managed_producer::interruption::native_sigint_interrupts_unopened_fifo",
+  "crates/ripr/tests/chaos_interrupted_runs.rs::managed_producer::interruption::native_sigint_interrupts_unread_stdout",
+  "crates/ripr/tests/chaos_interrupted_runs.rs::managed_producer::interruption::second_sigint_escapes_blocked_interruption_diagnostics",
+  "crates/ripr/tests/chaos_interrupted_runs.rs::managed_producer::interruption::library_cli_retains_native_signal_policy",
   "crates/ripr/src/analysis/language/perl/tests.rs::tests::perl_fact_packet_adapter_consumes_exact_return_fixture",
   "crates/ripr/src/analysis/language/perl/tests.rs::tests::perllsp_exporter_fixture_is_consumed_without_actionable_gap_state",
   "crates/ripr/src/analysis/language/perl/tests.rs::tests::ingestion_accepts_canonical_and_compat_perl_fact_exporters",
@@ -6162,6 +6170,11 @@ fixtures = [
   "fixtures/perl_packet_contract_migration",
 ]
 code = [
+  "crates/ripr/src/analysis/cancellation.rs",
+  "crates/ripr/src/cli/mod.rs",
+  "crates/ripr/src/cli/interrupt.rs",
+  "crates/ripr/src/cli/commands/check.rs",
+  "crates/ripr/src/cli/commands_context.rs",
   "crates/ripr/src/analysis/language/perl/mod.rs",
   "crates/ripr/tests/perl_two_binary_harness/command.rs",
   "crates/ripr/src/output/perl_preview_card.rs",
