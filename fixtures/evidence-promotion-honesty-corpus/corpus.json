@@ -9718,6 +9718,94 @@
         { "type": "expected_class", "class": "exposed" },
         { "type": "maximum_class", "class": "exposed" }
       ]
+    },
+    {
+      "id": "rust_field_match_foreign_option_constant",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/field_match_foreign_option_constant",
+      "vector": "qualified_option_constant_is_not_prelude_arm_identity",
+      "probe_family": "match_arm",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_field_match_raw_option_shadow",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/field_match_raw_option_shadow",
+      "vector": "raw_option_names_keep_scope_and_binding_identity",
+      "probe_family": "match_arm",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_field_match_macro_option_shadow",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/field_match_macro_option_shadow",
+      "vector": "imported_statement_macro_can_shadow_option_constructor",
+      "probe_family": "match_arm",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_field_match_unexecuted_assertion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/field_match_unexecuted_assertion",
+      "vector": "unexecuted_equality_is_not_same_call_oracle_evidence",
+      "probe_family": "match_arm",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        }
+      ]
     }
   ]
 }
