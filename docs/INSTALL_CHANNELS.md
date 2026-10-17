@@ -149,8 +149,8 @@ same tree:
 | --- | --- |
 | prebuilt 0.10.0 archive (download, checksum, extract) | about 1 |
 | `cargo install ripr --locked` (0.10.0 from crates.io) | 128 |
-| `cargo install --locked --path crates/ripr` (0.11.0 development build, workspace profile) | 640 |
-| `cargo build --release --locked -p ripr` in the workspace (same profile, 4 cores) | 751 |
+| `cargo install --locked --path crates/ripr` (0.11.0 development build, workspace profile before #6661: fat LTO, one codegen unit) | 640 |
+| `cargo build --release --locked -p ripr` in the workspace (profile before #6661, 4 cores; a later run took 1037 s, and 366 s with the thin-LTO profile) | 751 |
 | `cargo build --release --locked` on the packaged 0.11.0 crate (what `cargo install ripr --locked` builds, 4 cores) | 275 |
 
 The first three rows did not record a core count and the 640 s figure ran beside

@@ -450,6 +450,17 @@ fn is_lower_hex(value: &str, length: usize) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn shipped_archives_keep_the_fat_lto_single_codegen_unit_profile() {
+        assert_eq!(
+            super::SHIPPED_RELEASE_PROFILE_ENV,
+            &[
+                ("CARGO_PROFILE_RELEASE_LTO", "true"),
+                ("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "1"),
+            ]
+        );
+    }
+
     use super::*;
 
     #[test]
