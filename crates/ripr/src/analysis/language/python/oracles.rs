@@ -955,14 +955,25 @@ fn visible_scope_text(source: &str, name: &str, call_start: usize) -> Option<Str
     // A def nested in another def or in an `if`/`try` block reads names the
     // enclosing scope binds, which this scan does not model: keep the whole
     // file, as before.
-    let nested = (0..def_line).any(|index| {
+    // Only lines that actually enclose the def count; a `class` body does
+    // not make a method nested.
+    let mut enclosing_indent = def_indent;
+    let mut nested = false;
+    for index in (0..def_line).rev() {
         let line = lines[index];
         let trimmed = line.trim_start();
-        !trimmed.is_empty()
-            && !trimmed.starts_with('#')
-            && indent(line) < def_indent
-            && !trimmed.starts_with("class ")
-    });
+        if trimmed.is_empty() || trimmed.starts_with('#') || indent(line) >= enclosing_indent {
+            continue;
+        }
+        if !trimmed.starts_with("class ") {
+            nested = true;
+            break;
+        }
+        enclosing_indent = indent(line);
+        if enclosing_indent == 0 {
+            break;
+        }
+    }
     let Some(body_start) = signature_end(&lines, def_line).filter(|_| !nested) else {
         return Some(source.to_string());
     };

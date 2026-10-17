@@ -687,6 +687,23 @@ fn a_scoped_match_name_survives_signatures_line_endings_and_nesting() -> Result<
 }
 
 #[test]
+fn a_unittest_method_reads_its_own_match_name_inside_its_class() -> Result<(), String> {
+    // A class body does not make a method nested, so the method's own
+    // binding is read and a sibling method's binding is not.
+    let class = classify(
+        PARSE,
+        3,
+        PARSE_OLD,
+        &test_module(
+            "import unittest\n\nfrom src.shop import parse",
+            "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        pattern = None\n        with self.assertRaisesRegex(ValueError, pattern):\n            parse(\"\")\n\n    def test_other(self):\n        pattern = \"empty\"\n",
+        ),
+    )?;
+    assert_ne!(class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
 fn a_parametrize_mark_does_not_stand_in_for_example_rows() -> Result<(), String> {
     assert_eq!(
         passed_class(
