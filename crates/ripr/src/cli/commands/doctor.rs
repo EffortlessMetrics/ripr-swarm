@@ -300,6 +300,7 @@ fn cache_status(root: &Path) -> output::doctor::DoctorCacheStatus {
         size_bytes,
         size_display: format_bytes(size_bytes),
         artifact_ignore: ripr_artifact_ignore(root),
+        tracked_artifacts: ripr_tracked_artifacts(root),
     }
 }
 
@@ -619,6 +620,11 @@ Point RIPR_CACHE_DIR at a writable directory.",
     if let output::doctor::DoctorArtifactIgnore::Unignored { warning } = &cache.artifact_ignore {
         lines.push(warning.clone());
     }
+    if let output::doctor::DoctorTrackedArtifacts::Tracked { warning, .. } =
+        &cache.tracked_artifacts
+    {
+        lines.push(warning.clone());
+    }
 
     lines.extend(preview_language_enable_suggestions(
         environment.preview_enablement.as_ref(),
@@ -755,6 +761,11 @@ fn cache_detail_lines(cache: &output::doctor::DoctorCacheStatus) -> Vec<String> 
     ));
     // Same typed verdict the compact screen renders (#7663, #8257 review).
     if let output::doctor::DoctorArtifactIgnore::Unignored { warning } = &cache.artifact_ignore {
+        lines.push(warning.clone());
+    }
+    if let output::doctor::DoctorTrackedArtifacts::Tracked { warning, .. } =
+        &cache.tracked_artifacts
+    {
         lines.push(warning.clone());
     }
     lines
@@ -2464,6 +2475,44 @@ fn ripr_artifact_ignore(root: &Path) -> output::doctor::DoctorArtifactIgnore {
     }
 }
 
+/// The typed evidence on whether git's index already tracks entries under
+/// ripr's artifact root (#8276). A covering ignore rule never untracks
+/// earlier commits, so `git add -A` keeps refreshing tracked reports and
+/// `ripr check` keeps diffing them; this is the fact `ripr_artifact_ignore`
+/// deliberately leaves out. `git ls-files --cached` lists the index, so a
+/// positive listing is the only thing that warns; a non-repository, missing
+/// git or a missed deadline reports `NotChecked`.
+fn ripr_tracked_artifacts(root: &Path) -> output::doctor::DoctorTrackedArtifacts {
+    use output::doctor::DoctorTrackedArtifacts;
+    let probe = match crate::git::run_git_output_with_deadline(
+        root,
+        &["ls-files", "--cached", "-z", "--", "target/ripr"],
+        Some(std::time::Duration::from_secs(5)),
+    ) {
+        Ok(probe) => probe,
+        Err(_) => return DoctorTrackedArtifacts::NotChecked,
+    };
+    if probe.status.code() != Some(0) {
+        return DoctorTrackedArtifacts::NotChecked;
+    }
+    let count = probe
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|entry| !entry.is_empty())
+        .count();
+    if count == 0 {
+        return DoctorTrackedArtifacts::None;
+    }
+    DoctorTrackedArtifacts::Tracked {
+        count,
+        warning: format!(
+            "! {count} ripr artifact(s) under target/ripr are tracked by git, so `git add -A` \
+             keeps refreshing them and `ripr check` keeps diffing them. \
+             Run: git rm --cached -r -- target/ripr"
+        ),
+    }
+}
+
 /// Why a cache entry could not be created under `cache_dir`, or `None` when
 /// one could. For every directory a production cache writes entries into,
 /// probes the nearest existing ancestor with a short-lived
@@ -2904,6 +2953,7 @@ mod tests {
                     size_bytes: 0,
                     size_display: "0 B".to_string(),
                     artifact_ignore: output::doctor::DoctorArtifactIgnore::Ignored,
+                    tracked_artifacts: output::doctor::DoctorTrackedArtifacts::None,
                 },
                 test_surfaces: Vec::new(),
                 perl_preview: None,
@@ -3783,6 +3833,51 @@ mod tests {
         std::fs::write(root.join(".gitignore"), "/target/ripr/\n")
             .map_err(|error| error.to_string())?;
         assert_eq!(ripr_artifact_ignore(&root), DoctorArtifactIgnore::Ignored);
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_tracked_artifacts_names_the_untrack_command() -> Result<(), String> {
+        use output::doctor::DoctorTrackedArtifacts;
+        let root = unique_command_test_dir("artifact-tracked");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        for args in [
+            ["init"].as_slice(),
+            ["config", "user.email", "ripr@example.invalid"].as_slice(),
+            ["config", "user.name", "ripr tests"].as_slice(),
+        ] {
+            crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
+        }
+        // A repository with nothing under target/ripr tracked is clean.
+        assert_eq!(ripr_tracked_artifacts(&root), DoctorTrackedArtifacts::None);
+
+        let artifact = root.join("target").join("ripr");
+        std::fs::create_dir_all(&artifact).map_err(|error| error.to_string())?;
+        std::fs::write(artifact.join("report.json"), "{}").map_err(|error| error.to_string())?;
+        std::fs::write(artifact.join("second.json"), "{}").map_err(|error| error.to_string())?;
+        // Present on disk but untracked is still clean: the index decides.
+        assert_eq!(ripr_tracked_artifacts(&root), DoctorTrackedArtifacts::None);
+
+        crate::git::run_git(&root, &["add", "-f", "--", "target/ripr"])
+            .map_err(|error| error.to_string())?;
+        // A covering ignore rule must not hide the tracked state.
+        std::fs::write(root.join(".gitignore"), "/target/ripr/\n")
+            .map_err(|error| error.to_string())?;
+        match ripr_tracked_artifacts(&root) {
+            DoctorTrackedArtifacts::Tracked { count, warning } => {
+                assert_eq!(count, 2);
+                assert!(
+                    warning.contains("git rm --cached -r -- target/ripr"),
+                    "{warning}"
+                );
+            }
+            other => return Err(format!("expected Tracked, got {other:?}")),
+        }
+
+        crate::git::run_git(&root, &["rm", "--cached", "-r", "-q", "--", "target/ripr"])
+            .map_err(|error| error.to_string())?;
+        assert_eq!(ripr_tracked_artifacts(&root), DoctorTrackedArtifacts::None);
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
