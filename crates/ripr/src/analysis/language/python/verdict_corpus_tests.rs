@@ -626,6 +626,14 @@ fn a_literal_none_match_checks_no_message_in_either_framework() -> Result<(), St
         )?,
         ExposureClass::Exposed
     );
+    // A second binding is not a single `None` assignment: the message
+    // stays checked.
+    assert_eq!(
+        parse_class(
+            "def test_parse():\n    pattern = None\n    pattern = \"empty\"\n    with pytest.raises(ValueError, match=pattern):\n        parse(\"\")\n"
+        )?,
+        ExposureClass::Exposed
+    );
     assert_ne!(unittest("None")?, ExposureClass::Exposed);
     assert_ne!(unittest("expected_regex=None")?, ExposureClass::Exposed);
     assert_eq!(unittest("\"empty\"")?, ExposureClass::Exposed);

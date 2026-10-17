@@ -875,7 +875,15 @@ fn name_bound_once_to_literal(source: &str, name: &str) -> Option<String> {
     let mut assignments = source.lines().filter_map(|line| {
         let (target, value) = line.split_once('=')?;
         let value = value.strip_prefix('=').map_or(Some(value), |_| None)?;
-        (target.trim() == name).then(|| value.trim())
+        (target.trim() == name).then(|| {
+            // An unspaced `name=None` is a default argument (a wrapped
+            // signature or call), not an assignment.
+            if value.trim() == "None" && !(target.ends_with(' ') && value.starts_with(' ')) {
+                "<default-argument>"
+            } else {
+                value.trim()
+            }
+        })
     });
     let value = assignments.next()?;
     if assignments.next().is_some() {
