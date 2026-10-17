@@ -207,6 +207,8 @@ fn build_index_with_file_fact_cache_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
     cache: &RepoFileFactCache,
     mut load_known_file_paths: impl FnMut() -> KnownFilePaths,
 ) -> Result<CachedRustIndex, String> {
+    cancellation::checkpoint()?;
+    cache.sweep_stale_temp_files();
     let mut accounting = CacheAccounting::default();
     let batched = insert_cached_file_batches(
         root,

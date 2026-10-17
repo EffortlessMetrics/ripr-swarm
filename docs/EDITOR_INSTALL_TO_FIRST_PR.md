@@ -26,9 +26,10 @@ extension resolves the server in this order:
 1. `ripr.server.path`
 2. bundled server binary, when present
 3. downloaded cached server binary
-4. verified first-run download
-5. `ripr` on `PATH`
-6. actionable setup error
+4. `ripr` on `PATH`, when `ripr.server.version` is empty
+5. verified first-run download
+6. `ripr` on `PATH`, as the fallback when the download fails or a version is pinned
+7. actionable setup error
 
 For the first Rust loop, no config file is required. Rust is the default
 adapter. TypeScript and JavaScript are opt-in preview adapters (`[languages]`
