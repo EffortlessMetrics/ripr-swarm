@@ -762,6 +762,23 @@ mod tests {
     }
 
     #[test]
+    fn lines_look_alike_accepts_lines_at_the_token_cap() {
+        // Each line has 256 tokens, with 255 in common and one changed.
+        let shared: String = (0..255).map(|n| format!("a{n}+")).collect();
+        let old = format!("{shared}old");
+        let new = format!("{shared}fresh");
+        assert!(lines_look_alike(&old, &new));
+    }
+
+    #[test]
+    fn lines_look_alike_rejects_lines_above_the_token_cap() {
+        // These 257/258-token lines would look alike without the token cap.
+        let old: String = (0..257).map(|n| format!("a{n}+")).collect();
+        let new = format!("{old}extra");
+        assert!(!lines_look_alike(&old, &new));
+    }
+
+    #[test]
     fn content_pairing_stops_at_the_block_size_cap() {
         // `let vN = old;` -> `let vN = fresh;` pairs each line with its own
         // old line (667 against 333 for every other line) below the cap.
