@@ -641,6 +641,69 @@ fn a_literal_none_match_checks_no_message_in_either_framework() -> Result<(), St
 }
 
 #[test]
+fn a_match_name_is_read_from_its_own_function_not_the_whole_file() -> Result<(), String> {
+    // The pattern name binds in the asserting function (plus module level),
+    // so a same-named assignment in another function neither hides it nor
+    // supplies it.
+    assert_ne!(
+        parse_class(
+            "def test_parse():\n    pattern = None\n    with pytest.raises(ValueError, match=pattern):\n        parse(\"\")\n\n\ndef test_other():\n    pattern = \"empty\"\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    let parametrized = |extra: &str| {
+        parse_class(&format!(
+            "@pytest.mark.parametrize(\"pattern\", [\"empty\"])\ndef test_parse(pattern):\n    with pytest.raises(ValueError, match=pattern):\n        parse(\"\")\n{extra}"
+        ))
+    };
+    assert_eq!(
+        parametrized("")?,
+        parametrized("\n\ndef test_other():\n    pattern = \".*\"\n")?
+    );
+    Ok(())
+}
+
+#[test]
+fn a_scoped_match_name_survives_signatures_line_endings_and_nesting() -> Result<(), String> {
+    let broad = |body: &str| -> Result<(), String> {
+        assert_ne!(parse_class(body)?, ExposureClass::Exposed, "{body}");
+        Ok(())
+    };
+    // A `#` inside a default string and a colon inside a default dict do not
+    // end the signature early and hide the body's binding.
+    broad(
+        "def test_parse(tag=\"#\", opts={\"k\": 1}):\n    pattern = \".*\"\n    with pytest.raises(ValueError, match=pattern):\n        parse(\"\")\n",
+    )?;
+    // CRLF line endings keep the byte offsets aligned.
+    broad(
+        &"def test_other():\n    pass\n\n\ndef test_parse():\n    pattern = \".*\"\n    with pytest.raises(ValueError, match=pattern):\n        parse(\"\")\n"
+            .replace('\n', "\r\n"),
+    )?;
+    // A nested def keeps reading the enclosing function's binding.
+    broad(
+        "def test_parse():\n    pattern = \".*\"\n\n    def check():\n        with pytest.raises(ValueError, match=pattern):\n            parse(\"\")\n\n    check()\n",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn a_unittest_method_reads_its_own_match_name_inside_its_class() -> Result<(), String> {
+    // A class body does not make a method nested, so the method's own
+    // binding is read and a sibling method's binding is not.
+    let class = classify(
+        PARSE,
+        3,
+        PARSE_OLD,
+        &test_module(
+            "import unittest\n\nfrom src.shop import parse",
+            "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        pattern = None\n        with self.assertRaisesRegex(ValueError, pattern):\n            parse(\"\")\n\n    def test_other(self):\n        pattern = \"empty\"\n",
+        ),
+    )?;
+    assert_ne!(class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
 fn a_parametrize_mark_does_not_stand_in_for_example_rows() -> Result<(), String> {
     assert_eq!(
         passed_class(
