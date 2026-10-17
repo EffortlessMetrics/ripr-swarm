@@ -291,6 +291,55 @@ pub(crate) fn resolve_repair_subject(root: &Path, item: &str) -> Result<RepairSu
     }
 }
 
+/// The repair route for the one finding the default human `ripr check`
+/// selects (#8166 Slice C), or `None` when that finding may not be offered
+/// a repair start. The seam↔finding binding is the shared
+/// [`finding_for_seam`](super::repair_card_handoff::finding_for_seam)
+/// authority over the live classified-seam inventory, and admission is the
+/// same [`repair_refusal_reason`] gate the explicit resolver applies, so
+/// the printed seam ID round-trips through [`resolve_repair_subject`] to
+/// the same seam. Fail-closed throughout: a truncated inventory, zero or
+/// several binding seams, an ineligible or policy-omitted seam, and any
+/// unreadable authority yield no route rather than a guessed one.
+pub(crate) fn check_repair_route(
+    root: &Path,
+    check_config: &crate::config::RiprConfig,
+    output: &super::CheckOutput,
+) -> Option<crate::app::RepairRoute> {
+    let finding = crate::output::human::selected_triage_finding(output, check_config)?;
+    finding.canonical_gap.as_ref()?;
+    let config = load_for_root(root).ok()?;
+    let (classified, limit_info) =
+        crate::analysis::inventory_classified_seams_at_with_config(root, &config).ok()?;
+    if let Some(info) = &limit_info
+        && info.analyzed < info.total
+    {
+        return None;
+    }
+    let policy = AgentBriefPolicy::from_config(&config);
+    let mut bound = classified.iter().filter(|entry| {
+        let canonical_gap_id = repair_packet_eligibility(entry).readiness.canonical_gap_id;
+        super::repair_card_handoff::finding_for_seam(
+            &output.findings,
+            entry,
+            canonical_gap_id.as_deref(),
+            &classified,
+        )
+        .is_some_and(|bound_finding| bound_finding.id == finding.id)
+    });
+    let entry = bound.next()?;
+    if bound.next().is_some() {
+        return None;
+    }
+    if repair_refusal_reason(entry, policy).is_some() {
+        return None;
+    }
+    Some(crate::app::RepairRoute {
+        finding_id: finding.id.clone(),
+        seam_id: entry.seam.id().as_str().to_string(),
+    })
+}
+
 fn ineligible_repair_item(root: &Path, item: &str, seam_id: &str, reason: &str) -> String {
     let list = format!(
         "`ripr pilot --root {}`",

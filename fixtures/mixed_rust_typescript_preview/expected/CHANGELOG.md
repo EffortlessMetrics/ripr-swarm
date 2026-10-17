@@ -684,3 +684,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — mixed_rust_typescript_preview (26)
+
+Reason:
+RIPR-SPEC-0001: bounded human check drill-down prints the eligible seam repair line (ripr repair <seam-id>, #8166 Slice C); fixture seam is the repair-eligible weakly gripped boundary gap
+
+Command:
+`cargo xtask goldens bless mixed_rust_typescript_preview --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

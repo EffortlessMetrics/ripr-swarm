@@ -301,6 +301,15 @@ pub(crate) fn render_human_triage(
                 out.push_str(&format!("  {command}\n"));
                 super::push_powershell_variant(out, "  ", &command);
             }
+            // #8166 Slice C: an eligible top finding also gets the repair
+            // start, naming the seam identity the check pipeline's
+            // producer-owned gate established. No route, no line: an
+            // ineligible or unbound finding keeps only explain/context.
+            if let Some(route) = navigation.repair_route_for(&finding.id) {
+                let command = navigation.repair_command(&route.seam_id);
+                out.push_str(&format!("  {command}\n"));
+                super::push_powershell_variant(out, "  ", &command);
+            }
             // #5355: a Rust gap gets the one-step route to a runnable test.
             // A gap withheld because ripr could not read the related
             // assertions (RIPR-SPEC-0240) claims no missing test, so it gets

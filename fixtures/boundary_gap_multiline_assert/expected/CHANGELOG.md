@@ -428,3 +428,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — boundary_gap_multiline_assert (17)
+
+Reason:
+RIPR-SPEC-0001: bounded human check drill-down prints the eligible seam repair line (ripr repair <seam-id>, #8166 Slice C); fixture seam is the repair-eligible weakly gripped boundary gap
+
+Command:
+`cargo xtask goldens bless boundary_gap_multiline_assert --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

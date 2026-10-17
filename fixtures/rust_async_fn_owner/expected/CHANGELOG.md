@@ -494,3 +494,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_async_fn_owner (27)
+
+Reason:
+RIPR-SPEC-0001: bounded human check drill-down prints the eligible seam repair line (ripr repair <seam-id>, #8166 Slice C); fixture seam is the repair-eligible weakly gripped boundary gap
+
+Command:
+`cargo xtask goldens bless rust_async_fn_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

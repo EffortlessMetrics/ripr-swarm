@@ -26,6 +26,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/snapshot_oracle/input --diff <cwd>/fixtures/snapshot_oracle/diff.patch --mode fast probe:src_lib.rs:predicate:7f019e84
   ripr context --root <cwd>/fixtures/snapshot_oracle/input --diff <cwd>/fixtures/snapshot_oracle/diff.patch --mode fast --at probe:src_lib.rs:predicate:7f019e84
+  ripr repair 832e8014674b0ece --root <cwd>/fixtures/snapshot_oracle/input
 
 More:
   Full evidence: rerun with --format human-full
