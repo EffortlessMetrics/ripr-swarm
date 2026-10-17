@@ -49,12 +49,14 @@ publish a Draft, and add the `merge-ready` label last. Adding `merge-ready`
 starts the non-required lanes once for the head it was applied to. A later push
 to a labeled PR does not rerun them: re-apply the label (remove it, then add it
 again) once the new head is ready to qualify. Removing the label does not cancel
-runs already in flight.
+runs already in flight. A push cancels a still-running gated run for the older
+head (the skipped `synchronize` run joins the same concurrency group), which is
+intended: the stale head is superseded and the label is re-applied for the new one.
 
 - Auxiliary labels (`full-ci`, `windows-ci`, `vscode`, `coverage`,
   `clippy-future`, `release-check`) still select extra lanes, but only together
-  with `merge-ready`. Add them first; adding one after `merge-ready` takes
-  effect at the next push.
+  with `merge-ready`. Add them first; one added after `merge-ready` takes effect
+  only when `merge-ready` is re-applied.
 - Gated: `ci.yml` jobs, `coverage`, `test-analytics`, `future-clippy`,
   `windows-advisory` (both jobs), `security`, `printed-command-paste`,
   `npm-launcher`, `zed-extension`, `pilot-ranking` and `public-proof`. Push,
@@ -629,13 +631,14 @@ allocate the heavy required gate (#4986):
 
 ```text
 opened / reopened / synchronize while Draft:
-  no Routed Rust Small run; existing early advisory events remain separate
+  no Routed Rust Small run; the merge-ready-gated lanes skip as well
 
 ready_for_review (Draft -> Ready):
   the sole pull-request qualification request; validates the exact Ready head
 
 labeled / unlabeled (any label):
   no Routed Rust Small run; labels never create or refresh the required context
+  (only `labeled` of `merge-ready` admits the gated non-required lanes)
 
 push to main / workflow_dispatch:
   launch under their own authorities, unchanged

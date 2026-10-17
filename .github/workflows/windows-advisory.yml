@@ -55,10 +55,10 @@ concurrency:
 #     touching path handling, fixtures, or process/IO code.
 #   - workflow_dispatch: manual run; `repeat_nested_alias` adds three isolated
 #     native repetitions for #4377 only when requested.
-#   - every subscribed `pull_request` action (`opened`, `synchronize`,
-#     `reopened`, `labeled`; `unlabeled` stays omitted per #4380) and the
-#     schedule/dispatch triggers above also run the small always-on advisory
-#     subset job below (`windows-advisory-subset`, #4938); the full suite
+#   - an explicit `merge-ready` `labeled` event on a `pull_request` (the
+#     other subscribed actions are skipped by the job-level guard; `unlabeled`
+#     stays omitted per #4380) and the schedule/dispatch triggers above also
+#     run the small advisory subset job below (`windows-advisory-subset`, #4938); the full suite
 #     keeps its label/schedule/dispatch selection unchanged.
 #
 # The suite runs **twice** on purpose, because one sample cannot separate a
@@ -267,9 +267,9 @@ jobs:
   # #4337 (Windows-host-only clippy in cfg(windows) test code), #4918
   # (cache-unusable warning silent on native Windows), and #4921 (gap_artifacts
   # tests failing on a POSIX-only test root) were each caught only because
-  # someone ran the suite or clippy natively on Windows. This job runs on every
-  # subscribed `pull_request` action (`opened`, `synchronize`, `reopened`,
-  # `labeled` -- no labels required; `unlabeled` stays omitted per #4380) and
+  # someone ran the suite or clippy natively on Windows. This job runs on an
+  # explicit `merge-ready` `labeled` event (other subscribed actions are skipped
+  # by the guard; `unlabeled` stays omitted per #4380) and
   # covers exactly that family:
   #
   #   - lsp::gap_artifacts: the #4921 class;
