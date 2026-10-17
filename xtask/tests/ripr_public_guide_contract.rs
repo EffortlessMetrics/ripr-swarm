@@ -153,8 +153,15 @@ fn doc_section(doc: &str, heading: &str) -> Result<String, String> {
 #[test]
 fn docs_keep_the_canonical_role_vocabulary() -> Result<(), String> {
     assert_doc_command_routes(COMMAND_HIERARCHY_DOC)?;
-    if first_bash_block(ROOT_README)? != "cargo install ripr ripr check" {
-        return Err("README first run must install ripr and inspect a change".to_string());
+    // The lead install is the checksummed prebuilt archive (no Rust toolchain,
+    // #5311); `cargo install ripr` is the documented compile-from-source
+    // alternative below it. The block must verify the download and end by
+    // inspecting a change.
+    let first_run = first_bash_block(ROOT_README)?;
+    if !first_run.contains("sha256sum -c") || !first_run.ends_with(" ripr check") {
+        return Err(
+            "README first run must install a checksummed ripr and inspect a change".to_string(),
+        );
     }
     for target in [
         "docs/QUICKSTART.md#cli-first-hour",
