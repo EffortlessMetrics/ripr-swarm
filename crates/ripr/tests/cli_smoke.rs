@@ -2293,8 +2293,8 @@ fn selector_location_misses_explain_syntax_and_preserve_retry_scope()
     let diff_arg = diff.display().to_string();
     let expected_listing = format!(
         "ripr check --root {} --diff {} --json",
-        renderer_shell_arg(&root_arg),
-        renderer_shell_arg(&diff_arg)
+        renderer_shell_arg(&rendered_path(&root_arg)),
+        renderer_shell_arg(&rendered_path(&diff_arg))
     );
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
         let listed = run_command(
@@ -23601,12 +23601,17 @@ fn check_dirty_tree_with_deleted_head_tip_names_damage() -> Result<(), String> {
 }
 
 /// The argv of a printed `ripr ...` command, without the program name.
-/// Printed commands quote with POSIX single quotes (`shell_arg`).
+/// Printed commands quote with POSIX single quotes (`shell_arg`), or on
+/// Windows with console double quotes.
 fn printed_ripr_args(command: &str) -> Result<Vec<String>, String> {
+    printed_ripr_args_for(command, cfg!(windows))
+}
+
+fn printed_ripr_args_for(command: &str, windows: bool) -> Result<Vec<String>, String> {
     let mut tokens = Vec::new();
     let mut token = String::new();
     let mut in_token = false;
-    let mut chars = command.chars();
+    let mut chars = command.chars().peekable();
     while let Some(ch) = chars.next() {
         match ch {
             '\'' => {
@@ -23614,6 +23619,20 @@ fn printed_ripr_args(command: &str) -> Result<Vec<String>, String> {
                 loop {
                     match chars.next() {
                         Some('\'') => break,
+                        Some(inner) => token.push(inner),
+                        None => return Err(format!("unterminated quote in `{command}`")),
+                    }
+                }
+            }
+            '"' if windows => {
+                in_token = true;
+                loop {
+                    match chars.next() {
+                        Some('"') if chars.peek() == Some(&'"') => {
+                            chars.next();
+                            token.push('"');
+                        }
+                        Some('"') => break,
                         Some(inner) => token.push(inner),
                         None => return Err(format!("unterminated quote in `{command}`")),
                     }
@@ -23642,17 +23661,50 @@ fn printed_ripr_args(command: &str) -> Result<Vec<String>, String> {
     }
 }
 
-/// `listing` with its root token spelled as `ripr` prints it (quoted only
-/// when the path needs it).
+/// `listing` with its root token spelled as `ripr` prints it on the running
+/// host (separators, then quoted only when the path needs it).
 fn printed_ripr_command_text(listing: &str, root: &str) -> String {
-    let needs_quotes = root
-        .chars()
-        .any(|ch| !(ch.is_ascii_alphanumeric() || "/._-:@%+=,".contains(ch)));
-    if needs_quotes {
-        listing.replacen(root, &format!("'{root}'"), 1)
-    } else {
-        listing.to_string()
-    }
+    printed_ripr_command_text_for(listing, root, cfg!(windows))
+}
+
+fn printed_ripr_command_text_for(listing: &str, root: &str, windows: bool) -> String {
+    let rendered = rendered_path_for(root, windows);
+    listing.replacen(root, &renderer_shell_arg_for(&rendered, windows), 1)
+}
+
+#[test]
+fn printed_command_helpers_round_trip_both_host_spellings() -> Result<(), String> {
+    let windows_root = r"C:\Users\RUNNER~1\Temp\ripr-drill";
+    let listing = format!("ripr check --root {windows_root} --base HEAD --json");
+    let printed = printed_ripr_command_text_for(&listing, windows_root, true);
+    assert_eq!(
+        printed,
+        "ripr check --root \"C:/Users/RUNNER~1/Temp/ripr-drill\" --base HEAD --json"
+    );
+    assert_eq!(
+        printed_ripr_args_for(&printed, true)?,
+        [
+            "check",
+            "--root",
+            "C:/Users/RUNNER~1/Temp/ripr-drill",
+            "--base",
+            "HEAD",
+            "--json"
+        ]
+    );
+    let unix =
+        printed_ripr_command_text_for("ripr check --root /tmp/a b --json", "/tmp/a b", false);
+    assert_eq!(unix, "ripr check --root '/tmp/a b' --json");
+    assert_eq!(
+        printed_ripr_args_for(&unix, false)?,
+        ["check", "--root", "/tmp/a b", "--json"]
+    );
+    // A plain root stays bare on both hosts.
+    assert_eq!(
+        printed_ripr_command_text_for("ripr check --root /tmp/p --json", "/tmp/p", true),
+        "ripr check --root /tmp/p --json"
+    );
+    Ok(())
 }
 
 fn first_finding_id(stdout: &[u8]) -> Result<String, String> {
@@ -25583,9 +25635,16 @@ fn agent_status_follows_a_focused_test_committed_between_the_phases()
 }
 
 /// Quote one argument exactly as the product's generated-command renderer
-/// (`agent::loop_commands::shell_arg`) does: a plain token stays bare, any
-/// other value is POSIX single-quoted.
+/// (`agent::loop_commands::shell_arg`) does on the running host.
 fn renderer_shell_arg(value: &str) -> String {
+    renderer_shell_arg_for(value, cfg!(windows))
+}
+
+/// Host-parameterised core of [`renderer_shell_arg`] (#6947): a plain token
+/// stays bare; any other value is POSIX single-quoted, or on Windows
+/// double-quoted with an interior `"` doubled (`shell_arg_for`'s console form).
+/// Parameterised so both hosts' spellings are testable on any machine.
+fn renderer_shell_arg_for(value: &str, windows: bool) -> String {
     if !value.is_empty()
         && value
             .chars()
@@ -25593,7 +25652,49 @@ fn renderer_shell_arg(value: &str) -> String {
     {
         return value.to_string();
     }
+    if windows && !value.chars().any(|ch| matches!(ch, '$' | '`')) {
+        let trailing = value.chars().rev().take_while(|ch| *ch == '\\').count();
+        return format!(
+            "\"{}{}\"",
+            value.replace('"', "\"\""),
+            "\\".repeat(trailing)
+        );
+    }
     shell_single_quoted(value)
+}
+
+/// A selected path as the product's command renderer spells it: on Windows
+/// `\` is a separator and renders as `/` (`root_path_display`); on Unix the
+/// path renders exactly as the filesystem spells it.
+fn rendered_path_for(path: &str, windows: bool) -> String {
+    if windows {
+        path.replace('\\', "/")
+    } else {
+        path.to_string()
+    }
+}
+
+fn rendered_path(path: &str) -> String {
+    rendered_path_for(path, cfg!(windows))
+}
+
+#[test]
+fn renderer_spellings_follow_the_host_for_windows_temp_roots() {
+    // #6947: a Windows temp root carries `\` separators and an 8.3 `~`, so
+    // the product prints it with `/` separators inside console double quotes
+    // while a Unix root keeps its bytes inside single quotes.
+    let windows_root = r"C:\Users\RUNNER~1\AppData\Local\Temp\ripr-x";
+    assert_eq!(
+        renderer_shell_arg_for(&rendered_path_for(windows_root, true), true),
+        "\"C:/Users/RUNNER~1/AppData/Local/Temp/ripr-x\""
+    );
+    assert_eq!(
+        renderer_shell_arg_for(&rendered_path_for("/tmp/ripr x", false), false),
+        "'/tmp/ripr x'"
+    );
+    assert_eq!(renderer_shell_arg_for("/tmp/plain", true), "/tmp/plain");
+    assert_eq!(renderer_shell_arg_for("it's", true), "\"it's\"");
+    assert_eq!(renderer_shell_arg_for("it's", false), r"'it'\''s'");
 }
 
 /// Decode one rendered POSIX shell word (bare, single-quoted, or `'\''`
@@ -25630,7 +25731,7 @@ fn decode_shell_token_inverts_the_renderer_quoting() {
         r"/tmp/back\slash it's",
     ] {
         assert_eq!(
-            decode_shell_token(&renderer_shell_arg(value)).as_deref(),
+            decode_shell_token(&renderer_shell_arg_for(value, false)).as_deref(),
             Some(value),
             "round trip for {value:?}"
         );
