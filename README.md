@@ -116,9 +116,10 @@ checkout of the base branch, edit a tracked source file, then run `ripr check`
 to inspect that change. Stage a new file with `git add -N PATH` to include it.
 No commit or configuration file is needed for this edit-and-check loop.
 
-Installing from Git compiles in the workspace, with its fat-LTO release profile.
-A `cargo build --release` there took about 12 minutes (751 s) on a cold 4-core
-Linux container in October 2026 (`cargo install ripr` for 0.10.0 took about 2
+Installing from Git compiles in the workspace, with its thin-LTO release profile
+(16 codegen units); a cold `cargo build --release` there took about 6 minutes
+(366 s) on a 4-core Linux container in October 2026, against 17 minutes (1037 s)
+for the earlier fat-LTO single-codegen-unit profile (`cargo install ripr` for 0.10.0 took about 2
 minutes on an earlier run). The packaged 0.11.0 crate drops that profile, so
 `cargo install ripr --locked` should build in about 4.6 minutes (275 s) once
 0.11.0 is on crates.io (measured by building the packaged crate with

@@ -4,13 +4,17 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::policy::distribution::{DistributionContract, load_distribution_contract};
-use crate::run::run_output_owned;
+use crate::run::{run_output_owned, run_output_owned_with_envs};
 
 use super::payload::FinalNativePayloadIdentity;
 use super::sha256_file;
 
 const PRODUCER_SCHEMA_VERSION: u32 = 1;
 const PRODUCER_KIND: &str = "ripr_final_native_payload_producer_build";
+const SHIPPED_RELEASE_PROFILE_ENV: &[(&str, &str)] = &[
+    ("CARGO_PROFILE_RELEASE_LTO", "true"),
+    ("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "1"),
+];
 pub(crate) const PRODUCER_RECEIPT_FILE: &str = "producer-build.json";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -82,7 +86,11 @@ pub(crate) fn build_release_executable(
         target.to_string(),
         "--message-format=json-render-diagnostics".to_string(),
     ];
-    let output = run_output_owned("cargo", &cargo_arguments)?;
+    // Archives ship the fully optimized profile; the workspace `release`
+    // profile trades that for build time. The overlay keeps the recorded
+    // cargo arguments unchanged.
+    let output =
+        run_output_owned_with_envs("cargo", &cargo_arguments, SHIPPED_RELEASE_PROFILE_ENV)?;
     let expected_executable = Path::new("target")
         .join(target)
         .join("release")

@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- The workspace release profile now uses thin LTO with 16 codegen units instead of fat LTO with one, cutting a cold 4-core `cargo build --release` (and `cargo install --git`) from 1037 s to 366 s. Release archives still build with fat LTO and one codegen unit through an environment overlay in the archive producer, so shipped binaries and the recorded cargo arguments are unchanged (#6661).
