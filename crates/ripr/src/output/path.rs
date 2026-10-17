@@ -48,8 +48,9 @@ pub(crate) fn repository_relative_path_text(root: &Path, file: &Path) -> String 
     repository_relative_path_text_with(root, file, cfg!(windows), host_paths_case_insensitive())
 }
 
-/// [`repository_relative_path_text`] with the host made explicit so both
-/// answers are testable anywhere (#4378).
+/// Test-only wrapper over [`repository_relative_path_text_with`] that ties
+/// case-insensitivity to the `windows` flag, so both answers stay testable
+/// anywhere (#4378).
 #[cfg(test)]
 pub(crate) fn repository_relative_path_text_on(root: &Path, file: &Path, windows: bool) -> String {
     repository_relative_path_text_with(root, file, windows, windows)
