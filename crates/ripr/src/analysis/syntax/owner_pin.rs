@@ -3,8 +3,8 @@
 //! Oracle extraction intentionally retains deferred assertions. This query
 //! admits only uniquely identified assertions on ordinary statement paths,
 //! optionally through one syntactically bound, directly invoked closure.
-//! A test may also borrow the `assert_eq!` of one test-local check helper it
-//! calls eagerly (#6482); see [`local_helper_assertions`].
+//! A test may also borrow the `assert_eq!` or `assert!` of one test-local check
+//! helper it calls eagerly (#6482, #7788); see [`local_helper_assertions`].
 
 mod fallible_check;
 mod literal_json;
@@ -2133,8 +2133,13 @@ fn local_helper_assertions(
             .descendants()
             .filter_map(ast::MacroCall::cast)
         {
+            // The same candidate spellings as the test's own assertions.
+            // Their execution and bindings still pass the shared helper gate.
             if call.path().is_none_or(|path| {
-                !names_candidate_assertion(&path.syntax().text().to_string(), &["assert_eq"])
+                !names_candidate_assertion(
+                    &path.syntax().text().to_string(),
+                    &["assert_eq", "assert"],
+                )
             }) {
                 continue;
             }
