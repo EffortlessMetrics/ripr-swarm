@@ -1839,6 +1839,17 @@ fn ok_literal() {
                 "Result::expect_err(check(300).and(Err(E::Other)), \"too long\");",
                 vec![],
             ),
+            // A returned or operand UFCS value is used, not discarded.
+            (
+                "expect_err_ufcs_returned",
+                "return Result::expect_err(check(300), \"too long\");",
+                vec![],
+            ),
+            (
+                "expect_err_ufcs_negated",
+                "!Result::expect_err(check(300), \"too long\");",
+                vec![],
+            ),
             (
                 "expect_err_compared_binding",
                 "let e = check(300).expect_err(\"too long\");\n    assert_eq!(e, E::TooLong);",
