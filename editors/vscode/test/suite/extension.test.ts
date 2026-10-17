@@ -3944,6 +3944,7 @@ suite('Extension Smoke', () => {
       workspaceAmbiguous: true,
       resolvingServer: true,
       serverUnavailable: true,
+      serverFailed: true,
       starting: true,
       analysisQueued: true,
       ready: true,

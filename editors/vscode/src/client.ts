@@ -736,7 +736,7 @@ export class RiprClientController {
         // server that already died at the handshake.
         const reason = error instanceof Error ? error.message : String(error);
         this.updateStatus({
-          kind: 'serverUnavailable',
+          kind: 'serverFailed',
           summary: 'ripr server failed to start.',
           detail: `Server: ${server.source} (${server.detail})\n${reason}`,
           nextStep: 'Run ripr: Show Output to see the server error, fix it, then run ripr: Restart Server.'
@@ -3178,6 +3178,8 @@ function serverStartedSummary(kind: RiprStatusKind): string {
       return 'not yet; resolving server binary';
     case 'serverUnavailable':
       return 'no; server unavailable';
+    case 'serverFailed':
+      return 'no; server failed to start';
     case 'disabled':
       return 'no; extension disabled';
     case 'noWorkspace':
@@ -3210,6 +3212,7 @@ function evidenceFreshnessSummary(kind: RiprStatusKind): string {
     case 'noEnabledLanguages':
       return 'not projected; languages are disabled';
     case 'serverUnavailable':
+    case 'serverFailed':
     case 'noWorkspace':
     case 'workspaceAmbiguous':
     case 'disabled':
