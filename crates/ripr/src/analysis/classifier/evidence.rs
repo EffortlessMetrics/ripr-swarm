@@ -280,14 +280,28 @@ impl ClassifiedProbeEvidence {
             // #7970: a function that is not one of the related tests and
             // calls the owner by name (a wrapper, a helper, a production
             // caller) may feed it inputs the literal call lines do not show.
+            // #8462: a production function that holds the owner without a call
+            // shape (`let f = owner; f(1, 1)`) or a `macro_rules!` body that
+            // expands to a call is invisible to `calls`, so the bare name in
+            // either counts as another caller.
             context.owner_fn.is_none_or(|owner| {
-                context.index.functions().iter().any(|function| {
+                let other_function_holds_owner = context.index.functions().iter().any(|function| {
                     function.id != owner.id
                         && !test_summaries
                             .iter()
                             .any(|test| test.file == function.file && test.name == function.name)
-                        && function.calls.iter().any(|call| call.name == owner.name)
-                })
+                        && (function.calls.iter().any(|call| call.name == owner.name)
+                            || mentions_identifier(function.body.as_str(), &owner.name))
+                });
+                // Only the `&&`/`||` operand reading consumes this, so other
+                // families skip the per-file macro scan.
+                other_function_holds_owner
+                    || (matches!(context.probe.family, ProbeFamily::Predicate)
+                        && context.index.files().values().any(|file| {
+                            macro_rules_bodies(&file.source)
+                                .iter()
+                                .any(|body| mentions_identifier(body, &owner.name))
+                        }))
             }),
         );
         // #6796's computed-argument discipline, wrapper edition (#6672,
@@ -1441,6 +1455,57 @@ fn preferred_refusal_note(notes: Vec<AssertionRefusalNote>) -> Option<AssertionR
     // `min_by_key` keeps the first of equal ranks, so test order still
     // decides within a rank.
     notes.into_iter().min_by_key(rank)
+}
+
+/// True when `name` occurs as a whole identifier in the code of `text`,
+/// ignoring comments and string contents.
+fn mentions_identifier(text: &str, name: &str) -> bool {
+    if name.is_empty() || !text.contains(name) {
+        return false;
+    }
+    mask_comments_and_strings(text)
+        .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .any(|token| token == name)
+}
+
+/// The brace-delimited bodies of every `macro_rules!` item in `source`.
+fn macro_rules_bodies(source: &str) -> Vec<String> {
+    if !source.contains("macro_rules!") {
+        return Vec::new();
+    }
+    let masked = mask_comments_and_strings(source);
+    let mut bodies = Vec::new();
+    let mut from = 0;
+    while let Some(found) = masked[from..].find("macro_rules!") {
+        let start = from + found;
+        let Some(open) = masked[start..]
+            .find(['{', '(', '['])
+            .map(|offset| start + offset)
+        else {
+            break;
+        };
+        let (opener, closer) = match masked.as_bytes().get(open) {
+            Some(b'{') => (b'{', b'}'),
+            Some(b'(') => (b'(', b')'),
+            _ => (b'[', b']'),
+        };
+        let mut depth = 0usize;
+        let mut end = masked.len();
+        for (offset, byte) in masked.as_bytes()[open..].iter().enumerate() {
+            if *byte == opener {
+                depth += 1;
+            } else if *byte == closer {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    end = open + offset + 1;
+                    break;
+                }
+            }
+        }
+        bodies.push(masked[open..end].to_string());
+        from = end;
+    }
+    bodies
 }
 
 #[cfg(test)]

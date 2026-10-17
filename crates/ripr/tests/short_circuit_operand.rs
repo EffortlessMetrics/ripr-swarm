@@ -333,3 +333,54 @@ fn an_or_with_an_input_that_evaluates_the_changed_operand_reads_exposed() -> Res
     );
     Ok(())
 }
+
+const DIRECT_ONLY: &str = "use short_circuit::either;\n\n#[test]\nfn direct() {\n    assert_eq!(either(0, 3), true);\n    assert_eq!(either(0, 0), true);\n}\n";
+
+fn other_production_code_may_evaluate_the_changed_operand(extra: &str) -> Result<(), String> {
+    let source = format!("{}\n{extra}", lib("||", "y == 1"));
+    let findings = findings_on_changed_line(
+        &source,
+        "    x == 0 || y == 1",
+        "    x == 0 || y == 0",
+        DIRECT_ONLY,
+    )?;
+    assert_no_skipped_operand_claim(&findings);
+    Ok(())
+}
+
+#[test]
+fn a_function_pointer_binding_may_evaluate_the_changed_operand() -> Result<(), String> {
+    // `either(1, 1)` runs through the pointer and evaluates `y == 1`.
+    other_production_code_may_evaluate_the_changed_operand(
+        "pub fn via_pointer() -> bool {\n    let f = either;\n    f(1, 1)\n}\n",
+    )
+}
+
+#[test]
+fn a_production_macro_may_evaluate_the_changed_operand() -> Result<(), String> {
+    other_production_code_may_evaluate_the_changed_operand(
+        "macro_rules! both_ones {\n    () => {\n        either(1, 1)\n    };\n}\n\npub fn via_macro() -> bool {\n    both_ones!()\n}\n",
+    )
+}
+
+#[test]
+fn an_unrelated_mention_in_a_string_keeps_the_short_circuit_reading() -> Result<(), String> {
+    // Control: a string or comment naming `either` is not a use of it.
+    let source = format!(
+        "{}\n// either(1, 1) is never called.\npub fn note() -> &'static str {{\n    \"either\"\n}}\n",
+        lib("||", "y == 1")
+    );
+    let findings = findings_on_changed_line(
+        &source,
+        "    x == 0 || y == 1",
+        "    x == 0 || y == 0",
+        DIRECT_ONLY,
+    )?;
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.ripr.infect.summary.contains("short-circuits")),
+        "{findings:?}"
+    );
+    Ok(())
+}
