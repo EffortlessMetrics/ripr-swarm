@@ -1,5 +1,6 @@
 //! Literal API identity fixtures for actual production-shell replays.
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::process::Command;
 
 pub fn fixture() -> Result<Value, String> {
@@ -40,6 +41,8 @@ pub fn api_pr(pr: &Value) -> Value {
 pub const SHARED_PROGRAMS: &[&str] = &[
     "NATIVE_REQUEST_JQ",
     "NATIVE_COMMIT_JQ",
+    "QUALIFICATION_SUBJECT_JQ",
+    "FINAL_CURRENTNESS_JQ",
     "NATIVE_REVIEWS_JQ",
     "NATIVE_PRIOR_REQUESTS_JQ",
     "NATIVE_PRIOR_JOBS_JQ",
@@ -59,7 +62,13 @@ pub fn configure(command: &mut Command, workflow: &str) -> Result<(), String> {
         command.env(name, source);
     }
     let literal = fixture()?;
+    let subject = literal["SUBJECT"].to_string();
+    let identity = format!("{:x}", Sha256::digest(subject.as_bytes()));
     command
+        .env("GITHUB_RUN_ID", "1000")
+        .env("GITHUB_RUN_ATTEMPT", "1")
+        .env("EXPECTED_REQUEST_ID", "1000-1")
+        .env("EXPECTED_IDENTITY", identity)
         .env("REPOSITORY_ID", "R_fixture")
         .env("PR_ID", "PR_fixture")
         .env("PR_DATABASE_ID", "8008")
@@ -72,6 +81,6 @@ pub fn configure(command: &mut Command, workflow: &str) -> Result<(), String> {
         )
         .env("NATIVE_SUBJECT_JQ", program(workflow, "NATIVE_SUBJECT_JQ"))
         .env("MOCK_FRAME", literal["FRAME"].to_string())
-        .env("EXPECTED_SUBJECT", literal["SUBJECT"].to_string());
+        .env("EXPECTED_SUBJECT", subject);
     Ok(())
 }

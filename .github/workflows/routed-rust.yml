@@ -78,6 +78,27 @@ env:
     any(.labels[]; (.name | ascii_downcase) == "merge-ready")
   NATIVE_COMMIT_JQ: |
     .sha == $merge and .tree.sha == $tree and (.parents | map(.sha) == [$base,$head])
+  QUALIFICATION_SUBJECT_JQ: |
+    def oid: type == "string" and test("^[0-9a-f]{40}$");
+    . as $q | if (($q.base | oid) and ($q.tree | oid)) then
+      {version:2,repository_id:$repo_id,repository:$repo,pr_id:$pr_id,pr_number:$number,
+       destination_repository_id:$repo_id,destination_ref:"refs/heads/main",
+       head:$head,base:$q.base,merge:$merge,tree:$q.tree,parents:[$q.base,$head],
+       workflow_generation:$generation} as $expected |
+      if $q == $expected then $q else error("substituted qualification subject") end
+    else error("invalid qualification subject") end
+  FINAL_CURRENTNESS_JQ: |
+    def oid: type == "string" and test("^[0-9a-f]{40}$");
+    .data.repository as $r | $r.pullRequest as $p |
+    if (.errors == null and $r.id == $repo_id and $r.nameWithOwner == $repo and
+        $p.id == $pr_id and $p.number == $number and $p.headRepository.id == $repo_id and
+        $p.headRefOid == $head and $p.baseRepository.id == $repo_id and
+        $p.baseRefName == "main" and $p.baseRef.name == "main" and
+        $p.baseRef.prefix == "refs/heads/" and $p.baseRef.repository.id == $repo_id and
+        $p.baseRef.target.__typename == "Commit" and ($p.baseRef.target.oid | oid) and
+        $r.ref.name == "main" and $r.ref.prefix == "refs/heads/" and
+        $r.ref.target.__typename == "Commit" and $r.ref.target.oid == $p.baseRef.target.oid)
+    then $r.ref.target.oid else error("incoherent current repository observation") end
   NATIVE_REVIEWS_JQ: |
     [ .[][] ] as $reviews |
     ($reviews | map(select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")) |
@@ -153,6 +174,7 @@ jobs:
       generation: ${{ steps.preflight.outputs.generation }}
       subject: ${{ steps.preflight.outputs.subject }}
       identity: ${{ steps.preflight.outputs.identity }}
+      request_id: ${{ steps.preflight.outputs.request_id }}
     steps:
       - name: Reconcile native request and current readiness
         id: preflight
@@ -178,6 +200,7 @@ jobs:
           fi
           [[ "$REPOSITORY" = EffortlessMetrics/ripr-swarm && "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
           [[ -n "$REPOSITORY_ID" && -n "$PR_ID" ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ && "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
           for sha in "$HEAD_SHA" "$SUBJECT_SHA" "$GENERATION"; do [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; done
           permission=$(gh api "repos/$REPOSITORY/collaborators/$ACTOR/permission" --jq .permission)
           case "$permission" in admin|maintain|write) ;; *) echo 'Untrusted request actor' >&2; exit 1;; esac
@@ -249,6 +272,7 @@ jobs:
           {
             printf 'head=%s\nbase=%s\nmerge=%s\ntree=%s\ngeneration=%s\n' "$HEAD_SHA" "$BASE_SHA" "$SUBJECT_SHA" "$tree" "$GENERATION"
             printf 'subject=%s\nidentity=%s\nexecute=true\nprior_result=none\n' "$subject" "$identity"
+            printf 'request_id=%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
           } >> "$GITHUB_OUTPUT"
       - name: Admitted v2 ${{ steps.preflight.outputs.identity }} run ${{ github.run_id }} attempt ${{ github.run_attempt }}
         if: steps.preflight.outputs.execute == 'true'
@@ -699,6 +723,39 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Verify immutable qualification subject
+        if: github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          LABEL: ${{ github.event.label.name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          STORED_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          SUBJECT_SHA: ${{ github.sha }}
+          REPOSITORY_ID: ${{ github.event.repository.node_id }}
+          PR_ID: ${{ github.event.pull_request.node_id }}
+          PR_DATABASE_ID: ${{ github.event.pull_request.id }}
+          GENERATION: ${{ github.workflow_sha }}
+          EXPECTED_SUBJECT: ${{ needs.admission.outputs.subject }}
+          EXPECTED_IDENTITY: ${{ needs.admission.outputs.identity }}
+          EXPECTED_REQUEST_ID: ${{ needs.admission.outputs.request_id }}
+        run: |
+          set -euo pipefail
+          trap 'status=$?; printf "qualification_refusal status=%s\n" "$status" >&2; exit "$status"' ERR
+          [ "${LABEL,,}" = merge-ready ] || exit 0
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ && "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$EXPECTED_REQUEST_ID" == "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" ]] || { echo 'Qualification attempt substitution refused' >&2; exit 1; }
+          for sha in "$HEAD_SHA" "$SUBJECT_SHA" "$GENERATION"; do [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; done
+          candidate=$(jq -ceS --arg repo "$REPOSITORY" --arg repo_id "$REPOSITORY_ID" --arg pr_id "$PR_ID" --argjson number "$PR_NUMBER" --arg head "$HEAD_SHA" --arg merge "$SUBJECT_SHA" --arg generation "$GENERATION" "$QUALIFICATION_SUBJECT_JQ" <<< "$EXPECTED_SUBJECT")
+          identity=$(printf '%s' "$candidate" | sha256sum | cut -d ' ' -f1)
+          [[ "$identity" == "$EXPECTED_IDENTITY" ]] || { echo 'Qualification identity substitution refused' >&2; exit 1; }
+          base=$(jq -er .base <<< "$candidate")
+          tree=$(jq -er .tree <<< "$candidate")
+          commit=$(gh api "repos/$REPOSITORY/git/commits/$SUBJECT_SHA")
+          jq -e --arg merge "$SUBJECT_SHA" --arg base "$base" --arg head "$HEAD_SHA" --arg tree "$tree" "${NATIVE_COMMIT_JQ:?}" <<< "$commit" >/dev/null
+          printf 'Qualified request `%s`, identity `%s`, subject `%s`; final_currentness_required=true.\n' "$EXPECTED_REQUEST_ID" "$EXPECTED_IDENTITY" "$candidate" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Recheck current head and base before result publication
         if: github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready'
         env:
@@ -714,6 +771,8 @@ jobs:
           PR_DATABASE_ID: ${{ github.event.pull_request.id }}
           GENERATION: ${{ github.workflow_sha }}
           EXPECTED_SUBJECT: ${{ needs.admission.outputs.subject }}
+          EXPECTED_IDENTITY: ${{ needs.admission.outputs.identity }}
+          EXPECTED_REQUEST_ID: ${{ needs.admission.outputs.request_id }}
         run: |
           set -euo pipefail
           readiness_refused() { # Advisory diagnostics preserve the original status.
@@ -723,9 +782,7 @@ jobs:
             printf 'readiness_refusal phase=%s status=%s\n' "$readiness_phase" "$status" >&2
             case "$readiness_phase" in
               subject-check|subject-final-check)
-                observed=${subject_before-}
-                [ "$readiness_phase" != subject-final-check ] || observed=${subject_after-}
-                diagnostic=$(jq -cn --arg expected "$EXPECTED_SUBJECT" --arg observed "$observed" "${READINESS_SUBJECT_DIAGNOSTIC_JQ:-halt_error(5)}" 2>/dev/null) || diagnostic='{"payload":"diagnostic-unavailable"}'
+                diagnostic='{"payload":"current-repository-observation","currentness_established":false}'
                 ;;
               pull-request-check)
                 diagnostic=$(jq -cs --arg repo "$REPOSITORY" --arg head "$HEAD_SHA" --arg base "$STORED_BASE_SHA" --arg subject "$SUBJECT_SHA" "${READINESS_PR_DIAGNOSTIC_JQ:-halt_error(5)}" <<< "${pr-}" 2>/dev/null) || diagnostic='{"payload":"invalid-json-or-shape"}'
@@ -752,7 +809,7 @@ jobs:
               jq -e --arg repo "$REPOSITORY" --arg repo_id "$REPOSITORY_ID" --arg pr_id "$PR_ID" --argjson number "$PR_NUMBER" --arg head "$HEAD_SHA" --arg merge "$SUBJECT_SHA" "${NATIVE_REQUEST_JQ:?}" <<< "$pr" >/dev/null || return
               state=$(jq -er 'if .mergeable == null then "pending" elif .mergeable == true then "ready" else "refused" end' <<< "$pr") || return
               case "$state" in
-                ready) jq -e --arg merge "$SUBJECT_SHA" ' .merge_commit_sha == $merge ' <<< "$pr" >/dev/null || return; return 0 ;;
+                ready) jq -e '.merge_commit_sha | type == "string" and test("^[0-9a-f]{40}$")' <<< "$pr" >/dev/null || return; return 0 ;;
                 refused) echo 'Mergeability refused' >&2; return 1 ;;
                 pending) [ "$attempt" = 3 ] || sleep 2 ;;
               esac
@@ -760,21 +817,15 @@ jobs:
             echo 'Mergeability not established within bounded refresh' >&2
             return 1
           }
-          read_subject() {
-            local frame candidate base tree
+          observe_current_base() {
+            local frame
             frame=$(gh api graphql -f query="$NATIVE_SUBJECT_QUERY" -F number="$PR_NUMBER") || return
-            candidate=$(jq -ceS --arg repo "$REPOSITORY" --arg repo_id "$REPOSITORY_ID" --arg pr_id "$PR_ID" --argjson number "$PR_NUMBER" --arg head "$HEAD_SHA" --arg merge "$SUBJECT_SHA" --arg generation "$GENERATION" "$NATIVE_SUBJECT_JQ" <<< "$frame") || return
-            base=$(jq -er .base <<< "$candidate") || return
-            tree=$(jq -er .tree <<< "$candidate") || return
-            commit=$(gh api "repos/$REPOSITORY/git/commits/$SUBJECT_SHA") || return
-            jq -e --arg merge "$SUBJECT_SHA" --arg base "$base" --arg head "$HEAD_SHA" --arg tree "$tree" "${NATIVE_COMMIT_JQ:?}" <<< "$commit" >/dev/null || return
-            printf '%s\n' "$candidate"
+            jq -er --arg repo "$REPOSITORY" --arg repo_id "$REPOSITORY_ID" --arg pr_id "$PR_ID" --argjson number "$PR_NUMBER" --arg head "$HEAD_SHA" "$FINAL_CURRENTNESS_JQ" <<< "$frame"
           }
           readiness_phase='subject-refresh'
           settle_request || readiness_refused
           readiness_phase='subject-check'
-          subject_before=$(read_subject) || readiness_refused
-          [[ -n "$EXPECTED_SUBJECT" && "$subject_before" == "$EXPECTED_SUBJECT" ]] || readiness_refused
+          current_base_before=$(observe_current_base) || readiness_refused
           readiness_phase='reviews-fetch'
           reviews=$(gh api --paginate "repos/$REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100")
           readiness_phase='author-parse'
@@ -796,8 +847,15 @@ jobs:
           readiness_phase='subject-final-refresh'
           settle_request || readiness_refused
           readiness_phase='subject-final-check'
-          subject_after=$(read_subject) || readiness_refused
-          [[ "$subject_after" == "$subject_before" && "$subject_after" == "$EXPECTED_SUBJECT" ]] || readiness_refused
+          current_base_after=$(observe_current_base) || readiness_refused
+          # Qualification describes Tq. Bm compatibility and merge permission are
+          # a separate final judgment, even when the observed base did not move.
+          {
+            printf '### Immutable qualification subject\n\n'
+            printf 'Request: `%s`; identity: `%s`\n\n' "$EXPECTED_REQUEST_ID" "$EXPECTED_IDENTITY"
+            printf 'Observed main before/after review: `%s` / `%s`\n\n' "$current_base_before" "$current_base_after"
+            printf 'final_currentness_required=true; current-main compatibility and merge permission are not asserted.\n'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Summarize routed result
         env:
@@ -915,6 +973,31 @@ jobs:
             echo "- ${row%%:*}: \`${row#*:}\`" >> "$GITHUB_STEP_SUMMARY"
           done
           [ "$status" = "pass" ]
+      - name: Record immutable qualification completion
+        if: github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready' && needs.admission.outputs.execute == 'true'
+        env:
+          QUALIFICATION_SUBJECT: ${{ needs.admission.outputs.subject }}
+          QUALIFICATION_IDENTITY: ${{ needs.admission.outputs.identity }}
+          QUALIFICATION_REQUEST: ${{ needs.admission.outputs.request_id }}
+          PRODUCER_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          [[ "$QUALIFICATION_REQUEST" == "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" ]]
+          jq -n --argjson subject "$QUALIFICATION_SUBJECT" --arg identity "$QUALIFICATION_IDENTITY" \
+            --arg request "$QUALIFICATION_REQUEST" --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson producers "$PRODUCER_RESULTS" \
+            '{version:1,kind:"immutable-qualification-completion",subject:$subject,identity:$identity,
+              request_id:$request,run_id:$run,run_attempt:$attempt,producer_results:$producers,
+              final_currentness_required:true,current_main_compatibility:"not_asserted",
+              cross_run_reuse:"not_qualified"}' > "$RUNNER_TEMP/qualification-completion.json"
+      - name: Retain immutable qualification completion
+        if: github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready' && needs.admission.outputs.execute == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: qualification-completion-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/qualification-completion.json
+          if-no-files-found: error
+          retention-days: 5
       # Re-evaluate cancellation after readiness and aggregation, including reuse.
       # The explicit status functions keep this rejection reachable after failure.
       - name: Reject workflow cancellation before final result

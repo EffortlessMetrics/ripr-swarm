@@ -47,8 +47,16 @@ const REVIEW_SECRET: &str = "review-body-must-not-be-logged";
 const TOKEN_SECRET: &str = "token-must-not-be-logged";
 
 fn body() -> Result<String, String> {
+    let verification = step_body("Verify immutable qualification subject")?;
+    let readiness = step_body("Recheck current head and base before result publication")?;
+    Ok(format!(
+        "( {verification}\n)\nverification_status=$?\n[ \"$verification_status\" = 0 ] || exit \"$verification_status\"\n{readiness}"
+    ))
+}
+
+fn step_body(name: &str) -> Result<String, String> {
     let (_, step) = WORKFLOW
-        .split_once("      - name: Recheck current head and base before result publication\n")
+        .split_once(&format!("      - name: {name}\n"))
         .ok_or("final step missing")?;
     let (_, run) = step.split_once("        run: |\n").ok_or("run missing")?;
     Ok(run
@@ -169,6 +177,7 @@ fn run(script: &str, case: &Case) -> Result<(Output, String), String> {
         .env("GH_TOKEN", TOKEN_SECRET)
         .env("MOCK_ROOT", &temp)
         .env("MOCK_FAIL", case.fail);
+    command.env("GITHUB_STEP_SUMMARY", temp.join("summary"));
     native_subject::configure(&mut command, WORKFLOW)?;
     let output = command.output().map_err(|e| e.to_string())?;
     if matches!(output.status.code(), Some(124 | 137)) {
@@ -251,9 +260,9 @@ fn paired_statuses(
 #[test]
 fn live_subject_contract_replaces_historical_base_and_fetch_parity() -> Result<(), String> {
     let current = body()?;
-    assert!(current.contains("subject_before=$(read_subject)"));
-    assert!(current.contains("subject_after=$(read_subject)"));
-    assert!(current.contains("$subject_after\" == \"$EXPECTED_SUBJECT"));
+    assert!(current.contains("$EXPECTED_REQUEST_ID\" == \"$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"));
+    assert!(current.contains("current_base_before=$(observe_current_base)"));
+    assert!(current.contains("current_base_after=$(observe_current_base)"));
     assert!(!current.contains(".base.sha == $base and"));
     paired(&positive(), 0, None)?;
     let mut nonrequest = positive();

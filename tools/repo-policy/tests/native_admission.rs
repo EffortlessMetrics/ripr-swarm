@@ -19,12 +19,21 @@ fn body(name: &str) -> Result<String, String> {
         .split_once(&format!("      - name: {name}\n"))
         .ok_or("step missing")?;
     let (_, run) = step.split_once("        run: |\n").ok_or("run missing")?;
-    Ok(run
+    let script = run
         .lines()
         .take_while(|l| l.is_empty() || l.starts_with("          "))
         .map(|l| l.strip_prefix("          ").unwrap_or(l))
         .collect::<Vec<_>>()
-        .join("\n"))
+        .join("\n");
+    if name == "Recheck current head and base before result publication" {
+        let verification = body("Verify immutable qualification subject")?;
+        // Actions uses separate shells and preserves the first failing status.
+        // Do not put the verifier in an AND-list, which disables errexit.
+        return Ok(format!(
+            "( {verification}\n)\nverification_status=$?\n[ \"$verification_status\" = 0 ] || exit \"$verification_status\"\n{script}"
+        ));
+    }
+    Ok(script)
 }
 // Each Actions run step owns a separate shell. Preserve failures while allowing
 // the terminal always() guard to execute; an AND-list would disable Bash errexit.
@@ -149,6 +158,17 @@ fn execute_review_stream(
     }
     if let Some(stored) = environment.get("STORED_BASE_SHA").and_then(Value::as_str) {
         command.env("STORED_BASE_SHA", stored);
+    }
+    for key in [
+        "EXPECTED_SUBJECT",
+        "EXPECTED_IDENTITY",
+        "EXPECTED_REQUEST_ID",
+        "GITHUB_RUN_ID",
+        "GITHUB_RUN_ATTEMPT",
+    ] {
+        if let Some(value) = environment.get(key).and_then(Value::as_str) {
+            command.env(key, value);
+        }
     }
     for key in native_subject::SHARED_PROGRAMS {
         if let Some(program) = environment.get(key).and_then(Value::as_str) {
@@ -380,13 +400,234 @@ fn final_readiness_replays_all_independent_live_drift_vectors() -> Result<(), St
                     json!({})
                 }
             )?,
-            case["expected"]["contract_allows_required_success"]
-                .as_bool()
-                .ok_or("expected missing")?,
+            // Preserve the frozen old-policy vectors. A changed advertised
+            // live merge now requires a separate currentness judgment; it no
+            // longer erases proof of the immutable admitted Git object.
+            case["id"] == "subject_after_preflight"
+                || case["expected"]["contract_allows_required_success"]
+                    .as_bool()
+                    .ok_or("expected missing")?,
             "{}",
             case["id"]
         );
     }
+    Ok(())
+}
+
+#[test]
+fn completed_qualification_retains_its_subject_when_live_main_moves() -> Result<(), String> {
+    let literal = native_subject::fixture()?;
+    let mut pr = literal["PR"].clone();
+    pr["merge_commit_sha"] = json!("9".repeat(40));
+    let mut frame = literal["FRAME"].clone();
+    frame["data"]["repository"]["ref"]["target"]["oid"] = json!("e".repeat(40));
+    frame["data"]["repository"]["pullRequest"]["baseRef"]["target"]["oid"] = json!("e".repeat(40));
+    frame["data"]["repository"]["pullRequest"]["potentialMergeCommit"]["oid"] =
+        json!("9".repeat(40));
+    let reviews = json!([{"id":1,"user":{"login":"reviewer"},"state":"APPROVED",
+        "commit_id":"a".repeat(40),"submitted_at":"2026-10-17T00:00:00Z","body":""}]);
+    let script = body("Recheck current head and base before result publication")?;
+    assert!(
+        execute(&script, &pr, &reviews, &json!({"MOCK_FRAME":frame}))?,
+        "coherent live main movement must not erase immutable qualification facts"
+    );
+    Ok(())
+}
+
+#[test]
+fn immutable_qualification_step_uses_admission_outputs_and_cannot_be_optional() -> Result<(), String>
+{
+    fn bound(source: &str) -> bool {
+        let Some((before, step)) =
+            source.split_once("      - name: Verify immutable qualification subject\n")
+        else {
+            return false;
+        };
+        let Some((step, after)) = step
+            .split_once("      - name: Recheck current head and base before result publication\n")
+        else {
+            return false;
+        };
+        !before.contains("      - name: Summarize routed result")
+            && after.contains("      - name: Summarize routed result")
+            && step.starts_with("        if: github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready'\n")
+            && !step.contains("continue-on-error")
+            && [
+                "EXPECTED_SUBJECT: ${{ needs.admission.outputs.subject }}",
+                "EXPECTED_IDENTITY: ${{ needs.admission.outputs.identity }}",
+                "EXPECTED_REQUEST_ID: ${{ needs.admission.outputs.request_id }}",
+                "SUBJECT_SHA: ${{ github.sha }}",
+                "GENERATION: ${{ github.workflow_sha }}",
+            ].iter().all(|binding| step.contains(binding))
+    }
+    assert!(bound(WORKFLOW));
+    for (good, bad) in [
+        (
+            "EXPECTED_REQUEST_ID: ${{ needs.admission.outputs.request_id }}",
+            "EXPECTED_REQUEST_ID: stale-request",
+        ),
+        (
+            "EXPECTED_IDENTITY: ${{ needs.admission.outputs.identity }}",
+            "EXPECTED_IDENTITY: guessed-digest",
+        ),
+        (
+            "EXPECTED_SUBJECT: ${{ needs.admission.outputs.subject }}",
+            "EXPECTED_SUBJECT: unverified-subject",
+        ),
+        (
+            "      - name: Verify immutable qualification subject\n",
+            "      - name: Verify immutable qualification subject\n        continue-on-error: true\n",
+        ),
+    ] {
+        assert!(
+            !bound(&WORKFLOW.replace(good, bad)),
+            "wrong stage wiring must be rejected"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn qualification_completion_refuses_subject_and_attempt_substitution() -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    let literal = native_subject::fixture()?;
+    let pr = &literal["PR"];
+    let reviews = json!([{"id":1,"user":{"login":"reviewer"},"state":"APPROVED",
+        "commit_id":"a".repeat(40),"submitted_at":"2026-10-17T00:00:00Z","body":""}]);
+    let script = body("Recheck current head and base before result publication")?;
+    assert!(execute(&script, pr, &reviews, &json!({}))?);
+    for key in [
+        "version",
+        "repository",
+        "repository_id",
+        "pr_id",
+        "pr_number",
+        "destination_repository_id",
+        "destination_ref",
+        "head",
+        "merge",
+        "workflow_generation",
+    ] {
+        let mut subject = literal["SUBJECT"].clone();
+        subject[key] = json!("e".repeat(40));
+        let text = subject.to_string();
+        assert!(
+            !execute(
+                &script,
+                pr,
+                &reviews,
+                &json!({
+                    "EXPECTED_SUBJECT":text,
+                    "EXPECTED_IDENTITY":format!("{:x}", Sha256::digest(text.as_bytes()))
+                })
+            )?,
+            "substituted {key} with a recomputed digest must be refused"
+        );
+    }
+    for key in ["base", "tree"] {
+        let mut subject = literal["SUBJECT"].clone();
+        subject[key] = json!("e".repeat(40));
+        if key == "base" {
+            subject["parents"][0] = json!("e".repeat(40));
+        }
+        let text = subject.to_string();
+        assert!(
+            !execute(
+                &script,
+                pr,
+                &reviews,
+                &json!({
+                    "EXPECTED_SUBJECT":text,
+                    "EXPECTED_IDENTITY":format!("{:x}", Sha256::digest(text.as_bytes()))
+                })
+            )?,
+            "substituted {key} must disagree with the immutable Git object"
+        );
+    }
+    for environment in [
+        json!({"EXPECTED_IDENTITY":"0".repeat(64)}),
+        json!({"EXPECTED_REQUEST_ID":"999-1"}),
+        json!({"GITHUB_RUN_ATTEMPT":"2"}),
+        json!({"GITHUB_RUN_ID":"1001"}),
+        json!({"GITHUB_RUN_ATTEMPT":"0"}),
+    ] {
+        assert!(
+            !execute(&script, pr, &reviews, &environment)?,
+            "{environment}"
+        );
+    }
+    for parents in [
+        json!([{"sha":"a".repeat(40)},{"sha":"b".repeat(40)}]),
+        json!([{"sha":"b".repeat(40)},{"sha":"a".repeat(40)},{"sha":"e".repeat(40)}]),
+        json!([{"sha":"e".repeat(40)},{"sha":"a".repeat(40)}]),
+    ] {
+        assert!(
+            !execute(
+                &script,
+                pr,
+                &reviews,
+                &json!({"MOCK_COMMIT":{
+                    "sha":"c".repeat(40),"tree":{"sha":"d".repeat(40)},"parents":parents
+                }})
+            )?,
+            "wrong immutable ordered parents must be refused"
+        );
+    }
+    // Remove each actual guard and demonstrate the false acceptance it prevents.
+    for (guard, environment) in [
+        (
+            "[[ \"$EXPECTED_REQUEST_ID\" == \"$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT\" ]]",
+            json!({"GITHUB_RUN_ATTEMPT":"2"}),
+        ),
+        (
+            "[[ \"$identity\" == \"$EXPECTED_IDENTITY\" ]]",
+            json!({"EXPECTED_IDENTITY":"0".repeat(64)}),
+        ),
+    ] {
+        assert!(
+            script.contains(guard),
+            "load-bearing guard disappeared: {guard}"
+        );
+        let mutant = script.replace(guard, "true");
+        assert!(
+            execute(&mutant, pr, &reviews, &environment)?,
+            "guard removal must expose false success"
+        );
+    }
+    let mut wrong_head = literal["SUBJECT"].clone();
+    wrong_head["head"] = json!("e".repeat(40));
+    let text = wrong_head.to_string();
+    let shape = native_subject::program(WORKFLOW, "QUALIFICATION_SUBJECT_JQ");
+    assert!(shape.contains("if $q == $expected"));
+    assert!(
+        execute(
+            &script,
+            pr,
+            &reviews,
+            &json!({
+                "EXPECTED_SUBJECT":text,
+                "EXPECTED_IDENTITY":format!("{:x}", Sha256::digest(text.as_bytes())),
+                "QUALIFICATION_SUBJECT_JQ":shape.replace("if $q == $expected", "if true")
+            })
+        )?,
+        "removing subject-shape binding must expose a wrong-head receipt"
+    );
+    let commit = native_subject::program(WORKFLOW, "NATIVE_COMMIT_JQ");
+    let guard = " and (.parents | map(.sha) == [$base,$head])";
+    assert!(commit.contains(guard));
+    assert!(
+        execute(
+            &script,
+            pr,
+            &reviews,
+            &json!({
+                "MOCK_COMMIT":{"sha":"c".repeat(40),"tree":{"sha":"d".repeat(40)},
+                    "parents":[{"sha":"e".repeat(40)},{"sha":"a".repeat(40)}]},
+                "NATIVE_COMMIT_JQ":commit.replace(guard, "")
+            })
+        )?,
+        "removing immutable parent binding must expose wrong-base success"
+    );
     Ok(())
 }
 #[test]
