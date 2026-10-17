@@ -33,11 +33,16 @@ pub(in crate::cli) fn gate(args: &[String]) -> Result<(), CommandError> {
         help::print_gate_help();
         return Ok(());
     }
-    // The sole subcommand is implied when the command runs bare:
-    // `ripr <cmd>` behaves like `ripr <cmd> "evaluate"` (#2013).
+    // The sole subcommand is implied when the first token is a flag rather
+    // than a subcommand name (#7740):
+    // `ripr gate --pr-guidance ...` behaves like `ripr gate evaluate --pr-guidance ...`.
     let (subcommand, rest) = match args.split_first() {
+        Some((first, _)) if first.starts_with('-') => ("evaluate", args),
         Some((subcommand, rest)) => (subcommand.as_str(), rest),
-        None => ("evaluate", &[][..]),
+        None => {
+            help::print_gate_help();
+            return Ok(());
+        }
     };
     if subcommand != "evaluate" {
         return Err(CommandError::from(format!(
@@ -48,15 +53,19 @@ pub(in crate::cli) fn gate(args: &[String]) -> Result<(), CommandError> {
     let options = parse_gate_options(rest)?;
     // Surface the missing-input requirement directly instead of burying it
     // inside the gate-decision.json config_errors array (#2589 review).
-    // `--baseline` is parsed but is a comparison input, not a candidate
-    // source; acknowledge it when present so the error does not read as if
-    // the operator passed nothing (#7654).
-    if options.input.pr_guidance.is_none()
-        && options.input.gap_ledger.is_none()
-        && options.input.repo_exposure.is_none()
-    {
+    // Only `--pr-guidance` and `--gap-ledger` feed gate candidates.
+    // `--baseline` is a comparison input, not a candidate source (#7654);
+    // `--repo-exposure` is advisory context the producer never reads for
+    // candidates, so a repo-exposure-only run would always end as a
+    // config_error after writing reports (#7741). Refuse both up front and
+    // name the inputs that actually feed candidates.
+    if options.input.pr_guidance.is_none() && options.input.gap_ledger.is_none() {
         return Err(CommandError::from(
-            missing_candidate_input_message(options.input.baseline.is_some()).to_string(),
+            missing_candidate_input_message(
+                options.input.baseline.is_some(),
+                options.input.repo_exposure.is_some(),
+            )
+            .to_string(),
         ));
     }
     let report = output::gate::build_gate_decision_report(&options.input)?;
@@ -208,6 +217,19 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
     }
 
     let out_md = out_md.unwrap_or_else(|| output::gate::markdown_path_for(&out));
+    // Destinations follow the invoking cwd, independently of --root. Resolve
+    // relative/absolute spellings without traversing the filesystem, then use
+    // the shared native lexical comparison (no symlink/case-folding guarantee).
+    let absolute_out =
+        std::path::absolute(&out).map_err(|err| format!("gate could not resolve --out: {err}"))?;
+    let absolute_out_md = std::path::absolute(&out_md)
+        .map_err(|err| format!("gate could not resolve --out-md: {err}"))?;
+    if output::path::same_output_leaf(&absolute_out, &absolute_out_md) {
+        return Err(
+            "gate --out and --out-md must not be the same path; choose distinct JSON and Markdown destinations"
+                .to_string(),
+        );
+    }
     require_existing_gate_root(&root)?;
     Ok(GateOptions {
         input: output::gate::GateEvaluateInput {
@@ -233,11 +255,28 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
     })
 }
 
-fn missing_candidate_input_message(baseline_present: bool) -> &'static str {
-    if baseline_present {
-        "gate evaluate received --baseline but it is not a candidate source; gate evaluate requires at least one of --pr-guidance <path>, --gap-ledger <path>, or --repo-exposure <path>; see `ripr gate --help` for all options"
-    } else {
-        "gate evaluate requires at least one of --pr-guidance <path>, --gap-ledger <path>, or --repo-exposure <path>; see `ripr gate --help` for all options"
+fn missing_candidate_input_message(
+    baseline_present: bool,
+    repo_exposure_present: bool,
+) -> &'static str {
+    // The named requirement mirrors the producer's candidate-feed check
+    // (`output::gate`: only `--pr-guidance` and `--gap-ledger` feed
+    // candidates). `--repo-exposure` is advisory context, never a candidate
+    // source, so it is acknowledged like `--baseline` instead of satisfying
+    // the requirement (#7654, #7741).
+    match (baseline_present, repo_exposure_present) {
+        (true, true) => {
+            "gate evaluate received --baseline and --repo-exposure but neither is a candidate source; gate evaluate requires at least one of --pr-guidance <path> or --gap-ledger <path>; see `ripr gate --help` for all options"
+        }
+        (true, false) => {
+            "gate evaluate received --baseline but it is not a candidate source; gate evaluate requires at least one of --pr-guidance <path> or --gap-ledger <path>; see `ripr gate --help` for all options"
+        }
+        (false, true) => {
+            "gate evaluate received --repo-exposure but it is not a candidate source; gate evaluate requires at least one of --pr-guidance <path> or --gap-ledger <path>; see `ripr gate --help` for all options"
+        }
+        (false, false) => {
+            "gate evaluate requires at least one of --pr-guidance <path> or --gap-ledger <path>; see `ripr gate --help` for all options"
+        }
     }
 }
 
@@ -426,26 +465,11 @@ mod tests {
 
     #[test]
     fn gate_rejects_bad_surface_and_unknown_args() {
-        // Bare `ripr gate` is the `evaluate` alias (#2013): it dispatches
-        // instead of erroring on a missing subcommand. The full path writes
-        // the default report files, so they are cleaned on both sides.
-        for residue in [
-            "target/ripr/reports/gate-decision.json",
-            "target/ripr/reports/gate-decision.md",
-        ] {
-            let _ = std::fs::remove_file(residue);
-        }
-        let bare_result = gate(&args(&[]));
-        for residue in [
-            "target/ripr/reports/gate-decision.json",
-            "target/ripr/reports/gate-decision.md",
-        ] {
-            let _ = std::fs::remove_file(residue);
-        }
+        assert_eq!(gate(&args(&[])), Ok(()));
         assert_eq!(
-            bare_result,
+            gate(&args(&["evaluate"])),
             Err(CommandError::Failure(
-                "gate evaluate requires at least one of --pr-guidance <path>, --gap-ledger <path>, or --repo-exposure <path>; see `ripr gate --help` for all options"
+                "gate evaluate requires at least one of --pr-guidance <path> or --gap-ledger <path>; see `ripr gate --help` for all options"
                     .to_string()
             ))
         );
@@ -453,6 +477,12 @@ mod tests {
             gate(&args(&["inspect"])),
             Err(CommandError::Failure(
                 "unknown gate subcommand \"inspect\"; expected `evaluate`".to_string()
+            ))
+        );
+        assert_eq!(
+            gate(&args(&["foo"])),
+            Err(CommandError::Failure(
+                "unknown gate subcommand \"foo\"; expected `evaluate`".to_string()
             ))
         );
         assert_eq!(
@@ -495,6 +525,58 @@ mod tests {
     }
 
     #[test]
+    fn gate_leading_flags_dispatch_to_evaluate() -> Result<(), CommandError> {
+        // `ripr gate --pr-guidance <path> --mode visible-only` must imply
+        // evaluate (#7740), not treat `--pr-guidance` as a subcommand. The
+        // missing-guidance config_error path is enough to bind dispatch without
+        // depending on a successful producer.
+        let dir = unique_command_test_dir("gate-leading-flags");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create gate dir: {err}"))?;
+        let missing = dir.join("missing-guidance.json");
+        let out = dir.join("gate-decision.json");
+        let root = dir.display().to_string();
+        let missing_arg = missing.display().to_string();
+        let out_arg = out.display().to_string();
+        let flag_argv = args(&[
+            "--pr-guidance",
+            &missing_arg,
+            "--mode",
+            "visible-only",
+            "--root",
+            &root,
+            "--out",
+            &out_arg,
+        ]);
+        let mut evaluate_argv = vec!["evaluate".to_string()];
+        evaluate_argv.extend(flag_argv.iter().cloned());
+        let flag_result = gate(&flag_argv);
+        let evaluate_result = gate(&evaluate_argv);
+        assert_ne!(
+            flag_result,
+            Err(CommandError::Failure(
+                "unknown gate subcommand \"--pr-guidance\"; expected `evaluate`".to_string()
+            )),
+            "leading --pr-guidance must not be a subcommand"
+        );
+        assert_eq!(
+            flag_result, evaluate_result,
+            "leading flags must dispatch like an explicit evaluate subcommand"
+        );
+        let Err(error) = flag_result else {
+            return Err(CommandError::Failure(
+                "expected a config_error failure, got Ok".to_string(),
+            ));
+        };
+        assert!(
+            matches!(&error, CommandError::Failure(message) if message.contains(GATE_STATUS_CONFIG_ERROR)),
+            "config_error must carry the Failure variant: {error:?}"
+        );
+        assert_eq!(error.exit_code(), crate::cli::EXIT_COULD_NOT_COMPLETE);
+        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove gate dir: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
     fn gate_evaluate_missing_input_acknowledges_received_baseline() {
         // `--baseline` is parsed, then rejected as a non-candidate source.
         // The error must name that flag instead of listing only the three
@@ -519,7 +601,7 @@ mod tests {
             assert_eq!(
                 result,
                 Err(CommandError::Failure(
-                    "gate evaluate received --baseline but it is not a candidate source; gate evaluate requires at least one of --pr-guidance <path>, --gap-ledger <path>, or --repo-exposure <path>; see `ripr gate --help` for all options"
+                    "gate evaluate received --baseline but it is not a candidate source; gate evaluate requires at least one of --pr-guidance <path> or --gap-ledger <path>; see `ripr gate --help` for all options"
                         .to_string()
                 )),
                 "argv={argv:?}"
@@ -535,7 +617,7 @@ mod tests {
         assert_eq!(
             result,
             Err(CommandError::Failure(
-                "gate evaluate requires at least one of --pr-guidance <path>, --gap-ledger <path>, or --repo-exposure <path>; see `ripr gate --help` for all options"
+                "gate evaluate requires at least one of --pr-guidance <path> or --gap-ledger <path>; see `ripr gate --help` for all options"
                     .to_string()
             ))
         );
@@ -545,6 +627,129 @@ mod tests {
                 "absent --baseline must not be acknowledged as received: {message}"
             );
         }
+    }
+
+    #[test]
+    fn gate_evaluate_refuses_repo_exposure_only_up_front() -> Result<(), CommandError> {
+        // `--repo-exposure` is advisory context, never a candidate source: the
+        // producer only feeds candidates from `--pr-guidance`/`--gap-ledger`,
+        // so a repo-exposure-only run always ended as a config_error after
+        // writing reports. The argv layer must refuse it up front, name the
+        // received flags (including `--baseline` in the combined case), name
+        // the inputs that actually feed candidates, and write no reports
+        // (#7741).
+        let dir = unique_command_test_dir("gate-repo-exposure-only");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create gate dir: {err}"))?;
+        let exposure = dir.join("repo-exposure.json");
+        std::fs::write(&exposure, b"{\"seams\":[]}")
+            .map_err(|err| format!("write repo exposure: {err}"))?;
+        let out = dir.join("gate-decision.json");
+        let out_md = dir.join("gate-decision.md");
+        for argv in [
+            args(&[
+                "evaluate",
+                "--root",
+                &dir.display().to_string(),
+                "--repo-exposure",
+                &exposure.display().to_string(),
+                "--out",
+                &out.display().to_string(),
+                "--out-md",
+                &out_md.display().to_string(),
+            ]),
+            args(&[
+                "evaluate",
+                "--root",
+                &dir.display().to_string(),
+                "--repo-exposure",
+                &exposure.display().to_string(),
+                "--baseline",
+                "target/ripr/reports/gate-baseline.json",
+                "--out",
+                &out.display().to_string(),
+                "--out-md",
+                &out_md.display().to_string(),
+            ]),
+        ] {
+            // Flag-specific received-clause oracle: the combined case must
+            // keep naming `--baseline`, so a wording regression that reuses
+            // the repo-exposure-only clause there fails this assertion.
+            let expected_receipt = if argv.iter().any(|arg| arg == "--baseline") {
+                "received --baseline and --repo-exposure but neither is a candidate source"
+            } else {
+                "received --repo-exposure but it is not a candidate source"
+            };
+            let result = gate(&argv);
+            let Err(CommandError::Failure(message)) = result else {
+                return Err(CommandError::Failure(format!(
+                    "expected a repo-exposure-only refusal, got {result:?} for argv={argv:?}"
+                )));
+            };
+            assert!(
+                message.contains("--repo-exposure") && message.contains("candidate source"),
+                "refusal must name --repo-exposure as a non-candidate source: {message}"
+            );
+            assert!(
+                message.contains(expected_receipt),
+                "refusal must state the received flags precisely: {message}"
+            );
+            assert!(
+                message.contains("--pr-guidance") && message.contains("--gap-ledger"),
+                "refusal must name the inputs that feed candidates: {message}"
+            );
+            assert!(
+                !message.contains(GATE_STATUS_CONFIG_ERROR),
+                "up-front refusal must not look like a producer config_error: {message}"
+            );
+            assert_eq!(
+                CommandError::Failure(message.clone()).exit_code(),
+                crate::cli::EXIT_COULD_NOT_COMPLETE
+            );
+            for report in [&out, &out_md] {
+                assert!(
+                    !report.exists(),
+                    "up-front refusal must not write {}",
+                    report.display()
+                );
+            }
+        }
+        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove gate dir: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn gate_evaluate_pr_guidance_with_repo_exposure_still_evaluates() -> Result<(), CommandError> {
+        // Positive control for the #7741 guard: `--repo-exposure` alongside a
+        // candidate-feeding input must flow to evaluation, not the up-front
+        // refusal. Advisory visible-only decision, reports written.
+        let fixture = crate::testing::fixture_workspace::hermetic_gate_fixture_root()?;
+        let dir = unique_command_test_dir("gate-guidance-plus-exposure");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create gate dir: {err}"))?;
+        let exposure = dir.join("repo-exposure.json");
+        std::fs::write(&exposure, b"{\"seams\":[]}")
+            .map_err(|err| format!("write repo exposure: {err}"))?;
+        let out = dir.join("gate-decision.json");
+        let out_md = dir.join("gate-decision.md");
+        gate(&args(&[
+            "evaluate",
+            "--root",
+            &fixture.path().display().to_string(),
+            "--pr-guidance",
+            "fixtures/boundary_gap/expected/pr-guidance/exact-line/comments.json",
+            "--repo-exposure",
+            &exposure.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+        ]))?;
+
+        let json_text =
+            std::fs::read_to_string(&out).map_err(|err| format!("read gate json: {err}"))?;
+        assert!(json_text.contains("\"status\": \"advisory\""));
+        assert!(out_md.exists(), "evaluation must write the markdown report");
+        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove gate dir: {err}"))?;
+        Ok(())
     }
 
     #[test]
@@ -600,6 +805,7 @@ mod tests {
 
     #[test]
     fn gate_command_writes_visible_only_reports() -> Result<(), CommandError> {
+        let fixture = crate::testing::fixture_workspace::hermetic_gate_fixture_root()?;
         let dir = unique_command_test_dir("gate-visible");
         std::fs::create_dir_all(&dir).map_err(|err| format!("create gate dir: {err}"))?;
         let out = dir.join("gate-decision.json");
@@ -607,9 +813,7 @@ mod tests {
         gate(&args(&[
             "evaluate",
             "--root",
-            &crate::testing::fixture_workspace::hermetic_gate_fixture_root()?
-                .display()
-                .to_string(),
+            &fixture.path().display().to_string(),
             "--pr-guidance",
             "fixtures/boundary_gap/expected/pr-guidance/exact-line/comments.json",
             "--out",
@@ -632,15 +836,14 @@ mod tests {
 
     #[test]
     fn gate_command_writes_blocked_report_before_error() -> Result<(), CommandError> {
+        let fixture = crate::testing::fixture_workspace::hermetic_gate_fixture_root()?;
         let dir = unique_command_test_dir("gate-blocked");
         std::fs::create_dir_all(&dir).map_err(|err| format!("create gate dir: {err}"))?;
         let out = dir.join("gate-decision.json");
         let result = gate(&args(&[
             "evaluate",
             "--root",
-            &crate::testing::fixture_workspace::hermetic_gate_fixture_root()?
-                .display()
-                .to_string(),
+            &fixture.path().display().to_string(),
             "--pr-guidance",
             "fixtures/boundary_gap/expected/pr-guidance/exact-line/comments.json",
             "--mode",

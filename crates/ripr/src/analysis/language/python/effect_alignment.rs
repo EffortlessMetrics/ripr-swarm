@@ -12,7 +12,7 @@
 
 use super::no_behavior::{call_arglists_with_offsets, split_top_level_args};
 use super::related_tests::{
-    is_python_identifier_char, owner_method_bound_locals, owner_module_callees,
+    is_python_identifier_char, owner_class_locals, owner_method_bound_locals, owner_module_callees,
     owner_result_locals, python_text_hides_code,
 };
 use super::{PythonOwner, PythonTest};
@@ -275,7 +275,8 @@ fn owner_calls<'a>(test: &'a PythonTest, owner: &PythonOwner) -> Vec<(usize, &'a
 
 /// The spellings a test calls the owner by: its own name, an import alias, or
 /// a module-qualified name for a function; a local bound to its class for a
-/// method (rule 9).
+/// method, and the imported class itself for a classmethod or staticmethod
+/// (rule 9, #7634).
 fn owner_call_names(test: &PythonTest, owner: &PythonOwner) -> Vec<String> {
     let mut names = Vec::new();
     if is_method_owner(owner) {
@@ -285,6 +286,17 @@ fn owner_call_names(test: &PythonTest, owner: &PythonOwner) -> Vec<String> {
                     .into_iter()
                     .map(|local| format!("{local}.{}", owner.name)),
             );
+            if owner
+                .decorators
+                .iter()
+                .any(|decorator| matches!(decorator.as_str(), "classmethod" | "staticmethod"))
+            {
+                names.extend(
+                    owner_class_locals(test, owner, class)
+                        .into_iter()
+                        .map(|local| format!("{local}.{}", owner.name)),
+                );
+            }
         }
     } else {
         names.push(owner.name.clone());
@@ -326,12 +338,14 @@ fn owner_call_argument_locals(
     owner: &PythonOwner,
     parameter: &str,
 ) -> Vec<String> {
+    // The implicit receiver is bound by the owner's kind, not its name: a
+    // classmethod's `klass` is skipped, a staticmethod's `cls` is not (#7634).
     let skip = usize::from(
         is_method_owner(owner)
-            && owner
-                .parameters
-                .first()
-                .is_some_and(|first| matches!(first.name.as_str(), "self" | "cls")),
+            && !owner
+                .decorators
+                .iter()
+                .any(|decorator| decorator.ends_with("staticmethod")),
     );
     let position = owner
         .parameters

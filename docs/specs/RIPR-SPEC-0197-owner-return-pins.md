@@ -20,6 +20,7 @@ Linked issues:
 - #3727 (parser-backed call identity; this spec adds the owner's item
   container fact, not parser-derived `CallFact`)
 - #6675 (a binary bitwise `|` tail is unconditional; closures and `||` stay refused)
+- #7969 (a pure `&&`/`||` chain pins on a call that evaluates every operand)
 - #6692 (a hand-written `Clone` field pinned by `assert_eq!(recv.clone(), recv)` through derived equality)
 - #6957 (the owner's own enclosing module is not a shadow: nested
   production declarations keep their pin)
@@ -91,10 +92,20 @@ combination produces `reachable_unrevealed` with Observe `no` and Discriminate
 can never execute. Other owner-specific pin failures retain the existing token
 rule only for an assertion whose context was admitted.
 
-1. Oracle shape. The assertion is one plain `assert_eq!` (never
-   `assert_ne!`, `debug_assert_eq!`, a path-qualified or crate-specific
-   `*_assert_eq!`) with an exact-value, whole-object or `exact_error_variant`
-   oracle kind, on a line
+1. Oracle shape. The assertion is one plain `assert_eq!`, or that
+   `assert_eq!` qualified through a `std` or `core` root (`std::assert_eq!`,
+   `::core::assert_eq!`) when the root cannot be rebound (#7857). The test's
+   real file (for a generated test, the file holding the invocation) has no
+   module, import or `extern crate` rename with the root's name, no
+   item-position macro call, no `#![no_implicit_prelude]` and no glob import
+   other than `self::*` or `super::*` inside an inline module; and the root
+   passes the proof targeted call syntax uses: the package manifests bind no
+   dependency to the name, and every file on the test's module path keeps
+   the root available (no `#![no_std]` without `extern crate std`). Never
+   `assert_ne!`, `debug_assert_eq!`, another drop-in or crate-specific
+   qualified `assert_eq!` (`pretty_assertions::assert_eq!`, which needs a
+   manifest check) or a `*_assert_eq!`. Its oracle kind is exact-value,
+   whole-object or `exact_error_variant`, on a line
    inside the test's own body (or borrowed from a check helper under
    rule 7), in a test without `#[should_panic]`. The
    test's outer attributes admit only `#[test]` and the `serial_test` locks
@@ -136,19 +147,40 @@ rule only for an assertion whose context was admitted.
    contradicts the whole test. `#[rstest]` (or `rstest::rstest`, or a bare
    `rstest` bound by one explicit, unrenamed `use rstest::rstest`) takes no
    arguments and appears once; every parameter is an identifier binding (`mut`
-   allowed, no `ref` or `@` pattern) carrying exactly `#[case]`; every row
-   follows `#[rstest]` and holds one value per parameter, each a non-string
+   allowed, no `ref` or `@` pattern) carrying exactly `#[case]` or no
+   attribute at all; every row follows `#[rstest]` and holds one value per
+   `#[case]` parameter, each a non-string
    literal, `-literal`, `true` or `false` (a string literal reaches the
    parameter through `FromStr`, which runs user code). A parameterless
-   `#[rstest]` with no rows runs its body once, like `#[test]`. `rstest` must be the crate in
+   `#[rstest]` with no rows runs its body once, like `#[test]`. An unmarked
+   parameter is a fixture: rstest fills it once by calling the same-named
+   `#[fixture]` function before the body runs (a missing fixture does not
+   compile). A fixture may be the owner call's argument or its receiver, and
+   a receiver parameter `[mut] name: T` is typed by its annotation `T`, as
+   `let name: T = ..;` is, provided nothing in the body rebinds the name.
+   A fixture never supplies the expected value: the fixture body sits outside
+   the test and may call the owner. In a test with a fixture, an expected
+   operand that names a fixture parameter, or any name the body binds (a
+   `let`, closure, `for` or match binding, which may hold a fixture value
+   through an assignment or mutation, a rebound `#[case]` parameter
+   included), refuses; unrebound `#[case]` parameters and names bound
+   outside the test pass. A test with a fixture lends no check-helper
+   assertion: the helper's expected value is its own parameter, which the
+   test may fill from a fixture. A generic test (type parameters or a `where`
+   clause) refuses, since rstest may infer an annotated type parameter from
+   the fixture (cluster 12a, #6578). `rstest` must be the crate in
    the test's module under the `serial_test` rule, jointly with the other
    trusted crates; its `#[rstest]` and `#[fixture]` attributes, and a case
    row on a function whose `#[rstest]` above it consumes the row, count as
    emitting only items named after the function they decorate, so a function
    named after a checked crate refuses. A bare `#[case]` anywhere else, or in
    a module whose `use` binds `case`, is an unknown attribute macro. A computed row value (which could
-   call the owner), `#[rstest(..)]` arguments, fixture-injected or
-   `#[values]` parameters refuse. Every other attribute (`ignore`,
+   call the owner), `#[rstest(..)]` arguments, and parameters carrying any
+   other attribute (`#[values]`, `#[from]`, `#[with]`, `#[future]`,
+   `#[by_ref]`, `#[files]`) refuse, as do a `mut` `#[case]` parameter (the
+   body may reassign it, `expected = want;`, which no binding scan reads)
+   and an `impl Trait` parameter (an anonymous type parameter rstest may
+   infer from a fixture). Every other attribute (`ignore`,
    `timeout`, other async runtime tests, other parameterizing macros such as
    `test_case`) and every inner attribute refuses the pin. The
    parser must match the exact indexed function body and the assertion's
@@ -246,7 +278,23 @@ rule only for an assertion whose context was admitted.
    change the value through a shared handle). A `mut` binding, a second binding, a
    borrow, a method call or argument use of `v`, a use before the `let`,
    or an initializer with anything around the call leaves the assertion
-   unpinned. An expected operand naming a `let` whose initializer mentions
+   unpinned. A primitive scalar result (cell-0094) is the exception: when
+   the owner declares `bool`, `char`, `f32`, `f64` or a built-in integer
+   type, and its own file neither declares nor imports an item of that
+   name, the binding is `Copy` with no interior mutability, so no statement
+   can change it. Its other uses may then also sit in another plain
+   `assert!`, `assert_eq!` or `assert_ne!` after the `let`
+   (`let b = bonus(4); assert!(b > MULTIPLIER); assert_eq!(b, 12);`), and
+   statements may stand between the `let` and the pinned assertion. Every
+   use outside the `let` must still lie in such an assertion, since an item
+   (`const b`), pattern or other macro outside one can rebind the name. The
+   pinned assertion names the binding once, opens its line, and sits in the
+   `let`'s own block at its depth: leaving that block
+   (`{ let b = f(); } assert_eq!(b, 12);`) or entering a deeper one
+   (`{ use super::*; assert_eq!(b, 12); }`) may put another `b` in scope.
+   Residuals: a generic parameter or a macro-generated item named like the
+   primitive in the owner's file, and a non-std glob import bringing such a
+   type into it. An expected operand naming a `let` whose initializer mentions
    the owner, directly or through further `let`s, compares the owner with
    itself and is refused, and so is one naming a value ripr cannot trace
    to a simple `let` (`let (same, _) = (f(4), 0);`). This binding scan runs
@@ -432,9 +480,41 @@ rule only for an assertion whose context was admitted.
      forward. A definition the parser did not index (a `macro_rules!` body)
      counts when its `fn name` text is visible. A definition in a
      lexical-fallback file always counts.
+   - An associated call `T::name(..)` (#6617) names only an associated
+     function (no `self`) of an inherent `impl T` block, for a
+     `return_value` (or bool-tail `predicate`) probe; a whole-value field
+     pin through `T::new()` is not read. `T` is the owner's self type: one
+     CamelCase identifier other than `Self`, without generics, that exactly
+     one workspace `struct`, `enum` or `union` declares, and that no indexed
+     file gives to a `mod`, `trait` or `type` alias (a module `T` would make
+     the call a free-function path, which is the module-path shape and never
+     this one; a module path never has a CamelCase segment). No other
+     workspace definition of the name may be path-callable: an inherent or
+     trait-impl function of any type, a trait item, an unknown container
+     and every unindexed `fn name` compete; a module-level or local free
+     function cannot be the target of a type path and does not compete
+     (RIPR-SPEC-0172). On the test side the call is exactly
+     `T::name(..)` with nothing chained after it, in the test's own body
+     (no borrowed helper), and the test sits at its file's top level. The
+     file must import `T` at file level as `use <krate>::T;` where
+     `<krate>` names the owner's library from the test's crate (the
+     manifest authority, or a workspace package name in a synthetic index
+     without one) and the test's crate does not bind `<krate>` itself.
+     Every `use` in the file that names `T` must be such an import: an
+     alias (`as`), a glob, a brace list, another root, a longer path
+     (`use <krate>::m::T;`, which may pass through another crate's
+     `pub use`) or a nested module's import refuses, as does a declaration or `type` alias of `T` in the
+     test's file, a rename to `T`, a `use` or item of `T` in the test body,
+     or a macro in the body that mentions `T`. The owner's library must not
+     export another `T` (a foreign `pub use` or glob). A `cfg` on the
+     owner, its `impl`, an enclosing module or its file refuses, as for a
+     bare call (#7082): with the cfg off, `T::name` can reach a trait
+     default the index never sees. A bare `name(..)` still never names the
+     associated owner (shape 1 above).
 3. Return path. The changed expression must be the owner body's tail (or
    its final `return <expr>;`), and it must evaluate all of its parts on
-   every input: no closure, `|=` or non-binary `|`, no `&&`/`||`, no `if`, `match`,
+   every input: no closure, `|=` or non-binary `|`, no `&&`/`||` (except
+   the pure chains in "Short-circuit tails" below), no `if`, `match`,
    loop or `break`, and no combinator that skips its argument on some
    inputs (`map_or`, `unwrap_or`, `and_then`, `then`, ...). With
    `x.map_or(0, |v| v * 3)` changed, `assert_eq!(f(None), 0)` never runs
@@ -448,7 +528,9 @@ rule only for an assertion whose context was admitted.
    `Foo { f: |x| x }`, `[|x| x]`), so every closure still fails closed. A
    `|` inside a macro invocation's arguments
    (`matches!(k, A | B)`) or in a tail holding a `let` may separate pattern
-   alternatives, which short-circuit, so it is never binary. When the owner has no `?` and no other
+   alternatives, which short-circuit, so it is never binary. With a paired
+   old text, only the changed part of the tail is held to this rule
+   (Unchanged closures in a returned tail, below). When the owner has no `?` and no other
    `return`, any pinned value came through it. Otherwise the changed
    expression must be one `Ok(..)` (or `Some(..)`) constructor, the only
    one in the body, every other `return` must build `Err(..)` (or `None`),
@@ -497,13 +579,16 @@ rule only for an assertion whose context was admitted.
    (`ensure !(..)`), leaves the return paths unestablished.
 4. Macro binding. The existing non-returning standard-macro vocabulary is
    reused for test bodies; any other invoked macro may hide an early exit
-   and refuses the pin. Only bare standard names qualify; qualified paths stay unknown because
-   their roots can be rebound.
+   and refuses the pin. Only bare standard names qualify, plus a
+   `std`/`core`-rooted `assert_eq!` whose root rule 1 proves unrebound;
+   other qualified paths stay unknown because their roots can be rebound.
    Escape keywords or nested/ambiguous invocation syntax in opaque macro operands
    also refuse it; nested expansion is not interpreted, except that a bare,
-   unqualified nested `matches!` expands to one `match` over operands the
-   scan already reads, so it is admitted and its name joins this binding
-   check (see "Literal `matches!` pins"). Any visible
+   unqualified nested `matches!`, `format!` or `vec!` expands to one call
+   over operands the scan already reads, so it is admitted and its name
+   joins this binding check (see "Literal `matches!` pins", "Rendered scalar
+   pins" and "Exact projections"). A path before the nested name (`std::format!`) refuses; inside
+   a token tree `::` lexes as two `:` tokens, which count as a path. Any visible
    workspace definition/import binding of a trusted macro, a foreign glob,
    `macro_use`, `no_implicit_prelude`, or macro-generation arguments naming a
    trusted macro used by that test refuses the pin. This scan
@@ -598,7 +683,10 @@ rule only for an assertion whose context was admitted.
    bring only a workspace-declared type of that name, and a workspace glob
    counts only while no workspace file re-exports the name or a glob from
    elsewhere, renames to it or aliases it. The scan is file-wide, not
-   per-module. The changed line must be one whole field
+   per-module. A rename is an `as` inside a `use` or `extern crate` item, a
+   macro invocation's arguments (a macro may expand them into a `use`) or an
+   attribute; a cast (`letters as u32`) or a qualified path
+   (`<Window as Clone>`) in plain code renames nothing (#7926). The changed line must be one whole field
    initializer at the literal's own brace depth: a field of a nested literal
    or an argument of a call within a field (`start: f(Raw { start: .. })`)
    is not the outer field's value. No workspace `trait Clone` may exist, the
@@ -751,7 +839,7 @@ rule only for an assertion whose context was admitted.
      module of the file are refused.
    - The helper runs to its end on every call: no attributes other than
      `#[track_caller]`, no generic parameters or `where` clause, not `async`,
-     `const` or `unsafe`, no `self` parameter, no return type, and no `return`
+     `const` or `unsafe`, no `self` parameter, and no `return`
      or `?` anywhere in its body. It passes the same escape gate as a test
      (only the trusted standard macros, no `break`, `continue` or `yield`) and
      the same item-context and cfg gates, and the macros it invokes join the
@@ -759,6 +847,11 @@ rule only for an assertion whose context was admitted.
      `macro_rules!` or `use` inside the helper's own body) is checked at the
      borrowed assertion's line as well as across the test's span, since the
      helper's scope never overlaps the test's.
+     An explicit return type is allowed (#7818): a synchronous call runs the
+     panic assertion even if the caller discards a returned `Result` or
+     `Option`. This lends only the `assert_eq!`, never the returned value or
+     error. An early exit, including an opaque `ensure!`/`bail!`, still refuses
+     the helper; rule 7a's separate fallible-literal grammar is unchanged.
    - The assertion sits on the helper's own eager path and is uniquely
      identified by its line and text, as rule 1 requires within a test.
    - The assertion must also reach the test's oracle facts through the
@@ -849,8 +942,12 @@ snapshot; a strong related oracle never substitutes for a missing premise.
    version requirement alone is insufficient. Before this query, capture both
    legacy `config` and `config.toml` at every `.cargo` directory from the query
    working directory through its filesystem ancestors, plus both files in the
-   effective `CARGO_HOME` (or Cargo's default home). Bind present bytes and
-   absent-file identities; unreadable files, indeterminate home/ancestry or
+   effective `CARGO_HOME` (or Cargo's default home). Use Cargo's canonical
+   resolver, including OS-home discovery when home environment inputs are
+   absent and default-home fallback for an empty `CARGO_HOME`; resolve relative
+   homes at the metadata query's working directory. Discovery never forwards
+   ambient environment to a quarantined child or prepares registry dependencies.
+   Bind present bytes and absent-file identities; unreadable files, indeterminate home/ancestry or
    unresolved config paths refuse the receipt. Parse every present file, not
    just the winning precedence entry. Initially reject any `[source]`, `paths`,
    `[patch]` or `[replace]` entry, or config `[env]` entry setting a `CARGO_*`
@@ -974,7 +1071,9 @@ Implementation and validation obligations:
 2. Extend the existing owner-pin owner with private bounded extraction and
    composition modules under `syntax/owner_pin/` and `classify/owner_pin/`.
    Reuse cfg/source-role provenance, body identity and call-binding defeats;
-   do not broaden `plain_check_helper` or the existing helper producer.
+   do not broaden `plain_check_helper` for this fallible adapter or the existing
+   helper producer. Rule 7's later explicit-return panic-assertion extension
+   (#7818) does not admit fallible macros here.
 3. Add a lazily memoized dependency-identity query under `analysis/workspace/`,
    bounded to structurally eligible shapes and using the existing deadline,
    output budget and process policy. Failure yields no receipt, without fetching,
@@ -1022,6 +1121,84 @@ unchanged. Rule 7a's refusal controls therefore check that a refused receipt
 grants no observation credit (`discriminate` is not `yes`) instead of reading
 propagation, which the rule-7a fixture's constant `u8` tail now establishes
 on its own.
+
+### Format owner tails (#6578)
+
+`format_tail_witness` in `classify/propagation_witness.rs` completes a
+DirectReturn witness for a `return_value` probe whose changed expression is
+the owner's whole body, one `format!("literal", args..)` tail (or a lone
+`format!("literal")`, whose format may capture identifiers, `"{name}"`), on the
+probe's line, matching the owner's local return-value sink. `format!`
+evaluates each argument once and writes it into the `String` it returns (an
+unused argument does not compile), so the changed argument reaches the
+return with nothing in between, as a constant tail does. Only the bare
+`format!` with parentheses, a string-literal format and arguments free of
+macros, closures, blocks, branches, loops, `?`, `return`, `break`,
+`continue`, `.await` and `yield`; the owner's file must hold no binding site
+that may rebind `format` (a `macro_rules!`, an import, `#[macro_use]`,
+`#![no_implicit_prelude]` or a foreign glob). Limit: only the owner's own
+file is read, as for the standard-macro trust of owner bodies, so a
+`macro_rules! format` reached from another module through `#[macro_use]`
+is not seen. Whether the formatting keeps
+two values apart (`{:.0}`, a lossy `Display`) is not settled here, as
+integer division is not for an arithmetic tail. Without this witness
+`assert_eq!(label(4), "w12")` on `fn label(x: u32) -> String { format!("w{}", x * 3) }`
+read as a false `weakly_exposed` gap, because the current-path witness
+refuses any macro in the path.
+
+### Unchanged closures in a returned tail (#6578)
+
+In `lines.iter().map(|l| l.cents).sum::<u64>() + 50` → `.. + 25 * 2` only
+`25 * 2` changed. The closure is the same in both versions, the changed
+operand of the outer `+` runs on every input, and its value reaches the
+sum without passing through the closure. `ChangedSpan` in
+`classify/changed_span.rs` takes the probe's paired old line, strips the
+longest common prefix and suffix, parses the new line as one tail
+expression and finds the smallest node covering the differing text.
+
+1. The return-path gate (rule 3) reads a tail its whole-text check refuses
+   more closely, and admits it only in one narrow shape. The changed span
+   holds no closure, block, item, `&&`/`||`, assignment, or text the rule-3
+   check reads as conditional. Every node from it up to and including the
+   tail is an operator that evaluates all its operands (arithmetic,
+   comparison or bitwise; not `&&`, `||` or an assignment), a parenthesis,
+   prefix operator, cast or argument list, or a call to a named function or
+   method that is not a skipping combinator and holds no closure anywhere.
+   A closure beside the change in a call can discard or transform it
+   (`items.iter().map(|l| ..)` with `items` changed, `fold(51, |acc, l| ..)`),
+   a skipping combinator may never run it (`x.map_or(51, |v| v)`), and a
+   block around it (labeled `break`, `const` item, `async`) can skip or
+   rebind it, so each refuses. A call through a non-path callee
+   (`(Option::map_or)(x, 51, f)`) cannot be named and refuses.
+2. The current-path propagation witness, which refuses any closure text in
+   the path, completes a direct return witness for a `return_value` probe
+   whose whole changed expression is the owner's return-value sink on the
+   probe's line when no closure encloses or sits inside the changed node,
+   the changed part passes rule 1, and the expression holds no macro,
+   `dyn`, `extern` or FFI name.
+3. Without a paired old text, when the new line does not parse as one tail
+   expression, or when the tail binds a name outside every closure (a
+   `let`, `if let`, `match` arm or `for`, which can carry the change into a
+   closure that may not run), both read the whole expression as before.
+   When the whole changed tail is one of RIPR-SPEC-0265's admitted adaptor
+   tails, that spec's rule 2 establishes the pin's adaptor gate instead:
+   its keeping-pair registry tells a closure-carried change apart there,
+   so this section's closure refusal does not override it (a change inside
+   a `map` + `sum` closure body reads through 0265, not as a refusal
+   here).
+
+The removed old text between the same prefix and suffix must be as plain
+as its replacement: a closure, block, macro, `?`, `return`, `break`,
+`async`, `unsafe`, `const`, `static`, or text the rule-3 check reads as
+conditional refuses, because it may have given the same value
+(`(|| 51)()` → `51`). A leading `return ` and trailing `;` are dropped from
+both texts; inner whitespace is kept, since it may sit in a string literal
+the change touched (`"a b"` → `"a  b"`). A change
+that reaches into a comment beside the tail (which parses outside it) is
+read whole. Limit: a named call outside the skipping combinators can still
+collapse the changed value (`max`, `clamp`, `saturating_sub`, an `as u8`
+cast), as it can in a tail with no closure; this rule adds no new class of
+such calls.
 
 ### Same-named module-level functions (#6544)
 
@@ -1160,6 +1337,324 @@ value when:
    shape, execution and macro admission, `#[should_panic]`, and the
    return-path gate on the normalized pattern.
 
+### Rendered scalar pins
+
+`assert_eq!(format!("{:?}", owner(..)), "94")` fails exactly when
+`assert_eq!(owner(..), 94)` does when the owner returns a primitive scalar
+(trap-shine-debug-exact-control): the std `Debug` and `Display` text of a
+`bool`, `char`, float or built-in integer differs for every value but NaN,
+so exact text pins the value. The pin reads the call inside `format!` as
+the actual side and the string literal as the expected value when:
+
+1. The assertion is one plain, unqualified `assert_eq!` whose only nested
+   macros are plain, unqualified `format!` calls; `assert_ne!` and
+   `assert!` stay refused.
+2. One compared operand is exactly `format!("{}", call)` or
+   `format!("{:?}", call)` (a trailing comma is allowed). Flags, width,
+   precision, other text in the format string, a second argument, or
+   anything chained after `format!(..)` refuses. The call is the owner
+   call shape of rule 1, with nothing around it.
+3. The other operand is a plain string literal with no escapes, other
+   than `"NaN"`: every NaN payload of `f32` or `f64` renders as `NaN`, so
+   that text pins no single value (#7905).
+4. The owner's return type is a primitive scalar under the cell-0094 rule
+   (declared `bool`, `char`, `f32`, `f64` or built-in integer, with no
+   same-named item or import in the owner's file), and its return-path
+   gate holds any value. Every other rule above holds unchanged.
+
+Admitting a nested `format!` is an execution fact, shared by every
+`assert_eq!` the syntax gate reads: `format!` evaluates its operands
+eagerly and cannot leave the test once their tokens hold no exit, so
+`assert_eq!(format!("{}", f(4)).len(), 2)` reaches the ordinary token rule
+as `f(4).to_string().len()` does. Only the shape above earns the pin.
+
+The trap twin `trap-glow-debug-nonempty` (`assert!(!format!("{:?}",
+glow(2)).is_empty())`) holds for every value and stays a gap.
+
+### Inline expect-test pins (#6578)
+
+`expect![["text"]].assert_eq(&owner(..))` from `expect_test` compares the
+actual text with the inline literal and panics on a mismatch (unless
+`UPDATE_EXPECT` is set, which rewrites the expectation instead), as
+`assert_eq!(owner(..), "text")` does. The pin reads the argument as the
+actual side and the literal as the expected value when:
+
+1. The assertion is one method call `assert_eq` (no turbofish) on a bare
+   `expect!` invocation whose brackets hold one single-line string literal
+   (`[[..]]` or `[..]`) or nothing (the empty expectation, `""`), with one
+   argument. expect-test trims a multi-line literal's indentation before
+   comparing, so its raw text is not the compared value and refuses. A
+   single leading `&` borrows the actual value and is dropped; `&mut` or
+   `&raw` refuses. The comparison is a statement or the tail of the test's
+   own body; one nested in a block, branch, closure or `||` may never run
+   and is not extracted as its own oracle.
+2. The bare `expect!` must be expect-test's: its file imports
+   `use expect_test::expect;` under its own name, verified against the
+   manifest as `pretty_assertions` is (Required Evidence below), and no
+   `macro_rules!`, other import or glob may bind `expect`. That trust is
+   the test side's alone: `expect!` is no `std` macro, so in an owner body
+   (or any binding read) it stays an unknown macro that may hide a
+   `return` (a try-style `expect!(x)`), and the return paths stay open.
+3. Every other rule above holds unchanged: the actual side is the owner call
+   shape, execution and macro admission, `#[should_panic]`, and the
+   return-path gate on the literal.
+
+The parser grades a comparison it reads as an expect-test comparison
+(`assert_eq` or `assert_debug_eq` on an `expect!`/`expect_file!` receiver)
+never above `snapshot` / medium, read from its parsed shape, so a
+single-bracket, spaced (`expect! [[..]]`, `.assert_eq (..)`) or line-split
+call grades as the canonical spelling does. A weaker reading of the compared
+value (a tautology, a broad `is_err()`) is kept.
+The oracle keeps RIPR-SPEC-0231's step-6 `snapshot` kind; as for the
+bool-owner pin, only its probe-relative strength rises once the pin admits
+it. `assert_debug_eq` (which compares the `Debug` text), a qualified
+`expect_test::expect!` or `expect_test::expect_file!`, and every `insta`
+macro stay `snapshot` / medium.
+
+### Golden-file expect-test comparisons (#6578)
+
+`expect_file!["path"].assert_eq(&owner(..))` pins as the inline comparison
+does. `ExpectFile::assert_eq` reads the committed file (CRLF as LF; a missing
+file as the empty text), compares it with the actual text, and panics on a
+mismatch unless `UPDATE_EXPECT` is set, the same escape the inline form has.
+The rules above apply with four differences:
+
+1. The macro's one argument is a single string literal naming the file. A
+   computed path (`concat!(..)`, a binding) or the inline form's double
+   brackets refuses. `expect_file!` resolves the path against the test
+   source's directory, so the literal must be relative and stay in the
+   tree: an absolute path (`/tmp/x`, a drive-letter path, `\\host\x`), a `~` path or
+   any `..` segment may name text the commit does not fix, and refuses. A
+   non-raw literal with any escape (`"\u{2e}\u{2e}/x"`) refuses too, since
+   its decoded segments are not the source text.
+2. The bare `expect_file!` must be expect-test's under rule 2: its file
+   imports `use expect_test::expect_file;` (alone or grouped) under its own
+   name, verified against the manifest, and nothing else binds
+   `expect_file`. In an owner body it stays an unknown macro.
+3. The file is never read. The pin needs only that the compared text is
+   fixed by the commit; its content does not decide whether a changed
+   return fails. So the expected side is a stand-in that only a return-path
+   gate admitting any value of the owner's type accepts; a gate that checks
+   the expected value (an exact bool, a constructor head, a whole-value
+   field literal) refuses it.
+4. The test must not be able to write the file first. A test body that
+   writes, creates, copies or renames a file (`fs::write`, a bare `write(..)`
+   under `use std::fs::write`, `File::create`, `OpenOptions`, `fs::copy`,
+   `fs::rename`, any path-qualified `write(..)` or `create(..)` such as
+   `<File>::create` or `fs_err::write`), runs a `Command`, makes a symlink,
+   persists a temp file, or calls `set_var` / names `UPDATE_EXPECT`, lends no
+   golden-file pin, and neither does a test whose file renames an import
+   from `std::fs` or `std::env` (`use std::fs::write as save;`), which would
+   hide the write behind another name: it could derive the golden from the owner and compare
+   the owner with itself. Read from the test's masked body text, so it also
+   refuses a test that writes some unrelated file; a write hidden in a
+   helper the test calls is not seen (#8097 tracks the same hole for
+   `assert_eq!` against a file read back).
+
+Rejected: reading the golden file into the expected literal. The seam cache
+keys on Rust sources, so a golden edit would not invalidate the reading, and
+no gate the stand-in passes depends on the text. Rejected: keeping
+`expect_file!` at `snapshot` / medium. It compares the whole value exactly,
+as the inline form does; the corpus row
+`lib-expect-test-expect-file-golden` kills both mutants at runtime.
+
+### Short-circuit tails (#7969)
+
+Rule 3 refuses `&&`/`||` because a pin may never evaluate the changed
+part: `x == 0 && 0 == y` pinned only at `both_zero(1, 0)` returns `false`
+from `x == 0`, and the changed `0 == y` never runs. One shape is admitted,
+and only per pinned call:
+
+1. The owner has plain identifier parameters (no receiver, no pattern, no
+   generics), no `?`, no other `return` and no statement before the
+   tail (`let x = x + 1;` would make the call's arguments differ from the
+   values the chain reads), and its whole body is one
+   chain joined only by `&&` or only by `||` (a mix needs precedence and
+   refuses). Each operand is a `bool` parameter after any number of `!`,
+   or one comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`) of two atoms, not
+   both literals, with no leading `!` (`!x == 0` is `(!x) == 0`). An atom
+   is a parameter, a plain integer or `bool` literal, an unescaped char
+   literal, or a parameter `%` or `/` a nonzero integer literal. Such an
+   operand cannot call, index, overflow, divide by a variable or write, so
+   skipping it changes only the value. Anything else (a call, field,
+   index, cast, parenthesis, macro, constant, float, `+`/`-`/`*`) refuses.
+2. The pinned call evaluates every operand on some run. ripr reads each
+   argument on each run: a plain literal, a column of a constant-row `for`
+   table in the test (RIPR-SPEC-0186) whose loop body holds the call, or, for an assertion borrowed from a
+   check helper (rule 7), the helper's parameter at each of the test's
+   eager calls. On at least one run every operand but the last must take
+   the value that does not short-circuit (`true` for `&&`, `false` for
+   `||`). A run with any argument ripr cannot read, the last operand's
+   included, never counts.
+3. Every other rule holds unchanged. The predicate twin pins through the
+   same gate, as for any bool owner's whole tail.
+4. Propagation (#8037). An admitted chain that is the owner's whole body
+   completes a DirectReturn witness on its line (limitation
+   `short_circuit_owner_tail`), as a constant tail and an admitted
+   iterator-adaptor tail (RIPR-SPEC-0265 rule 3) do: its operands are
+   comparisons of parameters with literals and make no calls, so its value
+   is the owner's return. Before this,
+   an `||` chain had no witness, because the closure-syntax guard reads any
+   paired pipes as an opaque closure, so its return-value probe stayed
+   `weakly_exposed` even when the pin held. Whether a pinned run evaluates
+   every operand stays item 2's run check, not this edge's.
+
+The run check reads values, not mutants: it shows the changed chain runs
+to its end on a pinned input, which is what rule 3 asks of any tail.
+Whether those inputs discriminate a boundary stays the infection stage's
+question. In `grid-equality-table` (`day % 7 == 6 || day % 7 == 0` over a
+table) the predicate keeps `infection_unknown` for computed operands; the
+return value, which before item 4 lacked a complete owner-bound
+propagation witness, is now credited through that witness and the pin.
+
+### Exact projections
+
+For an owner whose declared return type is a built-in integer under the
+cell-0094 primitive-scalar check, `assert_eq!` on these projections of the
+owner call against a plain decimal literal `e` pins the call
+(trap-ceiling-wide-min-control, trap-muffle-times-one-control):
+
+1. `call.min(k)` with `e < k`: a result below the bound is the call's own
+   value, and any other value yields either itself or `k`, both unlike `e`.
+2. `call.max(k)` with `e > k`, symmetrically.
+3. `call * 1`, `1 * call`, `call + 0` and `0 + call`, which keep every
+   value.
+
+`.min` and `.max` are the prelude `Ord`'s methods only while nothing
+rebinds them (#7932 review). The projection refuses when the workspace
+declares a `fn min` (for `.min`) or `fn max` (for `.max`), declares a
+`trait Ord`, names `Ord` in a `use` item, or carries
+`no_implicit_prelude`, or when the test's file globs a foreign module. A
+local `trait Ord` shadows the prelude's, so `.min(k)` would resolve to it.
+`* 1` and `+ 0` keep std's operator impls, which coherence fixes for a
+primitive, so they do not read that scan.
+
+`k` and `e` are plain decimal literals (`_` separators allowed): a
+constant, a suffix, a hex literal or a negative number refuses. The call
+is the owner call shape of rule 1 with nothing else around it; chained
+projections, `assert_ne!` and `assert!` stay refused. The trap twins stay
+gaps: `cap(2).min(1) == 1` clamps (`e == k`) and `dampen(2) * 0 == 0`
+keeps no value. Residuals: a `#![no_implicit_prelude]` file whose own trait
+supplies `min`, and a generic parameter named like the integer type.
+
+For any primitive-scalar owner under the same check, `vec![call][0]`
+compared by `assert_eq!` pins the call (trap-pile-first-element-control):
+a one-element vector indexed at zero holds the call's own value. The
+assertion's only nested macros are plain, unqualified `vec!` calls; a
+second element, another index, the repeat form `vec![call; n]`, anything
+around the index, `assert_ne!` and `assert!` refuse. As with `format!`,
+admitting a nested `vec!` is an execution fact shared by every
+`assert_eq!` the syntax gate reads: the trap twin
+`trap-stack-container-length` (`assert_eq!(vec![stack(2)].len(), 1)`) now
+reaches the ordinary token rule and reads `weakly_exposed`, still a gap.
+
+### Early error-variant pins (#7063)
+
+Rule 3 pins a changed early `return Err(..);` only when it is the body's one
+`Err` exit. An owner that validates input usually has several, one per
+variant (`parse_pairs` returns `MissingEquals`, `EmptyKey` and
+`DuplicateKey`), so a changed `return Err(ConfigError::MissingEquals { line:
+idx + 1 });` got no pin and read as a gap although
+`assert_eq!(parse_pairs("host = a\nport 9000\n"), Err(ConfigError::MissingEquals
+{ line: 2 }))` fails on any wrong line number or variant
+(`config-missing-equals-line` in the RIPR-SPEC-0219 corpus).
+
+1. Variant gate. When the `Err` head gate refuses, a changed early
+   `return Err(Type::Variant ..);` still pins when no other exit can build
+   `Type::Variant`: every other `return` and the tail are one `Ok(..)` call
+   or one `Err(..)` call whose whole argument is `Type::Sibling`, optionally
+   followed by one `(..)` or `{ .. }` payload that ends the argument, for a
+   different `Sibling` of the same `Type`. A bare or aliased variant,
+   another enum's path, an opaque `Err(e)` / `Err(f(..))`, or a sibling
+   followed by more (`Err(Type::A { .. }.relabel())`) refuses, since it may
+   hold the changed variant. The body has no `?` (a converted callee error
+   may be any variant), no `return` sits in a closure, `async`/`const` block
+   or nested `fn`, and the changed value evaluates all of its parts, as for
+   the head gate. The owner's file must not bind `Ok` or `Err` as a value.
+2. Owner's enum. `Type` is declared once in the workspace and every sibling
+   the gate read is one of its declared variants (an associated constant
+   such as `Type::NO_EQUALS` may hold any variant). The owner's file must
+   not rebind `Type` through an import or alias, and must not bring any of
+   its variants in by `use` (`use ConfigError::MissingEquals;`,
+   `use ConfigError::*;`, `use self::ConfigError::MissingEquals as M;`),
+   which would let a bare or aliased spelling build the changed variant
+   unseen.
+3. Payload equality. `Type` derives `PartialEq` (no hand-written
+   `impl PartialEq` anywhere), and every field of every variant has no
+   attribute and compares by value under RIPR-SPEC-0225 rule 4. A
+   whole-value pin then compares the changed variant's payload too. The same
+   rule holds a payload-carrying `Err(Type::Variant ..)` that is the body's
+   one `Err` exit under rule 3's `Err` head gate, when `Type` is a
+   workspace enum declaring `Variant`; an associated-function payload
+   (`Err(String::from(..))`) keeps the head gate.
+4. Expected value. The pinned assertion is one plain `assert_eq!` with one
+   operand that is the owner call or a local bound directly from it
+   (`let r = owner(..);`), compared with one `Err(..)` call whose exact
+   variant is the same `Type::Variant`, written bare or after `crate::`
+   (`Err(crate::ConfigError::MissingEquals { line: 2 })` qualifies; any
+   other prefix, such as `external::ConfigError::MissingEquals`, may name a
+   foreign enum sharing the trailing names and does not; `Err(ConfigError::EmptyKey { .. })`
+   and `Ok(..)` do not). The owner call may also end in `.unwrap_err()` or
+   `.expect_err("..")`, directly or in a local bound from it
+   (`let e = owner(..).unwrap_err();`), compared with the bare variant
+   (`assert_eq!(e, ParseError::TooLong(12))`). The test's file must not
+   rebind `Type`. An equality on another function's result
+   (`assert_eq!(parse_section(..), Err(ConfigError::MissingEquals { .. }))`)
+   is never the pin, whatever else the test asserts on the owner.
+5. Field probes. A `field_construction` probe on one field initializer of
+   such a construction written on one line (`line: idx + 1` inside
+   `return Err(ConfigError::MissingEquals { line: idx + 1 });`) gets the same
+   pin, with one brace payload and the initializer as one of its top-level
+   fields. Its `exact_error_variant` `assert_eq!` clears the missing
+   field-value discriminator the way a credited clone-field pin does
+   (#6692). A construction spread over several lines, or a field the line
+   does not initialize, gets none.
+6. Propagation. The flow producer names an error-variant sink by its
+   variant alone (`Result::Err(ConfigError::MissingEquals)`), so a source
+   that carries a payload never shared its identity. The witness edge is
+   established, as for the call-free constructor of rule 3, when the sink
+   is the error variant on the changed line itself, the changed text is one
+   `Err(..)` constructor (optionally after `return`) of that exact variant,
+   and any payload is call-free: no call or tuple parentheses, macro,
+   closure, `?`, string or nested brace literal. A unit variant
+   (`Err(E::V)`) has no payload and qualifies; a tuple payload
+   (`Err(E::V(x))`) reads as a call and stays a candidate. The variant
+   path, `Type::Variant` bare or after `crate::` (no other prefix), must name, in the owner's file, a declared
+   workspace enum that declares that variant, under a name no import or
+   alias in that file rebinds (rule 2's owner-file condition). An import
+   alias (`use crate::ConfigError as CE;`), a `type` alias, `Self::` or a
+   module path names no declared enum, so its construction keeps the
+   candidate witness, as before #7063.
+7. Payload-only changes. A completed witness must not let a variant-only
+   oracle credit a change the variant does not show. For an `error_path` or
+   `return_value` probe whose changed error construction carries a payload
+   (a `(..)` or `{ .. }` after the variant path) and whose old text builds
+   the same variant (compared by the two trailing path segments, so
+   `crate::ConfigError::V` and `ConfigError::V` are one variant), or has no
+   old text (repo mode), observation is
+   confirmed only by the owner pin of rules 1 to 4: an `assert_eq!` tied to
+   the owner call. A written-out equality not tied to the owner call,
+   `assert!(matches!(r, Err(E::V { .. })))`, `matches!(e, E::V(_))`, a
+   guarded match on the variant, a RIPR-SPEC-0231 sibling exclusion
+   (`assert_ne!(owner(..), Err(E::Sibling { .. }))` or
+   `assert!(!matches!(owner(..), Err(E::Sibling { .. })))`), any other
+   `assert_ne!` and token overlap do not confirm it. A change that replaces the variant is still confirmed by a
+   variant pin (RIPR-SPEC-0107 Control B). Named residuals, each left below
+   `exposed` rather than credited on a reading that can be wrong:
+   - a literal-field pattern
+     (`assert!(matches!(owner(..), Err(E::V { line: 2 })))`) pins only the
+     fields it names, not the whole value, so it is not read as a payload
+     pin for an `error_path` or `return_value` probe; the
+     `field_construction` probe of a field it names keeps its own credit
+     from the #6578 variant-field pattern rule, which requires a direct
+     owner call as the scrutinee;
+   - a variant built inside a `?` (`let v = s.ok_or(E::V(x))?;`) gets no
+     early error-variant gate (the `?` is the error exit), so even
+     `assert_eq!(owner(..), Err(E::V(3)))` does not confirm its payload;
+   - beside those pattern pins, a `field_construction` probe is credited
+     only through the owner pin of rule 5, which needs a one-line brace
+     payload.
+
 ## Required Evidence
 
 - Rule 7 (#6482): in the RIPR-SPEC-0219 verdict corpus, `grid-arith-helper`
@@ -1169,8 +1664,9 @@ value when:
   `grid-bool-helper` move the same way. No case gains a false `exposed`
   verdict and no other row changes. The other helper cells stay below
   `exposed` for the causes their inline `-exact` twins share: an `&&` tail
-  owner pin (`grid-equality-helper`), a changed arm pattern that selection
-  never credits (`grid-match-helper`), and the iterator-closure and `?`
+  owner pin (`grid-equality-helper`, credited since #7969), a changed arm
+  pattern that selection never credited (`grid-match-helper`, credited since
+  RIPR-SPEC-0229 decision 5, #7981), and the iterator-closure and `?`
   operand shapes (`grid-iter-helper`, `grid-try-helper`).
 - The bytes 7930d93 replay moves both `return_value` findings
   (`try_get_int`, `try_get_int_le`) from `weakly_exposed` to `exposed`, and
@@ -1253,7 +1749,24 @@ value when:
   mention of a trusted name in another macro's arguments stays ambiguous,
   a plain `assert_eq!(..)` included: to that macro it is only tokens, and
   `define!(assert_eq!(mod tests;))` can emit `macro_rules! assert_eq`
-  together with the module whose tests then compile against it.
+  together with the module whose tests then compile against it. The one
+  exception is a call to a wrapper that cannot bind a name at all (#6648):
+  an unqualified call to a `macro_rules!` this file defines exactly once,
+  without an attribute and never names in a `use`. The definition sits at
+  file level, or in an inline module whose textual scope can be bounded and
+  contains the call, and ends before the call. Neither the definition nor
+  the call's arguments hold a binding word (`macro_rules`, `macro`, `use`,
+  `extern`, `mod`, `include`, `macro_use`, `macro_export`,
+  `no_implicit_prelude`) or an attribute other than a built-in test, lint,
+  `cfg` or `doc` attribute. The definition holds no `!` at all and captures
+  no `tt` fragment (the only fragment that can lift a lone `!` or `#` out of
+  the arguments and splice it after another name), and the arguments hold a
+  `!` only as a bare trusted `name!` (a unary `!` fails closed, since a `tt`
+  fragment or a repetition can splice it after a name). No module item sits
+  between the definition and the call, and every macro call there is another
+  such call of the same wrapper (even a trusted name may be a local macro
+  there), so nothing can bring in a shadowing definition. Attribute proc
+  macros elsewhere in the file stay invisible, as for every other site.
   `macro_use` or `no_implicit_prelude` anywhere in a non-trusted macro's
   arguments makes every trusted name ambiguous (stricter than the same
   attribute written on an item, which a resolved module can admit). A
@@ -1261,6 +1774,24 @@ value when:
   `#[macro_use]` on any enclosing module, no out-of-line child module)
   refuses only tests inside that item; a glob import from a workspace member
   crate with indexed files is workspace-owned.
+- A `macro_rules!` or `macro` body is only tokens to the parser, so the
+  items its expansion emits are read from its binding positions (#5991):
+  each rule's matcher matches the invocation and emits nothing, so the
+  binding positions are the transcriber's, and a literal
+  `use other::assert_eq;` in a matcher binds nothing. `macro_rules! name`,
+  `macro name`, and a `use` whose last segment or rename target is the name
+  make that trusted name ambiguous wherever the macro may expand.
+  `macro_use`, `no_implicit_prelude`, or a glob `use` not rooted at `crate`,
+  `self`, `super` or `$crate` in a body makes every trusted name ambiguous.
+  A body that binds a name its caller passes in (`macro_rules! $n`,
+  `macro $n`, `use x::$n`, `use $n;`) does too, when the macro's own name is
+  trusted: calls of a trusted name are never read for the names they pass,
+  while an untrusted call's arguments already record them. A rename target
+  (`use $n as x`) and a fragment before `::` bind the name they qualify, not
+  the fragment. Either kind of site is crate-local only when neither the
+  macro nor its body is exported, so a private macro's glob body binds only
+  its own target root, as a direct glob there would. A helper body that only
+  calls `assert_eq!` or holds `use super::*;` binds nothing.
 - A crate-local binding reaches only tests compiled in the same crate. A
   site is crate-local when it cannot leave the crate whose module tree holds
   its file: a private `use` or glob, `#[macro_use] extern crate`,
@@ -1305,6 +1836,14 @@ value when:
   (or found from another working directory) is not read, and a file
   compiled by a package other than its nearest manifest (a target `path`
   or `#[path]` from a sibling) is judged by the nearest manifest.
+- `use expect_test::expect;` under its own name makes a bare `expect!`
+  expect-test's on the same manifest terms as `pretty_assertions`
+  (inline expect-test pins, #6578).
+- Unchanged closures in a returned tail (#6578): in the RIPR-SPEC-0219
+  verdict corpus, `lib-pretty-total-path-qualified` is `credited`; a change
+  inside the closure, a value a closure captures through a `let`, and a
+  changed `map_or` default stay unrevealed
+  (`crates/ripr/tests/unchanged_closure_tail.rs`).
 
 ### Matched before/after observations
 
@@ -1488,15 +2027,18 @@ assertions. This repair shares the existing callback without that larger migrati
   constant-row table, cross-module and cross-file helpers, generic helpers
   and helpers with early exits keep the rule-1 refusal. A helper's arguments are its parameters, whose values stay
   unresolved (RIPR-SPEC-0229); rule 7 establishes execution and call identity
-  only.
+  only. The one exception is a short-circuit tail (#7969), whose run check
+  reads the plain literal a test passes at each eager helper call; it
+  resolves no other helper value.
 
 - Shared admission covers Rust `return_value`, `error_path` and `predicate`
   evidence from bare `assert_eq!` invocations, a bool owner's `assert!` and
   the lone-equality forms above, and from `assert_eq!` qualified through a
   drop-in assertion crate (`std`, `core`, `pretty_assertions`,
-  `similar_asserts`; RIPR-SPEC-0231). The pin itself matches only the bare
-  spelling, so a qualified drop-in `assert_eq!` is refused here and its row
-  reads `assertion_not_credited`. Other qualified assertion macros, other
+  `similar_asserts`; RIPR-SPEC-0231). The pin itself matches the bare
+  spelling and the `std`/`core`-rooted one (rule 1), so another qualified
+  drop-in `assert_eq!` is refused here and its row reads
+  `assertion_not_credited`. Other qualified assertion macros, other
   oracle kinds/families and general control-flow or macro resolution retain
   their existing authorities; this is not a general execution-proof system.
 
@@ -1508,8 +2050,10 @@ assertions. This repair shares the existing callback without that larger migrati
   are documented residuals.
 - A trait from outside the workspace that is also in scope and also names
   the method is not detected.
-- Type- and trait-qualified calls (`Type::name(..)`,
-  `Trait::name(&mut recv, ..)`) do not pin yet; module paths do (#6974).
+- Trait-qualified calls (`Trait::name(&mut recv, ..)`) and type-qualified
+  method calls do not pin yet; module paths do (#6974), and so does
+  `T::name(..)` for an inherent associated function directly imported
+  from the owner's library (#6617).
 - A path call relies on the name's workspace uniqueness. Items that a
   procedural or foreign macro generates are invisible to it, as they are
   to the bare call.
@@ -1520,6 +2064,18 @@ assertions. This repair shares the existing callback without that larger migrati
   this bounded source query; no compiler-equivalent macro identity is claimed.
 - No runtime claim: `exposed` stays a static reading. The matched compiled
   controls are independent evidence for the fixture contract only.
+
+- Short-circuit tails (#7969): `grid-equality-helper` moves from a false
+  actionable gap to `credited`. In the `authored-spec0197-short-circuit`
+  subject, `short-circuit-band-table` (`open && 3 <= level` over a table
+  whose `(3, true)` row runs both operands) stays `credited` (it already
+  read `exposed` through table boundary pairing; the pin must not undo it), and
+  `trap-short-circuit-skipped-operand` (`x == 0 && 0 == y` pinned only
+  with `x != 0`) stays a gap. No other row changes.
+- Short-circuit tail propagation (#8037): `grid-equality-table`
+  (`day % 7 == 6 || day % 7 == 0` over a table whose rows 0, 1 and 5 run
+  both operands) moves from a false actionable gap to `credited`. No other
+  row changes.
 
 ## Acceptance Examples
 
@@ -1543,6 +2099,20 @@ assertions. This repair shares the existing callback without that larger migrati
   `return Some(1 + 2);` sits beside a `None` tail and a test asserting
   `assert!(matches!(lookup(1), Some(x @ 3)))`, the finding reads `exposed`;
   `assert_eq!(lookup(2), None)` alone stays below `exposed`.
+- Given `impl Gauge { fn reading() -> u32 }` in `meter` and a free
+  `fn reading` in `spare`, a `panel` integration test with
+  `use meter::Gauge;` asserting `assert_eq!(Gauge::reading(), 42)` confirms
+  a change to `Gauge::reading`; the same test through `use meter::Gauge as
+  Knob;`, `use meter::*;` or `use spare::Gauge;` does not (#6617).
+- Given `fn both_zero(x: i32, y: i32) -> bool { x == 0 && 0 == y }`
+  changed from `y == 0` and a test asserting only
+  `assert_eq!(both_zero(1, 0), false)` and `assert_eq!(both_zero(2, 0), false)`,
+  the finding stays below `exposed`: no pinned call evaluates `0 == y`.
+- Given `fn in_band(level: u8, open: bool) -> bool { open && 3 <= level }`
+  changed from `level >= 3` and a test asserting
+  `assert_eq!(in_band(level, open), want)` over the table
+  `[(3, true, true), (2, true, false), (5, false, false)]`, the finding
+  reads `exposed`: the `(3, true)` row evaluates both operands.
 - Given a trait default `next_word` and `impl Reader for Fixed` overriding
   it, a test asserting `assert_eq!(reader.next_word(), 7)` on a `Fixed`
   receiver does not confirm a change to the default.
@@ -1560,17 +2130,40 @@ assertions. This repair shares the existing callback without that larger migrati
   `an_early_err_return_needs_to_be_the_only_err_source`,
   `an_early_return_pin_admits_only_the_value_that_return_produces`,
   `an_early_some_or_ok_return_is_pinned_beside_opposite_exits`,
-  `an_error_path_probe_is_pinned_like_a_changed_err_return`);
+  `an_error_path_probe_is_pinned_like_a_changed_err_return`); early
+  error-variant pins (#7063:
+  `an_early_err_variant_return_is_pinned_when_no_other_exit_builds_it`,
+  `an_early_err_variant_pin_admits_only_its_variant_through_derived_equality`,
+  `an_early_err_variant_pin_refuses_what_can_build_its_variant_unseen`,
+  `an_early_err_variant_pin_reads_only_the_owner_result`,
+  `an_early_err_variant_pin_refuses_a_test_file_that_rebinds_the_enum`,
+  `only_a_declared_enum_variant_completes_the_error_witness`; in
+  `propagation_witness.rs`,
+  `a_payload_carrying_err_on_its_own_line_completes_the_error_witness`; in
+  `reveal.rs`, `a_payload_change_needs_the_whole_value_owner_pin`,
+  `a_sibling_exclusion_does_not_confirm_a_payload_only_change`);
   literal `matches!` pins
-  (`a_literal_matches_pattern_pins_the_owner_value`);
+  (`a_literal_matches_pattern_pins_the_owner_value`); rendered scalar pins
+  (`a_scalar_rendering_compared_with_exact_text_pins`,
+  `each_refusal_names_the_gate_that_failed`); exact projections
+  (`an_integer_projection_that_keeps_the_value_pins`,
+  `a_one_element_vec_indexed_at_zero_pins_the_owner`);
   inline constructor receivers
-  (`an_inline_constructor_types_the_receiver_like_a_binding`); module-path
+  (`an_inline_constructor_types_the_receiver_like_a_binding`); associated
+  `T::name(..)` calls (#6617:
+  `associated_function_pins_through_a_directly_imported_owner_type`,
+  `associated_function_pin_refuses_other_names_for_the_type`,
+  `associated_function_pin_is_not_established_beside_a_competitor`,
+  `associated_function_pin_resolves_the_importing_crate_through_manifests`,
+  `bare_call_names_only_a_module_level_function`); module-path
   calls and let-bound results (#6974:
   `a_path_through_the_owners_own_crate_pins_the_owner`,
   `a_path_that_may_leave_the_owners_crate_is_not_a_pin`,
   `a_crate_relative_path_in_another_target_is_not_the_owners_crate`,
   `the_owners_library_name_roots_a_path_from_another_crate`,
   `a_result_bound_once_and_only_asserted_pins_like_the_call`,
+  `a_scalar_result_read_by_other_assertions_still_pins` and
+  `a_shadowed_primitive_return_is_not_a_scalar` (cell-0094),
   `review_holes_in_path_and_let_bound_pins_stay_closed`,
   `a_test_crate_binding_of_the_library_name_shadows_the_dependency`,
   `a_rename_to_the_owners_name_or_a_type_of_it_defeats_every_path`,
@@ -1680,6 +2273,27 @@ assertions. This repair shares the existing callback without that larger migrati
   mutant fails; `raw_path_shadow_module_keeps_the_mutant_green` (#7098
   review) loads a rival `Unit` from a `#[r#path]`-named non-`.rs` module,
   and the mutant passes while the finding refuses.
+- Binding-free local wrappers (#6648): `owner_pin/tests.rs`
+  `a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted`.
+- Macro-body bindings (#5991): `owner_pin/tests.rs`
+  `a_macro_body_that_binds_a_trusted_name_makes_it_ambiguous`,
+  `a_macro_body_site_names_the_macro_and_its_reach`, and the body rows of
+  `stored_macro_candidates_record_each_binding_construct`.
+- Short-circuit tail propagation (#8037): `propagation_witness.rs`
+  `short_circuit_owner_tail_completes_only_an_admitted_chain`;
+  `crates/ripr/tests/short_circuit_or_tail.rs`
+  `an_or_tail_run_to_its_end_by_a_table_is_exposed` and
+  `an_or_tail_whose_changed_operand_never_runs_stays_below_exposed`.
+- Short-circuit tails (#7969): `owner_pin/short_circuit.rs` unit tests
+  `reads_homogeneous_comparison_chains_over_parameters`,
+  `refuses_anything_that_can_call_panic_or_mix_operators`,
+  `evaluates_operands_on_literal_values`; `owner_pin/tests.rs`
+  `a_short_circuit_tail_pins_only_on_a_call_that_runs_every_operand`,
+  `a_short_circuit_tail_refuses_impure_or_mixed_chains`,
+  `a_short_circuit_tail_refuses_a_body_with_earlier_statements`,
+  `a_short_circuit_table_column_counts_only_inside_its_loop`;
+  `owner_pin/tests/helper_pins.rs`
+  `a_short_circuit_tail_reads_helper_calls_by_parameter`.
 - Bool-owner unit tests: `a_bare_assert_pins_a_bool_owner_to_true_or_false`,
   `a_bare_assert_pins_nothing_on_a_non_bool_owner`,
   `a_bare_assert_keeps_the_owner_binding_defeats`; pairing unit test
@@ -1706,6 +2320,9 @@ assertions. This repair shares the existing callback without that larger migrati
   confirmation signals behind the family, oracle-kind and owner-binding
   defeats. `analyze_related_assertions` applies shared context before matching
   or credit and preserves refused assertions only as zero-oracle relations; `file_imports_own_item`; `::`-rooted `use` paths.
+- `crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs`:
+  `ShortCircuitTail` (#7969), the `ReturnPathGate::ShortCircuit` owner
+  side and its per-run test-side check.
 - `crates/ripr/src/analysis/classify/operand_pin.rs`: rule 7's
   operand-only pin, applied in `classifier/evidence.rs`.
 - `crates/ripr/src/analysis/classifier/evidence.rs`: establishes the pin
@@ -1768,3 +2385,45 @@ assertions. This repair shares the existing callback without that larger migrati
 - `owner_return_pin_false_exposed` — zero: no fixture or replay finding
   gains `exposed` through the pin unless its confirming assertion is a
   complete call that names the owner on the changed return path.
+
+
+## Literal JSON construction admission (#7776)
+
+A bare `json!` with a visible unchanged canonical `use serde_json::json`
+(or grouped import) may construct data before an equality or inside its operands.
+This supplies execution context only; owner, path activation, propagation and
+value discrimination still require their existing witnesses.
+
+The initial closed grammar accepts Rust-valid JSON string/boolean/null literals, unsuffixed i32 integers,
+finite float literals, arrays and string-keyed objects. It refuses interpolated expressions,
+calls, nested macros, raw/byte/suffixed literals, split numeric tokens, trailing
+commas and unsupported syntax. A constructor name never supplies an oracle.
+
+Registry authority is limited to serde_json 1.0.151, crates.io checksum
+`c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14`,
+whose macro expansion has no enclosing-function exit for this literal grammar.
+The analysis root must declare this dependency directly or in its workspace
+package table. Offline locked Cargo metadata must resolve one canonical package
+and the importing package's unique package edge with matching normal/dev contexts. Optional, renamed,
+conditional, path/git/alternate-registry and ambiguous edges refuse. This uses
+rule 7a's existing bounded metadata process and strict configuration snapshot;
+ambient registry and ancestor/nested source replacements refuse. Windows environment names are canonicalized before registry/home checks. Manifest/config/
+lock identity is rechecked and affects classified-cache reuse.
+
+Visible local, imported, cross-file namespace and workspace macro bindings
+remain subject to the shared fail-closed admission checks. An unavailable or
+unsupported receipt retains the execution/binding refusal; uncalled closures,
+shadowed assertions/owners and alternate return paths retain their existing stops.
+Ordinary Cargo executable/registry-cache integrity remains an instrument
+assumption, as in rule 7a; this does not authenticate a hostile compiler or SDK.
+
+Matched fixtures preserve the didSave #17745 literal constructor test body and
+root/nested controls. Correct and deliberately wrong callback libraries execute
+one unignored test each. The fake constructor emits `return` and lets the wrong
+callback pass; the eight ineffective fixture controls have independent honesty
+corpus entries. The documentHighlight `range()` interpolation remains unsupported.
+A nested literal is admitted for observation but remains weakly exposed when the
+existing owner-call argument pin is unavailable; this leaf does not relax that
+authority. Withheld diff-index source bindings receive the same constructor scan.
+Full frozen consumer replay is separate from fixture admission and never clears
+consumer gates, missing IDs or unrelated propagation residuals by absence.

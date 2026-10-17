@@ -1,0 +1,76 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_map_insert_count_empty/input
+
+Summary: 2 probe(s), 1 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+
+INFO ./src/lib.rs:13
+  id: probe:src_lib.rs:call_deletion:930be5e9
+
+Changed
+  before: self.stock.insert(sku.to_string(), qty)
+  after:  self.stock.insert(sku.to_owned(), qty)
+
+Probe
+  family: call_deletion
+  delta:  effect
+  owner:  src/lib.rs::impl Shelf::restock
+  canonical gap: gap:rust:src/lib.rs:impl Shelf::restock:call_deletion:call_deletion:self.stock.insert_sku.to_owned_qty
+
+Static exposure
+  exposed (info, confidence 1.00)
+
+Evidence
+  - reach yes: Related tests appear to reach restock: first_insert_makes_one_entry
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Changed behavior appears to influence state write: self.stock.insert(sku.to_owned(), qty)
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator yes: Strong oracle found: exact value or pattern assertion
+  - local flow reaches state write: self.stock.insert(sku.to_owned(), qty) (line 13)
+  - related test src/lib.rs:22 first_insert_makes_one_entry uses strong exact value oracle: assert_eq!(shelf.stock.len(), 1);
+  - source function argument value qty = 2 at line 24
+  - source function argument value sku = "A" at line 24
+  - source assertion argument value 1 at line 25
+Drill in:
+  ripr explain --root <cwd>/fixtures/rust_map_insert_count_empty/input --diff <cwd>/fixtures/rust_map_insert_count_empty/diff.patch --mode fast probe:src_lib.rs:call_deletion:930be5e9
+  ripr context --root <cwd>/fixtures/rust_map_insert_count_empty/input --diff <cwd>/fixtures/rust_map_insert_count_empty/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:930be5e9
+
+WARNING ./src/lib.rs:13
+  id: probe:src_lib.rs:side_effect:1e5fb897
+
+Changed
+  before: self.stock.insert(sku.to_string(), qty)
+  after:  self.stock.insert(sku.to_owned(), qty)
+
+Probe
+  family: side_effect
+  delta:  effect
+  owner:  src/lib.rs::impl Shelf::restock
+  canonical gap: gap:rust:src/lib.rs:impl Shelf::restock:side_effect:side_effect:self.stock.insert_sku.to_owned_qty
+
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+
+Evidence
+  - reach yes: Related tests appear to reach restock: first_insert_makes_one_entry
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Changed behavior appears to influence state write: self.stock.insert(sku.to_owned(), qty)
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - local flow reaches state write: self.stock.insert(sku.to_owned(), qty) (line 13)
+  - related test src/lib.rs:22 first_insert_makes_one_entry uses strong exact value oracle: assert_eq!(shelf.stock.len(), 1); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - source function argument value qty = 2 at line 24
+  - source function argument value sku = "A" at line 24
+  - source assertion argument value 1 at line 25
+
+Weakness
+  - No strong discriminator was detected
+
+Next step
+  Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect
+Drill in:
+  ripr explain --root <cwd>/fixtures/rust_map_insert_count_empty/input --diff <cwd>/fixtures/rust_map_insert_count_empty/diff.patch --mode fast probe:src_lib.rs:side_effect:1e5fb897
+  ripr context --root <cwd>/fixtures/rust_map_insert_count_empty/input --diff <cwd>/fixtures/rust_map_insert_count_empty/diff.patch --mode fast --at probe:src_lib.rs:side_effect:1e5fb897

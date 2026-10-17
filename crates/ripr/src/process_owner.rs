@@ -580,7 +580,14 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn terminate_tree_leaves_unrelated_processes_alive() -> Result<(), String> {
-        let mut unrelated_command = platform_sleep_command(5);
+        // The unrelated process must outlive the whole observation window,
+        // not merely start alive: under full-suite parallelism the cold
+        // PowerShell starts, the bounded termination and the PowerShell
+        // alive-check itself can legitimately exceed a short sleep, and an
+        // expired unrelated process misreads as "terminated" (#7937). The
+        // window matches the sibling containment tests; the test kills the
+        // unrelated process itself on every exit path, so nothing leaks.
+        let mut unrelated_command = platform_sleep_command(60);
         let mut unrelated = unrelated_command
             .stdin(Stdio::null())
             .stdout(Stdio::null())

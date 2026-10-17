@@ -217,8 +217,9 @@ pub(super) fn print_workflow(name: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn print_check_help() {
-    println!("{CHECK_HELP}");
+/// `ripr check --help` is one screen; `--all` selects the exhaustive reference.
+pub(super) fn print_check_help(all: bool) {
+    println!("{}", if all { CHECK_HELP } else { CHECK_HELP_SHORT });
 }
 
 pub(super) fn print_config_help() {
@@ -505,6 +506,37 @@ mod tests {
         );
     }
 
+    /// #8164: HELP, README, and Quickstart must lead with one analysis command.
+    /// `Try this first:` is the live help owner; doctor stays a setup task and
+    /// must not reappear as a co-first command or a hardcoded `--base`.
+    #[test]
+    fn help_overview_has_one_canonical_first_run() -> Result<(), String> {
+        let Some((_, after)) = HELP.split_once("Try this first:\n") else {
+            return Err("default help lost its first-run section".to_string());
+        };
+        let section = after.split("\n\n").next().unwrap_or_default();
+        let commands: Vec<_> = section
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("ripr "))
+            .collect();
+        let [line] = commands.as_slice() else {
+            return Err(format!(
+                "first run must name exactly one command, got:\n{section}"
+            ));
+        };
+        let command = line.split_once("  ").map(|(part, _)| part).unwrap_or(line);
+        if command != "ripr check" {
+            return Err(format!(
+                "first run must be `ripr check` without a fixed base, got `{command}`"
+            ));
+        }
+        if section.contains("--base") {
+            return Err("first-run command must not hardcode --base".to_string());
+        }
+        Ok(())
+    }
+
     /// The first screen has to answer "what do I run?" without the reader
     /// knowing any internal vocabulary: the setup commands, one route per task,
     /// and how to reach the rest.
@@ -651,6 +683,36 @@ mod tests {
     }
 
     #[test]
+    fn check_help_names_advisory_exit_and_points_blocking_at_gate() {
+        // #5065: CI authors who only read `--help` must not treat findings as
+        // a nonzero lint. The typed contract is docs/EXIT_CODES.md.
+        assert!(CHECK_HELP.contains("`exposed`"));
+        assert!(CHECK_HELP.contains("`weakly_exposed`"));
+        assert!(CHECK_HELP.contains("A non-zero exit means the analysis did not"));
+        assert!(CHECK_HELP.contains("`ripr gate evaluate`"));
+        assert!(CHECK_HELP.contains("exit 3 on `blocked`"));
+        assert!(CHECK_HELP.contains("Do not build a CI gate on"));
+    }
+
+    #[test]
+    fn gate_help_splits_blocked_exit_3_from_config_error_exit_2() {
+        // #5065: monitors page on 2 (could not complete), not on 3 (blocked).
+        assert!(GATE_HELP.contains("exit 3 for a completed `blocked` decision"));
+        assert!(GATE_HELP.contains("exit 2 for a completed `config_error`"));
+        assert!(!GATE_HELP.contains("non-zero exit for `blocked` or"));
+    }
+
+    #[test]
+    fn agent_verify_help_names_the_empty_stdout_refusal_contract() {
+        // #5065: standalone verify is the exit-3 path whose stdout stays empty.
+        assert!(AGENT_VERIFY_HELP.contains("exits `3`"));
+        assert!(AGENT_VERIFY_HELP.contains("stdout empty"));
+        assert!(AGENT_VERIFY_HELP.contains("RIPR-SPEC-0134"));
+        assert!(AGENT_VERIFY_HELP.contains("exit `2`"));
+        assert!(AGENT_VERIFY_HELP.contains("stderr"));
+    }
+
+    #[test]
     fn check_help_names_the_latency_trace_env_and_mode_cost_class() {
         // #4946(d): every repo-exposure env var a check user can set is
         // documented on the same "Environment variables:" surface; this one
@@ -707,6 +769,8 @@ mod tests {
         assert!(PILOT_HELP.contains("Usage: ripr pilot"));
         assert!(PILOT_HELP.contains("pilot-summary.json"));
         assert!(PILOT_HELP.contains("--timeout-ms MS"));
+        assert!(PILOT_HELP.contains("--format FORMAT"));
+        assert!(PILOT_HELP.contains("--format json"));
         assert!(OUTCOME_HELP.starts_with("Compare before/after static evidence"));
         assert!(OUTCOME_HELP.contains("Usage: ripr outcome"));
         assert!(OUTCOME_HELP.contains("--before PATH"));
@@ -856,6 +920,8 @@ mod tests {
         assert!(DOCTOR_HELP.contains("Cargo.toml"));
         assert!(DOCTOR_HELP.contains("nested Cargo.toml in this tree"));
         assert!(DOCTOR_HELP.contains("https://rustup.rs"));
+        assert!(DOCTOR_HELP.contains("fits one 80x24 screen"));
+        assert!(DOCTOR_HELP.contains("`-v`/`--verbose`"));
         assert!(DOCTOR_HELP.contains("Printed for every profile."));
         assert!(
             DOCTOR_HELP
@@ -971,6 +1037,34 @@ mod tests {
         }
     }
 
+    /// The artifact-input group is disclosed as a one-of requirement, both
+    /// in the Usage synopsis and in a paragraph, so the shipped example
+    /// cannot be read as "every flag is optional" (#7746).
+    #[test]
+    fn pr_ledger_help_discloses_required_artifact_input() {
+        let usage = PR_LEDGER_HELP
+            .lines()
+            .find(|line| line.starts_with("Usage: ripr pr-ledger record"))
+            .unwrap_or_default();
+        for flag in [
+            "--gate",
+            "--baseline-delta",
+            "--zero-status",
+            "--pr-guidance",
+            "--gap-ledger",
+        ] {
+            assert!(
+                usage.contains(&format!("({flag} PATH|"))
+                    || usage.contains(&format!("|{flag} PATH")),
+                "Usage line must mark {flag} as one of the required artifact inputs: {usage}"
+            );
+        }
+        assert!(
+            PR_LEDGER_HELP.contains("At least one artifact input is required"),
+            "help must disclose the one-of artifact-input gate that exits 2"
+        );
+    }
+
     #[test]
     fn every_help_printer_executes_without_panic() {
         // Each wrapper is a `println!("{CONST}")` over the help-text
@@ -1011,7 +1105,7 @@ mod tests {
         print_swarm_queue_help();
         print_swarm_ingest_help();
         print_diff_help();
-        print_check_help();
+        print_check_help(true);
         print_explain_help();
         print_context_help();
         print_doctor_help();
@@ -1847,7 +1941,14 @@ mod tests {
             (
                 "pilot",
                 PILOT_HELP,
-                &["--root", "--out", "--mode", "--max-seams", "--quiet"],
+                &[
+                    "--root",
+                    "--out",
+                    "--mode",
+                    "--max-seams",
+                    "--format",
+                    "--quiet",
+                ],
             ),
         ];
 

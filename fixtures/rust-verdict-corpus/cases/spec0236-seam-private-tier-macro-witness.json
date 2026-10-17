@@ -1,0 +1,58 @@
+{
+  "case_id": "spec0236-seam-private-tier-macro-witness",
+  "subject_id": "authored-spec0236-23",
+  "diff": "cases/spec0236-seam-private-tier-macro-witness.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "integration_test_via_macro",
+  "hard_case": "Seam class matches example 23: `tier` reach opaque, summary names rust_macro_reach_unresolved (`runs_large_order` calls `run`, which reaches macro `priced!` that names `tier`), class opaque. Known gap: the limitation categories still include macro_generated_value beside opaque_static_evidence, where the example adopts opaque_static_evidence only. The diff finding reads no_static_path with no related test, although the test kills two of three mutants. Category deviation tracked in #7958.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if total > 100 { 20 } else { 0 }",
+        "mutated_line": "if total > 100 { 20 } else { 0 }",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: total == 100 now gives 0; 150 still gives 20"
+      },
+      {
+        "replacement": "if total >= 200 { 20 } else { 0 }",
+        "mutated_line": "if total >= 200 { 20 } else { 0 }",
+        "outcome": "tests_failed",
+        "failing_test": "runs_large_order",
+        "equivalence_review": "not equivalent: totals 100..=199 give 0, so 150 gives 0"
+      },
+      {
+        "replacement": "if total >= 100 { 30 } else { 0 }",
+        "mutated_line": "if total >= 100 { 30 } else { 0 }",
+        "outcome": "tests_failed",
+        "failing_test": "runs_large_order",
+        "equivalence_review": "not equivalent: the discount for large totals becomes 30"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "tests/run.rs asserts run(150) == 20; run invokes the same-crate priced! macro that calls private tier, and 150 does not sit on the 100 boundary. Spec cells: RIPR-SPEC-0236 example 23.",
+  "labeling_observation": {
+    "ripr_commit": "b0428d112",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

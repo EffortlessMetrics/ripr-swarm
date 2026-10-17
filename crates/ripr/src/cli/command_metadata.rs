@@ -146,7 +146,8 @@ pub(crate) struct CommandOutputs {
 pub(crate) enum CommandExitContract {
     /// Standard contract: `0` completed, `2` could not complete. Never `3`.
     CompletedOrFailed,
-    /// `ripr check`: findings, including `exposed`, still complete with `0`.
+    /// `ripr check` / `ripr diff`: findings still complete with `0`;
+    /// unsupported input keeps its report and exits `2`.
     AdvisoryFindings,
     /// `ripr gate evaluate`: `config_error` is `2`, `blocked` is `3`.
     GateEvaluate,
@@ -200,7 +201,7 @@ const EXIT_RECEIPT_CHECK: CommandExitContract = CommandExitContract::ReceiptChec
 /// whose `exit` field disagrees is a catalog integrity failure (#5066).
 fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
     match id {
-        "cmd:check" => Some(EXIT_ADVISORY_FINDINGS),
+        "cmd:check" | "cmd:diff" => Some(EXIT_ADVISORY_FINDINGS),
         "cmd:gate.evaluate" => Some(EXIT_GATE_EVALUATE),
         "cmd:agent.verify" | "cmd:agent.card" | "cmd:agent.stub" => {
             Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT)
@@ -435,7 +436,7 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        json_support: true,
         example: "ripr pilot --root .",
         next_routes: &["check", "repair", "doctor"],
         stop_states: &[
@@ -917,7 +918,7 @@ const METADATA: &[CommandMetadata] = &[
         effects: READS_ONLY,
         primary_inputs: &[
             "--pr-number, --base, and --head identities",
-            "optional gate, baseline-delta, zero-status, and guidance artifacts",
+            "at least one of --gate, --baseline-delta, --zero-status, --pr-guidance, or --gap-ledger (each individually optional)",
         ],
         outputs: CommandOutputs {
             default: Some("target/ripr/reports/pr-evidence-ledger.json"),
@@ -930,7 +931,7 @@ const METADATA: &[CommandMetadata] = &[
             "the append-only JSONL history (--out-jsonl), consumed by policy waiver-aging and policy history",
         ),
         json_support: true,
-        example: "ripr pr-ledger record --pr-number 123 --base SHA --head SHA",
+        example: "ripr pr-ledger record --pr-number 123 --base SHA --head SHA --gate target/ripr/reports/gate-decision.json",
         next_routes: &[
             "policy waiver-aging",
             "policy history",
@@ -2047,8 +2048,8 @@ const METADATA: &[CommandMetadata] = &[
         example: "ripr diff --root . --base REV --head HEAD --json",
         next_routes: &["check", "explain"],
         stop_states: &["explicit refusal on unresolvable revisions"],
-        exit: EXIT_COMPLETED_OR_FAILED,
-        limitations: "delivers JSON on stdout; redirect to a file when a report artifact is needed.",
+        exit: EXIT_ADVISORY_FINDINGS,
+        limitations: "delivers JSON on stdout; redirect to a file when a report artifact is needed. Findings and partial_with_limitations stay advisory (exit 0); unsupported_input keeps its report and exits 2.",
         not_applicable_reason: None,
     },
     CommandMetadata {
@@ -2905,6 +2906,23 @@ mod tests {
                 "cmd:help summary {:?} still omits the machine catalog route",
                 row.summary
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn pilot_row_reports_stdout_json_support() -> Result<(), String> {
+        // #7428: `ripr pilot --format json` emits the packet summary on stdout.
+        let row = metadata()
+            .iter()
+            .find(|row| row.id == "cmd:pilot")
+            .ok_or("cmd:pilot has no metadata row")?;
+        if !row.json_support {
+            return Err(
+                "cmd:pilot reports json_support: false while `ripr pilot --format json` \
+                 emits the summary document"
+                    .to_string(),
+            );
         }
         Ok(())
     }

@@ -53,6 +53,7 @@ pub(crate) use typescript::{
 };
 
 pub(crate) const CONFIG_FILE_NAME: &str = "ripr.toml";
+
 pub(crate) const DEFAULT_CONTEXT_RELATED_TESTS: usize = 5;
 pub(crate) const DEFAULT_LSP_SEAM_DIAGNOSTICS: bool = true;
 const DEFAULT_SUPPRESSIONS_PATH: &str = ".ripr/suppressions.toml";
@@ -192,6 +193,15 @@ fn discover_config_path(root: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Structural package workspace marker shared by CLI roots and TypeScript
+/// package discovery. Arrays and objects (including Yarn's object form) mark
+/// workspaces; scalars do not. This does not validate members, globs, or schemas.
+pub(crate) fn package_json_declares_workspace(manifest: &serde_json::Value) -> bool {
+    manifest
+        .get("workspaces")
+        .is_some_and(|workspaces| workspaces.is_array() || workspaces.is_object())
+}
+
 fn is_repository_boundary(directory: &Path) -> bool {
     // The directory entry bounds repository policy even when its target is
     // missing or cyclic. Following it would admit an enclosing repo's config.
@@ -217,11 +227,38 @@ pub(crate) fn load_for_root(root: &Path) -> Result<RiprConfig, String> {
         return default_config_for_root(root);
     };
     let text = crate::bounded_input::read_to_string(&path)
-        .map_err(|err| format!("read {} failed: {err}", path.display()))?;
-    let mut config = parse_config(&text).map_err(|err| format!("{}: {err}", path.display()))?;
+        .map_err(|err| config_load_read_error_for_host(&path, &err, cfg!(windows)))?;
+    let mut config = parse_config(&text)
+        .map_err(|err| config_load_parse_error_for_host(&path, &err, cfg!(windows)))?;
+    // Identity stays the discovered canonical path: symlink equality and
+    // `source_path` consumers compare filesystem identity, not the display
+    // spelling (#7652).
     config.source_path = Some(path);
     config.source_text = Some(text);
     Ok(config)
+}
+
+/// User-facing config path for load errors (#7652). Discovery and
+/// `source_path` keep the canonical form; only the diagnostic interpolates
+/// through the shared renderer so a Windows drive-letter verbatim prefix
+/// does not leak into stderr or the JSON refusal `message`.
+fn config_load_error_path_for_host(path: &Path, windows: bool) -> String {
+    crate::output::path::human_path_text(&path.to_string_lossy(), windows)
+}
+
+fn config_load_parse_error_for_host(path: &Path, err: &str, windows: bool) -> String {
+    format!("{}: {err}", config_load_error_path_for_host(path, windows))
+}
+
+fn config_load_read_error_for_host(
+    path: &Path,
+    err: &impl std::fmt::Display,
+    windows: bool,
+) -> String {
+    format!(
+        "read {} failed: {err}",
+        config_load_error_path_for_host(path, windows)
+    )
 }
 
 /// Whether config discovery would find a `ripr.toml` entry for this root
@@ -491,6 +528,33 @@ pub(crate) fn config_error_summary(error: &str) -> String {
     }
 }
 
+/// Human doctor lines for a config load error. Compact is the source-free
+/// summary. Verbose adds remaining parser-reason lines (unknown field,
+/// unclosed table, allowlisted misplaced-key hint) and never the TOML
+/// source excerpt.
+pub(crate) fn config_error_display_lines(error: &str, verbose: bool) -> Vec<String> {
+    let summary = config_error_summary(error);
+    let mut lines = vec![summary.clone()];
+    if !verbose {
+        return lines;
+    }
+    for line in error.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        if is_toml_source_excerpt_line(line) {
+            continue;
+        }
+        if summary.contains(line) || lines.iter().any(|existing| existing.contains(line)) {
+            continue;
+        }
+        lines.push(line.to_string());
+    }
+    lines
+}
+
+fn is_toml_source_excerpt_line(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed == "|" || trimmed.starts_with('|') || line.contains(" | ")
+}
+
 #[cfg(test)]
 pub(crate) fn tests_only_parse(text: &str) -> Result<RiprConfig, String> {
     parse_config(text)
@@ -654,8 +718,28 @@ impl RiprConfig {
             if perl.timeout_ms == Some(0) {
                 return Err("perl.timeout_ms must be at least 1 millisecond; remove the key for the default (30000)".to_string().into());
             }
+            // #7669: `[perl].producer` is a closed managed-mode selector.
+            // Reuse `is_managed_perl_producer` so a typo cannot pass
+            // `ripr config validate` and then silently skip managed mode.
+            let producer = match perl.producer {
+                Some(value) => {
+                    let name = value.get_ref();
+                    if !crate::app::is_managed_perl_producer(name) {
+                        return Err(Box::new(ConfigDiagnostic::at_value(
+                            format!(
+                                "perl.producer `{name}` is not supported; expected perl-ripr-facts, perllsp, or perl-lsp"
+                            ),
+                            "perl.producer",
+                            value.span(),
+                            text,
+                        )));
+                    }
+                    Some(name.clone())
+                }
+                None => None,
+            };
             config.perl = PerlConfig {
-                producer: perl.producer,
+                producer,
                 executable: perl.executable.map(PathBuf::from),
                 timeout_ms: perl.timeout_ms.unwrap_or(30_000),
                 // Repository config: ripr creates, writes and renames files
@@ -850,7 +934,7 @@ struct RawTypescriptLanguageConfig {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct RawPerlConfig {
-    producer: Option<String>,
+    producer: Option<toml::Spanned<String>>,
     executable: Option<String>,
     timeout_ms: Option<u64>,
     cache_dir: Option<String>,
@@ -1167,6 +1251,12 @@ fn parse_severity(field: &str, value: &str, allow_off: bool) -> Result<ConfigSev
 }
 
 fn parse_relative_path(field: &str, value: &str) -> Result<PathBuf, String> {
+    // TOML permits escaped NULs, but filesystem paths cannot contain them.
+    // Reject them here instead of validating a path that later looks absent
+    // (Path::exists) or fails to open. Do not echo the control byte.
+    if value.contains('\0') {
+        return Err(format!("{field} must not contain NUL characters"));
+    }
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return Err(format!("{field} must not be empty"));

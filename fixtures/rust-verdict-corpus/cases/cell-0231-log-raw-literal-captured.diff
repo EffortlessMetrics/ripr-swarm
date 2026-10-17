@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 01b5b57..ffbe607 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -68,5 +68,5 @@ mod tests {
+ 
+ /// Logs a record with embedded quotes; its test asserts it with a raw literal.
+ pub fn quote(amount: u32) {
+-    log::info!("said \"quoted {}\" twice", amount + 5);
++    log::info!("said \"quoted {}\" twice", 5 + amount);
+ }

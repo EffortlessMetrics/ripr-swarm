@@ -19,7 +19,9 @@ jobs:
     name: rust-tests-junit
     if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # #7142: the measured all-features workload exhausted 30m before its last
+    # subject and doctests; retain a bounded envelope with explicit variance.
+    timeout-minutes: 40
     env:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 

@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "call_deletion",
   "test_shape": "pretty_assertions_use_shadowed_assert_eq",
-  "hard_case": "ripr reads the pretty_assertions assert_eq! as a strong exact oracle and reports the call deletion as exposed, but a field_construction finding on the same line is weakly_exposed and the line-level gap outranks the credit.",
+  "hard_case": "ripr reads the pretty_assertions assert_eq! as a strong exact oracle. After #8011 removed a string-colon field_construction probe, the line read credited through a call_deletion probe confirmed by a whole-object equality on another call. Since #8027 `out += &format!(..)` is an accumulator update, not a call deletion (the call's value is consumed), and pairs away the removed `push_str`, so the line reads static_unknown (limited, acceptable).",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

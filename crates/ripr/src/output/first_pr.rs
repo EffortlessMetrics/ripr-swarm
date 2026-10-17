@@ -11,6 +11,7 @@ use crate::output::start_here_state::{
     START_HERE_PREVIEW_LIMITED, normalize_start_here_output_state, start_here_output_state_is_known,
 };
 #[cfg(test)]
+#[cfg(not(windows))]
 use crate::testing::cwd_placeholder::{project_cwd_text, project_renderer_cwd, project_root_text};
 use serde_json::{Map, Value, json};
 use std::env;
@@ -1625,7 +1626,13 @@ fn current_evidence_strength_for_card(card: &Value) -> String {
         string_path(card, &["oracle_kind"]),
     ) {
         (Some(strength), Some(kind)) => {
-            format!(" with a `{strength}` `{kind}` related-test oracle")
+            // #7752: the displayed phrase opens with the strength adjective
+            // ("a `strong` ..."), so the article agrees with the strength,
+            // not the oracle-kind label (Devin review on #8096).
+            format!(
+                " with {} `{strength}` `{kind}` related-test oracle",
+                crate::domain::indefinite_article(&strength)
+            )
         }
         _ => String::new(),
     };
@@ -3221,9 +3228,16 @@ mod tests {
             bash_label < powershell_label,
             "bash form must be presented before the PowerShell variant"
         );
+        // Host-aware (#7729): the translated-form claim names the shells the
+        // printed form actually parses in on this host.
+        let claim = if cfg!(windows) {
+            markdown.contains("double-quote quoting")
+        } else {
+            markdown.contains("The first form is written for Bash; cmd.exe is not supported.")
+        };
         assert!(
-            markdown.contains("The first form is written for Bash; cmd.exe is not supported."),
-            "receipt presentation must state the cmd.exe boundary:\n{markdown}"
+            claim,
+            "receipt presentation must state the host shell boundary:\n{markdown}"
         );
         Ok(())
     }
@@ -3283,12 +3297,19 @@ mod tests {
             bash_verify_at < powershell_verify_at && bash_packet_at < powershell_packet_at,
             "bash form must be presented before the PowerShell variant:\n{markdown}"
         );
-        assert_eq!(
+        // Host-aware (#7729): each presented block states the host shell
+        // boundary — the bash/cmd claim off Windows, the Windows-console
+        // claim on it.
+        let claim_count = if cfg!(windows) {
+            markdown.matches("double-quote quoting").count()
+        } else {
             markdown
                 .matches("The first form is written for Bash; cmd.exe is not supported.")
-                .count(),
-            2,
-            "each presented block must state the cmd.exe boundary:\n{markdown}"
+                .count()
+        };
+        assert_eq!(
+            claim_count, 2,
+            "each presented block must state the host shell boundary:\n{markdown}"
         );
         Ok(())
     }
@@ -4562,8 +4583,9 @@ mod tests {
         assert_eq!(
             packet["selected"]["next_command"],
             format!(
-                "git -C {} rev-parse --verify 'missing-head^{{commit}}'",
-                bound_arg(".")
+                "git -C {} rev-parse --verify {}",
+                bound_arg("."),
+                shell_arg("missing-head^{commit}")
             )
         );
         cleanup(&repo)
@@ -6231,10 +6253,13 @@ mod tests {
         // and redirects to a file literally named `=threshold` (PR #3625
         // review round 3, coderabbit).
         // Issue #3872: the packet redirect anchors at the resolved --root.
+        let quoted_id = shell_arg(
+            "gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold",
+        );
         assert_eq!(
             packet["selected"]["agent_packet_command"],
             format!(
-                "ripr agent packet --root {} --gap-ledger {} --gap-id 'gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold' --json > {}",
+                "ripr agent packet --root {} --gap-ledger {} --gap-id {quoted_id} --json > {}",
                 bound_arg("."),
                 shell_arg(&anchored_redirect_target(".", DEFAULT_GAP_LEDGER)),
                 shell_arg(&anchored_redirect_target(
@@ -6246,13 +6271,26 @@ mod tests {
         let quoted_id = "gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold";
         let markdown = render_start_here_markdown(&packet);
         assert!(
-            markdown.contains(&format!("--gap-id '{quoted_id}' --json >")),
-            "rendered bash form must quote the gap id:\n{markdown}"
+            markdown.contains(&format!("--gap-id {} --json >", shell_arg(quoted_id))),
+            "rendered command form must quote the gap id:\n{markdown}"
         );
-        assert!(
-            markdown.contains(&format!("--gap-id '{quoted_id}' --json) | Out-String")),
-            "rendered powershell form must quote the gap id:\n{markdown}"
-        );
+        if cfg!(windows) {
+            // The redirect command still earns a translated PowerShell form
+            // (guarded BOM-free write); the double-quoted gap id passes
+            // through it verbatim (#7729).
+            assert!(
+                markdown.contains(&format!(
+                    "--gap-id {} --json) | Out-String",
+                    shell_arg(quoted_id)
+                )),
+                "rendered powershell form must quote the gap id:\n{markdown}"
+            );
+        } else {
+            assert!(
+                markdown.contains(&format!("--gap-id '{quoted_id}' --json) | Out-String")),
+                "rendered powershell form must quote the gap id:\n{markdown}"
+            );
+        }
         let packet_artifact = packet["artifacts"]
             .as_array()
             .and_then(|artifacts| {
@@ -6495,14 +6533,26 @@ mod tests {
                 assert!(bash.contains(&shell_arg(&options.command_root())), "{bash}");
                 let powershell = crate::output::markdown::powershell_command(bash)
                     .ok_or_else(|| format!("recovery cannot be translated: {bash}"))?;
-                assert!(
-                    markdown.contains(&format!("Recovery step {} (PowerShell):", index + 1)),
-                    "{markdown}"
-                );
-                assert!(
-                    markdown.contains(&crate::output::markdown::code_span(&powershell)),
-                    "{markdown}"
-                );
+                if cfg!(windows) {
+                    // The Windows double-quote form is already
+                    // PowerShell-parseable, so the render states it runs
+                    // unchanged instead of repeating an identical second
+                    // form (#7729).
+                    assert!(
+                        markdown
+                            .contains("It runs unchanged in cmd.exe, PowerShell, and Git Bash."),
+                        "{markdown}"
+                    );
+                } else {
+                    assert!(
+                        markdown.contains(&format!("Recovery step {} (PowerShell):", index + 1)),
+                        "{markdown}"
+                    );
+                    assert!(
+                        markdown.contains(&crate::output::markdown::code_span(&powershell)),
+                        "{markdown}"
+                    );
+                }
             }
             if count == 2 {
                 assert!(
@@ -6566,10 +6616,20 @@ mod tests {
         );
         assert_eq!(diff["recovery_commands"].as_array().map(Vec::len), Some(1));
         let markdown = render_start_here_markdown(&packet);
-        assert!(
-            markdown.contains("Recovery step 1 (PowerShell):"),
-            "{markdown}"
-        );
+        if cfg!(windows) {
+            // The Windows double-quote form is already PowerShell-parseable,
+            // so the render states it runs unchanged instead of a second,
+            // identical form (#7729).
+            assert!(
+                markdown.contains("It runs unchanged in cmd.exe, PowerShell, and Git Bash."),
+                "{markdown}"
+            );
+        } else {
+            assert!(
+                markdown.contains("Recovery step 1 (PowerShell):"),
+                "{markdown}"
+            );
+        }
         cleanup(&repo)
     }
 
@@ -6630,6 +6690,13 @@ mod tests {
         cleanup(&repo)
     }
 
+    /// The checked-in fixtures pin Linux-rendered bytes: bash single-quote
+    /// quoting and the bash shell disclosure. Since #7729 the packet renders
+    /// host quoting and a host shell claim, so a byte comparison against the
+    /// Linux fixtures is host-dependent by design. The hosted Linux gate keeps
+    /// full corpus coverage; Windows packet coverage stays with the
+    /// host-aware packet tests above.
+    #[cfg(not(windows))]
     #[test]
     fn first_successful_pr_fixture_corpus_matches_expected_outputs() -> Result<(), String> {
         let corpus = fixture_repo_root()?.join("fixtures/first_successful_pr");
@@ -6962,6 +7029,7 @@ mod tests {
         serde_json::from_str(&text).map_err(|err| format!("parse {}: {err}", path.display()))
     }
 
+    #[cfg(not(windows))]
     fn assert_first_successful_pr_case(corpus: &Path, case_id: &str) -> Result<(), String> {
         let case = corpus.join(case_id);
         let options = FirstPrOptions {

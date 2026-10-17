@@ -11,12 +11,13 @@
 //! higher `RIPR_MAX_DIFF_INDEX_FILES` guard bounds memory, so a narrowed
 //! selection still over the threshold runs instead of refusing.
 //!
-//! The extra packages cannot contribute related tests here. The selection
-//! is never workspace-complete, so the related-test package guard drops
-//! every cross-package test that is not reached through the owner-uniqueness
-//! or dependency-edge admits, and both of those admits require a
-//! workspace-complete index. What a dependent file can still change is a
-//! whole-index scan:
+//! The extra packages contribute few related tests here. The selection is
+//! never workspace-complete, so the related-test package guard drops every
+//! cross-package test that is not reached through the owner-uniqueness or
+//! dependency-edge admits. Both admits require a workspace-complete index,
+//! except the dependency-edge type-path route on an inherent-impl owner
+//! whose whole package is indexed (#6617). What a dependent file can still
+//! change is a whole-index scan:
 //!
 //! - name-keyed scans of the changed owner: the "may be reached unseen" and
 //!   non-test-caller scans, same-named definitions (receiver identity,
@@ -240,6 +241,11 @@ impl AdmissionQuery {
             package_names: index.package_names.clone(),
             ..Self::default()
         };
+        // One workspace scan: `owner_may_be_reached_unseen` parses every
+        // file that mentions `doc` and `!` (external doctest includes).
+        // Calling it per changed-span owner re-parsed crates/ripr on every
+        // doctor.rs / cli_smoke.rs function and hung PR evidence at 3600s.
+        let unseen = classify::UnseenReachNames::build(index);
         for facts in index.files().values() {
             if facts.source.contains("macro_rules") {
                 query
@@ -260,7 +266,7 @@ impl AdmissionQuery {
                         .iter()
                         .any(|line| function.start_line <= *line && *line <= function.end_line)
             }) {
-                query.insert_owner(owner, index);
+                query.insert_owner(owner, index, &unseen);
             }
         }
         for facts in index.files().values() {
@@ -287,15 +293,18 @@ impl AdmissionQuery {
         })
     }
 
-    fn insert_owner(&mut self, owner: &FunctionSummary, index: &RustIndex) {
+    fn insert_owner(
+        &mut self,
+        owner: &FunctionSummary,
+        index: &RustIndex,
+        unseen: &classify::UnseenReachNames,
+    ) {
         // Probes name their owner by the id's last segment.
         let names = std::iter::once(owner.name.clone())
             .chain(owner.id.0.rsplit("::").next().map(str::to_string))
             .filter(|name| !name.is_empty())
             .collect::<BTreeSet<_>>();
-        if !classify::owner_may_be_reached_unseen(owner, index)
-            || classify::is_assertion_shaped_owner(owner, index)
-        {
+        if !unseen.may_reach_unseen(owner) || classify::is_assertion_shaped_owner(owner, index) {
             self.mentioned.extend(names.iter().cloned());
         }
         let same_named = index
@@ -354,7 +363,10 @@ impl AdmissionQuery {
         spells(&self.mentioned)
             || (!self.mentioned.is_empty() && contains(bytes, b"include_str!"))
             || declares(&[b"fn"], &self.defined)
-            || declares(&[b"struct", b"enum", b"union"], &self.declared_types)
+            || declares(
+                &[b"struct", b"enum", b"union", b"trait", b"mod", b"type"],
+                &self.declared_types,
+            )
             || spells(&self.implemented_traits)
             || (self.binary_owner
                 && (contains(bytes, b"CARGO_BIN_EXE_") || contains(bytes, b"cargo_bin")))
@@ -1241,6 +1253,71 @@ mod tests {
     }
 
     #[test]
+    fn from_core_index_scans_external_docs_once_not_per_owner() {
+        use crate::analysis::facts::{FileFacts, FunctionSourceRole, OwnedRustIndex};
+        use crate::domain::SymbolId;
+        use std::collections::BTreeMap;
+
+        let mut files = BTreeMap::new();
+        let mut functions = Vec::new();
+        let mut changed_lines = Vec::new();
+        for file_i in 0..4 {
+            let path = PathBuf::from(format!("src/mod{file_i}.rs"));
+            let mut source = if file_i == 3 {
+                String::from("#![doc = include_str!(\"README.md\")]\n")
+            } else {
+                String::from("#[doc = \"include_str! is described here\"]\n")
+            };
+            let mut lines = BTreeSet::new();
+            for fn_i in 0..10 {
+                let name = format!("owner_{file_i}_{fn_i}");
+                let start = 2 + fn_i;
+                source.push_str(&format!("pub fn {name}() {{}}\n"));
+                functions.push(FunctionSummary {
+                    id: SymbolId(format!("{}::{name}", path.display())),
+                    name: name.clone(),
+                    file: path.clone(),
+                    start_line: start,
+                    end_line: start,
+                    body: String::new().into(),
+                    calls: Vec::new(),
+                    returns: Vec::new(),
+                    literals: Vec::new(),
+                    source_role: FunctionSourceRole::Production,
+                    attrs: Vec::new(),
+                    impl_attrs: Vec::new(),
+                    nested_fn_names: Vec::new(),
+                    let_bindings: Vec::new(),
+                    item: Default::default(),
+                    impl_context: Default::default(),
+                });
+                lines.insert(start);
+            }
+            files.insert(
+                path.clone(),
+                FileFacts {
+                    path: path.clone(),
+                    source: source.into(),
+                    ..FileFacts::default()
+                },
+            );
+            changed_lines.push((path, lines));
+        }
+        let index = RustIndex::from_owned(OwnedRustIndex {
+            files,
+            functions,
+            ..Default::default()
+        });
+        let _ = classify::take_external_docs_parse_count();
+        let _query = AdmissionQuery::from_core_index(&index, &changed_lines);
+        assert_eq!(
+            classify::take_external_docs_parse_count(),
+            4,
+            "dependent-scope admission must parse each external-doc file once, not once per changed owner"
+        );
+    }
+
+    #[test]
     fn spelling_matches_whole_identifiers_only() {
         let set = names(&["parse"]);
         assert!(spells_any(b"let x = s.parse::<u8>();", &set));
@@ -1342,6 +1419,11 @@ mod tests {
         };
         assert!(query.admits(b"pub struct Widget;"));
         assert!(query.admits(b"enum Widget { A }"));
+        // A `trait`, `mod` or `type` of the name also changes which `T` an
+        // associated-function pin can name (#6617).
+        assert!(query.admits(b"pub trait Widget {}"));
+        assert!(query.admits(b"mod Widget {}"));
+        assert!(query.admits(b"type Widget = u8;"));
         assert!(!query.admits(b"let w: Widget = make();"));
         assert!(query.admits(b"impl Render for Thing {}"));
         assert!(!query.admits(b"fn unrelated() {}"));

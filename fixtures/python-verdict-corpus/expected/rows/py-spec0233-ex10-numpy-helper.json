@@ -1,0 +1,22 @@
+{
+  "case_id": "py-spec0233-ex10-numpy-helper",
+  "subject_id": "authored-py-pytest-numpy",
+  "origin": "authored",
+  "anchor": "src/arrays.py:2",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "numpy_testing_helper",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "static_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

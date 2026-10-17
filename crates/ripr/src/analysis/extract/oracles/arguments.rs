@@ -415,7 +415,7 @@ pub(super) fn delimited_contents_at(text: &str, open_index: usize) -> Option<Str
     None
 }
 
-fn split_top_level_commas(text: &str) -> Vec<String> {
+pub(super) fn split_top_level_commas(text: &str) -> Vec<String> {
     let masked = mask_comments_and_strings(text);
     let mut args = Vec::new();
     let mut start = 0usize;
@@ -425,9 +425,12 @@ fn split_top_level_commas(text: &str) -> Vec<String> {
         match ch {
             '(' | '[' | '{' => depth += 1,
             ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            // A string or char literal masks to spaces, so the text decides
+            // whether one is the operand before a `<` (`"x+" < s`).
             '<' if depth == 0
                 && (generic_depth > 0
-                    || masked[start..index].trim().is_empty()
+                    || (masked[start..index].trim().is_empty()
+                        && !text[start..index].trim_end().ends_with(['"', '\'', '#']))
                     || masked[..index].trim_end().ends_with("::")) =>
             {
                 generic_depth += 1;

@@ -9,7 +9,7 @@
   "edit_kind": "behavior_change",
   "behavior_family": "side_effect",
   "test_shape": "jest_mock_fn_tohavebeencalledwith_factory_object",
-  "hard_case": "the `db` mock comes from a test-local factory, not a literal `{ write: jest.fn() }`, so the argument pin reads medium although it discriminates",
+  "hard_case": "the `db` mock comes from a test-local factory, not a literal `{ write: jest.fn() }`; the spec credits it only because `makeDb` is a parameterless test-file factory whose whole body returns that literal",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",
@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "`saveFactory(db, v)` calls `db.write(v + 1)`. The test builds `const db = makeDb()` through a test-local factory returning `{ write: jest.fn() }`, calls `saveFactory(db, 1)` and pins `expect(db.write).toHaveBeenCalledWith(2)`; the edit `v + 2` calls `write(3)` and the test fails. RIPR-SPEC-0243 example 30 grades a `db` that is not the literal `{ write: jest.fn() }` object mock_expectation / medium, `weakly_exposed`. ripr reports `weakly_exposed` with mock_expectation / medium, as the spec states; against the discriminated truth that is a false actionable gap the spec accepts.",
+  "reasoning": "`saveFactory(db, v)` calls `db.write(v + 1)`. The test builds `const db = makeDb()` through a test-local factory returning `{ write: jest.fn() }`, calls `saveFactory(db, 1)` and pins `expect(db.write).toHaveBeenCalledWith(2)`; the edit `v + 2` calls `write(3)` and the test fails. RIPR-SPEC-0247 rule 1, amended 2026-10-15 (decision 8): `const db = makeDb();` reads as the flat literal a parameterless test-file factory returns, so the payload pins the changed call as it does for the inline literal. ripr reports `exposed` with mock_expectation / strong, matching the discriminated truth.",
   "labeling_observation": {
     "ripr_commit": "9073928",
     "full_checkout_verdict": "gap",

@@ -1,0 +1,10 @@
+diff --git a/src/unitPriceNull.ts b/src/unitPriceNull.ts
+index 0000000..1111111 100644
+--- a/src/unitPriceNull.ts
++++ b/src/unitPriceNull.ts
+@@ -1,4 +1,4 @@
+ export async function fetchUnitPriceNull(sku: string): Promise<number> {
+-  const table: Record<string, number | null> = { apple: 120, pear: 95 };
++  const table: Record<string, number | null> = { apple: 120, pear: null };
+   return table[sku] ?? 0;
+ }

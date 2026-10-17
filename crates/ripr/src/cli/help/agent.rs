@@ -150,7 +150,7 @@ Options:
                    proposed `tests/` file. Refuses when the file changed
                    since the stub was computed or the new file exists.
   --json           Emit one `rust_test_stub` JSON document (schema_version
-                   `0.1`) with the placement, test name, exact text, the
+                   `0.2`) with the placement, test name, exact text, the
                    `todo!()` fill-ins, derived inputs, run command, and
                    inventory `grip_class` plus check `classification`
                    when known. A strongly_gripped seam stays `state:
@@ -186,6 +186,12 @@ an agent-focused before/after summary. Snapshot paths must resolve under
 `--root`. The command remains advisory and static; it does not run analysis,
 mutation testing, generate tests, edit files, change cache behavior, or touch
 LSP/MCP surfaces.
+
+Refusal contract: a typed verify refusal — drifted analysis inputs
+(`analysis input identities differ`) or no repository movement between the
+artifacts — names the cause on stderr, exits `3`, and leaves stdout empty
+(RIPR-SPEC-0134). Other rejections (unreadable or invalid artifacts, lineage
+or metadata mismatches) exit `2`.
 
 Movement vocabulary (#2648): the JSON output uses two related fields:
   - `change` (per-item): improved | changed | regressed | unchanged | new | resolved

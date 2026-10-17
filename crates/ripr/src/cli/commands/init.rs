@@ -54,7 +54,7 @@ pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
         print_init_dry_run(&plan);
         return Ok(());
     }
-    apply_init_plan(&plan)
+    apply_init_plan(&plan, &options.root)
 }
 
 /// Warn when the planned `ripr.toml` sits where implicit `ripr check` will
@@ -228,17 +228,15 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
     }
 
     if path_is_occupied(&config_path)? && !options.force && options.ci.is_none() {
-        return Err(format!(
-            "{} already exists; rerun `ripr init --force` to overwrite it (resets customizations). Preview with `--force --dry-run`; `ripr init --ci github --force` refreshes the workflow and keeps the config",
-            config_path.display()
-        ));
+        return Err(existing_target_error(&config_path, &options.root, None));
     }
     if let Some(path) = workflow_path.as_ref().filter(|_| !options.force)
         && path_is_occupied(path)?
     {
-        return Err(format!(
-            "{} already exists; rerun `ripr init --ci github --force` to overwrite it",
-            path.display()
+        return Err(existing_target_error(
+            path,
+            &options.root,
+            options.ci.as_ref(),
         ));
     }
 
@@ -273,6 +271,52 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
         });
     }
     Ok(targets)
+}
+
+/// Refusal retries must target the same directory as the refused plan, even
+/// when pasted elsewhere. Share successful init's lossless root authority.
+fn existing_target_error(path: &Path, root: &Path, ci: Option<&InitCi>) -> String {
+    let path_display = output::path::human_path(path);
+    let root_display = match init_command_root(root) {
+        Ok(root) => root,
+        Err(error) => {
+            return format!("{path_display} already exists; recovery commands omitted: {error}.");
+        }
+    };
+    let root_arg = crate::agent::loop_commands::shell_arg(&root_display);
+    let workflow = format!("ripr init --ci github --force --root {root_arg}");
+    let overwrite = format!("ripr init --force --root {root_arg}");
+    let preview = format!("ripr init --force --dry-run --root {root_arg}");
+    let (mut message, commands) = if ci.is_some() {
+        (
+            format!("{path_display} already exists; rerun `{workflow}` to overwrite it"),
+            vec![&workflow],
+        )
+    } else {
+        (
+            format!(
+                "{path_display} already exists; rerun `{overwrite}` to overwrite it (resets customizations). Preview with `{preview}`; `{workflow}` refreshes the workflow and keeps the config"
+            ),
+            vec![&overwrite, &preview, &workflow],
+        )
+    };
+    for command in commands {
+        if let Some(powershell) = output::markdown::powershell_text_variant(command) {
+            message.push_str(&format!("\n(PowerShell) {powershell}"));
+        }
+    }
+    message
+}
+
+/// Preserve lossless aliases and filesystem traversal; only resolve the
+/// physical path if the supplied absolute spelling cannot be represented.
+fn init_command_root(root: &Path) -> Result<String, String> {
+    output::path::absolute_command_root_display(root).or_else(|error| {
+        let resolved = root.canonicalize().map_err(|resolve_error| {
+            format!("{error}; cannot resolve selected root: {resolve_error}")
+        })?;
+        output::path::command_root_display(root, &resolved)
+    })
 }
 
 /// Is anything at all sitting at `path`?
@@ -337,7 +381,7 @@ fn ensure_creatable_parent(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn apply_init_plan(plan: &[InitTarget]) -> Result<(), String> {
+fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
     let mut wrote_any = false;
     for target in plan {
         match target.action {
@@ -362,10 +406,28 @@ fn apply_init_plan(plan: &[InitTarget]) -> Result<(), String> {
         }
     }
     if wrote_any {
+        // #7830: a UTF-8 argument can select a non-UTF-8 cwd. Never render
+        // a lossy root as an executable command for a different repository.
+        let root_display = match init_command_root(root) {
+            Ok(root) => root,
+            Err(error) => {
+                println!();
+                println!("Init completed; follow-up commands omitted: {error}.");
+                return Ok(());
+            }
+        };
+        let root_arg = crate::agent::loop_commands::shell_arg(&root_display);
+        let doctor = format!("ripr doctor --root {root_arg}");
+        let check = format!("ripr check --root {root_arg}");
         println!();
         println!(
-            "Next: run `ripr doctor` to verify your setup, then `ripr check` to analyze your branch against its default branch."
+            "Next: run `{doctor}` to verify your setup, then `{check}` to analyze your branch against its default branch."
         );
+        for command in [&doctor, &check] {
+            if let Some(powershell) = output::markdown::powershell_text_variant(command) {
+                println!("(PowerShell) {powershell}");
+            }
+        }
     }
     Ok(())
 }
@@ -759,8 +821,12 @@ mod tests {
             crate::agent::loop_commands::shell_arg(&output::path::human_path(&workspace));
         let quoted_member =
             crate::agent::loop_commands::shell_arg(&output::path::human_path(&member));
-        assert!(quoted_workspace.starts_with('\''), "{quoted_workspace}");
-        assert!(quoted_member.starts_with('\''), "{quoted_member}");
+        // Host-aware quote character (#7729): POSIX single quotes off
+        // Windows, the Windows console double-quote form on it. The
+        // assertion's point is that the spaced path is quoted at all.
+        let quote = if cfg!(windows) { '"' } else { '\'' };
+        assert!(quoted_workspace.starts_with(quote), "{quoted_workspace}");
+        assert!(quoted_member.starts_with(quote), "{quoted_member}");
         assert!(
             warning.contains(&format!("ripr init --root {quoted_workspace}`")),
             "{warning}"
@@ -1026,7 +1092,7 @@ mod tests {
         let plan = init_plan(&opts)?;
         assert_eq!(plan[0].action, InitAction::LeaveUnchanged);
         assert_eq!(plan[1].action, InitAction::Overwrite);
-        apply_init_plan(&plan)?;
+        apply_init_plan(&plan, &opts.root)?;
         let config = std::fs::read_to_string(root.join(CONFIG_FILE_NAME))
             .map_err(|err| format!("read config failed: {err}"))?;
         assert_eq!(config, "[lsp]\nseam_diagnostics = false\n");

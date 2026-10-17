@@ -37,6 +37,59 @@ impl OracleKind {
     }
 }
 
+/// #7752: indefinite article for a user-interpolated label, decided from the
+/// first alphanumeric character ("an `exact_value` oracle", "a `snapshot`
+/// oracle"). Narrative templates must route interpolated `OracleKind` values
+/// through this helper instead of hardcoding "a".
+pub fn indefinite_article(word: &str) -> &'static str {
+    match word.chars().find(|ch| ch.is_alphanumeric()) {
+        Some('a' | 'e' | 'i' | 'o' | 'u' | 'A' | 'E' | 'I' | 'O' | 'U') => "an",
+        _ => "a",
+    }
+}
+
+#[cfg(test)]
+mod article_tests {
+    use super::{OracleKind, indefinite_article};
+
+    #[test]
+    fn vowel_initial_oracle_kinds_take_an() {
+        // Closed set: every vowel-sound-initial member must keep taking "an"
+        // so the narrative templates below stay grammatical. "unknown" starts
+        // with a vowel letter; "whole_object_equality" is spelled with a vowel
+        // letter but pronounced with a consonant 'w' and takes "a".
+        for kind in [
+            OracleKind::ExactValue,
+            OracleKind::ExactErrorVariant,
+            OracleKind::Unknown,
+        ] {
+            assert_eq!(indefinite_article(kind.as_str()), "an", "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn consonant_initial_oracle_kinds_take_a() {
+        for kind in [
+            OracleKind::WholeObjectEquality,
+            OracleKind::Snapshot,
+            OracleKind::RelationalCheck,
+            OracleKind::BroadError,
+            OracleKind::SmokeOnly,
+            OracleKind::MockExpectation,
+            OracleKind::GuardedResultMatch,
+        ] {
+            assert_eq!(indefinite_article(kind.as_str()), "a", "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn article_skips_leading_non_alphanumerics() {
+        assert_eq!(indefinite_article("`exact_value`"), "an");
+        assert_eq!(indefinite_article("`snapshot`"), "a");
+        assert_eq!(indefinite_article(""), "a");
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum OracleStrength {
     Strong,

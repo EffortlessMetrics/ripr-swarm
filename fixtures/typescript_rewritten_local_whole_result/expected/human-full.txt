@@ -1,0 +1,86 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/typescript_rewritten_local_whole_result/input
+config: <cwd>/fixtures/typescript_rewritten_local_whole_result/input/ripr.toml
+
+Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Changed file(s) by language: typescript = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+WARNING src/profile.ts:4
+  id: probe:src_profile.ts:typescript_preview:d4b164f6
+
+Changed
+  after:      adult: age > 18,
+
+Probe
+  family: field_construction
+  delta:  value
+  owner:  typescript:src/profile.ts::buildProfile
+
+Language
+  language: typescript
+  status: preview
+  owner kind: function
+
+Preview actionability
+  authority: preview_advisory_only
+  gap state: advisory
+  category: incomplete_repair_packet
+  repair packet ready: false
+  why not actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
+  repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available
+  missing fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs
+  evidence needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
+  raw evidence: src/profile.ts:4 (typescript_preview_probe) source=probe:src_profile.ts:typescript_preview:d4b164f6 owner=buildProfile
+
+Static exposure
+  weakly_exposed (warning, confidence 0.40)
+
+Evidence
+  - reach yes: 1 related test(s) found for owner `buildProfile`
+  - infection unknown: TypeScript preview adapter does not yet model infection
+  - propagation unknown: TypeScript preview adapter does not yet model propagation
+  - observation weak: Strongest extracted oracle kind: `relational_check` (rank 3)
+  - discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `adult == age > 18`
+  - local flow reaches constructed field: adult: age > 18, (line 4)
+  - related test tests/profile.test.ts:4 profile records adulthood uses weak relational check oracle: expect(...).toMatchObject(...)
+
+Weakness
+  - Related test reaches `buildProfile` but the strongest extracted oracle is `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form with an exact payload (string, object, or class reference)
+  - missing discriminator adult == age > 18: changed TypeScript field/object value at line 4 lacks a concrete preview discriminator
+
+TypeScript preview card (advisory)
+  card version: typescript_preview_card.v1
+  authority: preview_advisory_only (typescript/preview)
+  owner: buildProfile
+  owner kind: function
+  changed behavior: field_construction changed at src/profile.ts:4: `adult: age > 18,`
+  related test: tests/profile.test.ts:4 profile records adulthood
+  oracle: relational_check (weak)
+  missing discriminator: adult == age > 18
+  suggested assertion shape: Add an exact field/object assertion for the constructed value.
+  repair packet ready: false
+  why not actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
+  repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available
+  limits:
+    - Syntax-first TypeScript/JavaScript preview evidence only.
+    - No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.
+    - This card is advisory and is not a repair packet.
+
+TypeScript repair packet (advisory)
+  status: not actionable
+  limitation: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
+  next capability needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
+
+Next step
+  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `adult == age > 18`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available
+Drill in:
+  ripr explain --root <cwd>/fixtures/typescript_rewritten_local_whole_result/input --diff <cwd>/fixtures/typescript_rewritten_local_whole_result/diff.patch --mode fast probe:src_profile.ts:typescript_preview:d4b164f6
+  ripr context --root <cwd>/fixtures/typescript_rewritten_local_whole_result/input --diff <cwd>/fixtures/typescript_rewritten_local_whole_result/diff.patch --mode fast --at probe:src_profile.ts:typescript_preview:d4b164f6
+
+
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

@@ -5,6 +5,7 @@ mod expectations;
 mod family;
 mod ids;
 mod lexical;
+mod propagation_boundary;
 mod repo;
 
 use crate::analysis::diagnostic_origin::ParserByteSpan;
@@ -20,6 +21,7 @@ pub(crate) use binding_predicate::{
 pub(crate) use classify::parser_expression_for_probe;
 pub(crate) use diff::probes_for_file_with_relations;
 pub(crate) use diff::resolve_probe_source_currentness;
+pub(crate) use diff::same_connectives;
 pub(crate) use expectations::{expected_sinks, required_oracles};
 pub(crate) use ids::{fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression};
 #[cfg(test)]
@@ -32,6 +34,8 @@ pub(crate) struct SeededProbe {
     pub probe: Probe,
     pub binding_relation: Option<ChangedBindingPredicateUse>,
     pub parser_span: Option<ParserByteSpan>,
+    /// Original changed closing line; canonical identity alone cannot confirm activation.
+    pub propagation_origin: Option<crate::analysis::diff::ChangedLine>,
 }
 
 impl SeededProbe {
@@ -39,6 +43,7 @@ impl SeededProbe {
         Self {
             probe,
             binding_relation: None,
+            propagation_origin: None,
             parser_span: None,
         }
     }
@@ -47,6 +52,7 @@ impl SeededProbe {
         Self {
             probe,
             binding_relation: None,
+            propagation_origin: None,
             parser_span: Some(parser_span),
         }
     }
@@ -62,6 +68,7 @@ impl SeededProbe {
         Self {
             probe,
             binding_relation: Some(binding_relation),
+            propagation_origin: None,
             parser_span: None,
         }
     }
@@ -80,4 +87,9 @@ mod parameter_boundary_tests;
 #[cfg(test)]
 mod record_field_boundary_tests;
 #[cfg(test)]
+mod replacement_identity_tests;
+#[cfg(test)]
 mod where_bound_boundary_tests;
+
+#[cfg(test)]
+mod propagation_boundary_tests;

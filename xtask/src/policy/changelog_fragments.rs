@@ -1,9 +1,13 @@
-//! `cargo xtask check-changelog-fragments` (#6341): every `changelog.d/`
-//! fragment must fold into `CHANGELOG.md` without a reader having to guess.
-//! A fragment with no section line, an unknown section, or no issue/PR
-//! reference used to pass every gate and then drop out of the release notes
-//! at the fold. `--release-cut` additionally fails on any fragment at all, so
-//! the fold step is a command that fails rather than a checklist line.
+//! `cargo xtask check-changelog-fragments` (#6341, #7671, #7674): every
+//! `changelog.d/` fragment must fold into `CHANGELOG.md` without a reader
+//! having to guess, every `CHANGELOG.md` Unreleased bullet must already be
+//! traceable, and verdict-corpus / `Repo ops:` bookkeeping must not crowd
+//! user-facing sections. A fragment with no section line, an unknown section,
+//! or no issue/PR reference used to pass every gate and then drop out of the
+//! release notes at the fold. Unreleased entries were exempt from that
+//! reference rule, so folded history could ship untraceable. `--release-cut`
+//! additionally fails on any fragment at all, so the fold step is a command
+//! that fails rather than a checklist line.
 
 use std::fs;
 use std::path::Path;
@@ -13,6 +17,7 @@ use crate::{FixKind, PolicyReportSpec, finish_policy_report};
 const FRAGMENT_DIR: &str = "changelog.d";
 const README: &str = "README.md";
 const POLICY_DOC: &str = "docs/CHANGELOG_POLICY.md";
+const CHANGELOG: &str = "CHANGELOG.md";
 
 /// The section headings `docs/CHANGELOG_POLICY.md` allows. The check also
 /// fails when the policy doc stops listing one of them, so the two cannot
@@ -25,7 +30,10 @@ const ALLOWED_SECTIONS: &[&str] = &[
     "Fixed",
     "Security",
     "Docs",
+    "Internal / CI",
 ];
+
+const INTERNAL_CI_SECTION: &str = "Internal / CI";
 
 const USAGE: &str = "usage: cargo xtask check-changelog-fragments [--release-cut]";
 
@@ -44,12 +52,15 @@ pub(crate) fn check_changelog_fragments_with_args(args: &[String]) -> Result<(),
         PolicyReportSpec {
             report_file: "changelog-fragments.md",
             check: "check-changelog-fragments",
-            why_it_matters: "Fragments are folded into CHANGELOG.md by hand at the release cut. A fragment with no section, an unknown section, or no issue/PR reference cannot be placed or traced, and a fragment left unfolded drops a user-facing change from the release notes.",
+            why_it_matters: "Fragments are folded into CHANGELOG.md by hand at the release cut. A fragment with no section, an unknown section, or no issue/PR reference cannot be placed or traced, a fragment left unfolded drops a user-facing change from the release notes, an Unreleased bullet with no issue, PR, or RIPR-SPEC reference is untraceable after the cut, and verdict-corpus or Repo ops bookkeeping in a user-facing section crowds the notes an upgrader reads.",
             fix_kind: FixKind::AuthorDecisionRequired,
             recommended_fixes: &[
                 "Start the fragment with `<!-- section: X -->`, where X is one of the sections in docs/CHANGELOG_POLICY.md.",
                 "Write the entry as a `- ` bullet with the issue or PR reference (`#N` or a link) in it.",
                 "Name the file `<pr-or-issue>-<short-slug>.md` in lowercase kebab case.",
+                "File `Verdict corpus:` and `Repo ops:` bookkeeping under `Internal / CI`, not Added, Changed, or Fixed.",
+                "Give each CHANGELOG.md Unreleased bullet an issue, PR (`#N` or a link), or RIPR-SPEC-N reference.",
+                "Combine duplicate Unreleased section headings before folding fragments; keep every entry under one heading of its name.",
                 "At the release cut, fold every fragment into CHANGELOG.md and delete it (changelog.d/README.md).",
             ],
             rerun_command: if release_cut {
@@ -125,6 +136,7 @@ pub(crate) fn changelog_fragment_violations(
             ));
         }
     }
+    violations.extend(unreleased_changelog_violations(root)?);
     Ok(violations)
 }
 
@@ -174,16 +186,22 @@ fn fragment_violations(name: &str, text: &str) -> Vec<String> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut lines = text.lines();
     let first = lines.next().unwrap_or_default();
-    match section_of(first) {
-        Some(section) if ALLOWED_SECTIONS.contains(&section) => {}
-        Some(section) => violations.push(format!(
-            "{path}: unknown section `{section}`; use one of {}",
-            ALLOWED_SECTIONS.join(", ")
-        )),
-        None => violations.push(format!(
-            "{path}: first line must be `<!-- section: X -->`, found `{first}`"
-        )),
-    }
+    let section = match section_of(first) {
+        Some(section) if ALLOWED_SECTIONS.contains(&section) => Some(section),
+        Some(section) => {
+            violations.push(format!(
+                "{path}: unknown section `{section}`; use one of {}",
+                ALLOWED_SECTIONS.join(", ")
+            ));
+            None
+        }
+        None => {
+            violations.push(format!(
+                "{path}: first line must be `<!-- section: X -->`, found `{first}`"
+            ));
+            None
+        }
+    };
 
     let body: Vec<&str> = lines.collect();
     // HTML comments are copied into CHANGELOG.md verbatim at the fold, so a
@@ -232,8 +250,98 @@ fn fragment_violations(name: &str, text: &str) -> Vec<String> {
                 entry[0].trim()
             ));
         }
+        if is_internal_bookkeeping_line(entry[0])
+            && section.is_some_and(|section| section != INTERNAL_CI_SECTION)
+        {
+            violations.push(format!(
+                "{path}: entry `{}` is corpus or Repo ops bookkeeping; use `<!-- section: {INTERNAL_CI_SECTION} -->` instead of a user-facing section",
+                entry[0].trim()
+            ));
+        }
     }
     violations
+}
+
+/// Unreleased `CHANGELOG.md` bullets that name no issue, PR, or RIPR-SPEC
+/// (#7671), or that file corpus/`Repo ops:` bookkeeping under a user-facing
+/// heading (#7674). Missing `CHANGELOG.md` is skipped so fragment-only
+/// fixtures stay valid; versioned sections after Unreleased are not scanned.
+fn unreleased_changelog_violations(root: &Path) -> Result<Vec<String>, String> {
+    let path = root.join(CHANGELOG);
+    if !path.is_file() {
+        return Ok(Vec::new());
+    }
+    let text =
+        fs::read_to_string(&path).map_err(|err| format!("failed to read {CHANGELOG}: {err}"))?;
+    let mut violations = unreleased_entry_violations(&text);
+    violations.extend(unreleased_section_violations(&text));
+    Ok(violations)
+}
+
+fn unreleased_entry_violations(text: &str) -> Vec<String> {
+    let mut in_unreleased = false;
+    let mut heading = String::new();
+    let mut entries: Vec<(String, Vec<&str>)> = Vec::new();
+    for line in text.lines() {
+        if line.trim() == "## Unreleased" {
+            in_unreleased = true;
+            continue;
+        }
+        if in_unreleased && line.starts_with("## ") {
+            break;
+        }
+        if !in_unreleased {
+            continue;
+        }
+        if let Some(name) = line.strip_prefix("### ") {
+            heading = name.trim().to_string();
+            continue;
+        }
+        if line.trim().is_empty() || line.trim_start().starts_with("<!--") {
+            continue;
+        }
+        let continues = line.starts_with(char::is_whitespace) && !entries.is_empty();
+        if continues {
+            if let Some((_, entry)) = entries.last_mut() {
+                entry.push(line);
+            }
+            continue;
+        }
+        if line.starts_with("- ") {
+            entries.push((heading.clone(), vec![line]));
+        }
+    }
+
+    let mut violations = Vec::new();
+    for (heading, entry) in &entries {
+        if !entry
+            .iter()
+            .filter(|line| !line.contains("<!--"))
+            .any(|line| has_issue_reference(line) || has_spec_reference(line))
+        {
+            violations.push(format!(
+                "{CHANGELOG}: Unreleased entry `{}` names no issue, PR, or RIPR-SPEC; add `(#N)` or a RIPR-SPEC id",
+                entry[0].trim()
+            ));
+        }
+        if is_internal_bookkeeping_line(entry[0]) && heading.as_str() != INTERNAL_CI_SECTION {
+            violations.push(format!(
+                "{CHANGELOG}: Unreleased entry `{}` is corpus or Repo ops bookkeeping; move it under `### {INTERNAL_CI_SECTION}` instead of a user-facing heading",
+                entry[0].trim()
+            ));
+        }
+    }
+    violations
+}
+
+/// First-line prefixes that belong under `Internal / CI` (#7674). Analyzer
+/// behavior a corpus case happens to prove, and `ripr init --ci` workflow
+/// notes, stay user-facing.
+fn is_internal_bookkeeping_line(line: &str) -> bool {
+    let text = line.strip_prefix("- ").unwrap_or(line).trim_start();
+    text.starts_with("Verdict corpus:")
+        || text.starts_with("Repo ops:")
+        || text.starts_with("Labeled Rust verdict corpus")
 }
 
 /// The backticked items of the `## Sections` list in the policy doc.
@@ -245,6 +353,43 @@ fn documented_sections(policy: &str) -> Vec<&str> {
         .take_while(|line| !line.starts_with("## "))
         .filter_map(|line| line.trim().strip_prefix("- `")?.strip_suffix('`'))
         .collect()
+}
+
+/// The fold format uses column-zero `### <Section>` headings under the
+/// first `## Unreleased`. Each name must have one destination (#7673).
+/// Indented entry examples and later versioned sections are not destinations.
+fn unreleased_section_violations(text: &str) -> Vec<String> {
+    let mut in_unreleased = false;
+    let mut first_lines = std::collections::BTreeMap::new();
+    let mut violations = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        if !in_unreleased {
+            in_unreleased = line.trim() == "## Unreleased";
+            continue;
+        }
+        if line.starts_with("## ") {
+            break;
+        }
+        let Some(section) = line.strip_prefix("### ").map(str::trim) else {
+            continue;
+        };
+        if section.is_empty() {
+            continue;
+        }
+        let line_number = index + 1;
+        match first_lines.entry(section) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(line_number);
+            }
+            std::collections::btree_map::Entry::Occupied(entry) => {
+                violations.push(format!(
+                    "{CHANGELOG}:{line_number}: duplicate Unreleased section `### {section}` (first at line {}); combine its entries under one heading before folding fragments",
+                    entry.get()
+                ));
+            }
+        }
+    }
+    violations
 }
 
 fn section_of(line: &str) -> Option<&str> {
@@ -290,6 +435,18 @@ fn has_issue_reference(line: &str) -> bool {
     }) || ["/issues/", "/pull/"].iter().any(|marker| {
         line.match_indices(marker)
             .any(|(index, _)| followed_by_digit(&line[index + marker.len()..]))
+    })
+}
+
+/// `RIPR-SPEC-12` is a traceable Unreleased reference (#7671). A trailing
+/// digit is required so a mention of the prefix alone does not count.
+fn has_spec_reference(line: &str) -> bool {
+    const MARKER: &str = "RIPR-SPEC-";
+    line.match_indices(MARKER).any(|(index, _)| {
+        line[index + MARKER.len()..]
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_digit())
     })
 }
 
@@ -349,6 +506,40 @@ mod tests {
         let violations = fragment_violations("faster.md", text);
         assert_eq!(violations.len(), 1, "{violations:?}");
         assert!(violations[0].contains("unknown section `Improvements`"));
+    }
+
+    #[test]
+    fn internal_ci_section_is_allowed() {
+        let text = "<!-- section: Internal / CI -->\n- Verdict corpus: 14 cases (#1).\n";
+        assert_eq!(
+            fragment_violations("corpus-batch.md", text),
+            Vec::<String>::new()
+        );
+        let repo_ops = "<!-- section: Internal / CI -->\n- Repo ops: dx-scoreboard (#1).\n";
+        assert_eq!(
+            fragment_violations("dx-scoreboard.md", repo_ops),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn verdict_corpus_bookkeeping_belongs_in_internal_ci() {
+        let added = "<!-- section: Added -->\n- Verdict corpus: 14 cases (#1).\n";
+        let violations = fragment_violations("corpus-batch.md", added);
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(violations[0].contains("Internal / CI"), "{violations:?}");
+
+        let repo_ops = "<!-- section: Fixed -->\n- Repo ops: dx-scoreboard (#1).\n";
+        let violations = fragment_violations("dx-scoreboard.md", repo_ops);
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(violations[0].contains("Internal / CI"), "{violations:?}");
+
+        // Analyzer behavior a corpus case happens to prove stays user-facing.
+        let behavior = "<!-- section: Fixed -->\n- The Rust verdict corpus describes the checkout daily-limit boundary oracle (#6639).\n";
+        assert_eq!(
+            fragment_violations("module-path-oracle.md", behavior),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -445,6 +636,72 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_unreleased_sections_keep_the_first_location() {
+        let text = "# Changelog\n## Unreleased\n### Fixed\n- One (#1).\n### Added\n- Two (#2).\n### Fixed\n- Three (#3).\n### Fixed\n- Four (#4).\n## 0.10.0\n### Fixed\n";
+        assert_eq!(
+            unreleased_section_violations(text),
+            vec![
+                "CHANGELOG.md:7: duplicate Unreleased section `### Fixed` (first at line 3); combine its entries under one heading before folding fragments".to_string(),
+                "CHANGELOG.md:9: duplicate Unreleased section `### Fixed` (first at line 3); combine its entries under one heading before folding fragments".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn unique_unreleased_sections_ignore_other_versions_and_indented_examples() {
+        let unique = "# Changelog\n### Fixed\n## Unreleased\n### Fixed\n- Example (#1):\n  ### Fixed\n#### Fixed\n### Internal / CI\n- Tools (#2).\n## 0.10.0\n### Fixed\n### Fixed\n";
+        assert!(unreleased_section_violations(unique).is_empty());
+        assert!(unreleased_section_violations("## 0.10.0\n### Fixed\n### Fixed\n").is_empty());
+        assert!(unreleased_section_violations("## Unreleased\n").is_empty());
+    }
+
+    #[test]
+    fn duplicate_unreleased_sections_normalize_crlf_and_trailing_space() {
+        let text = "## Unreleased\r\n### Fixed\r\n### Added\r\n### Fixed  \r\n";
+        assert_eq!(
+            unreleased_section_violations(text),
+            vec![
+                "CHANGELOG.md:4: duplicate Unreleased section `### Fixed` (first at line 2); combine its entries under one heading before folding fragments".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn duplicate_unreleased_sections_reach_ordinary_and_release_cut_checks() -> Result<(), String> {
+        let root = fresh_root("changelog-duplicate-sections")?;
+        fs::create_dir_all(root.join(FRAGMENT_DIR)).map_err(|err| err.to_string())?;
+        fs::create_dir_all(root.join("docs")).map_err(|err| err.to_string())?;
+        let policy: String = std::iter::once("## Sections\n\n".to_string())
+            .chain(ALLOWED_SECTIONS.iter().map(|s| format!("- `{s}`\n")))
+            .collect();
+        fs::write(root.join(POLICY_DOC), policy).map_err(|err| err.to_string())?;
+        fs::write(root.join(FRAGMENT_DIR).join(README), "# fragments\n")
+            .map_err(|err| err.to_string())?;
+        fs::write(
+            root.join(CHANGELOG),
+            "## Unreleased\n### Fixed\n- One (#1).\n### Fixed\n- Two (#2).\n",
+        )
+        .map_err(|err| err.to_string())?;
+        let ordinary = changelog_fragment_violations(&root, false);
+        let cut = changelog_fragment_violations(&root, true);
+        fs::write(
+            root.join(CHANGELOG),
+            "## Unreleased\n### Fixed\n- One (#1).\n- Two (#2).\n",
+        )
+        .map_err(|err| err.to_string())?;
+        let repaired = changelog_fragment_violations(&root, true);
+        let _ = fs::remove_dir_all(&root);
+
+        let expected = vec![
+            "CHANGELOG.md:4: duplicate Unreleased section `### Fixed` (first at line 2); combine its entries under one heading before folding fragments".to_string(),
+        ];
+        assert_eq!(ordinary?, expected);
+        assert_eq!(cut?, expected);
+        assert!(repaired?.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn names_must_be_kebab_slugs_with_text() {
         for bad in [
             "Fix.md",
@@ -505,7 +762,7 @@ mod tests {
         let violations = changelog_fragment_violations(&root, false);
         let _ = fs::remove_dir_all(&root);
         let violations = violations?;
-        // Six allowed sections are missing from the list (a `Docs` item under
+        // Every allowed section is missing from the list (a `Docs` item under
         // a later heading does not count) and one listed section is unknown.
         assert_eq!(violations.len(), ALLOWED_SECTIONS.len(), "{violations:?}");
         assert!(
@@ -517,6 +774,117 @@ mod tests {
             violations
                 .iter()
                 .any(|v| v.contains("no longer lists section `Docs`"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unreleased_bullet_needs_a_traceable_reference() {
+        let missing = "# Changelog\n\n## Unreleased\n\n### Fixed\n\n- Faster checks.\n";
+        let violations = unreleased_entry_violations(missing);
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(
+            violations[0].contains("names no issue, PR, or RIPR-SPEC"),
+            "{violations:?}"
+        );
+
+        let issue = "# Changelog\n\n## Unreleased\n\n### Fixed\n\n- Faster checks (#12).\n";
+        assert_eq!(unreleased_entry_violations(issue), Vec::<String>::new());
+
+        let spec = "# Changelog\n\n## Unreleased\n\n### Added\n\n- Corpus cases, RIPR-SPEC-0219.\n";
+        assert_eq!(unreleased_entry_violations(spec), Vec::<String>::new());
+
+        let wrapped = "# Changelog\n\n## Unreleased\n\n### Fixed\n\n- Faster checks\n  wrap onto the next line (#12).\n";
+        assert_eq!(unreleased_entry_violations(wrapped), Vec::<String>::new());
+
+        let prefix_only =
+            "# Changelog\n\n## Unreleased\n\n### Docs\n\n- Mentions RIPR-SPEC- without a number.\n";
+        assert_eq!(unreleased_entry_violations(prefix_only).len(), 1);
+
+        let versioned_only = "# Changelog\n\n## Unreleased\n\n### Fixed\n\n- Traced (#1).\n\n## 0.10.0\n\n### Fixed\n\n- Historical and untraced.\n";
+        assert_eq!(
+            unreleased_entry_violations(versioned_only),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn unreleased_user_facing_rejects_verdict_corpus_bookkeeping() {
+        let crowded =
+            "# Changelog\n\n## Unreleased\n\n### Added\n\n- Verdict corpus: 14 cases (#12).\n";
+        let violations = unreleased_entry_violations(crowded);
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(violations[0].contains("Internal / CI"), "{violations:?}");
+
+        let segregated = "# Changelog\n\n## Unreleased\n\n### Internal / CI\n\n- Verdict corpus: 14 cases (#12).\n";
+        assert_eq!(
+            unreleased_entry_violations(segregated),
+            Vec::<String>::new()
+        );
+
+        let repo_ops =
+            "# Changelog\n\n## Unreleased\n\n### Changed\n\n- Repo ops: dx-scoreboard (#12).\n";
+        assert_eq!(unreleased_entry_violations(repo_ops).len(), 1);
+
+        let user_facing_ci = "# Changelog\n\n## Unreleased\n\n### Changed\n\n- CI: the `ripr init --ci github` workflow (#12).\n";
+        assert_eq!(
+            unreleased_entry_violations(user_facing_ci),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn changelog_unreleased_scan_runs_through_the_fragment_check() -> Result<(), String> {
+        let root = fresh_root("changelog-unreleased-refs")?;
+        fs::create_dir_all(root.join(FRAGMENT_DIR)).map_err(|err| err.to_string())?;
+        fs::create_dir_all(root.join("docs")).map_err(|err| err.to_string())?;
+        let policy: String = std::iter::once("## Sections\n\n".to_string())
+            .chain(ALLOWED_SECTIONS.iter().map(|s| format!("- `{s}`\n")))
+            .collect();
+        fs::write(root.join(POLICY_DOC), policy).map_err(|err| err.to_string())?;
+        fs::write(root.join(FRAGMENT_DIR).join(README), "# fragments\n")
+            .map_err(|err| err.to_string())?;
+        fs::write(
+            root.join(CHANGELOG),
+            "# Changelog\n\n## Unreleased\n\n### Fixed\n\n- No reference here.\n",
+        )
+        .map_err(|err| err.to_string())?;
+
+        let violations = changelog_fragment_violations(&root, false);
+        let _ = fs::remove_dir_all(&root);
+        let violations = violations?;
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(
+            violations[0].starts_with("CHANGELOG.md: Unreleased entry"),
+            "{violations:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn changelog_internal_bookkeeping_scan_runs_through_the_fragment_check() -> Result<(), String> {
+        let root = fresh_root("changelog-internal-ci")?;
+        fs::create_dir_all(root.join(FRAGMENT_DIR)).map_err(|err| err.to_string())?;
+        fs::create_dir_all(root.join("docs")).map_err(|err| err.to_string())?;
+        let policy: String = std::iter::once("## Sections\n\n".to_string())
+            .chain(ALLOWED_SECTIONS.iter().map(|s| format!("- `{s}`\n")))
+            .collect();
+        fs::write(root.join(POLICY_DOC), policy).map_err(|err| err.to_string())?;
+        fs::write(root.join(FRAGMENT_DIR).join(README), "# fragments\n")
+            .map_err(|err| err.to_string())?;
+        fs::write(
+            root.join(FRAGMENT_DIR).join("corpus-batch.md"),
+            "<!-- section: Added -->\n- Verdict corpus: 14 cases (#1).\n",
+        )
+        .map_err(|err| err.to_string())?;
+
+        let violations = changelog_fragment_violations(&root, false);
+        let _ = fs::remove_dir_all(&root);
+        let violations = violations?;
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(
+            violations[0].contains("corpus or Repo ops bookkeeping"),
+            "{violations:?}"
         );
         Ok(())
     }

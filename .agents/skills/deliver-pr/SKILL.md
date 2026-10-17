@@ -20,6 +20,15 @@ One coherent claim has one current candidate, current proof and review for the a
 - `pr_contract:ordinary_squash_merge`
 - `pr_contract:local_commit_not_delivery`
 
+# Lifecycle orientation
+
+For work spanning product learning, ordinary delivery or release handoff, use
+[the lifecycle map](../../../docs/PRODUCT_LIFECYCLE.md). It connects existing
+owners rather than adding a mandatory document chain. Revisit test completeness
+and cost, simplification, documentation and product fit when the affected
+question needs another pass. The map distinguishes the late-CI migration target
+from active machinery; it does not replace current checks or authorize a cutover.
+
 # Procedure
 
 1. Hydrate the selected claim from the current user instruction, root `AGENTS.md`, the issue, governing artifacts, current source, live GitHub state, and any existing PR. Prior summaries and subagent reports are leads until verified.
@@ -73,6 +82,7 @@ for changes to these boundaries; scenario decisions do not establish real delive
 - Multiple writers may contribute genuinely disjoint pieces only through one integrating candidate owner.
 - Do not inspect sibling worktrees or reserve files, crates, APIs, or semantic surfaces.
 - A behind-only branch needs no action. Unrelated movement on `main` does not require a rebase, restack, force-push, or broad re-proof.
+- A status helper's `BEHIND` observation requests integration judgment, not branch movement. Identify a material reason under the next rule before updating; retain Draft or running-check waits and reuse unaffected proof. Follow the recommendation into per-PR packets and board findings/dispositions so another projection cannot turn the observation into branch-update authority.
 - Rebase or update only for an actual content conflict, changed explicit prerequisite, material combined-tree failure, or repository policy that explicitly applies to this candidate.
 - Before repairing a conflict, first determine whether the conflicting upstream change already satisfies or supersedes the claim.
 

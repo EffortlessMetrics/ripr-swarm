@@ -1,0 +1,66 @@
+{
+  "case_id": "short-circuit-band-table",
+  "subject_id": "authored-spec0197-short-circuit",
+  "diff": "cases/short-circuit-band-table.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 8
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "table_driven_loop",
+  "hard_case": "The tail is an && chain, which RIPR-SPEC-0197 rule 3 refused before #7969; the (3, true) table row runs both operands, so the pin observes the changed 3 <= level.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "true",
+        "mutated_line": "true",
+        "outcome": "tests_failed",
+        "failing_test": "tests::in_band_table",
+        "equivalence_review": "not equivalent: in_band(2, true) is true instead of false"
+      },
+      {
+        "replacement": "false",
+        "mutated_line": "false",
+        "outcome": "tests_failed",
+        "failing_test": "tests::in_band_table",
+        "equivalence_review": "not equivalent: in_band(3, true) is false instead of true"
+      },
+      {
+        "replacement": "open || 3 <= level",
+        "mutated_line": "open || 3 <= level",
+        "outcome": "tests_failed",
+        "failing_test": "tests::in_band_table",
+        "equivalence_review": "not equivalent: in_band(2, true) is true instead of false"
+      },
+      {
+        "replacement": "open && 3 > level",
+        "mutated_line": "open && 3 > level",
+        "outcome": "tests_failed",
+        "failing_test": "tests::in_band_table",
+        "equivalence_review": "not equivalent: in_band(3, true) is false instead of true"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "in_band_table pins in_band(level, open) to want over [(3, true, true), (2, true, false), (5, false, false)]. The (3, true) row makes open true, so && runs the changed 3 <= level at its boundary 3; every listed mutant fails cargo test. RIPR-SPEC-0197's short-circuit tail rule admits the pin on that row; the predicate already read exposed through table boundary pairing before #7969, so this row is a credited control for the short-circuit gate.",
+  "labeling_observation": {
+    "ripr_commit": "fcc151c",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

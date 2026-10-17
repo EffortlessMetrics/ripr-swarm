@@ -1,0 +1,48 @@
+{
+  "case_id": "jest-spec0256-ex02-two-entry-object",
+  "subject_id": "authored-ts-jest-relations",
+  "diff": "cases/jest-spec0256-ex02-two-entry-object.diff",
+  "anchor": {
+    "file": "src/chargeNotify.ts",
+    "line": 8
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "side_effect",
+  "test_shape": "jest_mock_entry_of_two_entry_inline_object",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9.3; edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "notifier.send(owner, \"charged \" + total + \" cents\");",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "chargeNotify",
+        "equivalence_review": "not equivalent: `send` is called with `charged 360 cents` instead of `charged 360`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`chargeNotify(owner, cents, notifier)` sums with a `reduce` callback and calls `notifier.send(owner, \"charged \" + total)`; the edit appends ` cents`. The test declares `const notify = jest.fn()`, calls `chargeNotify(\"ann\", [360], { send: notify, flush: jest.fn() })` and pins `expect(notify).toHaveBeenCalledWith(\"ann\", \"charged 360\")`, which fails on `charged 360 cents`. RIPR-SPEC-0256 example 2: the renamed mock under `send` in a two-entry object is credited, `exposed`. ripr reports `exposed` with mock_expectation / strong, matching the spec and the truth.",
+  "labeling_observation": {
+    "ripr_commit": "3480fb2",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0256#2"
+  ]
+}

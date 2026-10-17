@@ -121,6 +121,18 @@ remainder that does not exist:
 The two format-pointer lines are identical in both states, so a consumer
 scraping them does not need to know which heading was used.
 
+Hidden finding locations use the same shared location renderer as selected
+and full findings: paths under the analysis root carry `./` and a
+workspace-relative path. Outside-root paths, parent-traversal remainders and
+unrooted relative paths retain the shared renderer's fallback spelling and
+encoding. This presentation rule also applies when no finding is selected;
+it does not re-coordinate base-side findings or change their currentness.
+
+When the hidden identity list exceeds its 20-finding window, its remainder
+line names `--format json with RIPR_CHECK_FINDINGS_BYTES=0` for every identity.
+Default check JSON has its own findings-array byte budget; the explicit
+opt-out recovers the full finding set without changing either display cap.
+
 When a selected finding exists, the digest includes file and line, static
 exposure class, changed behavior, first missing discriminator when known,
 related test when known, suggested repair or verify command when known, and a
@@ -246,6 +258,14 @@ a direct `ripr agent stub --at FILE:LINE --kind FAMILY` refusal names
 `FAMILY`, rather than the internal seam kind (#6689). Its `nearest:`
 suggestions are filtered to that family before the five-entry limit is
 applied. If the file contains only other families, the suggestions are empty.
+
+Direct JSON stub refusals distinguish an absent selector (`seam_not_found`)
+from a suffix naming several files or disjoint same-kind seams that tie
+(`selector_ambiguous`). Both remain decisions (exit 3), with empty stdout,
+the schema `0.2` refused envelope then human guidance on stderr, and no stub
+write. Unresolved identity/disclosure fields are explicitly null and warnings
+are empty. An exact path or a suggested seam ID can select one behavior;
+nested seams remain governed by the existing nesting rule (#7762).
 
 The stub producer covers free functions and methods of inherent or trait
 impls at module level whose generics are lifetimes only; a trait-impl method
@@ -499,6 +519,9 @@ suggested write cannot fail on the same missing base.
 - `crates/ripr/src/output/human.rs::tests::hidden_block_unresolved_subject_run_names_the_unknown_not_base_side`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_mixed_currentness_run_names_base_side_and_unresolved_counts`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_list_discloses_remainder_beyond_its_window`
+- `crates/ripr/src/output/human.rs::tests::hidden_identity_completeness_requires_unbounded_json`
+- `crates/ripr/src/output/human.rs::tests::hidden_identity_window_discloses_only_a_real_tail`
+- `crates/ripr/src/output/json/mod.rs::tests::check_findings_completeness_at_byte_boundary`
 - `cargo xtask goldens check`
 
 ## Implementation Mapping

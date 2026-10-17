@@ -43,7 +43,9 @@ pub(crate) struct MutationCalibrationReport {
     pub(crate) agreement: MutationCalibrationAgreement,
     pub(crate) precision_notes: Vec<String>,
     pub(crate) missed_runtime_signals: Vec<MutationCalibrationRuntimeSignal>,
+    pub(crate) missed_runtime_signals_total: usize,
     pub(crate) static_only_findings: Vec<MutationCalibrationStaticOnlyFinding>,
+    pub(crate) static_only_findings_total: usize,
     pub(crate) matched: Vec<MutationCalibrationMatch>,
     pub(crate) ambiguous_file_line: Vec<AmbiguousMutationCalibrationMatch>,
     pub(crate) unmatched_mutants: Vec<MutationOutcomeRecord>,
@@ -88,7 +90,7 @@ pub(crate) struct AmbiguousMutationCalibrationMatch {
 }
 
 pub(crate) const MUTATION_CALIBRATION_STATIC_WITHOUT_RUNTIME_SAMPLE_LIMIT: usize = 50;
-const MUTATION_CALIBRATION_AGREEMENT_SAMPLE_LIMIT: usize = 50;
+pub(crate) const MUTATION_CALIBRATION_AGREEMENT_SAMPLE_LIMIT: usize = 50;
 pub(crate) fn mutation_calibration_impl(args: &[String]) -> Result<(), String> {
     let parsed = parse_mutation_calibration_args(args)?;
     let repo_exposure_json = match parsed.repo_exposure_json.as_ref() {
@@ -314,13 +316,17 @@ pub(crate) fn build_mutation_calibration_report(
         .cloned()
         .collect::<Vec<_>>();
 
-    let (agreement, precision_notes, missed_runtime_signals, static_only_findings) =
+    let (agreement, precision_notes, mut missed_runtime_signals, mut static_only_findings) =
         mutation_calibration_agreement(
             &static_seams,
             &matched,
             &ambiguous_file_line,
             &unmatched_mutants,
         );
+    let missed_runtime_signals_total = missed_runtime_signals.len();
+    let static_only_findings_total = static_only_findings.len();
+    missed_runtime_signals.truncate(MUTATION_CALIBRATION_AGREEMENT_SAMPLE_LIMIT);
+    static_only_findings.truncate(MUTATION_CALIBRATION_AGREEMENT_SAMPLE_LIMIT);
 
     MutationCalibrationReport {
         static_seams_total: static_seams.len(),
@@ -328,7 +334,9 @@ pub(crate) fn build_mutation_calibration_report(
         agreement,
         precision_notes,
         missed_runtime_signals,
+        missed_runtime_signals_total,
         static_only_findings,
+        static_only_findings_total,
         matched,
         ambiguous_file_line,
         unmatched_mutants,
@@ -428,15 +436,18 @@ fn mutation_calibration_agreement(
         }
     }
 
-    missed_runtime_signals.truncate(MUTATION_CALIBRATION_AGREEMENT_SAMPLE_LIMIT);
-    static_only_findings.truncate(MUTATION_CALIBRATION_AGREEMENT_SAMPLE_LIMIT);
-
     (
         agreement,
         mutation_calibration_precision_notes(),
         missed_runtime_signals,
         static_only_findings,
     )
+}
+
+fn push_agreement_sample_note(out: &mut String, shown: usize, total: usize) {
+    if total > shown {
+        out.push_str(&format!("Sample only; showing {shown} of {total}.\n\n"));
+    }
 }
 
 fn mutation_calibration_precision_notes() -> Vec<String> {
@@ -747,6 +758,11 @@ pub(crate) fn mutation_calibration_report_markdown(report: &MutationCalibrationR
     if report.missed_runtime_signals.is_empty() {
         out.push_str("No imported runtime gap signals lacked a matching static gap.\n");
     } else {
+        push_agreement_sample_note(
+            &mut out,
+            report.missed_runtime_signals.len(),
+            report.missed_runtime_signals_total,
+        );
         out.push_str("| Runtime mutant | Location | Runtime outcome | Static class | Confidence label | Reason |\n");
         out.push_str("| --- | --- | --- | --- | --- | --- |\n");
         for record in &report.missed_runtime_signals {
@@ -773,6 +789,11 @@ pub(crate) fn mutation_calibration_report_markdown(report: &MutationCalibrationR
     if report.static_only_findings.is_empty() {
         out.push_str("No static gap seams lacked a runtime gap signal in this import.\n");
     } else {
+        push_agreement_sample_note(
+            &mut out,
+            report.static_only_findings.len(),
+            report.static_only_findings_total,
+        );
         out.push_str("| Seam | Class | Location | Confidence label | Reason |\n");
         out.push_str("| --- | --- | --- | --- | --- |\n");
         for record in &report.static_only_findings {

@@ -6,7 +6,7 @@ use crate::analysis::seams::SeamGripClass;
 use crate::domain::{ExposureClass, OracleKind};
 use proptest::prelude::*;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
@@ -87,6 +87,102 @@ fn semantic_config_diagnostic_names_profile_expected_values() {
     assert_eq!(diagnostic.location_status, ConfigLocationStatus::Exact);
     assert_eq!(diagnostic.invalid_value.as_deref(), Some("\"verbose\""));
     assert_eq!(diagnostic.expected_values, ["actionable", "full"]);
+}
+
+/// A typo in `[perl].producer` must fail at parse like the other closed
+/// enums. The runtime `is_managed_perl_producer` allowlist stays the single
+/// accepted set; `check.rs:1504` uses `"custom"` only as a non-managed
+/// predicate token, not as a documented `ripr.toml` value.
+#[test]
+fn perl_producer_typo_fails_closed_with_key_named_error() -> Result<(), String> {
+    let diagnostic = match parse_config_diagnostic("[perl]\nproducer = \"perllspp\"\n") {
+        Ok(_) => return Err("typo producer must fail parse".to_string()),
+        Err(diagnostic) => diagnostic,
+    };
+    if diagnostic.config_path.as_deref() != Some("perl.producer") {
+        return Err(format!("config_path: {:?}", diagnostic.config_path));
+    }
+    if diagnostic.location_status != ConfigLocationStatus::Exact {
+        return Err(format!("location_status: {:?}", diagnostic.location_status));
+    }
+    if diagnostic.invalid_value.as_deref() != Some("\"perllspp\"") {
+        return Err(format!("invalid_value: {:?}", diagnostic.invalid_value));
+    }
+    if diagnostic.expected_values != ["perl-ripr-facts", "perllsp", "perl-lsp"] {
+        return Err(format!("expected_values: {:?}", diagnostic.expected_values));
+    }
+    if !diagnostic
+        .message
+        .contains("perl.producer `perllspp` is not supported")
+    {
+        return Err(diagnostic.message.clone());
+    }
+    if !diagnostic
+        .message
+        .contains("expected perl-ripr-facts, perllsp, or perl-lsp")
+    {
+        return Err(diagnostic.message.clone());
+    }
+    Ok(())
+}
+
+#[test]
+fn perl_producer_custom_is_not_a_documented_unmanaged_value() -> Result<(), String> {
+    let error = match parse_config("[perl]\nproducer = \"custom\"\n") {
+        Ok(_) => return Err("custom is not an accepted ripr.toml producer".to_string()),
+        Err(error) => error,
+    };
+    if !error.contains("perl.producer `custom` is not supported") {
+        return Err(error);
+    }
+    Ok(())
+}
+
+#[test]
+fn perl_producer_accepted_managed_values_and_omission_parse() -> Result<(), String> {
+    for value in ["perl-ripr-facts", "perllsp", "perl-lsp"] {
+        let config = parse_config(&format!("[perl]\nproducer = \"{value}\"\n"))
+            .map_err(|err| format!("{value} must parse: {err}"))?;
+        if config.perl().producer() != Some(value) {
+            return Err(format!("{value} parsed as {:?}", config.perl().producer()));
+        }
+        if !crate::app::is_managed_perl_producer(value) {
+            return Err(format!(
+                "{value} must remain on the existing managed allowlist"
+            ));
+        }
+    }
+    let omitted = parse_config("[perl]\ntimeout_ms = 1000\n")
+        .map_err(|err| format!("omitted producer remains valid: {err}"))?;
+    if omitted.perl().producer().is_some() {
+        return Err(format!(
+            "omitted producer must stay None, got {:?}",
+            omitted.perl().producer()
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn perl_producer_diagnostic_expected_values_match_managed_allowlist() -> Result<(), String> {
+    let diagnostic = match parse_config_diagnostic("[perl]\nproducer = \"nope\"\n") {
+        Ok(_) => return Err("unknown producer must fail parse".to_string()),
+        Err(diagnostic) => diagnostic,
+    };
+    if diagnostic.expected_values.is_empty() {
+        return Err("editor/LSP expected-values must name the closed set".to_string());
+    }
+    for value in &diagnostic.expected_values {
+        if !crate::app::is_managed_perl_producer(value) {
+            return Err(format!(
+                "{value} listed as expected but is not a managed producer"
+            ));
+        }
+    }
+    if crate::app::is_managed_perl_producer("nope") {
+        return Err("control: the rejected value must stay unmanaged".to_string());
+    }
+    Ok(())
 }
 
 fn temp_root(name: &str) -> Result<PathBuf, String> {
@@ -1104,6 +1200,86 @@ fn malformed_or_unknown_config_is_actionable() {
 }
 
 #[test]
+fn relative_config_paths_reject_nul_before_filesystem_use() {
+    for (field, source) in [
+        (
+            "suppressions.path",
+            r#"[suppressions]
+path = ".ripr/suppressions\u0000.toml"
+"#,
+        ),
+        (
+            "analysis.production_like_targets",
+            r#"[analysis]
+production_like_targets = ["tests/\u0000support.rs"]
+"#,
+        ),
+        (
+            "analysis.test_harnesses[0].target",
+            r#"[[analysis.test_harnesses]]
+registration_id = "custom"
+target = "tests/custom.rs\u0000"
+kind = "custom_harness"
+adapter = "libtest_mimic_v1"
+marker = "libtest_mimic"
+"#,
+        ),
+        (
+            "profiles.bun_ub.test_roots",
+            r#"[profiles.bun_ub]
+test_roots = ["\u0000test/**/*.ts"]
+bridge_hints = "ripr.bun.bridge.toml"
+"#,
+        ),
+        (
+            "profiles.bun_ub.bridge_hints",
+            r#"[profiles.bun_ub]
+test_roots = ["test/**/*.ts"]
+bridge_hints = "ripr.bun.bridge\u0000.toml"
+"#,
+        ),
+        (
+            "perl.cache_dir",
+            r#"[perl]
+cache_dir = "target/\u0000perl-facts"
+"#,
+        ),
+    ] {
+        let error = parse_config(source).expect_err("NUL cannot name a filesystem path");
+        assert_eq!(error, format!("{field} must not contain NUL characters"));
+        assert!(!error.contains('\0'), "diagnostics must not echo the NUL");
+    }
+}
+
+#[test]
+fn relative_config_paths_preserve_normalization_spaces_and_unicode() -> Result<(), String> {
+    let config = parse_config(
+        r#"[suppressions]
+path = "  ./.ripr//café policy.toml  "
+[analysis]
+production_like_targets = [" ./tests//café support.rs "]
+[perl]
+cache_dir = " ./target//perl facts "
+"#,
+    )?;
+    assert_eq!(
+        config.suppressions.path,
+        PathBuf::from(".ripr/café policy.toml")
+    );
+    assert_eq!(
+        config.analysis.production_like_targets,
+        [PathBuf::from("tests/café support.rs")]
+            .into_iter()
+            .collect()
+    );
+    assert_eq!(
+        config.perl.cache_dir,
+        Some(PathBuf::from("target/perl facts"))
+    );
+    Ok(())
+}
+
+#[test]
 fn config_rejects_unsafe_suppression_paths() {
     for text in [
         "[suppressions]\npath = \"\"\n".to_string(),
@@ -1351,9 +1527,13 @@ proptest! {
         max_related_tests in any::<usize>(),
         suppression_path in valid_repository_paths(),
         resolve_tsconfig_paths in any::<bool>(),
-        producer in any::<String>(),
+        producer in prop::option::of(prop::sample::select(vec![
+            "perl-ripr-facts".to_string(),
+            "perllsp".to_string(),
+            "perl-lsp".to_string(),
+        ])),
         executable in any::<String>(),
-        timeout_ms in any::<u64>(),
+        timeout_ms in 1u64..,
         cache_dir in valid_repository_paths(),
     ) {
         let raw = RawConfig {
@@ -1400,7 +1580,7 @@ proptest! {
                 resolve_tsconfig_paths: Some(resolve_tsconfig_paths),
             }),
             perl: Some(RawPerlConfig {
-                producer: Some(producer),
+                producer: spanned_value(producer),
                 executable: Some(executable),
                 timeout_ms: Some(timeout_ms),
                 cache_dir: Some(cache_dir),
@@ -2231,4 +2411,182 @@ fn closer_config_names_the_member_entry_when_it_is_a_symlink_to_a_different_file
         loaded.display()
     );
     Ok(())
+}
+
+/// #7652: `load_for_root` used `Path::display()` of the canonicalized config
+/// path, leaking the Windows drive-letter verbatim prefix into the human
+/// stderr line and the JSON refusal `message`. Both surfaces share this
+/// helper; discovery and `source_path` stay canonical.
+#[test]
+fn config_load_parse_error_strips_windows_verbatim_prefix() -> Result<(), String> {
+    // `check-local-context` forbids drive-letter path literals, so the
+    // Windows shape is assembled from parts.
+    let drive = "F:";
+    let verbatim = format!(r"\\?\{drive}\tmp\probe-rust1\ripr.toml");
+    let path = Path::new(&verbatim);
+    let parse_detail = "invalid ripr.toml: TOML parse error at line 4, column 2\n  |\n4 | [bogus_section]\n  |  ^^^^^^^^^^^^^\nunknown field `bogus_section`";
+    let windows = config_load_parse_error_for_host(path, parse_detail, true);
+    let expected_path = format!("{drive}/tmp/probe-rust1/ripr.toml");
+    let expected_prefix =
+        format!("{expected_path}: invalid ripr.toml: TOML parse error at line 4, column 2");
+    if !windows.starts_with(&expected_prefix) {
+        return Err(format!(
+            "Windows parse error leaked the verbatim spelling: {windows}"
+        ));
+    }
+    if windows.contains(r"\\?\") || windows.contains('\\') {
+        return Err(format!(
+            "Windows parse error must use plain forward-slash spelling: {windows}"
+        ));
+    }
+    let unix = config_load_parse_error_for_host(path, parse_detail, false);
+    if !unix.starts_with(&format!("{verbatim}: invalid ripr.toml:")) {
+        return Err(format!(
+            "Unix parse error must keep verbatim text as a filename: {unix}"
+        ));
+    }
+    let unc = Path::new(r"\\?\UNC\server\share\ripr.toml");
+    let unc_windows =
+        config_load_parse_error_for_host(unc, "invalid ripr.toml: expected table", true);
+    if !unc_windows.starts_with(r"\\?\UNC\server\share\ripr.toml: invalid ripr.toml:") {
+        return Err(format!(
+            "Windows UNC verbatim form must render exactly as given: {unc_windows}"
+        ));
+    }
+    let notice = crate::core_error::CoreError::config_invalid(windows.clone()).refusal_notice();
+    if notice.message != expected_prefix {
+        return Err(format!(
+            "JSON refusal message must be the cleaned first line, got: {}",
+            notice.message
+        ));
+    }
+    if notice.message.contains(r"\\?\") || notice.message.contains("bogus_section") {
+        return Err(format!(
+            "JSON refusal message leaked verbatim path or config source: {}",
+            notice.message
+        ));
+    }
+    let unix_notice = crate::core_error::CoreError::config_invalid(unix).refusal_notice();
+    if unix_notice.message
+        != format!("{verbatim}: invalid ripr.toml: TOML parse error at line 4, column 2")
+    {
+        return Err(format!(
+            "Unix JSON refusal message must keep verbatim text as a filename: {}",
+            unix_notice.message
+        ));
+    }
+    let read_windows = config_load_read_error_for_host(path, &"permission denied", true);
+    if read_windows != format!("read {expected_path} failed: permission denied") {
+        return Err(format!(
+            "Windows read error leaked the verbatim spelling: {read_windows}"
+        ));
+    }
+    let read_unix = config_load_read_error_for_host(path, &"permission denied", false);
+    if read_unix != format!("read {verbatim} failed: permission denied") {
+        return Err(format!(
+            "Unix read error must keep verbatim text as a filename: {read_unix}"
+        ));
+    }
+    Ok(())
+}
+
+/// Live `load_for_root` wiring: a parse failure is path-qualified through
+/// the shared renderer, while a successful load still stores the canonical
+/// `source_path` used for identity and the symlink check.
+#[test]
+fn load_for_root_parse_error_uses_the_human_path_and_keeps_canonical_source_path()
+-> Result<(), String> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let root = std::env::temp_dir().join(format!(
+        "ripr-config-human-path-{}-{stamp}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    let config_path = root.join(CONFIG_FILE_NAME);
+    fs::write(&config_path, "[bogus_section]\n").map_err(|err| format!("write invalid: {err}"))?;
+    let parse_error = match load_for_root(&root) {
+        Ok(_) => {
+            fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
+            return Err("invalid ripr.toml must fail closed".to_string());
+        }
+        Err(error) => error,
+    };
+    let canonical = fs::canonicalize(&config_path).map_err(|err| format!("canonicalize: {err}"))?;
+    let expected_prefix = format!(
+        "{}: invalid ripr.toml:",
+        config_load_error_path_for_host(&canonical, cfg!(windows))
+    );
+    fs::write(&config_path, "[analysis]\nmode = \"draft\"\n")
+        .map_err(|err| format!("write valid: {err}"))?;
+    let loaded = load_for_root(&root);
+    fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
+    if !parse_error.starts_with(&expected_prefix) {
+        return Err(format!(
+            "parse error must use the human renderer of the discovered path: {parse_error}"
+        ));
+    }
+    if parse_error.contains(r"\\?\") && cfg!(windows) {
+        return Err(format!(
+            "hosted Windows parse error still has verbatim prefix: {parse_error}"
+        ));
+    }
+    let loaded = loaded.map_err(|err| format!("valid config must load: {err}"))?;
+    if loaded.source_path.as_deref() != Some(canonical.as_path()) {
+        return Err(format!(
+            "source_path must stay the canonical identity, got {:?}",
+            loaded.source_path
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn config_error_display_keeps_misplaced_mode_hint_without_source() {
+    let err = tests_only_parse("mode = \"deep\"\n").expect_err("top-level mode must fail");
+    let compact = config_error_display_lines(&err, false);
+    assert_eq!(compact.len(), 1, "{compact:?}");
+    assert!(
+        compact[0].contains("belongs under [analysis]"),
+        "compact must keep the allowlisted hint: {compact:?}"
+    );
+    assert!(
+        !compact.join("\n").contains("mode = \"deep\""),
+        "compact must not print the source assignment: {compact:?}"
+    );
+    let verbose = config_error_display_lines(&err, true);
+    assert!(
+        verbose
+            .iter()
+            .any(|line| line.contains("unknown field `mode`")),
+        "verbose must keep the parser reason: {verbose:?}"
+    );
+    assert!(
+        verbose
+            .iter()
+            .any(|line| line.contains("belongs under [analysis]")),
+        "verbose must keep the allowlisted hint: {verbose:?}"
+    );
+    assert!(
+        !verbose.join("\n").contains("mode = \"deep\""),
+        "verbose must not restore the source excerpt: {verbose:?}"
+    );
+}
+
+#[test]
+fn config_error_display_keeps_unclosed_table_reason() {
+    let err = tests_only_parse("[languages\n").expect_err("unclosed table must fail");
+    let verbose = config_error_display_lines(&err, true);
+    assert!(
+        verbose
+            .iter()
+            .any(|line| line.contains("unclosed") || line.contains("expected")),
+        "verbose must keep the unclosed-table reason: {verbose:?}"
+    );
+    assert!(
+        !verbose.iter().any(|line| is_toml_source_excerpt_line(line)),
+        "verbose must not reprint the TOML snippet: {verbose:?}"
+    );
 }

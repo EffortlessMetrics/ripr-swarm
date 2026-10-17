@@ -1,13 +1,53 @@
 /// Shell disclosure shown before generated command fences (#2628).
 ///
-/// The command strings are bash source (`agent::loop_commands::shell_arg`), so
-/// a fenced `bash` block is paired with a PowerShell translation derived by
-/// [`powershell_command`] when the translation differs ([`powershell_form`]). Naming both shells — and the cmd.exe boundary — in
-/// the prose keeps the packet honest on Windows; the wording mirrors the landed
-/// `agent_workflow` disclosure so every generated-command surface states the
-/// same contract. Shared here — beside the translation it describes — so the
-/// fenced command surfaces do not fork one disclosure per module.
+/// The command strings come from `agent::loop_commands::shell_arg`, which
+/// quotes for the shell family of the running host (#7729): POSIX single
+/// quotes off Windows, double quotes on it. [`command_shell_disclosure`]
+/// picks the host-appropriate text so the prose never claims a shell the
+/// printed commands do not parse in. On both hosts a fenced command is
+/// paired with a PowerShell translation derived by [`powershell_command`]
+/// when the translation differs ([`powershell_form`]). Shared here — beside
+/// the translation it describes — so the fenced command surfaces do not fork
+/// one disclosure per module.
 pub(crate) const COMMAND_SHELL_DISCLOSURE: &str = "Commands are written for Bash, with POSIX single-quote quoting and `>` redirection. A PowerShell form follows a command only when PowerShell needs a different one: doubled-quote escaping, the `&` call operator before a quoted program path, or a guarded BOM-free UTF-8 write in place of `>`. A command with no PowerShell form after it runs unchanged in PowerShell, unless a line says its PowerShell form is unavailable. cmd.exe is not supported. On Windows, use either Git Bash or PowerShell. WSL bash is not a drop-in substitute: paths keep their Windows drive-letter prefix, which WSL resolves as a relative path.\n\n";
+
+/// Host-appropriate variant of [`COMMAND_SHELL_DISCLOSURE`] for Windows
+/// hosts (#7729): the renderer double-quotes there, so the commands paste
+/// into cmd.exe and PowerShell (and Git Bash for paths without `$` or
+/// backtick content), and saying cmd.exe is unsupported would be false.
+/// #8152 review: PowerShell expands `$` and backtick inside double quotes
+/// just as Git Bash does, so a value carrying those characters keeps the
+/// single-quote form instead of the unsafe double-quoted one.
+pub(crate) const COMMAND_SHELL_DISCLOSURE_WINDOWS: &str = "Commands are written for the Windows console: arguments are double-quoted, the one form cmd.exe, PowerShell, and Git Bash all honor for spaced paths. A value carrying `$` or backtick keeps the single-quote form instead — both Git Bash and PowerShell would expand it inside double quotes — so paste that value in Git Bash or PowerShell, not cmd.exe (cmd.exe passes single quotes through as literal characters); the same routing applies to a value carrying `%`, which cmd.exe expands even inside double quotes. An interior `\"` in an argument is kept by cmd.exe and PowerShell but dropped by Git Bash (`\"` cannot occur in a Windows filename, so this touches only exotic non-path arguments). A PowerShell form follows a command only when PowerShell needs a different one: the `&` call operator before a quoted program path, or a guarded BOM-free UTF-8 write in place of `>`. A command with no PowerShell form after it runs unchanged in cmd.exe and PowerShell, unless a line says its PowerShell form is unavailable. Values containing control characters keep an explicit bash escape form; paste those in Git Bash or PowerShell. WSL bash is not a drop-in substitute: paths keep their Windows drive-letter prefix, which WSL resolves as a relative path.\n\n";
+
+/// The shell disclosure for the running host (#7729).
+pub(crate) fn command_shell_disclosure() -> &'static str {
+    if cfg!(windows) {
+        COMMAND_SHELL_DISCLOSURE_WINDOWS
+    } else {
+        COMMAND_SHELL_DISCLOSURE
+    }
+}
+
+/// One-line claim for a command whose PowerShell form was translated
+/// (`PowershellForm::Translated`), host-aware (#7729).
+pub(crate) fn translated_form_claim() -> &'static str {
+    if cfg!(windows) {
+        "The first form uses Windows double-quote quoting, which cmd.exe, PowerShell, and Git Bash all accept for paths without `$` or backtick content."
+    } else {
+        "The first form is written for Bash; cmd.exe is not supported."
+    }
+}
+
+/// One-line claim for a command that runs unchanged in PowerShell
+/// (`PowershellForm::SameAsBash`), host-aware (#7729).
+pub(crate) fn unchanged_form_claim() -> &'static str {
+    if cfg!(windows) {
+        "It runs unchanged in cmd.exe, PowerShell, and Git Bash."
+    } else {
+        "It runs unchanged in Bash and PowerShell; cmd.exe is not supported."
+    }
+}
 
 pub(crate) fn render_string_section(out: &mut String, title: &str, values: &[String]) {
     out.push_str(&format!("\n## {title}\n\n"));
@@ -244,9 +284,10 @@ pub(crate) enum PowershellForm {
     Unavailable,
 }
 
-/// Classify [`powershell_command`]'s result for one Bash command. Every
-/// generated-command surface prints a PowerShell form only for
-/// `Translated`, so the choice is made here once.
+/// Classify [`powershell_command`]'s result for one Bash command. Fenced
+/// surfaces and plain-text [`powershell_text_variant`] both consume this
+/// tri-state: a translated line, silence when the command is identical, and
+/// [`POWERSHELL_UNAVAILABLE_DISCLOSURE`] when no honest translation exists.
 pub(crate) fn powershell_form(command: &str) -> PowershellForm {
     match powershell_command(command) {
         None => PowershellForm::Unavailable,
@@ -388,7 +429,11 @@ const POWERSHELL_RESTORE_ENCODING: &str =
 ///   is invalid or semantically different (PR #3625 review, devin BUG).
 /// - PowerShell single quotes are also literal inside, but its doubling idiom
 ///   differs: bash closes, escapes, and reopens (`'\''`) where PowerShell
-///   doubles in place (`''`), so every occurrence is rewritten.
+///   doubles in place (`''`). That rewrite applies only outside double-quoted
+///   regions. Inside double quotes the same four characters are literal data:
+///   a Windows console-form path whose component boundary is `'\''` (an
+///   apostrophe-ending name followed by a name that starts with apostrophes)
+///   must keep the separator (#8260).
 /// - bash `>` redirection becomes a .NET write with BOM-free UTF-8, so Windows
 ///   PowerShell 5.1 does not produce a UTF-16 or BOM-prefixed file that JSON
 ///   consumers would reject. The target is rendered as a PowerShell string
@@ -431,16 +476,23 @@ const POWERSHELL_RESTORE_ENCODING: &str =
 /// executes the translated lines under a real `pwsh` on the Windows lane,
 /// where a missing `pwsh` fails closed instead of skipping.
 pub(crate) fn powershell_command(command: &str) -> Option<String> {
+    powershell_command_for(command, cfg!(windows))
+}
+
+/// Pure host-parameterised core of [`powershell_command`] (#8152 review), so
+/// the Windows-form translation is testable on any machine (the
+/// `shell_arg_for` / `human_path_text` pattern, #4378).
+fn powershell_command_for(command: &str, windows_form: bool) -> Option<String> {
     let (command, lifted) = lift_control_arguments(command)?;
-    let line = powershell_command_lifted(&command)?;
+    let line = powershell_command_lifted(&command, windows_form)?;
     restore_control_arguments(line, &lifted)
 }
 
-fn powershell_command_lifted(command: &str) -> Option<String> {
-    if is_compound_bash_command(command) {
+fn powershell_command_lifted(command: &str, windows_form: bool) -> Option<String> {
+    if has_unsupported_shell_syntax_for(command, false, windows_form) {
         return None;
     }
-    let command = command.replace("'\\''", "''");
+    let command = rewrite_bash_apostrophe_escapes(command);
     let command = powershell_safe_quotes(&command)?;
     if let Some(index) = powershell_redirect_offset(&command) {
         let invocation = invoke_quoted_program(command[..index].trim_end());
@@ -452,7 +504,21 @@ fn powershell_command_lifted(command: &str) -> Option<String> {
         if target.contains('>') {
             return None;
         }
-        let output = powershell_literal(target);
+        // #8152 review: in the Windows console form a double-quoted target
+        // already parses identically in PowerShell (backslashes literal,
+        // `""` one quote, a doubled trailing separator un-doubled by the
+        // native argv parser), so it passes through instead of being
+        // wrapped again — a wrap would make the quote characters part of
+        // the artifact path. The bash form keeps its single-quoted rebuild.
+        let output = if windows_form
+            && target.len() >= 2
+            && target.starts_with('"')
+            && target.ends_with('"')
+        {
+            target.to_string()
+        } else {
+            powershell_literal(target)
+        };
         return Some(format!(
             "{POWERSHELL_SAVE_ENCODING}{POWERSHELL_UTF8_STDOUT}try {{ $ripr = (({invocation}) | Out-String) }}{POWERSHELL_RESTORE_ENCODING}; if ($LASTEXITCODE -eq 0) {{ [System.IO.File]::WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath({output}), $ripr.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)) }} else {{ throw \"ripr exited with code $LASTEXITCODE\" }}"
         ));
@@ -616,6 +682,39 @@ fn restore_control_arguments(line: String, lifted: &[String]) -> Option<String> 
     Some(line)
 }
 
+/// Rewrite bash's close-escape-reopen apostrophe idiom (`'\''`) to PowerShell's
+/// doubled quote (`''`), only outside double-quoted regions.
+///
+/// A global replace also matches the same four characters inside a Windows
+/// console-form double-quoted path and drops the separator between an
+/// apostrophe-ending component and the next name (#8260). Bash-form
+/// double-quoted backslashes already withhold before this rewrite runs.
+fn rewrite_bash_apostrophe_escapes(command: &str) -> String {
+    let chars: Vec<char> = command.chars().collect();
+    let mut out = String::with_capacity(command.len());
+    let mut in_double_quote = false;
+    let mut index = 0;
+    while index < chars.len() {
+        if !in_double_quote
+            && chars[index] == '\''
+            && chars.get(index + 1) == Some(&'\\')
+            && chars.get(index + 2) == Some(&'\'')
+            && chars.get(index + 3) == Some(&'\'')
+        {
+            out.push_str("''");
+            index += 4;
+            continue;
+        }
+        let ch = chars[index];
+        if ch == '"' {
+            in_double_quote = !in_double_quote;
+        }
+        out.push(ch);
+        index += 1;
+    }
+    out
+}
+
 /// PowerShell's tokenizer treats U+2018-U+201B as single-quote characters and
 /// U+201C-U+201E as double-quote characters, exactly like ASCII `'` and `"`.
 /// Bash treats all of them as ordinary data, and `shell_arg` leaves them
@@ -629,7 +728,7 @@ fn restore_control_arguments(line: String, lifted: &[String]) -> Option<String> 
 /// one literal character, so doubling `’` yields `’`). A typographic double
 /// quote inside a double-quoted span has no such rewrite that bash would read
 /// the same way, so the translation withholds there. Outside quotes these
-/// characters never reach this function: [`is_compound_bash_command`] already
+/// characters never reach this function: [`has_unsupported_shell_syntax`] already
 /// withholds any unlisted character.
 ///
 /// Runs after the `'\''` rewrite, so `''` inside a span is an escaped
@@ -729,9 +828,9 @@ fn powershell_redirect_offset(command: &str) -> Option<usize> {
     None
 }
 
-/// Decide whether a bash command is compound: forms whose PowerShell
-/// translation would need a second shell parser rather than a quoting
-/// translation.
+/// Decide whether a command text is compound or expansion-bearing: forms
+/// whose PowerShell translation would need a second shell parser rather than
+/// a quoting translation.
 ///
 /// Detected outside single-quoted regions: `;`, `&` and `&&`, `|` and `||`,
 /// heredoc `<<`, input redirection `<` — a parse error in PowerShell, which
@@ -750,22 +849,32 @@ fn powershell_redirect_offset(command: &str) -> Option<usize> {
 /// (alphanumerics, whitespace, `.`, `/`, `_`, `-`, `:`) fails closed: an
 /// unlisted character withholds the translation, so `--%`, `KEY=value`, and
 /// other unsupported tokens never ship a line the shells would read
-/// differently. A trailing unbalanced quote withholds as well: the bash form
-/// is malformed there, so there is no honest line to translate. When in doubt
-/// the caller under-emits: a false "compound" costs one disclosure line, a
-/// false "simple" would publish an invalid or semantically different
+/// differently. A trailing unbalanced quote withholds as well: the rendered
+/// form is malformed there, so there is no honest line to translate. When in
+/// doubt the caller under-emits: a false "compound" costs one disclosure
+/// line, a false "simple" would publish an invalid or semantically different
 /// PowerShell line. Unquoted LF, CRLF, and bare CR are withheld before
 /// redirect parsing: a command list must not be folded into one invocation or
 /// mistaken for part of an artifact path. Quoted line separators are argument
 /// data and keep the normal translation path.
-fn is_compound_bash_command(command: &str) -> bool {
-    has_unsupported_shell_syntax(command, false)
-}
-
+///
 /// Share the quote/expansion boundary while allowing literal `=` in Bash
 /// arguments only. Rooted Bash forms never admit redirection or assignments
 /// before the program; PowerShell retains its existing translation boundary.
+///
+/// `windows_form` selects the double-quoted-content semantics of the command
+/// text the running host renders (#8152 review): off Windows the text is
+/// bash source, where a double-quoted backslash keeps its conservative
+/// blanket withhold (#3625 review); on Windows the text is the Windows
+/// console form, where backslashes are literal path separators, interior
+/// quotes are doubled (`""`), and a trailing separator run is doubled before
+/// the closing quote. There the guard proves the token safe to run unchanged
+/// in PowerShell instead of withholding every backslash path.
 fn has_unsupported_shell_syntax(command: &str, rooted_bash: bool) -> bool {
+    has_unsupported_shell_syntax_for(command, rooted_bash, cfg!(windows))
+}
+
+fn has_unsupported_shell_syntax_for(command: &str, rooted_bash: bool, windows_form: bool) -> bool {
     let chars: Vec<char> = command.chars().collect();
     let mut index = 0;
     let mut in_single_quote = false;
@@ -781,17 +890,48 @@ fn has_unsupported_shell_syntax(command: &str, rooted_bash: bool) -> bool {
             index += 1;
         } else if in_double_quote {
             match ch {
-                '"' => in_double_quote = false,
+                '"' => {
+                    // #8152 review: in the Windows console form a doubled
+                    // quote is one literal quote (the renderer's `""`
+                    // escaping, which PowerShell reads the same way), so the
+                    // pair stays inside the region. In bash source a `""`
+                    // pair toggles the region twice and keeps its existing
+                    // behavior untouched.
+                    if windows_form && next == Some('"') {
+                        index += 1;
+                    } else {
+                        in_double_quote = false;
+                    }
+                }
                 // Bash treats `\$` inside double quotes as literal data, but
                 // PowerShell evaluates `$(...)` as a subexpression — the
                 // same text changes meaning across shells, so any
-                // double-quoted backslash under-emits (#3625 review). Any
                 // double-quoted `$` under-emits too: PowerShell would expand
                 // `$VAR` and `$()` forms that bash may leave literal, so the
                 // same pasted text can run differently across shells.
-                '\\' => return true,
                 '`' => return true,
                 '$' => return true,
+                '\\' if windows_form => {
+                    // Windows console form: backslashes are literal path
+                    // separators. The runs that carry meaning are the ones
+                    // before a quote: an even run is the renderer's doubled
+                    // trailing separator (PowerShell passes it through and
+                    // the native argv parser un-doubles it), an odd run is an
+                    // argv-escaped quote the shells read differently, so it
+                    // under-emits. A run before `$`/backtick still under-
+                    // emits through the character checks above.
+                    let mut run = 1;
+                    while chars.get(index + run) == Some(&'\\') {
+                        run += 1;
+                    }
+                    match chars.get(index + run).copied() {
+                        Some('"') if run % 2 == 1 => return true,
+                        _ => index += run - 1,
+                    }
+                }
+                // Bash form (windows_form == false): any double-quoted
+                // backslash under-emits, unchanged since #3625 review.
+                '\\' => return true,
                 _ => {}
             }
             index += 1;
@@ -892,15 +1032,21 @@ fn powershell_literal(value: &str) -> String {
 }
 
 /// The PowerShell form of one generated command for plain-text surfaces, which
-/// print a bash command with no fenced PowerShell block. `Some` only when
-/// PowerShell needs a different line (an apostrophe or typographic quote in a
-/// path or ref, a `>` redirect); a command that runs unchanged, or has no
-/// honest translation, prints nothing extra. Same translation as the fenced
-/// surfaces ([`powershell_form`]); no second quoting implementation.
+/// print a bash command with no fenced PowerShell block. Same translation as
+/// the fenced surfaces ([`powershell_form`]); no second quoting implementation.
+///
+/// - `Some(translated)` when PowerShell needs a different line (an apostrophe
+///   or typographic single quote in a path or ref, a `>` redirect).
+/// - `None` when the command runs unchanged (`SameAsBash`): print nothing extra
+///   so ordinary output stays byte-identical.
+/// - `Some(POWERSHELL_UNAVAILABLE_DISCLOSURE)` when no honest translation
+///   exists. Callers prefix `(PowerShell)` the same way they prefix a
+///   translated line, so a PowerShell reader is not left with silent Bash.
 pub(crate) fn powershell_text_variant(command: &str) -> Option<String> {
     match powershell_form(command) {
         PowershellForm::Translated(line) => Some(line),
-        PowershellForm::SameAsBash | PowershellForm::Unavailable => None,
+        PowershellForm::Unavailable => Some(POWERSHELL_UNAVAILABLE_DISCLOSURE.to_string()),
+        PowershellForm::SameAsBash => None,
     }
 }
 
@@ -913,9 +1059,13 @@ mod tests {
         let command = "cargo test example -- --test-threads=1";
         assert!(powershell_command(command).is_none());
         let forms = rooted_command_forms(Some("/selected repo"), command);
+        // The root token follows the host's quoting form (#7729); the
+        // surrounding `(cd -P -- ...)` wrapper stays bash source on both
+        // hosts, so double-quoted roots remain valid bash there.
+        let quoted_root = crate::agent::loop_commands::shell_arg("/selected repo");
         assert_eq!(
             forms["bash"],
-            "(cd -P -- '/selected repo' && cargo test example -- --test-threads=1)"
+            format!("(cd -P -- {quoted_root} && cargo test example -- --test-threads=1)")
         );
         assert!(forms["powershell"].is_null());
         assert!(
@@ -1282,7 +1432,192 @@ mod tests {
             powershell_command("echo \"\\$(Write-Output injected)\""),
             None
         );
-        assert_eq!(powershell_command("echo \"a\\b\""), None);
+        // Bash-form text (windows_form = false): the blanket #3625 withhold
+        // is unchanged on every host, pinned through the pure core.
+        assert!(has_unsupported_shell_syntax_for(
+            r#"echo "a\b""#,
+            false,
+            false
+        ));
+        // Windows console form (windows_form = true): a literal path
+        // separator translates, because the running host renders this text
+        // and PowerShell reads the token the same way.
+        assert!(!has_unsupported_shell_syntax_for(
+            r#"echo "a\b""#,
+            false,
+            true
+        ));
+        assert_eq!(
+            powershell_command("echo \"a\\b\""),
+            if cfg!(windows) {
+                Some("echo \"a\\b\"".to_string())
+            } else {
+                None
+            }
+        );
+    }
+
+    /// #8152 review: on Windows the renderer double-quotes spaced paths whose
+    /// backslashes are literal separators, and the redirect twin must stay
+    /// available — withholding it sent Windows readers to a raw `>` paste,
+    /// which Windows PowerShell 5.1 writes as UTF-16 that the JSON consumer
+    /// rejects. The twin keeps the double-quoted target as-is (PowerShell
+    /// parses it natively) instead of wrapping the quotes into the path.
+    #[test]
+    fn powershell_command_translates_windows_form_redirect_with_backslash_target()
+    -> Result<(), String> {
+        let spaced_root = format!("C:{}work{}space{}repo", '\\', '\\', '\\');
+        let before_json = format!("{spaced_root}{}before.json", '\\');
+        let windows_command = format!(
+            "ripr check --root \"{spaced_root}\" --format repo-exposure-json > \"{before_json}\""
+        );
+        assert!(!has_unsupported_shell_syntax_for(
+            &windows_command,
+            false,
+            true
+        ));
+        let translated = powershell_command_for(&windows_command, true).ok_or_else(|| {
+            "Windows redirect form must translate to the guarded write".to_string()
+        })?;
+        let expected_write = format!(
+            "WriteAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath(\"{before_json}\")"
+        );
+        if !translated.contains(&expected_write) {
+            return Err(format!(
+                "double-quoted redirect target must pass through unchanged: {translated}"
+            ));
+        }
+        if !translated.contains("throw \"ripr exited with code $LASTEXITCODE\"") {
+            return Err(format!(
+                "guarded write must keep its fail-loud exit path: {translated}"
+            ));
+        }
+        // The same text is bash form off Windows and keeps its conservative
+        // withhold there.
+        assert!(has_unsupported_shell_syntax_for(
+            &windows_command,
+            false,
+            false
+        ));
+        // A doubled trailing separator (the renderer's escape for a path
+        // ending in `\`) passes through and is un-doubled by the native argv
+        // parser at run time.
+        let trailing = format!(
+            "ripr check --root \"C:{}repo{}{}\" > out.json",
+            '\\', '\\', '\\'
+        );
+        assert!(!has_unsupported_shell_syntax_for(&trailing, false, true));
+        // An odd backslash run before a quote is an argv-escaped quote the
+        // shells read differently: withhold in the Windows form too.
+        assert!(has_unsupported_shell_syntax_for(
+            r#"ripr check --root "a\"b""#,
+            false,
+            true
+        ));
+        // `$` and backtick inside double quotes expand in PowerShell: withheld
+        // in both forms.
+        assert!(has_unsupported_shell_syntax_for(
+            "ripr check --root \"$(whoami)\"",
+            false,
+            true
+        ));
+        assert!(has_unsupported_shell_syntax_for(
+            "ripr check --root \"a`$b\"",
+            false,
+            true
+        ));
+        Ok(())
+    }
+
+    /// #8260: the public Windows quoting producer (`shell_arg_for(..., true)`)
+    /// double-quotes a path whose component boundary is apostrophe, separator,
+    /// apostrophes (`stores\repo'\''child` = `stores` / `repo'` / `''child`).
+    /// A global `'\\''` → `''` rewrite before translation dropped that
+    /// separator. Host is passed explicitly so Linux CI covers the Windows form.
+    #[test]
+    fn powershell_command_preserves_windows_quoted_separator_adjacent_to_apostrophes()
+    -> Result<(), String> {
+        use crate::agent::loop_commands::shell_arg_for;
+
+        let path = format!("stores{}repo'{}''child", '\\', '\\');
+        let quoted = shell_arg_for(&path, true);
+        assert_eq!(quoted, format!("\"{path}\""));
+        if !quoted.contains("'\\''") {
+            return Err(format!(
+                "public Windows producer must emit the four-character sequence the translator rewrote globally: {quoted}"
+            ));
+        }
+
+        let command = format!(
+            "ripr agent repair --root . --store {quoted} --seam-id from-receipt --phase before"
+        );
+        let translated = powershell_command_for(&command, true)
+            .ok_or_else(|| format!("Windows console form must stay translatable: {command}"))?;
+        if !translated.contains(&path) {
+            return Err(format!(
+                "original store path including the separator must survive translation: {translated}"
+            ));
+        }
+        let dropped = format!("stores{}repo''child", '\\');
+        if translated.contains(&dropped) {
+            return Err(format!(
+                "unconditional '\\'' rewrite dropped the directory separator: {translated}"
+            ));
+        }
+
+        let apostrophe_only = shell_arg_for("it's", true);
+        assert_eq!(apostrophe_only, "\"it's\"");
+        let apostrophe_translated =
+            powershell_command_for(&format!("ripr x --store {apostrophe_only}"), true)
+                .ok_or_else(|| "apostrophe-only Windows form must stay translatable".to_string())?;
+        if !apostrophe_translated.contains("it's") {
+            return Err(format!(
+                "apostrophe-only path must survive translation: {apostrophe_translated}"
+            ));
+        }
+
+        let separator_only = format!("stores{}repo{}child", '\\', '\\');
+        let separator_quoted = shell_arg_for(&separator_only, true);
+        assert_eq!(separator_quoted, format!("\"{separator_only}\""));
+        let separator_translated =
+            powershell_command_for(&format!("ripr x --store {separator_quoted}"), true)
+                .ok_or_else(|| "separator-only Windows form must stay translatable".to_string())?;
+        if !separator_translated.contains(&separator_only) {
+            return Err(format!(
+                "separator-only path must survive translation: {separator_translated}"
+            ));
+        }
+
+        // Windows still emits the Bash close-escape-reopen form for `$`
+        // values; that conversion must keep working.
+        let dollar = shell_arg_for("it's $100", true);
+        assert_eq!(dollar, "'it'\\''s $100'");
+        assert_eq!(
+            powershell_command_for(&format!("ripr x --store {dollar}"), true).as_deref(),
+            Some("ripr x --store 'it''s $100'")
+        );
+
+        // Mixed: convert the Bash idiom outside quotes and keep the Windows
+        // double-quoted separator.
+        let mixed = format!("ripr x --gap {dollar} --store {quoted}");
+        let mixed_translated = powershell_command_for(&mixed, true)
+            .ok_or_else(|| format!("mixed Windows form must stay translatable: {mixed}"))?;
+        if !mixed_translated.contains("'it''s $100'") {
+            return Err(format!(
+                "Bash apostrophe idiom must still convert outside double quotes: {mixed_translated}"
+            ));
+        }
+        if !mixed_translated.contains(&path) {
+            return Err(format!(
+                "mixed command dropped the Windows store path: {mixed_translated}"
+            ));
+        }
+        if mixed_translated.contains(&dropped) {
+            return Err(format!(
+                "mixed command dropped the directory separator: {mixed_translated}"
+            ));
+        }
+        Ok(())
     }
 
     /// The PowerShell single-quote round-trip: bash's close-escape-reopen idiom
@@ -1977,15 +2312,25 @@ fn main() -> ExitCode {
         assert_eq!(powershell_command("echo ’ab"), None);
     }
 
-    /// Plain-text surfaces print the PowerShell form only when it differs.
+    /// Plain-text surfaces print a translated line, stay silent when the
+    /// command is the same, and print the shared disclosure when no honest
+    /// translation exists. Collapsing the last two into `None` is the #5422
+    /// defect: a PowerShell reader then gets Bash with no warning.
     #[test]
-    fn powershell_text_variant_prints_only_a_different_form() {
+    fn powershell_text_variant_distinguishes_translated_same_and_unavailable() {
         assert_eq!(powershell_text_variant("ripr check --root 'a b'"), None);
         assert_eq!(
             powershell_text_variant("ripr check --root 'it'\\''s'").as_deref(),
             Some("ripr check --root 'it''s'")
         );
-        assert_eq!(powershell_text_variant("a && b"), None);
+        assert_eq!(
+            powershell_text_variant("a && b").as_deref(),
+            Some(POWERSHELL_UNAVAILABLE_DISCLOSURE)
+        );
+        assert_eq!(
+            powershell_text_variant("echo \"a\u{201c}b\"").as_deref(),
+            Some(POWERSHELL_UNAVAILABLE_DISCLOSURE)
+        );
     }
 
     /// Run `line` in a real `pwsh` with a `ripr` function that records its

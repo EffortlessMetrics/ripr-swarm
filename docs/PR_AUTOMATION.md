@@ -316,6 +316,19 @@ Top-level `plans/` files are documentation evidence and campaign-planning
 inputs. They appear in the docs, evidence/support, and campaign-planning
 sections of the reviewer packet without being treated as production behavior.
 
+`cargo xtask ci-policy` is the hosted Rust policy entry. It uses the same
+change-set discovery, metadata validation, policy table and three whitespace
+checks as local precommit, with the existing nine-scan collect-all producer
+before compilation-bearing file-policy enumeration. It writes
+`target/ripr/reports/ci-policy.{json,md}` through the precommit report owner,
+identifies its composition, and leaves legacy `precommit.md` and structured
+local `precommit-v2` receipts untouched.
+Its pass excludes selected Clippy; the required producer retains explicit
+`cargo clippy --workspace --all-targets -- -D warnings`. The source/toolchain/input
+policy-preflight receipt is still verified. Formatting and the later dependency,
+process and network steps are retained; no duplicate-policy removal or measured
+savings is claimed. Ordinary local `precommit` keeps selected Clippy.
+
 `precommit` is the cheap non-mutating guardrail. It checks formatting, spec
 format and numbering, and the policy surfaces that should fail quickly before
 review.
@@ -336,6 +349,11 @@ covered-by warmup/list children, and `check-fast.md` records fmt and workspace
 Clippy children. Other commands are outside this bounded capture scope. Reused
 selectors and skipped warmups create no execution rows. Precommit diagnostics
 remain bound by its report digest; they add no acceptance or waiver authority.
+The nullable numeric `exit_code` comes directly from the observed native status;
+missing status, capture/status-call errors and Unix signals keep it null. It is
+independent of `outcome`: a timed-out call stays `timed_out` even if its observed
+exit code is zero. Human diagnostics render a missing code as `unavailable`.
+No environment values or new artifact locations are captured.
 Structured argv preserves argument boundaries (`$REPO` substitutes the repository
 root in precommit). Captured elapsed time runs from runner start through observed
 exit, with polling. Enforced timeout duration includes termination and reaping,
@@ -344,7 +362,7 @@ this cleanup. Both captured scopes exclude pipe drain. Inherited-status elapsed
 includes the launch/status call and preserves inherited streams. Missing values
 are unavailable evidence. Cargo counts normalize existing ANSI color sequences
 and recognize `Compiling`, `Checking` and `Fresh` stderr progress lines only; they do not identify compiler units, prove
-artifact reuse or justify removing either Clippy obligation. Dirty-source HEAD,
+artifact reuse or by themselves justify changing Clippy composition. Dirty-source HEAD,
 base and paths supply invocation context rather than immutable source identity.
 Successful report-write failures still return an I/O error; interrupted execution
 retains its original error and separately reports publication failures.
@@ -444,10 +462,13 @@ through GitHub CLI and writes `target/ripr/reports/pr-triage.md` plus
 `target/ripr/reports/pr-triage.json`. It flags same-title families, identical
 changed-file sets, stale drafts, branches behind main, incomplete validation
 signals, and policy/gate/generated workflow surfaces. It also emits an
-advisory queue disposition for each PR — `merge_candidate`, `needs_rebase`,
+advisory queue disposition for each PR — `merge_candidate`, `needs_integration_review`,
 `needs_review`, `close_duplicate`, `superseded`, `needs_fresh_validation`,
 `needs_owner_decision`, or `do_not_touch_wrong_lane`. It is advisory and never
-updates, closes, merges, or comments on PRs.
+updates, closes, merges, or comments on PRs. The behind finding and disposition
+preserve the observation and unaffected proof; they request material integration
+judgment rather than a branch update. Existing duplicate, policy, validation and
+review routes precede that disposition.
 
 `branch-inventory` is the remote-branch ownership/age report (#2024). It
 regenerates the inventory from current GitHub/Git data and writes
@@ -469,14 +490,44 @@ bound to the rechecked SHA (`--force-with-lease=<ref>:<sha>`, never plain
 (`branch-inventory-cleanup.{md,json}`) recording every deleted, skipped,
 changed, and failed branch. No CI or scheduled job runs the apply path.
 
-`gh-pr-status --pr <number>` is the per-PR merge-readiness packet. It reads
+`gh-pr-status --pr <number>` is the per-PR merge-readiness packet.
+Each full response uses the `gh 2.46` compatible `pr view` fields, bracketed by
+`gh api graphql` reads of PR/head/base/target identity. The bracket identities
+must agree and the full response must match their PR/head/target before its
+base OID is attached. An independently moving branch-tip lookup cannot supply
+that identity. GraphQL errors/partial or missing identity refuse collection.
+Set `RIPR_TEST_GH` to a real supported CLI binary and run
+`cargo test -p xtask --bin xtask gh_pr_status_real_cli_schema -- --ignored`
+to check the production view fields against its actual offline field registry;
+this opt-in capability test needs the tool but no credentials or network.
+It reads the full PR snapshot again after required-context lookup. Both reads
+must identify the requested PR and the same full head/base commits and target
+branch. Movement or unavailable identity returns an error before publishing a
+new readiness packet; existing report files remain historical and must not be
+used as a successful result of that invocation. Head movement requires affected
+head-bound proof/review and integration judgment; base-only movement preserves
+unchanged-head proof/review and requires integration judgment, not blanket
+reruns. When identities match, the final response supplies checks and review
+facts. The warning list records the exact observed commits. This separate read
+is not atomic with a later merge and supplies no merge authority. It reads
 GitHub CLI PR status, branch-protection required contexts when available,
 latest reviews, and Droid-related checks, then writes
 `target/ripr/reports/gh-pr-status.md` and
 `target/ripr/reports/gh-pr-status.json` with the merge state, outstanding
 checks, failed checks, behind-main state, review status, Droid status, and a
-safe next action: `wait`, `rebase`, `inspect failure`, or `merge`. It is
-advisory and never updates the branch, comments, approves, or merges.
+safe next action: `wait`, `inspect integration`, `inspect failure`, or `merge`.
+`BEHIND` requests integration judgment after Draft, review-required and pending
+waits; it does not establish that a branch update is needed. It is advisory and
+never updates the branch, comments, approves, or merges.
+The provider-response section retains known quota notices and unknown substance
+from returned reviews/comments without treating either as review completion.
+Historical response subjects remain unattributed; the packet head is collection
+context only. This does not add a provider gate or change the advisory action.
+See [provider observation fields](OUTPUT_SCHEMA.md#github-pr-status-provider-observations).
+For unresolved inline conversations and their next actions, use the read-only
+[finish-pr conversation inventory](../.agents/skills/finish-pr/references/review-conversations.md).
+It paginates threads and keeps outdated unresolved findings visible; it does not
+replace substantive review or change merge protections.
 Use [Merge freshness and watcher policy](MERGE_WATCH_POLICY.md) for polling
 cadence, branch-refresh decisions, REST status fallback, Droid/advisory-check
 handling, and local worktree merge limitations.
@@ -958,13 +1009,15 @@ failure, preserves each leaf report/error, and writes
 command. Any leaf error or aggregate report-write error returns nonzero.
 `check-file-policy` is excluded because it can compile tests. The selected
 leaf scans invoke no Cargo build/test/Clippy children; `cargo xtask` still
-compiles the driver when needed. This is a local workflow improvement; existing
-precommit/check-fast behavior and hosted gate routing remain unchanged.
+compiles the driver when needed. Ordinary local precommit/check-fast behavior
+is unchanged. Hosted `ci-policy` reuses this same producer once before the
+remaining policy checks; it does not add another nine-scan pass.
 
 [RIPR-SPEC-0253](specs/RIPR-SPEC-0253-local-collect-all-policy.md) maps this
 command's five acceptance cases to its actual-driver tests and production owner.
 
-The precommit inventory is:
+The policy inventory (the maintained execution authority is `PRECOMMIT_GATE_COMMANDS`
+and `precommit_policy` in `xtask/src/main.rs`) is:
 
 ```bash
 cargo fmt --check
@@ -973,21 +1026,29 @@ cargo xtask check-no-panic-family
 cargo xtask check-allow-attributes
 cargo xtask check-local-context
 cargo xtask check-file-policy
+cargo xtask check-covered-by
 cargo xtask check-executable-files
+cargo xtask check-text-encoding
 cargo xtask check-workflows
 cargo xtask check-droid-review-config
 cargo xtask check-spec-format
 cargo xtask check-spec-numbering
 cargo xtask check-fixture-contracts
+cargo xtask check-rust-judged-panel
+cargo xtask check-release-challenge-selection
+cargo xtask check-release-challenge-judgments
+cargo xtask check-python-judged-panel
 cargo xtask check-traceability
 cargo xtask check-capabilities
 cargo xtask check-workspace-shape
 cargo xtask check-architecture
+cargo xtask check-rust-source-role-authority
 cargo xtask check-public-api
 cargo xtask check-output-contracts
 cargo xtask check-identity-registry
 cargo xtask check-doc-artifacts
 cargo xtask check-doc-index
+cargo xtask check-changelog-fragments
 cargo xtask check-readme-state
 cargo xtask markdown-links
 cargo xtask check-pr-shape
@@ -996,6 +1057,10 @@ cargo xtask check-generated
 cargo xtask check-badge-diff-policy
 cargo xtask check-generated-clean
 cargo xtask check-proof-packs
+cargo xtask check-release-targets
+cargo xtask check-dependencies
+cargo xtask check-process-policy
+cargo xtask check-network-policy
 cargo xtask check-lint-policy
 ```
 

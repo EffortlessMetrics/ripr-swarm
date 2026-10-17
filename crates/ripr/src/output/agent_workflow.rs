@@ -7,12 +7,33 @@ use serde_json::{Value, json};
 
 /// Shell that every `command` string in this packet is written for.
 ///
-/// The command strings are built with POSIX single-quote escaping and `>`
-/// redirection (`agent::loop_commands::shell_arg`), so they are bash source,
-/// not shell-neutral text. Naming the shell keeps the packet honest on Windows,
-/// where cmd.exe treats `'` as a literal character and PowerShell rejects the
-/// `'\''` escape. Emitting an argv form for other shells is out of scope here.
+/// The command strings are quoted for the running host's shell family
+/// (#7729), so the manifest names that family in `command_shell`:
+///
+/// - `"bash"` off Windows: the commands are POSIX single-quote bash source
+///   with `>` redirection, built by `agent::loop_commands::shell_arg`.
+/// - `"windows-console"` on Windows: the same builders emit the double-quote
+///   console form, which cmd.exe, PowerShell, and Git Bash all honor for
+///   spaced paths.
+///
+/// Naming the family keeps the packet honest: cmd.exe treats `'` as a
+/// literal character and PowerShell rejects the `'\''` escape, so a
+/// bash-labelled packet on Windows would mislead, and a console-labelled
+/// packet off Windows would too. Emitting an argv form for other shells is
+/// out of scope here.
 const COMMAND_SHELL: &str = "bash";
+/// Host shell label for the workflow manifest (#7729): the command strings
+/// are quoted for the running host's shell family — bash source off Windows,
+/// the Windows console form on it.
+const COMMAND_SHELL_WINDOWS: &str = "windows-console";
+
+fn command_shell() -> &'static str {
+    if cfg!(windows) {
+        COMMAND_SHELL_WINDOWS
+    } else {
+        COMMAND_SHELL
+    }
+}
 
 pub(crate) fn render_agent_workflow_json(
     manifest: &AgentWorkflowManifest,
@@ -21,7 +42,7 @@ pub(crate) fn render_agent_workflow_json(
         "schema_version": AGENT_WORKFLOW_SCHEMA_VERSION,
         "tool": "ripr",
         "status": "ready",
-        "command_shell": COMMAND_SHELL,
+        "command_shell": command_shell(),
         "root": manifest.root,
         "mode": manifest.mode,
         "out_dir": manifest.out_dir,
@@ -132,7 +153,14 @@ mod markdown {
         lines.push(String::new());
         lines.push("This workflow packet is advisory and source-edit-free. It gives a human or agent the static context and commands for one focused test loop.".to_string());
         lines.push(String::new());
-        lines.push("Each step includes Bash command forms and, where supported, PowerShell forms; unavailable variants are disclosed. The Bash form uses POSIX single-quote quoting and `>` redirection; the PowerShell form uses PowerShell's doubled-quote equivalent, the `&` call operator before a quoted program path, and a guarded BOM-free UTF-8 write in place of `>`. cmd.exe is not supported. On Windows, use either Git Bash or PowerShell. WSL bash is not a drop-in substitute: paths here keep their Windows drive-letter prefix, which WSL resolves as a relative path, so running them there requires rewriting each path under `/mnt/` and having ripr available inside WSL.".to_string());
+        // Host-aware shell claim (#7729): the commands are quoted for the
+        // running host's shell family, so the header names the shells the
+        // printed forms actually parse in.
+        if cfg!(windows) {
+            lines.push("Each step includes command forms for the Windows console and, where supported, PowerShell forms; unavailable variants are disclosed. The command form uses double-quote quoting and `>` redirection, which cmd.exe, PowerShell, and Git Bash all honor for spaced paths; a value carrying `$` or backtick keeps the single-quote form instead (both Git Bash and PowerShell expand it inside double quotes), and cmd.exe passes those quotes through, so paste that value in Git Bash or PowerShell — the same routing applies to a value carrying `%`, which cmd.exe expands even inside double quotes. An interior `\"` in an argument is kept by cmd.exe and PowerShell but dropped by Git Bash (`\"` cannot occur in a Windows filename). The PowerShell form, where one follows a command, uses the `&` call operator before a quoted program path and a guarded BOM-free UTF-8 write in place of `>`. Values containing control characters keep an explicit bash escape form; paste those in Git Bash or PowerShell. WSL bash is not a drop-in substitute: paths here keep their Windows drive-letter prefix, which WSL resolves as a relative path, so running them there requires rewriting each path under `/mnt/` and having ripr available inside WSL.".to_string());
+        } else {
+            lines.push("Each step includes Bash command forms and, where supported, PowerShell forms; unavailable variants are disclosed. The Bash form uses POSIX single-quote quoting and `>` redirection; the PowerShell form uses PowerShell's doubled-quote equivalent, the `&` call operator before a quoted program path, and a guarded BOM-free UTF-8 write in place of `>`. cmd.exe is not supported. On Windows, use either Git Bash or PowerShell. WSL bash is not a drop-in substitute: paths here keep their Windows drive-letter prefix, which WSL resolves as a relative path, so running them there requires rewriting each path under `/mnt/` and having ripr available inside WSL.".to_string());
+        }
         lines.push(String::new());
     }
 
@@ -336,13 +364,17 @@ mod tests {
 
         // A bare `bash` substring proves nothing here: every command block is
         // already fenced as ```bash. The disclosure must be prose that reaches
-        // the reader before the first copyable command.
-        // Pinned literally rather than shared with the renderer: a constant
-        // imported from production would make this test agree with whatever the
-        // renderer happens to emit.
-        let disclosure = rendered
-            .find("Each step includes Bash command forms and, where supported, PowerShell forms; unavailable variants are disclosed.")
-            .ok_or_else(|| format!("commands.md must disclose both command shells: {rendered}"))?;
+        // the reader before the first copyable command. The pinned sentence is
+        // host-aware (#7729): bash forms off Windows, the Windows console form
+        // on it.
+        let pinned_disclosure = if cfg!(windows) {
+            "Each step includes command forms for the Windows console and, where supported, PowerShell forms; unavailable variants are disclosed."
+        } else {
+            "Each step includes Bash command forms and, where supported, PowerShell forms; unavailable variants are disclosed."
+        };
+        let disclosure = rendered.find(pinned_disclosure).ok_or_else(|| {
+            format!("commands.md must disclose the host command shell: {rendered}")
+        })?;
         let first_fence = rendered
             .find("```bash")
             .ok_or_else(|| "commands.md must still fence commands as bash".to_string())?;
@@ -406,9 +438,16 @@ mod tests {
             serde_json::from_str(&rendered).map_err(|err| format!("parse JSON: {err}"))?;
 
         // Machine consumers never read commands.md, so the manifest must carry
-        // the same boundary the Markdown header states.
+        // the same boundary the Markdown header states. Host-aware (#7729):
+        // the command strings are bash source off Windows and the Windows
+        // console form on it.
+        let expected_shell = if cfg!(windows) {
+            "windows-console"
+        } else {
+            "bash"
+        };
         assert_eq!(
-            value["command_shell"], "bash",
+            value["command_shell"], expected_shell,
             "workflow manifest must name the shell its command strings assume: {rendered}"
         );
         Ok(())
@@ -423,5 +462,30 @@ mod tests {
         assert!(rendered.contains("ripr check --root . --mode draft"));
         assert!(rendered.contains("Does not edit source files."));
         assert!(rendered.contains("Does not call an LLM API."));
+    }
+
+    /// Plain-text Missing Inputs used `powershell_text_variant`, which used to
+    /// collapse `Unavailable` into silence. A compound or untranslatable
+    /// command must still name the disclosure; a same-as-Bash command must not.
+    #[test]
+    fn missing_inputs_disclose_when_powershell_form_is_unavailable() {
+        let mut value = manifest();
+        value.missing_inputs[0].command = "ripr check --root . --mode draft && true".to_string();
+        let rendered = render_agent_workflow_commands_md(&value);
+        let missing = rendered
+            .split("## Missing Inputs")
+            .nth(1)
+            .unwrap_or(&rendered);
+        assert!(
+            missing.contains(&format!(
+                "  (PowerShell) `{POWERSHELL_UNAVAILABLE_DISCLOSURE}`"
+            )),
+            "{missing}"
+        );
+
+        value.missing_inputs[0].command = "ripr check --root . --mode draft".to_string();
+        let same = render_agent_workflow_commands_md(&value);
+        let missing_same = same.split("## Missing Inputs").nth(1).unwrap_or(&same);
+        assert!(!missing_same.contains("(PowerShell)"), "{missing_same}");
     }
 }

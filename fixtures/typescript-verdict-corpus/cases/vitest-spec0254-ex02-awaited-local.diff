@@ -1,0 +1,10 @@
+diff --git a/src/unitPriceLocal.ts b/src/unitPriceLocal.ts
+index 0000000..1111111 100644
+--- a/src/unitPriceLocal.ts
++++ b/src/unitPriceLocal.ts
+@@ -1,4 +1,4 @@
+ export async function fetchUnitPriceLocal(sku: string): Promise<number> {
+-  const table: Record<string, number> = { apple: 120, pear: 95 };
++  const table: Record<string, number> = { apple: 120, pear: 99 };
+   return table[sku] ?? 0;
+ }

@@ -3,7 +3,9 @@
 //! A `?` that is its function's only way to return `Err` reads `exposed`
 //! when a test asserts the owner call returns `Err`: swallowing the `?`
 //! would make that call return `Ok`. Every control below keeps the
-//! RIPR-SPEC-0107 reading (not `exposed`).
+//! RIPR-SPEC-0107 reading (not `exposed`). Decision 5 (#7999) reads
+//! `assert_eq!(owner(..).ok(), None)` as the same `Err` assertion, written
+//! directly, through a constant-row table row or a check helper.
 
 use ripr::{
     CheckInput, CheckOutput, ExposureClass, Mode, OutputFormat, ProbeFamily, check_workspace,
@@ -135,8 +137,18 @@ fn error_path_class(
     old_line: &str,
     test_body: &str,
 ) -> Result<ExposureClass, String> {
+    error_path_class_in(source, line, old_line, &test_file(test_body))
+}
+
+/// `error_path_class` over a whole test file.
+fn error_path_class_in(
+    source: &str,
+    line: usize,
+    old_line: &str,
+    test_source: &str,
+) -> Result<ExposureClass, String> {
     let diff = single_line_diff(source, line, old_line);
-    let repo = TempRepo::create(source, &test_file(test_body), &diff)?;
+    let repo = TempRepo::create(source, test_source, &diff)?;
     let output = repo.check()?;
     let mut matches = output.findings.iter().filter(|finding| {
         finding.probe.family == ProbeFamily::ErrorPath
@@ -304,5 +316,80 @@ fn a_removed_question_mark_line_is_never_exposed() -> Result<(), String> {
         .map(|finding| finding.probe.expression.clone())
         .collect::<Vec<_>>();
     assert!(exposed.is_empty(), "{exposed:?}");
+    Ok(())
+}
+
+const OK_HELPER_TEST: &str = r#"use question_mark_side_flip::total;
+
+fn check(text: &str, want: Option<u32>) {
+    assert_eq!(total(text).ok(), want, "{text}");
+}
+
+#[test]
+fn totals_parse() {
+    check("12", Some(3));
+    check("x", None);
+}
+"#;
+
+const OK_HELPER_SOME_ONLY_TEST: &str = r#"use question_mark_side_flip::total;
+
+fn check(text: &str, want: Option<u32>) {
+    assert_eq!(total(text).ok(), want, "{text}");
+}
+
+#[test]
+fn totals_parse() {
+    check("12", Some(3));
+}
+"#;
+
+#[test]
+fn ok_compared_with_none_exposes_a_sole_source_question_mark() -> Result<(), String> {
+    for body in [
+        "assert_eq!(total(\"x\").ok(), None);",
+        "let cases = [(\"12\", Some(3)), (\"x\", None)];\n    for (text, want) in cases {\n        assert_eq!(total(text).ok(), want, \"{text}\");\n    }",
+    ] {
+        assert_eq!(
+            error_path_class(SOLE_SOURCE, SOLE_LINE, OLD_LINE, body)?,
+            ExposureClass::Exposed,
+            "{body}"
+        );
+    }
+    assert_eq!(
+        error_path_class_in(SOLE_SOURCE, SOLE_LINE, OLD_LINE, OK_HELPER_TEST)?,
+        ExposureClass::Exposed,
+        "a check helper called with None"
+    );
+    Ok(())
+}
+
+#[test]
+fn ok_compared_with_some_keeps_the_gap() -> Result<(), String> {
+    for body in [
+        "assert_eq!(total(\"12\").ok(), Some(3));",
+        "let cases = [(\"12\", Some(3)), (\"7\", Some(7))];\n    for (text, want) in cases {\n        assert_eq!(total(text).ok(), want, \"{text}\");\n    }",
+    ] {
+        assert_ne!(
+            error_path_class(SOLE_SOURCE, SOLE_LINE, OLD_LINE, body)?,
+            ExposureClass::Exposed,
+            "{body}"
+        );
+    }
+    assert_ne!(
+        error_path_class_in(SOLE_SOURCE, SOLE_LINE, OLD_LINE, OK_HELPER_SOME_ONLY_TEST)?,
+        ExposureClass::Exposed,
+        "a check helper never called with None"
+    );
+    // An earlier `?` may take the `None` row's `Err` instead.
+    assert_ne!(
+        error_path_class(
+            EARLIER_SOURCE,
+            EARLIER_LINE,
+            OLD_LINE,
+            "assert_eq!(total(\"x\").ok(), None);"
+        )?,
+        ExposureClass::Exposed
+    );
     Ok(())
 }
