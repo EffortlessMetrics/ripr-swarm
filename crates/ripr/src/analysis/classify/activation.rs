@@ -1416,6 +1416,7 @@ fn element_boundary_observations(
         .iter()
         .filter(|run| view.tail.run_reaches_boundary(&run.elements, &boundary))
         .map(|run| ValueFact {
+            source_file: None,
             line: run.line,
             text: format!(
                 "{} | element {} = {boundary} of {}",
