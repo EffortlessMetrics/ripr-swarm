@@ -104,7 +104,6 @@ fn bound_spelling_in_macro_or_string_has_no_declaration_authority() -> Result<()
     for (source, line) in [
         ("tokens! {\n    T: Clone,\n}\n", 2),
         ("fn f() { let text = r#\"\n    T: Clone,\n\"#; }\n", 2),
-        ("fn f() { /*\n    T: Clone,\n*/ }\n", 2),
     ] {
         let result = added(source, line)?;
         assert!(
@@ -114,6 +113,12 @@ fn bound_spelling_in_macro_or_string_has_no_declaration_authority() -> Result<()
             "invented declaration authority: {result:?}"
         );
     }
+    // Block-comment content is prose: it seeds no probe at all (#8385).
+    let result = added("fn f() { /*\n    T: Clone,\n*/ }\n", 2)?;
+    assert!(
+        result.is_empty(),
+        "comment prose seeded a probe: {result:?}"
+    );
     Ok(())
 }
 

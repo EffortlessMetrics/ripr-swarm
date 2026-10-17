@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_direct_collection_count_payload (3)
+
+Reason:
+RIPR-SPEC-0122: human output prints No test stub here refusal for side-effect family (main #8412) on #6640 fixture
+
+Command:
+`cargo xtask goldens bless rust_direct_collection_count_payload --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

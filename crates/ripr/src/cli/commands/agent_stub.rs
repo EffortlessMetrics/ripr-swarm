@@ -53,7 +53,10 @@ pub(super) fn run_agent_stub(options: AgentStubOptions) -> Result<(), CommandErr
             )));
         }
     };
-    let disclosure = stub_grip_disclosure(&resolution.seam_id, resolution.grip_class, &config);
+    let mut disclosure = stub_grip_disclosure(&resolution.seam_id, resolution.grip_class, &config);
+    if let Some(note) = &resolution.at_note {
+        disclosure.warnings.insert(0, note.clone());
+    }
     let stub = match &resolution.outcome {
         Ok(stub) => stub,
         Err(refusal) => {

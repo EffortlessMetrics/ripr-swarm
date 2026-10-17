@@ -220,3 +220,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — enum_variant_declaration_not_call (19)
+
+Reason:
+RIPR-SPEC-0122: human check output prints the stub route or a No test stub here refusal for every probe family (#8412)
+
+Command:
+`cargo xtask goldens bless enum_variant_declaration_not_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

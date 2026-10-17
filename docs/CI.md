@@ -448,6 +448,25 @@ produced the identical `timed out waiting for response id 3`, and it reproduces
 5 of 5 on a Windows developer host. That is the lane doing its job — a platform
 question that could not be settled from one machine, settled by CI.
 
+### Advisory macOS Lane
+
+`.github/workflows/macos-advisory.yml` (#8391) gives CI a native macOS cargo
+signal. Before it, the only macOS jobs built and archived the server or pasted
+printed commands, so macOS-only dead code behind `cfg(target_os = "linux")`
+gating (#8055, #8060), `/var` -> `/private/var` temp paths and APFS case or
+normalization behavior surfaced only on a maintainer's local run.
+
+- **What runs.** On `macos-15`: `cargo clippy -p ripr -p xtask --all-targets
+  -- -D warnings` and `cargo test -p ripr --lib --no-fail-fast`. The integration
+  suites are not part of this lane.
+- **Contract.** Clippy and test outcomes are advisory and appear in the job
+  summary. A missing log or exit status, or a library run that executed zero
+  tests, fails the job. It is not a required check.
+- **Selection.** A daily schedule, `workflow_dispatch`, and pull requests
+  labeled `macos-ci` or `full-ci` when `merge-ready` is applied (same guard
+  shape as the merge-ready label flow in #4984/#8327; add `macos-ci` first,
+  `merge-ready` last, and re-apply `merge-ready` for a later head).
+
 ### Advisory Printed-Command Paste Lane
 
 `.github/workflows/printed-command-paste.yml` runs the
