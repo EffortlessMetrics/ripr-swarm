@@ -28,7 +28,7 @@ Updated:
 ## Pending — typescript_mock_payload_iife_impl (3)
 
 Reason:
-RIPR-SPEC-0001: human Summary line moved to the plain-language form in #8275; fixtures added by #8256 kept the old text
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
 
 Command:
 `cargo xtask goldens bless typescript_mock_payload_iife_impl --reason "..."`

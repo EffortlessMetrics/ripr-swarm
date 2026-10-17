@@ -41,7 +41,7 @@ Updated:
 ## Pending — seeded_push_after_early_return (4)
 
 Reason:
-RIPR-SPEC-0001: human Summary line moved to the plain-language form in #8275; fixtures added by #8256 kept the old text
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
 
 Command:
 `cargo xtask goldens bless seeded_push_after_early_return --reason "..."`

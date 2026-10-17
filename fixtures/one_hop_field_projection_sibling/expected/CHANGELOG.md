@@ -16,7 +16,7 @@ Updated:
 ## Pending — one_hop_field_projection_sibling (2)
 
 Reason:
-RIPR-SPEC-0001: human Summary line moved to the plain-language form in #8275; fixtures added by #8256 kept the old text
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
 
 Command:
 `cargo xtask goldens bless one_hop_field_projection_sibling --reason "..."`
