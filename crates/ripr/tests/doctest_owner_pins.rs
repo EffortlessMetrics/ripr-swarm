@@ -240,6 +240,8 @@ fn an_example_that_binds_the_crate_name_or_the_owner_pins_nothing() -> Result<()
             "use wire::read_u16;",
             "assert_eq!(read_u16(&[0x12, 0x34]), 0x1234);",
         ],
+        // A glob may bring in a `wire` that shadows the extern crate.
+        vec!["use other::*;", PINNED],
         // An import from elsewhere takes the bare call.
         vec![
             "use std::convert::identity as read_u16;",
@@ -261,6 +263,8 @@ fn an_example_that_may_rebind_assert_eq_pins_nothing() -> Result<(), String> {
         "",
         &["std::assert_eq!(wire::read_u16(&[0x12, 0x34]), 0x1234);"],
     )?;
+    // An imported `assert_eq` from elsewhere is not std's.
+    assert_unpinned("", &["use pretty::assert_eq;", PINNED])?;
     // A std-rooted call elsewhere in the example makes the plain one
     // ambiguous too.
     assert_unpinned("", &["std::assert_eq!(1, 1);", PINNED])

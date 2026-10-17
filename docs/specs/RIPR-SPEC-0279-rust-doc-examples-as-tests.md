@@ -79,22 +79,30 @@ every condition holds; anything else registers nothing.
   through resolved `mod` edges only (no `include!`, no unresolved or
   test-only edge), and the manifest keeps that root (`autolib` on, no moved
   `[lib] path`), leaves `[lib] doctest` on, and builds a Rust library a
-  doctest can link (`lib`, `rlib`, `proc-macro`, or no `crate-type`).
+  doctest can link (`lib`, `rlib`, or no `crate-type`, and not `proc-macro`).
   Without manifest authority, nothing registers.
 - The comment documents a public production function of that file: the
   first item line after it is `pub` and function qualifiers, then `fn`
   and the function's name. An item inside a `#[cfg(test)]` module, a test,
   a non-function item, a `pub(crate)` or private function (an example
   calling it from outside the crate cannot compile), or a statement in a
-  function body registers nothing. Privacy of enclosing modules is not
-  checked.
-- The comment holds no `<!--`, no `~~~` line and no fence indented four or
-  more spaces or by a tab. In those, CommonMark may read the backticks as
-  an HTML comment, as text inside another fence, or as an indented code
-  block, which rustdoc does not run as written; the scanner does not model
+  function body registers nothing. Only attribute lines that hold nothing
+  but the attribute are skipped, so `#[inline] pub fn f` on one line
+  registers nothing. Privacy of enclosing modules is not checked.
+- The comment is the item's only doc fragment: no second `///` run and no
+  attribute mentioning `doc` (`#[doc = ..]`, `#[cfg_attr(.., doc = ..)]`,
+  and conservatively `#[doc(hidden)]`) sits between it and the item or
+  directly above it. rustdoc joins every fragment into one document, so a
+  fence may open in one and close in another.
+- The comment holds no `<!--`, no line starting with a tag (`<details>`,
+  `</div>`; autolinks such as `<https://..>` are not tags), no `~~~` line,
+  no line indented by a tab and no fence indented four or more spaces. In
+  those, CommonMark may read the backticks as an HTML comment, as raw HTML
+  inside an HTML block, as text inside another fence, or as an indented
+  code block, which rustdoc does not run as written; the scanner does not model
   Markdown blocks, so the whole comment registers nothing.
-- The fence's info string is empty or names only `rust` or an edition
-  (`edition2015` to `edition2024`). `ignore`, `no_run`, `compile_fail`,
+- The fence's info string is empty or every word in it, split on commas
+  and spaces, is `rust` or an edition (`edition2015` to `edition2024`). `ignore`, `no_run`, `compile_fail`,
   `should_panic`, `text` and every other word refuse: rustdoc does not run
   such a block's assertions as written, or does not compile it as Rust.
 - The block declares no `fn main` (rustdoc then runs the code unwrapped),
@@ -169,9 +177,10 @@ package (`[lib] name`, else the package name with `-` read as `_`):
   (`use strsim::sorensen_dice;`, `assert_eq!(0.0, sorensen_dice("", "a"))`)
   is the discriminator the runtime truth records. `mined-doctest-only-read-u16`
   reaches the pin, and its `header_case!` wrapper no longer makes
-  `assert_eq!` ambiguous (#8113). The row stays `false_actionable` only
-  because its `call_deletion` finding on the deleted return tail is still
-  a gap, which is a separate rule.
+  `assert_eq!` ambiguous (#8113), so it moves from `false_actionable` to
+  `ideal`: its one scored finding reads `exposed`. The `call_deletion`
+  finding on the deleted return tail that once kept it a gap no longer
+  appears on current main.
 
 ## Non-Goals
 
@@ -184,6 +193,10 @@ package (`[lib] name`, else the package name with `-` read as `_`):
   same-named rivals.
 - A runtime claim: a registered example is static evidence that a test
   appears to discriminate, not a claim that it compiles or passes.
+- Feature, platform or `cfg(not(doctest))` gating of the documented
+  function: like an ordinary `#[test]`, an example on a gated function
+  registers without establishing that default `cargo test` enables the
+  gate.
 
 ## Acceptance Examples
 

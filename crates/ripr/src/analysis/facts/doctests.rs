@@ -13,14 +13,18 @@
 //! - the file composes, through resolved `mod` edges only, under its
 //!   package's default `src/lib.rs` library root, and the manifest leaves
 //!   `autolib` on, moves no target, keeps `[lib] doctest` on and builds a
-//!   Rust library (`lib`, `rlib`, `proc-macro`, or no `crate-type`);
+//!   Rust library (`lib`, `rlib`, or no `crate-type`; not `proc-macro`);
 //! - the example documents a public production function of that file,
 //!   declared on the line that follows the comment (a doc comment on a
 //!   statement, or on a private function whose example cannot compile,
 //!   is not one);
-//! - the comment holds no `<!--`, `~~~` or fence indented four or more
-//!   spaces, where CommonMark may read the backticks as something other
-//!   than a code block;
+//! - the comment is the item's only doc fragment (no second `///` run
+//!   and no `#[doc]` or doc-bearing attribute on the item, which rustdoc
+//!   would join into one document);
+//! - the comment holds no `<!--`, no line opening an HTML block, no `~~~`,
+//!   no tab-indented line and no fence indented four or more spaces, where
+//!   CommonMark may read the backticks as something other than a code
+//!   block;
 //! - its fence is plain or names only `rust` or an edition (`ignore`,
 //!   `no_run`, `compile_fail`, `should_panic`, `text` and every other
 //!   attribute refuse);
@@ -108,6 +112,7 @@ pub(super) fn register_doctests(index: &mut RustIndex) {
             generated.push((test, Arc::from(source)));
         }
     }
+    let mut touched = std::collections::BTreeSet::new();
     for (test, source) in generated {
         let key = (test.file.clone(), test.start_line);
         if index.doctest_sources.contains_key(&key) {
@@ -121,6 +126,12 @@ pub(super) fn register_doctests(index: &mut RustIndex) {
         index.test_order.push(id);
         if let Some(file) = index.files.get_mut(&file_path) {
             file.tests.push(id);
+            touched.insert(file_path);
+        }
+    }
+    // One sort per file that gained examples, not one per example.
+    for path in touched {
+        if let Some(file) = index.files.get_mut(&path) {
             file.tests.sort_by(|&left, &right| {
                 let left = &index.test_facts[left];
                 let right = &index.test_facts[right];
@@ -224,6 +235,10 @@ fn declared_fn_name(line: &str) -> Option<&str> {
 
 /// Every runnable fenced example in the file's `///` comment runs.
 pub(super) fn doc_examples(source: &str) -> Vec<DocExample> {
+    // Most files hold no fence at all; skip the line scan for them.
+    if !source.contains("```") {
+        return Vec::new();
+    }
     let lines: Vec<&str> = source.lines().collect();
     let mut examples = Vec::new();
     let mut index = 0;
@@ -237,6 +252,12 @@ pub(super) fn doc_examples(source: &str) -> Vec<DocExample> {
             index += 1;
         }
         let item_line = item_after(&lines, index);
+        // rustdoc joins every doc fragment on an item into one document, so
+        // a run that shares its item with another `///` run or a `#[doc]`
+        // attribute may sit inside a fence opened elsewhere: refuse it.
+        if shares_its_document(&lines, start, index) {
+            continue;
+        }
         examples.extend(
             run_examples(&lines[start..index], start + 1)
                 .into_iter()
@@ -263,28 +284,78 @@ fn outer_doc_text(line: &str) -> Option<&str> {
     Some(rest.strip_prefix(' ').unwrap_or(rest))
 }
 
-/// The 1-based line of the first line after a doc run that is neither an
-/// attribute, a blank line nor a plain comment: the documented item.
+/// The 1-based line of the first line after a doc run that is neither a
+/// whole-line attribute, a blank line nor a plain comment: the documented
+/// item. `#[inline] pub fn f` on one line is the item line itself, which
+/// then reads as no function head and registers nothing.
 fn item_after(lines: &[&str], from: usize) -> Option<usize> {
     lines
         .iter()
         .enumerate()
         .skip(from)
-        .find(|(_, line)| {
-            let trimmed = line.trim_start();
-            !(trimmed.is_empty() || trimmed.starts_with("#[") || trimmed.starts_with("//"))
-        })
+        .find(|(_, line)| !is_between_doc_and_item(line))
         .map(|(position, _)| position + 1)
+}
+
+/// A blank line, a plain or doc comment, or an attribute that is the whole
+/// line (an unclosed one continues on the next line, which then reads as
+/// the item and refuses).
+fn is_between_doc_and_item(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.is_empty() || trimmed.starts_with("//") || whole_line_attribute(trimmed)
+}
+
+fn whole_line_attribute(trimmed: &str) -> bool {
+    let Some(body) = trimmed.strip_prefix("#[") else {
+        return false;
+    };
+    let mut depth = 1usize;
+    for (position, ch) in body.char_indices() {
+        match ch {
+            '[' => depth += 1,
+            ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    let rest = body[position + 1..].trim();
+                    return rest.is_empty() || rest.starts_with("//");
+                }
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
+/// Whether the doc run `lines[start..end]` shares its item's document with
+/// another `///` run or a doc-bearing attribute (`#[doc = ..]`,
+/// `#[cfg_attr(.., doc = ..)]`), before or after it.
+fn shares_its_document(lines: &[&str], start: usize, end: usize) -> bool {
+    let doc_fragment = |line: &str| {
+        let trimmed = line.trim_start();
+        outer_doc_text(line).is_some() || (trimmed.starts_with("#[") && trimmed.contains("doc"))
+    };
+    let after = lines
+        .iter()
+        .skip(end)
+        .take_while(|line| is_between_doc_and_item(line))
+        .any(|line| doc_fragment(line));
+    let before = lines[..start]
+        .iter()
+        .rev()
+        .take_while(|line| is_between_doc_and_item(line))
+        .any(|line| doc_fragment(line));
+    after || before
 }
 
 type FencedBlock<'a> = (usize, &'a str, Vec<String>);
 
 /// The fenced blocks of one doc run, as (fence line, info, restored code).
 /// An unclosed fence yields nothing. So does a run where the backticks may
-/// not open a code block: an HTML comment (a commented-out example), a
-/// `~~~` fence that may wrap them, or a fence line indented four or more
-/// spaces (an indented code block). The scanner does not model Markdown
-/// block structure, so it refuses rather than guesses.
+/// not open a code block: an HTML comment (a commented-out example), an
+/// HTML block, a `~~~` fence that may wrap them, a tab-indented line, or a
+/// fence line indented four or more spaces (an indented code block). The
+/// scanner does not model Markdown block structure, so it refuses rather
+/// than guesses.
 fn run_examples<'a>(run: &[&'a str], first_line: usize) -> Vec<FencedBlock<'a>> {
     let markdown_context = run
         .iter()
@@ -293,6 +364,7 @@ fn run_examples<'a>(run: &[&'a str], first_line: usize) -> Vec<FencedBlock<'a>> 
             let trimmed = text.trim_start();
             let indent = text.len() - trimmed.len();
             text.contains("<!--")
+                || opens_html_block(trimmed)
                 || trimmed.starts_with("~~~")
                 || text.starts_with('\t')
                 || (indent >= 4 && trimmed.starts_with("```"))
@@ -326,6 +398,24 @@ fn run_examples<'a>(run: &[&'a str], first_line: usize) -> Vec<FencedBlock<'a>> 
         }
     }
     blocks
+}
+
+/// A line starting with a tag (`<details>`, `</div>`) may open a CommonMark
+/// HTML block, inside which backticks are raw HTML that rustdoc does not
+/// run. An autolink (`<https://..>`, `<a@b.c>`) opens none.
+fn opens_html_block(trimmed: &str) -> bool {
+    let Some(rest) = trimmed.strip_prefix('<') else {
+        return false;
+    };
+    let tag_start = rest
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '/');
+    let link = rest
+        .split('>')
+        .next()
+        .is_some_and(|inner| inner.contains("://") || inner.contains('@'));
+    tag_start && !link
 }
 
 /// rustdoc compiles a hidden line (`# code`, or a bare `#`) without the

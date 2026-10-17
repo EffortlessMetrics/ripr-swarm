@@ -411,14 +411,16 @@ impl MemberCrates {
             kinds.as_array().is_some_and(|kinds| {
                 kinds.iter().any(|kind| {
                     kind.as_str()
-                        .is_some_and(|kind| matches!(kind, "lib" | "rlib" | "proc-macro"))
+                        .is_some_and(|kind| matches!(kind, "lib" | "rlib"))
                 })
             })
         });
-        let proc_macro_flag = lib
+        // A proc-macro crate exports no plain `pub fn` an example could
+        // call, so it registers nothing.
+        let not_proc_macro = lib
             .get("proc-macro")
-            .is_none_or(|value| value.as_bool().is_some());
-        doctest_on && linkable && proc_macro_flag
+            .is_none_or(|value| value.as_bool() == Some(false));
+        doctest_on && linkable && not_proc_macro
     }
 }
 

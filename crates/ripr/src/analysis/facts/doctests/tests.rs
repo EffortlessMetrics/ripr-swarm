@@ -61,6 +61,8 @@ fn only_plain_rust_and_edition_fences_run() {
         ("", true),
         ("rust", true),
         ("rust,edition2021", true),
+        ("rust edition2021", true),
+        ("edition2021 ignore", false),
         ("edition2024", true),
         ("ignore", false),
         ("rust,ignore", false),
@@ -216,6 +218,16 @@ fn targets_rustdoc_does_not_test_register_nothing() -> Result<(), Box<dyn Error>
         ("[lib]\ncrate-type = [\"cdylib\"]\n", "src/lib.rs", 0),
         ("[lib]\npath = \"src/other.rs\"\n", "src/lib.rs", 0),
         ("[package.metadata]\nx = 1\n", "src/main.rs", 0),
+        (
+            "[lib]\ncrate-type = [\"cdylib\", \"rlib\"]\n",
+            "src/lib.rs",
+            1,
+        ),
+        ("[lib]\ncrate-type = [\"rlib\"]\n", "src/lib.rs", 1),
+        ("[lib]\nproc-macro = true\n", "src/lib.rs", 0),
+        ("[lib]\ncrate-type = [\"proc-macro\"]\n", "src/lib.rs", 0),
+        ("[lib]\ndoctest = \"yes\"\n", "src/lib.rs", 0),
+        ("autolib = false\n", "src/lib.rs", 0),
     ] {
         let dir = temp_dir("doctest-targets")?;
         package(&dir.0, manifest, "")?;
@@ -225,6 +237,104 @@ fn targets_rustdoc_does_not_test_register_nothing() -> Result<(), Box<dyn Error>
             expected,
             "{manifest} {lib_file}"
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_file_reached_other_than_by_a_plain_mod_registers_nothing() -> Result<(), Box<dyn Error>> {
+    // The same module file counts only when a plain `mod` composes it into
+    // the library: not under `#[cfg(test)]`, through `include!`, or when
+    // the library leaves it unresolved.
+    for (lib, expected) in [
+        ("mod wire_mod;\n", 1),
+        ("#[cfg(test)]\nmod wire_mod;\n", 0),
+        ("include!(\"wire_mod.rs\");\n", 0),
+        ("", 0),
+    ] {
+        let dir = temp_dir("doctest-compose")?;
+        package(&dir.0, "", lib)?;
+        fs::write(dir.0.join("src/wire_mod.rs"), WIRE)?;
+        assert_eq!(
+            doctests(&dir.0, &["src/lib.rs", "src/wire_mod.rs"])?.len(),
+            expected,
+            "{lib}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn html_blocks_and_split_doc_fragments_yield_nothing() {
+    let example = "/// ```\n/// assert_eq!(wire::read_u16(&[0, 1]), 1);\n/// ```\n";
+    for source in [
+        // A collapsible example: the backticks are raw HTML in the block.
+        format!(
+            "/// <details><summary>Example</summary>\n///\n{example}/// </details>\npub fn read_u16() {{}}\n"
+        ),
+        format!("/// </div>\n{example}pub fn read_u16() {{}}\n"),
+        // rustdoc joins fragments, so the fence may open in another one.
+        format!("/// ```text\n#[doc = \"x\"]\n{example}pub fn read_u16() {{}}\n"),
+        format!("{example}#[cfg_attr(docsrs, doc = \"x\")]\npub fn read_u16() {{}}\n"),
+        format!("/// ```text\n#[inline]\n{example}pub fn read_u16() {{}}\n"),
+        format!("{example}// note\n/// more\npub fn read_u16() {{}}\n"),
+    ] {
+        assert_eq!(examples(&source), Vec::new(), "{source}");
+    }
+    // Controls: an autolink is not a tag, and a whole-line attribute
+    // between the comment and the function is skipped.
+    for source in [
+        format!("/// See <https://example.com>.\n{example}pub fn read_u16() {{}}\n"),
+        format!("{example}#[inline]\n#[must_use]\npub fn read_u16() {{}}\n"),
+    ] {
+        assert_eq!(examples(&source).len(), 1, "{source}");
+    }
+}
+
+#[test]
+fn a_one_line_attributed_item_keeps_its_own_comment() -> Result<(), Box<dyn Error>> {
+    // The comment documents `helper`, compiled out under `cfg(test)`; it
+    // does not pass to the next function.
+    let example = "/// ```\n/// assert_eq!(wire::read_u16(&[0, 1]), 1);\n/// ```\n";
+    let dir = temp_dir("doctest-one-line-attr")?;
+    for (lib, expected) in [
+        (
+            format!("{example}#[cfg(test)] pub fn helper() {{}}\npub fn read_u16() {{}}\n"),
+            0,
+        ),
+        (format!("{example}#[inline] pub fn read_u16() {{}}\n"), 0),
+        (format!("{example}#[inline]\npub fn read_u16() {{}}\n"), 1),
+    ] {
+        package(&dir.0, "", &lib)?;
+        assert_eq!(doctests(&dir.0, &["src/lib.rs"])?.len(), expected, "{lib}");
+    }
+    Ok(())
+}
+
+#[test]
+fn fences_need_matching_ticks_and_items_need_fn_qualifiers_only() -> Result<(), Box<dyn Error>> {
+    // A four-backtick fence closes only at four or more backticks, so the
+    // inner three-backtick line is code, not a close.
+    let four = "/// ````\n/// assert_eq!(wire::read_u16(&[0, 1]), 1);\n/// ```\n/// ````\npub fn read_u16() {}\n";
+    assert_eq!(examples(four).len(), 1);
+    assert_eq!(
+        examples(four).first().map(|example| example.1.clone()),
+        Some(vec![
+            "assert_eq!(wire::read_u16(&[0, 1]), 1);".to_string(),
+            "```".to_string()
+        ])
+    );
+    // Only `pub` and fn qualifiers may precede `fn` on the item line.
+    let dir = temp_dir("doctest-qualifiers")?;
+    for (head, expected) in [
+        ("pub const fn read_u16", 1),
+        ("pub async unsafe fn read_u16", 1),
+        ("pub extern \"C\" fn read_u16", 1),
+        ("pub default fn read_u16", 0),
+    ] {
+        let lib = WIRE.replace("pub fn read_u16", head);
+        package(&dir.0, "", &lib)?;
+        assert_eq!(doctests(&dir.0, &["src/lib.rs"])?.len(), expected, "{head}");
     }
     Ok(())
 }
