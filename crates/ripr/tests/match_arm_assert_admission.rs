@@ -161,7 +161,7 @@ fn unrelated_assertion_remains_unconfirmed() -> Result<(), String> {
 #[test]
 fn unestablished_plain_assertion_names_its_macro_in_human_and_json() -> Result<(), String> {
     let output = analyze_output(
-        "use std::prelude::v1::*;",
+        "use rayon::prelude::*;",
         "assert!(matches!(actual, super::SelectionRequest::Unresolved(_)));",
     )?;
     let finding = output
