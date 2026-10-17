@@ -7,10 +7,11 @@
     feature = "lang-typescript"
 ))]
 
+use super::run_command;
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
-use std::process::{Command, Output};
+use std::process::Output;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -122,12 +123,14 @@ impl Fixture {
     }
 
     fn check(&self) -> TestResult<(Output, Value)> {
-        let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
-            .args(["check", "--json", "--quiet", "--root"])
-            .arg(&self.0)
-            .arg("--diff")
-            .arg(self.0.join("change.diff"))
-            .output()?;
+        let root = self.0.to_str().ok_or("fixture root must be UTF-8")?;
+        let diff = self.0.join("change.diff");
+        let diff = diff.to_str().ok_or("fixture diff path must be UTF-8")?;
+        let output = run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            None,
+            &["check", "--json", "--quiet", "--root", root, "--diff", diff],
+        )?;
         let json = serde_json::from_slice(&output.stdout).map_err(|error| {
             format!(
                 "normal check JSON missing: {error}; status={}; stderr={}",

@@ -8527,10 +8527,10 @@ id = "RIPR-SPEC-0147"
 name = "typed analysis outcome projection"
 spec = "docs/specs/RIPR-SPEC-0147-analysis-outcome-projection.md"
 tests = [
-  "crates/ripr/tests/parse_failure_path_outcome.rs::syntax_errors_keep_partial_json_for_all_path_spellings",
-  "crates/ripr/tests/parse_failure_path_outcome.rs::valid_files_do_not_acquire_parse_limitations",
-  "crates/ripr/tests/parse_failure_path_outcome.rs::long_nonportable_source_path_keeps_bounded_parser_cause",
-  "crates/ripr/tests/parse_failure_path_outcome.rs::distinct_long_nonportable_paths_keep_distinct_parse_failures",
+  "crates/ripr/tests/cli_smoke/parse_failure_path_outcome.rs::syntax_errors_keep_partial_json_for_all_path_spellings",
+  "crates/ripr/tests/cli_smoke/parse_failure_path_outcome.rs::valid_files_do_not_acquire_parse_limitations",
+  "crates/ripr/tests/cli_smoke/parse_failure_path_outcome.rs::long_nonportable_source_path_keeps_bounded_parser_cause",
+  "crates/ripr/tests/cli_smoke/parse_failure_path_outcome.rs::distinct_long_nonportable_paths_keep_distinct_parse_failures",
   "crates/ripr/tests/cli_smoke/unsupported_diff_exit.rs::diff_json_outcomes_preserve_report_and_exit_contract",
   "crates/ripr/tests/cli_smoke/unsupported_diff_exit.rs::diff_human_unsupported_and_usage_keep_stream_contracts",
   "crates/ripr/tests/cli_smoke/unsupported_diff_exit.rs::diff_discovery_names_unsupported_and_partial_exits",
