@@ -540,8 +540,10 @@ impl OwnerPinSyntax {
             ProbeFamily::ReturnValue | ProbeFamily::ErrorPath | ProbeFamily::Predicate
         ) && is_admission_gated_assert_eq(&assertion.text))
             || (probe.family == ProbeFamily::MatchArm
-                && outer_macro_path(&assertion.text)
-                    .is_some_and(|path| path.strip_prefix("r#").unwrap_or(&path) == "assert"));
+                && outer_macro_path(&assertion.text).is_some_and(|path| {
+                    let leaf = drop_in_assertion_leaf(&path).unwrap_or(&path);
+                    leaf.strip_prefix("r#").unwrap_or(leaf) == "assert"
+                }));
         !gated || self.admits(test, assertion, index)
     }
 
