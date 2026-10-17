@@ -15,6 +15,7 @@ mod owner_result_binding;
 mod reach_limit;
 mod related_tests;
 pub(crate) mod shared_grips;
+mod snapshot_owner_binding;
 mod value_contradiction;
 
 pub(crate) use value_contradiction::CONTRADICTION_DISCLOSURE;
@@ -2120,6 +2121,15 @@ fn oracle_discriminates_seam_in_test(
     index: &RustIndex,
     pin_syntax: &Mutex<crate::analysis::classify::OwnerPinSyntax>,
 ) -> bool {
+    // #8121: a snapshot admitted by kind for a return-value seam must also
+    // observe the owner's own result, not an unrelated value in the test.
+    if seam.kind() == SeamKind::ReturnValue
+        && matches!(oracle.kind, OracleKind::Snapshot)
+        && let Some(owner) = owner
+        && !snapshot_owner_binding::snapshot_observes_owner_result(&owner.name, oracle, test)
+    {
+        return false;
+    }
     oracle_discriminates_seam(seam, oracle)
         || direct_collection_mutation_receiver(seam.expression())
             .zip(owner)
