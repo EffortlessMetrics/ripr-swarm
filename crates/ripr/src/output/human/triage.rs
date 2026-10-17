@@ -317,7 +317,7 @@ pub(crate) fn render_human_triage(
                 && finding.static_limit_kind
                     != Some(StaticLimitKind::RustAssertionContextUnresolved)
                 && !super::sections::untraced_reach_weak_finding(finding)
-                && finding.probe.family.offers_stub_route()
+                && finding.probe.offers_stub_route()
                 && finding
                     .probe
                     .location
