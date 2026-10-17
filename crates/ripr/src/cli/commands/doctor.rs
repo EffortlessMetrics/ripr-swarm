@@ -2471,22 +2471,27 @@ fn ripr_artifact_tracking(root: &Path) -> output::doctor::DoctorArtifactTracking
     if probe.stdout.is_empty() {
         return DoctorArtifactTracking::Untracked;
     }
-    // Bind the remedy to the selected root: pasted from another directory, a
-    // bare `git rm --cached` would untrack files in whatever repository the
-    // shell happens to be in (#8301 review).
-    let untrack = if root == Path::new(".") {
+    let untrack = untrack_artifacts_command(root);
+    DoctorArtifactTracking::Tracked {
+        warning: format!(
+            "! ripr artifacts under target/ripr are tracked by git; `git add -A` keeps \
+             refreshing them and `ripr check` diffs them. Untrack them with: {untrack}"
+        ),
+    }
+}
+
+/// The untrack command doctor prints, bound to the selected root: pasted from
+/// another directory, a bare `git rm --cached` would untrack files in whatever
+/// repository the shell happens to be in (#8301 review). The default `.` root
+/// keeps the short form.
+fn untrack_artifacts_command(root: &Path) -> String {
+    if root == Path::new(".") {
         "git rm --cached -r -- target/ripr".to_string()
     } else {
         format!(
             "git -C {} rm --cached -r -- target/ripr",
             crate::agent::loop_commands::shell_arg(&output::path::human_path(root))
         )
-    };
-    DoctorArtifactTracking::Tracked {
-        warning: format!(
-            "! ripr artifacts under target/ripr are tracked by git; `git add -A` keeps \
-             refreshing them and `ripr check` diffs them. Untrack them with: {untrack}"
-        ),
     }
 }
 
@@ -3883,6 +3888,31 @@ mod tests {
             DoctorArtifactTracking::NotChecked
         );
         Ok(())
+    }
+
+    #[test]
+    fn untrack_command_binds_non_default_roots_and_quotes_them() {
+        // The default root keeps the short form: there is no other repository
+        // to confuse it with.
+        assert_eq!(
+            untrack_artifacts_command(Path::new(".")),
+            "git rm --cached -r -- target/ripr"
+        );
+        // Any other root is named, so the command cannot act elsewhere.
+        assert_eq!(
+            untrack_artifacts_command(Path::new("other-repo")),
+            "git -C other-repo rm --cached -r -- target/ripr"
+        );
+        // A root with spaces must stay one shell word.
+        let spaced = untrack_artifacts_command(Path::new("my repo"));
+        assert!(
+            spaced.starts_with("git -C ") && !spaced.starts_with("git -C my repo "),
+            "{spaced}"
+        );
+        assert!(
+            spaced.ends_with(" rm --cached -r -- target/ripr"),
+            "{spaced}"
+        );
     }
 
     #[test]
