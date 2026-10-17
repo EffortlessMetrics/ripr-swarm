@@ -5434,20 +5434,23 @@ mod tests {
     /// setup statement must not appear as a second, "smoke only" row.
     #[test]
     fn setup_unwrap_row_is_dropped_beside_the_same_tests_assertion() {
-        let (finalized, total) = finalize_related_tests(vec![
-            smoke_row("parses_small", 3, "parse(\"5\").unwrap();"),
-            RelatedTest {
-                oracle: Some("assert_eq!(v, 5);".to_string()),
-                ..related("parses_small", 3, Some(RelationReason::DirectOwnerCall))
-            },
-            smoke_row("setup_expect", 9, "parse(\"5\").expect(\"parses\");"),
-            RelatedTest {
-                oracle: Some("assert!(v.is_ok());".to_string()),
-                oracle_kind: OracleKind::SmokeOnly,
-                oracle_strength: OracleStrength::Smoke,
-                ..related("setup_expect", 9, Some(RelationReason::DirectOwnerCall))
-            },
-        ]);
+        let (finalized, total) = finalize_related_tests(
+            vec![
+                smoke_row("parses_small", 3, "parse(\"5\").unwrap();"),
+                RelatedTest {
+                    oracle: Some("assert_eq!(v, 5);".to_string()),
+                    ..related("parses_small", 3, Some(RelationReason::DirectOwnerCall))
+                },
+                smoke_row("setup_expect", 9, "parse(\"5\").expect(\"parses\");"),
+                RelatedTest {
+                    oracle: Some("assert!(v.is_ok());".to_string()),
+                    oracle_kind: OracleKind::SmokeOnly,
+                    oracle_strength: OracleStrength::Smoke,
+                    ..related("setup_expect", 9, Some(RelationReason::DirectOwnerCall))
+                },
+            ],
+            None,
+        );
         assert_eq!(
             oracle_texts(&finalized),
             vec![
@@ -5463,23 +5466,26 @@ mod tests {
     /// all stay listed.
     #[test]
     fn setup_unwrap_row_stays_when_it_is_the_tests_only_oracle() {
-        let (finalized, total) = finalize_related_tests(vec![
-            smoke_row("only_unwrap", 3, "parse(\"5\").unwrap();"),
-            smoke_row("other_test", 20, "parse(\"5\").unwrap();"),
-            RelatedTest {
-                file: PathBuf::from("tests/other.rs"),
-                oracle: Some("assert_eq!(v, 5);".to_string()),
-                ..related("other_test", 20, Some(RelationReason::DirectOwnerCall))
-            },
-            smoke_row("chained", 30, "parse(\"5\").unwrap().len();"),
-            smoke_row(
-                "chained",
-                30,
-                "parse(\"5\").expect(\"a\").expect(\"b\").len();",
-            ),
-            smoke_row("real_smoke", 40, "assert!(parse(\"5\").is_ok());"),
-            smoke_row("real_smoke", 40, "parse(\"5\").unwrap();"),
-        ]);
+        let (finalized, total) = finalize_related_tests(
+            vec![
+                smoke_row("only_unwrap", 3, "parse(\"5\").unwrap();"),
+                smoke_row("other_test", 20, "parse(\"5\").unwrap();"),
+                RelatedTest {
+                    file: PathBuf::from("tests/other.rs"),
+                    oracle: Some("assert_eq!(v, 5);".to_string()),
+                    ..related("other_test", 20, Some(RelationReason::DirectOwnerCall))
+                },
+                smoke_row("chained", 30, "parse(\"5\").unwrap().len();"),
+                smoke_row(
+                    "chained",
+                    30,
+                    "parse(\"5\").expect(\"a\").expect(\"b\").len();",
+                ),
+                smoke_row("real_smoke", 40, "assert!(parse(\"5\").is_ok());"),
+                smoke_row("real_smoke", 40, "parse(\"5\").unwrap();"),
+            ],
+            None,
+        );
         assert_eq!(total, 6);
         let mut got: Vec<(String, String, String)> = finalized
             .iter()
