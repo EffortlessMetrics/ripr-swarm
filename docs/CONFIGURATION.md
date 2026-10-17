@@ -304,7 +304,9 @@ outside any Git work tree (for example `RIPR_CACHE_DIR` elsewhere) is
 unaffected. When Git cannot answer (dubious ownership, a damaged repository, a
 5-second deadline) the cache is refused rather than assumed clean. An
 extracted archive carries no Git evidence, so this does not defend against a
-planted cache delivered that way. The corpus-fingerprint cache binds its
+planted cache delivered that way. A cache export refuses a tracked source
+for the same reason, so it cannot launder tracked entries into an exported
+cache. The corpus-fingerprint cache binds its
 entries to the checkout path hash and is unchanged.
 
 To relocate the cache to a different directory (e.g., for a read-only

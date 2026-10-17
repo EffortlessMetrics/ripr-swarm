@@ -153,6 +153,12 @@ fn export_selected(
     key: &RepoSeamCacheKey,
     files: &[RepoFileFactCacheKey],
 ) -> Result<CacheExportReport, String> {
+    // The copies are validated against the output directory, so a source the
+    // load path would refuse (Git-tracked entries, #7780) must be refused
+    // here or the export launders it into a cache the loader then trusts.
+    if let Some(reason) = super::cache_base_untrusted_reason(source) {
+        return Err(format!("refusing to export an untrusted cache: {reason}"));
+    }
     let mut report = CacheExportReport {
         schema_version: "0.1",
         cache_dir: output.to_path_buf(),
@@ -264,6 +270,7 @@ pub(crate) fn export_current(root: &Path, output: &Path) -> Result<CacheExportRe
 #[cfg(test)]
 mod tests {
     use super::super::FileFacts;
+    use super::super::ignore_remove_dir_all;
     use super::super::tests::{empty_state, isolated_dir, sample_classified};
     use super::*;
     use std::collections::BTreeMap;
@@ -355,6 +362,46 @@ mod tests {
                 &self.key,
                 std::slice::from_ref(&self.file),
             )
+        }
+    }
+
+    fn git_init_and_track(root: &Path, track: bool) -> Result<(), String> {
+        crate::git::run_git(root, &["init", "-q"]).map_err(|err| format!("git init: {err}"))?;
+        if track {
+            crate::git::run_git(root, &["add", "-f", "--", "source"])
+                .map_err(|err| format!("git add: {err}"))?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn export_refuses_a_git_tracked_source_cache_and_leaves_no_copies() -> Result<(), String> {
+        // #7780: both classified and file-fact entries are in the source, so
+        // a refusal proves neither family is copied around the load gate.
+        let fixture = Fixture::new("export-tracked-source")?;
+        git_init_and_track(&fixture.root, true)?;
+        let outcome = fixture.export();
+        let copied = inventory(&fixture.output)?;
+        ignore_remove_dir_all(&fixture.root);
+        match outcome {
+            Err(reason) if reason.contains("tracked by Git") => {}
+            other => return Err(format!("tracked source must be refused, got {other:?}")),
+        }
+        if !copied.is_empty() {
+            return Err(format!("refused export copied {} files", copied.len()));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn export_keeps_an_untracked_source_cache_inside_a_work_tree() -> Result<(), String> {
+        let fixture = Fixture::new("export-untracked-source")?;
+        git_init_and_track(&fixture.root, false)?;
+        let outcome = fixture.export();
+        ignore_remove_dir_all(&fixture.root);
+        match outcome {
+            Ok(report) if report.classified_entries == 2 && report.file_fact_entries == 1 => Ok(()),
+            other => Err(format!("untracked source must export, got {other:?}")),
         }
     }
 

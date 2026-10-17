@@ -6096,6 +6096,21 @@ mod tests {
     }
 
     #[test]
+    fn production_constructors_probe_the_cache_base_they_resolve() {
+        // The tracked-cache gate probes `base`; every production constructor
+        // must hand it the same root `RIPR_CACHE_DIR` / the default resolves,
+        // or the gate would inspect a directory the entries do not live in.
+        let root = isolated_dir("constructor-base");
+        let expected = cache_base_dir(&root);
+        assert_eq!(RepoFileFactCache::at(&root).base, expected);
+        assert_eq!(RepoSeamFactCache::at(&root).base, expected);
+        assert_eq!(
+            RepoSeamFactCache::at_compact_classified(&root).base,
+            expected
+        );
+    }
+
+    #[test]
     fn given_cache_outside_any_work_tree_when_load_runs_then_entries_are_still_served()
     -> Result<(), String> {
         // Not every cache sits in a repository (`RIPR_CACHE_DIR`, extracted

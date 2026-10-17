@@ -922,7 +922,8 @@ are scoped or reviewed.
   suppress or fabricate findings. When Git tracks any file under the cache
   root, or cannot confirm it does not, every lookup is now refused with a
   named cache-ignored reason and the run recomputes (#7780). Caches outside a
-  Git work tree are unchanged; extracted archives carry no Git evidence and
+  Git work tree are unchanged, and a cache export refuses a tracked source;
+  extracted archives carry no Git evidence and
   are not covered.
 
 - Windows: `ripr agent card --json` now reports `selected_target.file`
