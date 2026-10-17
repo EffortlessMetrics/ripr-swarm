@@ -296,3 +296,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — observation_unverified_side_effect (26)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless observation_unverified_side_effect --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

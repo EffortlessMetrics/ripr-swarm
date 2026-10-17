@@ -893,3 +893,12 @@ surface = "repo"
 classification = "fixture"
 reason = "Committed agent-as-user run harness output that docs/PUBLIC_PROOF.md is rendered from. It has no in-repo producer command, so it is edited by hand and not refreshed by public-proof."
 covered_by = ["cargo test -p xtask --bin xtask public_proof"]
+
+[[allow]]
+glob = "benchmarks/stub_quality/cases/**/Cargo.toml"
+kind = "fixture_input"
+owner = "analysis-fixtures"
+surface = "fixtures"
+classification = "fixture"
+reason = "Stub quality corpus crates are analyzed inputs for judging suggested tests (#8361)."
+covered_by = ["cargo xtask check-file-policy"]

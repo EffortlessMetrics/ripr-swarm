@@ -271,7 +271,7 @@ fn property_macro_quarantine_matches_runtime_collection_and_discrimination() -> 
             assert!(guidance.contains("macro"), "{name}: {guidance}");
             assert!(!guidance.contains("Add "), "{name}: unsupported is not a new-test request");
             let human = render_check(&report, &OutputFormat::Human)?;
-            assert!(human.contains("static_limited"), "{name}: {human}");
+            assert!(human.contains("limited by static analysis"), "{name}: {human}");
         }
         for wrong in [false, true] {
             let runtime_source = root.join("runtime.rs");
@@ -470,7 +470,7 @@ fn property_mentions_respect_known_package_boundaries() -> Result<(), String> {
             assert!(!human.contains(plain_action), "{name}: {human}");
             assert!(!human.contains(named_action), "{name}: {human}");
         } else {
-            assert!(human.contains("State: limited by static analysis (static_limited)"));
+            assert!(human.contains("State: limited by static analysis"));
             assert_eq!(human.contains(plain_action), !limited, "{name}: {human}");
             assert_eq!(human.contains(named_action), limited, "{name}: {human}");
         }

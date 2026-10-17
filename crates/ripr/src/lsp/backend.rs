@@ -1,3 +1,11 @@
+//! The `tower-lsp-server` `LanguageServer` implementation for the ripr sidecar.
+//!
+//! [`Backend`] owns client handles, workspace roots, open-document state,
+//! refresh and publication barriers, and the config-pull coordinator. It
+//! delegates analysis scheduling to `refresh_scheduler`, diagnostic shaping to
+//! `diagnostics`, and code actions to `actions`; keep protocol plumbing here
+//! and decisions in those owners.
+
 use super::AnalysisStatusNotification;
 use super::actions::{code_action_response, disable_retained_analysis_actions, resolve_action};
 use super::capabilities::{

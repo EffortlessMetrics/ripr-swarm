@@ -516,3 +516,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_related_test_name_proximity (18)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless typescript_related_test_name_proximity --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
