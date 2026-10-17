@@ -63,7 +63,36 @@ suite('Server resolver compatibility fallback', () => {
     assert.ok(missingServerRemedy(false).includes('Enable ripr.server.autoDownload'));
   });
 
-  test('a disabled download with no PATH server is a missing binary, not a download failure', async function () {
+  test('a disabled download keeps a PATH probe failure kind instead of missing_binary', async function () {
+    if (!currentRiprPlatform()) {
+      this.skip();
+      return;
+    }
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-resolver-path-kind-'));
+    const runtime: ServerResolverRuntime = {
+      probeCandidate: async (_command, _source, detail) => ({
+        message: `${detail} failed version check.`,
+        detail: `${detail} exited with code 1.`,
+        kind: 'other'
+      })
+    };
+    try {
+      const result = await resolveServer(stubContext(root), config(), stubOutput(), runtime);
+      assert.ok(!('command' in result), JSON.stringify(result));
+      if ('command' in result) {
+        return;
+      }
+      assert.strictEqual(result.kind, 'other', JSON.stringify(result));
+      assert.ok(
+        !result.detail.includes('cargo install ripr'),
+        `an unusable PATH binary must not recommend cargo install: ${result.detail}`
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a disabled download with a missing PATH server remains a missing binary', async function () {
     if (!currentRiprPlatform()) {
       this.skip();
       return;
@@ -72,8 +101,8 @@ suite('Server resolver compatibility fallback', () => {
     const runtime: ServerResolverRuntime = {
       probeCandidate: async (_command, _source, detail) => ({
         message: `${detail} could not start.`,
-        detail: `${detail} rejected`,
-        kind: 'other'
+        detail: `spawn ${detail} ENOENT`,
+        kind: 'missing_binary'
       })
     };
     try {
@@ -126,6 +155,7 @@ suite('Server resolver compatibility fallback', () => {
       assert.ok('message' in result, `expected a version-check failure, got ${JSON.stringify(result)}`);
       if ('message' in result) {
         assert.ok(result.message.includes('could not start'), result.message);
+        assert.strictEqual(result.kind, 'missing_binary', JSON.stringify(result));
       }
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

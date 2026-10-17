@@ -197,7 +197,12 @@ export async function resolveServer(
   const autoDownloadHint = config.autoDownload
     ? 'Automatic download was enabled but did not produce a usable server.'
     : 'Automatic download is disabled.';
-  const kind = downloadFailure ? classifyDownloadFailureKind(downloadFailure) : 'missing_binary';
+  // A PATH probe of an installed-but-unusable binary is `other`, not a
+  // missing executable. Copy Install Command is only honest for a binary
+  // that was not found (#8588 CodeRabbit).
+  const kind = downloadFailure
+    ? classifyDownloadFailureKind(downloadFailure)
+    : pathResult.kind;
   return {
     message: 'ripr server is not available.',
     detail: [
@@ -364,7 +369,11 @@ export function probeServerVersion(
     child.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
 
     child.once('error', (error) => {
-      finish({ message: `${detail} could not start.`, detail: error.message, kind: 'other' });
+      finish({
+        message: `${detail} could not start.`,
+        detail: error.message,
+        kind: spawnErrorKind(error)
+      });
     });
 
     // Classify on 'close', not 'exit': the win32 wrapper reports the exit
@@ -378,7 +387,11 @@ export function probeServerVersion(
       // typed marker; name the real cause instead of a bogus exit code (#5891).
       const startFailure = probeProcessStartFailure(child);
       if (startFailure) {
-        finish({ message: `${detail} could not start.`, detail: startFailure, kind: 'other' });
+        finish({
+          message: `${detail} could not start.`,
+          detail: startFailure,
+          kind: missingExecutableMessage(startFailure) ? 'missing_binary' : 'other'
+        });
         return;
       }
       if (code === 0) {
@@ -424,6 +437,24 @@ function withManagedIdentity(
 
 function isResolved(result: ResolvedServer | ResolveFailure): result is ResolvedServer {
   return 'command' in result;
+}
+
+function spawnErrorKind(error: unknown): ResolveFailureKind {
+  if (
+    typeof error === 'object'
+    && error !== null
+    && 'code' in error
+    && (error as { code?: unknown }).code === 'ENOENT'
+  ) {
+    return 'missing_binary';
+  }
+  return missingExecutableMessage(error instanceof Error ? error.message : String(error))
+    ? 'missing_binary'
+    : 'other';
+}
+
+function missingExecutableMessage(message: string): boolean {
+  return /ENOENT|cannot find the file|is not recognized as/i.test(message);
 }
 
 function firstOutputLine(stdoutChunks: Buffer[], stderrChunks: Buffer[]): string | undefined {
