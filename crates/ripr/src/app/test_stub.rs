@@ -92,6 +92,9 @@ pub(crate) struct TestStubResolution {
     /// nearest gap in the same function was stubbed instead (#6298), so the
     /// substitution is stated rather than left to the generated comment.
     pub(crate) at_note: Option<String>,
+    /// The line of the seam this resolution stubs. It differs from a
+    /// requested `--at` line when the nearest gap was substituted.
+    pub(crate) seam_line: usize,
 }
 
 #[derive(Debug)]
@@ -231,6 +234,7 @@ impl<'a> AtCandidate<'a> {
                     outcome,
                     grip_class: None,
                     at_note: None,
+                    seam_line: seam.display_line(),
                 }
             }
             Self::Classified(entry) => resolution_for(entry, source),
@@ -328,6 +332,23 @@ pub(crate) fn stub_route_for_finding(
     }
     let resolution = resolve_at_location(root, config, &file, line, Some(kind)).ok()?;
     let decision = match resolution.outcome {
+        // `--at` stubs the nearest gap when the finding's line holds none
+        // (#6298). Print the line that stub is for, and only when asking for
+        // that line resolves to the same seam, so the command shown is the
+        // command that produces the stub it promises (#8444).
+        Ok(_) if resolution.at_note.is_some() => {
+            let seam_line = resolution.seam_line;
+            let same = resolve_at_location(root, config, &file, seam_line, Some(kind))
+                .is_ok_and(|exact| exact.seam_id == resolution.seam_id && exact.at_note.is_none());
+            if !same {
+                return None;
+            }
+            StubRouteDecision::Stub {
+                file,
+                line: seam_line,
+                kind,
+            }
+        }
         Ok(_) => StubRouteDecision::Stub { file, line, kind },
         Err(refusal) => StubRouteDecision::Refused {
             reason: refusal.reason(),
@@ -824,6 +845,7 @@ fn resolution_for(entry: &ClassifiedSeam, source: String) -> TestStubResolution 
         outcome,
         grip_class: Some(entry.class),
         at_note: None,
+        seam_line: entry.seam.display_line(),
     }
 }
 
