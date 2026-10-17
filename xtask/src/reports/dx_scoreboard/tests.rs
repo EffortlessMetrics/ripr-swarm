@@ -3587,3 +3587,47 @@ fn a_non_draft_checkout_config_still_produces_a_draft_warm_check_sample() -> Res
     );
     Ok(())
 }
+
+#[test]
+fn ingested_first_run_rows_name_the_ripr_build_and_install_route() -> Result<(), String> {
+    let row = |ripr: &str, step: &str| {
+        format!(
+            r#"{{"schema":"first_run_row.v1","ripr":"{ripr}","case":"_setup","step":"{step}","metric":"secs","value":40.0,"budget":null,"better":"lower"}}"#
+        )
+    };
+    let published = parse_ingest_text(&row("ripr 0.10.0", "install_published"))?;
+    assert_eq!(
+        ingested_identity(&published),
+        Some((
+            "ripr 0.10.0".to_string(),
+            "cargo install ripr --locked".to_string()
+        ))
+    );
+    let archive = parse_ingest_text(&row("ripr 0.10.0", "install_archive"))?;
+    assert_eq!(
+        ingested_identity(&archive),
+        Some((
+            "ripr 0.10.0".to_string(),
+            "prebuilt release archive".to_string()
+        ))
+    );
+    // Without an install step the route is unknown, so no identity is invented.
+    let walk_only = parse_ingest_text(&row("ripr 0.10.0", "check"))?;
+    assert_eq!(ingested_identity(&walk_only), None);
+    Ok(())
+}
+
+#[test]
+fn ingested_identity_never_replaces_a_measured_one() {
+    let mut measured = RunContext {
+        analyzer_version: "ripr 0.11.0".to_string(),
+        binary: "target/release/ripr".to_string(),
+        ..RunContext::default()
+    };
+    record_ingested_identity(&mut measured, &[PathBuf::from("does-not-exist.jsonl")]);
+    assert_eq!(measured.analyzer_version, "ripr 0.11.0");
+    assert_eq!(measured.binary, "target/release/ripr");
+    let mut empty = RunContext::default();
+    record_ingested_identity(&mut empty, &[PathBuf::from("does-not-exist.jsonl")]);
+    assert!(empty.analyzer_version.is_empty() && empty.binary.is_empty());
+}

@@ -194,7 +194,8 @@ pub(crate) fn dx_scoreboard(args: &[String]) -> Result<(), String> {
         samples.extend(load_ingest(path, &config)?);
     }
     samples.extend(file_samples(&config, &options.boards)?);
-    let context = measure::measure(&config, &options, &mut samples)?;
+    let mut context = measure::measure(&config, &options, &mut samples)?;
+    record_ingested_identity(&mut context, &options.ingest);
     let baseline = match &options.baseline {
         Some(path) => Some(check_baseline(read_json(path)?).map_err(|err| {
             format!(
@@ -509,6 +510,54 @@ pub(crate) fn parse_ingest_text(text: &str) -> Result<Value, String> {
         return Err("ingest file is empty".to_string());
     }
     Ok(json!({"schema_version": FIRST_RUN_ROW_SCHEMA_VERSION, "rows": rows}))
+}
+
+/// The ripr build and install route a first-run ingest file names. A run that
+/// only ingests (the nightly `first-run-install` lane) measures no binary of
+/// its own, so without this the report records an empty identity and a
+/// committed baseline cannot say which ripr it describes.
+pub(crate) fn ingested_identity(value: &Value) -> Option<(String, String)> {
+    let nonempty = |v: &Value| v.as_str().filter(|t| !t.is_empty()).map(str::to_string);
+    match value["schema_version"].as_str() {
+        Some(FIRST_RUN_SCHEMA_VERSION) => {
+            Some((nonempty(&value["ripr"])?, nonempty(&value["binary"])?))
+        }
+        Some(FIRST_RUN_ROW_SCHEMA_VERSION) => {
+            let rows = value["rows"].as_array()?;
+            let version = rows.iter().find_map(|row| nonempty(&row["ripr"]))?;
+            let route = if rows
+                .iter()
+                .any(|row| row["step"].as_str() == Some("install_published"))
+            {
+                "cargo install ripr --locked"
+            } else if rows
+                .iter()
+                .any(|row| row["step"].as_str() == Some("install_archive"))
+            {
+                "prebuilt release archive"
+            } else {
+                return None;
+            };
+            Some((version, route.to_string()))
+        }
+        _ => None,
+    }
+}
+
+/// Fill an empty analyzer version and binary from the first ingest file that
+/// names them. A measured identity is never replaced.
+fn record_ingested_identity(context: &mut RunContext, ingest: &[PathBuf]) {
+    if !context.analyzer_version.is_empty() || !context.binary.is_empty() {
+        return;
+    }
+    let found = ingest.iter().find_map(|path| {
+        let text = fs::read_to_string(path).ok()?;
+        ingested_identity(&parse_ingest_text(&text).ok()?)
+    });
+    if let Some((version, binary)) = found {
+        context.analyzer_version = version;
+        context.binary = binary;
+    }
 }
 
 pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>, String> {
