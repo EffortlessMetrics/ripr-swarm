@@ -1253,7 +1253,8 @@ fn contains_inline_new_member_call(
             else {
                 return false;
             };
-            let rest = &body_text[args_start + close + 1..];
+            // A wrapped chain (`new C()\n  .m()`) or a spaced one is still the call.
+            let rest = body_text[args_start + close + 1..].trim_start();
             let rest = rest.strip_prefix("?.").or_else(|| rest.strip_prefix('.'));
             rest.and_then(|rest| rest.strip_prefix(method_name))
                 .is_some_and(|after| after.starts_with('('))
@@ -3950,7 +3951,9 @@ mod constructed_receiver_tests {
             ("expect(new Clamp(0, 10).limits(50)).toBe(10)", false),
             ("expect(new Other(0, 10).limit(50)).toBe(10)", false),
             ("expect(new Clamp(0, 10)).toBeDefined()", false),
-            ("expect(new Clamp(0, 10) .limit(50))", false),
+            ("expect(new Clamp(0, 10) .limit(50))", true),
+            ("expect(new Clamp(0, 10)\n    .limit(50))", true),
+            ("expect(new Clamp(0, 10) .limits(50))", false),
             ("expect(factory.new Clamp(0, 10).limit(50))", false),
             ("// new Clamp(0, 10).limit(50)", false),
             ("setup(); // new Clamp(0, 10).limit(50)", false),
