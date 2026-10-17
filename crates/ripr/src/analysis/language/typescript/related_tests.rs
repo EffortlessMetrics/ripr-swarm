@@ -1174,7 +1174,7 @@ pub(crate) fn receiver_names_for_constructor_calls(
 }
 
 /// `line` without a trailing `// comment` (a `//` outside any quote). An
-/// unquoted `a://b` is stripped too, which can only withhold credit. Quote
+/// unquoted URL scheme separator is stripped too, which can only withhold credit. Quote
 /// tracking is per line, so a quote
 /// opened earlier on a multi-line template leaves the text untouched: the
 /// result only ever drops text, which can withhold credit but not grant it.
