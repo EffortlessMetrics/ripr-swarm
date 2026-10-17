@@ -1,0 +1,12 @@
+{
+ "schema_version": "work_plan_identity_provenance.v1",
+ "repository": "EffortlessMetrics/ripr-swarm",
+ "captured_at": "2026-10-09T12:00:00Z",
+ "capture_method": "authored plan-disposition corpus reusing the committed RIPR-SPEC-0244 selection packets and captured directories by reference",
+ "files": [
+  {
+   "path": "corpus.json",
+   "sha256": "bc73aab514d94019559f7ad9fcd71f7332106c3e3ed41d8b81f28d6469e5981c"
+  }
+ ]
+}

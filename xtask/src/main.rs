@@ -68,6 +68,7 @@ mod work_burndown_identity;
 mod work_claim_identity;
 mod work_context_identity;
 mod work_intake_identity;
+mod work_plan_identity;
 mod work_portfolio;
 mod work_result_identity;
 mod work_selection_identity;

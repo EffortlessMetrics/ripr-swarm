@@ -14749,6 +14749,41 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0276"
+name = "Plan dispositions bind the selected-work portfolio basis"
+spec = "docs/specs/RIPR-SPEC-0276-plan-dispositions-selected-work-basis.md"
+tests = [
+  "xtask/src/work_plan_identity.rs::tests::work_plan_identity_committed_corpus_five_scenarios_hold",
+  "xtask/src/work_plan_identity.rs::tests::work_plan_identity_single_scoped_pr_disposition_passes",
+  "xtask/src/work_plan_identity.rs::tests::work_plan_identity_standalone_and_append_dispositions_pass",
+  "xtask/src/work_plan_identity.rs::tests::work_plan_identity_blocked_disposition_passes",
+  "xtask/src/work_plan_identity.rs::tests::work_plan_identity_reorder_and_wrong_inputs_fail",
+  "xtask/src/work_plan_identity.rs::tests::work_plan_identity_plan_schema_has_no_singleton_fields",
+  "xtask/src/work_plan_identity.rs::tests::work_plan_identity_dispositions_stay_on_the_closed_set",
+  "xtask/src/work_plan_identity.rs::tests::work_plan_identity_human_and_json_projections_agree",
+  "xtask/src/work_plan_identity.rs::tests::work_plan_identity_deterministic_output",
+  "xtask/src/work_plan_identity.rs::tests::work_plan_identity_corpus_loader_fails_closed",
+  "xtask/src/work_plan_identity.rs::tests::work_plan_identity_committed_provenance_covers_every_corpus_byte",
+  "xtask/src/work_plan_identity.rs::tests::work_plan_identity_plans_bind_recorded_issues_and_snapshots",
+  "xtask/src/work_plan_identity.rs::tests::work_plan_identity_command_mutate_nothing_mutation_negative",
+]
+fixtures = [
+  "fixtures/work_plan_identity",
+]
+code = [
+  "xtask/src/work_plan_identity.rs",
+  "xtask/src/work_selection_identity.rs",
+  "xtask/src/command.rs",
+  "xtask/src/dispatch.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0276-plan-dispositions-selected-work-basis.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0244"
 name = "Shared selected-work identity schemas and legacy compatibility"
 spec = "docs/specs/RIPR-SPEC-0244-selected-work-identity.md"

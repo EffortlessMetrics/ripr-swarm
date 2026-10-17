@@ -185,6 +185,7 @@ pub(crate) enum XtaskCommand {
     WorkSynthesisCheck(Vec<String>),
     WorkBurndownCheck(Vec<String>),
     WorkIntakeCheck(Vec<String>),
+    WorkPlanCheck(Vec<String>),
     Unknown(String),
 }
 
@@ -432,6 +433,13 @@ impl XtaskCommand {
                     Some("check") => Self::WorkIntakeCheck(rest[2..].to_vec()),
                     _ => Self::Unknown(format!(
                         "work intake {}",
+                        rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
+                    )),
+                },
+                Some("plan") => match rest.get(1).map(|arg| arg.as_str()) {
+                    Some("check") => Self::WorkPlanCheck(rest[2..].to_vec()),
+                    _ => Self::Unknown(format!(
+                        "work plan {}",
                         rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
                     )),
                 },
@@ -2472,6 +2480,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Validates committed WorkIntakeV1 rows against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR B, RIPR-SPEC-0275, consuming #1644); every intake binds the repository, portfolio-snapshot identity, basis head, current main and one issue the captured portfolio records, campaign placement and relevant campaigns must be recorded campaigns but an out-of-campaign issue may still qualify because placement stays a later root/planning decision, open overlapping PRs and claims stay visible before any mutation, and an empty contract set, an unknown issue, a wrong repository or a legacy authority attempt fails with exact recompile/reconcile routes.",
+        ),
+        command_entry(
+            "work plan check [--corpus <dir>] [--json]",
+            "report_only",
+            "target/ripr/reports/work-plan-check.{json,md}",
+            false,
+            false,
+            "Validates committed WorkPlanV1 rows against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR B, RIPR-SPEC-0276, consuming #1646); every plan binds the repository, portfolio-snapshot identity, basis head and the full selected-work identity it plans for, planning emits one closed RIPR-SPEC-0244 disposition and is read-only so a row that would replace or reorder the whole portfolio fails visibly, campaign-targeting dispositions must name a recorded campaign, a blocked disposition must name its blocker, a plan derived from nothing is a claim, and a wrong repository, snapshot, basis or legacy authority attempt fails with exact recompile/reconcile routes.",
         ),
     ]
 }
