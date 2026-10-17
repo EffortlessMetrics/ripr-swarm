@@ -346,7 +346,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     })
   );
 
-  await startServerOnce(controller);
+  try {
+    await startServerOnce(controller);
+  } catch (error) {
+    // The controller already surfaced the failure in the status bar and a
+    // warning; rejecting activation would only add a generic "Activating
+    // extension failed" toast on top.
+    output.appendLine(`ripr server start during activation failed: ${String(error)}`);
+  }
 }
 
 export async function deactivate(): Promise<void> {

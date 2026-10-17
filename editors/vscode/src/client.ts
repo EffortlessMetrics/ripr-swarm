@@ -747,6 +747,18 @@ export class RiprClientController {
         this.client = undefined;
       }
       this.disposeNotifications(client);
+      if (startGeneration === this.startGeneration) {
+        // Without this the status bar keeps spinning on "starting" for a
+        // server that already died at the handshake.
+        const reason = error instanceof Error ? error.message : String(error);
+        this.updateStatus({
+          kind: 'serverUnavailable',
+          summary: 'ripr server failed to start.',
+          detail: `Server: ${server.source} (${server.detail})\n${reason}`,
+          nextStep: 'Run ripr: Show Output to see the server error, fix it, then run ripr: Restart Server.'
+        });
+        this.warnWithOutput(`ripr server failed to start: ${reason}`);
+      }
       throw error;
     }
     // If stop() ran during `await this.client.start()`, the generation no
