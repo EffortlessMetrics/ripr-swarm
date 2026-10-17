@@ -120,7 +120,25 @@ fn check(value: &Value, schema: &Value, root: &Value, location: &str) -> Result<
     if let Some(expected) = schema.get("type") {
         check_type(value, expected, location)?;
     }
-    if let Some(object) = value.as_object() {
+    if let Some(branches) = schema.get("oneOf").and_then(Value::as_array) {
+        let mut matched = 0usize;
+        for (index, branch) in branches.iter().enumerate() {
+            if check(value, branch, root, location).is_ok() {
+                matched += 1;
+            } else {
+                println!("oneOf branch {index} rejected the value");
+            }
+        }
+        if matched != 1 {
+            return Err(format!(
+                "{location}: matched {matched} of {} oneOf branches, expected exactly 1",
+                branches.len()
+            ));
+        }
+    }
+    if let Some(object) = value.as_object()
+        && schema.get("properties").is_some()
+    {
         check_object(object, schema, root, location)?;
     }
     if let Some(items) = value.as_array() {
@@ -235,6 +253,7 @@ const SUPPORTED_KEYWORDS: &[&str] = &[
     "items",
     "minLength",
     "minimum",
+    "oneOf",
     "properties",
     "required",
     "title",
@@ -254,6 +273,11 @@ fn unsupported_keywords(schema: &Value, found: &mut Vec<String>) {
     }
     for keyword in ["items", "additionalProperties"] {
         if let Some(nested) = schema.get(keyword) {
+            unsupported_keywords(nested, found);
+        }
+    }
+    if let Some(branches) = schema.get("oneOf").and_then(Value::as_array) {
+        for nested in branches {
             unsupported_keywords(nested, found);
         }
     }
@@ -434,6 +458,72 @@ fn published_doctor_schema_rejects_documents_the_schema_forbids() -> Result<(), 
     let mut undeclared_nested_field = base.clone();
     undeclared_nested_field["cache"]["free_form_note"] = Value::String("hello".to_string());
     assert_rejected("undeclared nested field", &undeclared_nested_field, &schema)?;
+
+    // #7663 review: `cache.artifact_ignore` is a `oneOf` union — the plain
+    // string verdicts (`no_artifacts` / `ignored` / `not_checked`) or an
+    // `unignored` object carrying the exact warning line. Each arm must
+    // discriminate: an unlisted string is neither arm, an empty object
+    // misses the required `unignored` key, and an `unignored` without its
+    // warning line claims evidence it does not carry.
+    let mut unlisted_verdict = base.clone();
+    unlisted_verdict["cache"]["artifact_ignore"] = Value::String("unknown".to_string());
+    assert_rejected(
+        "unlisted artifact-ignore verdict",
+        &unlisted_verdict,
+        &schema,
+    )?;
+
+    let mut empty_object = base.clone();
+    empty_object["cache"]["artifact_ignore"] = serde_json::json!({});
+    assert_rejected("empty artifact-ignore object", &empty_object, &schema)?;
+
+    let mut warningless_unignored = base.clone();
+    warningless_unignored["cache"]["artifact_ignore"] = serde_json::json!({"unignored": {}});
+    assert_rejected(
+        "unignored without its warning line",
+        &warningless_unignored,
+        &schema,
+    )?;
+
+    // The positive counterpart: a fully populated `unignored` arm stays legal,
+    // because that is the shape an un-ignored artifact root actually emits.
+    let mut populated_unignored = base.clone();
+    populated_unignored["cache"]["artifact_ignore"] =
+        serde_json::json!({"unignored": {"warning": "warning: add target/ripr/ to .gitignore"}});
+    check(&populated_unignored, &schema, &schema, "doctor").map_err(|error| {
+        format!("a populated unignored artifact-ignore must stay legal: {error}")
+    })?;
+
+    // #8276: `cache.artifact_tracking` is its own `oneOf` union, not a new
+    // `artifact_ignore` arm. Each arm must discriminate.
+    let mut unlisted_tracking = base.clone();
+    unlisted_tracking["cache"]["artifact_tracking"] = Value::String("ignored".to_string());
+    assert_rejected(
+        "unlisted artifact-tracking verdict",
+        &unlisted_tracking,
+        &schema,
+    )?;
+
+    let mut warningless_tracked = base.clone();
+    warningless_tracked["cache"]["artifact_tracking"] = serde_json::json!({"tracked": {}});
+    assert_rejected(
+        "tracked without its warning line",
+        &warningless_tracked,
+        &schema,
+    )?;
+
+    let mut missing_tracking = base.clone();
+    if let Some(cache) = missing_tracking["cache"].as_object_mut() {
+        cache.remove("artifact_tracking");
+    }
+    assert_rejected("missing artifact_tracking", &missing_tracking, &schema)?;
+
+    let mut populated_tracked = base.clone();
+    populated_tracked["cache"]["artifact_tracking"] =
+        serde_json::json!({"tracked": {"warning": "! untrack with git rm --cached"}});
+    check(&populated_tracked, &schema, &schema, "doctor").map_err(|error| {
+        format!("a populated tracked artifact-tracking must stay legal: {error}")
+    })?;
 
     let mut wrong_test_surface_type = base.clone();
     wrong_test_surface_type["test_surfaces"] = Value::String("rust".to_string());

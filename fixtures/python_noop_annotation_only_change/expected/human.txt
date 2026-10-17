@@ -3,11 +3,11 @@ mode: fast
 root: fixtures/python_noop_annotation_only_change/input
 config: <cwd>/fixtures/python_noop_annotation_only_change/input/ripr.toml
 
-Summary: 0 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 0 of 0 finding(s) unsuppressed
+Summary: 0 probes analyzed; 0 findings unsuppressed
 
 Changed file(s) by language: python = 1
 
-Analysis outcome: no changed line is behavior ripr checks (analysis complete; no_behavioral_candidates)
+Analysis outcome: no changed line is behavior ripr checks (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 0 candidate line(s), 0 probe(s), 0 finding(s)
 
 No diff-derived static exposure probes found.

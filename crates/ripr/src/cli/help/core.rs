@@ -1,6 +1,6 @@
 pub(super) const INIT_HELP: &str = r#"Write an optional repo policy file (ripr.toml) and, with --ci github, a non-blocking advisory workflow.
 
-Usage: ripr init [--root PATH] [--ci github] [--dry-run] [--force]
+Usage: ripr init [--root PATH] [--ci github] [--mcp] [--dry-run] [--force]
 
 `ripr init` is optional. It writes the built-in defaults to a repo-local
 ripr.toml so teams can commit, review, and tune policy. Missing ripr.toml is
@@ -10,11 +10,19 @@ not unlock basic CLI, editor, or pilot usefulness.
 Options:
   --root PATH      Workspace root where ripr.toml should be written. Defaults to current directory.
   --ci github      Also write .github/workflows/ripr.yml with advisory reports and optional SARIF rendering/upload.
+  --mcp            Also add the ripr MCP server to .mcp.json (Claude Code project config).
+                   Other servers in an existing file are kept; an existing
+                   `ripr` entry is kept unless --force; a symlink or a file
+                   that is not a JSON object is refused. The file is rewritten
+                   with sorted keys. Like --ci, --mcp keeps an existing
+                   ripr.toml and --force does not reset it. Codex config is
+                   user-global and is never written: init prints the
+                   `codex mcp add` command.
   --dry-run        Show the plan and the file bodies without writing anything.
                    Resolves the same preconditions as the real run, so it
                    fails the same way (existing file without --force, root
                    that is not a directory) instead of reporting success.
-  --force          Overwrite an existing ripr.toml or generated workflow.
+  --force          Overwrite an existing ripr.toml, generated workflow, or ripr MCP entry.
 
 Generated config:
   - uses draft analysis mode and includes unchanged tests
@@ -266,6 +274,14 @@ Options:
                            unsuppressed findings only. Relative PATH
                            resolves against --root; a missing or malformed
                            policy fails the run.
+  --output-dir DIR         With a named --diff file, write native badge.json,
+                           detail.json and human.txt from one analysis. DIR must
+                           be new (parent exists). Verify manifest.json and member
+                           hashes before consuming the set. Does not combine with
+                           --format/--json, scope switches, --gap-ledger,
+                           --write-artifact or --suppression-policy. Bounded input
+                           inventory refuses drift, nonregular files and external
+                           module reads. See docs/OUTPUT_SCHEMA.md.
   --write-artifact PATH    Write a full-fidelity check artifact (schema
                            ripr-check-artifact-v1) for later
                            `ripr explain --from PATH` /

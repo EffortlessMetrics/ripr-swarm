@@ -153,8 +153,15 @@ fn doc_section(doc: &str, heading: &str) -> Result<String, String> {
 #[test]
 fn docs_keep_the_canonical_role_vocabulary() -> Result<(), String> {
     assert_doc_command_routes(COMMAND_HIERARCHY_DOC)?;
-    if first_bash_block(ROOT_README)? != "cargo install ripr ripr check" {
-        return Err("README first run must install ripr and inspect a change".to_string());
+    // The lead install is the checksummed prebuilt archive (no Rust toolchain,
+    // #5311); `cargo install ripr` is the documented compile-from-source
+    // alternative below it. The block must verify the download and end by
+    // inspecting a change.
+    let first_run = first_bash_block(ROOT_README)?;
+    if !first_run.contains("sha256sum -c") || !first_run.ends_with(" ripr check") {
+        return Err(
+            "README first run must install a checksummed ripr and inspect a change".to_string(),
+        );
     }
     for target in [
         "docs/QUICKSTART.md#cli-first-hour",
@@ -186,6 +193,26 @@ fn docs_keep_the_canonical_role_vocabulary() -> Result<(), String> {
         "REPAIR_ATTEMPT.md#governed-python-sequence",
     ] {
         assert_contains("Quickstart repair continuation", &repair, target)?;
+    }
+    Ok(())
+}
+
+/// Both docs say the release has macOS archives, and stock macOS has `shasum`
+/// but no `sha256sum`. A verify step that only names `sha256sum` fails there
+/// before extraction, so the copy-paste block must keep the `shasum` fallback
+/// and the docs must name the macOS target triples.
+#[test]
+fn prebuilt_install_block_verifies_on_macos() -> Result<(), String> {
+    for (name, doc) in [
+        ("README.md", ROOT_README),
+        ("docs/QUICKSTART.md", QUICKSTART_DOC),
+    ] {
+        let block = first_bash_block(doc)?;
+        assert_contains(name, &block, "sha256sum -c - || shasum -a 256 -c -")?;
+        let flat = doc.replace('\n', " ");
+        for triple in ["aarch64-apple-darwin", "x86_64-apple-darwin"] {
+            assert_contains(name, &flat, triple)?;
+        }
     }
     Ok(())
 }
@@ -633,6 +660,7 @@ const PORTABLE_TESTS: &[&str] = &[
     "exhaustive_help_marks_non_public_rows_visibly",
     "help_screens_state_the_surfaces_the_parsers_accept",
     "bare_groups_display_their_documented_help",
+    "discovery_rows_require_path_and_example_in_the_same_object",
     "group_help_preserves_explicit_errors_and_gate_flag_alias",
     "calibrate_help_names_how_to_produce_the_imported_artifacts",
     "calibrate_help_discloses_mutants_json_only_denominator",
@@ -674,7 +702,7 @@ fn packaged_help_target_runs_every_case_and_rejects_missing_shared_asset() -> Re
         .iter()
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
-    if actual != expected || actual.len() != 23 {
+    if actual != expected || actual.len() != 24 {
         return Err(format!(
             "portable test inventory drifted: expected {expected:?}, got {actual:?}"
         ));
@@ -683,10 +711,10 @@ fn packaged_help_target_runs_every_case_and_rejects_missing_shared_asset() -> Re
     execute.arg("--test-threads=1").current_dir(&scratch.0);
     let result = require_success(run(execute)?, "extracted help execution")?;
     let text = String::from_utf8(result.stdout).map_err(|error| error.to_string())?;
-    if !text.contains("test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out")
+    if !text.contains("test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out")
     {
         return Err(format!(
-            "extracted target did not run all 23 portable cases:\n{text}"
+            "extracted target did not run all 24 portable cases:\n{text}"
         ));
     }
     // The successful compile, exact inventory and execution above establish

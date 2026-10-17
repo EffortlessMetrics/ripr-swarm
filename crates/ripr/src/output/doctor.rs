@@ -21,7 +21,12 @@
 //! claim an existing file does not exist (#5101).
 
 use crate::config::{CONFIG_FILE_NAME, RiprConfig, load_for_root};
-use crate::domain::{LanguageId, LanguageStatus};
+use crate::domain::NextActionDoctorRecovery;
+use crate::domain::{
+    CanonicalNextActionV1, LanguageId, LanguageStatus, NextActionCurrentness, NextActionDiffSource,
+    NextActionInput, NextActionProducer, NextActionStop, current_command_platform,
+    select_canonical_next_action,
+};
 pub(crate) use crate::output::path::command_root_display as doctor_command_root_display;
 use crate::output::path::{
     absolute_command_root_display as absolute_doctor_root_display, human_path,
@@ -681,6 +686,67 @@ pub(crate) struct DoctorCacheStatus {
     pub(crate) size_bytes: u64,
     /// The human display of `size_bytes` (`B`, `KB`, `MB`, or `GB`).
     pub(crate) size_display: String,
+    /// Whether git ignore rules cover ripr's own artifact root
+    /// (`target/ripr`) under this root (#7663). The human screen prints the
+    /// same evidence; the typed field keeps `doctor --json` as complete as
+    /// the human report (#8257 review).
+    pub(crate) artifact_ignore: DoctorArtifactIgnore,
+    /// Whether git already tracks files under the artifact root (#8276).
+    /// Separate from `artifact_ignore`: an ignore rule does not untrack
+    /// files committed earlier, so `git add -A` keeps refreshing them.
+    pub(crate) artifact_tracking: DoctorArtifactTracking,
+}
+
+/// Whether git ignore rules cover ripr's own artifact root (`target/ripr`)
+/// under the doctor root (#7663).
+///
+/// Standard Python `.gitignore` templates never list Rust-conventional
+/// `target/`, so `git add -A` can commit ripr's reports into the user's
+/// history; doctor names that before it happens. The verdict is decided by
+/// `git check-ignore` (the full ignore semantics, not a line-by-line
+/// reimplementation) and is fail-closed: only a positive "not ignored"
+/// answer produces the warning.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DoctorArtifactIgnore {
+    /// `target/ripr` does not exist under the root: there is nothing to
+    /// cover yet.
+    NoArtifacts,
+    /// Git ignore rules cover the artifact root.
+    Ignored,
+    /// The artifact root exists and git positively reports it as not
+    /// ignored. `warning` is the exact line the human screen prints.
+    Unignored {
+        /// The actionable warning, including the exact `.gitignore` entry.
+        warning: String,
+    },
+    /// Coverage could not be established: the root is not a git repository,
+    /// git is unavailable, or the probe hit its deadline. Doctor stays quiet
+    /// rather than claiming a checked fact it could not establish.
+    NotChecked,
+}
+
+/// Whether git's index tracks files under ripr's artifact root
+/// (`target/ripr`) (#8276).
+///
+/// Orthogonal to [`DoctorArtifactIgnore`]: a repository can ignore
+/// `/target/ripr/` while earlier reports stay tracked, so the reports keep
+/// being refreshed by `git add -A` and diffed by `ripr check`. Fail-closed:
+/// only a positive non-empty `git ls-files --cached` answer warns.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DoctorArtifactTracking {
+    /// The index holds no entries under the artifact root.
+    Untracked,
+    /// The index holds entries under the artifact root. `warning` is the
+    /// exact line the human screen prints, naming the remediation.
+    Tracked {
+        /// The actionable warning, including the exact untrack command.
+        warning: String,
+    },
+    /// The index could not be read: not a git repository, git unavailable,
+    /// or the probe hit its deadline or output cap. Doctor stays quiet.
+    NotChecked,
 }
 
 /// The test surface detected for one language.
@@ -1115,6 +1181,144 @@ impl DoctorRootPath {
             Self::Directory => "- Rerun with `--root <path>` naming the repository directory",
         }
     }
+}
+
+/// The precise doctor recovery for a first-command state, when the state is
+/// one: the failing check and its exact recovery route. Runnable states and
+/// the git-environment states recommend a command instead, so they bind no
+/// recovery (the selector never invents one). Pure and infallible: the
+/// canonical projection and the renderer's defensive fallback share it, so
+/// the two can never disagree on the mapping.
+pub(crate) fn doctor_recovery_for_first_command(
+    first: DoctorFirstCommand,
+    report: &DoctorReport,
+) -> Option<NextActionDoctorRecovery> {
+    let (check_name, recovery_route) = match first {
+        DoctorFirstCommand::MissingRoot => (
+            "root_directory".to_string(),
+            "fix the selected root, then rerun `ripr doctor`".to_string(),
+        ),
+        DoctorFirstCommand::InvalidConfig => (
+            "config".to_string(),
+            "correct `ripr.toml` so it loads, then rerun `ripr doctor`".to_string(),
+        ),
+        DoctorFirstCommand::FailedPrerequisites => {
+            let failed_check = report
+                .checks
+                .iter()
+                .find(|check| check.name == "cargo_toml" && check.status == DoctorCheckStatus::Fail)
+                .map(|check| check.name.to_string());
+            let failed_runtime = || {
+                report
+                    .runtime_probes
+                    .iter()
+                    .find(|probe| probe.required && probe.status == DoctorStatus::Fail)
+                    .map(|probe| probe.tool.clone())
+            };
+            (
+                failed_check
+                    .or_else(failed_runtime)
+                    .unwrap_or_else(|| "prerequisites".to_string()),
+                "fix the failing checks above, then rerun `ripr doctor`".to_string(),
+            )
+        }
+        DoctorFirstCommand::OutsideGit
+        | DoctorFirstCommand::UnbornHead
+        | DoctorFirstCommand::SavedDiff
+        | DoctorFirstCommand::Worktree
+        | DoctorFirstCommand::DefaultCheck => return None,
+    };
+    Some(NextActionDoctorRecovery {
+        check_name,
+        recovery_route,
+    })
+}
+
+/// Project doctor's canonical action from its first-command state. `None`
+/// when the state names a command to run rather than a precise recovery; the
+/// check-name and recovery binding come from
+/// [`doctor_recovery_for_first_command`]. Doctor reads no diff, so the bound
+/// source is the fixed no-base committed mode, never a live-tree claim.
+pub(crate) fn canonical_next_action_for_doctor(
+    report: &DoctorReport,
+    first: DoctorFirstCommand,
+    root: &Path,
+) -> Result<Option<CanonicalNextActionV1>, String> {
+    let Some(recovery) = doctor_recovery_for_first_command(first, report) else {
+        return Ok(None);
+    };
+    let root_display = absolute_doctor_root_display(root)?;
+    let input = NextActionInput {
+        producer: NextActionProducer::Doctor,
+        root: root_display,
+        diff_source: NextActionDiffSource::Committed {
+            base: None,
+            head: None,
+        },
+        item_id: recovery.check_name.clone(),
+        check_item: None,
+        card_item: None,
+        item_candidates: Vec::new(),
+        attempts: Vec::new(),
+        currentness: NextActionCurrentness {
+            head_expected: None,
+            head_observed: None,
+            config_expected: None,
+            config_observed: None,
+        },
+        offered_command: None,
+        route_admitted: true,
+        route_refusal: None,
+        missing_input: None,
+        platform: current_command_platform(),
+        limitation: None,
+        limitation_route: None,
+        detail_route: recovery.recovery_route.clone(),
+        transition_from: "doctor_check_failed".to_string(),
+        transition_to: None,
+        restart_route: "ripr doctor".to_string(),
+        check_case: None,
+        doctor_recovery: Some(recovery),
+        pilot_delegation: None,
+        alternatives: Vec::new(),
+        limitations: Vec::new(),
+    };
+    select_canonical_next_action(&input).map(Some)
+}
+
+/// The `- Safe next action:` line when the first command is runnable.
+pub(crate) const SAFE_NEXT_ACTION_RUN_FIRST_LINE: &str = "- Safe next action: run the recommended first command below; it produces the evidence the packet is composed from";
+
+/// The `- Safe next action:` line for a precise doctor recovery, or `None`
+/// when a runnable first command follows. The canonical decision picks the
+/// line family: a doctor-recovery stop renders that check's recovery prose.
+/// A projection that cannot be built (a producer bug, never a doctor state)
+/// falls back to the shared recovery mapping, which renders the same family
+/// the projection would, so the render stays total.
+pub(crate) fn safe_next_action_recovery_line(
+    report: &DoctorReport,
+    first: DoctorFirstCommand,
+    root: &Path,
+) -> Option<&'static str> {
+    let check_name = match canonical_next_action_for_doctor(report, first, root) {
+        Ok(Some(action)) => match action.stop() {
+            Some(NextActionStop::DoctorRecovery { check_name, .. }) => check_name.clone(),
+            _ => return None,
+        },
+        Ok(None) => return None,
+        Err(_) => doctor_recovery_for_first_command(first, report)?.check_name,
+    };
+    Some(match check_name.as_str() {
+        "root_directory" => {
+            "- Safe next action: fix the selected root first (see below); no check command can run until it exists"
+        }
+        "config" => {
+            "- Safe next action: correct `ripr.toml` so it loads; no check command can run until it does"
+        }
+        _ => {
+            "- Safe next action: fix the `!` checks above; no check command can run until they pass"
+        }
+    })
 }
 
 /// Evaluate the doctor core checks (root, Cargo.toml, config, tool
@@ -4167,6 +4371,8 @@ mod tests {
                 relocated_by_env: false,
                 size_bytes: 0,
                 size_display: "0 B".to_string(),
+                artifact_ignore: DoctorArtifactIgnore::NoArtifacts,
+                artifact_tracking: DoctorArtifactTracking::Untracked,
             },
             test_surfaces: Vec::new(),
             perl_preview: None,
@@ -4225,6 +4431,10 @@ mod tests {
                 relocated_by_env: true,
                 size_bytes: 1024,
                 size_display: "1.00 KB".to_string(),
+                artifact_ignore: DoctorArtifactIgnore::Ignored,
+                artifact_tracking: DoctorArtifactTracking::Tracked {
+                    warning: "! tracked".to_string(),
+                },
             },
             test_surfaces: vec![DoctorTestSurface {
                 language: "python".to_string(),
@@ -4257,6 +4467,11 @@ mod tests {
             serde_json::Value::Null
         );
         assert_eq!(parsed["cache"]["relocated_by_env"], true);
+        assert_eq!(parsed["cache"]["artifact_ignore"], "ignored");
+        assert_eq!(
+            parsed["cache"]["artifact_tracking"]["tracked"]["warning"],
+            "! tracked"
+        );
         assert_eq!(parsed["test_surfaces"][0]["framework"], "pytest");
         assert_eq!(parsed["test_surfaces"][0]["evidence"], "python: pytest");
         Ok(())
@@ -5433,6 +5648,82 @@ mod tests {
             return Err(format!(
                 "descendant {pid} outlived the doctor probe timeout"
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn safe_next_action_line_follows_the_canonical_doctor_decision() -> Result<(), String> {
+        let root = Path::new(".");
+        let pass = |report: &mut DoctorReport, name: &'static str| {
+            report.add_check(name, DoctorStatus::Pass, None);
+        };
+
+        let mut config_fail = DoctorReport::new(".");
+        pass(&mut config_fail, "root_directory");
+        pass(&mut config_fail, "tool_git");
+        pass(&mut config_fail, "git_repository");
+        config_fail.add_check("config", DoctorStatus::Fail, Some("bad".to_string()));
+        let first = DoctorFirstCommand::resolve_for_report(&config_fail, || false);
+        let action = canonical_next_action_for_doctor(&config_fail, first, root)?
+            .ok_or_else(|| "config failure binds a precise recovery".to_string())?;
+        assert_eq!(action.producer(), NextActionProducer::Doctor);
+        assert!(matches!(
+            action.stop(),
+            Some(NextActionStop::DoctorRecovery { check_name, .. }) if check_name == "config"
+        ));
+        assert_eq!(
+            safe_next_action_recovery_line(&config_fail, first, root),
+            Some(
+                "- Safe next action: correct `ripr.toml` so it loads; no check command can run until it does"
+            )
+        );
+
+        let mut manifest_fail = DoctorReport::new(".");
+        pass(&mut manifest_fail, "root_directory");
+        pass(&mut manifest_fail, "tool_git");
+        pass(&mut manifest_fail, "git_repository");
+        manifest_fail.add_check("cargo_toml", DoctorStatus::Fail, Some("none".to_string()));
+        let first = DoctorFirstCommand::resolve_for_report(&manifest_fail, || false);
+        let line = safe_next_action_recovery_line(&manifest_fail, first, root);
+        assert_eq!(
+            line,
+            Some(
+                "- Safe next action: fix the `!` checks above; no check command can run until they pass"
+            )
+        );
+
+        let mut missing_root = DoctorReport::new(".");
+        missing_root.add_check("root_directory", DoctorStatus::Fail, Some("x".to_string()));
+        let first = DoctorFirstCommand::resolve_for_report(&missing_root, || false);
+        assert_eq!(first, DoctorFirstCommand::MissingRoot);
+        assert_eq!(
+            safe_next_action_recovery_line(&missing_root, first, root),
+            Some(
+                "- Safe next action: fix the selected root first (see below); no check command can run until it exists"
+            )
+        );
+
+        // Negative control: a runnable first command binds no recovery, so
+        // no recovery line is selected and the shared fallback maps the
+        // same states to the same family.
+        let mut healthy = DoctorReport::new(".");
+        pass(&mut healthy, "root_directory");
+        pass(&mut healthy, "tool_git");
+        pass(&mut healthy, "git_repository");
+        for runnable in [
+            DoctorFirstCommand::DefaultCheck,
+            DoctorFirstCommand::Worktree,
+            DoctorFirstCommand::SavedDiff,
+            DoctorFirstCommand::OutsideGit,
+            DoctorFirstCommand::UnbornHead,
+        ] {
+            assert!(canonical_next_action_for_doctor(&healthy, runnable, root)?.is_none());
+            assert!(doctor_recovery_for_first_command(runnable, &healthy).is_none());
+            assert_eq!(
+                safe_next_action_recovery_line(&healthy, runnable, root),
+                None
+            );
         }
         Ok(())
     }

@@ -45,7 +45,11 @@ a Windows lib run at the exact base is the discriminator.
 import scan. Doctor emits one `test_surfaces[]` row per confirmed
 framework. The singular `detect_python_test_framework` is pytest-first
 primary-of-set for adapter repo-input, not mixed catalog authority.
-Django `tests.py` admission stays #7706.
+Django `tests.py` admission landed in #7706: the detector reuses the
+shared `is_test_file` predicate (`tests.py` / `test.py` / `*_test.py`,
+files under a `tests`/`test` component, `.py` only) and descends one
+level into immediate app directories, keeping the 64-entry / 4096-byte
+prefix bounds.
 
 A 4096-byte evidence prefix that cuts `import unittest_extra` after
 `import unittest` is not unittest evidence. Read one extra byte; if the

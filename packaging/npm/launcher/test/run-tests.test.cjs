@@ -4,6 +4,9 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const REQUIRED_PORTABLE_TESTS = Object.freeze([
+  "missing native executable gives exact recovery for every registered target",
+  "public bin missing-native failure gives exact recovery after a directory move",
+  "public bin simulated unsupported platforms fail without reinstall advice or stdout",
   "public bin missing-library failure gives exact recovery after a directory move",
   "public bin preserves internal import and parser failures without library recovery advice",
   "public bin library recovery never guesses a version from invalid or unavailable metadata",

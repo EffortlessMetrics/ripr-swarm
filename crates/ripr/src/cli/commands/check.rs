@@ -287,6 +287,7 @@ const CHECK_VALUE_OPTIONS: &[&str] = &[
     "--gap-ledger",
     "--perl-facts",
     "--suppression-policy",
+    "--output-dir",
     "--write-artifact",
     "--git-timeout",
 ];
@@ -390,7 +391,7 @@ fn select_output_format(
 /// through here; a rendered `unsupported_input` result keeps its original
 /// report instead of appending a refusal. Argv usage errors return before
 /// the envelope snapshot exists and stay prose-only.
-fn refuse_check(
+pub(super) fn refuse_check(
     envelope_input: &CheckInput,
     format: OutputFormat,
     error: impl Into<CoreError>,
@@ -420,7 +421,7 @@ fn refuse_check(
 /// `docs/EXIT_CODES.md`). Formats are matched explicitly — a new machine
 /// format must decide its refusal shape here instead of silently inheriting
 /// the zero-byte gap.
-fn machine_refusal_document(
+pub(super) fn machine_refusal_document(
     envelope_input: &CheckInput,
     format: OutputFormat,
     error: &CoreError,
@@ -510,6 +511,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         help::print_check_help(all);
         return Ok(());
     }
+    let mut output_dir: Option<PathBuf> = None;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -600,6 +602,13 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                     "--suppression-policy",
                 )?));
             }
+            "--output-dir" => {
+                i += 1;
+                if output_dir.is_some() {
+                    return Err("pass --output-dir once".into());
+                }
+                output_dir = Some(PathBuf::from(expect_value(args, i, "--output-dir")?));
+            }
             "--write-artifact" => {
                 i += 1;
                 write_artifact = Some(PathBuf::from(expect_value(args, i, "--write-artifact")?));
@@ -619,6 +628,22 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             other => return Err(unknown_argument("check", other)),
         }
         i += 1;
+    }
+    if output_dir.is_some()
+        && (input
+            .diff_file
+            .as_deref()
+            .is_none_or(|path| path == Path::new("-"))
+            || format_selection.is_some()
+            || worktree_explicitly_provided
+            || committed_explicitly_provided
+            || candidate_tree.is_some()
+            || candidate_base.is_some()
+            || gap_ledger.is_some()
+            || write_artifact.is_some()
+            || input.suppression_policy.is_some())
+    {
+        return Err("--output-dir requires a named --diff file and cannot be combined with --format/--json, --worktree/--committed, --candidate-tree/--candidate-base, --gap-ledger, --write-artifact or --suppression-policy".into());
     }
     // #6834: refusal-envelope context for every failure below. Argv usage
     // errors above return before this snapshot exists and stay prose-only.
@@ -643,7 +668,8 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         // root is checked: the implicit path below legitimately walks up from
         // the current directory.
         ensure_command_root(&input.root, "check").map_err(|err| {
-            refuse_check(
+            super::check_fanout::refuse(
+                output_dir.as_deref(),
                 &envelope_input,
                 effective_format,
                 CoreError::repository_root_unusable(err),
@@ -651,13 +677,21 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         })?;
     } else {
         resolve_implicit_workspace_root(&mut input).map_err(|err| {
-            refuse_check(
+            super::check_fanout::refuse(
+                output_dir.as_deref(),
                 &envelope_input,
                 effective_format,
                 CoreError::repository_root_unusable(err),
             )
         })?;
     }
+    let mut fanout_custody = output_dir
+        .as_deref()
+        .map(|destination| super::check_fanout::Custody::capture(&input, destination))
+        .transpose()
+        .map_err(|error| {
+            super::check_fanout::refuse(output_dir.as_deref(), &input, effective_format, error)
+        })?;
     // The root is now the effective one (resolved for implicit runs).
     envelope_input = input.clone();
     // RIPR-SPEC-0084: when no --base was explicitly given AND no --diff file
@@ -677,12 +711,25 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         git_timeout_explicitly_provided,
         std::env::var("RIPR_GIT_TIMEOUT"),
     )
-    .map_err(|err| refuse_check(&envelope_input, effective_format, err))?
-    {
+    .map_err(|err| {
+        super::check_fanout::refuse(
+            super::check_fanout::refusal_destination(
+                fanout_custody.as_ref(),
+                output_dir.as_deref(),
+            ),
+            &envelope_input,
+            effective_format,
+            err,
+        )
+    })? {
         input.git_timeout = timeout;
     }
     if worktree_explicitly_provided && input.diff_file.is_some() {
-        return Err(refuse_check(
+        return Err(super::check_fanout::refuse(
+            super::check_fanout::refusal_destination(
+                fanout_custody.as_ref(),
+                output_dir.as_deref(),
+            ),
             &envelope_input,
             effective_format,
             "check --worktree cannot be combined with --diff".to_string(),
@@ -690,7 +737,11 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     }
     if committed_explicitly_provided {
         if worktree_explicitly_provided {
-            return Err(refuse_check(
+            return Err(super::check_fanout::refuse(
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 "check --committed and --worktree select different diff sources; pass one"
@@ -698,14 +749,22 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             ));
         }
         if input.diff_file.is_some() {
-            return Err(refuse_check(
+            return Err(super::check_fanout::refuse(
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 "check --committed cannot be combined with --diff".to_string(),
             ));
         }
         if candidate_tree.is_some() {
-            return Err(refuse_check(
+            return Err(super::check_fanout::refuse(
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 "check --committed cannot be combined with --candidate-tree".to_string(),
@@ -726,7 +785,8 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                 | OutputFormat::Github
         )
     {
-        return Err(refuse_check(
+        return Err(super::check_fanout::refuse(
+            super::check_fanout::refusal_destination(fanout_custody.as_ref(), output_dir.as_deref()),
             &envelope_input,
             effective_format,
             "--suppression-policy applies to the findings-based check formats (human, human-full, json, github); \
@@ -743,13 +803,30 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         let base = match candidate_base.as_deref() {
             Some(explicit) => crate::domain::GitCandidateBase::Treeish(
                 crate::domain::GitTreeish::new(explicit).map_err(|error| {
-                    refuse_check(&envelope_input, effective_format, error.to_string())
+                    super::check_fanout::refuse(
+                        super::check_fanout::refusal_destination(
+                            fanout_custody.as_ref(),
+                            output_dir.as_deref(),
+                        ),
+                        &envelope_input,
+                        effective_format,
+                        error.to_string(),
+                    )
                 })?,
             ),
             None => crate::domain::GitCandidateBase::EmptyTree,
         };
-        let candidate = crate::domain::GitObjectId::parse(tree)
-            .map_err(|error| refuse_check(&envelope_input, effective_format, error.to_string()))?;
+        let candidate = crate::domain::GitObjectId::parse(tree).map_err(|error| {
+            super::check_fanout::refuse(
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
+                &envelope_input,
+                effective_format,
+                error.to_string(),
+            )
+        })?;
         input.git_candidate = Some(crate::domain::GitCandidateSubject::new(
             input.root.clone(),
             base,
@@ -759,7 +836,8 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // #3278 review: --candidate-base without --candidate-tree is a
     // dangling input the run would silently ignore; fail closed.
     if candidate_base.is_some() && candidate_tree.is_none() {
-        return Err(refuse_check(
+        return Err(super::check_fanout::refuse(
+            super::check_fanout::refusal_destination(fanout_custody.as_ref(), output_dir.as_deref()),
             &envelope_input,
             effective_format,
             "--candidate-base requires --candidate-tree: name the candidate tree the base applies to"
@@ -778,7 +856,11 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         RiprConfig::default()
     } else {
         load_for_root(&input.root).map_err(|err| {
-            refuse_check(
+            super::check_fanout::refuse(
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 config_load_refusal(&input.root, err),
@@ -811,7 +893,11 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             || matches!(format, OutputFormat::RepoExposureJson)
             || format.is_repo_scope());
     if subject_bound_with_live_repo_path {
-        return Err(refuse_check(
+        return Err(super::check_fanout::refuse(
+            super::check_fanout::refusal_destination(
+                fanout_custody.as_ref(),
+                output_dir.as_deref(),
+            ),
             &envelope_input,
             effective_format,
             format!(
@@ -835,7 +921,11 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         // identity re-reads a named file. A literal '-' in the cwd must
         // never let those unrelated bytes stand in for the consumed input.
         if input.diff_file.as_deref() == Some(Path::new("-")) {
-            return Err(refuse_check(
+            return Err(super::check_fanout::refuse(
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 format!(
@@ -858,7 +948,11 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         // literal and writable, so nothing is refused.
         if !crate::cli::commands_context::windows_stripped_components(path).is_empty() {
             let written = crate::cli::commands_context::windows_normalized_path(path);
-            return Err(refuse_check(
+            return Err(super::check_fanout::refuse(
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 format!(
@@ -877,7 +971,11 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         // vacuously. Fail closed until a subject-aware diff source
         // identity exists (R4 scope).
         if candidate_tree.is_some() {
-            return Err(refuse_check(
+            return Err(super::check_fanout::refuse(
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 format!(
@@ -887,7 +985,11 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             ));
         }
         if gap_ledger.is_some() {
-            return Err(refuse_check(
+            return Err(super::check_fanout::refuse(
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 format!(
@@ -897,7 +999,11 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             ));
         }
         if matches!(format, OutputFormat::RepoExposureJson) || format.is_repo_scope() {
-            return Err(refuse_check(
+            return Err(super::check_fanout::refuse(
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 format!(
@@ -920,7 +1026,11 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                 .producer()
                 .is_some_and(app::is_managed_perl_producer)
         {
-            return Err(refuse_check(
+            return Err(super::check_fanout::refuse(
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 format!(
@@ -955,12 +1065,33 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                         CoreError::config_invalid(message)
                     }
                 };
-                refuse_check(&envelope_input, effective_format, refusal)
+                super::check_fanout::refuse(
+                    super::check_fanout::refusal_destination(
+                        fanout_custody.as_ref(),
+                        output_dir.as_deref(),
+                    ),
+                    &envelope_input,
+                    effective_format,
+                    refusal,
+                )
             },
         )?;
         apply_to_check_input(&mut input, &config, explicit);
         // Post-subject-config snapshot: the candidate tree's config won.
         envelope_input = input.clone();
+    }
+    if let Some(custody) = fanout_custody.as_mut() {
+        custody.bind_config(&config).map_err(|error| {
+            super::check_fanout::refuse(
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
+                &envelope_input,
+                effective_format,
+                error,
+            )
+        })?;
     }
     // #2644: `fast` is currently behaviorally identical to `draft`. The notice
     // fires on the EFFECTIVE mode after `apply_to_check_input`, not on argv
@@ -1030,12 +1161,22 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         eprintln!("{}", terminal_safe(warning));
     }
     if format.is_repo_scope() {
-        validate_repo_scope_diff_inputs(&input, base_explicitly_provided)
-            .map_err(|err| refuse_check(&envelope_input, effective_format, err))?;
+        validate_repo_scope_diff_inputs(&input, base_explicitly_provided).map_err(|err| {
+            super::check_fanout::refuse(
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
+                &envelope_input,
+                effective_format,
+                err,
+            )
+        })?;
     }
     if committed_explicitly_provided {
         if gap_ledger.is_some() {
-            return Err(refuse_check(
+            return Err(super::check_fanout::refuse(
+            super::check_fanout::refusal_destination(fanout_custody.as_ref(), output_dir.as_deref()),
                 &envelope_input,
                 effective_format,
                 "check --committed selects a diff source; --gap-ledger renders a supplied ledger and reads no diff"
@@ -1043,7 +1184,11 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             ));
         }
         if format.is_repo_scope() || matches!(format, OutputFormat::RepoExposureJson) {
-            return Err(refuse_check(
+            return Err(super::check_fanout::refuse(
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
                 &envelope_input,
                 effective_format,
                 format!(
@@ -1055,10 +1200,29 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     }
     if let Some(gap_ledger) = gap_ledger.as_ref() {
         write_stdout_chunked(
-            &render_check_gap_ledger_badge(gap_ledger, &format, &config)
-                .map_err(|err| refuse_check(&envelope_input, effective_format, err))?,
+            &render_check_gap_ledger_badge(gap_ledger, &format, &config).map_err(|err| {
+                super::check_fanout::refuse(
+                    super::check_fanout::refusal_destination(
+                        fanout_custody.as_ref(),
+                        output_dir.as_deref(),
+                    ),
+                    &envelope_input,
+                    effective_format,
+                    err,
+                )
+            })?,
         )
-        .map_err(|err| refuse_check(&envelope_input, effective_format, err))?;
+        .map_err(|err| {
+            super::check_fanout::refuse(
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
+                &envelope_input,
+                effective_format,
+                err,
+            )
+        })?;
         return Ok(());
     }
     // #4945: the sink is wired BEFORE every repo-format path so the
@@ -1126,7 +1290,17 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                 Ok(())
             },
         )
-        .map_err(|err| refuse_check(&envelope_input, effective_format, err))?;
+        .map_err(|err| {
+            super::check_fanout::refuse(
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
+                &envelope_input,
+                effective_format,
+                err,
+            )
+        })?;
         // Producer `completed` was held until the streaming stdout write
         // finished; a failed write already dropped the sink, which projected
         // `failed` instead.
@@ -1192,7 +1366,17 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     };
     let mut output = match output_result {
         Ok(output) => output,
-        Err(err) => return Err(refuse_check(&envelope_input, effective_format, err)),
+        Err(err) => {
+            return Err(super::check_fanout::refuse(
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
+                &envelope_input,
+                effective_format,
+                err,
+            ));
+        }
     };
     // The findings formats apply suppression only through the explicit flag.
     // Disclose a detected default without parsing it or changing stdout/exit
@@ -1230,7 +1414,17 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             &output.findings,
             worktree_run,
         )
-        .map_err(|err| refuse_check(&envelope_input, effective_format, err))?;
+        .map_err(|err| {
+            super::check_fanout::refuse(
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
+                &envelope_input,
+                effective_format,
+                err,
+            )
+        })?;
     }
     // RIPR-SPEC-0083: disclose when no scope was provided and the result is empty.
     // #4012: gate on what was actually analyzed, not on what was typed. A
@@ -1258,10 +1452,18 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         if let Some(base) = output.base.as_deref() {
             let root = &limited_check_input.root;
             let timeout = limited_check_input.git_timeout;
+            let base_commit = analysis::resolve_base_commit(root, Some(base), timeout);
+            let head_commit = analysis::resolve_base_commit(root, Some("HEAD"), timeout);
+            // The candidate probe spawns Git subprocesses; only an equal
+            // resolution can use its answer (#7644).
+            let another_ref_available = base_commit.is_some()
+                && base_commit == head_commit
+                && analysis::another_base_candidate_exists(root, timeout);
             if let Some(hedge) = default_base_is_head_hedge(
                 base,
-                analysis::resolve_base_commit(root, Some(base), timeout).as_deref(),
-                analysis::resolve_base_commit(root, Some("HEAD"), timeout).as_deref(),
+                base_commit.as_deref(),
+                head_commit.as_deref(),
+                another_ref_available,
             ) {
                 eprintln!("{}", terminal_safe(hedge));
             }
@@ -1336,6 +1538,9 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // candidate tree, or HEAD content behind uncommitted edits) prints no
     // route: it could stub an expression the finding never saw.
     let analyzed_live_files = candidate_tree.is_none() && !output.unanalyzed_working_tree;
+    let machine_drill_in = output_dir
+        .as_ref()
+        .map(|_| app::FindingDrillIn::Commands(navigation.clone()));
     let navigation = if matches!(format, OutputFormat::Human) && analyzed_live_files {
         navigation.with_stub_route(app::test_stub::check_stub_route(
             &limited_check_input.root,
@@ -1357,6 +1562,62 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         worktree_run,
         input_diff_file_is_some || candidate_tree.is_some(),
     );
+    if let (Some(_destination), Some(custody)) = (output_dir.as_deref(), fanout_custody.as_ref()) {
+        custody.verify().map_err(|error| {
+            super::check_fanout::refuse(
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
+                &envelope_input,
+                effective_format,
+                error,
+            )
+        })?;
+        let mut documents = Vec::new();
+        for (member_format, name) in super::check_fanout::MEMBERS {
+            let navigation = if member_format == OutputFormat::Human {
+                Some(&drill_in)
+            } else {
+                machine_drill_in.as_ref()
+            };
+            let document = app::render_check_with_config_and_navigation_and_progress(
+                &output,
+                &member_format,
+                &config,
+                navigation,
+                progress_sink,
+                provenance,
+            )
+            .map_err(|error| {
+                super::check_fanout::refuse(
+                    super::check_fanout::refusal_destination(
+                        fanout_custody.as_ref(),
+                        output_dir.as_deref(),
+                    ),
+                    &envelope_input,
+                    effective_format,
+                    error,
+                )
+            })?;
+            documents.push((name, document));
+        }
+        let exit = analysis_outcome_exit_result("check", output.analysis_outcome.as_ref());
+        super::check_fanout::publish(
+            custody.destination(),
+            &documents,
+            custody.identity(&limited_check_input, &config),
+            true,
+            exit.is_ok(),
+            exit.as_ref().err().map(String::as_str),
+            || custody.verify(),
+        )?;
+        exit?;
+        if let Some(sink) = &progress {
+            sink.commit_success();
+        }
+        return Ok(());
+    }
     write_stdout_chunked(
         &app::render_check_with_config_and_navigation_and_progress(
             &output,
@@ -1366,9 +1627,29 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             progress_sink,
             provenance,
         )
-        .map_err(|err| refuse_check(&envelope_input, effective_format, err))?,
+        .map_err(|err| {
+            super::check_fanout::refuse(
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
+                &envelope_input,
+                effective_format,
+                err,
+            )
+        })?,
     )
-    .map_err(|err| refuse_check(&envelope_input, effective_format, err))?;
+    .map_err(|err| {
+        super::check_fanout::refuse(
+            super::check_fanout::refusal_destination(
+                fanout_custody.as_ref(),
+                output_dir.as_deref(),
+            ),
+            &envelope_input,
+            effective_format,
+            err,
+        )
+    })?;
     // The producer's unsupported result is already on stdout. Keep that
     // report, including retained findings and coverage identity; appending a
     // refusal here would corrupt machine output. Genuine partial reports
@@ -1385,16 +1666,24 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
 /// The stderr warning for an empty default-base result when the default base
 /// and HEAD each resolve to the same commit after analysis. It states those
 /// two later observations only; it does not attribute the analyzed range.
-/// `None` unless both commits resolved and are equal.
+/// `None` unless both commits resolved and are equal, and some other branch
+/// could actually serve as the advised `--base` (#7644): in a single-branch
+/// repository the Start-here action (commit a change, or `--worktree`) is
+/// the only actionable remediation, so the `--base` advice stays silent.
 fn default_base_is_head_hedge(
     base: &str,
     base_commit: Option<&str>,
     head_commit: Option<&str>,
+    another_ref_available: bool,
 ) -> Option<String> {
     match (base_commit, head_commit) {
-        (Some(base_commit), Some(head_commit)) if base_commit == head_commit => Some(format!(
-            "ripr: after analysis, the default base `{base}` and HEAD each resolved to the same commit. This empty result alone is not a clean pass. Pass `--base <ref>` for the branch your change should be compared against (for example `--base origin/main`)."
-        )),
+        (Some(base_commit), Some(head_commit))
+            if base_commit == head_commit && another_ref_available =>
+        {
+            Some(format!(
+                "ripr: after analysis, the default base `{base}` and HEAD each resolved to the same commit. This empty result alone is not a clean pass. Pass `--base <ref>` for the branch your change should be compared against (for example `--base origin/main`)."
+            ))
+        }
         _ => None,
     }
 }
@@ -1772,7 +2061,7 @@ mod tests {
 
     #[test]
     fn default_base_equal_to_head_is_named_and_distinct_commits_stay_silent() {
-        let hedge = default_base_is_head_hedge("origin/feat", Some("abc"), Some("abc"));
+        let hedge = default_base_is_head_hedge("origin/feat", Some("abc"), Some("abc"), true);
         assert!(
             hedge
                 .as_deref()
@@ -1782,12 +2071,25 @@ mod tests {
             "{hedge:?}"
         );
         assert_eq!(
-            default_base_is_head_hedge("origin/main", Some("abc"), Some("def")),
+            default_base_is_head_hedge("origin/main", Some("abc"), Some("def"), true),
             None
         );
         // An unresolved side is never asserted equal.
-        assert_eq!(default_base_is_head_hedge("main", None, None), None);
-        assert_eq!(default_base_is_head_hedge("main", Some("abc"), None), None);
+        assert_eq!(default_base_is_head_hedge("main", None, None, true), None);
+        assert_eq!(
+            default_base_is_head_hedge("main", Some("abc"), None, true),
+            None
+        );
+    }
+
+    #[test]
+    fn default_base_hedge_stays_silent_when_no_other_ref_could_be_a_base() {
+        // #7644: a fresh single-branch repository has no ref the `--base`
+        // advice could name, so the Start-here action owns the remediation.
+        assert_eq!(
+            default_base_is_head_hedge("master", Some("abc"), Some("abc"), false),
+            None
+        );
     }
 
     #[test]

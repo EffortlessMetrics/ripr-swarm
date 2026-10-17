@@ -59,3 +59,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_test_under_false_cfg_not_grip (6)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless rust_test_under_false_cfg_not_grip --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
