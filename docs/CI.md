@@ -40,11 +40,14 @@ hosted Actions or wheel qualification.
 
 ## Merge-ready label flow
 
-Pull-request CI does not run on Draft or plain Ready. Agents and authors prove
+The non-required lanes gated by `merge-ready` do not run on Draft or plain Ready.
+Routed Rust Small, ub-review, the Python wheel workflow and source-of-truth still
+follow their own triggers until #4984/#8082 integrate them. Agents and authors prove
 the change locally ([validation](agent-context/validation.md#local-and-hosted-proof)),
 publish a Draft, and add the `merge-ready` label last. Adding `merge-ready`
 starts the non-required lanes once; each later push to a labeled PR reruns
-them. Removing the label stops further runs.
+them. Removing the label stops later pushes from rerunning them; runs already
+in flight are not cancelled.
 
 - Auxiliary labels (`full-ci`, `windows-ci`, `vscode`, `coverage`,
   `clippy-future`, `release-check`) still select extra lanes, but only together
@@ -325,7 +328,7 @@ implement and validate the lane-selection logic.
 
 | Label | Effect |
 | --- | --- |
-| `merge-ready` | Start pull-request CI for the non-required lanes. Pull-request CI does not run on Draft or plain Ready. Applied to a labeled PR, every later push reruns the lanes. Add auxiliary labels (`full-ci`, `windows-ci`, ...) first, then `merge-ready`; they have no effect without it. Does not change the required `Ripr Rust Small Result` (#4984). |
+| `merge-ready` | Start pull-request CI for the non-required lanes. The gated lanes do not run on Draft or plain Ready (Routed Rust Small, ub-review, wheel and source-of-truth keep their own triggers). Applied to a labeled PR, every later push reruns the lanes. Add auxiliary labels (`full-ci`, `windows-ci`, ...) first, then `merge-ready`; they have no effect without it. Does not change the required `Ripr Rust Small Result` (#4984). |
 | `full-ci` | Run required, advisory, and release-like lanes. Demotes `ripr-waive` for this PR. Expected to cost more. For Routed Rust Small, read at the next Draft -> Ready transition. |
 | `release-check` | Run the currently wired release-surface proof without opting into every `full-ci` lane: package list, publish dry-run, unlocked install resolution, and release-readiness. |
 | `vscode` | Run editor extension lanes even when no editor path changed. |
