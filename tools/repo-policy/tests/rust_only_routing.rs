@@ -362,73 +362,191 @@ fn event_commit_bindings_are_exact_and_history_is_available() -> TestResult {
     Ok(())
 }
 
+const GATED: [(&str, &str); 12] = [
+    ("ci.yml", include_str!("../../../.github/workflows/ci.yml")),
+    (
+        "coverage.yml",
+        include_str!("../../../.github/workflows/coverage.yml"),
+    ),
+    (
+        "future-clippy.yml",
+        include_str!("../../../.github/workflows/future-clippy.yml"),
+    ),
+    (
+        "macos-advisory.yml",
+        include_str!("../../../.github/workflows/macos-advisory.yml"),
+    ),
+    (
+        "npm-launcher.yml",
+        include_str!("../../../.github/workflows/npm-launcher.yml"),
+    ),
+    (
+        "pilot-ranking.yml",
+        include_str!("../../../.github/workflows/pilot-ranking.yml"),
+    ),
+    (
+        "printed-command-paste.yml",
+        include_str!("../../../.github/workflows/printed-command-paste.yml"),
+    ),
+    (
+        "public-proof.yml",
+        include_str!("../../../.github/workflows/public-proof.yml"),
+    ),
+    (
+        "security.yml",
+        include_str!("../../../.github/workflows/security.yml"),
+    ),
+    (
+        "test-analytics.yml",
+        include_str!("../../../.github/workflows/test-analytics.yml"),
+    ),
+    (
+        "windows-advisory.yml",
+        include_str!("../../../.github/workflows/windows-advisory.yml"),
+    ),
+    (
+        "zed-extension.yml",
+        include_str!("../../../.github/workflows/zed-extension.yml"),
+    ),
+];
+
+fn gated_jobs(workflow: &str) -> &[&str] {
+    match workflow {
+        "ci.yml" => &["release-proof", "rust-only-features", "msrv", "vscode"],
+        "coverage.yml" => &["coverage"],
+        "future-clippy.yml" => &["future-clippy"],
+        "macos-advisory.yml" => &["macos-advisory"],
+        "npm-launcher.yml" => &["launcher"],
+        "pilot-ranking.yml" => &["ranking"],
+        "printed-command-paste.yml" => &["paste"],
+        "public-proof.yml" => &["drift"],
+        "security.yml" => &["cargo-deny", "dependency-review"],
+        "test-analytics.yml" => &["rust-tests"],
+        "windows-advisory.yml" => &["windows-advisory"],
+        "zed-extension.yml" => &["zed-extension"],
+        _ => &[],
+    }
+}
+
+fn named_job<'a>(source: &'a str, name: &str) -> &'a str {
+    let marker = format!("\n  {name}:\n");
+    let tail = source.split_once(&marker).map_or("", |(_, tail)| tail);
+    assert!(!tail.is_empty(), "named job must exist: {name}");
+    let end = tail
+        .match_indices('\n')
+        .find_map(|(offset, _)| {
+            let next = &tail[offset + 1..];
+            (next.starts_with("  ") && !next.starts_with("   ") && !next.starts_with("  #"))
+                .then_some(offset)
+        })
+        .unwrap_or(tail.len());
+    &tail[..end]
+}
+
+fn job_condition(source: &str, name: &str) -> Option<String> {
+    let mut lines = named_job(source, name).lines().peekable();
+    let mut condition = None;
+    while let Some(line) = lines.next() {
+        if let Some(value) = line.strip_prefix("    if:") {
+            assert!(condition.is_none(), "duplicate job condition: {name}");
+            let value = value.trim();
+            condition = Some(if matches!(value, ">" | ">-" | "|" | "|-") {
+                let mut folded = Vec::new();
+                while let Some(line) = lines.next_if(|line| line.starts_with("      ")) {
+                    folded.push(line.trim());
+                }
+                folded.join(" ")
+            } else {
+                value.to_string()
+            });
+        }
+    }
+    condition
+}
+
+fn verify_job_admission(workflow: &str, source: &str) {
+    const EXPLICIT: &str =
+        "github.event.action == 'labeled' && github.event.label.name == 'merge-ready'";
+    let jobs = gated_jobs(workflow);
+    assert!(!jobs.is_empty(), "unknown gated workflow: {workflow}");
+    for name in jobs {
+        let condition = job_condition(source, name).unwrap_or_default();
+        assert!(
+            !condition.is_empty(),
+            "named job admission is mandatory: {name}"
+        );
+        assert!(
+            condition.contains(EXPLICIT),
+            "{workflow}/{name}: {condition}"
+        );
+        for event in ["opened", "synchronize", "reopened", "ready_for_review"] {
+            assert!(
+                !condition.contains(&format!("'{event}'")),
+                "{workflow}/{name} re-admits {event}"
+            );
+        }
+    }
+}
+
+fn without_job_condition(source: &str, name: &str) -> String {
+    let block = named_job(source, name);
+    let mut lines = block.split_inclusive('\n').peekable();
+    let mut removed = String::new();
+    while let Some(line) = lines.next() {
+        if let Some(value) = line.strip_prefix("    if:") {
+            removed.push_str(line);
+            if matches!(value.trim(), ">" | ">-" | "|" | "|-") {
+                while let Some(line) = lines.next_if(|line| line.starts_with("      ")) {
+                    removed.push_str(line);
+                }
+            }
+        }
+    }
+    assert!(
+        !removed.is_empty(),
+        "guard removal must change source: {name}"
+    );
+    let changed_block = block.replacen(&removed, "", 1);
+    source.replacen(block, &changed_block, 1)
+}
+
+#[test]
+fn each_named_job_guard_removal_is_rejected_with_concurrency_unchanged() {
+    for (workflow, source) in GATED {
+        verify_job_admission(workflow, source);
+        for name in gated_jobs(workflow) {
+            let mutant = without_job_condition(source, name);
+            assert!(job_condition(&mutant, name).is_none());
+            for line in source.lines().filter(|line| {
+                line.starts_with("  group:") || line.starts_with("  cancel-in-progress:")
+            }) {
+                assert!(mutant.lines().any(|retained| retained == line));
+            }
+            assert!(
+                std::panic::catch_unwind(|| verify_job_admission(workflow, &mutant)).is_err(),
+                "missing named job guard must reject: {workflow}/{name}"
+            );
+        }
+    }
+}
+
+#[test]
+fn named_job_conditions_handle_folding_and_ignore_step_or_neighbor_conditions() {
+    let source = "jobs:\n  first:\n    if: >-\n      explicit &&\n      fresh\n    steps:\n      - if: step_only\n  second:\n    steps:\n      - if: unrelated\n";
+    assert_eq!(
+        job_condition(source, "first").as_deref(),
+        Some("explicit && fresh")
+    );
+    assert!(job_condition(source, "second").is_none());
+}
+
 /// Every merge-ready-gated lane admits a pull request only through an explicit
 /// `labeled` event for `merge-ready`; no gated `if:` re-admits opened,
 /// synchronize or reopened events while the label is still attached.
 #[test]
 fn gated_lanes_admit_pull_requests_only_on_the_merge_ready_labeled_event() {
-    const GATED: [(&str, &str); 12] = [
-        ("ci.yml", include_str!("../../../.github/workflows/ci.yml")),
-        (
-            "coverage.yml",
-            include_str!("../../../.github/workflows/coverage.yml"),
-        ),
-        (
-            "future-clippy.yml",
-            include_str!("../../../.github/workflows/future-clippy.yml"),
-        ),
-        (
-            "macos-advisory.yml",
-            include_str!("../../../.github/workflows/macos-advisory.yml"),
-        ),
-        (
-            "npm-launcher.yml",
-            include_str!("../../../.github/workflows/npm-launcher.yml"),
-        ),
-        (
-            "pilot-ranking.yml",
-            include_str!("../../../.github/workflows/pilot-ranking.yml"),
-        ),
-        (
-            "printed-command-paste.yml",
-            include_str!("../../../.github/workflows/printed-command-paste.yml"),
-        ),
-        (
-            "public-proof.yml",
-            include_str!("../../../.github/workflows/public-proof.yml"),
-        ),
-        (
-            "security.yml",
-            include_str!("../../../.github/workflows/security.yml"),
-        ),
-        (
-            "test-analytics.yml",
-            include_str!("../../../.github/workflows/test-analytics.yml"),
-        ),
-        (
-            "windows-advisory.yml",
-            include_str!("../../../.github/workflows/windows-advisory.yml"),
-        ),
-        (
-            "zed-extension.yml",
-            include_str!("../../../.github/workflows/zed-extension.yml"),
-        ),
-    ];
-    const EXPLICIT: &str =
-        "github.event.action == 'labeled' && github.event.label.name == 'merge-ready'";
     for (name, source) in GATED {
-        // Callable leaves (ci.yml) put the guard on a folded `if:` continuation
-        // line, so also collect labeled-event guard lines (group/cancel lines
-        // carry the same explicit labeled-event predicate).
-        let gated_ifs: Vec<&str> = source
-            .lines()
-            .filter(|line| {
-                (line.trim_start().starts_with("if:")
-                    || line.contains("github.event.action == 'labeled'"))
-                    && line.contains("'merge-ready'")
-            })
-            .collect();
-        assert!(!gated_ifs.is_empty(), "{name} has no merge-ready guard");
+        verify_job_admission(name, source);
         if source.contains("\nconcurrency:\n") {
             const REQUEST: &str = "github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready'";
             // Staged callable leaves key the group by admitted request/subject
@@ -469,15 +587,6 @@ fn gated_lanes_admit_pull_requests_only_on_the_merge_ready_labeled_event() {
                 source.lines().any(|line| line == expected_cancel),
                 "{name}: only a merge-ready request may cancel pull_request runs"
             );
-        }
-        for line in gated_ifs {
-            assert!(line.contains(EXPLICIT), "{name}: {line}");
-            for event in ["opened", "synchronize", "reopened", "ready_for_review"] {
-                assert!(
-                    !line.contains(&format!("'{event}'")),
-                    "{name} re-admits {event}: {line}"
-                );
-            }
         }
     }
 }

@@ -214,6 +214,120 @@ mod execution {
         Ok(output.status.success())
     }
 
+    fn job_admission(source: &str) -> Result<&str, String> {
+        let (_, paste) = source
+            .split_once("\njobs:\n  paste:\n")
+            .ok_or("missing paste job")?;
+        let (header, _) = paste
+            .split_once("    steps:\n")
+            .ok_or("missing paste steps")?;
+        let mut conditions = header
+            .lines()
+            .filter_map(|line| line.strip_prefix("    if: "));
+        let condition = conditions.next().ok_or("missing paste job admission")?;
+        if conditions.next().is_some() {
+            return Err("duplicate paste job admission".into());
+        }
+        Ok(condition)
+    }
+
+    fn admitted(
+        expression: &str,
+        called: bool,
+        event: &str,
+        action: &str,
+        label: &str,
+        labels: &[&str],
+    ) -> Result<bool, String> {
+        let flag = |value| if value { "true" } else { "false" };
+        let expression = expression
+            .replace("contains(toJSON(inputs), '\"subject_sha\"')", flag(called))
+            .replace(
+                "github.event_name != 'pull_request'",
+                flag(event != "pull_request"),
+            )
+            .replace(
+                "contains(github.event.pull_request.labels.*.name, 'merge-ready')",
+                flag(labels.contains(&"merge-ready")),
+            )
+            .replace(
+                "github.event.action == 'labeled'",
+                flag(action == "labeled"),
+            )
+            .replace(
+                "github.event.label.name == 'merge-ready'",
+                flag(label == "merge-ready"),
+            );
+        assert!(!expression.contains("github.") && !expression.contains("inputs."));
+        let expression = expression
+            .replace("true", "1 == 1")
+            .replace("false", "1 == 0");
+        run(
+            &format!("if [[ {expression} ]]; then exit 0; else exit 1; fi"),
+            &[],
+        )
+    }
+
+    #[test]
+    fn callable_job_admission_preserves_inherited_events_and_refuses_sticky_labels()
+    -> Result<(), String> {
+        let expression = job_admission(WORKFLOW)?;
+        for (event, action, label, labels, expected_legacy) in [
+            (
+                "pull_request",
+                "synchronize",
+                "",
+                vec!["merge-ready"],
+                false,
+            ),
+            ("pull_request", "reopened", "", vec!["merge-ready"], false),
+            (
+                "pull_request",
+                "labeled",
+                "unrelated",
+                vec!["merge-ready"],
+                false,
+            ),
+            (
+                "pull_request",
+                "labeled",
+                "merge-ready",
+                vec!["merge-ready", "full-ci"],
+                true,
+            ),
+            ("schedule", "", "", vec![], true),
+            ("workflow_dispatch", "", "", vec![], true),
+        ] {
+            assert_eq!(
+                admitted(expression, false, event, action, label, &labels)?,
+                expected_legacy
+            );
+            assert!(admitted(expression, true, event, action, label, &labels)?);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn callable_admission_removal_is_rejected() -> Result<(), String> {
+        const BYPASS: &str = "contains(toJSON(inputs), '\"subject_sha\"') || ";
+        let expression = job_admission(WORKFLOW)?;
+        assert_eq!(expression.matches(BYPASS).count(), 1);
+        let mutant = expression.replacen(BYPASS, "", 1);
+        assert!(admitted(
+            expression,
+            true,
+            "pull_request",
+            "synchronize",
+            "",
+            &[]
+        )?);
+        assert!(
+            !admitted(&mutant, true, "pull_request", "synchronize", "", &[])?,
+            "removing only the callable bypass must reject the valid called request"
+        );
+        Ok(())
+    }
+
     #[test]
     fn production_guard_event_matrix() -> Result<(), String> {
         let body = guard()?;

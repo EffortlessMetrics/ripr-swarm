@@ -280,24 +280,29 @@ fn condition(source: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
+#[derive(Clone, Copy, Debug)]
+struct Event<'a> {
+    name: &'a str,
+    action: &'a str,
+    label: &'a str,
+    labels: &'a [&'a str],
+}
 fn predicate(
     expression: &str,
     called: bool,
-    event: &str,
-    action: &str,
-    label: &str,
+    event: Event<'_>,
     selected: bool,
     identity: &str,
 ) -> TestResult<bool> {
     let flag = |v| if v { "true" } else { "false" };
     let mut expr=expression.replace("contains(toJSON(inputs), '\"subject_sha\"')",flag(called))
-        .replace("contains(github.event.pull_request.labels.*.name, 'merge-ready')",flag(label=="merge-ready"))
-        .replace("github.event.action == 'labeled'",flag(action=="labeled"))
-        .replace("github.event.label.name == 'merge-ready'",flag(label=="merge-ready"))
-        .replace("contains(github.event.pull_request.labels.*.name, 'full-ci')",flag(label=="full-ci"))
-        .replace("contains(github.event.pull_request.labels.*.name, 'release-check')",flag(label=="release-check"))
-        .replace("contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action)",flag(["opened","synchronize","reopened"].contains(&action)))
-        .replace("github.event_name",&format!("'{event}'"))
+        .replace("contains(github.event.pull_request.labels.*.name, 'merge-ready')",flag(event.labels.contains(&"merge-ready")))
+        .replace("github.event.action == 'labeled'",flag(event.action=="labeled"))
+        .replace("github.event.label.name == 'merge-ready'",flag(event.label=="merge-ready"))
+        .replace("contains(github.event.pull_request.labels.*.name, 'full-ci')",flag(event.labels.contains(&"full-ci")))
+        .replace("contains(github.event.pull_request.labels.*.name, 'release-check')",flag(event.labels.contains(&"release-check")))
+        .replace("contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action)",flag(["opened","synchronize","reopened"].contains(&event.action)))
+        .replace("github.event_name",&format!("'{}'",event.name))
         .replace("github.ref", "'refs/heads/main'")
         .replace("needs.source-identity.result",&format!("'{identity}'"))
         .replace("always()","true").replace("!cancelled()","true");
@@ -326,62 +331,128 @@ fn predicate(
 }
 #[test]
 fn actual_predicates_preserve_legacy_events_and_use_only_frozen_callable_selection() -> TestResult {
-    for (name, _) in JOBS {
-        let expression = condition(job(WORKFLOW, name));
-        // Callable selection is frozen; direct legacy events follow main's merge-ready gate.
-        for (event, action, label) in [
-            ("pull_request", "opened", ""),
-            ("pull_request", "synchronize", ""),
-            ("pull_request", "ready_for_review", ""),
-            ("pull_request", "labeled", "unrelated"),
-            ("pull_request", "labeled", "full-ci"),
-            ("pull_request", "labeled", "release-check"),
-            ("pull_request", "labeled", "merge-ready"),
-            ("push", "", ""),
-            ("workflow_dispatch", "", ""),
-        ] {
-            // Current main gates direct pull_request runs on the explicit
-            // merge-ready labeled event; callable runs use frozen selection.
-            let merge_ready = action == "labeled" && label == "merge-ready";
-            let expected = match *name {
-                "release-proof" => {
-                    (event != "pull_request" || merge_ready)
-                        && (event != "pull_request"
-                            || ["full-ci", "release-check"].contains(&label))
-                }
-                "rust-only-features" => event != "pull_request" || merge_ready,
-                "msrv" => {
-                    (event != "pull_request" || merge_ready)
-                        && (event == "workflow_dispatch"
-                            || (event == "pull_request" && label == "full-ci"))
-                }
-                "vscode" => {
-                    (event != "pull_request" || merge_ready)
-                        && (event != "pull_request" || label == "full-ci")
-                }
-                _ => return Err(format!("Unknown test job {name}").into()),
-            };
+    // Expected columns follow JOBS: Rust-only, release proof, MSRV, VS Code.
+    // Event label is independent of the retained PR label collection.
+    for (name, action, label, labels, expected) in [
+        ("pull_request", "opened", "", vec![], [false; 4]),
+        (
+            "pull_request",
+            "synchronize",
+            "",
+            vec!["merge-ready", "full-ci"],
+            [false; 4],
+        ),
+        (
+            "pull_request",
+            "reopened",
+            "",
+            vec!["merge-ready", "full-ci"],
+            [false; 4],
+        ),
+        (
+            "pull_request",
+            "ready_for_review",
+            "",
+            vec!["merge-ready", "full-ci"],
+            [false; 4],
+        ),
+        (
+            "pull_request",
+            "labeled",
+            "unrelated",
+            vec!["merge-ready", "full-ci"],
+            [false; 4],
+        ),
+        (
+            "pull_request",
+            "labeled",
+            "full-ci",
+            vec!["merge-ready", "full-ci"],
+            [false; 4],
+        ),
+        (
+            "pull_request",
+            "labeled",
+            "release-check",
+            vec!["merge-ready", "release-check"],
+            [false; 4],
+        ),
+        (
+            "pull_request",
+            "labeled",
+            "merge-ready",
+            vec!["merge-ready"],
+            [true, false, false, false],
+        ),
+        (
+            "pull_request",
+            "labeled",
+            "merge-ready",
+            vec!["merge-ready", "full-ci"],
+            [true; 4],
+        ),
+        (
+            "pull_request",
+            "labeled",
+            "merge-ready",
+            vec!["merge-ready", "release-check"],
+            [true, true, false, false],
+        ),
+        ("push", "", "", vec![], [true, true, false, true]),
+        ("workflow_dispatch", "", "", vec![], [true; 4]),
+    ] {
+        let event = Event {
+            name,
+            action,
+            label,
+            labels: &labels,
+        };
+        for ((job_name, _), expected) in JOBS.iter().zip(expected) {
+            let expression = condition(job(WORKFLOW, job_name));
             assert_eq!(
-                predicate(&expression, false, event, action, label, false, "skipped")?,
+                predicate(&expression, false, event, false, "skipped")?,
                 expected,
-                "{name} {event}/{action}/{label}"
+                "{job_name} {event:?}"
             );
             for selected in [true, false] {
                 assert_eq!(
-                    predicate(&expression, true, event, action, label, selected, "success")?,
+                    predicate(&expression, true, event, selected, "success")?,
                     selected,
-                    "called {name} {event}/{action}/{label}"
+                    "called {job_name} {event:?}"
                 );
-                assert!(!predicate(
-                    &expression,
-                    true,
-                    event,
-                    action,
-                    label,
-                    selected,
-                    "failure"
-                )?);
+                assert!(!predicate(&expression, true, event, selected, "failure")?);
             }
+        }
+    }
+    Ok(())
+}
+#[test]
+fn independent_event_labels_reject_request_guard_removal() -> TestResult {
+    const GUARD: &str =
+        "(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')";
+    for (name, _) in JOBS {
+        let expression = condition(job(WORKFLOW, name));
+        assert_eq!(expression.matches(GUARD).count(), 1, "{name}");
+        let mutant = expression.replacen(GUARD, "true", 1);
+        for (action, label) in [
+            ("synchronize", ""),
+            ("reopened", ""),
+            ("labeled", "unrelated"),
+        ] {
+            let event = Event {
+                name: "pull_request",
+                action,
+                label,
+                labels: &["merge-ready", "full-ci"],
+            };
+            assert!(
+                !predicate(&expression, false, event, false, "skipped")?,
+                "{name} {event:?}"
+            );
+            assert!(
+                predicate(&mutant, false, event, false, "skipped")?,
+                "request guard removal must expose false admission: {name} {event:?}"
+            );
         }
     }
     Ok(())
@@ -760,14 +831,19 @@ fn release_steps_preserve_manual_semantics_and_ignore_labels_on_calls() -> TestR
             for event in ["pull_request", "push", "workflow_dispatch"] {
                 for label in ["", "full-ci", "release-check", "unrelated"] {
                     let expected = event == "push" || ["full-ci", "release-check"].contains(&label);
+                    let labels = [label];
+                    let context = Event {
+                        name: event,
+                        action: "labeled",
+                        label: "unrelated",
+                        labels: &labels,
+                    };
                     assert_eq!(
-                        predicate(expr, false, event, "labeled", label, false, "skipped")?,
+                        predicate(expr, false, context, false, "skipped")?,
                         expected,
                         "{event}/{label}"
                     );
-                    assert!(predicate(
-                        expr, true, event, "labeled", label, true, "success"
-                    )?);
+                    assert!(predicate(expr, true, context, true, "success")?);
                 }
             }
         }

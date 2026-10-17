@@ -81,7 +81,7 @@ concurrency:
 jobs:
   paste:
     name: paste-${{ matrix.os }}
-    if: github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))
+    if: contains(toJSON(inputs), '"subject_sha"') || github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
