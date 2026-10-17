@@ -175,6 +175,16 @@ fn extract_executable(archive: &Path, target: &str, dest: &Path, limit: u64) -> 
 }
 
 fn write_executable(from: &mut dyn Read, dest: &Path, limit: u64) -> Result<(), String> {
+    let result = copy_executable(from, dest, limit);
+    if result.is_err() {
+        // A refused, truncated or unwritable entry must not leave a partial
+        // file that looks like an install.
+        let _ = fs::remove_file(dest);
+    }
+    result
+}
+
+fn copy_executable(from: &mut dyn Read, dest: &Path, limit: u64) -> Result<(), String> {
     let mut out = fs::File::create(dest)
         .map_err(|err| format!("failed to create {}: {err}", dest.display()))?;
     // Read one byte past the limit so an over-size entry is told apart from one
@@ -182,8 +192,6 @@ fn write_executable(from: &mut dyn Read, dest: &Path, limit: u64) -> Result<(), 
     let written = io::copy(&mut from.take(limit.saturating_add(1)), &mut out)
         .map_err(|err| format!("failed to write {}: {err}", dest.display()))?;
     if written > limit {
-        drop(out);
-        let _ = fs::remove_file(dest);
         return Err(format!(
             "the archive's `ripr` entry is larger than the {limit}-byte limit; refusing to extract it"
         ));
@@ -395,6 +403,31 @@ mod tests {
         // The boundary is inclusive: an entry of exactly `limit` bytes installs.
         extract_executable(&path, TARGET, &dest, 64)?;
         assert_eq!(fs::metadata(&dest).map_err(|e| e.to_string())?.len(), 64);
+        let _ = fs::remove_dir_all(&work);
+        Ok(())
+    }
+
+    #[test]
+    fn a_failed_copy_leaves_no_partial_executable() -> Result<(), String> {
+        struct Breaks(bool);
+        impl Read for Breaks {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                if self.0 {
+                    return Err(io::Error::other("stream cut"));
+                }
+                self.0 = true;
+                buf[..4].copy_from_slice(b"part");
+                Ok(4)
+            }
+        }
+        let work = scratch("cut");
+        fs::create_dir_all(&work).map_err(|err| err.to_string())?;
+        let dest = work.join("ripr");
+        let err = write_executable(&mut Breaks(false), &dest, 1024)
+            .err()
+            .ok_or("a cut stream was accepted")?;
+        assert!(err.contains("stream cut"), "{err}");
+        assert!(!dest.exists(), "the partial file was left behind");
         let _ = fs::remove_dir_all(&work);
         Ok(())
     }
