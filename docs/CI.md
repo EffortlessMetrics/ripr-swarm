@@ -40,14 +40,16 @@ hosted Actions or wheel qualification.
 
 ## Merge-ready label flow
 
-The non-required lanes gated by `merge-ready` do not run on Draft or plain Ready.
+The non-required lanes gated by `merge-ready` do not run on a Draft or plain Ready
+PR without the label.
 Routed Rust Small, ub-review, the Python wheel workflow and source-of-truth still
 follow their own triggers until #4984/#8082 integrate them. Agents and authors prove
 the change locally ([validation](agent-context/validation.md#local-and-hosted-proof)),
 publish a Draft, and add the `merge-ready` label last. Adding `merge-ready`
-starts the non-required lanes once; each later push to a labeled PR reruns
-them. Removing the label stops later pushes from rerunning them; runs already
-in flight are not cancelled.
+starts the non-required lanes once for the head it was applied to. A later push
+to a labeled PR does not rerun them: re-apply the label (remove it, then add it
+again) once the new head is ready to qualify. Removing the label does not cancel
+runs already in flight.
 
 - Auxiliary labels (`full-ci`, `windows-ci`, `vscode`, `coverage`,
   `clippy-future`, `release-check`) still select extra lanes, but only together
@@ -328,7 +330,7 @@ implement and validate the lane-selection logic.
 
 | Label | Effect |
 | --- | --- |
-| `merge-ready` | Start pull-request CI for the non-required lanes. The gated lanes do not run on Draft or plain Ready (Routed Rust Small, ub-review, wheel and source-of-truth keep their own triggers). Applied to a labeled PR, every later push reruns the lanes. Add auxiliary labels (`full-ci`, `windows-ci`, ...) first, then `merge-ready`; they have no effect without it. Does not change the required `Ripr Rust Small Result` (#4984). |
+| `merge-ready` | Start pull-request CI for the non-required lanes. The gated lanes do not run on a Draft or plain Ready PR without this label (Routed Rust Small, ub-review, wheel and source-of-truth keep their own triggers). It is a per-head request: a later push to a labeled PR does not rerun the lanes; remove and re-add the label for the new head. Add auxiliary labels (`full-ci`, `windows-ci`, ...) first, then `merge-ready`; they have no effect without it. Does not change the required `Ripr Rust Small Result` (#4984). |
 | `full-ci` | Run required, advisory, and release-like lanes. Demotes `ripr-waive` for this PR. Expected to cost more. For Routed Rust Small, read at the next Draft -> Ready transition. |
 | `release-check` | Run the currently wired release-surface proof without opting into every `full-ci` lane: package list, publish dry-run, unlocked install resolution, and release-readiness. |
 | `vscode` | Run editor extension lanes even when no editor path changed. |
@@ -381,9 +383,8 @@ and single-platform CI was the root cause enabling both.
   false-confidence condition it exists to prevent.
 - **Selection.** A daily schedule for standing signal, `workflow_dispatch`, and
   pull requests labeled `windows-ci` or `full-ci`.
-- **Merge-ready subset (#4938).** Every subscribed `pull_request` action on a
-  PR labeled `merge-ready` (`opened`, `synchronize`, `reopened`, or `labeled`
-  with that label) also runs `windows-advisory-subset`, a fast advisory Windows job
+- **Merge-ready subset (#4938).** The `labeled` event for `merge-ready` on a
+  PR also runs `windows-advisory-subset`, a fast advisory Windows job
   (`lsp::gap_artifacts` and Cargo-home identity lib tests, the #4918 cache-warning smoke, and
   `cargo clippy -p ripr --all-targets`) under the same advisory contract as
   the lane. It does not gate merges; #4337, #4918, and #4921 were each caught
@@ -778,8 +779,8 @@ cargo test -p ripr --locked --no-default-features --features lang-rust --no-fail
 ```
 
 It runs on every push to `main` or `master`, on manual dispatch, and on
-`merge-ready` pull request `opened`, `synchronize`, `reopened` and `labeled`
-events whose diff touches
+the `labeled` event for `merge-ready` on a pull request
+whose diff touches
 `crates/`, `fixtures/`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain*`, or
 `.cargo/`. Other label events, unlabeled pull requests and other pull requests
 skip the compile. It is not

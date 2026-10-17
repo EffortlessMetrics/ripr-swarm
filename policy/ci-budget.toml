@@ -44,7 +44,7 @@ description = "Explicit release-check or full-ci proof."
 name = "merge-ready"
 effect = "start_non_required_pull_request_lanes"
 budget_effect = "large"
-notes = "The gated non-required lanes do not run on Draft or plain Ready; Routed Rust Small, ub-review, the Python wheel workflow and source-of-truth keep their own triggers until #4984/#8082 integrate them. Adding `merge-ready` starts the non-required pull-request lanes once, and each later push to a labeled PR reruns them. Other labels (`full-ci`, `windows-ci`, `vscode`, `coverage`, `clippy-future`, `release-check`) still select additional lanes but only take effect together with `merge-ready`; add them first and `merge-ready` last. The required `Ripr Rust Small Result` context is not changed by this label (see #4984)."
+notes = "The gated non-required lanes do not run on a Draft or plain Ready PR without this label; Routed Rust Small, ub-review, the Python wheel workflow and source-of-truth keep their own triggers until #4984/#8082 integrate them. Adding `merge-ready` starts the non-required pull-request lanes once for that head; a later push does not rerun them, so re-apply the label for the new head. Other labels (`full-ci`, `windows-ci`, `vscode`, `coverage`, `clippy-future`, `release-check`) still select additional lanes but only take effect together with `merge-ready`; add them first and `merge-ready` last. The required `Ripr Rust Small Result` context is not changed by this label (see #4984)."
 
 [[label]]
 name = "full-ci"
