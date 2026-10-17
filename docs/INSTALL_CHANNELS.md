@@ -174,7 +174,9 @@ times the source route and the scoreboard records it as
 `first_run.install_seconds`. The nightly `first-run-install.yml` workflow runs
 that walk and ingests it, but the metric has no committed baseline sample yet,
 so nothing fails on a slower install until one is committed from that
-workflow's report; the prebuilt route is not timed by the walk.
+workflow's report. `cargo xtask first-run --install-archive VERSION` times the
+prebuilt route (download, checksum, extract) and walks the extracted
+executable; its sample is kept apart from the source-install metric.
 
 ## What blocks a developer who is not us
 

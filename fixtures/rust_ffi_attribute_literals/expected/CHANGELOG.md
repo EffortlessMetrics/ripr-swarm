@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_ffi_attribute_literals (3)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless rust_ffi_attribute_literals --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

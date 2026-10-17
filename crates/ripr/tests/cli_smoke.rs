@@ -5294,8 +5294,15 @@ fn first_pr_check_missing_packet_recovers_without_a_resolvable_base()
             .join("target/ripr/reports/start-here.json")
             .is_file()
     );
+    // The packet is current (not "does not create one", not stale) and
+    // records the blocked missing-artifacts state, which fails the gate (#7373).
     let recheck = run_ripr(&["first-pr", "--root", &root, "--base", "HEAD", "--check"]);
-    assert_success(&recheck);
+    assert_failure(&recheck);
+    let recheck_stderr = String::from_utf8_lossy(&recheck.stderr);
+    assert!(
+        recheck_stderr.contains("blocked state `missing_artifacts`"),
+        "{recheck_stderr}"
+    );
     ignore_remove_dir_all(&workspace);
     Ok(())
 }
@@ -5324,11 +5331,49 @@ fn first_pr_check_recovery_write_resolves_the_default_base() -> Result<(), Strin
     )?;
     assert_eq!(base, "master");
 
+    // `--check` resolves the omitted base too, so the packet is current; the
+    // blocked missing-artifacts state it records fails the gate (#7373).
     let check = run_ripr(&["first-pr", "--root", &root_str, "--check"]);
-    assert_success(&check);
+    assert_failure(&check);
+    let check_stderr = String::from_utf8_lossy(&check.stderr);
     assert!(
-        String::from_utf8_lossy(&check.stdout).contains("First PR start-here packet ok"),
-        "{check:?}"
+        check_stderr.contains("blocked state `missing_artifacts`"),
+        "{check_stderr}"
+    );
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #7373: `--check` is the gate, so a current packet that records a blocked
+/// state fails it (exit 2) while write mode keeps exiting 0 after composing the
+/// packet. The unblocked packet stays the passing control.
+#[test]
+fn first_pr_check_exits_2_for_a_blocked_packet_but_write_mode_exits_0() -> Result<(), String> {
+    let root = unique_temp_workspace("first-pr-blocked-exit");
+    std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+    let run = |extra: &[&str]| -> Result<Output, String> {
+        let mut args = vec!["first-pr", "--root", "."];
+        args.extend_from_slice(extra);
+        run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &args).map_err(|err| err.to_string())
+    };
+
+    let write = run(&[])?;
+    assert_success(&write);
+    let packet = root.join("target/ripr/reports/start-here.json");
+    assert_eq!(json_string_at(&packet, "/status")?, "blocked");
+    assert_eq!(
+        json_string_at(&packet, "/selected/output_state")?,
+        "wrong_root"
+    );
+
+    let check = run(&["--check"])?;
+    assert_failure(&check);
+    assert_eq!(check.status.code(), Some(2), "{check:?}");
+    let stderr = String::from_utf8_lossy(&check.stderr);
+    assert!(stderr.contains("blocked state `wrong_root`"), "{stderr}");
+    assert!(
+        !String::from_utf8_lossy(&check.stdout).contains("start-here packet ok"),
+        "a blocked packet must not print the ok line"
     );
     ignore_remove_dir_all(&root);
     Ok(())
@@ -5495,6 +5540,28 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     assert!(!repair.status.success());
     let stderr = String::from_utf8_lossy(&repair.stderr);
     assert!(stderr.contains("not a seam ID"), "{stderr}");
+    assert!(
+        stderr.contains("ripr pilot --root ") && stderr.contains("agent-packet-unknown-seam"),
+        "{stderr}"
+    );
+
+    // The other ID `ripr check` prints, its canonical gap ID, gets the same
+    // family-named refusal instead of the generic hint (#8158).
+    let gap_packet = run_ripr(&[
+        "agent",
+        "packet",
+        "--root",
+        &root_path,
+        "--seam-id",
+        "gap:0123456789abcdef",
+        "--json",
+    ]);
+    assert!(!gap_packet.status.success());
+    let stderr = String::from_utf8_lossy(&gap_packet.stderr);
+    assert!(
+        stderr.contains("is a `ripr check` canonical gap ID, not a seam ID"),
+        "{stderr}"
+    );
     assert!(
         stderr.contains("ripr pilot --root ") && stderr.contains("agent-packet-unknown-seam"),
         "{stderr}"
@@ -17567,7 +17634,7 @@ fn python_check_safe_action(
         .find(|line| line.starts_with("  Safe next action:"))
         .ok_or_else(|| format!("check printed no safe next action:\n{stdout}"))?;
     assert!(
-        stdout.contains("State: preview language, advisory only (preview_limited)"),
+        stdout.contains("State: preview language, advisory only"),
         "expected preview_limited triage:\n{stdout}"
     );
     Ok(line.to_string())
