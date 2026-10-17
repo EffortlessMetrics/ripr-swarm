@@ -10,7 +10,7 @@ import {
   Trace
 } from 'vscode-languageclient/node';
 import { explicitSetting, getConfig, RiprConfig } from './config';
-import { missingServerRemedy, requestedServerVersion, resolveServer, ResolveFailure, ResolvedServer } from './serverResolver';
+import { missingServerActions, missingServerRemedy, requestedServerVersion, resolveServer, ResolveFailure, ResolvedServer } from './serverResolver';
 import { setupFilePath, hasUnsafeShellMetacharacter, redirectTargetMatches, redirectStaysInWorkspace, serverShellArg, normalizePath, sameWorkspaceRoot, rootMatchesWorkspace, objectField, stringField, boundedStringField, arrayLength, numberFieldValue, TEST_RUNNER_VERIFY_COMMAND_PREFIXES, testRunnerCommandLeavesScope } from './packetJson';
 import { riprDocumentSelectorsForWorkspace, extensionVersion, traceFromConfig, currentWorkspaceRootState, workspaceRootStateNoWorkspace, workspaceRootStateLabel, workspaceRootStateDetail, workspaceRootPickItems } from './workspaceHelpers';
 import type { WorkspaceRootPickItem } from './workspaceHelpers';
@@ -624,7 +624,7 @@ export class RiprClientController {
         detail: server.detail,
         nextStep: `${server.remedy ?? missingServerRemedy(config.autoDownload)} Then run ripr: Restart Server.`
       });
-      await this.showMissingServerMessage(server.message, server.detail, server.remedy);
+      await this.showMissingServerMessage(server);
       return;
     }
     this.server = server;
@@ -2626,11 +2626,14 @@ export class RiprClientController {
       this.server = server;
       return server;
     }
-    await this.showMissingServerMessage(server.message, server.detail, server.remedy);
+    await this.showMissingServerMessage(server);
     return undefined;
   }
 
-  private async showMissingServerMessage(summary: string, detail: string, remedy?: string): Promise<void> {
+  private async showMissingServerMessage(failure: ResolveFailure): Promise<void> {
+    const summary = failure.message;
+    const detail = failure.detail;
+    const remedy = failure.remedy;
     this.output.appendLine(summary);
     this.output.appendLine(detail);
     // Name the actual failure (HTTP/checksum/manifest) in the popup body —
@@ -2644,12 +2647,12 @@ export class RiprClientController {
       : summary;
     const separator = cause.endsWith('.') ? '' : '.';
     const guidance = remedy ?? missingServerRemedy(this.runtime.getConfig().autoDownload);
+    // "Copy Install Command" only remedies a binary that was never
+    // installed; download/HTTP/checksum/manifest and other non-missing
+    // classes get the diagnostic and retry actions instead (#8588).
     const selection = await this.runtime.showErrorMessage(
       `ripr server is not available: ${cause}${separator} ${guidance}`,
-      'Open Settings',
-      'Copy Diagnostic',
-      'Copy Install Command',
-      'Retry'
+      ...missingServerActions(failure)
     );
     if (selection === 'Open Settings') {
       await vscode.commands.executeCommand('workbench.action.openSettings', 'ripr.server');

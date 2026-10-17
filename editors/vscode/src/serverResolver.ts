@@ -50,6 +50,21 @@ export interface ResolvedServer {
   readonly needsShell?: boolean;
 }
 
+/**
+ * The class of a resolution failure (#8588). This is the finest distinction
+ * the resolver itself knows from its control flow: a download attempt that
+ * was made and failed (HTTP, checksum, manifest, transport, or a downloaded
+ * binary that failed its probe) is `download_failed`, not a missing binary,
+ * and only a failure where no candidate produced a binary and no download
+ * failed is `missing_binary`.
+ */
+export type ResolveFailureKind =
+  | 'missing_binary'
+  | 'download_failed'
+  | 'configured_path'
+  | 'invalid_version'
+  | 'server_unusable';
+
 export interface ResolveFailure {
   readonly message: string;
   readonly detail: string;
@@ -59,6 +74,23 @@ export interface ResolveFailure {
    * present but its target failed resolution (#5891).
    */
   readonly remedy?: string;
+  /** Failure class, when the producing path knows it (#8588). */
+  readonly kind?: ResolveFailureKind;
+}
+
+export type MissingServerAction = 'Open Settings' | 'Copy Diagnostic' | 'Copy Install Command' | 'Retry';
+
+/**
+ * Actions offered for an unavailable server (#8588). `cargo install ripr`
+ * can only remedy a binary that was never installed, so "Copy Install
+ * Command" is offered only for `missing_binary`; every other class (and an
+ * unclassified failure, which cannot be shown to be a missing binary) gets
+ * the diagnostic and retry actions instead.
+ */
+export function missingServerActions(failure: Pick<ResolveFailure, 'kind'>): readonly MissingServerAction[] {
+  return failure.kind === 'missing_binary'
+    ? ['Open Settings', 'Copy Diagnostic', 'Copy Install Command', 'Retry']
+    : ['Open Settings', 'Copy Diagnostic', 'Retry'];
 }
 
 export interface ServerResolverRuntime {
@@ -91,7 +123,7 @@ export async function resolveServer(
     if (isResolved(configuredResult)) {
       return configuredResult;
     }
-    return { ...configuredResult, remedy: CONFIGURED_PATH_REMEDY };
+    return { ...configuredResult, remedy: CONFIGURED_PATH_REMEDY, kind: 'configured_path' };
   }
 
   const platform = currentRiprPlatform();
@@ -100,7 +132,7 @@ export async function resolveServer(
     version = requestedServerVersion(context, config);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    return { message: 'ripr.server.version is invalid.', detail };
+    return { message: 'ripr.server.version is invalid.', detail, kind: 'invalid_version' };
   }
   let downloadFailure: string | undefined;
   let earlyPathResult: ResolvedServer | ResolveFailure | undefined;
@@ -185,6 +217,11 @@ export async function resolveServer(
     : 'Automatic download is disabled.';
   return {
     message: 'ripr server is not available.',
+    // A recorded download failure (HTTP/checksum/manifest/transport, or a
+    // downloaded binary that failed its probe) is not remedied by
+    // `cargo install ripr`; only a clean fall-through with no usable binary
+    // anywhere is the not-installed class (#8588).
+    kind: downloadFailure ? 'download_failed' : 'missing_binary',
     detail: [
       downloadFailure,
       pathResult.detail,
@@ -242,7 +279,7 @@ async function probeExistingCandidate(
   runtime: ServerResolverRuntime
 ): Promise<ResolvedServer | ResolveFailure> {
   if (!fs.existsSync(command)) {
-    return { message: `${detail} was not found.`, detail: `${command} does not exist.` };
+    return { message: `${detail} was not found.`, detail: `${command} does not exist.`, kind: 'missing_binary' };
   }
   return runtime.probeCandidate(command, source, detail, false, source === 'bundled' ? 'bundled' : 'unmanaged');
 }
@@ -298,7 +335,8 @@ export function probeServerVersion(
     const timer = setTimeout(() => {
       finish({
         message: `${detail} did not respond.`,
-        detail: `Timed out after ${timeoutMs}ms while running ${command} --version.`
+        detail: `Timed out after ${timeoutMs}ms while running ${command} --version.`,
+        kind: 'server_unusable'
       });
     }, timeoutMs);
 
@@ -306,7 +344,7 @@ export function probeServerVersion(
     child.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
 
     child.once('error', (error) => {
-      finish({ message: `${detail} could not start.`, detail: error.message });
+      finish({ message: `${detail} could not start.`, detail: error.message, kind: 'server_unusable' });
     });
 
     // Classify on 'close', not 'exit': the win32 wrapper reports the exit
@@ -320,7 +358,7 @@ export function probeServerVersion(
       // typed marker; name the real cause instead of a bogus exit code (#5891).
       const startFailure = probeProcessStartFailure(child);
       if (startFailure) {
-        finish({ message: `${detail} could not start.`, detail: startFailure });
+        finish({ message: `${detail} could not start.`, detail: startFailure, kind: 'server_unusable' });
         return;
       }
       if (code === 0) {
@@ -330,7 +368,8 @@ export function probeServerVersion(
           // so it cannot count as a passed version check (#5891).
           finish({
             message: `${detail} could not start.`,
-            detail: `The ${command} --version probe wrapper exited with code 0 without reporting a probe exit code; the probe process never ran to completion.`
+            detail: `The ${command} --version probe wrapper exited with code 0 without reporting a probe exit code; the probe process never ran to completion.`,
+            kind: 'server_unusable'
           });
           return;
         }
@@ -338,7 +377,11 @@ export function probeServerVersion(
           binaryVersion: firstOutputLine(stdoutChunks, stderrChunks)
         });
       } else {
-        finish({ message: `${detail} failed version check.`, detail: `${command} --version exited with code ${code}.` });
+        finish({
+          message: `${detail} failed version check.`,
+          detail: `${command} --version exited with code ${code}.`,
+          kind: 'server_unusable'
+        });
       }
     });
   });
@@ -347,7 +390,8 @@ export function probeServerVersion(
 function compatibilityFailure(detail: string, failure: LspCompatibilityFailure): ResolveFailure {
   return {
     message: `${detail} is not LSP compatible.`,
-    detail: `[${failure.kind}] ${failure.detail}`
+    detail: `[${failure.kind}] ${failure.detail}`,
+    kind: 'server_unusable'
   };
 }
 
