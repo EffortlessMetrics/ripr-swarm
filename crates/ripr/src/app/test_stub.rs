@@ -500,7 +500,7 @@ fn resolve_at(
         // its own; when the stub is for a different line, say so (#6298).
         if seam_line != line {
             resolution.at_note = Some(format!(
-                "note: no gap is on {file}:{line}; this is the nearest gap in `{}`, {file}:{seam_line}",
+                "note: {file}:{line} has no stubbable gap; this stub is for the nearest one in `{}`, {file}:{seam_line}",
                 resolution.owner
             ));
         }
