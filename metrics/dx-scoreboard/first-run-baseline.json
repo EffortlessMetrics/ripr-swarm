@@ -7,7 +7,7 @@
         "below_target": 3,
         "comparison_failed": 0,
         "failed": 0,
-        "meets_target": 4,
+        "meets_target": 5,
         "not_measured": 0,
         "regressed": 0
       },
@@ -341,7 +341,7 @@
     "below_target": 3,
     "comparison_failed": 0,
     "failed": 0,
-    "meets_target": 4,
+    "meets_target": 5,
     "not_measured": 0,
     "regressed": 0
   },
