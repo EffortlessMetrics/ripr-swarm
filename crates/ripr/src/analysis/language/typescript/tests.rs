@@ -16637,3 +16637,59 @@ fn unresolved_workspace_package_import_names_the_manifest() -> Result<(), String
     );
     Ok(())
 }
+
+#[test]
+fn type_test_file_changes_are_counted_but_never_probed() -> Result<(), String> {
+    // #8536: tsd / Vitest typecheck `*.test-d.ts` files are tests; editing
+    // one must not produce a production `no_static_path` finding.
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    let root = std::env::temp_dir().join(format!("ripr-ts-type-test-{stamp}"));
+    fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    fs::write(
+        root.join("index.js"),
+        "export default function pLimit(c) {\n  return {c};\n}\n",
+    )
+    .map_err(|e| e.to_string())?;
+    fs::write(
+        root.join("index.test-d.ts"),
+        "import pLimit from './index.js';\nconst limit = pLimit(2);\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let adapter = TypeScriptAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        perl_producer_failure: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
+    };
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("index.test-d.ts"),
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            new_side_line: 2,
+            text: "const limit = pLimit(2);".to_string(),
+        }],
+        removed_lines: Vec::new(),
+    }];
+    let result = adapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files);
+    let _ = fs::remove_dir_all(&root);
+    let result = result?;
+    assert!(result.findings.is_empty(), "{}", result.findings.len());
+    assert_eq!(result.changed_files, 1);
+    Ok(())
+}

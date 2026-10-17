@@ -2,7 +2,9 @@
 
 use super::*;
 
-const TEST_FILE_STEM_SUFFIXES: &[&str] = &[".test", "-test", "_test", ".spec"];
+// `.test-d` / `.spec-d` are the tsd and Vitest typecheck type-test conventions.
+const TEST_FILE_STEM_SUFFIXES: &[&str] =
+    &[".test", "-test", "_test", ".spec", ".test-d", ".spec-d"];
 const TEST_DIRECTORY_NAMES: &[&str] = &["test", "tests", "__tests__"];
 // Every source extension routed to this adapter (router.rs), so Cypress
 // `*.cy.<ext>` classification stays bounded to real adapter source surface.
@@ -349,6 +351,9 @@ mod tests {
             "src/test.tsx",
             "cypress/e2e/checkout.cy.ts",
             "src/Button.cy.tsx",
+            // tsd / Vitest typecheck type tests are test files, not production.
+            "index.test-d.ts",
+            "src/cart.spec-d.mts",
             // Modern ESM/CJS extensions ride the same conventions now that
             // the router accepts them.
             "src/cart.test.mts",
@@ -395,6 +400,7 @@ mod tests {
             "spec/helpers/setup.js",
             "src/requestContractSpec.js",
             "src/cypress.ts",
+            "src/cart-d.ts",
             "src/specification.ts",
         ] {
             assert!(
