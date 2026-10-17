@@ -17586,8 +17586,12 @@ fn python_check_safe_action(
         .find(|line| line.starts_with("  Safe next action:"))
         .ok_or_else(|| format!("check printed no safe next action:\n{stdout}"))?;
     assert!(
-        stdout.contains("State: preview language, advisory only (preview_limited)"),
+        stdout.contains("State: preview language, advisory only"),
         "expected preview_limited triage:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("(preview_limited)"),
+        "bounded output must not leak the preview_limited schema token:\n{stdout}"
     );
     Ok(line.to_string())
 }
