@@ -463,3 +463,53 @@ fn loose_number_facts_bind_the_observed_call_to_the_owner_import() -> Result<(),
     assert_eq!(foreign.2, 0, "foreign bare");
     Ok(())
 }
+
+/// A body-local `counts` shadows the namespace import, so
+/// `counts.lineCount(...)` is not an owner call. A real `lineCount(...)`
+/// smoke call keeps the test related; the loose-number pin must not credit.
+#[test]
+fn loose_number_facts_refuse_a_shadowed_namespace_receiver() -> Result<(), String> {
+    let test = |imports: &str, body: &str| {
+        format!(
+            "import test from \"node:test\";\nimport assert from \"node:assert\";\n{imports}\n\ntest(\"counts\", () => {{\n{body}\n}});\n"
+        )
+    };
+    let source = test(
+        "import * as counts from \"../src/linecount\";\nimport { lineCount } from \"../src/linecount\";",
+        "  const counts = fakeCounts();\n  lineCount([\"a\"]);\n  assert.equal(counts.lineCount([\"a\"]), 1);",
+    );
+    let tests = extract_tests(Path::new("tests/linecount.test.ts"), &source);
+    let [parsed] = tests.as_slice() else {
+        return Err(format!("expected one test, got {}", tests.len()));
+    };
+    assert_eq!(parsed.assertions.len(), 1);
+    assert!(parsed.assertions[0].loose_number_expected);
+    assert_eq!(
+        parsed.assertions[0].observed_expression.as_deref(),
+        Some("counts.lineCount([\"a\"])")
+    );
+    if !local_identifier_declared_in_test_body(&parsed.body_text, "counts") {
+        return Err("body-local `counts` must read as a shadow".to_string());
+    }
+    let facts = line_count_facts("typed-bind-shadowed-namespace", &source)?;
+    assert_eq!(facts.0, 1, "shadowed namespace: the smoke call relates");
+    assert_eq!(facts.1, 1, "shadowed namespace: the assertion is marked");
+    assert_eq!(facts.2, 0, "shadowed namespace: the pin must not credit");
+    let owner = extract_owners(Path::new("src/linecount.ts"), LINE_COUNT)
+        .into_iter()
+        .find(|owner| owner.name == "lineCount")
+        .ok_or("owner lineCount not extracted")?;
+    if !related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None)
+        .iter()
+        .any(|candidate| candidate.relation.uses_oracle())
+    {
+        return Err(format!(
+            "real owner smoke call must keep a trusted relation: {:?}",
+            related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None)
+                .iter()
+                .map(|candidate| candidate.relation)
+                .collect::<Vec<_>>()
+        ));
+    }
+    Ok(())
+}
