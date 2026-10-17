@@ -14707,6 +14707,8 @@ tests = [
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::empty_collection_expectations_cannot_confirm_a_push",
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::owner_may_exit_before_line_reads_everything_before_the_changed_expression",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::empty_collection_expectations_cap_effect_families_only_after_an_early_exit",
+  "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::seeded_collection_expectations_restate_the_pre_call_state",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::seeded_collection_expectations_cap_effect_families_only_after_an_early_exit",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::field_collection_count_read_refuses_a_preexisting_key",
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::assertion_field_collection_reads_name_binding_and_getter",
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::collection_subject_must_end_after_root_index_or_value_read",
