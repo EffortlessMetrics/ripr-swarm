@@ -2716,6 +2716,8 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 
 - `rust_value_propagation_unresolved` -- (RIPR-SPEC-0150, additive) A changed Rust value-producing binding reaches a same-owner equality predicate through a bounded `map_or` shape that ripr cannot fully resolve. Classification stays `static_unknown`; this is a named limitation, not a propagation, coverage, or repair claim.
 
+- `rust_field_match_selector_unresolved` -- (RIPR-SPEC-0229, additive, #8479) A plain owner-parameter field selects a changed tail match, but the field value at the invocation and whether an assertion observes that invocation's return remain unresolved. Classification stays `weakly_exposed`; canonical repair-gap projection is withheld. Inspect the existing call/assertion before adding a test; this is a named limitation, not exposure credit or resolved test debt.
+
 - `rust_subprocess_binary_reach_unresolved` -- (additive) An integration test invokes a Cargo-built binary, but ripr does not yet map that binary target back to the changed owner. Classification stays `no_static_path`; this is a named limitation, not a subprocess reach or receipt claim.
 
 - `wrapper_error_binding_unresolved` -- (additive, #3700) A wrapper error conversion (`callee(..).map_err(..)`) takes its error-variant identity from the converted callee, and ripr cannot establish that the boxed conversion preserves that variant. The wrapper-specific producer attaches this discriminator and structured detail to `weakly_exposed` findings. A `reachable_unrevealed` finding with a `no_assertion` consumer may retain secondary wrapper-binding missing text while omitting both optional fields. The seam stays below `exposed`; this is a named limitation, not a coverage or repair claim.
