@@ -9662,6 +9662,13 @@ fn expected_binding_calls_owner(test: &TestSummary, expected: &str, name: &str) 
             // name) may hold an owner call: fail closed (#6974 review).
             // A word the scan refuses only because a `let` annotation
             // names it (`let w: Window = ..`) is a type, not a binding.
+            // A statement macro may bind the word (`s!(expected);`), and the
+            // test may write through it (`EXPECTED.store(f(4))`): neither
+            // is a `let` the scan reads, so the owner may feed the operand
+            // (#7847).
+            if bound_by_macro(&masked_body, word) || written_by_test(&masked_body, word) {
+                return true;
+            }
             let Some(bindings) = receiver_let_bindings(test, word) else {
                 if binds_outside_let(&masked_body, word) || let_patterns_bind(&masked_body, word) {
                     return true;
@@ -9678,6 +9685,67 @@ fn expected_binding_calls_owner(test: &TestSummary, expected: &str, name: &str) 
         }
     }
     false
+}
+
+/// #7847: whether the masked test body writes through `name` outside a
+/// `let`: an assignment (`name = ..`, `name += ..`), a `&mut name` borrow, or
+/// a mutating call on it (`name.store(..)`, `name.set(..)`, `name.push(..)`,
+/// any `*_mut`, `fetch_*` or `set_*` method). Lexical and conservative, so a
+/// static the test stores the owner's value in is no independent expected
+/// value.
+fn written_by_test(masked: &str, name: &str) -> bool {
+    const MUTATORS: &[&str] = &[
+        "store",
+        "set",
+        "push",
+        "push_str",
+        "push_back",
+        "push_front",
+        "insert",
+        "replace",
+        "swap",
+        "extend",
+        "append",
+        "write",
+        "lock",
+        "take",
+        "clear",
+        "remove",
+        "entry",
+        "resize",
+        "truncate",
+        "get_or_init",
+        "compare_exchange",
+        "update",
+    ];
+    whole_word_offsets(masked, name).into_iter().any(|offset| {
+        let before = masked[..offset].trim_end();
+        if before.ends_with("&mut") {
+            return true;
+        }
+        // A `let` (or `let mut`) declaration is the binding the let scan reads.
+        if before.ends_with("let") || before.ends_with("mut") {
+            return false;
+        }
+        let after = masked[offset + name.len()..].trim_start();
+        if let Some(call) = after.strip_prefix('.') {
+            let method: String = call
+                .trim_start()
+                .chars()
+                .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
+                .collect();
+            return MUTATORS.contains(&method.as_str())
+                || method.ends_with("_mut")
+                || method.starts_with("fetch_")
+                || method.starts_with("set_");
+        }
+        after
+            .strip_prefix('=')
+            .is_some_and(|rest| !rest.starts_with(['=', '>']))
+            || ["+=", "-=", "*=", "/=", "%=", "|=", "&=", "^=", "<<=", ">>="]
+                .iter()
+                .any(|operator| after.starts_with(operator))
+    })
 }
 
 /// #6578: whether the expected operand may carry a value an rstest fixture

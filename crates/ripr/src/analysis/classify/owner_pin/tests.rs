@@ -8348,6 +8348,45 @@ fn unit_tests(prelude: &str, body: &str) -> String {
     )
 }
 
+/// #7847: an expected word a statement macro binds, or a static the test
+/// writes the owner's value into, compares the owner with itself.
+#[test]
+fn an_expected_value_a_macro_or_a_static_rebinds_from_the_owner_is_not_a_pin() {
+    let macro_prelude =
+        "macro_rules! s {\n    ($i:ident) => {\n        let $i = weight(4);\n    };\n}\n\n";
+    for (prelude, body) in [
+        (
+            macro_prelude,
+            "s!(expected);\n        assert_eq!(weight(4), expected);",
+        ),
+        (
+            "static EXPECTED: AtomicU32 = AtomicU32::new(0);\n\n",
+            "EXPECTED.store(weight(4), Ordering::SeqCst);\n        assert_eq!(weight(4), EXPECTED.load(Ordering::SeqCst));",
+        ),
+        (
+            "static mut EXPECTED: u32 = 0;\n\n",
+            "EXPECTED = weight(4);\n        assert_eq!(weight(4), EXPECTED);",
+        ),
+    ] {
+        let lib = unit_tests(prelude, body);
+        assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{body}");
+    }
+    // Controls: an independent `let`, and a static the test only reads.
+    for (prelude, body) in [
+        (
+            "",
+            "let expected = 12;\n        assert_eq!(weight(4), expected);",
+        ),
+        (
+            "static EXPECTED: u32 = 12;\n\n",
+            "assert_eq!(weight(4), EXPECTED);",
+        ),
+    ] {
+        let lib = unit_tests(prelude, body);
+        assert_eq!(path_admitted(&lib, "x * 3", None).len(), 1, "{body}");
+    }
+}
+
 #[test]
 fn a_path_through_the_owners_own_crate_pins_the_owner() {
     for body in [
