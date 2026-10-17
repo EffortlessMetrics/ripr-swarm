@@ -239,3 +239,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_wrong_family_oracle (21)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_wrong_family_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

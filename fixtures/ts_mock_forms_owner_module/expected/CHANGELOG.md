@@ -143,3 +143,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_mock_forms_owner_module (13)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless ts_mock_forms_owner_module --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
