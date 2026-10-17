@@ -448,7 +448,11 @@ fn gated_lanes_admit_pull_requests_only_on_the_merge_ready_labeled_event() {
         for line in source.lines() {
             if line == "jobs:" {
                 in_jobs = true;
-            } else if in_jobs && !line.starts_with(' ') && !line.trim().is_empty() {
+            } else if in_jobs
+                && !line.starts_with(' ')
+                && !line.starts_with('#')
+                && !line.trim().is_empty()
+            {
                 in_jobs = false;
             }
             if !in_jobs {
