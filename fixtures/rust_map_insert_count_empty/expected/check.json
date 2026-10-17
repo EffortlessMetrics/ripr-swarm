@@ -55,16 +55,19 @@
         "observed_values": [
           {
             "line": 24,
+            "source_file": "src/lib.rs",
             "value": "qty = 2",
             "context": "function_argument"
           },
           {
             "line": 24,
+            "source_file": "src/lib.rs",
             "value": "sku = \"A\"",
             "context": "function_argument"
           },
           {
             "line": 25,
+            "source_file": "src/lib.rs",
             "value": "1",
             "context": "assertion_argument"
           }
@@ -75,16 +78,19 @@
       "observed_values": [
         {
           "line": 24,
+          "source_file": "src/lib.rs",
           "value": "qty = 2",
           "context": "function_argument"
         },
         {
           "line": 24,
+          "source_file": "src/lib.rs",
           "value": "sku = \"A\"",
           "context": "function_argument"
         },
         {
           "line": 25,
+          "source_file": "src/lib.rs",
           "value": "1",
           "context": "assertion_argument"
         }
@@ -158,16 +164,19 @@
         "observed_values": [
           {
             "line": 24,
+            "source_file": "src/lib.rs",
             "value": "qty = 2",
             "context": "function_argument"
           },
           {
             "line": 24,
+            "source_file": "src/lib.rs",
             "value": "sku = \"A\"",
             "context": "function_argument"
           },
           {
             "line": 25,
+            "source_file": "src/lib.rs",
             "value": "1",
             "context": "assertion_argument"
           }
@@ -178,16 +187,19 @@
       "observed_values": [
         {
           "line": 24,
+          "source_file": "src/lib.rs",
           "value": "qty = 2",
           "context": "function_argument"
         },
         {
           "line": 24,
+          "source_file": "src/lib.rs",
           "value": "sku = \"A\"",
           "context": "function_argument"
         },
         {
           "line": 25,
+          "source_file": "src/lib.rs",
           "value": "1",
           "context": "assertion_argument"
         }

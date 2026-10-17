@@ -59,36 +59,43 @@
         "observed_values": [
           {
             "line": 66,
+            "source_file": "src/lib.rs",
             "value": "\"rust_module_unresolved_target\"",
             "context": "assertion_argument"
           },
           {
             "line": 66,
+            "source_file": "src/lib.rs",
             "value": "\"src/a.rs:12\"",
             "context": "assertion_argument"
           },
           {
             "line": 67,
+            "source_file": "src/lib.rs",
             "value": "line = \"src/a.rs:12\"",
             "context": "function_argument"
           },
           {
             "line": 79,
+            "source_file": "src/lib.rs",
             "value": "\"{context}\"",
             "context": "assertion_argument"
           },
           {
             "line": 86,
+            "source_file": "src/lib.rs",
             "value": "line = \"ripr: 1 Rust module composition limitation(s): src/a.rs:rust_module_ambiguous_parent; affected module contexts remain fail-closed.\"",
             "context": "function_argument"
           },
           {
             "line": 87,
+            "source_file": "src/lib.rs",
             "value": "line = \"ripr: 0 Rust module composition limitation(s): src/a.rs:rust_module_ambiguous_parent; affected module contexts remain fail-closed.\"",
             "context": "function_argument"
           },
           {
             "line": 94,
+            "source_file": "src/lib.rs",
             "value": "\"rust_module_unresolved_target\"",
             "context": "assertion_argument"
           }
@@ -99,36 +106,43 @@
       "observed_values": [
         {
           "line": 66,
+          "source_file": "src/lib.rs",
           "value": "\"rust_module_unresolved_target\"",
           "context": "assertion_argument"
         },
         {
           "line": 66,
+          "source_file": "src/lib.rs",
           "value": "\"src/a.rs:12\"",
           "context": "assertion_argument"
         },
         {
           "line": 67,
+          "source_file": "src/lib.rs",
           "value": "line = \"src/a.rs:12\"",
           "context": "function_argument"
         },
         {
           "line": 79,
+          "source_file": "src/lib.rs",
           "value": "\"{context}\"",
           "context": "assertion_argument"
         },
         {
           "line": 86,
+          "source_file": "src/lib.rs",
           "value": "line = \"ripr: 1 Rust module composition limitation(s): src/a.rs:rust_module_ambiguous_parent; affected module contexts remain fail-closed.\"",
           "context": "function_argument"
         },
         {
           "line": 87,
+          "source_file": "src/lib.rs",
           "value": "line = \"ripr: 0 Rust module composition limitation(s): src/a.rs:rust_module_ambiguous_parent; affected module contexts remain fail-closed.\"",
           "context": "function_argument"
         },
         {
           "line": 94,
+          "source_file": "src/lib.rs",
           "value": "\"rust_module_unresolved_target\"",
           "context": "assertion_argument"
         }

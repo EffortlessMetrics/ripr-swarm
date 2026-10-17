@@ -54,6 +54,7 @@
         "observed_values": [
           {
             "line": 4,
+            "source_file": "tests/save.rs",
             "value": "2",
             "context": "assertion_argument"
           }
@@ -64,6 +65,7 @@
       "observed_values": [
         {
           "line": 4,
+          "source_file": "tests/save.rs",
           "value": "2",
           "context": "assertion_argument"
         }
@@ -138,6 +140,7 @@
         "observed_values": [
           {
             "line": 4,
+            "source_file": "tests/save.rs",
             "value": "2",
             "context": "assertion_argument"
           }
@@ -148,6 +151,7 @@
       "observed_values": [
         {
           "line": 4,
+          "source_file": "tests/save.rs",
           "value": "2",
           "context": "assertion_argument"
         }
@@ -222,6 +226,7 @@
         "observed_values": [
           {
             "line": 4,
+            "source_file": "tests/save.rs",
             "value": "2",
             "context": "assertion_argument"
           }
@@ -232,6 +237,7 @@
       "observed_values": [
         {
           "line": 4,
+          "source_file": "tests/save.rs",
           "value": "2",
           "context": "assertion_argument"
         }

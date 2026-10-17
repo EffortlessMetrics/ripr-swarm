@@ -54,6 +54,7 @@
         "observed_values": [
           {
             "line": 7,
+            "source_file": "tests/config_parse.rs",
             "value": "3",
             "context": "assertion_argument"
           }
@@ -64,6 +65,7 @@
       "observed_values": [
         {
           "line": 7,
+          "source_file": "tests/config_parse.rs",
           "value": "3",
           "context": "assertion_argument"
         }
