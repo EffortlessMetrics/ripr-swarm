@@ -2788,6 +2788,30 @@
       ]
     },
     {
+      "id": "py_cross_test_import_alias_not_borrowed",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_cross_test_import_alias",
+      "vector": "import_alias_binds_only_in_the_importing_test",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "py_unittest_list_equal_effectful_argument",
       "language": "python",
       "tier": "pure",
@@ -9445,6 +9469,77 @@
         { "type": "expected_class", "class": "weakly_exposed" },
         { "type": "maximum_class", "class": "weakly_exposed" },
         { "type": "expected_oracle", "kind": "mock_expectation", "strength": "medium" }
+      ]
+    },
+    {
+      "id": "rust_array_sibling_exit_field",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_array_sibling_exit_field",
+      "vector": "sibling_element_field_may_exit_before_indexed_pin_assertion",
+      "probe_family": "field_construction",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_array_sibling_plain_field",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_array_sibling_plain_field",
+      "vector": "sibling_element_field_plain_path_keeps_indexed_pin",
+      "probe_family": "field_construction",
+      "assertions": [
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
+      "id": "rust_test_written_expected_file",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_test_written_expected_file",
+      "vector": "expected_operand_read_from_file_the_test_writes",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_test_written_expected_file_bound",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_test_written_expected_file_bound",
+      "vector": "expected_operand_bound_from_file_the_test_writes",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_committed_golden_expected_file",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_committed_golden_expected_file",
+      "vector": "expected_operand_read_from_committed_golden_file",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" },
+        { "type": "maximum_class", "class": "exposed" }
       ]
     }
   ]
