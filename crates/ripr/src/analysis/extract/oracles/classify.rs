@@ -1508,6 +1508,64 @@ mod tests {
         Ok(())
     }
 
+    /// #7900: `x.m() || !x.m()` on one receiver is a tautology for any
+    /// method, including through a snapshot wrapper that would otherwise
+    /// grade medium. Different receivers, different methods, and `&&`
+    /// keep the snapshot reading.
+    #[test]
+    fn same_receiver_method_or_negation_is_a_tautology() -> Result<(), String> {
+        use OracleKind::{RelationalCheck, Snapshot};
+        use OracleStrength::{Medium, Weak};
+        let mut mismatches = Vec::new();
+        for (text, expected_kind, expected_strength) in [
+            (
+                "assert!(r.is_empty() || !r.is_empty());",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(!r.is_empty() || r.is_empty());",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(r.is_empty() || !(r.is_empty()));",
+                RelationalCheck,
+                Weak,
+            ),
+            ("assert!(r.is_ok() || !r.is_ok());", RelationalCheck, Weak),
+            (
+                r#"expect![["true"]].assert_eq(&(r.is_empty() || !r.is_empty()).to_string());"#,
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                r#"expect![["true"]].assert_eq(&(a.is_empty() || !b.is_empty()).to_string());"#,
+                Snapshot,
+                Medium,
+            ),
+            (
+                r#"expect![["true"]].assert_eq(&(r.is_empty() || !r.is_ok()).to_string());"#,
+                Snapshot,
+                Medium,
+            ),
+            (
+                r#"expect![["true"]].assert_eq(&(r.is_empty() && !r.is_empty()).to_string());"#,
+                Snapshot,
+                Medium,
+            ),
+        ] {
+            if let Err(mismatch) = require_classification(text, expected_kind, expected_strength) {
+                mismatches.push(mismatch);
+            }
+        }
+        if mismatches.is_empty() {
+            Ok(())
+        } else {
+            Err(mismatches.join("\n"))
+        }
+    }
+
     /// Rules 2 and 3 through the classifier and the scanner that feed
     /// related tests, not only through the pattern reader.
     #[test]
@@ -1837,6 +1895,17 @@ fn ok_literal() {
             (
                 "expect_err_ufcs_fallback_error",
                 "Result::expect_err(check(300).and(Err(E::Other)), \"too long\");",
+                vec![],
+            ),
+            // A returned or operand UFCS value is used, not discarded.
+            (
+                "expect_err_ufcs_returned",
+                "return Result::expect_err(check(300), \"too long\");",
+                vec![],
+            ),
+            (
+                "expect_err_ufcs_negated",
+                "!Result::expect_err(check(300), \"too long\");",
                 vec![],
             ),
             (

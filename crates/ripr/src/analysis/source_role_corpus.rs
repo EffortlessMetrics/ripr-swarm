@@ -134,3 +134,30 @@ fn cfg_test_variants_all_reach_executable_tests() -> Result<(), String> {
     assert!(roles_by_name(&index).contains_key("rate"));
     Ok(())
 }
+
+#[test]
+fn direct_cfg_helpers_keep_one_executable_test_and_production_controls() -> Result<(), String> {
+    let index = build_case("direct_cfg_helpers")?;
+    assert_eq!(test_names(&index), ["fixture_contracts"]);
+    let roles = roles_by_name(&index);
+    for name in ["standalone_helper", "conjunct_helper", "inline_helper"] {
+        assert_eq!(
+            roles.get(name).map(String::as_str),
+            Some("CfgTestModule"),
+            "{name}"
+        );
+    }
+    for name in [
+        "production_lease",
+        "alternative_control",
+        "nontest_control",
+        "lookalike_control",
+    ] {
+        assert_eq!(
+            roles.get(name).map(String::as_str),
+            Some("Production"),
+            "{name}"
+        );
+    }
+    Ok(())
+}

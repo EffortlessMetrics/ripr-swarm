@@ -2865,7 +2865,13 @@ fn trailing_expect_err_receiver(masked: &str) -> Option<&str> {
         if group_end(masked, found.open) == Some(close) {
             return match found.form {
                 ExpectErrForm::Method => Some(&masked[..found.start]),
-                ExpectErrForm::ResultUfcs => ufcs_expect_err_result_arg(masked, found.open, close),
+                // The UFCS call must be the whole statement: text before
+                // `Result::` (`return `, `!`, `&`) means the value is used.
+                ExpectErrForm::ResultUfcs => masked[..found.start]
+                    .trim()
+                    .is_empty()
+                    .then(|| ufcs_expect_err_result_arg(masked, found.open, close))
+                    .flatten(),
             };
         }
         search = found.open + 1;

@@ -9456,6 +9456,34 @@
       ]
     },
     {
+      "id": "rust_direct_collection_count_payload_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_direct_collection_count_payload",
+      "vector": "len_count_confirms_deleted_direct_push",
+      "probe_family": "call_deletion",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ],
+      "control": "must_stay_exposed"
+    },
+    {
+      "id": "rust_direct_collection_count_payload_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_direct_collection_count_payload",
+      "vector": "len_count_cannot_confirm_changed_direct_push_payload",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
       "id": "ts_mock_payload_wrapped_impl_not_a_fresh_mock",
       "language": "typescript",
       "tier": "pure",
@@ -9492,6 +9520,32 @@
       "tier": "pure",
       "source_fixture": "fixtures/rust_array_sibling_plain_field",
       "vector": "sibling_element_field_plain_path_keeps_indexed_pin",
+      "probe_family": "field_construction",
+      "assertions": [
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
+      "id": "rust_array_element_drop_exit",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_array_element_drop_exit",
+      "vector": "element_type_non_plain_drop_exits_during_unwind",
+      "probe_family": "field_construction",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_array_element_drop_plain",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_array_element_drop_plain",
+      "vector": "element_type_plain_drop_keeps_indexed_pin",
       "probe_family": "field_construction",
       "assertions": [
         { "type": "expected_class", "class": "exposed" }

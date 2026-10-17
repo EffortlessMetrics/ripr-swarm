@@ -607,6 +607,13 @@ the diff changes `None => 1` to `None => 0`.
   helper-lent char literal that selects the changed arm credits it; a
   literal for another arm and a variable argument do not. Verdict corpus
   case `grid-match-helper`.
+  A same-file `macro_rules!` that may define an item of the owner's name
+  (#7985) makes the owner call ambiguous, so it credits nothing; a macro
+  defining an unrelated name does not. Unit tests: `macro_item_names.rs`
+  `tests` and the `helper_transfer.rs` unit test
+  `test_call_is_shadowed_by_a_macro_defined_same_named_fn`, plus the shared-gate
+  test `macro_defined_same_name_is_a_foreign_rebind_for_every_gate_caller` in
+  `reveal.rs` (covering the owner-pin callers).
 - `crates/ripr/tests/match_arm_table_selection.rs` and the
   `arm_selection.rs` unit tests
   `integer_scrutinee_arithmetic_evaluates_the_input`,

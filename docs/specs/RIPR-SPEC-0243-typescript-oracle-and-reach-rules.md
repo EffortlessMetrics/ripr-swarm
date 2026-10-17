@@ -491,8 +491,8 @@ Relation rank, `uses_oracle` and reason:
 
 Specifier resolution: a relative specifier joins lexically, with the
 directory `main`, `index` and `outDir` rules of RIPR-SPEC-0099. A
-non-relative specifier resolves only through tsconfig `paths` (when
-`[typescript] resolve_tsconfig_paths = true`) or through a workspace
+non-relative specifier resolves only through tsconfig `paths` (unless
+`[typescript] resolve_tsconfig_paths = false`) or through a workspace
 package name, which is always on. Anything else is unresolved, and an
 owner import through an unresolved alias reports
 `typescript_path_alias_unresolved`.
@@ -847,8 +847,8 @@ to `amount - 20`, and `tests/lib.test.ts` has
 28. `packages/a/package.json` is `{ "name": "a", "main": "src/lib.ts" }`
     with the base `src/lib.ts`; `packages/b/tests/x.test.ts` imports
     `{ price }` from `"a"` and asserts `toBe(130)`: `exposed` with no
-    tsconfig flag (unchanged).
-29. `import { price } from "@/lib"` with `resolve_tsconfig_paths` off:
+    tsconfig flag, via the workspace package name (unchanged).
+29. `import { price } from "@/lib"` with `resolve_tsconfig_paths = false` set explicitly (the default is on):
     `no_static_path`, `typescript_path_alias_unresolved` (unchanged).
 30. `src/lib.ts` is `export function save(db: Db, v: number) {
     db.write(v + 1); }`, changed to `v + 2`; test
