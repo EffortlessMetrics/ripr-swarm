@@ -498,12 +498,12 @@ fn observed_term_call_rows(
     new_line: &str,
     rows: Vec<PythonOwnerCallValues>,
 ) -> Option<Vec<PythonOwnerCallValues>> {
-    let no_store = proven_no_side_effecting_store(old_line, new_line, owner);
+    let no_store = return_change_has_no_effect_store(old_line, new_line, owner);
     let mut observed = Vec::new();
     for row in rows {
         match call_observation(owner, related_candidates, focus, &row, no_store) {
             CallObservation::Observed => observed.push(row),
-            CallObservation::ProvenUnobserved => {}
+            CallObservation::Discarded => {}
             CallObservation::Unclear => return None,
         }
     }
@@ -517,8 +517,8 @@ enum CallObservation {
     Observed,
     /// A top-level expression statement whose result is discarded, and the
     /// owner does not store the changed expression.
-    ProvenUnobserved,
-    /// Nested, assigned-but-unread, passed on, or otherwise not proven unused.
+    Discarded,
+    /// Nested, assigned-but-unread, passed on, or otherwise not established unused.
     Unclear,
 }
 
@@ -588,7 +588,7 @@ fn classify_body_call(
     Some(match covering {
         Stmt::Expr(expr) if is_owner_call_expr(expr.value.as_ref(), owner, test) => {
             if no_store {
-                CallObservation::ProvenUnobserved
+                CallObservation::Discarded
             } else {
                 CallObservation::Unclear
             }
@@ -685,7 +685,7 @@ fn assertion_text_observes_token(text: &str, token: &str) -> bool {
             .any(|(idx, _)| has_identifier_boundary(text, idx, token.len()))
 }
 
-fn proven_no_side_effecting_store(old_line: &str, new_line: &str, owner: &PythonOwner) -> bool {
+fn return_change_has_no_effect_store(old_line: &str, new_line: &str, owner: &PythonOwner) -> bool {
     ChangedEffect::of(old_line, Some(new_line), owner).is_none()
         && ChangedEffect::of(new_line, Some(old_line), owner).is_none()
         && old_line.trim().starts_with("return")
