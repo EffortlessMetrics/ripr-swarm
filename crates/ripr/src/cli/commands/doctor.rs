@@ -3834,6 +3834,17 @@ mod tests {
     }
 
     #[test]
+    fn ripr_artifact_tracking_is_not_checked_when_git_cannot_run() {
+        // A root that does not exist fails the git spawn itself, so the
+        // probe must stay quiet instead of claiming the index is clean.
+        let missing = unique_command_test_dir("artifact-tracking-missing-root");
+        assert_eq!(
+            ripr_artifact_tracking(&missing),
+            output::doctor::DoctorArtifactTracking::NotChecked
+        );
+    }
+
+    #[test]
     fn ripr_artifact_tracking_reports_index_entries_independent_of_ignore_rules()
     -> Result<(), String> {
         use output::doctor::{DoctorArtifactIgnore, DoctorArtifactTracking};
