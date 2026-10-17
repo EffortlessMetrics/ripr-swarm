@@ -235,8 +235,9 @@ ripr init --ci github
 Review the generated files before committing them. The workflow installs the
 ripr version that generated it, so generate it with a released `ripr`: an
 unreleased development build names a version crates.io does not publish yet,
-and the install step fails. On a PR, read the job summary
-first, then open the linked artifacts for the evidence and suggested test.
+and the install step fails. On a PR, read the summary comment it posts on the
+conversation (one comment, updated on every push; same-repository PRs only), then the job summary
+and the linked artifacts for the evidence and suggested test.
 The generated workflow is non-blocking by default; a policy gate is a separate,
 explicit adoption decision.
 The workflow runs on `ubuntu-latest` and pins `shell: bash`, so its steps

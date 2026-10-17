@@ -314,8 +314,9 @@ pub(super) fn pr_comments(args: &[String]) -> Result<(), String> {
         "plan" => pr_comments_plan(rest),
         "existing" => pr_comments_github::pr_comments_existing(rest),
         "requests" => pr_comments_github::pr_comments_requests(rest),
+        "summary" => pr_comments_github::pr_comments_summary(rest),
         _ => Err(format!(
-            "unknown pr-comments subcommand {subcommand:?}; expected `plan`, `existing`, or `requests`"
+            "unknown pr-comments subcommand {subcommand:?}; expected `plan`, `existing`, `requests`, or `summary`"
         )),
     }
 }
@@ -3514,6 +3515,7 @@ mod tests {
             // continue-on-error semantics in `ci_packet::stage_table`.
             yaml_advisory_steps: &[
                 "Capture existing RIPR inline comments",
+                "Publish RIPR summary comment",
                 "Publish RIPR inline comments",
                 "Add RIPR advisory summary",
                 "Upload RIPR report artifacts",
@@ -6089,7 +6091,7 @@ language = "rust"
         );
         assert_eq!(
             pr_comments(&args(&["publish"])),
-            Err("unknown pr-comments subcommand \"publish\"; expected `plan`, `existing`, or `requests`".to_string())
+            Err("unknown pr-comments subcommand \"publish\"; expected `plan`, `existing`, `requests`, or `summary`".to_string())
         );
         assert_eq!(
             parse_pr_comments_plan_options(&args(&["--mode", "post"])),
@@ -8041,8 +8043,8 @@ language = "rust"
         // The DX bar from #5409: a workflow an adopter can read in one sitting.
         let line_count = workflow.lines().count();
         assert!(
-            line_count <= 150,
-            "generated workflow is {line_count} lines; #5409 keeps it at 150 or fewer"
+            line_count <= 166,
+            "generated workflow is {line_count} lines; #5409 set 150, and the summary comment step took it to 165"
         );
 
         assert!(workflow.contains("RIPR_UPLOAD_SARIF: \"true\""));
@@ -8113,6 +8115,18 @@ language = "rust"
         assert!(capture.contains("| ripr pr-comments existing --root . --raw -"));
         let publish = workflow_step(&workflow, "Publish RIPR inline comments");
         assert!(publish.contains("done < target/ripr/review/publish/requests.tsv"));
+        // The conversation comment is on by default, but never for a fork or
+        // Dependabot head, whose token cannot write, and it stays advisory.
+        let summary = workflow_step(&workflow, "Publish RIPR summary comment");
+        assert!(summary.contains("env.RIPR_SUMMARY_COMMENT != 'false'"));
+        assert!(
+            summary.contains("github.event.pull_request.head.repo.full_name == github.repository")
+        );
+        assert!(summary.contains("github.actor != 'dependabot[bot]'"));
+        assert!(summary.contains("continue-on-error: true"));
+        assert!(summary.contains("| ripr pr-comments summary --root . --raw -"));
+        assert!(summary.contains("done < target/ripr/review/summary/summary.tsv"));
+        assert_step_before(&workflow, "Run RIPR", "Publish RIPR summary comment");
 
         let run = workflow_step(&workflow, "Run RIPR");
         assert_eq!(
