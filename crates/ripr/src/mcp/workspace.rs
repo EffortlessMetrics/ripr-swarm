@@ -336,6 +336,8 @@ pub(crate) struct Snapshot {
 pub(crate) struct ScopeFacts {
     pub(crate) uncommitted_edits: bool,
     pub(crate) untracked: Vec<String>,
+    /// Gitignored Rust files the diff source could not analyze (#7467).
+    pub(crate) ignored: Vec<String>,
 }
 
 impl ScopeFacts {
@@ -343,6 +345,7 @@ impl ScopeFacts {
         Self {
             uncommitted_edits: output.unanalyzed_working_tree,
             untracked: output.untracked_working_tree_source_paths.clone(),
+            ignored: output.ignored_working_tree_source_paths.clone(),
         }
     }
 
@@ -350,6 +353,7 @@ impl ScopeFacts {
         json!({
             "uncommitted_edits": self.uncommitted_edits,
             "untracked": self.untracked,
+            "ignored": self.ignored,
         })
     }
 }
@@ -1062,10 +1066,28 @@ impl Drop for InFlightAttempt {
 /// argument, so there is no in-protocol expansion to promise.
 fn scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
     let scope = &snapshot.scope;
-    if !scope.uncommitted_edits {
-        return None;
-    }
     const NAMED_PATHS: usize = 3;
+    if !scope.uncommitted_edits {
+        if scope.ignored.is_empty() {
+            return None;
+        }
+        let named = scope
+            .ignored
+            .iter()
+            .take(NAMED_PATHS)
+            .cloned()
+            .collect::<Vec<_>>();
+        return Some(json!({
+            "analyzed": "committed default-branch diff",
+            "ignored_files": "outside this analysis",
+            "note": "gitignored Rust files were excluded and not analyzed by this snapshot; neither the committed diff nor `ripr check --worktree --format json` analyzes them. Un-ignore them or pass an explicit `--diff` to cover them",
+            "ignored_edits": {
+                "files": named,
+                "total": scope.ignored.len(),
+                "more": scope.ignored.len().saturating_sub(NAMED_PATHS),
+            },
+        }));
+    }
     let named = scope
         .untracked
         .iter()
@@ -3026,6 +3048,34 @@ mod tests {
                 return Err(format!("reserved code is not a wire token: {code}"));
             }
         }
+        Ok(())
+    }
+
+    /// #7467 review: gitignored exclusions ride the snapshot identity and
+    /// are disclosed even when no tracked or untracked edit exists.
+    #[test]
+    fn ignored_only_exclusions_change_identity_and_are_disclosed() -> Result<(), String> {
+        let snap = |paths: &[&str]| -> Result<Snapshot, String> {
+            let mut out = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+            out.ignored_working_tree_source_paths = paths.iter().map(|p| p.to_string()).collect();
+            Snapshot::from_output(&out, Some("root:sha256:test")).map_err(|f| f.detail)
+        };
+        let a = snap(&["src/gen_a.rs"])?;
+        let b = snap(&["src/gen_b.rs"])?;
+        let a2 = snap(&["src/gen_a.rs"])?;
+        let none = snap(&[])?;
+        assert_ne!(a.snapshot_id, b.snapshot_id, "different ignored sets");
+        assert_eq!(
+            a.snapshot_id, a2.snapshot_id,
+            "identical sets keep identity"
+        );
+        assert_ne!(a.snapshot_id, none.snapshot_id);
+        assert!(scope_disclosure(&none).is_none());
+        let disclosure = scope_disclosure(&a).ok_or("ignored-only must disclose")?;
+        let text = disclosure.to_string();
+        assert!(text.contains("src/gen_a.rs"), "{text}");
+        assert!(text.contains("not analyzed"), "{text}");
+        assert!(text.contains("--worktree"), "{text}");
         Ok(())
     }
 }
