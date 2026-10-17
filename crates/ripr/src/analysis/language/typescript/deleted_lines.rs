@@ -276,10 +276,7 @@ fn owner_headers_from_code_runs<'a>(
                 angle_depth = 0;
             }
             paren_depth += paren_delta(code);
-            angle_depth += type_angle_delta(code);
-            if angle_depth < 0 {
-                angle_depth = 0;
-            }
+            angle_depth += type_angle_delta(code, angle_depth);
             group.push((line, code));
         }
         close_header_group(&group, &mut headers);
@@ -465,36 +462,26 @@ fn paren_delta(code: &str) -> isize {
     })
 }
 
-/// Opened minus closed type-argument angles on this line. Comparisons
-/// (`a < b`) and arrows (`=>`, `>=`, `<=`) are not type lists: a type
-/// opener sits immediately after an identifier, `)`, `]` or `>`. An
-/// unmatched `>` is ignored once this line has opened a type list, so
-/// `a > b): Promise<` cannot cancel that `<`. Unmatched closes on a line
-/// with no type-open (`> {`) still report -1 so they can close `Promise<`
-/// from the previous line. The grouping accumulator never lets angle
-/// depth go below zero, so `a > b` cannot cancel an open `(` (#7705).
-fn type_angle_delta(code: &str) -> isize {
+/// Opened minus closed type-argument angles on this line, given the
+/// still-open type lists from earlier header lines. Comparisons (`a < b`)
+/// and arrows (`=>`, `>=`, `<=`) are not type lists: a type opener sits
+/// immediately after an identifier, `)`, `]` or `>`. A `>` only closes
+/// when a type list is already open, so `a > b` cannot cancel an open `(`
+/// and `> | Array<` can close `Promise<` then open the next list (#7705).
+fn type_angle_delta(code: &str, incoming: isize) -> isize {
     let bytes = code.as_bytes();
-    let mut depth: isize = 0;
-    let mut unmatched_close: isize = 0;
-    let mut saw_type_open = false;
+    let mut depth = incoming;
     for at in 0..bytes.len() {
         match bytes[at] {
             b'<' if bytes.get(at + 1) != Some(&b'=') && is_type_open_angle(bytes, at) => {
                 depth += 1;
-                saw_type_open = true;
             }
             b'>' if bytes.get(at + 1) == Some(&b'=') || (at > 0 && bytes[at - 1] == b'=') => {}
             b'>' if depth > 0 => depth -= 1,
-            b'>' => unmatched_close += 1,
             _ => {}
         }
     }
-    if saw_type_open {
-        depth
-    } else {
-        depth - unmatched_close
-    }
+    depth - incoming
 }
 
 fn is_type_open_angle(bytes: &[u8], at: usize) -> bool {

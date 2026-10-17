@@ -909,6 +909,43 @@ fn deleted_body_under_a_header_with_a_comparison_then_a_type_list_keeps_its_owne
     Ok(())
 }
 
+/// A wrap that closes one type list and opens another on the same line
+/// (`> | Array<`) must net to zero, or the later `> {` leaves depth open
+/// and the unpaired body line is swallowed as header text.
+#[test]
+fn deleted_body_under_a_wrapped_union_type_header_keeps_its_owner() -> Result<(), String> {
+    let findings = analyze(
+        "wrapped-union-type",
+        &[
+            " export class Cart {",
+            "-  save(): Promise<",
+            "-    string",
+            "-  > | Array<",
+            "-    string",
+            "-  > {",
+            "-    audit();",
+            "+  save(): Promise<",
+            "+    string | number",
+            "+  > | Array<",
+            "+    string | number",
+            "+  > {",
+            "     return Promise.resolve(\"ok\");",
+            "   }",
+            " }",
+        ],
+    )?;
+    let base = base_side(&findings);
+    assert_eq!(base, vec![record(2, "save")], "{findings:?}");
+    assert!(
+        findings
+            .iter()
+            .filter(|finding| finding.source_currentness.is_base_side())
+            .all(|finding| !finding.is_candidate_actionable()),
+        "base-side records must stay non-actionable: {findings:?}"
+    );
+    Ok(())
+}
+
 /// A line deleted from the body of a kept block comment is not code.
 #[test]
 fn deleted_comment_body_line_records_nothing() -> Result<(), String> {
