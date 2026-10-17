@@ -4217,6 +4217,28 @@ mod tests {
     /// content is carried by typed fields now, and a text array with no
     /// production producer would be a field claiming more than it enforces.
     #[test]
+    fn artifact_tracking_verdicts_serialize_to_the_published_spellings() -> Result<(), String> {
+        let render = |tracking: &DoctorArtifactTracking| {
+            serde_json::to_string(tracking).map_err(|error| error.to_string())
+        };
+        assert_eq!(
+            render(&DoctorArtifactTracking::NoneTracked)?,
+            "\"none_tracked\""
+        );
+        assert_eq!(
+            render(&DoctorArtifactTracking::NotChecked)?,
+            "\"not_checked\""
+        );
+        assert_eq!(
+            render(&DoctorArtifactTracking::Tracked {
+                warning: "w".to_string()
+            })?,
+            "{\"tracked\":{\"warning\":\"w\"}}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn the_dead_sections_array_is_gone_from_the_serialized_report() -> Result<(), String> {
         let mut report = DoctorReport::new("/workspace");
         report.apply_environment(DoctorEnvironmentFacts {

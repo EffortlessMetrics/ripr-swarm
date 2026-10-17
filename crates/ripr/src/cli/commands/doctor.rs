@@ -3860,6 +3860,12 @@ mod tests {
             ripr_artifact_tracking(&root),
             DoctorArtifactTracking::NoneTracked
         );
+        // A root git cannot run in (missing directory) establishes nothing:
+        // the probe fails closed to NotChecked instead of claiming no files.
+        assert_eq!(
+            ripr_artifact_tracking(&root.join("does-not-exist")),
+            DoctorArtifactTracking::NotChecked
+        );
         // Track the report, then add the covering ignore rule: the ignore
         // verdict is satisfied while the tracked fact remains separate.
         crate::git::run_git(&root, &["add", "-f", "--", "target/ripr/report.json"])
