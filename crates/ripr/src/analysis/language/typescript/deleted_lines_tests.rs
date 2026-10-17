@@ -841,6 +841,71 @@ fn deleted_wrapped_header_opening_with_a_brace_is_not_given_to_the_enclosing_fun
     Ok(())
 }
 
+/// A wrapped replacement whose parameter list contains `>=` must not let
+/// that comparison cancel the open `(`, or the unpaired body line is lost.
+#[test]
+fn deleted_body_under_a_wrapped_header_with_a_comparison_keeps_its_owner() -> Result<(), String> {
+    let findings = analyze(
+        "wrapped-header-comparison",
+        &[
+            " export class Cart {",
+            "-  save(",
+            "-    id: string,",
+            "-    limit = a >= b,",
+            "-  ) {",
+            "-    audit(id);",
+            "+  save(",
+            "+    id: string | number,",
+            "+    limit = a >= b,",
+            "+  ) {",
+            "     persist(id);",
+            "   }",
+            " }",
+        ],
+    )?;
+    let base = base_side(&findings);
+    assert_eq!(base, vec![record(2, "save")], "{findings:?}");
+    assert!(
+        findings
+            .iter()
+            .filter(|finding| finding.source_currentness.is_base_side())
+            .all(|finding| !finding.is_candidate_actionable()),
+        "base-side records must stay non-actionable: {findings:?}"
+    );
+    Ok(())
+}
+
+/// A default callback in the parameter list opens with `=> {`. That body
+/// is not header text; a deleted line under it stays base-side on `save`.
+#[test]
+fn deleted_callback_inside_a_parameter_list_stays_with_the_live_method() -> Result<(), String> {
+    let findings = analyze(
+        "callback-in-parameter-list",
+        &[
+            " export class Cart {",
+            "-  save(cb = () => {",
+            "-    audit();",
+            "-  }) {",
+            "+  save(cb = () => {",
+            "+    log();",
+            "+  }) {",
+            "     persist();",
+            "   }",
+            " }",
+        ],
+    )?;
+    let base = base_side(&findings);
+    assert_eq!(base, vec![record(2, "save")], "{findings:?}");
+    assert!(
+        findings
+            .iter()
+            .filter(|finding| finding.source_currentness.is_base_side())
+            .all(|finding| !finding.is_candidate_actionable()),
+        "base-side records must stay non-actionable: {findings:?}"
+    );
+    Ok(())
+}
+
 /// A line deleted from the body of a kept block comment is not code.
 #[test]
 fn deleted_comment_body_line_records_nothing() -> Result<(), String> {

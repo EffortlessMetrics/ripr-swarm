@@ -225,7 +225,8 @@ struct RemovedHeaders {
 /// destructured first line (`save({` / `id,` / `}) {`), or an Allman brace
 /// on its own line. Open parentheses and type-argument lists join until
 /// they close; a `{` inside still-open parens is a parameter object, not
-/// the body (#7705).
+/// the body, unless the previous line opened a callback with `=> {`
+/// (#7705).
 fn removed_owner_headers(runs: &[Vec<RemovedCode<'_>>]) -> RemovedHeaders {
     owner_headers_from_code_runs(
         runs.iter()
@@ -265,7 +266,11 @@ fn owner_headers_from_code_runs<'a>(
         let mut group: Vec<(usize, &'a str)> = Vec::new();
         let mut depth: isize = 0;
         for (line, code) in run {
-            let continues = !group.is_empty() && (depth > 0 || code.trim() == "{");
+            let last_opened_callback = group
+                .last()
+                .is_some_and(|(_, last)| last.trim_end().ends_with("=> {"));
+            let continues =
+                !group.is_empty() && !last_opened_callback && (depth > 0 || code.trim() == "{");
             if !continues {
                 close_header_group(&group, &mut headers);
                 group.clear();
@@ -464,7 +469,8 @@ fn paren_delta(code: &str) -> isize {
 
 /// Opened minus closed type-argument angles. Comparisons (`a < b`) and
 /// arrows (`=>`, `>=`, `<=`) are not type lists: a type opener sits
-/// immediately after an identifier, `)`, `]` or `>` (#7705).
+/// immediately after an identifier, `)`, `]` or `>`. A `>` only closes a
+/// still-open type list, so `a >= b` cannot cancel an open `(` (#7705).
 fn type_angle_delta(code: &str) -> isize {
     let bytes = code.as_bytes();
     let mut depth: isize = 0;
@@ -473,8 +479,8 @@ fn type_angle_delta(code: &str) -> isize {
             b'<' if bytes.get(at + 1) != Some(&b'=') && is_type_open_angle(bytes, at) => {
                 depth += 1;
             }
-            b'>' if at > 0 && bytes[at - 1] == b'=' => {}
-            b'>' => depth -= 1,
+            b'>' if bytes.get(at + 1) == Some(&b'=') || (at > 0 && bytes[at - 1] == b'=') => {}
+            b'>' if depth > 0 => depth -= 1,
             _ => {}
         }
     }
