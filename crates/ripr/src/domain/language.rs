@@ -434,9 +434,9 @@ pub enum StaticLimitKind {
     /// expects. The gap is withheld and the class is `static_unknown`. See
     /// RIPR-SPEC-0240.
     RustPanicOutcomeUnresolved,
-    /// A related test that calls the owner directly checks it with a strong
-    /// `debug_assert_eq!` or `debug_assert!`. Those run under the default
-    /// `cargo test` profile but are compiled out under `--release`, so ripr
+    /// A related test that calls the owner directly pins its result with
+    /// `debug_assert_eq!(owner(..), expected)`. That runs under the default
+    /// `cargo test` profile but is compiled out under `--release`, so ripr
     /// neither credits nor denies the discriminator. The gap is withheld and
     /// the class is `static_unknown`. See RIPR-SPEC-0240 / #8051.
     RustDebugAssertionProfileUnresolved,
@@ -622,8 +622,8 @@ impl StaticLimitKind {
                  coverage claim."
             }
             StaticLimitKind::RustDebugAssertionProfileUnresolved => {
-                "A related Rust test calls this code and checks it with a `debug_assert_eq!` or \
-                 `debug_assert!`, which runs under the default test profile but is compiled out \
+                "A related Rust test calls this code and checks its result with \
+                 `debug_assert_eq!`, which runs under the default test profile but is compiled out \
                  when tests run with `--release`. ripr does not resolve which profile runs the \
                  tests, so it does not claim a gap; this is a named limitation, not a coverage \
                  claim."

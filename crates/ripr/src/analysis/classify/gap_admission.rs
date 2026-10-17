@@ -812,26 +812,36 @@ pub(in crate::analysis) fn withhold_should_panic_gap(
 
 const DEBUG_ASSERTION_LIMIT: StaticLimitKind = StaticLimitKind::RustDebugAssertionProfileUnresolved;
 const DEBUG_ASSERTION_FIRST_UNRESOLVED_EDGE: &str =
-    "whether the tests run with debug assertions, which the `debug_assert` check needs";
+    "whether the tests run with debug assertions, which the `debug_assert_eq!` check needs";
 
-/// #8051: a related test that calls the owner directly and checks it with a
-/// strong `debug_assert_eq!` or `debug_assert!` discriminates under the
-/// default `cargo test` profile, where debug assertions run, and never under
-/// `--release`, where they are compiled out. ripr does not resolve which
-/// profile runs the tests, so neither the gap nor credit is established: the
-/// gap is withheld under its own limit. The owner pin still refuses the
-/// `debug_` spellings (RIPR-SPEC-0197), so this never upgrades a class. A
-/// weak debug check (`debug_assert_ne!`, a relational condition) keeps the
-/// gap, since it would not discriminate as a standard assertion either.
-/// Returns `true` when the finding was rewritten to `static_unknown`.
+/// #8051: a related test that calls a free-function owner directly and pins
+/// its whole result with `debug_assert_eq!(owner(..), expected)` discriminates
+/// under the default `cargo test` profile, where debug assertions run, and
+/// never under `--release`, where they are compiled out. ripr does not
+/// resolve which profile runs the tests, so neither the gap nor credit is
+/// established: a return-value or error-path gap is withheld under its own
+/// limit. The `debug_` macros are not assertion facts (the parser and the
+/// owner pin both refuse them, RIPR-SPEC-0197), so this reads the test body
+/// itself and never upgrades a class. Any other `debug_` check, an operand
+/// that is not the owner call alone, an ignored test, or another probe
+/// family keeps the gap. Returns `true` when the finding was rewritten to
+/// `static_unknown`.
 pub(in crate::analysis) fn withhold_debug_assertion_gap(
     finding: &mut Finding,
     index: &RustIndex,
+    owner_name: Option<&str>,
 ) -> bool {
+    let Some(owner) = owner_name else {
+        return false;
+    };
     if finding.static_limit_kind.is_some()
         || !matches!(
             finding.class,
             ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+        )
+        || !matches!(
+            finding.probe.family,
+            ProbeFamily::ReturnValue | ProbeFamily::ErrorPath
         )
     {
         return false;
@@ -842,13 +852,12 @@ pub(in crate::analysis) fn withhold_debug_assertion_gap(
         .filter(|related| {
             related.relation_reason == Some(RelationReason::DirectOwnerCall)
                 && !related.is_unmatched()
-                && related.oracle_strength == OracleStrength::Strong
-                && related.oracle.as_deref().is_some_and(is_debug_assertion)
                 && index.tests().iter().any(|test| {
                     test.name == related.name
                         && test.file == related.file
                         && test.start_line == related.line
                         && !is_ignored(test)
+                        && pins_owner_with_debug_assert_eq(test, owner)
                 })
         })
         .map(|related| {
@@ -864,7 +873,7 @@ pub(in crate::analysis) fn withhold_debug_assertion_gap(
         return false;
     }
     let next_step = format!(
-        "{} checks this code only with a `debug_` assertion, which runs under the default test profile and is compiled out with `--release`, so ripr does not report a gap. If the tests may run with `--release`, use `assert_eq!` or `assert!` instead.",
+        "{} checks this code's result only with `debug_assert_eq!`, which runs under the default test profile and is compiled out with `--release`, so ripr does not report a gap. If the tests may run with `--release`, use `assert_eq!` instead.",
         checking.join(", ")
     );
     withhold_gap(
@@ -877,20 +886,85 @@ pub(in crate::analysis) fn withhold_debug_assertion_gap(
     true
 }
 
-/// One `debug_assert_eq!` or `debug_assert!` invocation, bare or under a
-/// `std`/`core` root. `debug_assert_ne!` passes for every other value, so it
-/// is not read here.
-fn is_debug_assertion(oracle: &str) -> bool {
-    let text = oracle.trim_start();
-    let text = text.strip_prefix("::").unwrap_or(text);
-    let text = text
-        .strip_prefix("std::")
-        .or_else(|| text.strip_prefix("core::"))
-        .unwrap_or(text);
-    ["debug_assert_eq", "debug_assert"].iter().any(|name| {
-        text.strip_prefix(name)
-            .is_some_and(|rest| rest.trim_start().starts_with('!'))
+/// Whether `test`'s body invokes `debug_assert_eq!` (bare, or under a `std`
+/// or `core` root) with one compared operand that is a bare call of `owner`
+/// and nothing else, and another that does not call `owner`. An optional
+/// third operand is the failure message.
+fn pins_owner_with_debug_assert_eq(test: &TestFact, owner: &str) -> bool {
+    const NAME: &str = "debug_assert_eq";
+    let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
+    masked.match_indices(NAME).any(|(at, _)| {
+        let before = masked[..at]
+            .trim_end_matches("std::")
+            .trim_end_matches("core::");
+        let before = before.strip_suffix("::").unwrap_or(before);
+        if before
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || ch == ':')
+        {
+            return false;
+        }
+        let Some(after_bang) = masked[at + NAME.len()..].trim_start().strip_prefix('!') else {
+            return false;
+        };
+        let open = masked.len() - after_bang.trim_start().len();
+        let Some(close) = closing_bracket(&masked, open) else {
+            return false;
+        };
+        let inner = &masked[open + 1..close];
+        let (commas, _) = top_level_separators(inner);
+        let mut operands = Vec::new();
+        let mut start = 0;
+        for comma in commas {
+            operands.push(inner[start..comma].trim());
+            start = comma + 1;
+        }
+        operands.push(inner[start..].trim());
+        if operands.last().is_some_and(|last| last.is_empty()) {
+            operands.pop();
+        }
+        match operands.as_slice() {
+            [left, right] | [left, right, _] => {
+                (is_bare_owner_call(left, owner) && free_call_offsets(right, owner).is_empty())
+                    || (is_bare_owner_call(right, owner)
+                        && free_call_offsets(left, owner).is_empty())
+            }
+            _ => false,
+        }
     })
+}
+
+/// The byte offset of the bracket that closes the one opening at `open` of
+/// masked `code`, when `open` is an opening bracket that closes in `code`.
+fn closing_bracket(code: &str, open: usize) -> Option<usize> {
+    if !code[open..].starts_with(['(', '[', '{']) {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (offset, ch) in code[open..].char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(open + offset);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether masked `operand` is exactly one bare call `owner(..)`: no path,
+/// receiver, projection or trailing operator.
+fn is_bare_owner_call(operand: &str, owner: &str) -> bool {
+    operand
+        .strip_prefix(owner)
+        .is_some_and(|rest| rest.starts_with('('))
+        && free_call_offsets(operand, owner) == [0]
+        && closing_bracket(operand, owner.len()) == Some(operand.len() - 1)
 }
 
 /// The byte ranges of the bracketed arguments of every panicking macro

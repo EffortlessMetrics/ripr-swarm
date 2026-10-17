@@ -1,12 +1,12 @@
-//! Public-API controls for `debug_` assertions (#8051, RIPR-SPEC-0240).
+//! Public-API controls for `debug_assert_eq!` (#8051, RIPR-SPEC-0240).
 //!
-//! A test that calls the owner and checks it with a strong
-//! `debug_assert_eq!` or `debug_assert!` discriminates under the default
-//! `cargo test` profile and never under `--release`, so the finding reads
-//! `static_unknown` with `rust_debug_assertion_profile_unresolved`: neither
-//! a missing assertion nor credit. A standard `assert_eq!` keeps its credit;
-//! `debug_assert_ne!`, a relational `debug_assert!` and an ignored test keep
-//! the gap.
+//! A test that calls the owner and pins its whole result with
+//! `debug_assert_eq!` discriminates under the default `cargo test` profile and
+//! never under `--release`, so a return-value finding reads `static_unknown`
+//! with `rust_debug_assertion_profile_unresolved`: neither a missing assertion
+//! nor credit. A standard `assert_eq!` keeps its credit. Other `debug_` checks,
+//! an assertion that does not pin the owner, an ignored test, and other probe
+//! families keep the gap, and a `debug_` check never earns `exposed`.
 
 use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, check_workspace};
 use std::path::PathBuf;
@@ -50,7 +50,7 @@ struct TempRepo {
 }
 
 impl TempRepo {
-    fn create(lib: &str) -> Result<Self, String> {
+    fn create(lib: &str, diff: &str) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "ripr-debug-assertion-limit-{}-{}",
@@ -66,7 +66,7 @@ impl TempRepo {
         .map_err(|error| format!("write Cargo.toml failed: {error}"))?;
         std::fs::write(root.join("src/lib.rs"), lib)
             .map_err(|error| format!("write source failed: {error}"))?;
-        std::fs::write(root.join("diff.patch"), DIFF)
+        std::fs::write(root.join("diff.patch"), diff)
             .map_err(|error| format!("write diff failed: {error}"))?;
         Ok(Self { root })
     }
@@ -78,10 +78,8 @@ impl Drop for TempRepo {
     }
 }
 
-/// The `return_value` finding on line 2, which must be the only one.
-fn return_finding(attrs: &str, body: &str) -> Result<Finding, String> {
-    let repo = TempRepo::create(&source(attrs, body))?;
-    let output = check_workspace(CheckInput {
+fn check(repo: &TempRepo) -> Result<ripr::CheckOutput, String> {
+    check_workspace(CheckInput {
         root: repo.root.clone(),
         base: None,
         diff_file: Some(repo.root.join("diff.patch")),
@@ -89,7 +87,13 @@ fn return_finding(attrs: &str, body: &str) -> Result<Finding, String> {
         format: OutputFormat::Json,
         include_unchanged_tests: true,
         ..CheckInput::default()
-    })?;
+    })
+}
+
+/// The `return_value` finding on line 2, which must be the only one.
+fn return_finding(attrs: &str, body: &str) -> Result<Finding, String> {
+    let repo = TempRepo::create(&source(attrs, body), DIFF)?;
+    let output = check(&repo)?;
     let mut on_line = output.findings.iter().filter(|finding| {
         finding.probe.location.line == 2 && finding.probe.family == ripr::ProbeFamily::ReturnValue
     });
@@ -103,11 +107,12 @@ fn return_finding(attrs: &str, body: &str) -> Result<Finding, String> {
 }
 
 #[test]
-fn a_strong_debug_assertion_reads_as_a_profile_limit() -> Result<(), String> {
+fn a_debug_assert_eq_owner_pin_reads_as_a_profile_limit() -> Result<(), String> {
     for body in [
         "debug_assert_eq!(one(), 1);",
         "debug_assert_eq!(1, one());",
         "std::debug_assert_eq!(one(), 1);",
+        "debug_assert_eq!(one(), 1, \"one, as ever\");",
     ] {
         let finding = return_finding("", body)?;
         assert_eq!(finding.class, ExposureClass::StaticUnknown, "{body}");
@@ -129,7 +134,7 @@ fn a_strong_debug_assertion_reads_as_a_profile_limit() -> Result<(), String> {
 }
 
 #[test]
-fn standard_assertions_and_weak_debug_checks_keep_their_class() -> Result<(), String> {
+fn standard_assertions_and_other_debug_checks_keep_their_class() -> Result<(), String> {
     // The standard macro is credited.
     let finding = return_finding("", "assert_eq!(one(), 1);")?;
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
@@ -137,8 +142,18 @@ fn standard_assertions_and_weak_debug_checks_keep_their_class() -> Result<(), St
     for (attrs, body) in [
         // Passes for every value other than the one named.
         ("", "debug_assert_ne!(one(), 2);"),
-        // A relational condition would not discriminate as `assert!` either.
+        // Not an equality pin of the result.
+        ("", "debug_assert!(one() == 1);"),
         ("", "debug_assert!(one() > 0);"),
+        // The equality does not compare the owner's result.
+        (
+            "",
+            "let v = one(); debug_assert_eq!(2 + 2, 4); assert!(v > 0);",
+        ),
+        ("", "debug_assert_eq!(one() + 1, 2);"),
+        ("", "debug_assert_eq!(one(), one());"),
+        // Another macro that merely ends in the name.
+        ("", "let _ = one(); other::debug_assert_eq!(one(), 1);"),
         // An ignored test never runs by default.
         ("#[ignore]", "debug_assert_eq!(one(), 1);"),
     ] {
@@ -151,6 +166,102 @@ fn standard_assertions_and_weak_debug_checks_keep_their_class() -> Result<(), St
             "{attrs} {body}: {finding:?}"
         );
         assert_eq!(finding.static_limit_kind, None, "{attrs} {body}");
+    }
+    Ok(())
+}
+
+/// Predicate, match-arm and field-construction changes each checked only by
+/// `debug_assert_eq!`: lines 2, 7 and 16 of [`FAMILIES_SOURCE`].
+const FAMILIES_SOURCE: &str = "pub fn is_big(x: u32) -> bool {
+    x > 10
+}
+
+pub fn label(v: Option<u32>) -> u32 {
+    match v {
+        Some(v) => v + 2,
+        None => 0,
+    }
+}
+
+pub struct C {
+    pub retries: u32,
+}
+
+pub fn build() -> C {
+    C { retries: 4 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ten_is_not_big() {
+        debug_assert_eq!(is_big(10), false);
+    }
+
+    #[test]
+    fn some_one_labels_three() {
+        debug_assert_eq!(label(Some(1)), 3);
+    }
+
+    #[test]
+    fn build_retries_four_times() {
+        debug_assert_eq!(build().retries, 4);
+    }
+}
+";
+
+const FAMILIES_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,3 @@
+ pub fn is_big(x: u32) -> bool {
+-    x >= 10
++    x > 10
+ }
+@@ -6,3 +6,3 @@ pub fn label(v: Option<u32>) -> u32 {
+     match v {
+-        Some(v) => v + 1,
++        Some(v) => v + 2,
+         None => 0,
+@@ -15,3 +15,3 @@ pub struct C {
+ pub fn build() -> C {
+-    C { retries: 3 }
++    C { retries: 4 }
+ }
+";
+
+#[test]
+fn a_debug_check_never_earns_exposed_in_any_family() -> Result<(), String> {
+    let repo = TempRepo::create(FAMILIES_SOURCE, FAMILIES_DIFF)?;
+    let output = check(&repo)?;
+    let mut families = Vec::new();
+    for finding in &output.findings {
+        families.push(finding.probe.family.clone());
+        assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+        if !matches!(
+            finding.probe.family,
+            ripr::ProbeFamily::ReturnValue | ripr::ProbeFamily::ErrorPath
+        ) {
+            assert_ne!(
+                finding.static_limit_kind.map(|kind| kind.as_str()),
+                Some("rust_debug_assertion_profile_unresolved"),
+                "{finding:?}"
+            );
+        }
+    }
+    // Premise: the changed predicate, arm and field each produced a finding.
+    for family in [
+        ripr::ProbeFamily::Predicate,
+        ripr::ProbeFamily::MatchArm,
+        ripr::ProbeFamily::FieldConstruction,
+    ] {
+        assert!(
+            families.contains(&family),
+            "{family:?} missing from {families:?}"
+        );
     }
     Ok(())
 }

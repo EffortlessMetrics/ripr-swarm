@@ -2503,19 +2503,9 @@ fn is_result_expect_err_ufcs(call: &ast::CallExpr) -> bool {
 pub(crate) fn is_assertion_macro_leaf(name: &str) -> bool {
     // `matches!` computes a bool. Only an asserting wrapper observes it;
     // admitting the computation itself credits discarded values (#5713).
-    // The `debug_` variants run under `cargo test`'s default debug profile,
-    // and the oracle grader already reads their relation (#6701); a test
-    // checked only by `debug_assert_eq!` is not a test without an
-    // assertion (#8051).
     matches!(
         name,
-        "assert"
-            | "assert_eq"
-            | "assert_ne"
-            | "assert_matches"
-            | "debug_assert"
-            | "debug_assert_eq"
-            | "debug_assert_ne"
+        "assert" | "assert_eq" | "assert_ne" | "assert_matches"
     ) || name.ends_with("snapshot")
 }
 
@@ -2523,13 +2513,7 @@ pub(crate) fn is_assertion_macro(macro_name: &str) -> bool {
     let macro_name = drop_in_assertion_leaf(macro_name).unwrap_or(macro_name);
     matches!(
         macro_name,
-        "assert"
-            | "assert_eq"
-            | "assert_ne"
-            | "assert_matches"
-            | "debug_assert"
-            | "debug_assert_eq"
-            | "debug_assert_ne"
+        "assert" | "assert_eq" | "assert_ne" | "assert_matches"
     ) || macro_name.starts_with("insta::assert")
         || macro_name.contains("snapshot")
 }

@@ -203,37 +203,44 @@ A panicking macro inside a nested `fn`, closure or `macro_rules!` in the
 owner still counts; that over-reads toward `static_unknown`, never toward a
 gap or credit.
 
-### Profile-dependent `debug_` assertion
+### Profile-dependent `debug_assert_eq!`
 
-`debug_assert_eq!` and `debug_assert!` run under the default `cargo test`
-profile and are compiled out under `--release` (unless the profile turns
-debug assertions back on). A test checked only by one of them discriminates
-in the first profile and never in the second. Before #8051 the parser did not
-collect the `debug_` forms, so such a test read as having no assertion and
-the finding as a certain `reachable_unrevealed` gap. The parser now collects
-them (`is_assertion_macro`), and the owner pin still refuses them
-(RIPR-SPEC-0197), so the finding reads `weakly_exposed` with
-`observation_unverified`. `gap_admission::withhold_debug_assertion_gap`
+`debug_assert_eq!` runs under the default `cargo test` profile and is
+compiled out under `--release` (unless the profile turns debug assertions
+back on). A test that pins the owner's result only with it discriminates in
+the first profile and never in the second. The parser does not collect the
+`debug_` forms as assertion facts and the owner pin refuses them
+(RIPR-SPEC-0197), so such a test reads as having no assertion and the
+finding as a certain gap. `gap_admission::withhold_debug_assertion_gap`
 withholds that gap under `rust_debug_assertion_profile_unresolved` when:
 
-- the finding is `weakly_exposed` or `reachable_unrevealed` with no
-  `static_limit_kind`;
+- the finding is `weakly_exposed` or `reachable_unrevealed`, from a
+  `return_value` or `error_path` probe, with no `static_limit_kind`, and its
+  owner is a free function;
 - a related row with a `direct_owner_call` relation, not an unmatched
-  examined test, carries a `strong` oracle whose text is one
-  `debug_assert_eq!` or `debug_assert!` invocation, bare or under a `std` or
-  `core` root;
-- the row's test (bound by name, file and start line) is not `#[ignore]`.
+  examined test, binds (by name, file and start line) a test without
+  `#[ignore]` whose body (comments and strings masked) invokes
+  `debug_assert_eq!`, bare or under a `std` or `core` root, with one
+  compared operand that is exactly a bare `owner(..)` call and another that
+  does not call the owner (an optional third operand is the message).
 
-It runs after the `#[should_panic]` limit and before
-`withhold_unsupported_gap`. Decision (#8051, reversible): withhold rather
-than credit. Crediting would claim a discriminator that a `--release` test
-run never executes, and ripr does not read the CI command or the profile
-settings; keeping the gap would claim a missing test the default run does
-have. This matches the corpus precedent for a production `debug_assert!`
-(`mined-debug-assert-only-oracle`, RIPR-SPEC-0219), which scores
-`static_unknown` as `abstained`. `debug_assert_ne!` and a relational
-`debug_assert!` (`one() > 0`) keep their gap, since neither would
-discriminate as the standard macro.
+It reads the test body instead of oracle facts, so it never feeds the
+shared discriminate decision and never upgrades a class. It runs after the
+`#[should_panic]` limit and before `withhold_unsupported_gap`.
+
+Decision (#8051, reversible): withhold rather than credit. Crediting would
+claim a discriminator that a `--release` test run never executes, and ripr
+does not read the CI command or the profile settings; keeping the gap would
+claim a missing test the default run does have. This matches the corpus
+precedent for a production `debug_assert!` (`mined-debug-assert-only-oracle`,
+RIPR-SPEC-0219), which scores `static_unknown` as `abstained`. The first cut
+collected `debug_` forms as parser oracles, which let predicate, match-arm
+and field-projection paths credit them as `exposed` and filled the empty
+assertion list the `#[should_panic]` rule requires; review rejected it, so
+the rule reads the body. Everything else keeps the gap: `debug_assert_ne!`,
+`debug_assert!` in any form, an equality that does not compare the owner
+call alone (`debug_assert_eq!(2 + 2, 4)`, `one() + 1`), an ignored test,
+methods, and predicate, match-arm, field and side-effect probes.
 
 ## Scope boundary
 

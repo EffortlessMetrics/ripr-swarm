@@ -1328,7 +1328,7 @@ fn apply_probe_and_oracle_limits(
     classify::withhold_should_panic_gap(finding, index);
     // #8051: a strong `debug_assert_eq!` discriminates only in a profile
     // with debug assertions, which ripr does not resolve.
-    classify::withhold_debug_assertion_gap(finding, index);
+    classify::withhold_debug_assertion_gap(finding, index, owner_name.as_deref());
     // RIPR-SPEC-0240 runs last so a producer-named limit keeps its finding.
     classify::withhold_unsupported_gap(finding);
 }
