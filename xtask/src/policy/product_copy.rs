@@ -268,6 +268,61 @@ fn repo_root() -> Result<PathBuf, String> {
 mod tests {
     use super::*;
 
+    /// First `ripr ...` command inside the first fenced block after `heading`.
+    fn first_run_command(markdown: &str, heading: &str) -> Result<String, String> {
+        let Some((_, after)) = markdown.split_once(heading) else {
+            return Err(format!("missing heading `{heading}`"));
+        };
+        let Some((_, fenced)) = after.split_once("```") else {
+            return Err(format!("no fenced block after `{heading}`"));
+        };
+        let block = fenced.split("```").next().unwrap_or_default();
+        block
+            .lines()
+            .map(str::trim)
+            .find(|line| line.starts_with("ripr "))
+            .map(str::to_string)
+            .ok_or_else(|| format!("no `ripr` command in the first block after `{heading}`"))
+    }
+
+    /// #8164: README and Quickstart lead with the same single first-run
+    /// command as `ripr --help`, with no hardcoded base. The help side is
+    /// pinned by `help_overview_has_one_canonical_first_run`.
+    #[test]
+    fn readme_and_quickstart_lead_with_the_canonical_first_run() -> Result<(), String> {
+        let root = repo_root()?;
+        for (file, heading) in [
+            ("README.md", "## The first useful run"),
+            ("docs/QUICKSTART.md", "## CLI First Hour"),
+        ] {
+            let text =
+                fs::read_to_string(root.join(file)).map_err(|err| format!("read {file}: {err}"))?;
+            let command = first_run_command(&text, heading)?;
+            if command != "ripr check" {
+                return Err(format!(
+                    "{file} must lead with `ripr check` and no fixed base, got `{command}`"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn first_run_command_rejects_a_drifted_lead_command() -> Result<(), String> {
+        let drifted = "## CLI First Hour\n\n```bash\nripr doctor\nripr check\n```\n";
+        if first_run_command(drifted, "## CLI First Hour")? != "ripr doctor" {
+            return Err("the first command in the block must be the one reported".to_string());
+        }
+        let hardcoded = "## CLI First Hour\n\n```bash\nripr check --base origin/main\n```\n";
+        if first_run_command(hardcoded, "## CLI First Hour")? == "ripr check" {
+            return Err("a hardcoded --base must not read as the canonical command".to_string());
+        }
+        if first_run_command("no heading", "## CLI First Hour").is_ok() {
+            return Err("a missing heading must be an error".to_string());
+        }
+        Ok(())
+    }
+
     #[test]
     fn product_copy_baseline_is_clean() -> Result<(), String> {
         let root = repo_root()?;
