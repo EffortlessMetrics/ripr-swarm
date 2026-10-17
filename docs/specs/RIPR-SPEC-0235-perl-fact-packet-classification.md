@@ -199,12 +199,17 @@ For each change, the first match wins:
    with a bound strong oracle reads `weakly_exposed`; with any other bound
    oracle, `reachable_unrevealed`.
 7. **Relation-kind cap, per relation.** Only `direct_owner_call` supports
-   positive reachability. A relation of any other kind
-   (`method_receiver`, `helper_call`, `package_reference`,
-   `test_name_match`, `file_proximity`, `fixture_setup`, `unknown`) is
-   capped at `reachable_unrevealed` before aggregation. Today the cap
-   checks whether any bound relation is `direct_owner_call`, so a strong
-   advisory relation beside a weak direct one reads `weakly_exposed`.
+   positive reachability (sink-aligned `exposed`, suggested location, row
+   miss). A reachable `method_receiver` or `helper_call` relation whose own
+   bound oracle passes rules 5 and 6 keeps its per-relation
+   `weakly_exposed` (#6583, examples 13 and 14): it is an owner call shape,
+   and the binding already requires the oracle's test and target owner to
+   match the relation exactly, so a wrong-receiver, weak-oracle, or
+   unreachable relation earns nothing. A relation of any other kind
+   (`package_reference`, `test_name_match`, `file_proximity`,
+   `fixture_setup`, `unknown`) is capped at `reachable_unrevealed` before
+   aggregation. The cap is per relation, so a strong advisory relation
+   beside a weak direct one no longer reads `weakly_exposed`.
 8. **Aggregation.** The change takes the strongest per-relation class:
    any `weakly_exposed`, then any `reachable_unrevealed`, otherwise
    `static_unknown`.
@@ -440,11 +445,12 @@ cases.
 12. Hint `static_unknown`: `static_unknown`, no gap, no location (today
     both emitted).
 13. `my $p = Pricing->new; is($p->discount(100), 90)` as
-    `method_receiver` / `reachable`: `reachable_unrevealed`, relation
-    null / null, no location (today `direct_owner_call` / high, location
-    emitted).
-14. `helper_call`: `reachable_unrevealed`, `helper_owner_call` / high, no
-    location (today location emitted).
+    `method_receiver` / `reachable` with the oracle bound to the change
+    owner: `weakly_exposed`, no location (#6583; was
+    `reachable_unrevealed`).
+14. `helper_call` with the oracle bound to the change owner:
+    `weakly_exposed`, `helper_owner_call` / high, no location (#6583; was
+    `reachable_unrevealed`).
 15. `package_reference`: `reachable_unrevealed`, `import_path_affinity` /
     medium; `test_name_match`: `reachable_unrevealed`, `owner_named_test`
     / medium. Neither has a location (class unchanged; today location
@@ -458,8 +464,8 @@ cases.
     "return $amount * 0.9"`: `weakly_exposed` (unchanged).
 19. `changed_observable: "$amount*0.9"`, `observed_sink: "$amount * 0.9"`:
     `weakly_exposed` (unchanged).
-20. Example 17's sinks with `method_receiver`: `reachable_unrevealed`
-    (unchanged).
+20. Example 17's sinks with `method_receiver`: `weakly_exposed` (#6583
+    weak credit; sink-aligned `exposed` stays `direct_owner_call`-only).
 21. Example 17's sinks with hint `weakly_reachable`:
     `reachable_unrevealed` (unchanged).
 22. Example 17's sinks with `packet_status: partial`: `exposed`, no gap

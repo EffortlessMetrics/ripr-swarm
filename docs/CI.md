@@ -189,8 +189,10 @@ schedule/merge queue), not the default PR path.
 ### 4) Hosted fallback boundary
 
 - Do **not** remove, narrow, or relabel the current protected GitHub-hosted
-  Rust-small fallback without updating the routed-runner docs, active-goal
-  state, and branch-protection contract in the same PR.
+  Rust-small fallback without updating the routed-runner docs and the
+  branch-protection contract in the same PR (the retired active-goal state
+  left with the `.ripr/goals/` scheduler in #1701 and has no successor to
+  update).
 - The current routed Rust-small workflow may select GitHub-hosted when a PR is
   untrusted, runner state cannot be read, or no idle image-ready CX53/CX43
   runner is available. That result remains a valid protected-path success while
@@ -1214,7 +1216,7 @@ ripr init --ci github
 
 Copy the generated file, not a workflow from this page. Run
 `ripr init --ci github --dry-run` to print it without writing anything. It
-uploads the pilot, report, and agent artifact directories. The official GitHub
+uploads `target/ripr` (pilot, workflow, agent, report and review artifacts) and `target/ci` as the `ripr-reports` artifact. The official GitHub
 SARIF upload documentation uses `github/codeql-action/upload-sarif@v4`; keep
 the RIPR job, artifact upload, and optional SARIF steps advisory until the
 repository has chosen a baseline policy.

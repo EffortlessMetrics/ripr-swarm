@@ -148,8 +148,8 @@ Common options:
   --format FORMAT   human (default); human-full lists every finding with
                     drill-in commands; json (or --json) for scripts and CI;
                     github for Actions annotations; sarif for code scanning.
-  --mode MODE       instant, draft (default), or deep: how much of the
-                    workspace is indexed (never changes what a class means).
+  --mode MODE       instant, draft (default), fast, deep, or ready: how much
+                    of the workspace is indexed (never changes a class).
   --root PATH       Workspace root. Defaults to the current directory, then
                     walks up to the enclosing workspace or package, or the git
                     top level (never past the repository); `--root .` pins

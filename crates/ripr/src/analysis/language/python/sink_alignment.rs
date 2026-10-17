@@ -223,8 +223,9 @@ pub(super) fn dict_changed_keys_and_values(
     }
 }
 
-/// Whether a strong oracle observes the CHANGED dict element (#1290): a subscript or
-/// `.get(...)` of a changed key, the changed value literal, or a whole-collection
+/// Whether a strong oracle observes the CHANGED dict element (#1290 / #6585): a
+/// subscript or `.get(...)` of a changed key, the changed value literal when the
+/// oracle does not solely subscript an unchanged sibling, or a whole-collection
 /// comparison. Conservative — when in doubt it returns `true` (credit stands) so a
 /// genuine discriminator is never dropped; it only returns `false` for an oracle
 /// that observes purely a sibling key or an aggregate.
@@ -241,24 +242,43 @@ pub(super) fn oracle_observes_changed_dict_element(
     {
         return true;
     }
-    // Observes a changed value literal (e.g. the new `9090` / `"failure"`).
+    // Observes a changed value literal (e.g. the new `9090` / `"failure"`), but
+    // not when that literal only appears beside a sibling-key subscript
+    // (`assert build()['timeout'] == 80` after `'port'` changed to `80`).
     for value in changed_values {
         let literal = value.trim().trim_matches('"').trim_matches('\'');
-        if literal.len() >= 2 && oracle.contains(literal) {
-            return true;
-        }
-    }
-    // Subscripts a changed key by literal (`["port"]`, `['port']`, `.get("port")`).
-    for key in changed_keys {
-        if oracle.contains(&format!("[\"{key}\"]"))
-            || oracle.contains(&format!("['{key}']"))
-            || oracle.contains(&format!(".get(\"{key}\")"))
-            || oracle.contains(&format!(".get('{key}')"))
+        if literal.len() >= 2
+            && oracle.contains(literal)
+            && !oracle_solely_subscripts_unchanged_dict_key(oracle, changed_keys)
         {
             return true;
         }
     }
-    false
+    // Subscripts a changed key by literal (`["port"]`, `['port']`, `.get("port")`).
+    changed_keys
+        .iter()
+        .any(|key| oracle_subscripts_dict_key(oracle, key))
+}
+
+fn oracle_subscripts_dict_key(oracle: &str, key: &str) -> bool {
+    oracle.contains(&format!("[\"{key}\"]"))
+        || oracle.contains(&format!("['{key}']"))
+        || oracle.contains(&format!(".get(\"{key}\")"))
+        || oracle.contains(&format!(".get('{key}')"))
+}
+
+fn oracle_has_literal_dict_subscript(oracle: &str) -> bool {
+    oracle.contains("[\"")
+        || oracle.contains("['")
+        || oracle.contains(".get(\"")
+        || oracle.contains(".get('")
+}
+
+fn oracle_solely_subscripts_unchanged_dict_key(oracle: &str, changed_keys: &[String]) -> bool {
+    oracle_has_literal_dict_subscript(oracle)
+        && !changed_keys
+            .iter()
+            .any(|key| oracle_subscripts_dict_key(oracle, key))
 }
 
 /// Parse a list-literal line (a `return [...]`) into its top-level element source
@@ -314,8 +334,9 @@ fn list_changed_indices_and_values(
     }
 }
 
-/// Whether a strong oracle observes the CHANGED list element (#1290): a subscript of
-/// a changed index, the changed element value literal, or a whole-collection
+/// Whether a strong oracle observes the CHANGED list element (#1290 / #6585): a
+/// subscript of a changed index, the changed element value literal when the
+/// oracle does not solely subscript an unchanged sibling, or a whole-collection
 /// comparison. Conservative, mirroring [`oracle_observes_changed_dict_element`]: it
 /// returns `false` only for an oracle that observes purely a sibling index or an
 /// aggregate (`len(...)`).
@@ -333,16 +354,47 @@ fn oracle_observes_changed_list_element(
     }
     for value in changed_values {
         let literal = value.trim().trim_matches('"').trim_matches('\'');
-        if literal.len() >= 2 && oracle.contains(literal) {
+        if literal.len() >= 2
+            && oracle.contains(literal)
+            && !oracle_solely_subscripts_unchanged_list_index(oracle, changed_indices)
+        {
             return true;
         }
     }
-    for index in changed_indices {
-        if oracle.contains(&format!("[{index}]")) {
-            return true;
+    changed_indices
+        .iter()
+        .any(|index| oracle_subscripts_list_index(oracle, *index))
+}
+
+fn oracle_subscripts_list_index(oracle: &str, index: usize) -> bool {
+    oracle.contains(&format!("[{index}]"))
+}
+
+fn oracle_has_list_index_subscript(oracle: &str) -> bool {
+    let bytes = oracle.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'[' {
+            let mut j = i + 1;
+            if j < bytes.len() && bytes[j].is_ascii_digit() {
+                while j < bytes.len() && bytes[j].is_ascii_digit() {
+                    j += 1;
+                }
+                if j < bytes.len() && bytes[j] == b']' {
+                    return true;
+                }
+            }
         }
+        i += 1;
     }
     false
+}
+
+fn oracle_solely_subscripts_unchanged_list_index(oracle: &str, changed_indices: &[usize]) -> bool {
+    oracle_has_list_index_subscript(oracle)
+        && !changed_indices
+            .iter()
+            .any(|index| oracle_subscripts_list_index(oracle, *index))
 }
 
 /// Split an f-string source (`f"..."`/`f'...'`, optional `r` prefix) into its
@@ -772,8 +824,9 @@ pub(super) fn classify_sink_alignment_with_old(
     // `9090` changes only `port`), but an assertion that merely calls the owner
     // and observes a SIBLING key (`build_config()["host"]`) or an aggregate
     // (`len(...)`) does not discriminate the change. Credit only when the
-    // assertion observes the CHANGED element: its changed value, a subscript of
-    // the changed key, or a whole-collection comparison. Non-dict changes (and
+    // assertion observes the CHANGED element: its changed value unless the
+    // oracle solely subscripts an unchanged sibling, a subscript of
+    // the changed key, or a whole-collection comparison. Non-dict changes (and)
     // changes whose changed keys cannot be localized from the paired old line) are
     // not gated and keep prior behavior (pass-through `true`).
     let dict_change = dict_changed_keys_and_values(old_line_text, line_text);
