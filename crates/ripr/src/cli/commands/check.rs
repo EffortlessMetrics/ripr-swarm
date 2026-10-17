@@ -1249,6 +1249,9 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         eprintln!("{disclosure}");
     }
     if matches!(format, OutputFormat::RepoExposureJson) {
+        // #7781: this path never reaches `check_with_progress`, so it needs
+        // its own containment check before the inventory caches write.
+        crate::atomic_file::ensure_default_output_contained(&input.root)?;
         // #4945: this early return renders straight from the inventory, so it
         // brackets the walk itself with repo-scope stage boundaries instead of
         // relying on `check_with_progress` (which this path never reaches).
