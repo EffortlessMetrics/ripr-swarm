@@ -11,3 +11,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_array_element_drop_exit (2)
+
+Reason:
+RIPR-SPEC-0158: re-bless check.json formatting against current renderer
+
+Command:
+`cargo xtask goldens bless rust_array_element_drop_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -111,6 +111,11 @@ pub(in crate::analysis) struct OwnerReturnPin {
     /// The owner is an `async fn`, so a test reads its return value as
     /// `owner(..).await` (RIPR-SPEC-0197 rule 1, `#[tokio::test]`).
     awaited: bool,
+    /// Every record type the owner's return expression constructs has at
+    /// most a plain (empty) `Drop` impl in the workspace, so dropping the
+    /// receiver while unwinding from a failed assertion cannot exit the
+    /// process before the failure is reported (#8480).
+    drop_plain: bool,
     /// Per test file: whether the owner's trait is in scope. The trait is
     /// fixed per pin and the scan masks the whole file, so it runs once.
     trait_scope_by_file: RefCell<BTreeMap<PathBuf, bool>>,
@@ -2251,11 +2256,43 @@ impl OwnerReturnPin {
                 && declared_return_type(&owner.body)
                     .is_some_and(|returned| INTEGER_TYPES.contains(&returned.as_str())),
             awaited: declares_async(owner, index),
+            drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
             trait_scope_by_file: RefCell::default(),
             identity,
         })
+    }
+
+    /// Whether every record type constructed in the owner's return
+    /// expression has at most a plain `Drop` impl in the workspace (#8480).
+    /// Types constructed nowhere in the body (scalar returns, calls) have
+    /// nothing to refuse.
+    fn returned_types_drop_plain(owner: &FunctionSummary, index: &RustIndex) -> bool {
+        let source = owner.body.as_str();
+        let Some(parse) = parse_clean_source_file(source) else {
+            return false;
+        };
+        let Some(function) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
+            return false;
+        };
+        let Some(body) = function.body() else {
+            return false;
+        };
+        body.syntax()
+            .descendants()
+            .filter_map(ast::RecordExpr::cast)
+            .all(|record| {
+                record
+                    .path()
+                    .and_then(|path| path.segment())
+                    .is_some_and(|segment| {
+                        super::element_field_pin::drop_is_plain(
+                            index,
+                            &segment.syntax().text().to_string(),
+                        )
+                    })
+            })
     }
 
     /// #6692: the owner-side gates for a `field_construction` probe in a
@@ -2336,6 +2373,7 @@ impl OwnerReturnPin {
             returns_scalar: false,
             returns_integer: false,
             awaited: declares_async(owner, index),
+            drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
             trait_scope_by_file: RefCell::default(),
@@ -2436,6 +2474,7 @@ impl OwnerReturnPin {
             returns_scalar: false,
             returns_integer: false,
             awaited: declares_async(owner, index),
+            drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
             trait_scope_by_file: RefCell::default(),
@@ -2528,6 +2567,7 @@ impl OwnerReturnPin {
             returns_scalar: false,
             returns_integer: false,
             awaited: declares_async(owner, index),
+            drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
             trait_scope_by_file: RefCell::default(),
@@ -2567,6 +2607,11 @@ impl OwnerReturnPin {
             .chain(std::iter::once(test.body.as_str()))
             .any(|text| text.contains("should_panic"))
         {
+            return false;
+        }
+        // #8480: a non-plain `Drop` on a constructed return type runs
+        // while unwinding from a failed assertion and may exit 0 first.
+        if !self.drop_plain {
             return false;
         }
         let condition;

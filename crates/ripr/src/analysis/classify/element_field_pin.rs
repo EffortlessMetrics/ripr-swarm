@@ -481,7 +481,7 @@ fn observes_with(
 /// Whether no `Drop` impl for `type_name` in the indexed workspace has a
 /// non-empty body. An unparseable source fails closed: its impls are
 /// invisible to this scan.
-fn drop_is_plain(index: &RustIndex, type_name: &str) -> bool {
+pub(super) fn drop_is_plain(index: &RustIndex, type_name: &str) -> bool {
     index
         .files()
         .iter()

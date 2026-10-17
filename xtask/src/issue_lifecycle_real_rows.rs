@@ -302,6 +302,374 @@ pub(crate) fn verify_real_rows_bindings(
     Ok(())
 }
 
+/// The committed fresh-root reconstruction receipt (#4932): a cold-start
+/// agent with no prior chat context re-runs the scorecard and row tests
+/// offline, re-verifies every live identity the rows bind with read-only
+/// `gh` commands, records the observed facts and the fail-closed drift
+/// conclusions, and pins that the reconstructed dispositions agree with the
+/// committed corpus. The validator binds the receipt against the corpus and
+/// the provenance; any identity drift, disposition disagreement, missing
+/// row, extra lifecycle or stale timestamp rejects instead of matching.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct IssueLifecycleFreshRootReceiptLiveIssueV1 {
+    pub state: String,
+    #[serde(default)]
+    pub closed_at: Option<String>,
+    #[serde(default)]
+    pub labels: Vec<String>,
+    #[serde(default)]
+    pub unchecked_acceptance_rows: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct IssueLifecycleFreshRootReceiptLivePrV1 {
+    pub state: String,
+    pub merged_at: String,
+    pub merge_commit: String,
+    #[serde(default)]
+    pub head: Option<String>,
+    #[serde(default)]
+    pub checks: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct IssueLifecycleFreshRootReceiptAncestryV1 {
+    pub merge_base: String,
+    pub behind_by: u64,
+    #[serde(default)]
+    pub ahead_by: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct IssueLifecycleFreshRootReceiptLiveFactsV1 {
+    pub issue_7795: IssueLifecycleFreshRootReceiptLiveIssueV1,
+    pub pr_8285: IssueLifecycleFreshRootReceiptLivePrV1,
+    pub issue_1706: IssueLifecycleFreshRootReceiptLiveIssueV1,
+    pub pr_8325: IssueLifecycleFreshRootReceiptLivePrV1,
+    pub main_head_at_reconstruction: String,
+    pub row_a_merge_ancestry: IssueLifecycleFreshRootReceiptAncestryV1,
+    pub row_b_merge_ancestry: IssueLifecycleFreshRootReceiptAncestryV1,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct IssueLifecycleFreshRootReceiptDispositionV1 {
+    pub lifecycle_id: String,
+    pub observation_key: String,
+    pub issue: String,
+    pub pr: String,
+    pub merge_commit: String,
+    pub corpus_disposition: IssueLifecycleDispositionV1,
+    pub reconstructed_disposition: IssueLifecycleDispositionV1,
+    pub matches_corpus: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct IssueLifecycleFreshRootReceiptV1 {
+    pub schema_version: String,
+    pub issue: u64,
+    pub spec: String,
+    pub reconstructed_by: String,
+    pub reconstructed_at: String,
+    pub branch: String,
+    pub base_main: String,
+    pub commands: std::collections::BTreeMap<String, Vec<String>>,
+    pub live_facts: IssueLifecycleFreshRootReceiptLiveFactsV1,
+    pub reconstructed_dispositions: Vec<IssueLifecycleFreshRootReceiptDispositionV1>,
+    pub drift_checks: Vec<std::collections::BTreeMap<String, String>>,
+    pub result: String,
+}
+
+pub(crate) const ISSUE_LIFECYCLE_FRESH_ROOT_RECEIPT_SCHEMA_VERSION: &str =
+    "issue_lifecycle_fresh_root_reconstruction.v1";
+
+/// Load and parse the committed fresh-root reconstruction receipt.
+pub(crate) fn load_fresh_root_receipt() -> Result<IssueLifecycleFreshRootReceiptV1, String> {
+    let body = fs::read_to_string(
+        workspace_path(ISSUE_LIFECYCLE_REAL_ROWS_ROOT).join("fresh_root_reconstruction.json"),
+    )
+    .map_err(|error| format!("read fresh-root reconstruction receipt: {error}"))?;
+    let receipt: IssueLifecycleFreshRootReceiptV1 = serde_json::from_str(&body)
+        .map_err(|error| format!("parse fresh-root reconstruction receipt: {error}"))?;
+    if receipt.schema_version != ISSUE_LIFECYCLE_FRESH_ROOT_RECEIPT_SCHEMA_VERSION {
+        return Err(format!(
+            "unsupported fresh-root reconstruction receipt schema `{}`",
+            receipt.schema_version
+        ));
+    }
+    Ok(receipt)
+}
+
+/// Fail-closed binding of the fresh-root reconstruction receipt against the
+/// committed corpus and provenance: the receipt must bind exactly the real
+/// rows (no synthetic lifecycle may enter), every recorded identity must
+/// agree with the corpus, the provenance and the receipt's own live facts,
+/// and every reconstructed disposition must equal the disposition the
+/// unchanged counting law assesses for the committed row. Any drift —
+/// including a live fact that moved since capture — rejects here instead of
+/// fabricating a match.
+pub(crate) fn verify_fresh_root_receipt(
+    corpus: &IssueLifecycleCorpusV1,
+    provenance: &IssueLifecycleRealRowsProvenanceV1,
+    receipt: &IssueLifecycleFreshRootReceiptV1,
+) -> Result<(), String> {
+    if receipt.issue != 4932 {
+        return Err(format!(
+            "fresh-root receipt must bind issue 4932, got {}",
+            receipt.issue
+        ));
+    }
+    if !receipt.spec.contains(ISSUE_LIFECYCLE_REAL_ROWS_SPEC) {
+        return Err(format!(
+            "fresh-root receipt must name its {} decision",
+            ISSUE_LIFECYCLE_REAL_ROWS_SPEC
+        ));
+    }
+    if receipt.reconstructed_at.trim().is_empty() || receipt.reconstructed_by.trim().is_empty() {
+        return Err("fresh-root receipt must record who reconstructed and when".to_string());
+    }
+    if receipt.reconstructed_at < provenance.captured_at {
+        return Err(format!(
+            "fresh-root receipt reconstructed_at `{}` predates the capture provenance `{}`; the receipt cannot record a reconstruction before the capture existed",
+            receipt.reconstructed_at, provenance.captured_at
+        ));
+    }
+    if receipt.branch.trim().is_empty()
+        || receipt.base_main.len() != 40
+        || receipt.result.trim().is_empty()
+    {
+        return Err(
+            "fresh-root receipt must record its branch, its 40-hex base main and its result"
+                .to_string(),
+        );
+    }
+    if !receipt
+        .base_main
+        .chars()
+        .all(|character| character.is_ascii_hexdigit())
+    {
+        return Err(format!(
+            "fresh-root receipt base_main `{}` is not a 40-hex commit SHA",
+            receipt.base_main
+        ));
+    }
+    if receipt.commands.len() < 2
+        || receipt
+            .commands
+            .values()
+            .any(|commands| commands.is_empty())
+    {
+        return Err(
+            "fresh-root receipt must record the offline and live verification commands".to_string(),
+        );
+    }
+    if receipt.reconstructed_dispositions.len() != corpus.rows.len() {
+        return Err(format!(
+            "fresh-root receipt must reconstruct all {} real rows, got {}",
+            corpus.rows.len(),
+            receipt.reconstructed_dispositions.len()
+        ));
+    }
+    if receipt.drift_checks.is_empty() {
+        return Err("fresh-root receipt must record its fail-closed drift checks".to_string());
+    }
+    let facts = &receipt.live_facts;
+    if facts.issue_7795.state != "CLOSED" || facts.issue_1706.state != "OPEN" {
+        return Err(format!(
+            "fresh-root receipt live facts drifted from the captured outcome: issue 7795 `{}`, issue 1706 `{}`",
+            facts.issue_7795.state, facts.issue_1706.state
+        ));
+    }
+    if facts
+        .issue_7795
+        .closed_at
+        .as_deref()
+        .is_none_or(str::is_empty)
+    {
+        return Err(
+            "fresh-root receipt must record the observed close timestamp of issue 7795".to_string(),
+        );
+    }
+    if facts.issue_1706.unchecked_acceptance_rows != Some(10) {
+        return Err(format!(
+            "fresh-root receipt must keep the ten uncovered issue 1706 acceptance rows visible, got {:?}",
+            facts.issue_1706.unchecked_acceptance_rows
+        ));
+    }
+    if !facts
+        .issue_1706
+        .labels
+        .iter()
+        .any(|label| label == "status/needs-work")
+    {
+        return Err(
+            "fresh-root receipt must record the observed status/needs-work label on issue 1706"
+                .to_string(),
+        );
+    }
+    if facts.pr_8285.state != "MERGED" || facts.pr_8325.state != "MERGED" {
+        return Err(format!(
+            "fresh-root receipt live facts drifted from the captured outcome: pr 8285 `{}`, pr 8325 `{}`",
+            facts.pr_8285.state, facts.pr_8325.state
+        ));
+    }
+    if facts.pr_8285.merged_at.trim().is_empty() || facts.pr_8325.merged_at.trim().is_empty() {
+        return Err(
+            "fresh-root receipt must record the observed merge timestamps of both PRs".to_string(),
+        );
+    }
+    if facts.pr_8285.merged_at > receipt.reconstructed_at
+        || facts.pr_8325.merged_at > receipt.reconstructed_at
+    {
+        return Err(
+            "fresh-root receipt records a merge after the reconstruction instant; the receipt cannot observe an event that had not happened yet"
+                .to_string(),
+        );
+    }
+    if facts
+        .issue_7795
+        .closed_at
+        .as_deref()
+        .is_some_and(|closed_at| closed_at < facts.pr_8285.merged_at.as_str())
+    {
+        return Err(
+            "fresh-root receipt records issue 7795 closed before its PR merged; the observation is inconsistent"
+                .to_string(),
+        );
+    }
+    if facts.pr_8285.head.as_deref().is_none_or(str::is_empty)
+        || facts.pr_8285.checks.as_deref().is_none_or(str::is_empty)
+    {
+        return Err(
+            "fresh-root receipt must record the observed head and check outcome of pr 8285"
+                .to_string(),
+        );
+    }
+    if facts.main_head_at_reconstruction.len() != 40
+        || !facts
+            .main_head_at_reconstruction
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+    {
+        return Err(format!(
+            "fresh-root receipt main_head_at_reconstruction `{}` is not a 40-hex commit SHA",
+            facts.main_head_at_reconstruction
+        ));
+    }
+    if facts.row_a_merge_ancestry.behind_by != 0 || facts.row_b_merge_ancestry.behind_by != 0 {
+        return Err(
+            "fresh-root receipt ancestry observations must keep both merge commits on the recorded main head (behind_by 0); a merge that left main ancestry breaks the current-head identity"
+                .to_string(),
+        );
+    }
+    if facts.row_a_merge_ancestry.ahead_by == Some(0)
+        || facts.row_b_merge_ancestry.ahead_by == Some(0)
+    {
+        return Err(
+            "fresh-root receipt ancestry observations must record main strictly ahead of each merge commit"
+                .to_string(),
+        );
+    }
+    if facts.row_a_merge_ancestry.merge_base != facts.pr_8285.merge_commit
+        || facts.row_b_merge_ancestry.merge_base != facts.pr_8325.merge_commit
+    {
+        return Err(
+            "fresh-root receipt ancestry observations must name the recorded merge commits as merge base"
+                .to_string(),
+        );
+    }
+    for row in &corpus.rows {
+        if row.synthetic {
+            return Err(format!(
+                "fresh-root receipt binding found a synthetic row `{}`; synthetic lifecycles must never enter the real reconstruction",
+                row.lifecycle_id
+            ));
+        }
+        let entry = receipt
+            .reconstructed_dispositions
+            .iter()
+            .find(|entry| entry.lifecycle_id == row.lifecycle_id)
+            .ok_or_else(|| {
+                format!(
+                    "fresh-root receipt is missing reconstruction of lifecycle `{}`",
+                    row.lifecycle_id
+                )
+            })?;
+        let provenance_row = provenance
+            .rows
+            .iter()
+            .find(|candidate| candidate.lifecycle_id == row.lifecycle_id)
+            .ok_or_else(|| {
+                format!(
+                    "capture provenance is missing lifecycle `{}`",
+                    row.lifecycle_id
+                )
+            })?;
+        if entry.observation_key != row.observation_key
+            || entry.issue != row.issue.issue_ref
+            || Some(entry.pr.as_str()) != row.execution_refs.pr.as_deref()
+            || Some(entry.merge_commit.as_str()) != row.execution_refs.merge.as_deref()
+        {
+            return Err(format!(
+                "fresh-root receipt identity for `{}` disagrees with the committed row",
+                row.lifecycle_id
+            ));
+        }
+        if Some(entry.merge_commit.as_str()) != provenance_row.merge_commit.as_deref() {
+            return Err(format!(
+                "fresh-root receipt merge identity for `{}` disagrees with the capture provenance",
+                row.lifecycle_id
+            ));
+        }
+        // Bind the live-observed merge commits to the committed corpus merge
+        // identities (normalising the `gh-merge-commit:` prefix): a receipt
+        // whose live PR merge commit drifted from the corpus must reject
+        // here, not only against its own ancestry observation.
+        let live_merge_commit = match row.execution_refs.pr.as_deref() {
+            Some("pr:EffortlessMetrics/ripr-swarm#8285") => {
+                Some(facts.pr_8285.merge_commit.as_str())
+            }
+            Some("pr:EffortlessMetrics/ripr-swarm#8325") => {
+                Some(facts.pr_8325.merge_commit.as_str())
+            }
+            _ => None,
+        };
+        let corpus_merge_commit = row.execution_refs.merge.as_deref().map(|identity| {
+            identity
+                .strip_prefix("gh-merge-commit:")
+                .unwrap_or(identity)
+        });
+        if live_merge_commit != corpus_merge_commit {
+            return Err(format!(
+                "fresh-root receipt live merge commit for `{}` must match the committed corpus merge identity",
+                row.lifecycle_id
+            ));
+        }
+        let assessment = assess_issue_lifecycle_attempt(row);
+        if assessment.disposition != Some(entry.reconstructed_disposition) {
+            return Err(format!(
+                "fresh-root receipt reconstructed `{:?}` for `{}` but the counting law assesses `{:?}`",
+                entry.reconstructed_disposition, row.lifecycle_id, assessment.disposition
+            ));
+        }
+        if entry.corpus_disposition != provenance_row.disposition
+            || !entry.matches_corpus
+            || entry.reconstructed_disposition != entry.corpus_disposition
+        {
+            return Err(format!(
+                "fresh-root receipt for `{}` does not match the committed corpus; record the drift instead of fabricating a match",
+                row.lifecycle_id
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -657,5 +1025,137 @@ mod tests {
             return Err("row A must stay completed beside the pending Row B".to_string());
         }
         Ok(())
+    }
+
+    /// Acceptance box "a fresh root reconstructs the outcome without prior
+    /// chat": the committed reconstruction receipt loads and binds against
+    /// the committed corpus and capture provenance — identity binding,
+    /// disposition agreement through the unchanged counting law, and every
+    /// row real (no synthetic lifecycle enters the reconstruction).
+    #[test]
+    fn fresh_root_reconstruction_receipt_matches_the_committed_corpus() -> Result<(), String> {
+        let corpus = load_real_rows_corpus()?;
+        let provenance = load_real_rows_provenance()?;
+        verify_real_rows_bindings(&real_root(), &corpus, &provenance)?;
+        let receipt = load_fresh_root_receipt()?;
+        verify_fresh_root_receipt(&corpus, &provenance, &receipt)
+    }
+
+    /// Fail-closed drift: a receipt recording a drifted live fact (issue
+    /// #1706 closed) must reject instead of fabricating agreement with the
+    /// corpus.
+    #[test]
+    fn fresh_root_receipt_with_drifted_live_fact_rejects() -> Result<(), String> {
+        let corpus = load_real_rows_corpus()?;
+        let provenance = load_real_rows_provenance()?;
+        let mut receipt = load_fresh_root_receipt()?;
+        receipt.live_facts.issue_1706.state = "CLOSED".to_string();
+        let error = match verify_fresh_root_receipt(&corpus, &provenance, &receipt) {
+            Ok(()) => {
+                return Err(
+                    "a receipt claiming issue 1706 closed must reject as drifted".to_string(),
+                );
+            }
+            Err(error) => error,
+        };
+        if !error.contains("drifted") {
+            return Err(format!("expected a drifted rejection, got: {error}"));
+        }
+        Ok(())
+    }
+
+    /// Fail-closed disagreement: a receipt reconstructing a disposition the
+    /// counting law does not assess for the committed row must reject, even
+    /// when every identity still binds.
+    #[test]
+    fn fresh_root_receipt_with_disposition_disagreement_rejects() -> Result<(), String> {
+        let corpus = load_real_rows_corpus()?;
+        let provenance = load_real_rows_provenance()?;
+        let mut receipt = load_fresh_root_receipt()?;
+        for entry in &mut receipt.reconstructed_dispositions {
+            if entry.lifecycle_id == ROW_B_LIFECYCLE_ID {
+                entry.reconstructed_disposition = IssueLifecycleDispositionV1::Completed;
+                entry.matches_corpus = true;
+            }
+        }
+        match verify_fresh_root_receipt(&corpus, &provenance, &receipt) {
+            Ok(()) => Err(
+                "a receipt upgrading Row B to completed must reject against the counting law"
+                    .to_string(),
+            ),
+            Err(_) => Ok(()),
+        }
+    }
+
+    /// Fail-closed contamination: a receipt reconstructing a lifecycle the
+    /// committed corpus does not contain (a synthetic import sneaking into
+    /// the real reconstruction) must reject on the row-count binding.
+    #[test]
+    fn fresh_root_receipt_with_unknown_lifecycle_rejects() -> Result<(), String> {
+        let corpus = load_real_rows_corpus()?;
+        let provenance = load_real_rows_provenance()?;
+        let mut receipt = load_fresh_root_receipt()?;
+        receipt
+            .reconstructed_dispositions
+            .push(IssueLifecycleFreshRootReceiptDispositionV1 {
+                lifecycle_id: "lifecycle-synthetic-import".to_string(),
+                observation_key: "issue-lifecycle:synthetic".to_string(),
+                issue: "EffortlessMetrics/ripr-swarm#0".to_string(),
+                pr: "pr:EffortlessMetrics/ripr-swarm#0".to_string(),
+                merge_commit: "gh-merge-commit:0000000000000000000000000000000000000000"
+                    .to_string(),
+                corpus_disposition: IssueLifecycleDispositionV1::Completed,
+                reconstructed_disposition: IssueLifecycleDispositionV1::Completed,
+                matches_corpus: true,
+            });
+        match verify_fresh_root_receipt(&corpus, &provenance, &receipt) {
+            Ok(()) => Err(
+                "a receipt binding a lifecycle outside the committed corpus must reject"
+                    .to_string(),
+            ),
+            Err(_) => Ok(()),
+        }
+    }
+
+    /// Fail-closed ordering: a receipt claiming reconstruction before the
+    /// capture provenance existed must reject, mirroring the captured_at
+    /// consistency law.
+    #[test]
+    fn fresh_root_receipt_predating_the_capture_rejects() -> Result<(), String> {
+        let corpus = load_real_rows_corpus()?;
+        let provenance = load_real_rows_provenance()?;
+        let mut receipt = load_fresh_root_receipt()?;
+        receipt.reconstructed_at = "2026-10-16T00:00:00Z".to_string();
+        let error = match verify_fresh_root_receipt(&corpus, &provenance, &receipt) {
+            Ok(()) => {
+                return Err("a receipt predating the capture provenance must reject".to_string());
+            }
+            Err(error) => error,
+        };
+        if !error.contains("predates") {
+            return Err(format!("expected a predates rejection, got: {error}"));
+        }
+        Ok(())
+    }
+
+    /// Fail-closed live identity: a receipt whose observed PR merge commit
+    /// drifted from the committed corpus merge identity — kept self-consistent
+    /// with its own ancestry observation — must still reject on the corpus
+    /// binding (review follow-up: the live-fact merge commits must be bound
+    /// to the rows, not only to the receipt's own ancestry fields).
+    #[test]
+    fn fresh_root_receipt_with_live_merge_commit_drift_rejects() -> Result<(), String> {
+        let corpus = load_real_rows_corpus()?;
+        let provenance = load_real_rows_provenance()?;
+        let mut receipt = load_fresh_root_receipt()?;
+        let drifted = "0000000000000000000000000000000000000000".to_string();
+        receipt.live_facts.pr_8325.merge_commit = drifted.clone();
+        receipt.live_facts.row_b_merge_ancestry.merge_base = drifted;
+        match verify_fresh_root_receipt(&corpus, &provenance, &receipt) {
+            Ok(()) => Err(
+                "a receipt whose live merge commit drifted from the corpus must reject".to_string(),
+            ),
+            Err(_) => Ok(()),
+        }
     }
 }

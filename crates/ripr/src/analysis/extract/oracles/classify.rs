@@ -591,6 +591,68 @@ mod tests {
     }
 
     #[test]
+    fn closure_body_equality_that_pins_the_matched_item_is_exact() -> Result<(), String> {
+        // Top-level equivalent already pins (#7726 residual is the wrapper).
+        require_classification(
+            "assert!(matches!(r, Ok(_)) && *r == Ok(3));",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        )?;
+        // Nested matches! field-guard from the landed #8433 half.
+        require_classification(
+            "assert!(xs.iter().any(|x| matches!(x, Some(v) if v.id == 3)));",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        )?;
+        for text in [
+            "assert!(xs.iter().all(|r| matches!(r, Ok(_)) && *r == Ok(3)));",
+            "assert!(xs.iter().any(|r| matches!(r, Ok(_)) && *r == Ok(3)));",
+            "assert!(xs.iter().all(|r| *r == Ok(3) && matches!(r, Ok(_))));",
+            "assert!(xs.iter().all(|r| matches!(r, Ok(_)) && Ok(3) == *r));",
+            "debug_assert!(xs.iter_mut().all(|r| matches!(r, Ok(_)) && *r == Ok(3)));",
+            "assert!(xs.into_iter().all(|r| matches!(r, Ok(_)) && *r == Ok(3)));",
+            "assert!(xs.iter().all(|v| matches!(v, Some(_)) && v.id == 3));",
+            "assert!(xs.iter().all(|v| matches!(v, Some(_)) && (*v).id == 3));",
+            "assert!(xs.iter().all(|v| matches!(v, Some(_)) && v.0 == 3));",
+            "ensure!(xs.iter().all(|r| matches!(r, Ok(_)) && *r == Ok(3)));",
+            "assert!((xs.iter().all(|r| matches!(r, Ok(_)) && *r == Ok(3))));",
+            "assert!(xs.iter().all(|r: &i32| matches!(r, Ok(_)) && *r == Ok(3)));",
+            "assert!(xs.iter().all(|r| matches!(r, Ok(_)) && *r == /* pin */ Ok(3)));",
+        ] {
+            require_classification(text, OracleKind::ExactValue, OracleStrength::Strong)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn closure_body_equality_rejects_shapes_that_do_not_pin_the_item() -> Result<(), String> {
+        for text in [
+            // SPEC-0231 example 29: `.all()` membership without matches! stays weak.
+            "assert!(xs.iter().all(|x| x == 1));",
+            "assert!(xs.iter().all(|r| matches!(r, Ok(_))));",
+            "assert!(xs.iter().all(|r| matches!(r, Ok(_)) && *r == *r));",
+            "assert!(xs.iter().all(|r| matches!(r, Ok(_)) || *r == Ok(3)));",
+            "assert!(f(|r| matches!(r, Ok(_)) && *r == Ok(3)));",
+            "assert!(xs.iter().position(|r| matches!(r, Ok(_)) && *r == Ok(3)) != None);",
+            "assert!(ready && xs.iter().all(|r| matches!(r, Ok(_)) && *r == Ok(3)));",
+            "assert!(!xs.iter().all(|r| matches!(r, Ok(_)) && *r == Ok(3)));",
+            "assert!(xs.iter().all(move |r| matches!(r, Ok(_)) && *r == Ok(3)));",
+            "assert!(xs.iter().all(|r| { matches!(r, Ok(_)) && *r == Ok(3) }));",
+            "assert!(xs.iter().all(|r| matches!(r, Ok(_)) && other == Ok(3)));",
+            "assert!(xs.iter().all(|r| matches!(r, Ok(_)) && r.len() == 3));",
+            "assert!(xs.iter().all(|r| matches!(r, Ok(_)) && r.a == r.b));",
+            "assert!(xs.iter().all(|w| matches!(r, Ok(_)) && *r == Ok(3)));",
+            // Angle-nested commas stay rejected, matching rule 7.
+            "assert!(xs.iter().all(|r: &Result<i32, ()>| matches!(r, Ok(_)) && *r == Ok(3)));",
+            // A `matches!` named only in the message is not an invocation.
+            r#"assert!(xs.iter().all(|r| *r == Ok(3)), "matches!");"#,
+        ] {
+            require_classification(text, OracleKind::RelationalCheck, OracleStrength::Weak)?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn exact_fallible_oracle_requires_an_explicit_value_comparison() -> Result<(), String> {
         let exact = classify_assertion(
             "ensure!(state == TerminalState::Pass, \"message mentions is_err\");",

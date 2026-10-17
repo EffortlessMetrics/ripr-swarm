@@ -56,6 +56,7 @@ Updated:
 
 Reason:
 RIPR-SPEC-0158 and #7805: additive source_file metadata on test-source values only; check.json lines otherwise byte-identical
+RIPR-SPEC-0002: #8386 drop a bare unwrap/expect setup row listed beside the same test's real assertion row; classification unchanged
 
 Command:
 `cargo xtask goldens bless rust_test_written_expected_file_bound --reason "..."`
