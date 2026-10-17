@@ -761,7 +761,41 @@ pub struct PreviewLanguageAdvisory {
     pub enabled: bool,
 }
 
+/// Prose names `(adapter, files)` for a preview language (#4908). The
+/// TypeScript adapter analyzes the whole TS/JS family, so a JavaScript-only
+/// set of files is "JavaScript files" under the "TypeScript/JavaScript"
+/// adapter and a mixed one is "TypeScript/JavaScript files". Any other set,
+/// including TypeScript-only, keeps the plain display name for both.
+pub(crate) fn preview_family_names(
+    wire: &str,
+    file_count: usize,
+    javascript_file_count: usize,
+) -> (String, String) {
+    let language = crate::domain::LanguageId::display_name_for_wire(wire)
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            let mut chars = wire.chars();
+            chars.next().map_or_else(String::new, |first| {
+                first.to_uppercase().collect::<String>() + chars.as_str()
+            })
+        });
+    if wire != "typescript" || javascript_file_count == 0 {
+        return (language.clone(), language);
+    }
+    let family = "TypeScript/JavaScript".to_string();
+    if javascript_file_count >= file_count {
+        (family, "JavaScript".to_string())
+    } else {
+        (family.clone(), family)
+    }
+}
+
 impl PreviewLanguageAdvisory {
+    /// `(adapter, files)` prose names; see [`preview_family_names`].
+    pub(crate) fn prose_names(&self) -> (String, String) {
+        preview_family_names(&self.language, self.file_count, self.javascript_file_count)
+    }
+
     /// Returns the producer-owned non-success record for this advisory, when
     /// the adapter did not complete successfully.
     pub(crate) fn non_success_run<'a>(

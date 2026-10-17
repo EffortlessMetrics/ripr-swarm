@@ -4572,10 +4572,15 @@ fn blocked_root_message(root: &WorkspaceRootAuthority) -> Option<String> {
         };
         format!(" {label}: {listed}.")
     };
-    // The stored details already name the recovery for ambiguous, removed
-    // and changed roots; an unavailable root only says what the client sent.
+    // The stored details already name the recovery for removed and changed
+    // roots; an unavailable root only says what the client sent. An
+    // ambiguous set lists its folders above, so the guidance names the only
+    // recovery the server implements: one folder per window, then a restart
+    // (#7461). No server command, setting, or request selects a root.
     let guidance = match root.state {
-        WorkspaceRootState::WorkspaceAmbiguous => " ripr analyzes one workspace root per server.",
+        WorkspaceRootState::WorkspaceAmbiguous => {
+            " ripr analyzes one workspace root per server. Remove the extra folder from the workspace (or open each repository in its own editor session), then restart the language server. In VS Code, the `ripr: Select Workspace Root` command picks one folder and restarts instead."
+        }
         WorkspaceRootState::RootUnavailable => {
             " Open the repository folder as the editor's workspace root, then restart the language server."
         }
@@ -4589,12 +4594,21 @@ fn blocked_root_message(root: &WorkspaceRootAuthority) -> Option<String> {
     ))
 }
 
+/// Recovery route for workspace-root states that stop analysis until the
+/// editor holds a single workspace root and the server restarts (#7461).
+/// The name describes the end state the user must produce because no server
+/// command, setting, or request implements a root-selection step; a
+/// `select_*` route would name a phantom action. One wording owner for both
+/// the status projection and the top-limitation payload so they cannot drift
+/// apart.
+const SINGLE_ROOT_RESTART_ROUTE: &str = "use_single_workspace_root_and_restart";
+
 fn root_recovery_route(state: &WorkspaceRootState) -> &'static str {
     match state {
         WorkspaceRootState::SelectedSingleRoot => "refresh",
-        WorkspaceRootState::WorkspaceAmbiguous => "select_root_and_restart",
-        WorkspaceRootState::RootUnavailable => "select_root_and_restart",
-        WorkspaceRootState::RootRemoved => "select_root_and_restart",
+        WorkspaceRootState::WorkspaceAmbiguous => SINGLE_ROOT_RESTART_ROUTE,
+        WorkspaceRootState::RootUnavailable => SINGLE_ROOT_RESTART_ROUTE,
+        WorkspaceRootState::RootRemoved => SINGLE_ROOT_RESTART_ROUTE,
         WorkspaceRootState::RootChanged => "refresh",
     }
 }
@@ -7591,17 +7605,17 @@ fn top_limitation_dto(
             WorkspaceRootState::WorkspaceAmbiguous => (
                 "workspace_ambiguous",
                 "workspace root authority is ambiguous; analysis input is not selected",
-                "select_root_and_restart",
+                SINGLE_ROOT_RESTART_ROUTE,
             ),
             WorkspaceRootState::RootUnavailable => (
                 "input_invalid",
                 "workspace root authority is unavailable; analysis input is not selected",
-                "select_root_and_restart",
+                SINGLE_ROOT_RESTART_ROUTE,
             ),
             WorkspaceRootState::RootRemoved => (
                 "input_invalid",
                 "the selected workspace root was removed; analysis input is invalid",
-                "select_root_and_restart",
+                SINGLE_ROOT_RESTART_ROUTE,
             ),
             WorkspaceRootState::RootChanged => (
                 "snapshot_stale",
