@@ -670,27 +670,37 @@ fn sequence_elements(side: &str) -> Option<Vec<String>> {
 /// held, whatever it is compared with.
 fn indexed_by_test(side: &str) -> bool {
     let masked = mask_comments_and_strings(side);
-    let side = masked.trim();
-    let Some(body) = side.strip_suffix(']') else {
-        return false;
-    };
     let mut depth = 0usize;
-    for (at, ch) in body.char_indices().rev() {
+    let mut open_at = None;
+    for (at, ch) in masked.char_indices() {
         match ch {
-            ')' | ']' | '}' => depth += 1,
-            '(' | '{' => depth = depth.saturating_sub(1),
-            '[' if depth == 0 => {
-                let base = body[..at].trim_end();
-                let indexes_a_value = base
-                    .chars()
-                    .next_back()
-                    .is_some_and(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | ')' | ']'));
-                let index = body[at + 1..].trim();
-                return indexes_a_value
-                    && (is_bool_test(index)
-                        || bool_preserving_operand(index).is_some_and(is_bool_test));
+            '(' | '{' => depth += 1,
+            ')' | '}' => depth = depth.saturating_sub(1),
+            '[' => {
+                if depth == 0 {
+                    open_at = Some(at);
+                }
+                depth += 1;
             }
-            '[' => depth -= 1,
+            ']' => {
+                depth = depth.saturating_sub(1);
+                // Every top-level bracket group is read, whatever follows it
+                // (`table[test].name`, `table[test][0]`).
+                if let (0, Some(open)) = (depth, open_at.take()) {
+                    let indexes_a_value = masked[..open]
+                        .trim_end()
+                        .chars()
+                        .next_back()
+                        .is_some_and(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | ')' | ']'));
+                    let index = masked[open + 1..at].trim();
+                    if indexes_a_value
+                        && (is_bool_test(index)
+                            || bool_preserving_operand(index).is_some_and(is_bool_test))
+                    {
+                        return true;
+                    }
+                }
+            }
             _ => {}
         }
     }
