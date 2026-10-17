@@ -232,3 +232,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — binding_predicate_two_uses (16)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless binding_predicate_two_uses --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

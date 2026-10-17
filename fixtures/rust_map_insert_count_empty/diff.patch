@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -10,6 +10,6 @@ impl Shelf {
+     }
+ 
+     pub fn restock(&mut self, sku: &str, qty: u32) {
+-        self.stock.insert(sku.to_string(), qty);
++        self.stock.insert(sku.to_owned(), qty);
+     }
+ }

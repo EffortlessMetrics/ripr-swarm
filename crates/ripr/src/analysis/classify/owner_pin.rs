@@ -241,6 +241,8 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// RIPR-SPEC-0225 decision 9: whether the workspace is closed for
     /// iteration, a whole-index scan computed once per run.
     iteration_closed: OnceCell<bool>,
+    /// The same closed-field premise without the array iteration restriction.
+    field_projection_workspace_closed: OnceCell<bool>,
     /// RIPR-SPEC-0225 decision 9: the names a workspace macro may declare a
     /// type under, `None` when any name may be declared.
     macro_type_names: OnceCell<Option<BTreeSet<String>>>,
@@ -426,6 +428,13 @@ impl OwnerPinSyntax {
     /// The run's memo of a whole-index verdict that `compute` reads once.
     pub(in crate::analysis) fn iteration_closed(&self, compute: impl FnOnce() -> bool) -> bool {
         *self.iteration_closed.get_or_init(compute)
+    }
+
+    pub(in crate::analysis) fn field_projection_workspace_closed(
+        &self,
+        compute: impl FnOnce() -> bool,
+    ) -> bool {
+        *self.field_projection_workspace_closed.get_or_init(compute)
     }
 
     /// Whether a macro in the workspace may declare a type named `name`.
@@ -1716,6 +1725,15 @@ impl AssertionRefusal {
                         ),
                         MacroBindingKind::ArgumentAttribute { wrapper, attribute } => format!(
                             "`{wrapper}!` at {place} carries `{attribute}` in its arguments, which its expansion may apply, bringing in a different `{name}!`"
+                        ),
+                        MacroBindingKind::MacroBody(macro_name) => format!(
+                            "the body of `{macro_name}!` at {place} defines or imports `{name}`, so its expansion may rebind it"
+                        ),
+                        MacroBindingKind::BodyBindsAny {
+                            macro_name,
+                            binding,
+                        } => format!(
+                            "the body of `{macro_name}!` at {place} carries `{binding}`, which its expansion may apply, bringing in a different `{name}!`"
                         ),
                     }
                 }

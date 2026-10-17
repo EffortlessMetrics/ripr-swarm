@@ -79,6 +79,7 @@ const FIXTURE_CARGO_TOML: &str = "[package]\nname = \"boundary_gap_fixture\"\nve
 const FIXTURE_LIB: &str = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
 const FIXTURE_WEAK_TEST: &str = "use boundary_gap_fixture::discounted_total;\n\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n\n#[test]\nfn far_above_threshold_discounts() {\n    assert_eq!(discounted_total(10_000, 100), 9_990);\n}\n";
 const FIXTURE_SEAM: &str = "67fc764ba37d77bd";
+const FIXTURE_GAP: &str = "gap:4b5fdc1a2a157b0d";
 const SECOND_SEAM: &str = "59fe960b7be4b8d6";
 const FIXTURE_BOUNDARY_TEST: &str = "\n#[test]\nfn at_threshold_discounts() {\n    assert_eq!(discounted_total(100, 100), 90);\n}\n";
 
@@ -372,6 +373,112 @@ fn repair_single_item_matches_advanced_card() -> Result<(), String> {
         status_command, printed,
         "status must name the same ordinary continue route the before phase printed"
     );
+    Ok(())
+}
+
+fn assert_no_repair_attempt_side_effects(root: &Path) {
+    assert!(
+        attempt_ids(root).is_empty(),
+        "an ineligible explicit subject must create no repair attempt"
+    );
+    assert!(
+        !root
+            .join("target/ripr/repair-attempts/.before.lock")
+            .exists(),
+        "an ineligible explicit subject must not create the before-phase lock"
+    );
+    assert!(
+        !root.join("target/ripr/repair-attempts").exists(),
+        "an ineligible explicit subject must not create the repair-attempt store"
+    );
+}
+
+/// #8166 Slice A (positive control): an explicit eligible seam still
+/// starts exactly one before-phase attempt through the façade.
+#[test]
+fn repair_explicit_eligible_seam_starts_one_attempt() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-eligible-explicit")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let repair = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&repair, 0, "repair with an explicit eligible seam");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1, "exactly one attempt must be created");
+    assert_eq!(read_manifest(root, &ids[0])?["seam_id"], FIXTURE_SEAM);
+    Ok(())
+}
+
+/// #8166 Slice A: an explicit seam that is no longer repair-eligible
+/// (its boundary is already gripped, so it is not a headline repair
+/// target) must refuse as a Decision (exit 3) naming the ineligibility
+/// reason, before any attempt or before-phase lock side effect.
+#[test]
+fn repair_explicit_ineligible_seam_refuses_without_attempt_or_lock() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-ineligible-seam")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{FIXTURE_WEAK_TEST}{FIXTURE_BOUNDARY_TEST}"),
+    )
+    .map_err(|e| e.to_string())?;
+    run_git(root, &["add", "tests/pricing.rs"])?;
+    git_commit(root, "grip the boundary")?;
+    let repair = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&repair, 3, "repair with an explicit ineligible seam");
+    assert!(
+        stdout_text(&repair).is_empty(),
+        "ineligibility refusal must leave stdout empty:\n{}",
+        stdout_text(&repair)
+    );
+    let stderr = stderr_text(&repair);
+    assert!(
+        stderr.contains(FIXTURE_SEAM),
+        "refusal must name the seam:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("not a headline repair target"),
+        "refusal must name the ineligibility reason:\n{stderr}"
+    );
+    assert_no_repair_attempt_side_effects(root);
+    Ok(())
+}
+
+/// #8166 Slice A: a canonical gap ID (and its seam ID) whose class is
+/// configured off must refuse as a Decision (exit 3) naming the policy
+/// reason, before any attempt or before-phase lock side effect.
+#[test]
+fn repair_explicit_policy_omitted_gap_and_seam_refuse_without_attempt_or_lock() -> Result<(), String>
+{
+    let fixture = Fixture::boundary("facade-ineligible-gap")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[severity.seams]\nweakly_gripped = \"off\"\n",
+    )
+    .map_err(|e| e.to_string())?;
+    run_git(root, &["add", "ripr.toml"])?;
+    git_commit(root, "configure weakly_gripped off")?;
+    for item in [FIXTURE_GAP, FIXTURE_SEAM] {
+        let repair = run_ripr(root, &["repair", item, "--root", &root_arg])?;
+        assert_exit(&repair, 3, "repair with a policy-omitted explicit item");
+        assert!(
+            stdout_text(&repair).is_empty(),
+            "policy refusal must leave stdout empty:\n{}",
+            stdout_text(&repair)
+        );
+        let stderr = stderr_text(&repair);
+        assert!(
+            stderr.contains(item),
+            "refusal must name the item {item}:\n{stderr}"
+        );
+        assert!(
+            stderr.contains("configured off"),
+            "refusal must name the policy ineligibility reason:\n{stderr}"
+        );
+        assert_no_repair_attempt_side_effects(root);
+    }
     Ok(())
 }
 

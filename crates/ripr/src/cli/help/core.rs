@@ -1,6 +1,6 @@
 pub(super) const INIT_HELP: &str = r#"Write an optional repo policy file (ripr.toml) and, with --ci github, a non-blocking advisory workflow.
 
-Usage: ripr init [--root PATH] [--ci github] [--dry-run] [--force]
+Usage: ripr init [--root PATH] [--ci github] [--mcp] [--dry-run] [--force]
 
 `ripr init` is optional. It writes the built-in defaults to a repo-local
 ripr.toml so teams can commit, review, and tune policy. Missing ripr.toml is
@@ -10,11 +10,19 @@ not unlock basic CLI, editor, or pilot usefulness.
 Options:
   --root PATH      Workspace root where ripr.toml should be written. Defaults to current directory.
   --ci github      Also write .github/workflows/ripr.yml with advisory reports and optional SARIF rendering/upload.
+  --mcp            Also add the ripr MCP server to .mcp.json (Claude Code project config).
+                   Other servers in an existing file are kept; an existing
+                   `ripr` entry is kept unless --force; a symlink or a file
+                   that is not a JSON object is refused. The file is rewritten
+                   with sorted keys. Like --ci, --mcp keeps an existing
+                   ripr.toml and --force does not reset it. Codex config is
+                   user-global and is never written: init prints the
+                   `codex mcp add` command.
   --dry-run        Show the plan and the file bodies without writing anything.
                    Resolves the same preconditions as the real run, so it
                    fails the same way (existing file without --force, root
                    that is not a directory) instead of reporting success.
-  --force          Overwrite an existing ripr.toml or generated workflow.
+  --force          Overwrite an existing ripr.toml, generated workflow, or ripr MCP entry.
 
 Generated config:
   - uses draft analysis mode and includes unchanged tests
@@ -122,6 +130,44 @@ including the `repo-exposure.json` that `ripr pilot` writes, carries no head;
 ripr then says so and cannot verify the pair came from the same repository or
 adjacent commits. Matching heads still do not mean matching working trees.
 "#;
+/// The one-screen default for `ripr check --help` (#8158 item 2). The
+/// exhaustive reference stays in [`CHECK_HELP`], reachable with `--help --all`;
+/// flag mining for typo suggestions and the help tests read the full text.
+pub(super) const CHECK_HELP_SHORT: &str = r#"Analyze the current diff and name the changed behavior your tests may not catch.
+
+Usage: ripr check [OPTIONS]
+
+Common options:
+  --base REV        Compare against this revision. When omitted, ripr uses the
+                    local origin/HEAD ref, then origin/main, origin/master,
+                    main, and master in order.
+  --diff PATH       Read a diff file instead of running git diff (`-` = stdin).
+  --worktree        Include staged and unstaged tracked edits (already the
+                    default when the tree has them).
+  --committed       Compare committed history only (base...HEAD).
+  --format FORMAT   human (default); human-full lists every finding with
+                    drill-in commands; json (or --json) for scripts and CI;
+                    github for Actions annotations; sarif for code scanning.
+  --mode MODE       instant, draft (default), or deep: how much of the
+                    workspace is indexed (never changes what a class means).
+  --root PATH       Workspace root. Defaults to the current directory, then
+                    walks up to the enclosing workspace or package, or the git
+                    top level (never past the repository); `--root .` pins
+                    this directory.
+  --quiet           Suppress stderr progress. Unknown totals show no
+                    percentage or ETA, and progress makes no speed claim.
+
+Exit status: 0 for a completed run, including `exposed` and `weakly_exposed`
+findings. `unsupported_input` reports exit 2, as do usage errors. Do not build
+a CI gate on check's exit code; run `ripr gate evaluate` (exit 3 on `blocked`).
+
+Examples:
+  ripr check
+  ripr check --base origin/main --json
+
+More:
+  ripr check --help --all   Every option, format, and environment variable.
+"#;
 pub(super) const CHECK_HELP: &str = r#"Analyze a diff or workspace and emit findings in human, JSON, SARIF, or badge form.
 
 Usage: ripr check [OPTIONS]
@@ -228,6 +274,14 @@ Options:
                            unsuppressed findings only. Relative PATH
                            resolves against --root; a missing or malformed
                            policy fails the run.
+  --output-dir DIR         With a named --diff file, write native badge.json,
+                           detail.json and human.txt from one analysis. DIR must
+                           be new (parent exists). Verify manifest.json and member
+                           hashes before consuming the set. Does not combine with
+                           --format/--json, scope switches, --gap-ledger,
+                           --write-artifact or --suppression-policy. Bounded input
+                           inventory refuses drift, nonregular files and external
+                           module reads. See docs/OUTPUT_SCHEMA.md.
   --write-artifact PATH    Write a full-fidelity check artifact (schema
                            ripr-check-artifact-v1) for later
                            `ripr explain --from PATH` /
@@ -255,6 +309,8 @@ Options:
   --quiet                  Suppress analysis progress and heartbeats on
                            stderr. Does not change machine stdout, exit
                            codes, or error reporting.
+  --all                    With --help: print this exhaustive reference
+                           instead of the one-screen summary.
 
 Exit status:
   Complete and partial_with_limitations reports exit 0, including `exposed`

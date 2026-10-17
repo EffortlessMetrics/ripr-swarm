@@ -63,6 +63,9 @@ preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
   replaced by a refusal envelope. This changes the earlier unsupported-input
   exit-`0` contract (#7440 for check, #7793 for diff). Empty or whitespace-only input stays complete
   `no_scope` with exit `0`; it does not establish analyzed behavior.
+  An `unsupported_input` run with `--write-artifact` neither creates nor
+  replaces the requested reusable artifact; its report keeps direct-input
+  drill-in commands rather than pointing to that unwritten artifact.
   A run that analyzed only
   part of its scope also exits `0`, with `partial_with_limitations`: a diff
   over the smaller partial budget (its limitation is also named
@@ -98,6 +101,12 @@ preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
   shape and its `schema_version`.
 - **User error**: unknown command, missing required argument, or invalid
   config.
+- **Verification root failure**: `ripr agent verify-execute --json` with a
+  missing root or a file root retains exit `2` and the root recovery diagnostic.
+  It also emits the existing schema `1` `verification_wrong_root` response on
+  stdout with `executed: false` and `result_committed: false`. No packet runs
+  and no result is written. This is distinct from a packet path-policy refusal,
+  which retains typed-refusal exit `3`.
 - **Gate `--root` refusal**: `ripr gate evaluate --root <path>` that is
   missing or not a directory is an argv-level usage refusal: it exits `2`,
   names the root, and does not write `gate-decision.{json,md}`. Evaluation

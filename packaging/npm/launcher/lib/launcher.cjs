@@ -250,7 +250,7 @@ function resolveNativeExecutable(options) {
   } catch (error) {
     throw new LauncherError(
       "native_executable_missing",
-      `native package ${selected.package}@${contract.version} does not contain ${nativeMetadata.executable}`,
+      `native package ${selected.package}@${contract.version} does not contain ${nativeMetadata.executable}; restore ${nativeMetadata.executable} from the matching native package tarball, or reinstall ${LAUNCHER_NAME}@${contract.version} in its owning npm environment with optional dependencies enabled`,
       error,
     );
   }

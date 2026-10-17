@@ -315,7 +315,7 @@ fn explain_and_context_fresh_runs_disclose_progress_on_stderr() -> Result<(), St
 #[test]
 fn check_help_does_not_spray_progress() -> Result<(), String> {
     let output = ripr()
-        .args(["check", "--help"])
+        .args(["check", "--help", "--all"])
         .output()
         .map_err(|error| format!("run check help: {error}"))?;
     assert!(output.status.success());
@@ -327,6 +327,30 @@ fn check_help_does_not_spray_progress() -> Result<(), String> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("--quiet"));
     assert!(stdout.contains("percentage or ETA"));
+    Ok(())
+}
+
+/// The default one-screen route stays a short command too: it writes nothing
+/// to stderr and still carries SPEC-0185's `--quiet`, unknown-totals and
+/// no-speed-claim disclosure.
+#[test]
+fn check_default_help_does_not_spray_progress() -> Result<(), String> {
+    let output = ripr()
+        .args(["check", "--help"])
+        .output()
+        .map_err(|error| format!("run check help: {error}"))?;
+    assert!(output.status.success());
+    let stderr = stderr_text(&output);
+    assert!(
+        stderr.is_empty(),
+        "default help is a short command with no stderr: {stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let flat = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(flat.contains("--quiet"));
+    assert!(flat.contains("percentage or ETA"), "{flat}");
+    assert!(flat.contains("no speed claim"), "{flat}");
+    assert!(flat.contains("ripr check --help --all"));
     Ok(())
 }
 

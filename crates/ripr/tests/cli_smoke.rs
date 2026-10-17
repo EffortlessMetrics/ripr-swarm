@@ -17,6 +17,8 @@ mod agent_policy_guidance;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/artifact_mode_precedence.rs"]
 mod artifact_mode_precedence;
+#[path = "cli_smoke/baseline_path_values.rs"]
+mod baseline_path_values;
 #[path = "../src/build_commit_record.rs"]
 mod build_commit_record;
 #[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
@@ -52,6 +54,12 @@ mod init_followups;
 #[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/javascript_awaited_roots.rs"]
 mod javascript_awaited_roots;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/mixed_quote_rename.rs"]
+mod mixed_quote_rename;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/native_fanout.rs"]
+mod native_fanout;
 #[path = "cli_smoke/next_action.rs"]
 mod next_action;
 #[path = "cli_smoke/output_leaf_identity.rs"]
@@ -62,6 +70,9 @@ mod output_leaf_identity;
 ))]
 #[path = "cli_smoke/partial_preview_disclosure.rs"]
 mod partial_preview_disclosure;
+#[cfg(all(feature = "lang-rust", feature = "lang-python"))]
+#[path = "cli_smoke/portable_diff_paths.rs"]
+mod portable_diff_paths;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/python_source_admission.rs"]
 mod python_source_admission;
@@ -106,11 +117,17 @@ mod typescript_effect_aliases;
 #[path = "cli_smoke/unknown_explain.rs"]
 mod unknown_explain;
 #[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/unsupported_artifact.rs"]
+mod unsupported_artifact;
+#[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unsupported_check_exit.rs"]
 mod unsupported_check_exit;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unsupported_diff_exit.rs"]
 mod unsupported_diff_exit;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/verify_execute_root.rs"]
+mod verify_execute_root;
 #[cfg(unix)]
 #[path = "cli_smoke/workflow_directory.rs"]
 mod workflow_directory;
@@ -2312,6 +2329,16 @@ fn selector_location_misses_explain_syntax_and_preserve_retry_scope()
             .as_u64()
             .ok_or("finding must carry its source line")?;
         let locator = format!("src/lib.rs:{line}");
+        // A file:line locator resolves only when one finding carries it.
+        // A line shared by several findings is ambiguous under the
+        // fail-closed selector (#8166 Slice B) and must refuse instead of
+        // rendering the first match, so the expectation follows the
+        // fixture's actual sharing on this platform.
+        let locator_unique = findings
+            .iter()
+            .filter(|other| other["probe"]["line"].as_u64() == Some(line))
+            .count()
+            == 1;
 
         for command in ["explain", "context"] {
             for (selector, needs_hint, success) in [
@@ -2321,7 +2348,7 @@ fn selector_location_misses_explain_syntax_and_preserve_retry_scope()
                 (missing_repo_id, false, false),
                 ("src/lib.rs:999999", false, false),
                 (id, false, true),
-                (locator.as_str(), false, true),
+                (locator.as_str(), false, locator_unique),
             ] {
                 let mut args = vec![command, "--root", &root_arg, "--diff", &diff_arg];
                 if command == "context" {
@@ -2381,6 +2408,98 @@ fn selector_location_misses_explain_syntax_and_preserve_retry_scope()
     let cleanup = std::fs::remove_dir_all(&root);
     result?;
     cleanup?;
+    Ok(())
+}
+
+/// #8166 Slice B: a selector naming several findings (two findings share
+/// `src/lib.rs:3` in `collection_argument_plain`) refuses as ambiguous
+/// through both `explain` and `context` — usage-class exit 2, empty stdout,
+/// bounded candidate ids on stderr — while a unique probe or canonical gap
+/// identity resolves exactly one finding through both commands, and an
+/// unmatched (including 16-hex seam-shaped) selector keeps the no-match
+/// refusal.
+#[test]
+fn selector_ambiguity_and_gap_identity_route_through_explain_and_context()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/collection_argument_plain");
+    let root = fixture.join("input");
+    let diff = fixture.join("diff.patch");
+    let bin = env!("CARGO_BIN_EXE_ripr");
+    let root_arg = root.display().to_string();
+    let diff_arg = diff.display().to_string();
+    let first_id = "probe:src_lib.rs:call_deletion:1f64eda5";
+    let second_id = "probe:src_lib.rs:side_effect:3ceb2918";
+    let gap_id = "gap:rust:src/lib.rs:add:call_deletion:call_deletion:v.push_x*1";
+
+    for command in ["explain", "context"] {
+        for (selector, success_id) in [
+            ("src/lib.rs:3", None),
+            (gap_id, Some(first_id)),
+            (first_id, Some(first_id)),
+            ("0123456789abcdef", None),
+            ("probe:not-a-real-id", None),
+        ] {
+            let mut args = vec![
+                command, "--root", &root_arg, "--diff", &diff_arg, "--mode", "draft",
+            ];
+            if command == "context" {
+                args.push("--at");
+            }
+            args.push(selector);
+            let output = run_command(bin, None, &args)?;
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            match success_id {
+                Some(expected_id) => {
+                    if !output.status.success() {
+                        return Err(format!(
+                            "unique {command} selector {selector:?} failed: {stderr}"
+                        )
+                        .into());
+                    }
+                    if command == "context" {
+                        let packet: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+                        if packet["probe"]["id"].as_str() != Some(expected_id) {
+                            return Err(format!(
+                                "gap/probe selector resolved another finding: {packet}"
+                            )
+                            .into());
+                        }
+                    } else if !stdout.contains(expected_id) {
+                        return Err(format!(
+                            "{command} did not render the selected finding {expected_id}: {stdout}"
+                        )
+                        .into());
+                    }
+                }
+                None => {
+                    if output.status.code() != Some(2) || !output.stdout.is_empty() {
+                        return Err(format!(
+                            "selector refusal changed the CLI failure contract for {command} {selector:?}: {output:?}"
+                        )
+                        .into());
+                    }
+                    if selector == "src/lib.rs:3" {
+                        if !stderr.contains("matched 2 findings")
+                            || !stderr.contains(first_id)
+                            || !stderr.contains(second_id)
+                        {
+                            return Err(format!(
+                                "ambiguous {command} refusal must name the bounded candidates: {stderr}"
+                            )
+                            .into());
+                        }
+                    } else if !stderr.contains("no finding matched") {
+                        return Err(format!(
+                            "unmatched {command} selector must keep the no-match refusal: {stderr}"
+                        )
+                        .into());
+                    }
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -5188,8 +5307,15 @@ fn first_pr_check_missing_packet_recovers_without_a_resolvable_base()
             .join("target/ripr/reports/start-here.json")
             .is_file()
     );
+    // The packet is current (not "does not create one", not stale) and
+    // records the blocked missing-artifacts state, which fails the gate (#7373).
     let recheck = run_ripr(&["first-pr", "--root", &root, "--base", "HEAD", "--check"]);
-    assert_success(&recheck);
+    assert_failure(&recheck);
+    let recheck_stderr = String::from_utf8_lossy(&recheck.stderr);
+    assert!(
+        recheck_stderr.contains("blocked state `missing_artifacts`"),
+        "{recheck_stderr}"
+    );
     ignore_remove_dir_all(&workspace);
     Ok(())
 }
@@ -5218,11 +5344,49 @@ fn first_pr_check_recovery_write_resolves_the_default_base() -> Result<(), Strin
     )?;
     assert_eq!(base, "master");
 
+    // `--check` resolves the omitted base too, so the packet is current; the
+    // blocked missing-artifacts state it records fails the gate (#7373).
     let check = run_ripr(&["first-pr", "--root", &root_str, "--check"]);
-    assert_success(&check);
+    assert_failure(&check);
+    let check_stderr = String::from_utf8_lossy(&check.stderr);
     assert!(
-        String::from_utf8_lossy(&check.stdout).contains("First PR start-here packet ok"),
-        "{check:?}"
+        check_stderr.contains("blocked state `missing_artifacts`"),
+        "{check_stderr}"
+    );
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #7373: `--check` is the gate, so a current packet that records a blocked
+/// state fails it (exit 2) while write mode keeps exiting 0 after composing the
+/// packet. The unblocked packet stays the passing control.
+#[test]
+fn first_pr_check_exits_2_for_a_blocked_packet_but_write_mode_exits_0() -> Result<(), String> {
+    let root = unique_temp_workspace("first-pr-blocked-exit");
+    std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+    let run = |extra: &[&str]| -> Result<Output, String> {
+        let mut args = vec!["first-pr", "--root", "."];
+        args.extend_from_slice(extra);
+        run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &args).map_err(|err| err.to_string())
+    };
+
+    let write = run(&[])?;
+    assert_success(&write);
+    let packet = root.join("target/ripr/reports/start-here.json");
+    assert_eq!(json_string_at(&packet, "/status")?, "blocked");
+    assert_eq!(
+        json_string_at(&packet, "/selected/output_state")?,
+        "wrong_root"
+    );
+
+    let check = run(&["--check"])?;
+    assert_failure(&check);
+    assert_eq!(check.status.code(), Some(2), "{check:?}");
+    let stderr = String::from_utf8_lossy(&check.stderr);
+    assert!(stderr.contains("blocked state `wrong_root`"), "{stderr}");
+    assert!(
+        !String::from_utf8_lossy(&check.stdout).contains("start-here packet ok"),
+        "a blocked packet must not print the ok line"
     );
     ignore_remove_dir_all(&root);
     Ok(())
@@ -5389,6 +5553,28 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     assert!(!repair.status.success());
     let stderr = String::from_utf8_lossy(&repair.stderr);
     assert!(stderr.contains("not a seam ID"), "{stderr}");
+    assert!(
+        stderr.contains("ripr pilot --root ") && stderr.contains("agent-packet-unknown-seam"),
+        "{stderr}"
+    );
+
+    // The other ID `ripr check` prints, its canonical gap ID, gets the same
+    // family-named refusal instead of the generic hint (#8158).
+    let gap_packet = run_ripr(&[
+        "agent",
+        "packet",
+        "--root",
+        &root_path,
+        "--seam-id",
+        "gap:0123456789abcdef",
+        "--json",
+    ]);
+    assert!(!gap_packet.status.success());
+    let stderr = String::from_utf8_lossy(&gap_packet.stderr);
+    assert!(
+        stderr.contains("is a `ripr check` canonical gap ID, not a seam ID"),
+        "{stderr}"
+    );
     assert!(
         stderr.contains("ripr pilot --root ") && stderr.contains("agent-packet-unknown-seam"),
         "{stderr}"
@@ -17461,7 +17647,7 @@ fn python_check_safe_action(
         .find(|line| line.starts_with("  Safe next action:"))
         .ok_or_else(|| format!("check printed no safe next action:\n{stdout}"))?;
     assert!(
-        stdout.contains("State: preview language, advisory only (preview_limited)"),
+        stdout.contains("State: preview language, advisory only"),
         "expected preview_limited triage:\n{stdout}"
     );
     Ok(line.to_string())

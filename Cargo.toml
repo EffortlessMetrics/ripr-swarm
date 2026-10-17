@@ -192,3 +192,19 @@ opt-level = 3
 
 [profile.dev.package.rowan]
 opt-level = 3
+
+# Additional small parsing-stack dependencies measured on the policy scans.
+[profile.dev.package.ra-ap-rustc_lexer]
+opt-level = 2
+
+[profile.dev.package.hashbrown]
+opt-level = 2
+
+[profile.dev.package.rustc-hash]
+opt-level = 2
+
+[profile.dev.package.memchr]
+opt-level = 2
+
+[profile.dev.package.smol_str]
+opt-level = 2

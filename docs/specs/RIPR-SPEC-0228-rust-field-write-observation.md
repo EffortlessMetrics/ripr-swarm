@@ -176,6 +176,37 @@ these reads too (Decision 2): `c.history()` observes `self.log` only when
 `history` resolves to a body returning `self.log`, and a shared name alone
 never confirms a field-path collection write (examples 12 and 13).
 
+A count-only read of a written map (`c.stock.len()`,
+`c.stock.is_empty()`) does not confirm a deleted `insert` when the
+test may already hold the inserted key (#8204): overwriting a
+pre-existing key leaves the count unchanged, so
+`shelf.stock.insert("A", 1); shelf.restock("A", 2);
+assert_eq!(shelf.stock.len(), 1)` stays `weakly_exposed`, pinned by
+`fixtures/rust_map_overwrite_count` in the RIPR-SPEC-0108 honesty
+corpus. The same count from an empty start still confirms, as
+`fixtures/rust_map_insert_count_empty` pins. A `push` count is
+unaffected: appending changes the count whether or not the
+collection started empty.
+
+A read of only element zero of the written collection (`c.items.first()`,
+`c.items.get(0)`, `c.items[0]`, typed or underscore spellings such as
+`get(0usize)` and `[0_usize]`, first-element ranges such as `[..1]` and
+`get(0..=0)`, and the bare-receiver and through-getter forms) does not
+confirm a `push` (#8203): `push` appends, so element zero is the pushed
+element only when the collection started empty. Such a test stays
+`weakly_exposed`, pinned by `fixtures/rust_preseeded_first_element` in
+the RIPR-SPEC-0108 honesty corpus. A read of the pushed element
+(`last()`, a non-zero index, or the whole collection) still confirms,
+as `fixtures/rust_pushed_element_last` pins. The one exception is a
+bare receiver whose test body proves an empty start (a narrow empty
+construction such as `Vec::new()` as the whole right-hand side, with
+no test-side seeding of that receiver and at most one mutable escape,
+counting `&mut *receiver`): there element zero is the pushed element,
+and the read still confirms. Field-path first-element reads stay
+demoted, because this observer does not establish the field
+collection's start state. An `insert` write is not an append and keeps
+its prior first-element credit; the read is not position-aware.
+
 ### Limits
 
 - A read through a method (`r.count()`) confirms only when the method
@@ -387,6 +418,24 @@ changes `self.count += 2` to `self.count += 1`.
   counts any `else`, since a `let .. else` block may exit through a
   never-typed call no token catches, so an ordinary `if/else` completed
   before the push widens the same conservative cap.
+- A seeded-collection expectation is implemented (#8205, extending
+  #8051): `assertion_restates_seeded_collection` in
+  `propagation_witness.rs` and the `seeded_after_skipped_push` cap in
+  `reveal.rs` recognize an `assert_eq!` whose expected side exactly
+  restates, with whitespace removed, the collection state the test
+  seeded in the binding's own construction (a struct-literal field
+  entry or a bare assignment read from the test body). When the owner
+  may leave before the push, such an assertion only restates what the
+  collection already held, for example a seeded `vec![9]` asserted
+  after a locked owner returns early, so it neither confirms
+  observation nor counts as a strong oracle for `side_effect` or
+  `call_deletion` probes on a field collection write. An expectation
+  that differs from the seeded state (including the seeded state plus
+  the pushed element, `vec![9, 1]` after `push(1)`) keeps its
+  strength, as does any expectation when the owner cannot exit before
+  the push or when no seeded construction is spelled out. The same
+  owner-wide limit as the empty-collection cap applies: the cap cannot
+  read which path one test took.
 - Keyed reads of a field-map insert are implemented (examples 16-20):
   `field_collection_insert_key` and `assertion_keyed_getter_reads` in
   `propagation_witness.rs`, `keyed_field_read_confirms` and
