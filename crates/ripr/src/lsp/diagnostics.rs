@@ -3132,7 +3132,9 @@ pub(super) fn saved_editor_line(
     let text = raw
         .strip_suffix('\n')
         .map_or(raw, |line| line.strip_suffix('\r').unwrap_or(line));
-    if !text.contains('\r') {
+    // A bare `\r` on an earlier analyzer line also shifts this line's editor
+    // index, so the shortcut needs the whole prefix and line to be free of one.
+    if !has_bare_cr(&contents[..line_start + text.len()]) {
         return Some((analyzer_index as u32, text.to_owned()));
     }
     let offset = if expression.is_empty() {
@@ -3142,6 +3144,14 @@ pub(super) fn saved_editor_line(
     };
     let (line, editor_text) = editor_line_containing(contents, line_start + offset);
     Some((line, editor_text.to_owned()))
+}
+
+fn has_bare_cr(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes
+        .iter()
+        .enumerate()
+        .any(|(index, &byte)| byte == b'\r' && bytes.get(index + 1) != Some(&b'\n'))
 }
 
 /// The editor line (terminators `\n`, `\r\n`, bare `\r`) that holds a byte

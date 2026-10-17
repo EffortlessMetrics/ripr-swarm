@@ -8670,6 +8670,14 @@ fn diagnostic_for_finding_follows_editor_lines_when_file_uses_bare_cr() -> Resul
 }
 
 #[test]
+fn saved_editor_line_counts_bare_crs_on_earlier_analyzer_lines() {
+    assert_eq!(
+        super::diagnostics::saved_editor_line("a\rb\nc\n", 1, "c"),
+        Some((2, "c".to_string()))
+    );
+}
+
+#[test]
 fn saved_editor_line_keeps_the_analyzer_line_without_a_bare_cr() {
     let contents = "a\r\nb\r\nc\n";
     assert_eq!(
