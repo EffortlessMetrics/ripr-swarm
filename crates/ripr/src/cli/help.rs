@@ -1288,7 +1288,7 @@ mod tests {
             CLI_COMMANDS_RS,
             &["parse_calibrate_cargo_mutants_options"],
         ),
-        ("check", CHECK_PARSER_RS, &["check"]),
+        ("check", CHECK_PARSER_RS, &["check_inner"]),
         (
             "config validate",
             CONFIG_PARSER_RS,
