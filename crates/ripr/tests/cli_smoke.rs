@@ -17586,8 +17586,8 @@ fn python_check_safe_action(
         .find(|line| line.starts_with("  Safe next action:"))
         .ok_or_else(|| format!("check printed no safe next action:\n{stdout}"))?;
     assert!(
-        stdout.contains("State: preview language, advisory only (preview_limited)"),
-        "expected preview_limited triage:\n{stdout}"
+        stdout.contains("State: preview language, advisory only"),
+        "expected plain preview-language triage:\n{stdout}"
     );
     Ok(line.to_string())
 }
