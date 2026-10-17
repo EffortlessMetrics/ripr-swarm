@@ -1106,9 +1106,22 @@ pub(super) fn is_exact_value_assertion(line: &str) -> bool {
             && (some_matches_pins_a_value(line)
                 // A pinning `==` conjunct keeps the chain exact (RIPR-SPEC-0231
                 // rule 3's decision), including the runtime controls'
-                // `matches!(value, _) && value == 2`.
-                || boolean_assertion_macro_condition(line)
-                    .is_some_and(|(_, condition)| has_top_level_exact_equality(&condition))))
+                // `matches!(value, _) && value == 2`. An `==` that pins the
+                // closure parameter of a whole-condition iterator `.all` /
+                // `.any` is the same conjunct once the wrapper is read
+                // through (#7726).
+                || pinning_equality_condition(line)))
+}
+
+/// Whether `line` (a full assertion, or an already-stripped `ensure!`
+/// condition) holds a pinning `==` at the condition's top level, or inside
+/// a whole-condition iterator `.all` / `.any` closure that names that
+/// closure's matched item.
+fn pinning_equality_condition(line: &str) -> bool {
+    let extracted = boolean_assertion_macro_condition(line).map(|(_, condition)| condition);
+    let condition = extracted.as_deref().unwrap_or(line);
+    has_top_level_exact_equality(condition)
+        || (condition.contains("matches!") && iterator_all_or_any_pins_matched_item(condition))
 }
 
 /// RIPR-SPEC-0231 rule 1 (#7558): whether an `||` decides the condition:
@@ -1612,6 +1625,130 @@ fn exact_membership_any_condition(line: &str) -> Option<()> {
         .checked_sub(masked.as_ptr().addr())?;
     let body_original = line.get(body_offset..body_offset.checked_add(body_masked.len())?)?;
     exact_membership_operands(body_masked, body_original, param)
+}
+
+/// #7726: a whole-condition iterator `.all` / `.any` whose closure body has
+/// a pinning `==` that names the bound element (`*r == Ok(3)`). This is the
+/// same conjunct `has_top_level_exact_equality` already admits when the
+/// body is the whole `assert!` condition; the wrapper is what hid it.
+/// Unknown callees, `.position`, and SPEC-0231 example 29 (`.all` without
+/// `matches!`) never match.
+fn iterator_all_or_any_pins_matched_item(condition: &str) -> bool {
+    let Some((param, body)) = iterator_all_or_any_closure(condition) else {
+        return false;
+    };
+    closure_body_pins_matched_item(body, &param)
+}
+
+fn iterator_all_or_any_closure(condition: &str) -> Option<(String, &str)> {
+    let masked = mask_comments_and_strings(condition);
+    let mut inner = masked.as_str();
+    loop {
+        let trimmed = inner.trim();
+        if !trimmed.starts_with('(') {
+            inner = trimmed;
+            break;
+        }
+        let (_, close) = balanced_paren_span(trimmed, 0)?;
+        if close + 1 != trimmed.len() {
+            return None;
+        }
+        inner = trimmed[1..close].trim();
+    }
+    let pred_dot = single_all_or_any_call(inner)?;
+    let receiver = inner.get(..pred_dot)?.trim();
+    let (closure_start, closure_end, after) = any_closure_span(inner, pred_dot)?;
+    if !inner.get(after..)?.trim().is_empty() {
+        return None;
+    }
+    collection_iteration_head(receiver)?;
+    let closure = inner.get(closure_start..closure_end)?;
+    let (param, body_masked) = exact_equality_closure(closure)?;
+    let body_offset = body_masked
+        .as_ptr()
+        .addr()
+        .checked_sub(masked.as_ptr().addr())?;
+    let body_original = condition.get(body_offset..body_offset.checked_add(body_masked.len())?)?;
+    Some((param.to_string(), body_original))
+}
+
+/// Offset of `.any` or `.all` when the condition holds exactly one such
+/// call. Two predicate calls, or a longer name (`.always(`), never match.
+fn single_all_or_any_call(condition: &str) -> Option<usize> {
+    let mut found = None;
+    let bytes = condition.as_bytes();
+    let mut index = 0;
+    while index + 4 <= bytes.len() {
+        let is_any = bytes.get(index + 1) == Some(&b'a')
+            && bytes.get(index + 2) == Some(&b'n')
+            && bytes.get(index + 3) == Some(&b'y');
+        let is_all = bytes.get(index + 1) == Some(&b'a')
+            && bytes.get(index + 2) == Some(&b'l')
+            && bytes.get(index + 3) == Some(&b'l');
+        if bytes[index] == b'.'
+            && (is_any || is_all)
+            && bytes.get(index + 4..).is_some_and(opens_call_paren)
+        {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(index);
+            index += 4;
+        } else {
+            index += 1;
+        }
+    }
+    found
+}
+
+fn closure_body_pins_matched_item(body: &str, param: &str) -> bool {
+    !has_top_level_disjunction(body)
+        && split_top_level_conjuncts(body).into_iter().any(|conjunct| {
+            let masked = mask_comments_and_strings(conjunct.trim());
+            let masked = masked.trim();
+            if let Some(inner) = super::arguments::parenthesized_contents(masked) {
+                return closure_body_pins_matched_item(inner, param);
+            }
+            is_pinning_equality(conjunct, masked) && equality_xor_names_param(conjunct, param)
+        })
+}
+
+/// Exactly one side of a top-level `==` is a bare / deref / field / tuple
+/// projection of `param`. Method calls, indexes, and two projections of the
+/// same parameter (`r.a == r.b`) pin nothing.
+fn equality_xor_names_param(conjunct: &str, param: &str) -> bool {
+    let conjunct = conjunct.trim();
+    let masked = mask_comments_and_strings(conjunct);
+    let offset = masked.len() - masked.trim_start().len();
+    let Some((at, width)) = top_level_comparison_operator(masked.trim()) else {
+        return false;
+    };
+    let at = offset + at;
+    let Some(left) = conjunct.get(..at) else {
+        return false;
+    };
+    let Some(right) = conjunct.get(at + width..) else {
+        return false;
+    };
+    let names = |side: &str| side_names_closure_param(&mask_comments_and_strings(side), param);
+    names(left) != names(right)
+}
+
+fn side_names_closure_param(side: &str, param: &str) -> bool {
+    let compact: String = side.chars().filter(|ch| !ch.is_whitespace()).collect();
+    let rewritten = compact
+        .replace(&format!("(*{param})"), &format!("*{param}"))
+        .replace(&format!("(&{param})"), param);
+    let mut s = rewritten.as_str();
+    loop {
+        if element_accesses_param(s, param) {
+            return true;
+        }
+        let Some(inner) = super::arguments::parenthesized_contents(s) else {
+            return false;
+        };
+        s = inner;
+    }
 }
 
 /// The condition of a leading `assert!(`/`debug_assert!(` invocation: the
