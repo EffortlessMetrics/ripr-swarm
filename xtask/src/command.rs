@@ -179,6 +179,7 @@ pub(crate) enum XtaskCommand {
     WorkExplain(Vec<String>),
     WorkSelectionCheck(Vec<String>),
     WorkResultCheck(Vec<String>),
+    WorkClaimCheck(Vec<String>),
     Unknown(String),
 }
 
@@ -384,6 +385,13 @@ impl XtaskCommand {
                     Some("check") => Self::WorkResultCheck(rest[2..].to_vec()),
                     _ => Self::Unknown(format!(
                         "work result {}",
+                        rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
+                    )),
+                },
+                Some("claim") => match rest.get(1).map(|arg| arg.as_str()) {
+                    Some("check") => Self::WorkClaimCheck(rest[2..].to_vec()),
+                    _ => Self::Unknown(format!(
+                        "work claim {}",
                         rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
                     )),
                 },
@@ -2376,6 +2384,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Validates committed WorkTaskResultV1 rows against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR B, RIPR-SPEC-0269, consuming #1633); every result must bind repository, portfolio-snapshot identity, basis head and the selected-work identity it extends, a result for another repository/snapshot/issue/action/basis/worktree/head fails stale or wrong-input with exact recompile/reconcile routes, legacy active-goal/current-work-item refs stay read-only with no authority, and no GitHub, branch, worktree, claim, spec, campaign or source state is touched.",
+        ),
+        command_entry(
+            "work claim check [--corpus <dir>] [--json]",
+            "report_only",
+            "target/ripr/reports/work-claim-check.{json,md}",
+            false,
+            false,
+            "Validates committed WorkClaimV1 rows against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR B, RIPR-SPEC-0270, consuming #1635/#1647); every claim binds one selected issue/action and the exact portfolio basis, a stale basis requires reconcile (never release or takeover), one worktree cannot serve two selections and one selection cannot be double-claimed, legacy active-goal/current-work-item refs stay read-only with no authority, and no GitHub, branch, worktree, claim, spec, campaign or source state is touched.",
         ),
     ]
 }

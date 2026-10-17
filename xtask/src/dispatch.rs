@@ -264,6 +264,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::WorkResultCheck(args) => {
             super::work_result_identity::work_result_check_command(&args)
         }
+        XtaskCommand::WorkClaimCheck(args) => {
+            super::work_claim_identity::work_claim_check_command(&args)
+        }
         XtaskCommand::Help(args) => print_help_route(&args),
         XtaskCommand::Unknown(command) if matches!(command.as_str(), "--help" | "-h") => {
             front_door::print()
