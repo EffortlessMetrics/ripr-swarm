@@ -958,11 +958,11 @@ impl FileFacts {
 ///   repository-registered test-producing attribute (#3532 harness
 ///   registry); it registers a `TestFact` through this same role
 ///   authority.
-/// - `CfgTestModule` is evidence-only helper role: a function inside a
-///   test-required module (`#[cfg(test)]`, or a `test` conjunct in
-///   `cfg(all(...))` through the shared `cfg_predicates` authority). It
-///   stays evidence-capable without entering the executable-test
-///   denominator.
+/// - `CfgTestModule` is evidence-only role for a function gated directly
+///   on test or inside a test-required module (through the shared
+///   `cfg_predicates` authority). It also retains compiled-out test items.
+///   The historical serialized name stays unchanged; this role never
+///   adds a helper to the executable-test denominator.
 /// - `HarnessHelper` is evidence-only helper role inside a registered
 ///   custom test-harness target (#3532, e.g. a `[[test]]`
 ///   `harness = false` libtest-mimic suite): the custom harness never
@@ -993,10 +993,10 @@ pub enum FunctionSourceRole {
     /// fallback, the parser-fallback provenance stays on
     /// `FileFacts::used_lexical_fallback`.
     TestAttribute,
-    /// Member of a test-required module — classified by the parser through
-    /// the `cfg_predicates` authority (#3530) or preserved by the facts
-    /// normalizer's cfg-test walk. Evidence-role helper: no executable
-    /// `TestFact` is registered for this variant alone.
+    /// A test-required function or member of a test-required module,
+    /// including compiled-out test items. The historical serialized name
+    /// is retained. Parser and normalizer share `cfg_predicates` (#3530);
+    /// this evidence-only role does not register an executable `TestFact`.
     CfgTestModule,
     /// Promoted by the explicit test-case authority
     /// (`facts::parameterized_tests`) from an exact `#[test_case(...)]`
