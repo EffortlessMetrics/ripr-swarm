@@ -514,6 +514,12 @@ id = "RIPR-SPEC-0265"
 scope = "out"
 reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a Python case cannot label them"
 
+# Rust doc examples as tests
+[[spec]]
+id = "RIPR-SPEC-0279"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust doc examples and diffs, so a Python case cannot label them"
+
 # TypeScript strict custom matcher
 [[spec]]
 id = "RIPR-SPEC-0262"
