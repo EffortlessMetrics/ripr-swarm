@@ -3,6 +3,7 @@
 //! body moved verbatim; test names and module path (`crate::tests`) are
 //! unchanged.
 
+mod build_feature_reuse;
 mod discarded_matcher_honesty;
 mod fixture_cache;
 #[path = "precommit_source_oracle.rs"]
