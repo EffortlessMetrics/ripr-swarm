@@ -5,7 +5,7 @@ pub(crate) const PYTHON_REPAIR_CARD_UNAVAILABLE_STATIC_LIMIT_KIND: &str =
     "python_repair_card_unavailable";
 
 use crate::agent::command_specs::{command_display_is_nonblank, command_displays_are_complete};
-use crate::agent::loop_commands::shell_arg;
+use crate::agent::loop_commands::shell_arg_for;
 use crate::domain::{CommandRole, CommandSpec};
 use crate::output::gap_source_subject::{self, GapSourceSubject};
 use crate::output::receipt_write::receipt_write_command;
@@ -2414,10 +2414,12 @@ fn perl_route_kind(value: &str) -> &'static str {
 }
 
 fn attach_check_output_preview_receipt_routes(records: &mut [GapRecord], root: &str) {
+    // Stored in versioned records: canonical POSIX quoting on every
+    // host (#8437), like the receipt command.
     let after_check_command = format!(
         "ripr check --root {} --json > {}",
-        shell_arg(root),
-        shell_arg(DEFAULT_CHECK_AFTER_OUTPUT)
+        shell_arg_for(root, false),
+        shell_arg_for(DEFAULT_CHECK_AFTER_OUTPUT, false)
     );
 
     for record in records {

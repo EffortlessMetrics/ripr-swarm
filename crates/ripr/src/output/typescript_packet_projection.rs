@@ -1801,7 +1801,7 @@ mod tests {
                 "ripr receipt write --gap gap:typescript:typescript_preview:a1b2c3d4 \
                  --verify-command {} --status not_run \
                  --out target/ripr/receipts/gap-typescript-typescript_preview-a1b2c3d4.json",
-                crate::agent::loop_commands::shell_arg("jest tests/discount.test.ts")
+                "'jest tests/discount.test.ts'"
             )
         );
         assert!(

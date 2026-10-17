@@ -8,7 +8,7 @@ use super::bool_operands::{
     BoolOperandReading, bool_literal_comparison_reading, contains_unread_pattern_operand,
     unread_pattern_conjunct_rest,
 };
-use super::pattern_admission::pattern_assertion_classification;
+use super::pattern_admission::{LocalDecls, pattern_assertion_classification_in};
 use super::patterns::{
     PatternPolarity, contains_negated_pattern, deciding_disjunction_conjunct_rest,
     has_deciding_disjunction, has_top_level_exact_equality, inequality_has_struct_literal_operand,
@@ -43,6 +43,18 @@ pub(crate) struct OracleClassification {
 }
 
 pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
+    classify_assertion_against(line, &LocalDecls::default())
+}
+
+/// RIPR-SPEC-0231 rule 3 (#6737): classify `line` using `struct` / `enum`
+/// declarations from the same source. A unique local `struct Cfg` or
+/// single-variant `enum Only { Value }` shows `Cfg { .. }` and `Only::Value`
+/// as `relational_check` / weak; unresolved paths keep today's exact reading.
+pub(crate) fn classify_assertion_in(line: &str, decl_source: &str) -> OracleClassification {
+    classify_assertion_against(line, &LocalDecls::from_source(decl_source))
+}
+
+fn classify_assertion_against(line: &str, decls: &LocalDecls) -> OracleClassification {
     // Preserve the full outer-assertion boundary before semantic operand
     // projection removes wrappers or trailing tokens from the input.
     let scalar_integer_relation = outer_assertion_condition(line)
@@ -66,11 +78,12 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
             return capped_at_inequality(classify_non_negated_assertion(
                 line,
                 scalar_integer_relation,
+                decls,
             ));
         }
         Some(BoolOperandReading::Chain(chain)) => {
-            let whole = classify_non_negated_assertion(line, scalar_integer_relation);
-            let chain = classify_assertion(&chain);
+            let whole = classify_non_negated_assertion(line, scalar_integer_relation, decls);
+            let chain = classify_assertion_against(&chain, decls);
             // Rule 3 only lowers a reading, never raises it.
             return if chain.strength.rank() < whole.strength.rank() {
                 chain
@@ -85,8 +98,8 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
             // (`a == b && matches!(..) == false`). A tie takes the rest,
             // unlike `Chain`, because the fix is a kind change at equal
             // strength.
-            let whole = classify_after_bool_reading(line, scalar_integer_relation);
-            let rest = classify_assertion(&rest);
+            let whole = classify_after_bool_reading(line, scalar_integer_relation, decls);
+            let rest = classify_assertion_against(&rest, decls);
             return if rest.strength.rank() <= whole.strength.rank() {
                 rest
             } else {
@@ -95,12 +108,16 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
         }
         None => {}
     }
-    classify_after_bool_reading(line, scalar_integer_relation)
+    classify_after_bool_reading(line, scalar_integer_relation, decls)
 }
 
 /// The reading of an assertion that no bool-literal comparison rule
 /// decided: the pattern, negation and whole-condition rules.
-fn classify_after_bool_reading(line: &str, scalar_integer_relation: bool) -> OracleClassification {
+fn classify_after_bool_reading(
+    line: &str,
+    scalar_integer_relation: bool,
+    decls: &LocalDecls,
+) -> OracleClassification {
     // A negated pattern takes rule 1 before any pattern-reading step, so
     // `!matches!(r, Err(E::X))` never reads as the variant it excludes.
     if is_negated_pattern_assertion(line) {
@@ -113,7 +130,7 @@ fn classify_after_bool_reading(line: &str, scalar_integer_relation: bool) -> Ora
         return if rest.is_empty() {
             INEQUALITY
         } else {
-            classify_assertion(&rest)
+            classify_assertion_against(&rest, decls)
         };
     }
     // A conjunct whose `matches!` sits under an unread operator, call or
@@ -123,7 +140,7 @@ fn classify_after_bool_reading(line: &str, scalar_integer_relation: bool) -> Ora
         return if rest.is_empty() {
             INEQUALITY
         } else {
-            classify_assertion(&rest)
+            classify_assertion_against(&rest, decls)
         };
     }
     // A parenthesized `&&` conjunct that a `||` decides pins nothing, so the
@@ -134,7 +151,7 @@ fn classify_after_bool_reading(line: &str, scalar_integer_relation: bool) -> Ora
         return if rest.is_empty() {
             RELATION
         } else {
-            classify_assertion(&rest)
+            classify_assertion_against(&rest, decls)
         };
     }
     // A `matches!` compared with `==` or `!=` reads as the pattern only with
@@ -150,6 +167,7 @@ fn classify_after_bool_reading(line: &str, scalar_integer_relation: bool) -> Ora
         return capped_at_inequality(classify_non_negated_assertion(
             line,
             scalar_integer_relation,
+            decls,
         ));
     }
     // An inequality-named helper is recognized before any exact-kind step,
@@ -159,7 +177,7 @@ fn classify_after_bool_reading(line: &str, scalar_integer_relation: bool) -> Ora
     // mock or side-effect observer (`mock.assert_not_called()`,
     // `assert_not_sent(..)`) keeps its observer reading.
     if is_inequality_named_assertion_helper(line) || is_inequality_named_assertion_macro(line) {
-        let classification = classify_non_negated_assertion(line, scalar_integer_relation);
+        let classification = classify_non_negated_assertion(line, scalar_integer_relation, decls);
         // A call-count or observation helper keeps its own reading: a mock
         // verification stays `mock_expectation` / medium, and a free helper
         // that rule 5 gives no observer credit (`assert_not_sent(..)`, like
@@ -179,7 +197,7 @@ fn classify_after_bool_reading(line: &str, scalar_integer_relation: bool) -> Ora
         }
         return capped_at_inequality(classification);
     }
-    classify_non_negated_assertion(line, scalar_integer_relation)
+    classify_non_negated_assertion(line, scalar_integer_relation, decls)
 }
 
 /// RIPR-SPEC-0231 rule 1: whether the assertion only shows its value differs
@@ -228,8 +246,9 @@ fn capped_at_inequality(classification: OracleClassification) -> OracleClassific
 fn classify_non_negated_assertion(
     line: &str,
     scalar_integer_relation: bool,
+    decls: &LocalDecls,
 ) -> OracleClassification {
-    let whole = classify_whole_condition(line, scalar_integer_relation);
+    let whole = classify_whole_condition(line, scalar_integer_relation, decls);
     // RIPR-SPEC-0231 rule 3 (#7695): without a pinning `==` conjunct (rule
     // 1), a `&&` chain is no stronger than its strongest conjunct read alone,
     // so a `matches!` in the chain keeps its pattern's reading instead of
@@ -244,7 +263,7 @@ fn classify_non_negated_assertion(
     };
     let readings = conjuncts
         .iter()
-        .map(|conjunct| classify_assertion(conjunct))
+        .map(|conjunct| classify_assertion_against(conjunct, decls))
         .collect::<Vec<_>>();
     let Some(rank) = readings.iter().map(|reading| reading.strength.rank()).max() else {
         return whole;
@@ -267,10 +286,14 @@ fn classify_non_negated_assertion(
         .map_or(whole.clone(), |reading| (*reading).clone())
 }
 
-fn classify_whole_condition(line: &str, scalar_integer_relation: bool) -> OracleClassification {
+fn classify_whole_condition(
+    line: &str,
+    scalar_integer_relation: bool,
+    decls: &LocalDecls,
+) -> OracleClassification {
     // RIPR-SPEC-0231 rules 2 and 3: a whole-pattern assertion is only as
     // strong as its pattern, ahead of every step that reads `matches!`.
-    if let Some(classification) = pattern_assertion_classification(line) {
+    if let Some(classification) = pattern_assertion_classification_in(line, decls) {
         return classification;
     }
     if let Some(classification) = classify_fallible_assertion(line) {
@@ -1628,6 +1651,51 @@ mod tests {
         }
     }
 
+    /// RIPR-SPEC-0231 examples 24 and 25 (#6737): a local struct or
+    /// single-variant enum in the test file shows `Cfg { .. }` and
+    /// `Only::Value` as `relational_check` / weak through the classifier
+    /// and the line scanner.
+    #[test]
+    fn spec_0231_local_decls_reach_the_classifier_and_scanner() -> Result<(), String> {
+        let source = r#"
+pub struct Cfg { pub retries: u32 }
+pub fn cfg() -> Cfg { Cfg { retries: 2 } }
+enum Only { Value }
+fn make() -> Only { Only::Value }
+
+#[test]
+fn struct_wildcard() {
+    assert!(matches!(cfg(), Cfg { .. }));
+}
+
+#[test]
+fn single_variant() {
+    assert!(matches!(make(), Only::Value));
+}
+"#;
+        for text in [
+            "assert!(matches!(cfg(), Cfg { .. }));",
+            "assert!(matches!(make(), Only::Value));",
+        ] {
+            let actual = super::classify_assertion_in(text, source);
+            if actual.kind != OracleKind::RelationalCheck || actual.strength != OracleStrength::Weak
+            {
+                return Err(format!(
+                    "{text}: expected RelationalCheck/Weak, classifier {actual:?}"
+                ));
+            }
+            let facts = crate::analysis::extract::extract_assertions_in(text, 7, source);
+            let scanned = facts
+                .iter()
+                .map(|fact| (fact.kind.clone(), fact.strength.clone()))
+                .collect::<Vec<_>>();
+            if scanned != vec![(OracleKind::RelationalCheck, OracleStrength::Weak)] {
+                return Err(format!("{text}: scanner {scanned:?}"));
+            }
+        }
+        Ok(())
+    }
+
     /// Rules 2 and 3 through the classifier and the scanner that feed
     /// related tests, not only through the pattern reader.
     #[test]
@@ -1689,6 +1757,11 @@ mod tests {
     fn spec_0231_pattern_readings_reach_the_parser_path() -> Result<(), String> {
         use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
         let source = r#"
+pub struct Cfg { pub retries: u32 }
+fn cfg() -> Cfg { Cfg { retries: 2 } }
+enum Only { Value }
+fn make() -> Only { Only::Value }
+
 #[test]
 fn err_binding() {
     assert!(matches!(check(20), Err(_e)));
@@ -1702,6 +1775,16 @@ fn ok_wildcard() {
 #[test]
 fn ok_literal() {
     assert!(matches!(check(5), Ok(5)));
+}
+
+#[test]
+fn struct_wildcard() {
+    assert!(matches!(cfg(), Cfg { .. }));
+}
+
+#[test]
+fn single_variant() {
+    assert!(matches!(make(), Only::Value));
 }
 "#;
         let facts =
@@ -1729,6 +1812,14 @@ fn ok_literal() {
             (
                 "ok_literal",
                 Some((OracleKind::ExactValue, OracleStrength::Strong)),
+            ),
+            (
+                "struct_wildcard",
+                Some((OracleKind::RelationalCheck, OracleStrength::Weak)),
+            ),
+            (
+                "single_variant",
+                Some((OracleKind::RelationalCheck, OracleStrength::Weak)),
             ),
         ];
         if readings != expected {
