@@ -38,7 +38,8 @@ jobs:
 
       - name: Extract the documented snippets
         shell: bash
-        run: awk '/prebuilt-snippet:/{m=$0;next} m&&/^```/{n++;if(n%2==0){m=""};next} m{print > (m ~ /unix/ ? "snippet.sh" : "snippet.ps1")}' docs/QUICKSTART.md
+        run: |
+          awk '/prebuilt-snippet:/{m=$0;next} m&&/^```/{n++;if(n%2==0){m=""};next} m{print > (m ~ /unix/ ? "snippet.sh" : "snippet.ps1")}' docs/QUICKSTART.md
 
       - name: Install with the documented snippet (Linux and macOS)
         if: runner.os != 'Windows'
