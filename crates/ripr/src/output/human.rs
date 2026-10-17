@@ -1,3 +1,10 @@
+//! Human (terminal) rendering of `ripr check` output.
+//!
+//! Renders a `CheckOutput` as bounded or full text: header summary, analysis
+//! outcome disclosures (working-tree, committed-history, unanalyzed scope),
+//! and per-finding drill-in. Classification lives upstream; triage and
+//! next-action selection are delegated to the `triage` submodule and `domain`.
+
 use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn, FindingNavigation};
 use crate::config::RiprConfig;
 use crate::domain::Finding;
@@ -990,16 +997,7 @@ fn render_language_runs(out: &mut String, output: &CheckOutput) {
 pub(crate) fn advisory_language_names(
     advisory: &crate::analysis::PreviewLanguageAdvisory,
 ) -> (String, String) {
-    let language = language_display_name(&advisory.language);
-    if advisory.language != "typescript" || advisory.javascript_file_count == 0 {
-        return (language.clone(), language);
-    }
-    let family = "TypeScript/JavaScript".to_string();
-    if advisory.javascript_file_count >= advisory.file_count {
-        (family, "JavaScript".to_string())
-    } else {
-        (family.clone(), family)
-    }
+    advisory.prose_names()
 }
 
 /// Prose name for a language wire string (`typescript` -> `TypeScript`),

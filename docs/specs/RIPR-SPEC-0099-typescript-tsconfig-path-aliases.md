@@ -16,8 +16,8 @@ Linked PRs:
 
 Support-tier impact:
 
-- Opt-in improvement for TypeScript preview analysis: when
-  `[typescript] resolve_tsconfig_paths = true` is set in `.ripr.toml`,
+- Default-on improvement for TypeScript preview analysis (opt-out via
+  `[typescript] resolve_tsconfig_paths = false`):
   `@/owner`-style aliased imports can now be credited as ownerâ†”test links
   instead of silently producing `no_static_path`. Language status stays
   Preview; no tier change.
@@ -28,7 +28,7 @@ Policy impact:
 
 - No new crates, binaries, or LSP servers.
 - New module: `crates/ripr/src/analysis/language/typescript/tsconfig.rs`.
-- New config key: `[typescript] resolve_tsconfig_paths` (default `false`).
+- New config key: `[typescript] resolve_tsconfig_paths` (default `true` after the amendment; originally `false`).
 - No schema version bump. `typescript_path_alias_unresolved` is additive
   evidence on existing findings; it does not change the JSON schema version.
 - Register this spec in `policy/doc-artifacts.toml`.
@@ -50,7 +50,17 @@ alias-resolution artifact rather than an actual coverage hole.
 
 ## Solution
 
-### 1. Config opt-in (default OFF)
+### 1. Config switch (default ON; amended)
+
+Amendment: the default is now ON. `@/owner`-style aliases are near-universal in
+real TypeScript projects (Vite, Next, tsconfig `paths`), so the original
+default-OFF made nearly every aliased test read as a false `no_static_path`.
+Resolution stays explicit-source-only (one alias hop to a unique workspace
+file, per section 2), so the fail-closed boundary is unchanged. An explicit
+`resolve_tsconfig_paths = false` restores the original behavior and the
+always-on disclosure in section 4 still fires.
+
+Original rationale (kept for history):
 
 Add `[typescript] resolve_tsconfig_paths = false` to the ripr config model.
 The feature is opt-in because tsconfig path resolution without running the
@@ -141,9 +151,9 @@ When `classify_change` is called for a changed line in `src/owner.ts`:
 Then: `finding.class == Exposed`, `related_tests.len() == 1`,
 NO `typescript_path_alias_unresolved` limitation in evidence.
 
-### AC-2 (DEFAULT-OFF CONTROL)
+### AC-2 (EXPLICIT-FALSE CONTROL)
 
-Identical setup, `resolve_tsconfig_paths` omitted (default false):
+Identical setup, `resolve_tsconfig_paths = false` (explicit opt-out; originally the omitted default):
 
 Then: `finding.class == NoStaticPath`, `related_tests.is_empty()`,
 AND `typescript_limitation: typescript_path_alias_unresolved` IS present
@@ -272,7 +282,7 @@ Unit tests in `crates/ripr/src/analysis/language/typescript/tests.rs`:
    `class: exposed`, 1 related test, NO alias limitation.
 
 2. `tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure`
-   â€” DEFAULT-OFF CONTROL (AC-2): identical setup, no alias map â†’ `class:
+   â€” EXPLICIT-FALSE CONTROL (AC-2): identical setup, no alias map â†’ `class:
    no_static_path`, `typescript_path_alias_unresolved` present in evidence.
 
 3. `tsconfig_alias_resolution_multi_entry_value_fails_closed` â€” AMBIGUOUS
@@ -336,7 +346,7 @@ result:    class: exposed
            NO typescript_path_alias_unresolved limitation
 ```
 
-### After (flag OFF, disclosure emitted)
+### After (`resolve_tsconfig_paths = false`, disclosure emitted)
 
 ```
 resolve_tsconfig_paths = false  (default)

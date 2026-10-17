@@ -460,6 +460,15 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "swarm-plan-packet-corpus"
                     | "work_portfolio"
                     | "work_selection_identity"
+                    | "work_result_identity"
+                    | "work_claim_identity"
+                    | "work_wave_identity"
+                    | "work_context_identity"
+                    | "work_synthesis_identity"
+                    | "work_burndown_identity"
+                    | "work_intake_identity"
+                    | "work_plan_identity"
+                    | "work_adapter_identity"
                     | "typescript-bun-ub-calibration"
                     | "typescript-preview-false-actionable-audit"
                     | "typescript-preview-repair-loop"
@@ -497,12 +506,16 @@ pub(crate) fn fixture_contract_violations(path: &Path) -> Result<Vec<String>, St
     }
 
     let text = read_text_lossy(&spec)?;
-    if !text
-        .lines()
-        .any(|line| line.starts_with("Spec: RIPR-SPEC-"))
-    {
+    if !text.lines().any(|line| line.starts_with(SPEC_LINE_PREFIX)) {
         violations.push(format!(
             "{} is missing `Spec: RIPR-SPEC-NNNN`",
+            normalize_path(&spec)
+        ));
+    } else if !text.lines().any(spec_line_cites_real_id) {
+        // #7399: the scaffold's literal `NNNN` placeholder used to satisfy the
+        // prefix check here and then fail `check-traceability` later.
+        violations.push(format!(
+            "{} cites no real spec id (a `Spec: RIPR-SPEC-` line needs four digits, not a placeholder); run `cargo xtask specs next` to allocate one or cite an existing docs/specs id",
             normalize_path(&spec)
         ));
     }
@@ -512,6 +525,23 @@ pub(crate) fn fixture_contract_violations(path: &Path) -> Result<Vec<String>, St
         }
     }
     Ok(violations)
+}
+
+const SPEC_LINE_PREFIX: &str = "Spec: RIPR-SPEC-";
+
+/// True when a `Spec: RIPR-SPEC-` line is followed by exactly four digits, the
+/// same id shape `check-traceability` requires.
+fn spec_line_cites_real_id(line: &str) -> bool {
+    let Some(rest) = line.strip_prefix(SPEC_LINE_PREFIX) else {
+        return false;
+    };
+    let digits: String = rest.chars().take(4).collect();
+    digits.len() == 4
+        && digits.chars().all(|c| c.is_ascii_digit())
+        && !rest
+            .chars()
+            .nth(4)
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
 #[derive(Debug)]
@@ -2268,7 +2298,7 @@ fn fixtures_new(name: &str) -> Result<(), String> {
         name
     );
     println!(
-        "  3. Edit {}/SPEC.md to fill in the Given/When/Then/Must Not.",
+        "  3. Edit {}/SPEC.md to fill in the Given/When/Then/Must Not, and replace the\n     `Spec: RIPR-SPEC-NNNN` placeholder with a real id (`cargo xtask specs next`\n     allocates one; or cite an existing docs/specs id). `fixtures` rejects the placeholder.",
         name
     );
     println!("{}", fixtures_new_step4(name));
@@ -2278,6 +2308,44 @@ fn fixtures_new(name: &str) -> Result<(), String> {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn spec_line_placeholder_is_not_a_real_spec_id() {
+        // #7399: the scaffold placeholder must not satisfy the fixture gate.
+        assert!(!spec_line_cites_real_id("Spec: RIPR-SPEC-NNNN"));
+        assert!(!spec_line_cites_real_id("Spec: RIPR-SPEC-12"));
+        assert!(!spec_line_cites_real_id("Spec: RIPR-SPEC-00011"));
+        assert!(!spec_line_cites_real_id("Spec: RIPR-SPEC-0001x"));
+        assert!(spec_line_cites_real_id("Spec: RIPR-SPEC-0001"));
+        assert!(spec_line_cites_real_id(
+            "Spec: RIPR-SPEC-0062, RIPR-SPEC-0063"
+        ));
+    }
+
+    #[test]
+    fn scaffolded_fixture_with_placeholder_spec_fails_the_contract() -> Result<(), String> {
+        let dir = unique_temp_path("7399-spec-placeholder");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("expected")).map_err(|e| e.to_string())?;
+        std::fs::write(dir.join("diff.patch"), "").map_err(|e| e.to_string())?;
+        std::fs::write(dir.join("expected/check.json"), "{}").map_err(|e| e.to_string())?;
+        let body = |id: &str| {
+            format!("# Fixture\n\nSpec: {id}\n\n## Given\n\n## When\n\n## Then\n\n## Must Not\n")
+        };
+        std::fs::write(dir.join("SPEC.md"), body("RIPR-SPEC-NNNN")).map_err(|e| e.to_string())?;
+        let placeholder = fixture_contract_violations(&dir)?;
+        std::fs::write(dir.join("SPEC.md"), body("RIPR-SPEC-0001")).map_err(|e| e.to_string())?;
+        let real = fixture_contract_violations(&dir)?;
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            placeholder
+                .iter()
+                .any(|v| v.contains("cites no real spec id")),
+            "{placeholder:#?}"
+        );
+        assert!(real.is_empty(), "{real:#?}");
+        Ok(())
+    }
+
     #[test]
     fn golden_drift_reports_record_the_producing_build() -> Result<(), String> {
         // #7401: neither the drift report nor the console card recorded which

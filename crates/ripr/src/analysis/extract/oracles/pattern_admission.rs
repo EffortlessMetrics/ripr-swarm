@@ -125,10 +125,11 @@ pub(super) fn is_unpinned_pattern(text: &str) -> bool {
 /// when the pattern pins a value and the ordinary chain decides.
 fn pattern_pair_classification(scrutinee: &str, pattern: &str) -> Option<OracleClassification> {
     let (pattern, guard) = split_guard(pattern);
-    // A guard that equates the scrutinee or a pattern binding with a value
-    // pins that value itself (`_ if value == 2`, RIPR-SPEC-0108's
+    // A guard that equates the scrutinee, a pattern binding, or a field /
+    // deref / tuple projection of either with a value pins that value
+    // (`_ if value == 2`, `Some(v) if v.id == 3`; RIPR-SPEC-0108's
     // runtime-controlled fixtures), so the ordinary chain keeps its reading
-    // (decision 7).
+    // (decision 7, #7726).
     if guard.is_some_and(|guard| guard_pins_value(guard, scrutinee, pattern)) {
         return None;
     }
@@ -165,10 +166,13 @@ fn asserted_pattern(line: &str) -> Option<(String, String)> {
     pair(complete_macro_arguments(expression, "matches!")?)
 }
 
-/// A guard conjunct `a == b` where exactly one side is the scrutinee or a
-/// name the pattern binds. `e.len() == 3` or `flag == true` pins no value of
-/// the matched expression, and `e == e` or `(a, b) if a == b` compares the
-/// match with itself, so none of them counts.
+/// A guard conjunct `a == b` where exactly one side names the matched
+/// value: the scrutinee, a name the pattern binds, or a field / deref /
+/// tuple projection rooted at one of those (`v.id`, `(*v).field`, `v.0`).
+/// Method calls (`e.len() == 3`), a foreign name (`other.id == 3`),
+/// `flag == true`, and self-comparisons (`e == e`, `v.id == v.id`,
+/// `v.a == v.b`, `(a, b) if a == b`) pin nothing. A disjunct (`||`)
+/// does not pin.
 fn guard_pins_value(guard: &str, scrutinee: &str, pattern: &str) -> bool {
     let bound = pattern_bindings(pattern);
     let subject = comparable(scrutinee);
@@ -184,11 +188,112 @@ fn guard_pins_value(guard: &str, scrutinee: &str, pattern: &str) -> bool {
         // One side names the matched value and the other is a value
         // expression: `e == e` or `a == b` over two bindings compares the
         // match with itself and pins nothing.
-        let names_match = |side: &String| *side == subject || bound.contains(side);
+        let names_match = |side: &str| side_names_the_match(side, &subject, &bound);
         let left = comparable(&conjunct[..index]);
         let right = comparable(&conjunct[index + 2..]);
         names_match(&left) != names_match(&right)
     })
+}
+
+/// Whether `side` (already comparable) is the scrutinee, a pattern binding,
+/// or a field / deref / tuple projection of either. Method calls and
+/// indexing do not name the match.
+fn side_names_the_match(side: &str, subject: &str, bound: &[String]) -> bool {
+    if side == subject || bound.iter().any(|name| name == side) {
+        return true;
+    }
+    match_root_ident(side).is_some_and(|(root, has_projection)| {
+        has_projection && (root == subject || bound.iter().any(|name| name == root))
+    })
+}
+
+/// Root identifier of a field, deref, or tuple projection, and whether at
+/// least one `.field` / `.0` projection remains (`v.id`, `(*v).field`).
+fn match_root_ident(side: &str) -> Option<(&str, bool)> {
+    let mut s = side;
+    let mut projected = false;
+    loop {
+        if s.is_empty() {
+            return None;
+        }
+        if s.starts_with('(') {
+            let close = matching_close(s, 0)?;
+            if close + 1 == s.len() {
+                s = s.get(1..close)?;
+                continue;
+            }
+            let rest = s.get(close + 1..)?;
+            if !is_field_suffix(rest) {
+                return None;
+            }
+            projected = true;
+            s = s.get(1..close)?;
+            continue;
+        }
+        if s.starts_with(['*', '&']) {
+            s = s.get(1..)?;
+            continue;
+        }
+        break;
+    }
+    let ident_end = s
+        .char_indices()
+        .find(|(_, ch)| !is_ident_char(*ch))
+        .map_or(s.len(), |(index, _)| index);
+    if ident_end == 0 {
+        return None;
+    }
+    let ident = s.get(..ident_end)?;
+    if !is_ident(ident) {
+        return None;
+    }
+    let rest = s.get(ident_end..)?;
+    if rest.is_empty() {
+        return Some((ident, projected));
+    }
+    is_field_suffix(rest).then_some((ident, true))
+}
+
+fn is_ident_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_'
+}
+
+fn is_ident(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first.is_ascii_alphabetic() || first == '_') && chars.all(is_ident_char)
+}
+
+/// `.field` / `.0` chain and nothing else. A method call (`.len()`) or
+/// index (`[0]`) is not a field projection.
+fn is_field_suffix(rest: &str) -> bool {
+    let mut rest = rest;
+    if !rest.starts_with('.') {
+        return false;
+    }
+    while let Some(after) = rest.strip_prefix('.') {
+        let len = after
+            .char_indices()
+            .find(|(_, ch)| !is_ident_char(*ch))
+            .map_or(after.len(), |(index, _)| index);
+        if len == 0 {
+            return false;
+        }
+        let Some(field) = after.get(..len) else {
+            return false;
+        };
+        let digits = !field.is_empty() && field.bytes().all(|byte| byte.is_ascii_digit());
+        if !digits && !is_ident(field) {
+            return false;
+        }
+        let Some(rest_after) = after.get(len..) else {
+            return false;
+        };
+        rest = rest_after;
+    }
+    rest.is_empty()
 }
 
 fn comparable(expression: &str) -> String {
@@ -852,7 +957,8 @@ mod tests {
                 Weak,
             ),
             // Other forms the rules name. A guard `==` that does not equate
-            // the scrutinee or a binding pins no value (decision 7).
+            // the scrutinee, a binding, or a field/deref/tuple projection
+            // of either pins no value (decision 7, #7726).
             (
                 "assert!(matches!(check(20), Err(e) if e.len() == 3))",
                 BroadError,
@@ -875,6 +981,26 @@ mod tests {
             ),
             (
                 "assert!(matches!(pair(), (a, b) if a == b))",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(matches!(lookup(1), Some(v) if v.id == v.id))",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(matches!(lookup(1), Some(v) if v.a == v.b))",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(matches!(lookup(1), Some(v) if other.id == 3))",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(matches!(lookup(1), Some(v) if v.len() == 3))",
                 RelationalCheck,
                 Weak,
             ),
@@ -922,14 +1048,20 @@ mod tests {
             "assert!(matches!(check(20), Err(E::A) | Err(E::B)))",
             "assert!(matches!(check(5), Ok(_)) && score(2) == 4)",
             "assert_eq!(check(20), Err(e))",
-            // A guard equating the scrutinee or a binding pins a value
-            // (decision 7).
+            // A guard equating the scrutinee, a binding, or a field /
+            // deref / tuple projection of either pins a value
+            // (decision 7, #7726).
             "assert!(matches!(value, _ if value == 2))",
             "assert_matches!(value, _ if value == 2)",
             "assert!(matches!(lookup(1), Some(x) if x == 3))",
             "assert!(matches!(lookup(1), Some(x) if ready && *x == 3))",
             "assert!(matches!(check(20), Err(e) if e == E::Bad))",
             "assert!(matches!(check(20), Err(e) if E::Bad == e))",
+            "assert!(matches!(lookup(1), Some(v) if v.id == 3))",
+            "assert!(matches!(lookup(1), Some(v) if 3 == v.id))",
+            "assert!(matches!(lookup(1), Some(v) if (*v).id == 3))",
+            "assert!(matches!(lookup(1), Some(v) if v.0 == 3))",
+            "assert!(matches!(value, _ if value.id == 3))",
             // A user enum's `None`, `Ok` or `Err` variant is a variant pin.
             "assert!(matches!(mode(), Mode::None))",
             "assert!(matches!(reply(), Reply::Ok(_)))",
@@ -942,6 +1074,108 @@ mod tests {
             if actual.is_some() {
                 return Err(format!(
                     "{text}: expected no pattern reading, got {actual:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn guard_projection_of_a_pattern_binding_pins_a_value() -> Result<(), String> {
+        use crate::analysis::extract::oracles::classify_assertion;
+        use OracleKind::{BroadError, ExactValue, RelationalCheck};
+        use OracleStrength::{Strong, Weak};
+
+        let whole_pattern_pins = [
+            "assert!(matches!(x, Some(v) if v.id == 3))",
+            "assert!(matches!(x, Some(v) if 3 == v.id))",
+            "assert!(matches!(x, Some(v) if (*v).id == 3))",
+            "assert!(matches!(x, Some(v) if ready && v.id == 3))",
+            "assert!(matches!(x, Some(v) if v.inner.id == 3))",
+            "assert!(matches!(x, Some(v) if v.0 == 3))",
+            "assert!(matches!(value, _ if value.id == 3))",
+        ];
+        for text in whole_pattern_pins {
+            if let Some(ceiling) = pattern_assertion_classification(text) {
+                return Err(format!(
+                    "{text}: expected a pinning guard (no pattern ceiling), got {ceiling:?}"
+                ));
+            }
+            let actual = classify_assertion(text);
+            if actual.kind != ExactValue || actual.strength != Strong {
+                return Err(format!(
+                    "{text}: expected ExactValue/Strong through classify_assertion, got {:?}/{:?}",
+                    actual.kind, actual.strength
+                ));
+            }
+        }
+        // Nested `matches!` is not a whole-pattern assertion; the same
+        // guard reader still lets `some_matches_pins_a_value` keep exact
+        // credit. The closure-body `*r == Ok(3)` form is out of this claim.
+        let nested = "assert!(xs.iter().any(|x| matches!(x, Some(v) if v.id == 3)))";
+        if pattern_assertion_classification(nested).is_some() {
+            return Err(format!(
+                "{nested}: nested matches! is not a whole-pattern assertion, got {:?}",
+                pattern_assertion_classification(nested)
+            ));
+        }
+        let nested_actual = classify_assertion(nested);
+        if nested_actual.kind != ExactValue || nested_actual.strength != Strong {
+            return Err(format!(
+                "{nested}: expected ExactValue/Strong through classify_assertion, got {:?}/{:?}",
+                nested_actual.kind, nested_actual.strength
+            ));
+        }
+
+        let still_weak = [
+            (
+                "assert!(matches!(x, Some(v) if v.id == v.id))",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(matches!(x, Some(v) if v.a == v.b))",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(matches!(x, Some(v) if v.id == 3 || v.id == 4))",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(matches!(x, Some(v) if other.id == 3))",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(matches!(x, Some(w) if v.id == 3))",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(matches!(x, Some(v) if v.len() == 3))",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(matches!(check(20), Err(e) if e.len() == 3))",
+                BroadError,
+                Weak,
+            ),
+        ];
+        for (text, kind, strength) in still_weak {
+            let ceiling = pattern_assertion_classification(text);
+            if ceiling.as_ref().map(|c| (&c.kind, &c.strength)) != Some((&kind, &strength)) {
+                return Err(format!(
+                    "{text}: expected pattern ceiling {kind:?}/{strength:?}, got {ceiling:?}"
+                ));
+            }
+            let actual = classify_assertion(text);
+            if actual.kind != kind || actual.strength != strength {
+                return Err(format!(
+                    "{text}: expected {kind:?}/{strength:?} through classify_assertion, got {:?}/{:?}",
+                    actual.kind, actual.strength
                 ));
             }
         }

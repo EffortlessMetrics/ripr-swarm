@@ -25,6 +25,16 @@ echo "$(cat $f.sha256)  $f" | { sha256sum -c - || shasum -a 256 -c -; } && tar x
   && export PATH="$PWD:$PATH"   # ./ripr is now first on PATH for this shell
 ```
 
+The macOS archives are not signed or notarized. A `curl` and `tar` download like
+the one above normally carries no quarantine attribute, so `./ripr` runs
+without a prompt. A browser, AirDrop or mail download of the archive is
+quarantined, and Gatekeeper then blocks the extracted `ripr` with a dialog such
+as "Apple could not verify "ripr" is free of malware" or ""ripr" cannot be
+opened because the developer cannot be verified". Verify the checksum first,
+then clear the attribute with `xattr -d com.apple.quarantine ./ripr` (or
+`xattr -dr com.apple.quarantine <extracted-dir>`). Do that only for an archive
+whose `.sha256` matched.
+
 Or install the published CLI with Cargo, which compiles from source:
 
 ```bash
@@ -63,11 +73,12 @@ cargo install --locked --git https://github.com/EffortlessMetrics/ripr-swarm rip
 ```
 
 From a `ripr-swarm` checkout, `cargo install --path crates/ripr` does the same.
-Either route compiles from source. A `cargo build --release` in the workspace took
-about 12 minutes on a cold 4-core Linux container in October 2026. A local build
-of the packaged crate, which is what `cargo install ripr --locked` should compile
-once 0.11.0 is published, took about 4.6 minutes on the same container because it
-drops the workspace's LTO profile (an estimate, not a crates.io install). A
+Either route compiles from source. A `cargo build --release` in the workspace (thin LTO,
+16 codegen units) took about 6 minutes on a cold 4-core Linux container in
+October 2026. A local build of the packaged crate, which is what `cargo install
+ripr --locked` should compile once 0.11.0 is published, took about 4.6 minutes on
+the same container because it carries no profile section (an estimate, not a
+crates.io install). A
 prebuilt 0.11 archive exists only after 0.11.0 is published.
 
 With [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) installed,

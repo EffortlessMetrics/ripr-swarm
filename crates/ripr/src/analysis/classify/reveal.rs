@@ -1,3 +1,14 @@
+//! Reveal-stage classification: decides whether the related tests observe and
+//! discriminate the changed behavior.
+//!
+//! [`reveal_outcome`] is the entry point. It grades each related test's
+//! assertions against the probe (exact value, error variant, field, collection,
+//! effect observer) and reports the observe and discriminate [`StageEvidence`]
+//! plus whether the owner's return value was pinned. Reach, infect and
+//! propagate are owned by sibling modules; this file only judges the oracle.
+//! Evidence stays conservative: an assertion that cannot be tied to the
+//! changed behavior is withheld rather than credited.
+
 use super::super::rust_index::{
     OracleFact, OracleTextShape, TestSummary, extract_identifier_tokens, has_oracle_text_shape,
     is_inequality_assertion,
