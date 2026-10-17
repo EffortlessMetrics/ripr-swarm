@@ -69,6 +69,22 @@ superseded.
   `pr_readiness_workflow_contract`), the Python wheel workflow, and
   `source-of-truth`. Their cutover is tracked under #4984.
 
+### What starts what (until #8082 lands)
+
+| Action on a PR | Required `Ripr Rust Small Result` | Gated optional lanes |
+| --- | --- | --- |
+| Push to a Draft or Ready PR | no | no |
+| Draft -> Ready (`ready_for_review`) | yes, once for that head | no |
+| Add `merge-ready` (`labeled`) | no | yes, once for that head |
+| Push after Ready | no: re-toggle Draft -> Ready | no: re-apply `merge-ready` |
+| Any other label | no | no |
+
+The required check is still requested by Draft -> Ready, not by the label.
+Moving it onto `merge-ready` is the #8082 cutover (its admission job); gating the
+required job by label in a separate change would let a skipped required job
+report success. A brief Draft flip followed by Ready on a PR is this re-toggle,
+not an error.
+
 ## Verification Economics Policy
 
 CI is a product surface. A contributor should be able to tell what ran, why it

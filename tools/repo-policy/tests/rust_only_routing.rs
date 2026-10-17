@@ -588,7 +588,86 @@ fn gated_lanes_admit_pull_requests_only_on_the_merge_ready_labeled_event() {
                 "{name}: only a merge-ready request may cancel pull_request runs"
             );
         }
+        let violations = job_guard_violations(source);
+        assert!(violations.is_empty(), "{name}: {violations:?}");
     }
+}
+
+/// Every job under `jobs:` must carry a single-line `if:` admitting only the
+/// explicit merge-ready `labeled` event. Returns one message per violation.
+fn job_guard_violations(source: &str) -> Vec<String> {
+    const EXPLICIT: &str =
+        "github.event.action == 'labeled' && github.event.label.name == 'merge-ready'";
+    let mut violations = Vec::new();
+    let mut guarded: Vec<(&str, bool)> = Vec::new();
+    let mut in_jobs = false;
+    for line in source.lines() {
+        if line == "jobs:" {
+            in_jobs = true;
+        } else if in_jobs
+            && !line.starts_with(' ')
+            && !line.starts_with('#')
+            && !line.trim().is_empty()
+        {
+            in_jobs = false;
+        }
+        if !in_jobs {
+            continue;
+        }
+        if let Some(key) = line
+            .strip_prefix("  ")
+            .filter(|rest| !rest.starts_with(' '))
+            .and_then(|rest| rest.strip_suffix(':'))
+            .filter(|key| {
+                key.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            })
+        {
+            guarded.push((key, false));
+        } else if line.starts_with("    if:") && !guarded.is_empty() {
+            if !(line.contains("'merge-ready'") && line.contains(EXPLICIT)) {
+                violations.push(format!(
+                    "guard must admit only the explicit merge-ready event: {line}"
+                ));
+            }
+            for event in ["opened", "synchronize", "reopened", "ready_for_review"] {
+                if line.contains(&format!("'{event}'")) {
+                    violations.push(format!("re-admits {event}: {line}"));
+                }
+            }
+            if let Some(entry) = guarded.last_mut() {
+                entry.1 = true;
+            }
+        }
+    }
+    if guarded.is_empty() {
+        violations.push("declares no jobs".to_string());
+    }
+    for (job, has_guard) in guarded {
+        if !has_guard {
+            violations.push(format!("job `{job}` has no single-line merge-ready guard"));
+        }
+    }
+    violations
+}
+
+#[test]
+fn job_guard_scanner_rejects_unguarded_jobs_even_after_column_zero_comments() {
+    const GUARD: &str = "    if: github.event_name != 'pull_request' || (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')";
+    let guarded = format!("jobs:\n  first:\n{GUARD}\n    runs-on: x\n");
+    assert!(job_guard_violations(&guarded).is_empty());
+
+    let unguarded = "jobs:\n  first:\n    runs-on: x\n";
+    assert_eq!(job_guard_violations(unguarded).len(), 1);
+
+    let after_comment =
+        format!("jobs:\n  first:\n{GUARD}\n# a column-zero comment\n  second:\n    runs-on: x\n");
+    let violations = job_guard_violations(&after_comment);
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert!(violations[0].contains("`second`"), "{violations:?}");
+
+    let readmits = "jobs:\n  first:\n    if: github.event.action == 'opened' || (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')\n";
+    assert_eq!(job_guard_violations(readmits).len(), 1);
 }
 
 #[test]
