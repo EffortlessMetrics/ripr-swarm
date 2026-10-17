@@ -87,13 +87,13 @@ pub(super) fn parse_sidecar(text: &str, asset: &str) -> Result<String, String> {
     Ok(digest)
 }
 
-/// Download, verify and extract. `fetch` copies a URL to a path; production
-/// shells out to curl and tests substitute local bytes.
+/// Download, verify and extract. `acquire` copies a URL to a path; production
+/// delegates to the walk and tests substitute local bytes.
 pub(super) fn install(
     version: &str,
     target: &'static str,
     work: &Path,
-    fetch: &dyn Fn(&str, &Path) -> Result<(), String>,
+    acquire: &dyn Fn(&str, &Path) -> Result<(), String>,
 ) -> Result<ArchiveInstall, String> {
     let asset = server_asset_name(version, target, archive_extension(target));
     let base = format!("{BASE_URL}/v{version}");
@@ -102,8 +102,8 @@ pub(super) fn install(
         .map_err(|err| format!("failed to create {}: {err}", download.display()))?;
     let archive = download.join(&asset);
     let sidecar = download.join(format!("{asset}.sha256"));
-    fetch(&format!("{base}/{asset}"), &archive)?;
-    fetch(&format!("{base}/{asset}.sha256"), &sidecar)?;
+    acquire(&format!("{base}/{asset}"), &archive)?;
+    acquire(&format!("{base}/{asset}.sha256"), &sidecar)?;
 
     let expected = parse_sidecar(
         &fs::read_to_string(&sidecar)
@@ -360,6 +360,30 @@ mod tests {
         let err = install("0.10.0", TARGET, &work, &serve(&archive, sidecar))
             .err()
             .ok_or("a nested executable was accepted")?;
+        assert!(err.contains("no root `ripr` entry"), "{err}");
+        let _ = fs::remove_dir_all(&work);
+        Ok(())
+    }
+
+    #[test]
+    fn a_link_named_ripr_is_not_the_executable() -> Result<(), String> {
+        let mut builder = tar::Builder::new(GzEncoder::new(Vec::new(), Compression::fast()));
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Symlink);
+        header.set_size(0);
+        header.set_mode(0o755);
+        builder
+            .append_link(&mut header, "./ripr", "/bin/sh")
+            .map_err(|err| err.to_string())?;
+        let archive = builder
+            .into_inner()
+            .and_then(GzEncoder::finish)
+            .map_err(|err| err.to_string())?;
+        let sidecar = format!("{}  {ASSET}\n", sha256_hex(&archive)?);
+        let work = scratch("link");
+        let err = install("0.10.0", TARGET, &work, &serve(&archive, sidecar))
+            .err()
+            .ok_or("a symlink was accepted as the executable")?;
         assert!(err.contains("no root `ripr` entry"), "{err}");
         let _ = fs::remove_dir_all(&work);
         Ok(())

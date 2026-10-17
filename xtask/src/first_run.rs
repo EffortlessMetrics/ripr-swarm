@@ -292,34 +292,48 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         resolve_ripr(&options.ripr)?
     };
 
-    let version = capture_output_in_dir(&ripr, &["--version".to_string()], &out, "ripr --version")
+    let version_run =
+        capture_output_in_dir(&ripr, &["--version".to_string()], &out, "ripr --version");
+
+    if let Some(installed) = &archive_install {
+        let verdict = match &version_run {
+            Ok(captured) if captured.status.success() => {
+                archive::check_reported_version(&captured.stdout, &installed.version)
+            }
+            Ok(captured) => Err(format!(
+                "the extracted executable's --version exited {:?}",
+                captured.status.code()
+            )),
+            Err(err) => Err(err.clone()),
+        };
+        if let Err(reason) = verdict {
+            // The executable the archive emitted is not the release asked for
+            // (or cannot run), so the install is a failure however fast it
+            // ran. The receipt and diagnostics are kept.
+            if let Some(step) = setup_steps.last_mut() {
+                step.exit = Some(1);
+                step.stderr.push_str(&format!("{reason}\n"));
+                fs::write(out.join(ARCHIVE_STDERR_LOG), &step.stderr)
+                    .map_err(|err| format!("failed to write {ARCHIVE_STDERR_LOG}: {err}"))?;
+            }
+            return finish(
+                &options,
+                &out,
+                "unavailable",
+                setup_steps,
+                Vec::new(),
+                archive_install.as_ref(),
+            );
+        }
+    }
+
+    let version = version_run
         .map(|captured| captured.stdout.trim().to_string())
         .map_err(|err| {
             format!(
-                "{err}\nbuild or install ripr first, or pass --ripr <path> / --install-published"
+                "{err}\nbuild or install ripr first, or pass --ripr <path> / --install-published / --install-archive <version>"
             )
         })?;
-
-    if let Some(installed) = &archive_install
-        && let Err(reason) = archive::check_reported_version(&version, &installed.version)
-    {
-        // The executable the archive emitted is not the release asked for, so
-        // the install is a failure however fast it ran.
-        if let Some(step) = setup_steps.last_mut() {
-            step.exit = Some(1);
-            step.stderr.push_str(&format!("{reason}\n"));
-            fs::write(out.join(ARCHIVE_STDERR_LOG), &step.stderr)
-                .map_err(|err| format!("failed to write {ARCHIVE_STDERR_LOG}: {err}"))?;
-        }
-        return finish(
-            &options,
-            &out,
-            "unavailable",
-            setup_steps,
-            Vec::new(),
-            archive_install.as_ref(),
-        );
-    }
 
     setup_steps.push(fetch_sources(&out)?);
     let mut cases = Vec::new();
@@ -382,6 +396,8 @@ fn fetch_with_curl(url: &str, dest: &Path) -> Result<(), String> {
         "--show-error".to_string(),
         "--location".to_string(),
         "--proto".to_string(),
+        "=https".to_string(),
+        "--proto-redir".to_string(),
         "=https".to_string(),
         "--output".to_string(),
         dest.display().to_string(),
@@ -1444,6 +1460,46 @@ mod tests {
             text.contains("verdict: `reachable_unrevealed` (false gap; tests that notice the edit: tests::boundary, tests::equal)"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn the_archive_route_needs_a_version_and_excludes_the_other_routes() {
+        let args = |list: &[&str]| list.iter().map(|a| a.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            parse_options(&args(&["--install-archive", "0.10.0"]))
+                .map(|o| o.install_archive)
+                .unwrap_or_default(),
+            Some("0.10.0".to_string())
+        );
+        for bad in [
+            args(&["--install-archive"]),
+            args(&["--install-archive", "../x"]),
+            args(&["--install-archive", "0.10.0", "--install-published"]),
+            args(&["--install-archive", "0.10.0", "--ripr", "ripr"]),
+        ] {
+            assert!(parse_options(&bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn the_report_names_the_install_route() {
+        let options = |archive: Option<&str>, published: bool| Options {
+            ripr: "ripr".into(),
+            out: PathBuf::from("x"),
+            install_published: published,
+            install_archive: archive.map(str::to_string),
+        };
+        assert_eq!(
+            install_json(&options(None, false), None)["route"],
+            "caller_supplied_executable"
+        );
+        assert_eq!(
+            install_json(&options(None, true), None)["route"],
+            "source_cargo_install"
+        );
+        let failed = install_json(&options(Some("0.10.0"), false), None);
+        assert_eq!(failed["route"], "released_archive");
+        assert_eq!(failed["failed"], true);
     }
 
     #[test]

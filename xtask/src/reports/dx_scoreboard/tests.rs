@@ -1419,6 +1419,34 @@ fn manifest_corpus_entries_must_pin_full_shas_and_unique_ids() {
 }
 
 #[test]
+fn archive_install_rows_do_not_become_the_source_install_metric() -> Result<(), String> {
+    let row = |case: &str, step: &str, metric: &str, value: &str| {
+        format!(
+            r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.10.0","case":"{case}","step":"{step}","metric":"{metric}","value":{value},"budget":null,"better":"lower"}}"#
+        )
+    };
+    let text = [
+        row("_setup", "install_archive", "secs", "1.5"),
+        row("_setup", "install_archive", "exit", "0"),
+        row("semver", "check", "secs", "0.5"),
+        row("semver", "check", "exit", "0"),
+    ]
+    .join("\n");
+    let input = first_run_rows_to_input(&parse_ingest_text(&text)?)?;
+    let ids: Vec<&str> = input["metrics"]
+        .as_array()
+        .map(|metrics| metrics.iter().filter_map(|m| m["id"].as_str()).collect())
+        .unwrap_or_default();
+    assert!(!ids.contains(&"first_run.install_seconds"), "{ids:?}");
+    assert!(
+        !ids.contains(&"first_run.time_to_first_useful_result_s"),
+        "{ids:?}"
+    );
+    assert!(ids.contains(&"first_run.walk_secs"), "{ids:?}");
+    Ok(())
+}
+
+#[test]
 fn first_run_rows_fail_closed_on_malformed_or_cut_off_input() {
     let row = |body: &str| format!(r#"{{"schema":"first_run_row.v1",{body}}}"#);
     let convert =
