@@ -1231,7 +1231,7 @@ fn root_matches_report(root: &Path, report_root: Option<&str>) -> bool {
 
 fn normalize_path(path: &Path) -> String {
     let normalized = path.to_string_lossy().replace('\\', "/");
-    if cfg!(windows) {
+    if crate::output::path::host_paths_case_insensitive() {
         normalized.to_lowercase()
     } else {
         normalized

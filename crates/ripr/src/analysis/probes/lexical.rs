@@ -1034,6 +1034,20 @@ mod tests {
         }
     }
 
+    /// #8013: a `::` that appears only inside a string or comment must not
+    /// suppress a real field colon. Masking already drops that `::`; these
+    /// pins keep the widening from regressing.
+    #[test]
+    fn path_separator_inside_string_or_comment_does_not_suppress_field_construction() {
+        for text in ["Foo { path: \"a::b\" }", "x: 1, // see Foo::bar"] {
+            let families = classify_changed_line(text);
+            assert!(
+                families.contains(&ProbeFamily::FieldConstruction),
+                "{text} constructs a field: {families:?}"
+            );
+        }
+    }
+
     /// Review (#3720, devin BUG thread): declarations with behavioral-shape
     /// initializers keep the initializer family alongside StaticUnknown —
     /// the threshold comparison still reads Predicate, the Err initializer

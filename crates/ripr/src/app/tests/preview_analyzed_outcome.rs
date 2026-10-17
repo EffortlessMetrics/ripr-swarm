@@ -537,8 +537,8 @@ fn excluded_only_typescript_diff_discloses_skipped_scope_in_human_and_json() -> 
             return Err(format!("excluded file not disclosed as skipped: {json}"));
         }
         let human = crate::render_check(&output, &crate::OutputFormat::Human)?;
-        if !human.contains("(analysis incomplete; partial_with_limitations)")
-            || !human.contains("Limitation: some changed files were not analyzed during language analysis (language_scope_unsupported at language_adapter)")
+        if !human.contains("Analysis outcome: limitations below (analysis incomplete)")
+            || !human.contains("Limitation: some changed files were not analyzed during language analysis; affected items: 1;")
             || !human.contains("vendor/lib.ts")
             || human.contains("analyzed under preview support")
         {

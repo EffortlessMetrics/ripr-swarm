@@ -172,6 +172,7 @@ fn a_test_pinning_the_changed_element_exposes_its_field() -> Result<(), String> 
     for body in [
         ANY,
         "        let rows = rows(30, 3);\n        assert_eq!(rows[1].total, 33);",
+        "        let rows = rows(30, 3);\n        let r = &rows[1];\n        assert_eq!(r.total, 33);",
     ] {
         assert_eq!(field_class("0", body)?, ExposureClass::Exposed, "{body}");
     }
@@ -187,6 +188,11 @@ fn a_membership_or_read_another_element_may_satisfy_keeps_the_gap() -> Result<()
             "0",
             "        let rows = rows(30, 3);\n        assert_eq!(rows[0].total, 0);",
             "index of the unchanged element",
+        ),
+        (
+            "0",
+            "        let rows = rows(30, 3);\n        let r = &rows[0];\n        assert_eq!(r.total, 0);",
+            "alias of the unchanged element",
         ),
         (
             "0",
@@ -649,5 +655,36 @@ fn a_name_from_outside_the_scanned_workspace_keeps_the_gap() -> Result<(), Strin
             "{label}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn a_non_plain_drop_on_the_element_type_keeps_the_gap() -> Result<(), String> {
+    // #8084: when the assertion fails, unwinding drops the receiver; a
+    // `Drop` body that exits the process turns the failure into a pass.
+    let lib = |drop_body: &str| {
+        format!(
+            "pub struct Row {{\n    pub total: u32,\n}}\n\nimpl Drop for Row {{\n    fn drop(&mut self) {{{drop_body}\n    }}\n}}\n\npub fn rows(a: u32, b: u32) -> [Row; 2] {{\n    [Row {{ total: 0 }}, Row {{ total: a + b + 0 }}]\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn pins_second_row() {{\n        let rows = rows(30, 3);\n        assert_eq!(rows[1].total, 33);\n    }}\n}}\n"
+        )
+    };
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -11,3 +11,3 @@\n pub fn rows(a: u32, b: u32) -> [Row; 2] {\n-    [Row { total: 0 }, Row { total: a + b }]\n+    [Row { total: 0 }, Row { total: a + b + 0 }]\n }\n";
+    let class = |drop_body: &str| -> Result<ExposureClass, String> {
+        let findings = TempRepo::create(&lib(drop_body), diff)?.findings()?;
+        let field = findings
+            .iter()
+            .find(|finding| finding.probe.family == ProbeFamily::FieldConstruction)
+            .ok_or_else(|| format!("premise: a field_construction finding, got {findings:?}"))?;
+        Ok(field.class.clone())
+    };
+    assert_eq!(
+        class("\n        // no-op")?,
+        ExposureClass::Exposed,
+        "an empty Drop body keeps the pin exposed"
+    );
+    assert_eq!(
+        class("\n        std::process::exit(0);")?,
+        ExposureClass::WeaklyExposed,
+        "a Drop body that exits cannot leave the pin exposed"
+    );
     Ok(())
 }

@@ -2,16 +2,16 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/collection_argument_alias/input
 
-Summary: 2 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 probes (0 exposed, 2 weak, 0 unrevealed, 0 no path); 2 of 2 findings unsuppressed
 
-Analysis outcome: findings below (analysis complete; complete_with_findings)
+Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
 
 Start here:
-  State: a test gap to inspect or repair (top_gap)
+  State: a test gap to inspect or repair
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:3
-  Static exposure: weak (weakly_exposed, warning, confidence 0.92)
+  Static exposure: weak (severity: warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:rust:src/lib.rs:add:call_deletion:call_deletion:v.push_x*1
   Changed behavior: v.push(x * 1)
@@ -26,9 +26,10 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/collection_argument_alias/input --diff <cwd>/fixtures/collection_argument_alias/diff.patch --mode fast probe:src_lib.rs:call_deletion:1f64eda5
   ripr context --root <cwd>/fixtures/collection_argument_alias/input --diff <cwd>/fixtures/collection_argument_alias/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:1f64eda5
+No test stub here: the change shows up as a side effect or call, which needs an observer or mock ripr cannot write
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:3 (weakly_exposed)
+    - ./src/lib.rs:3 (weak)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

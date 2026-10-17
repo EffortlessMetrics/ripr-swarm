@@ -162,6 +162,9 @@ impl LspSession {
         let binary = env!("CARGO_BIN_EXE_ripr");
         let mut child = Command::new(binary)
             .args(["lsp", "--stdio"])
+            // Cases already run in parallel. Keep a real multi-thread runtime
+            // without multiplying host-sized or inherited scheduler pools.
+            .env("TOKIO_WORKER_THREADS", "2")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             // Tracing output is not part of the wire contract; dropping
@@ -337,8 +340,14 @@ impl LspSession {
 
 impl Drop for LspSession {
     fn drop(&mut self) {
-        // An orphaned `ripr lsp --stdio` server holds file locks and breaks
-        // later builds; always kill and reap, ignoring "already exited".
+        // Closing stdin lets the server exit on its own; give an exiting
+        // instrumented process time to finish writing its coverage profile
+        // before the owned kill, which would otherwise truncate it (#4978).
+        self.stdin = None;
+        let grace = Instant::now() + Duration::from_secs(2);
+        while matches!(self.child.try_wait(), Ok(None)) && Instant::now() < grace {
+            std::thread::sleep(Duration::from_millis(10));
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }

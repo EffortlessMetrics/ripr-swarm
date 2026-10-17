@@ -558,6 +558,14 @@ fn owner_headers_are_told_from_lines_that_only_hold_a_callback() {
         "export const pick = <T extends Record<string, unknown>>(obj: T) => {",
         "const handler = function (request) {",
         "  save: function (id) {",
+        "const f: <T = string>(a: T) => void = (a) => {",
+        "export default function (",
+        "export default class {",
+        "export default (x) => {",
+        "  get = (id) => {",
+        "  set = (id) => {",
+        "  get total() {",
+        "  set total(value) {",
     ] {
         assert!(super::deleted_lines::opens_an_owner(header), "{header}");
     }
@@ -572,6 +580,7 @@ fn owner_headers_are_told_from_lines_that_only_hold_a_callback() {
         "  setTimeout(function () {",
         "  const listener: (state: State) => void = noop;",
         "  if (total > 100) {",
+        "  doThing(); {",
     ] {
         assert!(!super::deleted_lines::opens_an_owner(line), "{line}");
     }
@@ -641,6 +650,303 @@ fn deleted_body_under_a_renamed_header_is_not_the_new_owners() -> Result<(), Str
     Ok(())
 }
 
+/// #7705 shape 3: a typed binding whose type is itself a generic function
+/// (`const f: <T = string>(a: T) => void = (a) => {`) still opens an owner.
+/// `plain_assignment` must skip the `=` inside `<T = string>`, or the header
+/// is missed and a type-only header edit drops the deleted body line.
+#[test]
+fn deleted_body_under_a_type_parameter_default_header_keeps_its_owner() -> Result<(), String> {
+    let findings = analyze(
+        "type-param-default",
+        &[
+            "-export const cappedTotal: <T = number[]>(items: T) => number = (items) => {",
+            "-  audit(items);",
+            "+export const cappedTotal: <T = readonly number[]>(items: T) => number = (items) => {",
+            "   return items.length;",
+            " };",
+        ],
+    )?;
+    let base = base_side(&findings);
+    assert_eq!(base, vec![record(1, "cappedTotal")], "{findings:?}");
+    assert!(
+        findings
+            .iter()
+            .filter(|finding| finding.source_currentness.is_base_side())
+            .all(|finding| !finding.is_candidate_actionable()),
+        "base-side records must stay non-actionable: {findings:?}"
+    );
+    Ok(())
+}
+
+/// #7705 shape 9: an anonymous default function has no `owner_name`, but a
+/// type-only header edit still keeps the owner live so the deleted body
+/// line is recorded on it. Both headers being nameless is the same owner.
+#[test]
+fn deleted_body_under_an_anonymous_default_function_header_keeps_its_owner() -> Result<(), String> {
+    let findings = analyze(
+        "anon-default-function",
+        &[
+            "-export default function (items: number[]): number {",
+            "-  audit(items);",
+            "+export default function (items: readonly number[]): number {",
+            "   return items.length;",
+            " }",
+        ],
+    )?;
+    let base = base_side(&findings);
+    assert_eq!(base, vec![record(1, "default")], "{findings:?}");
+    assert!(
+        findings
+            .iter()
+            .filter(|finding| finding.source_currentness.is_base_side())
+            .all(|finding| !finding.is_candidate_actionable()),
+        "base-side records must stay non-actionable: {findings:?}"
+    );
+    Ok(())
+}
+
+/// #7705 shape 9: an anonymous default arrow is the same owner across a
+/// type-only header edit, so its deleted body line is kept.
+#[test]
+fn deleted_body_under_an_anonymous_default_arrow_header_keeps_its_owner() -> Result<(), String> {
+    let findings = analyze(
+        "anon-default-arrow",
+        &[
+            "-export default (items: number[]): number => {",
+            "-  audit(items);",
+            "+export default (items: readonly number[]): number => {",
+            "   return items.length;",
+            " };",
+        ],
+    )?;
+    let base = base_side(&findings);
+    assert_eq!(base, vec![record(1, "default")], "{findings:?}");
+    assert!(
+        findings
+            .iter()
+            .filter(|finding| finding.source_currentness.is_base_side())
+            .all(|finding| !finding.is_candidate_actionable()),
+        "base-side records must stay non-actionable: {findings:?}"
+    );
+    Ok(())
+}
+
+/// #7705 shape 10: a class field named `get` is an owner header, not a
+/// getter modifier. Deleting it with its body does not give those lines to
+/// the function that held the class.
+#[test]
+fn deleted_class_field_named_get_is_not_given_to_the_enclosing_function() -> Result<(), String> {
+    let findings = analyze(
+        "class-field-named-get",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "   class Cart {",
+            "-    get = (id: string) => {",
+            "-      audit(id);",
+            "-    };",
+            "   }",
+            "   return items.length;",
+            " }",
+        ],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
+    Ok(())
+}
+
+/// #7705 shape 1: a replacement header Prettier-wrapped so no single added
+/// line opens an owner (`save(` / `id: readonly string,` / `) {`). The
+/// method still lives on; the unpaired body line stays base-side on it.
+#[test]
+fn deleted_body_under_a_wrapped_replacement_header_keeps_its_owner() -> Result<(), String> {
+    let findings = analyze(
+        "wrapped-replacement-header",
+        &[
+            " export class Cart {",
+            "-  save(id: string) {",
+            "-    audit(id);",
+            "+  save(",
+            "+    id: string | number,",
+            "+  ) {",
+            "     persist(id);",
+            "   }",
+            " }",
+        ],
+    )?;
+    let base = base_side(&findings);
+    assert_eq!(base, vec![record(2, "save")], "{findings:?}");
+    assert!(
+        findings
+            .iter()
+            .filter(|finding| finding.source_currentness.is_base_side())
+            .all(|finding| !finding.is_candidate_actionable()),
+        "base-side records must stay non-actionable: {findings:?}"
+    );
+    Ok(())
+}
+
+/// #7705 shape 4: a wrapped return type (`): Promise<` / `string` / `> {`)
+/// still joins as one header, so a type-only header edit keeps the deleted
+/// body line on the live method.
+#[test]
+fn deleted_body_under_a_wrapped_return_type_header_keeps_its_owner() -> Result<(), String> {
+    let findings = analyze(
+        "wrapped-return-type",
+        &[
+            " export class Cart {",
+            "-  save(id: string): Promise<",
+            "-    string",
+            "-  > {",
+            "-    audit(id);",
+            "+  save(id: string | number): Promise<",
+            "+    string",
+            "+  > {",
+            "     return Promise.resolve(id);",
+            "   }",
+            " }",
+        ],
+    )?;
+    let base = base_side(&findings);
+    assert_eq!(base, vec![record(2, "save")], "{findings:?}");
+    assert!(
+        findings
+            .iter()
+            .filter(|finding| finding.source_currentness.is_base_side())
+            .all(|finding| !finding.is_candidate_actionable()),
+        "base-side records must stay non-actionable: {findings:?}"
+    );
+    Ok(())
+}
+
+/// #7705 shape 8: a wrapped header whose first line ends in `{` (`save({` /
+/// `id,` / `}) {`) is still a header. Deleting it does not give its body to
+/// the enclosing live function.
+#[test]
+fn deleted_wrapped_header_opening_with_a_brace_is_not_given_to_the_enclosing_function()
+-> Result<(), String> {
+    let findings = analyze(
+        "wrapped-header-opens-with-brace",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "   const api = {",
+            "-    save({",
+            "-      id,",
+            "-    }) {",
+            "-      audit(id);",
+            "-    },",
+            "   };",
+            "   return items.length;",
+            " }",
+        ],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
+    Ok(())
+}
+
+/// A wrapped replacement whose parameter list contains `>=` must not let
+/// that comparison cancel the open `(`, or the unpaired body line is lost.
+#[test]
+fn deleted_body_under_a_wrapped_header_with_a_comparison_keeps_its_owner() -> Result<(), String> {
+    let findings = analyze(
+        "wrapped-header-comparison",
+        &[
+            " export class Cart {",
+            "-  save(",
+            "-    id: string,",
+            "-    limit = a >= b,",
+            "-  ) {",
+            "-    audit(id);",
+            "+  save(",
+            "+    id: string | number,",
+            "+    limit = a >= b,",
+            "+  ) {",
+            "     persist(id);",
+            "   }",
+            " }",
+        ],
+    )?;
+    let base = base_side(&findings);
+    assert_eq!(base, vec![record(2, "save")], "{findings:?}");
+    assert!(
+        findings
+            .iter()
+            .filter(|finding| finding.source_currentness.is_base_side())
+            .all(|finding| !finding.is_candidate_actionable()),
+        "base-side records must stay non-actionable: {findings:?}"
+    );
+    Ok(())
+}
+
+/// A comparison `>` on the same line as `Promise<` must not cancel that
+/// type-open, or the wrapped `Result` / `> {` close is lost and the body
+/// line is dropped.
+#[test]
+fn deleted_body_under_a_header_with_a_comparison_then_a_type_list_keeps_its_owner()
+-> Result<(), String> {
+    let findings = analyze(
+        "comparison-then-type-list",
+        &[
+            " export class Cart {",
+            "-  save(limit = a > b): Promise<",
+            "-    string",
+            "-  > {",
+            "-    audit(limit);",
+            "+  save(limit = a > b): Promise<",
+            "+    string | number",
+            "+  > {",
+            "     return Promise.resolve(limit);",
+            "   }",
+            " }",
+        ],
+    )?;
+    let base = base_side(&findings);
+    assert_eq!(base, vec![record(2, "save")], "{findings:?}");
+    assert!(
+        findings
+            .iter()
+            .filter(|finding| finding.source_currentness.is_base_side())
+            .all(|finding| !finding.is_candidate_actionable()),
+        "base-side records must stay non-actionable: {findings:?}"
+    );
+    Ok(())
+}
+
+/// A wrap that closes one type list and opens another on the same line
+/// (`> | Array<`) must net to zero, or the later `> {` leaves depth open
+/// and the unpaired body line is swallowed as header text.
+#[test]
+fn deleted_body_under_a_wrapped_union_type_header_keeps_its_owner() -> Result<(), String> {
+    let findings = analyze(
+        "wrapped-union-type",
+        &[
+            " export class Cart {",
+            "-  save(): Promise<",
+            "-    string",
+            "-  > | Array<",
+            "-    string",
+            "-  > {",
+            "-    audit();",
+            "+  save(): Promise<",
+            "+    string | number",
+            "+  > | Array<",
+            "+    string | number",
+            "+  > {",
+            "     return Promise.resolve(\"ok\");",
+            "   }",
+            " }",
+        ],
+    )?;
+    let base = base_side(&findings);
+    assert_eq!(base, vec![record(2, "save")], "{findings:?}");
+    assert!(
+        findings
+            .iter()
+            .filter(|finding| finding.source_currentness.is_base_side())
+            .all(|finding| !finding.is_candidate_actionable()),
+        "base-side records must stay non-actionable: {findings:?}"
+    );
+    Ok(())
+}
+
 /// A line deleted from the body of a kept block comment is not code.
 #[test]
 fn deleted_comment_body_line_records_nothing() -> Result<(), String> {
@@ -705,6 +1011,168 @@ fn long_deleted_function_records_nothing() -> Result<(), String> {
         started.elapsed() < std::time::Duration::from_secs(30),
         "a 20,000-line deletion took {:?}",
         started.elapsed()
+    );
+    Ok(())
+}
+
+/// Unspaced `length<3` is a comparison, not a type list: a later deleted
+/// method in the same object stays a removed header, not body of `api`.
+#[test]
+fn deleted_method_after_an_unspaced_length_comparison_is_not_stolen() -> Result<(), String> {
+    let findings = analyze(
+        "unspaced-length-comparison",
+        &[
+            " const items = [1, 2, 3];",
+            " export const api = {",
+            "-  cap: items.length<3,",
+            "-  save(id: string) {",
+            "-    audit(id);",
+            "-  },",
+            " };",
+        ],
+    )?;
+    let stolen = findings.iter().any(|finding| {
+        finding.source_currentness.is_base_side()
+            && finding
+                .probe
+                .before
+                .as_deref()
+                .is_some_and(|text| text.contains("save(id") || text.contains("audit(id)"))
+    });
+    assert!(!stolen, "save/audit joined into api: {findings:?}");
+    assert!(
+        findings
+            .iter()
+            .filter(|finding| finding.source_currentness.is_base_side())
+            .all(|finding| !finding.is_candidate_actionable()),
+        "base-side records must stay non-actionable: {findings:?}"
+    );
+    Ok(())
+}
+
+/// #7705 shape 5: a removed behavior line followed by a removed bare `{`
+/// joins as `doThing(); {` and must not be read as a method header. The
+/// statement stays base-side evidence on the live owner. The inner block
+/// line is also live-enclosing once the false header is refused.
+#[test]
+fn deleted_statement_then_bare_brace_is_not_swallowed_as_a_header() -> Result<(), String> {
+    let findings = analyze(
+        "statement-then-bare-brace",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "-  doThing();",
+            "-  {",
+            "-    audit(items);",
+            "-  }",
+            "   return items.length;",
+            " }",
+        ],
+    )?;
+    let dos = findings
+        .iter()
+        .filter(|finding| {
+            finding.source_currentness.is_base_side()
+                && finding.probe.before.as_deref().map(str::trim) == Some("doThing();")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        dos.len(),
+        1,
+        "doThing(); must not be swallowed as a header: {findings:?}"
+    );
+    assert_eq!(
+        dos[0]
+            .probe
+            .owner
+            .as_ref()
+            .map(|owner| owner.0.rsplit("::").next().unwrap_or_default()),
+        Some("cappedTotal"),
+        "{findings:?}"
+    );
+    assert!(
+        findings.iter().any(|finding| {
+            finding.source_currentness.is_base_side()
+                && finding
+                    .probe
+                    .before
+                    .as_deref()
+                    .is_some_and(|text| text.contains("audit(items)"))
+        }),
+        "the block body stays on the live owner: {findings:?}"
+    );
+    assert!(
+        findings
+            .iter()
+            .filter(|finding| finding.source_currentness.is_base_side())
+            .all(|finding| !finding.is_candidate_actionable()),
+        "base-side records must stay non-actionable: {findings:?}"
+    );
+    assert!(
+        findings
+            .iter()
+            .all(|finding| !finding.is_candidate_actionable()),
+        "no kept record may become actionable: {findings:?}"
+    );
+    Ok(())
+}
+
+/// An Allman-style method header (`save()` then `{` on the next line) is
+/// still a header: deleting it does not give its body to the enclosing
+/// live function. Shape 5 must not refuse this join.
+#[test]
+fn deleted_allman_method_header_is_not_given_to_the_enclosing_function() -> Result<(), String> {
+    let findings = analyze(
+        "allman-method-header",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "   const api = {",
+            "-    save()",
+            "-    {",
+            "-      audit(id);",
+            "-    },",
+            "   };",
+            "   return items.length;",
+            " }",
+        ],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
+    Ok(())
+}
+
+/// A nested function header inside a deleted `forEach(() => {` callback is
+/// its own removed owner: wrap-join must not swallow it into the live
+/// enclosing function.
+#[test]
+fn deleted_nested_header_inside_a_callback_is_not_stolen() -> Result<(), String> {
+    let findings = analyze(
+        "nested-header-in-callback",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "-  items.forEach((item) => {",
+            "-    function helper() {",
+            "-      audit(item);",
+            "-    }",
+            "-  });",
+            "   return items.length;",
+            " }",
+        ],
+    )?;
+    let stolen = findings.iter().any(|finding| {
+        finding.source_currentness.is_base_side()
+            && finding.probe.before.as_deref().is_some_and(|text| {
+                text.contains("function helper") || text.contains("audit(item)")
+            })
+    });
+    assert!(
+        !stolen,
+        "nested helper/audit joined into cappedTotal: {findings:?}"
+    );
+    assert!(
+        findings
+            .iter()
+            .filter(|finding| finding.source_currentness.is_base_side())
+            .all(|finding| !finding.is_candidate_actionable()),
+        "base-side records must stay non-actionable: {findings:?}"
     );
     Ok(())
 }

@@ -139,3 +139,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — gate_baseline_fallback_disclosure (6)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless gate_baseline_fallback_disclosure --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

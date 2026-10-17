@@ -1,0 +1,31 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_array_sibling_plain_field/input
+
+Summary: 2 probes (2 exposed, 0 weak, 0 unrevealed, 0 no path); 2 of 2 findings unsuppressed
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+
+Start here:
+  State: no gap selected for repair
+  Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation
+  File: ./src/lib.rs:6
+  Static exposure: exposed (severity: info, confidence 1.00)
+  Canonical gap: gap:rust:src/lib.rs:rows:field_construction:field_construction:total_a+b
+  Changed behavior: total: a + b
+  Related test: src/lib.rs:14 pins_second_row
+  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
+    - reach yes: Related tests appear to reach rows: pins_second_row
+    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - 8 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/rust_array_sibling_plain_field/input --diff <cwd>/fixtures/rust_array_sibling_plain_field/diff.patch --mode fast probe:src_lib.rs:field_construction:d6d7c327
+  ripr context --root <cwd>/fixtures/rust_array_sibling_plain_field/input --diff <cwd>/fixtures/rust_array_sibling_plain_field/diff.patch --mode fast --at probe:src_lib.rs:field_construction:d6d7c327
+
+Hidden:
+  1 lower-priority finding(s) omitted from default human output.
+    - ./src/lib.rs:6 (exposed)
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
