@@ -485,6 +485,34 @@ fn published_doctor_schema_rejects_documents_the_schema_forbids() -> Result<(), 
         &schema,
     )?;
 
+    // #8276: `cache.artifact_tracking` is its own union. An unlisted string,
+    // a `tracked` arm without its count, and a zero count all claim evidence
+    // the report does not carry; a populated `tracked` arm stays legal.
+    let mut unlisted_tracking = base.clone();
+    unlisted_tracking["cache"]["artifact_tracking"] = Value::String("unknown".to_string());
+    assert_rejected(
+        "unlisted artifact-tracking verdict",
+        &unlisted_tracking,
+        &schema,
+    )?;
+
+    let mut countless_tracked = base.clone();
+    countless_tracked["cache"]["artifact_tracking"] =
+        serde_json::json!({"tracked": {"warning": "! tracked"}});
+    assert_rejected("tracked without its count", &countless_tracked, &schema)?;
+
+    let mut zero_tracked = base.clone();
+    zero_tracked["cache"]["artifact_tracking"] =
+        serde_json::json!({"tracked": {"count": 0, "warning": "! tracked"}});
+    assert_rejected("tracked with a zero count", &zero_tracked, &schema)?;
+
+    let mut populated_tracked = base.clone();
+    populated_tracked["cache"]["artifact_tracking"] =
+        serde_json::json!({"tracked": {"count": 2, "warning": "! tracked"}});
+    check(&populated_tracked, &schema, &schema, "doctor").map_err(|error| {
+        format!("a populated tracked artifact-tracking must stay legal: {error}")
+    })?;
+
     // The positive counterpart: a fully populated `unignored` arm stays legal,
     // because that is the shape an un-ignored artifact root actually emits.
     let mut populated_unignored = base.clone();

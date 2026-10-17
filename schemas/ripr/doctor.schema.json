@@ -180,7 +180,7 @@
       "description": "Where the seam cache lives for this root and how large it is. `size_bytes` is 0 when the directory does not exist or cannot be read, which is a legitimate state, not a failed measurement. Never null: a released document always carries the cache the run resolved, so a producer that stopped reporting it fails this contract instead of passing it.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["cache_dir", "relocated_by_env", "size_bytes", "size_display", "artifact_ignore"],
+      "required": ["cache_dir", "relocated_by_env", "size_bytes", "size_display", "artifact_ignore", "artifact_tracking"],
       "properties": {
         "cache_dir": { "type": "string", "minLength": 1 },
         "relocated_by_env": {
@@ -189,7 +189,8 @@
         },
         "size_bytes": { "type": "integer", "minimum": 0 },
         "size_display": { "type": "string", "minLength": 1 },
-        "artifact_ignore": { "$ref": "#/$defs/artifact_ignore" }
+        "artifact_ignore": { "$ref": "#/$defs/artifact_ignore" },
+        "artifact_tracking": { "$ref": "#/$defs/artifact_tracking" }
       }
     },
     "artifact_ignore": {
@@ -208,6 +209,30 @@
               "additionalProperties": false,
               "required": ["warning"],
               "properties": {
+                "warning": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "artifact_tracking": {
+      "description": "Whether any file under ripr's own artifact root `target/ripr` is tracked in the git index (#8276). Independent of `artifact_ignore`: ignore rules never untrack committed files. `tracked` carries the file count and the exact warning line naming `git rm --cached -r -- target/ripr`; `not_checked` means git could not establish it.",
+      "oneOf": [
+        {
+          "enum": ["not_tracked", "not_checked"]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tracked"],
+          "properties": {
+            "tracked": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["count", "warning"],
+              "properties": {
+                "count": { "type": "integer", "minimum": 1 },
                 "warning": { "type": "string", "minLength": 1 }
               }
             }
