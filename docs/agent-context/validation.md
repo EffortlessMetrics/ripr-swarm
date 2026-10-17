@@ -90,6 +90,14 @@ cargo xtask check-fast
 cargo xtask precommit
 ```
 
+Local `precommit` also runs `cargo xtask goldens check` (slow, minutes cold)
+when the change set touches an output-surface path (`crates/ripr/src/output/`,
+`domain/`, `lsp.rs`, `docs/OUTPUT_SCHEMA.md`, `policy/output_contracts.txt`) or
+a fixture `expected/` file, and prints the skip reason otherwise. Real drift
+fails with the golden-drift repair card; a missing fixture dependency cache is
+reported as an instrument gap, not drift, and must not be blessed. CI skips
+this step because it has its own goldens lane.
+
 Add the focused test, narrow compile and changed-surface checks required by the
 claim. For `check-fast`, independently verify the diff selector and base before
 using it as evidence. An empty or failed selector is not proof that nothing

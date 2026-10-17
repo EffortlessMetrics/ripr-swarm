@@ -53951,6 +53951,64 @@ fn precommit_gate_commands_match_executed_precommit_source() -> Result<(), Strin
     precommit_source_oracle::require_catalogue(&source, &expected)
 }
 
+/// #8421: precommit runs the slow `goldens check` only when the change set can
+/// stale a golden, and never under CI (which has its own lane).
+#[test]
+fn precommit_goldens_selection_follows_output_surface_changes() -> Result<(), String> {
+    use super::PrecommitGoldensSelection::{Run, Skip};
+    let paths = |items: &[&str]| items.iter().map(|p| (*p).to_string()).collect::<Vec<_>>();
+    for stale in [
+        "crates/ripr/src/output/human.rs",
+        "crates/ripr/src/domain/classification.rs",
+        "crates/ripr/src/lsp.rs",
+        "docs/OUTPUT_SCHEMA.md",
+        "policy/output_contracts.txt",
+        "fixtures/boundary_gap/expected/human.txt",
+    ] {
+        match super::select_precommit_goldens(&paths(&["README.md", stale]), false) {
+            Run(reason) if reason.contains(stale) => {}
+            other => {
+                return Err(format!(
+                    "`{stale}` must select goldens check, got {other:?}"
+                ));
+            }
+        }
+    }
+    for quiet in [
+        vec![],
+        paths(&["docs/ROADMAP.md", "crates/ripr/src/analysis/probes.rs"]),
+        paths(&["fixtures/boundary_gap/input/src/lib.rs"]),
+    ] {
+        if !matches!(super::select_precommit_goldens(&quiet, false), Skip(_)) {
+            return Err(format!("{quiet:?} must skip goldens check"));
+        }
+    }
+    if !matches!(
+        super::select_precommit_goldens(&paths(&["crates/ripr/src/output/human.rs"]), true),
+        Skip(reason) if reason.contains("CI")
+    ) {
+        return Err("CI must skip the local goldens selection".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn precommit_goldens_availability_failure_is_not_reported_as_drift() -> Result<(), String> {
+    let prep = "fixture dependency preparation failed for x\nDo not bless availability drift.";
+    let classified = super::classify_precommit_goldens_failure(prep);
+    if !classified.contains("instrument gap, not golden drift") || !classified.contains(prep) {
+        return Err(format!(
+            "availability failure not distinguished: {classified}"
+        ));
+    }
+    let drift =
+        "goldens check failed; semantic drift detail in target/ripr/reports/golden-drift.md";
+    if super::classify_precommit_goldens_failure(drift) != drift {
+        return Err("real drift must pass through unchanged".to_string());
+    }
+    Ok(())
+}
+
 /// Advisory-only `cargo xtask precommit` invocations (`continue-on-error`
 /// steps and `|| true` shielding) must not put precommit or any of its gates
 /// into the expanded enforced set.

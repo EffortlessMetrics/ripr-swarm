@@ -677,8 +677,74 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
         check_process_policy()?;
         check_network_policy()?;
         check_lint_policy()?;
+        precommit_goldens_when_output_changed()?;
     }
     publish_precommit_policy_report(collect_all)
+}
+
+/// Why a local `precommit` runs or skips `goldens check` (#8421). The gate is
+/// slow (minutes cold), so it is selected from the change set instead of
+/// running unconditionally.
+#[derive(Debug, PartialEq, Eq)]
+enum PrecommitGoldensSelection {
+    Run(String),
+    Skip(String),
+}
+
+fn path_stales_goldens(path: &str) -> bool {
+    is_output_surface_path(path)
+        || (path.starts_with("fixtures/") && path.split('/').any(|part| part == "expected"))
+}
+
+fn select_precommit_goldens(changed: &[String], ci: bool) -> PrecommitGoldensSelection {
+    if ci {
+        return PrecommitGoldensSelection::Skip(
+            "CI runs `goldens check` in its own lane".to_string(),
+        );
+    }
+    match changed.iter().find(|path| path_stales_goldens(path)) {
+        Some(path) => PrecommitGoldensSelection::Run(format!(
+            "output-surface or golden path changed (`{path}`)"
+        )),
+        None => PrecommitGoldensSelection::Skip(
+            "no output-surface path or fixture `expected/` file changed".to_string(),
+        ),
+    }
+}
+
+/// Preparation/availability failures are an instrument gap, not golden drift.
+fn classify_precommit_goldens_failure(error: &str) -> String {
+    if error.contains("fixture dependency preparation failed")
+        || error.contains("Do not bless availability drift")
+    {
+        format!(
+            "precommit goldens check could not run (instrument gap, not golden drift):\n{error}"
+        )
+    } else {
+        error.to_string()
+    }
+}
+
+fn precommit_goldens_when_output_changed() -> Result<(), String> {
+    let ci = std::env::var_os("CI").is_some() || std::env::var_os("GITHUB_ACTIONS").is_some();
+    let changed: Vec<String> = if ci {
+        Vec::new()
+    } else {
+        collect_pr_changes()?
+            .into_iter()
+            .map(|change| change.path)
+            .collect()
+    };
+    match select_precommit_goldens(&changed, ci) {
+        PrecommitGoldensSelection::Skip(reason) => {
+            println!("precommit: skipping `goldens check`: {reason}");
+            Ok(())
+        }
+        PrecommitGoldensSelection::Run(reason) => {
+            println!("precommit: running `goldens check`: {reason}");
+            goldens_check().map_err(|error| classify_precommit_goldens_failure(&error))
+        }
+    }
 }
 
 fn publish_precommit_policy_report(ci_policy: bool) -> Result<(), String> {
