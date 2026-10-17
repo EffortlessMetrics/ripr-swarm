@@ -155,7 +155,11 @@ suite('Server resolver compatibility fallback', () => {
     }
   });
 
-  test('an unpinned configuration uses a compatible ripr on PATH before any download (#5314)', async () => {
+  test('an unpinned configuration uses a compatible ripr on PATH before any download (#5314)', async function () {
+    if (!currentRiprPlatform()) {
+      this.skip();
+      return;
+    }
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-resolver-path-first-'));
     const attempts: string[] = [];
     const outputLines: string[] = [];
@@ -178,6 +182,71 @@ suite('Server resolver compatibility fallback', () => {
       assert.ok(
         !outputLines.some((line) => line.includes('download failed')),
         `PATH must win before the download is attempted: ${outputLines.join('\n')}`
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a pinned version keeps the download first and probes PATH once afterwards (#5314)', async function () {
+    if (!currentRiprPlatform()) {
+      this.skip();
+      return;
+    }
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-resolver-pinned-'));
+    const attempts: string[] = [];
+    const outputLines: string[] = [];
+    const runtime: ServerResolverRuntime = {
+      probeCandidate: async (command, source, detail, _useShell, installationState = 'unmanaged') => {
+        attempts.push(source);
+        return { command, source, detail, installationState, compatibilityResult: compatibleLspEvidence };
+      }
+    };
+    try {
+      const result = await resolveServer(
+        stubContext(root),
+        { ...config(), autoDownload: true, serverVersion: '0.10.0', downloadBaseUrl: 'https://sentinel.invalid/ripr' },
+        { appendLine: (line: string) => outputLines.push(line) } as unknown as vscode.OutputChannel,
+        runtime
+      );
+      assert.ok('command' in result, JSON.stringify(result));
+      assert.strictEqual(result.source, 'path');
+      assert.deepStrictEqual(attempts, ['path']);
+      assert.ok(
+        outputLines.some((line) => line.includes('download failed')),
+        `a pinned version must attempt the download before PATH: ${outputLines.join('\n')}`
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('an incompatible early PATH probe falls through to the download and is not probed twice (#5314)', async function () {
+    if (!currentRiprPlatform()) {
+      this.skip();
+      return;
+    }
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-resolver-path-incompatible-'));
+    const attempts: string[] = [];
+    const outputLines: string[] = [];
+    const runtime: ServerResolverRuntime = {
+      probeCandidate: async (_command, source, detail) => {
+        attempts.push(source);
+        return { message: 'ripr on PATH is not compatible.', detail: `${detail} rejected` };
+      }
+    };
+    try {
+      const result = await resolveServer(
+        stubContext(root),
+        { ...config(), autoDownload: true, serverVersion: '', downloadBaseUrl: 'https://sentinel.invalid/ripr' },
+        { appendLine: (line: string) => outputLines.push(line) } as unknown as vscode.OutputChannel,
+        runtime
+      );
+      assert.ok('message' in result, JSON.stringify(result));
+      assert.deepStrictEqual(attempts, ['path']);
+      assert.ok(
+        outputLines.some((line) => line.includes('download failed')),
+        `an unusable PATH server must fall through to the download: ${outputLines.join('\n')}`
       );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
