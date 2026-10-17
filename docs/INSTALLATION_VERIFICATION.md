@@ -14,6 +14,14 @@ ripr agent verify --before <before.repo-exposure.json> --after <after.repo-expos
 ripr agent receipt --verify-json <agent-verify.json> --seam-id <seam_id> --json
 ```
 
+`cargo install ripr` installs the latest published release,
+[0.10.0](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.10.0), whose
+[versioned instructions](https://github.com/EffortlessMetrics/ripr/blob/v0.10.0/README.md)
+describe that workflow. The 0.11.0 steps in this checklist apply only after
+0.11.0 is published and verified; until then, do not expect 0.11 development
+behavior from an unversioned `cargo install ripr`. To verify a specific
+release, pin it as in the Public Cargo Install Proof below.
+
 `ripr init` may materialize repo policy, but it must not be required for the
 first useful CLI, editor, or CI experience.
 
