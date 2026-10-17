@@ -23675,18 +23675,22 @@ fn printed_ripr_command_text_for(listing: &str, root: &str, windows: bool) -> St
 #[test]
 fn printed_command_helpers_round_trip_both_host_spellings() -> Result<(), String> {
     let windows_root = format!("{}:\\temp\\RUNNER~1\\ripr-drill", 'C');
+    let bound = format!("{}:/temp/RUNNER~1/ripr-drill", 'C');
     let listing = format!("ripr check --root {windows_root} --base HEAD --json");
     let printed = printed_ripr_command_text_for(&listing, &windows_root, true);
     assert_eq!(
         printed,
-        "ripr check --root \"C:/temp/RUNNER~1/ripr-drill\" --base HEAD --json"
+        format!(
+            "ripr check --root \"{}:/temp/RUNNER~1/ripr-drill\" --base HEAD --json",
+            'C'
+        )
     );
     assert_eq!(
         printed_ripr_args_for(&printed, true)?,
         [
             "check",
             "--root",
-            "C:/temp/RUNNER~1/ripr-drill",
+            bound.as_str(),
             "--base",
             "HEAD",
             "--json"
@@ -25686,7 +25690,7 @@ fn renderer_spellings_follow_the_host_for_windows_temp_roots() {
     let windows_root = format!("{}:\\temp\\RUNNER~1\\ripr-x", 'C');
     assert_eq!(
         renderer_shell_arg_for(&rendered_path_for(&windows_root, true), true),
-        "\"C:/temp/RUNNER~1/ripr-x\""
+        format!("\"{}:/temp/RUNNER~1/ripr-x\"", 'C')
     );
     assert_eq!(
         renderer_shell_arg_for(&rendered_path_for("/tmp/ripr x", false), false),
