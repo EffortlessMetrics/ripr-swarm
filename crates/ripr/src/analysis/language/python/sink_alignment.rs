@@ -9,9 +9,8 @@ use super::related_tests::{
 };
 use super::source_facts::parse_module_result;
 use super::{
-    PythonOwner, PythonTest, has_identifier_boundary, import_module_may_be_owners,
-    import_source_module_matches_owner, parse_attribute_assignment,
-    python_dict_field_segment_parts, significant_change_tokens,
+    PythonOwner, PythonTest, has_identifier_boundary, import_source_module_matches_owner,
+    parse_attribute_assignment, python_dict_field_segment_parts, significant_change_tokens,
     strong_test_calls_owner_method_on_bound_receiver, strong_test_imports_owner_from_module,
     strong_tests_import_only_rival_modules, top_level_python_segments,
 };
@@ -607,34 +606,26 @@ pub(super) fn classify_sink_alignment_with_old(
         .rsplit('.')
         .next()
         .unwrap_or(owner.name.as_str());
-    let mut alias_tokens: Vec<String> = Vec::new();
     // A method owner's only importable alias is its class's, which rule 9 does
     // not count as identity alone; an aliased class reaches the bound-receiver
     // branch instead (`from m import Cart as C`, `C().total()`).
-    for test in all_tests
-        .iter()
-        .filter(|_| !is_method_owner)
-        .filter(|test| super::test_activation::activation_control(test).is_none())
-    {
-        for import in &test.imports {
-            // For a method/classmethod owner the bare method name is not directly
-            // importable, so only the owner's CLASS alias is identity-bearing.
-            // Matching the bare method name here would credit any same-named free
-            // function aliased in an unrelated module (a false-`exposed`).
-            let imported_matches = if is_method_owner {
-                owner_class_token.as_deref() == Some(import.imported.as_str())
-                    && import_module_may_be_owners(import, owner, &test.file)
-            } else {
+    let owner_aliases_in = |test: &PythonTest| -> Vec<String> {
+        if is_method_owner || super::test_activation::activation_control(test).is_some() {
+            return Vec::new();
+        }
+        test.imports
+            .iter()
+            .filter(|import| {
                 // Free-function alias: require module identity, else a same-named
                 // function aliased from an unrelated module credits a false-`exposed`.
                 (import.imported == owner_simple || import.imported == owner.name)
                     && import_source_module_matches_owner(import, owner, &test.file)
-            };
-            if imported_matches && !import.alias.is_empty() {
-                alias_tokens.push(import.alias.clone());
-            }
-        }
-    }
+            })
+            .filter(|import| import.alias.len() >= 2)
+            .map(|import| import.alias.clone())
+            .collect()
+    };
+    let mut alias_tokens: Vec<String> = all_tests.iter().flat_map(owner_aliases_in).collect();
     let mut change_only = change_tokens.clone();
     identity_tokens.retain(|token| token.len() >= 2);
     let method_name_token = method_name_token.filter(|token| token.len() >= 2);
@@ -882,7 +873,12 @@ pub(super) fn classify_sink_alignment_with_old(
             },
         ),
         ("alias", "strong_oracle_observes_import_alias", &|unit| {
-            observes_imported_owner(unit, &alias_tokens) && gates_ok(unit)
+            // An alias binds only in the test that imports it: another test's
+            // `from m import owner as quote` does not make this test's `quote`
+            // the owner (#8247). Without source facts the pooled set stands.
+            let own_aliases = unit.test.map(owner_aliases_in);
+            observes_imported_owner(unit, own_aliases.as_deref().unwrap_or(&alias_tokens))
+                && gates_ok(unit)
         }),
         (
             "direct",

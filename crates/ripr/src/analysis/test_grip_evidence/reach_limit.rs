@@ -26,6 +26,7 @@ use crate::analysis::classify::{
     impl_self_type_name, is_trait_impl_method, macro_reach_limit_kind, transitive_reach_limit_kind,
 };
 use crate::analysis::rust_index::{FunctionSummary, TestSummary, is_test_file};
+use crate::analysis::seams::RepoSeam;
 use crate::domain::{Confidence, StageEvidence, StageState};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
@@ -517,6 +518,27 @@ fn identifiers(body: &str) -> Vec<(String, bool)> {
         *entry |= used_as_value;
     }
     out.into_iter().collect()
+}
+
+/// The named limit when the seam's file is positively outside every crate's
+/// module tree (#7426): no `mod` declaration reaches it, so Cargo never
+/// compiles it and no test can import what it defines. That is a wiring
+/// problem, not a missing test, so the seam reads `opaque` (withheld from the
+/// actionable ranking) instead of the `no` that would invite a test that
+/// cannot compile.
+pub(in crate::analysis::test_grip_evidence) fn outside_module_tree_summary(
+    seam: &RepoSeam,
+    context: &CompactGripContext<'_>,
+) -> Option<String> {
+    let file = seam.file();
+    let facts = context.index.files().get(file)?;
+    facts.role_provenance.outside_module_tree.then(|| {
+        format!(
+            "`{}` is not part of any crate's module tree (no `mod` declaration reaches it), so no test can reach `{}`: declare the module or remove the file",
+            file.display(),
+            seam.owner()
+        )
+    })
 }
 
 /// The reach stage for a seam with no related test: `opaque` with the named

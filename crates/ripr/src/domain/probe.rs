@@ -201,6 +201,46 @@ pub struct Probe {
     pub required_oracles: Vec<String>,
 }
 
+impl Probe {
+    /// The name of the `const` or `static` item this probe's changed line
+    /// declares, for a `static_unknown` probe. A changed constant has no seam
+    /// of its own, so `ripr check` routes it to the functions that consume it.
+    pub(crate) fn changed_const_name(&self) -> Option<&str> {
+        if self.family != ProbeFamily::StaticUnknown {
+            return None;
+        }
+        let mut rest = self.expression.trim_start();
+        if let Some(after_pub) = rest.strip_prefix("pub") {
+            rest = after_pub.trim_start();
+            if rest.starts_with('(') {
+                rest = rest[rest.find(')')? + 1..].trim_start();
+            }
+        }
+        rest = rest
+            .strip_prefix("const ")
+            .or_else(|| rest.strip_prefix("static "))?
+            .trim_start();
+        rest = rest.strip_prefix("mut ").unwrap_or(rest).trim_start();
+        let end = rest
+            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .unwrap_or(rest.len());
+        let name = &rest[..end];
+        let declaration = rest[end..].trim_start();
+        // An initializer on the line separates an item from a generics or
+        // parameter continuation line such as `const N: usize,`.
+        let named_item = !name.is_empty()
+            && name != "_"
+            && declaration.starts_with(':')
+            && declaration.contains('=');
+        named_item.then_some(name)
+    }
+
+    /// Whether `ripr check` resolves a stub route for this probe.
+    pub(crate) fn offers_stub_route(&self) -> bool {
+        self.family.offers_stub_route() || self.changed_const_name().is_some()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FlowSinkKind {
@@ -691,6 +731,68 @@ impl Finding {
 
 #[cfg(test)]
 mod tests {
+    use super::{Probe, ProbeFamily};
+    use crate::domain::{DeltaKind, ProbeId, SourceLocation};
+    use std::path::PathBuf;
+
+    fn probe_over(family: ProbeFamily, expression: &str) -> Probe {
+        Probe {
+            id: ProbeId("probe:src_lib_rs:2:static_unknown".to_string()),
+            location: SourceLocation {
+                file: PathBuf::from("src/lib.rs"),
+                line: 2,
+                column: 1,
+            },
+            owner: None,
+            family,
+            delta: DeltaKind::Unknown,
+            before: None,
+            after: None,
+            expression: expression.to_string(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn changed_const_name_reads_only_const_and_static_items() {
+        let name = |expression: &str| {
+            probe_over(ProbeFamily::StaticUnknown, expression)
+                .changed_const_name()
+                .map(str::to_string)
+        };
+        for (expression, expected) in [
+            ("const CAP: u64 = 5_000;", "CAP"),
+            ("pub const CAP: u64 = 5;", "CAP"),
+            ("pub(crate) const CAP_2: u64 = 5;", "CAP_2"),
+            ("static LIMIT: u32 = 3;", "LIMIT"),
+            ("pub static mut LIMIT: u32 = 3;", "LIMIT"),
+        ] {
+            assert_eq!(name(expression).as_deref(), Some(expected), "{expression}");
+        }
+        for expression in [
+            "const fn cap() -> u64 { 5 }",
+            "let const_limit = 3;",
+            "const _: () = ();",
+            "pub const",
+            "x = 1;",
+            "const N: usize,",
+        ] {
+            assert_eq!(name(expression), None, "{expression}");
+        }
+        assert_eq!(
+            probe_over(ProbeFamily::Predicate, "const CAP: u64 = 5;").changed_const_name(),
+            None,
+            "only a static_unknown probe names a changed constant"
+        );
+    }
+
+    #[test]
+    fn a_changed_constant_offers_a_stub_route_but_other_static_unknown_probes_do_not() {
+        assert!(probe_over(ProbeFamily::StaticUnknown, "const CAP: u64 = 5;").offers_stub_route());
+        assert!(!probe_over(ProbeFamily::StaticUnknown, "mystery!();").offers_stub_route());
+        assert!(probe_over(ProbeFamily::Predicate, "a > b").offers_stub_route());
+    }
 
     /// #4323: every stop-reason gloss is one clean clause (no whitespace runs
     /// from broken literal continuations) and differs from its token.

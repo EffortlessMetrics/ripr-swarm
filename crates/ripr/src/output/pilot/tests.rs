@@ -1870,6 +1870,49 @@ fn discovered_files(
         .collect()
 }
 
+/// #4908: real discovery tags every TS/JS-family file `TypeScript`; pilot
+/// splits the JavaScript-family files into the documented `javascript` route.
+#[test]
+fn pilot_language_routes_split_real_discovery_javascript_files() {
+    use crate::domain::LanguageId;
+
+    let root = Path::new(".");
+    let enabled = [LanguageId::Rust, LanguageId::TypeScript];
+    let routes_of = |entries: &[(LanguageId, &str)]| {
+        PilotLanguageRoutes::from_discovered(root, false, &enabled, &discovered_files(entries))
+            .routes
+            .iter()
+            .map(|route| (route.language, route.file_count))
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        routes_of(&[
+            (LanguageId::TypeScript, "web/a.js"),
+            (LanguageId::TypeScript, "web/b.mjs"),
+            (LanguageId::TypeScript, "web/c.cjs"),
+            (LanguageId::TypeScript, "web/d.jsx"),
+        ]),
+        vec![(LanguageId::JavaScript, 4)],
+        "a JS-only repository gets only the javascript route"
+    );
+    assert_eq!(
+        routes_of(&[
+            (LanguageId::TypeScript, "web/a.js"),
+            (LanguageId::TypeScript, "web/b.ts"),
+            (LanguageId::TypeScript, "web/c.mts"),
+            (LanguageId::TypeScript, "web/types.d.ts"),
+        ]),
+        vec![(LanguageId::TypeScript, 3), (LanguageId::JavaScript, 1)],
+        "a mixed repository keeps both routes with each file counted once"
+    );
+    assert_eq!(
+        routes_of(&[(LanguageId::TypeScript, "web/b.ts")]),
+        vec![(LanguageId::TypeScript, 1)],
+        "a TypeScript-only repository is unchanged"
+    );
+}
+
 #[test]
 fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
     use super::language_routes::PilotLanguageRoutesState;
