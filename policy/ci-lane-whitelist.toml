@@ -42,6 +42,10 @@ id = "first-run-install"
 paths = ["target/ripr/first-run/first-run.json", "target/ripr/first-run/first-run-rows.jsonl", "target/ripr/first-run/first-run.md", "target/ripr/first-run/install_published.stderr.log", "target/ripr/reports/dx-scoreboard.json", "target/ripr/reports/dx-scoreboard.md"]
 
 [[artifact_family]]
+id = "first-run-archive"
+paths = ["target/ripr/first-run/first-run.json", "target/ripr/first-run/first-run-rows.jsonl", "target/ripr/first-run/first-run.md", "target/ripr/first-run/install_archive.stderr.log"]
+
+[[artifact_family]]
 id = "public-badge-endpoints"
 paths = ["badges/*.json", "target/ripr/reports/repo-ripr-badge*.json", "target/ripr/reports/repo-ripr-badges.md"]
 
@@ -188,6 +192,16 @@ commands = ["cargo xtask first-run --install-published", "cargo xtask dx-scorebo
 estimated_lem = 15
 artifact_families = ["first-run-install"]
 description = "First-run install: nightly and on demand only; times a cold crates.io install and the first-run walk on ubuntu-latest and, once a same-runner baseline is committed, fails when install time, time to first useful result or friction regresses past its margin."
+
+[[lane]]
+id = "first-run-archive"
+posture = "advisory"
+workflow = ".github/workflows/first-run-archive.yml"
+jobs = ["archive"]
+commands = ["cargo xtask first-run --install-archive 0.10.0"]
+estimated_lem = 10
+artifact_families = ["first-run-archive"]
+description = "First-run archive install: on demand only; verifies the documented prebuilt-archive snippets on Linux, macOS and Windows hosted runners and walks the first-run path with the released archive. Read-only; publishes nothing."
 
 [[lane]]
 id = "public-proof"

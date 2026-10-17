@@ -1,0 +1,67 @@
+name: First-run archive install
+
+# Verifies the documented prebuilt-archive install snippets in
+# docs/QUICKSTART.md on hosted Linux, macOS and Windows runners, records how
+# long each takes, then walks the first-run path with the same released
+# archive (`cargo xtask first-run --install-archive`). On demand only, never on
+# a pull request. Read-only: it downloads a public release and publishes
+# nothing (#5311). The walk step may fail on a platform bug without hiding the
+# snippet result; the report says which step failed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Released ripr version whose archive is installed
+        default: "0.10.0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: first-run-archive-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  archive:
+    name: archive (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Extract the documented snippets
+        shell: bash
+        run: awk '/prebuilt-snippet:/{m=$0;next} m&&/^```/{n++;if(n%2==0){m=""};next} m{print > (m ~ /unix/ ? "snippet.sh" : "snippet.ps1")}' docs/QUICKSTART.md
+
+      - name: Install with the documented snippet (Linux and macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: mkdir bin-test && cd bin-test && time bash -c "$(sed "s/v=0.10.0/v=${{ inputs.version || '0.10.0' }}/" ../snippet.sh)"$'\n'"ripr --version"
+
+      - name: Install with the documented snippet (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: New-Item -ItemType Directory bin-test | Out-Null; Set-Location bin-test; Measure-Command { Invoke-Expression ((Get-Content ../snippet.ps1 -Raw) -replace "v='0.10.0'", "v='${{ inputs.version || '0.10.0' }}'"); ripr --version } | Select-Object TotalSeconds
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Walk the first-run path with the released archive
+        run: cargo xtask first-run --install-archive ${{ inputs.version || '0.10.0' }}
+
+      - name: Upload first-run reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: first-run-archive-${{ matrix.os }}
+          path: |
+            target/ripr/first-run/first-run.*
+            target/ripr/first-run/first-run-rows.jsonl
+            target/ripr/first-run/install_archive.stderr.log
+          if-no-files-found: warn

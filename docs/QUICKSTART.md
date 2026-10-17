@@ -11,16 +11,35 @@ ripr uses static analysis; it does not run mutants or write the test for you.
 ## Installation
 
 Fastest, with no Rust toolchain: download the checksummed prebuilt 0.10.0
-archive (about a second here). This example is Linux x86-64; the
-[release](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.10.0) also
-has macOS and Windows archives:
+archive (about a second on Linux). Pick your platform; the
+[release](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.10.0) has
+archives for Linux and macOS on x86-64 and ARM64 and for Windows on x86-64.
+`.github/workflows/first-run-archive.yml` runs exactly these two snippets on
+hosted runners and records the timings (#5311).
 
+Linux and macOS (Bash or zsh):
+
+<!-- prebuilt-snippet:unix -->
 ```bash
-v=0.10.0; t=x86_64-unknown-linux-gnu; f=ripr-server-v$v-$t.tar.gz
+v=0.10.0; case "$(uname -s)-$(uname -m)" in
+  Linux-x86_64) t=x86_64-unknown-linux-gnu;; Linux-aarch64) t=aarch64-unknown-linux-gnu;;
+  Darwin-x86_64) t=x86_64-apple-darwin;; Darwin-arm64) t=aarch64-apple-darwin;; esac
+f=ripr-server-v$v-$t.tar.gz
 b=https://github.com/EffortlessMetrics/ripr/releases/download/v$v
 curl -fsSLO $b/$f && curl -fsSLO $b/$f.sha256
-echo "$(cat $f.sha256)  $f" | sha256sum -c - && tar xzf $f \
-  && export PATH="$PWD:$PATH"   # ./ripr is now first on PATH for this shell
+echo "$(cat $f.sha256)  $f" | { sha256sum -c - 2>/dev/null || shasum -a 256 -c -; } \
+  && tar xzf $f && export PATH="$PWD:$PATH"   # ./ripr is now first on PATH for this shell
+```
+
+Windows (PowerShell):
+
+<!-- prebuilt-snippet:powershell -->
+```powershell
+$v='0.10.0'; $t='x86_64-pc-windows-msvc'; $f="ripr-server-v$v-$t.zip"
+$b="https://github.com/EffortlessMetrics/ripr/releases/download/v$v"
+Invoke-WebRequest "$b/$f" -OutFile $f; Invoke-WebRequest "$b/$f.sha256" -OutFile "$f.sha256"
+if ((Get-FileHash $f -Algorithm SHA256).Hash -ne ((Get-Content "$f.sha256") -split '\s+')[0].ToUpper()) { throw 'checksum mismatch' }
+Expand-Archive $f -DestinationPath ripr-bin; $env:PATH="$PWD\ripr-bin;$env:PATH"   # ripr.exe is now first on PATH for this session
 ```
 
 Or install the published CLI with Cargo, which compiles from source:
