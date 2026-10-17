@@ -57,21 +57,25 @@
         "observed_values": [
           {
             "line": 21,
+            "source_file": "tests/contract.rs",
             "value": "amount = 50",
             "context": "function_argument"
           },
           {
             "line": 21,
+            "source_file": "tests/contract.rs",
             "value": "threshold = 100",
             "context": "function_argument"
           },
           {
             "line": 22,
+            "source_file": "tests/contract.rs",
             "value": "50",
             "context": "assertion_argument"
           },
           {
             "line": 23,
+            "source_file": "tests/contract.rs",
             "value": "amount = 100",
             "context": "function_argument"
           },
@@ -83,16 +87,19 @@
           },
           {
             "line": 23,
+            "source_file": "tests/contract.rs",
             "value": "threshold = 100",
             "context": "function_argument"
           },
           {
             "line": 26,
+            "source_file": "tests/contract.rs",
             "value": "90",
             "context": "assertion_argument"
           },
           {
             "line": 26,
+            "source_file": "tests/contract.rs",
             "value": "amount = 100",
             "context": "function_argument"
           },
@@ -104,6 +111,7 @@
           },
           {
             "line": 26,
+            "source_file": "tests/contract.rs",
             "value": "threshold = 100",
             "context": "function_argument"
           }
@@ -114,21 +122,25 @@
       "observed_values": [
         {
           "line": 21,
+          "source_file": "tests/contract.rs",
           "value": "amount = 50",
           "context": "function_argument"
         },
         {
           "line": 21,
+          "source_file": "tests/contract.rs",
           "value": "threshold = 100",
           "context": "function_argument"
         },
         {
           "line": 22,
+          "source_file": "tests/contract.rs",
           "value": "50",
           "context": "assertion_argument"
         },
         {
           "line": 23,
+          "source_file": "tests/contract.rs",
           "value": "amount = 100",
           "context": "function_argument"
         },
@@ -140,16 +152,19 @@
         },
         {
           "line": 23,
+          "source_file": "tests/contract.rs",
           "value": "threshold = 100",
           "context": "function_argument"
         },
         {
           "line": 26,
+          "source_file": "tests/contract.rs",
           "value": "90",
           "context": "assertion_argument"
         },
         {
           "line": 26,
+          "source_file": "tests/contract.rs",
           "value": "amount = 100",
           "context": "function_argument"
         },
@@ -161,6 +176,7 @@
         },
         {
           "line": 26,
+          "source_file": "tests/contract.rs",
           "value": "threshold = 100",
           "context": "function_argument"
         }

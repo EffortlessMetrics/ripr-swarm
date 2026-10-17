@@ -74,6 +74,7 @@ mod tests {
 
     fn fact(line: usize, context: ValueContext) -> ValueFact {
         ValueFact {
+            source_file: None,
             line,
             text: format!("assert_eq!(f({line}), {line});"),
             value: line.to_string(),

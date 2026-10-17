@@ -55,21 +55,25 @@
         "observed_values": [
           {
             "line": 8,
+            "source_file": "tests/classify.rs",
             "value": "\"word\"",
             "context": "assertion_argument"
           },
           {
             "line": 8,
+            "source_file": "tests/classify.rs",
             "value": "input = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
             "context": "function_argument"
           },
           {
             "line": 13,
+            "source_file": "tests/classify.rs",
             "value": "\"blank\"",
             "context": "assertion_argument"
           },
           {
             "line": 13,
+            "source_file": "tests/classify.rs",
             "value": "input = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \"",
             "context": "function_argument"
           }
@@ -80,21 +84,25 @@
       "observed_values": [
         {
           "line": 8,
+          "source_file": "tests/classify.rs",
           "value": "\"word\"",
           "context": "assertion_argument"
         },
         {
           "line": 8,
+          "source_file": "tests/classify.rs",
           "value": "input = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
           "context": "function_argument"
         },
         {
           "line": 13,
+          "source_file": "tests/classify.rs",
           "value": "\"blank\"",
           "context": "assertion_argument"
         },
         {
           "line": 13,
+          "source_file": "tests/classify.rs",
           "value": "input = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \"",
           "context": "function_argument"
         }
@@ -178,21 +186,25 @@
         "observed_values": [
           {
             "line": 18,
+            "source_file": "tests/classify.rs",
             "value": "\"word\"",
             "context": "assertion_argument"
           },
           {
             "line": 18,
+            "source_file": "tests/classify.rs",
             "value": "input = \"ab\"",
             "context": "function_argument"
           },
           {
             "line": 23,
+            "source_file": "tests/classify.rs",
             "value": "\"word\"",
             "context": "assertion_argument"
           },
           {
             "line": 23,
+            "source_file": "tests/classify.rs",
             "value": "input = \"ab \"",
             "context": "function_argument"
           }
@@ -203,21 +215,25 @@
       "observed_values": [
         {
           "line": 18,
+          "source_file": "tests/classify.rs",
           "value": "\"word\"",
           "context": "assertion_argument"
         },
         {
           "line": 18,
+          "source_file": "tests/classify.rs",
           "value": "input = \"ab\"",
           "context": "function_argument"
         },
         {
           "line": 23,
+          "source_file": "tests/classify.rs",
           "value": "\"word\"",
           "context": "assertion_argument"
         },
         {
           "line": 23,
+          "source_file": "tests/classify.rs",
           "value": "input = \"ab \"",
           "context": "function_argument"
         }
@@ -301,21 +317,25 @@
         "observed_values": [
           {
             "line": 28,
+            "source_file": "tests/classify.rs",
             "value": "\"word\"",
             "context": "assertion_argument"
           },
           {
             "line": 28,
+            "source_file": "tests/classify.rs",
             "value": "input = \"ab\"",
             "context": "function_argument"
           },
           {
             "line": 33,
+            "source_file": "tests/classify.rs",
             "value": "\"blank\"",
             "context": "assertion_argument"
           },
           {
             "line": 33,
+            "source_file": "tests/classify.rs",
             "value": "input = \" \"",
             "context": "function_argument"
           }
@@ -326,21 +346,25 @@
       "observed_values": [
         {
           "line": 28,
+          "source_file": "tests/classify.rs",
           "value": "\"word\"",
           "context": "assertion_argument"
         },
         {
           "line": 28,
+          "source_file": "tests/classify.rs",
           "value": "input = \"ab\"",
           "context": "function_argument"
         },
         {
           "line": 33,
+          "source_file": "tests/classify.rs",
           "value": "\"blank\"",
           "context": "assertion_argument"
         },
         {
           "line": 33,
+          "source_file": "tests/classify.rs",
           "value": "input = \" \"",
           "context": "function_argument"
         }
@@ -424,21 +448,25 @@
         "observed_values": [
           {
             "line": 38,
+            "source_file": "tests/classify.rs",
             "value": "\"word\"",
             "context": "assertion_argument"
           },
           {
             "line": 38,
+            "source_file": "tests/classify.rs",
             "value": "input = \"ab\"",
             "context": "function_argument"
           },
           {
             "line": 43,
+            "source_file": "tests/classify.rs",
             "value": "\"blank\"",
             "context": "assertion_argument"
           },
           {
             "line": 43,
+            "source_file": "tests/classify.rs",
             "value": "input = \" \"",
             "context": "function_argument"
           }
@@ -449,21 +477,25 @@
       "observed_values": [
         {
           "line": 38,
+          "source_file": "tests/classify.rs",
           "value": "\"word\"",
           "context": "assertion_argument"
         },
         {
           "line": 38,
+          "source_file": "tests/classify.rs",
           "value": "input = \"ab\"",
           "context": "function_argument"
         },
         {
           "line": 43,
+          "source_file": "tests/classify.rs",
           "value": "\"blank\"",
           "context": "assertion_argument"
         },
         {
           "line": 43,
+          "source_file": "tests/classify.rs",
           "value": "input = \" \"",
           "context": "function_argument"
         }

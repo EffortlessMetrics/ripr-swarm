@@ -55,11 +55,13 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/errors.rs",
             "value": "x = -1",
             "context": "function_argument"
           },
           {
             "line": 6,
+            "source_file": "tests/errors.rs",
             "value": "CalcError::Negative",
             "context": "enum_variant"
           }
@@ -70,11 +72,13 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/errors.rs",
           "value": "x = -1",
           "context": "function_argument"
         },
         {
           "line": 6,
+          "source_file": "tests/errors.rs",
           "value": "CalcError::Negative",
           "context": "enum_variant"
         }
@@ -148,11 +152,13 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/errors.rs",
             "value": "x = -1",
             "context": "function_argument"
           },
           {
             "line": 6,
+            "source_file": "tests/errors.rs",
             "value": "CalcError::Negative",
             "context": "enum_variant"
           }
@@ -163,11 +169,13 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/errors.rs",
           "value": "x = -1",
           "context": "function_argument"
         },
         {
           "line": 6,
+          "source_file": "tests/errors.rs",
           "value": "CalcError::Negative",
           "context": "enum_variant"
         }

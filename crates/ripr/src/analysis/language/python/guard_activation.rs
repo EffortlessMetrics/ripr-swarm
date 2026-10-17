@@ -98,6 +98,7 @@ pub(super) fn python_guarded_arm_gap(
                 .iter()
                 .filter(|(_, binding)| !binding.from_default)
                 .map(|(parameter, binding)| ValueFact {
+                    source_file: None,
                     line: row.line,
                     text: row.text.clone(),
                     value: format!("{parameter} = {}", binding.value),

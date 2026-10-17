@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -2,6 +2,6 @@
+     let text: Option<String> = if present {
+         Some(String::new())
+     } else {
+-        Some(String::new())
++        None
+     };
+     serde_json::json!({"status": if text.is_some() { "collected" } else { "not_collected" }})

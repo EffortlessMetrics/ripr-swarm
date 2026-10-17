@@ -108,6 +108,7 @@ Updated:
 ## Pending — match_arm_proximity_wrapper_confirms (9)
 
 Reason:
+RIPR-SPEC-0158 and #7805: independently audited additive source_file metadata only; all classification, oracle, evidence and human output preserved
 RIPR-SPEC-0002: #8386 drop a bare unwrap/expect setup row listed beside the same test's real assertion row; classification unchanged
 
 Command:

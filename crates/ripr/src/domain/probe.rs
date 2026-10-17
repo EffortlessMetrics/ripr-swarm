@@ -337,12 +337,19 @@ impl ValueContext {
 /// the source/value origin, not an execution state.
 ///
 /// The `text` field holds retained source or value-transfer provenance. The
-/// JSON renderer deduplicates shared text into the finding-level
+/// Optional `source_file` retains the originating file when the producer knows
+/// it; omission means unknown. The JSON renderer deduplicates shared text into the finding-level
 /// `assertion_texts` map keyed by line number. Per-value objects retain optional
 /// `provenance` when their text differs from that shared entry; otherwise
 /// consumers recover it via `finding.assertion_texts[line.to_string()]`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ValueFact {
+    /// Producer-owned stable source identity (literal Unix backslashes use `%5C`).
+    /// None means unknown, including
+    /// legacy serialized facts and derived values without a source-file witness.
+    /// This metadata grants no assertion execution or oracle admission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_file: Option<String>,
     pub line: usize,
     pub text: String,
     pub value: String,

@@ -43,11 +43,13 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/errors.rs",
             "value": "payload = \"payload?\"",
             "context": "function_argument"
           },
           {
             "line": 8,
+            "source_file": "tests/errors.rs",
             "value": "ChecksumError::MalformedPayload",
             "context": "enum_variant"
           }
@@ -58,11 +60,13 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/errors.rs",
           "value": "payload = \"payload?\"",
           "context": "function_argument"
         },
         {
           "line": 8,
+          "source_file": "tests/errors.rs",
           "value": "ChecksumError::MalformedPayload",
           "context": "enum_variant"
         }
@@ -134,11 +138,13 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/errors.rs",
             "value": "payload = \"payload?\"",
             "context": "function_argument"
           },
           {
             "line": 8,
+            "source_file": "tests/errors.rs",
             "value": "ChecksumError::MalformedPayload",
             "context": "enum_variant"
           }
@@ -149,11 +155,13 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/errors.rs",
           "value": "payload = \"payload?\"",
           "context": "function_argument"
         },
         {
           "line": 8,
+          "source_file": "tests/errors.rs",
           "value": "ChecksumError::MalformedPayload",
           "context": "enum_variant"
         }
@@ -225,11 +233,13 @@
         "observed_values": [
           {
             "line": 19,
+            "source_file": "tests/errors.rs",
             "value": "raw = \"zhex\"",
             "context": "function_argument"
           },
           {
             "line": 22,
+            "source_file": "tests/errors.rs",
             "value": "ParseSummaryError::MalformedSource",
             "context": "enum_variant"
           }
@@ -240,11 +250,13 @@
       "observed_values": [
         {
           "line": 19,
+          "source_file": "tests/errors.rs",
           "value": "raw = \"zhex\"",
           "context": "function_argument"
         },
         {
           "line": 22,
+          "source_file": "tests/errors.rs",
           "value": "ParseSummaryError::MalformedSource",
           "context": "enum_variant"
         }
@@ -316,11 +328,13 @@
         "observed_values": [
           {
             "line": 19,
+            "source_file": "tests/errors.rs",
             "value": "raw = \"zhex\"",
             "context": "function_argument"
           },
           {
             "line": 22,
+            "source_file": "tests/errors.rs",
             "value": "ParseSummaryError::MalformedSource",
             "context": "enum_variant"
           }
@@ -331,11 +345,13 @@
       "observed_values": [
         {
           "line": 19,
+          "source_file": "tests/errors.rs",
           "value": "raw = \"zhex\"",
           "context": "function_argument"
         },
         {
           "line": 22,
+          "source_file": "tests/errors.rs",
           "value": "ParseSummaryError::MalformedSource",
           "context": "enum_variant"
         }

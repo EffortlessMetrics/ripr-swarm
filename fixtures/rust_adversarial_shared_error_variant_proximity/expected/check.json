@@ -55,21 +55,25 @@
         "observed_values": [
           {
             "line": 27,
+            "source_file": "src/lib.rs",
             "value": "20_000",
             "context": "assertion_argument"
           },
           {
             "line": 27,
+            "source_file": "src/lib.rs",
             "value": "PayError::Limit",
             "context": "enum_variant"
           },
           {
             "line": 32,
+            "source_file": "src/lib.rs",
             "value": "100",
             "context": "assertion_argument"
           },
           {
             "line": 32,
+            "source_file": "src/lib.rs",
             "value": "amount = 100",
             "context": "function_argument"
           }
@@ -80,21 +84,25 @@
       "observed_values": [
         {
           "line": 27,
+          "source_file": "src/lib.rs",
           "value": "20_000",
           "context": "assertion_argument"
         },
         {
           "line": 27,
+          "source_file": "src/lib.rs",
           "value": "PayError::Limit",
           "context": "enum_variant"
         },
         {
           "line": 32,
+          "source_file": "src/lib.rs",
           "value": "100",
           "context": "assertion_argument"
         },
         {
           "line": 32,
+          "source_file": "src/lib.rs",
           "value": "amount = 100",
           "context": "function_argument"
         }
@@ -182,21 +190,25 @@
         "observed_values": [
           {
             "line": 27,
+            "source_file": "src/lib.rs",
             "value": "20_000",
             "context": "assertion_argument"
           },
           {
             "line": 27,
+            "source_file": "src/lib.rs",
             "value": "PayError::Limit",
             "context": "enum_variant"
           },
           {
             "line": 32,
+            "source_file": "src/lib.rs",
             "value": "100",
             "context": "assertion_argument"
           },
           {
             "line": 32,
+            "source_file": "src/lib.rs",
             "value": "amount = 100",
             "context": "function_argument"
           }
@@ -207,21 +219,25 @@
       "observed_values": [
         {
           "line": 27,
+          "source_file": "src/lib.rs",
           "value": "20_000",
           "context": "assertion_argument"
         },
         {
           "line": 27,
+          "source_file": "src/lib.rs",
           "value": "PayError::Limit",
           "context": "enum_variant"
         },
         {
           "line": 32,
+          "source_file": "src/lib.rs",
           "value": "100",
           "context": "assertion_argument"
         },
         {
           "line": 32,
+          "source_file": "src/lib.rs",
           "value": "amount = 100",
           "context": "function_argument"
         }

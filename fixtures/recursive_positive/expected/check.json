@@ -55,6 +55,7 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/classify.rs",
             "value": "\"blank\"",
             "context": "assertion_argument"
           },
@@ -66,16 +67,19 @@
           },
           {
             "line": 5,
+            "source_file": "tests/classify.rs",
             "value": "input = \"word\"",
             "context": "function_argument"
           },
           {
             "line": 10,
+            "source_file": "tests/classify.rs",
             "value": "\"word\"",
             "context": "assertion_argument"
           },
           {
             "line": 10,
+            "source_file": "tests/classify.rs",
             "value": "input = \"zz\"",
             "context": "function_argument"
           }
@@ -86,6 +90,7 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/classify.rs",
           "value": "\"blank\"",
           "context": "assertion_argument"
         },
@@ -97,16 +102,19 @@
         },
         {
           "line": 5,
+          "source_file": "tests/classify.rs",
           "value": "input = \"word\"",
           "context": "function_argument"
         },
         {
           "line": 10,
+          "source_file": "tests/classify.rs",
           "value": "\"word\"",
           "context": "assertion_argument"
         },
         {
           "line": 10,
+          "source_file": "tests/classify.rs",
           "value": "input = \"zz\"",
           "context": "function_argument"
         }

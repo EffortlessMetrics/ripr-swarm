@@ -57,31 +57,37 @@
         "observed_values": [
           {
             "line": 6,
+            "source_file": "tests/buf_tests.rs",
             "value": "-1",
             "context": "assertion_argument"
           },
           {
             "line": 6,
+            "source_file": "tests/buf_tests.rs",
             "value": "nbytes = 3",
             "context": "function_argument"
           },
           {
             "line": 7,
+            "source_file": "tests/buf_tests.rs",
             "value": "0",
             "context": "assertion_argument"
           },
           {
             "line": 13,
+            "source_file": "tests/buf_tests.rs",
             "value": "3",
             "context": "assertion_argument"
           },
           {
             "line": 13,
+            "source_file": "tests/buf_tests.rs",
             "value": "4",
             "context": "assertion_argument"
           },
           {
             "line": 14,
+            "source_file": "tests/buf_tests.rs",
             "value": "nbytes = 4",
             "context": "function_argument"
           }
@@ -92,31 +98,37 @@
       "observed_values": [
         {
           "line": 6,
+          "source_file": "tests/buf_tests.rs",
           "value": "-1",
           "context": "assertion_argument"
         },
         {
           "line": 6,
+          "source_file": "tests/buf_tests.rs",
           "value": "nbytes = 3",
           "context": "function_argument"
         },
         {
           "line": 7,
+          "source_file": "tests/buf_tests.rs",
           "value": "0",
           "context": "assertion_argument"
         },
         {
           "line": 13,
+          "source_file": "tests/buf_tests.rs",
           "value": "3",
           "context": "assertion_argument"
         },
         {
           "line": 13,
+          "source_file": "tests/buf_tests.rs",
           "value": "4",
           "context": "assertion_argument"
         },
         {
           "line": 14,
+          "source_file": "tests/buf_tests.rs",
           "value": "nbytes = 4",
           "context": "function_argument"
         }

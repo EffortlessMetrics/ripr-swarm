@@ -54,6 +54,7 @@
         "observed_values": [
           {
             "line": 29,
+            "source_file": "src/lib.rs",
             "value": "\"\"",
             "context": "assertion_argument"
           }
@@ -64,6 +65,7 @@
       "observed_values": [
         {
           "line": 29,
+          "source_file": "src/lib.rs",
           "value": "\"\"",
           "context": "assertion_argument"
         }

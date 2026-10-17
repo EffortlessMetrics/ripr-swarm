@@ -1264,6 +1264,15 @@ fn value_fact_json(
     let sp = "  ".repeat(indent);
     out.push_str(&format!("{sp}{{\n"));
     number_field(out, indent + 1, "line", fact.line, true);
+    if let Some(source_file) = &fact.source_file {
+        field(
+            out,
+            indent + 1,
+            "source_file",
+            &crate::output::path::display_path_text(source_file),
+            true,
+        );
+    }
     field(out, indent + 1, "value", &fact.value, true);
     // Additive (#3295 deferred follow-up): when this fact's retained
     // text is NOT the shared assertion source for its line, it carries
@@ -1717,6 +1726,7 @@ mod provenance_tests {
 
     fn fact(line: usize, value: &str, text: &str) -> ValueFact {
         ValueFact {
+            source_file: None,
             line,
             text: text.to_string(),
             value: value.to_string(),

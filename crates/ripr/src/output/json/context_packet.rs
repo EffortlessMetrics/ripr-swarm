@@ -202,6 +202,7 @@ mod tests {
     fn context_packet_escapes_observed_values_and_discriminator_reasons() {
         let mut finding = sample_finding();
         finding.activation.observed_values.push(ValueFact {
+            source_file: None,
             line: 11,
             text: "assert!(x)".to_string(),
             value: "line \"a\"\nnext".to_string(),

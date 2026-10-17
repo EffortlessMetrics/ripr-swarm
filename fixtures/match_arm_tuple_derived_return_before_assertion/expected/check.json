@@ -56,31 +56,37 @@
         "observed_values": [
           {
             "line": 21,
+            "source_file": "tests/projection.rs",
             "value": "1",
             "context": "assertion_argument"
           },
           {
             "line": 22,
+            "source_file": "tests/projection.rs",
             "value": "\"receipt-1\"",
             "context": "assertion_argument"
           },
           {
             "line": 22,
+            "source_file": "tests/projection.rs",
             "value": "0",
             "context": "assertion_argument"
           },
           {
             "line": 24,
+            "source_file": "tests/projection.rs",
             "value": "\"request_identity_v2\"",
             "context": "assertion_argument"
           },
           {
             "line": 24,
+            "source_file": "tests/projection.rs",
             "value": "0",
             "context": "assertion_argument"
           },
           {
             "line": 24,
+            "source_file": "tests/projection.rs",
             "value": "1",
             "context": "assertion_argument"
           }
@@ -91,31 +97,37 @@
       "observed_values": [
         {
           "line": 21,
+          "source_file": "tests/projection.rs",
           "value": "1",
           "context": "assertion_argument"
         },
         {
           "line": 22,
+          "source_file": "tests/projection.rs",
           "value": "\"receipt-1\"",
           "context": "assertion_argument"
         },
         {
           "line": 22,
+          "source_file": "tests/projection.rs",
           "value": "0",
           "context": "assertion_argument"
         },
         {
           "line": 24,
+          "source_file": "tests/projection.rs",
           "value": "\"request_identity_v2\"",
           "context": "assertion_argument"
         },
         {
           "line": 24,
+          "source_file": "tests/projection.rs",
           "value": "0",
           "context": "assertion_argument"
         },
         {
           "line": 24,
+          "source_file": "tests/projection.rs",
           "value": "1",
           "context": "assertion_argument"
         }
@@ -216,31 +228,37 @@
         "observed_values": [
           {
             "line": 21,
+            "source_file": "tests/projection.rs",
             "value": "1",
             "context": "assertion_argument"
           },
           {
             "line": 22,
+            "source_file": "tests/projection.rs",
             "value": "\"receipt-1\"",
             "context": "assertion_argument"
           },
           {
             "line": 22,
+            "source_file": "tests/projection.rs",
             "value": "0",
             "context": "assertion_argument"
           },
           {
             "line": 24,
+            "source_file": "tests/projection.rs",
             "value": "\"request_identity_v2\"",
             "context": "assertion_argument"
           },
           {
             "line": 24,
+            "source_file": "tests/projection.rs",
             "value": "0",
             "context": "assertion_argument"
           },
           {
             "line": 24,
+            "source_file": "tests/projection.rs",
             "value": "1",
             "context": "assertion_argument"
           }
@@ -251,31 +269,37 @@
       "observed_values": [
         {
           "line": 21,
+          "source_file": "tests/projection.rs",
           "value": "1",
           "context": "assertion_argument"
         },
         {
           "line": 22,
+          "source_file": "tests/projection.rs",
           "value": "\"receipt-1\"",
           "context": "assertion_argument"
         },
         {
           "line": 22,
+          "source_file": "tests/projection.rs",
           "value": "0",
           "context": "assertion_argument"
         },
         {
           "line": 24,
+          "source_file": "tests/projection.rs",
           "value": "\"request_identity_v2\"",
           "context": "assertion_argument"
         },
         {
           "line": 24,
+          "source_file": "tests/projection.rs",
           "value": "0",
           "context": "assertion_argument"
         },
         {
           "line": 24,
+          "source_file": "tests/projection.rs",
           "value": "1",
           "context": "assertion_argument"
         }

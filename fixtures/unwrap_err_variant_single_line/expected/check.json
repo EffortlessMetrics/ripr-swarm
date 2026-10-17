@@ -54,16 +54,19 @@
         "observed_values": [
           {
             "line": 4,
+            "source_file": "tests/errors.rs",
             "value": "12",
             "context": "assertion_argument"
           },
           {
             "line": 4,
+            "source_file": "tests/errors.rs",
             "value": "ParseError::TooLong",
             "context": "enum_variant"
           },
           {
             "line": 4,
+            "source_file": "tests/errors.rs",
             "value": "name = \"aaaaaaaaaaaa\"",
             "context": "function_argument",
             "provenance": "fn too_long_name_rejected_with_exact_variant() { let err = validate(\"aaaaaaaaaaaa\").unwrap_err(); assert_eq!(err, ParseError::TooLong(12)); }"
@@ -75,16 +78,19 @@
       "observed_values": [
         {
           "line": 4,
+          "source_file": "tests/errors.rs",
           "value": "12",
           "context": "assertion_argument"
         },
         {
           "line": 4,
+          "source_file": "tests/errors.rs",
           "value": "ParseError::TooLong",
           "context": "enum_variant"
         },
         {
           "line": 4,
+          "source_file": "tests/errors.rs",
           "value": "name = \"aaaaaaaaaaaa\"",
           "context": "function_argument",
           "provenance": "fn too_long_name_rejected_with_exact_variant() { let err = validate(\"aaaaaaaaaaaa\").unwrap_err(); assert_eq!(err, ParseError::TooLong(12)); }"
@@ -158,16 +164,19 @@
         "observed_values": [
           {
             "line": 4,
+            "source_file": "tests/errors.rs",
             "value": "12",
             "context": "assertion_argument"
           },
           {
             "line": 4,
+            "source_file": "tests/errors.rs",
             "value": "ParseError::TooLong",
             "context": "enum_variant"
           },
           {
             "line": 4,
+            "source_file": "tests/errors.rs",
             "value": "name = \"aaaaaaaaaaaa\"",
             "context": "function_argument",
             "provenance": "fn too_long_name_rejected_with_exact_variant() { let err = validate(\"aaaaaaaaaaaa\").unwrap_err(); assert_eq!(err, ParseError::TooLong(12)); }"
@@ -179,16 +188,19 @@
       "observed_values": [
         {
           "line": 4,
+          "source_file": "tests/errors.rs",
           "value": "12",
           "context": "assertion_argument"
         },
         {
           "line": 4,
+          "source_file": "tests/errors.rs",
           "value": "ParseError::TooLong",
           "context": "enum_variant"
         },
         {
           "line": 4,
+          "source_file": "tests/errors.rs",
           "value": "name = \"aaaaaaaaaaaa\"",
           "context": "function_argument",
           "provenance": "fn too_long_name_rejected_with_exact_variant() { let err = validate(\"aaaaaaaaaaaa\").unwrap_err(); assert_eq!(err, ParseError::TooLong(12)); }"

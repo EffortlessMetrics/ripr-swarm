@@ -55,26 +55,31 @@
         "observed_values": [
           {
             "line": 13,
+            "source_file": "src/lib.rs",
             "value": "v = 0",
             "context": "function_argument"
           },
           {
             "line": 13,
+            "source_file": "src/lib.rs",
             "value": "x = 11",
             "context": "function_argument"
           },
           {
             "line": 14,
+            "source_file": "src/lib.rs",
             "value": "0",
             "context": "assertion_argument"
           },
           {
             "line": 14,
+            "source_file": "src/lib.rs",
             "value": "1",
             "context": "assertion_argument"
           },
           {
             "line": 14,
+            "source_file": "src/lib.rs",
             "value": "11",
             "context": "assertion_argument"
           }
@@ -85,26 +90,31 @@
       "observed_values": [
         {
           "line": 13,
+          "source_file": "src/lib.rs",
           "value": "v = 0",
           "context": "function_argument"
         },
         {
           "line": 13,
+          "source_file": "src/lib.rs",
           "value": "x = 11",
           "context": "function_argument"
         },
         {
           "line": 14,
+          "source_file": "src/lib.rs",
           "value": "0",
           "context": "assertion_argument"
         },
         {
           "line": 14,
+          "source_file": "src/lib.rs",
           "value": "1",
           "context": "assertion_argument"
         },
         {
           "line": 14,
+          "source_file": "src/lib.rs",
           "value": "11",
           "context": "assertion_argument"
         }
@@ -180,26 +190,31 @@
         "observed_values": [
           {
             "line": 13,
+            "source_file": "src/lib.rs",
             "value": "v = 0",
             "context": "function_argument"
           },
           {
             "line": 13,
+            "source_file": "src/lib.rs",
             "value": "x = 11",
             "context": "function_argument"
           },
           {
             "line": 14,
+            "source_file": "src/lib.rs",
             "value": "0",
             "context": "assertion_argument"
           },
           {
             "line": 14,
+            "source_file": "src/lib.rs",
             "value": "1",
             "context": "assertion_argument"
           },
           {
             "line": 14,
+            "source_file": "src/lib.rs",
             "value": "11",
             "context": "assertion_argument"
           }
@@ -210,26 +225,31 @@
       "observed_values": [
         {
           "line": 13,
+          "source_file": "src/lib.rs",
           "value": "v = 0",
           "context": "function_argument"
         },
         {
           "line": 13,
+          "source_file": "src/lib.rs",
           "value": "x = 11",
           "context": "function_argument"
         },
         {
           "line": 14,
+          "source_file": "src/lib.rs",
           "value": "0",
           "context": "assertion_argument"
         },
         {
           "line": 14,
+          "source_file": "src/lib.rs",
           "value": "1",
           "context": "assertion_argument"
         },
         {
           "line": 14,
+          "source_file": "src/lib.rs",
           "value": "11",
           "context": "assertion_argument"
         }

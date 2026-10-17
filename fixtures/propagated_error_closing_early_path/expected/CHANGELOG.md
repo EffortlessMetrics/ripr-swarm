@@ -102,3 +102,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — propagated_error_closing_early_path (9)
+
+Reason:
+RIPR-SPEC-0158 #7805 #7853: frozen-main integration adds this fixture after the prior 174-fixture audit; retain only additive source_file metadata, with classification, RIPR stages, oracles, guidance and both human outputs unchanged.
+
+Command:
+`cargo xtask goldens bless propagated_error_closing_early_path --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

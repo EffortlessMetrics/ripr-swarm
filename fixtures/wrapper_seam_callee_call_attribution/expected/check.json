@@ -44,16 +44,19 @@
         "observed_values": [
           {
             "line": 6,
+            "source_file": "tests/attribution.rs",
             "value": "3",
             "context": "assertion_argument"
           },
           {
             "line": 15,
+            "source_file": "tests/attribution.rs",
             "value": "3",
             "context": "assertion_argument"
           },
           {
             "line": 18,
+            "source_file": "tests/attribution.rs",
             "value": "5",
             "context": "assertion_argument"
           }
@@ -64,16 +67,19 @@
       "observed_values": [
         {
           "line": 6,
+          "source_file": "tests/attribution.rs",
           "value": "3",
           "context": "assertion_argument"
         },
         {
           "line": 15,
+          "source_file": "tests/attribution.rs",
           "value": "3",
           "context": "assertion_argument"
         },
         {
           "line": 18,
+          "source_file": "tests/attribution.rs",
           "value": "5",
           "context": "assertion_argument"
         }
@@ -158,16 +164,19 @@
         "observed_values": [
           {
             "line": 6,
+            "source_file": "tests/attribution.rs",
             "value": "3",
             "context": "assertion_argument"
           },
           {
             "line": 15,
+            "source_file": "tests/attribution.rs",
             "value": "3",
             "context": "assertion_argument"
           },
           {
             "line": 18,
+            "source_file": "tests/attribution.rs",
             "value": "5",
             "context": "assertion_argument"
           }
@@ -178,16 +187,19 @@
       "observed_values": [
         {
           "line": 6,
+          "source_file": "tests/attribution.rs",
           "value": "3",
           "context": "assertion_argument"
         },
         {
           "line": 15,
+          "source_file": "tests/attribution.rs",
           "value": "3",
           "context": "assertion_argument"
         },
         {
           "line": 18,
+          "source_file": "tests/attribution.rs",
           "value": "5",
           "context": "assertion_argument"
         }

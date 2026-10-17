@@ -56,16 +56,19 @@
         "observed_values": [
           {
             "line": 6,
+            "source_file": "tests/size_hints.rs",
             "value": "3",
             "context": "assertion_argument"
           },
           {
             "line": 7,
+            "source_file": "tests/size_hints.rs",
             "value": "3",
             "context": "assertion_argument"
           },
           {
             "line": 9,
+            "source_file": "tests/size_hints.rs",
             "value": "3",
             "context": "assertion_argument"
           }
@@ -76,16 +79,19 @@
       "observed_values": [
         {
           "line": 6,
+          "source_file": "tests/size_hints.rs",
           "value": "3",
           "context": "assertion_argument"
         },
         {
           "line": 7,
+          "source_file": "tests/size_hints.rs",
           "value": "3",
           "context": "assertion_argument"
         },
         {
           "line": 9,
+          "source_file": "tests/size_hints.rs",
           "value": "3",
           "context": "assertion_argument"
         }

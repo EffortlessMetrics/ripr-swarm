@@ -95,6 +95,8 @@ Updated:
 Reason:
 RIPR-SPEC-0122: human check output prints the stub route or a No test stub here refusal for every probe family (#8412)
 
+RIPR-SPEC-0158 and #7805: independently audited additive source_file metadata only; all classification, oracle, evidence and human output preserved
+
 Command:
 `cargo xtask goldens bless whole_value_string_from_shadow --reason "..."`
 

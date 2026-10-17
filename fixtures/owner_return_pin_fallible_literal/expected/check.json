@@ -54,6 +54,7 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "src/test_support.rs",
             "value": "7",
             "context": "assertion_argument"
           }
@@ -64,6 +65,7 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "src/test_support.rs",
           "value": "7",
           "context": "assertion_argument"
         }

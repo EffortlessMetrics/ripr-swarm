@@ -304,6 +304,11 @@ Updated:
 Reason:
 RIPR-SPEC-0122: human check output prints the stub route or a No test stub here refusal for every probe family (#8412)
 
+## Pending — observation_unverified_call_deletion (1)
+
+Reason:
+RIPR-SPEC-0158 and #7805: independently audited additive source_file metadata only; all classification, oracle, evidence and human output preserved
+
 Command:
 `cargo xtask goldens bless observation_unverified_call_deletion --reason "..."`
 

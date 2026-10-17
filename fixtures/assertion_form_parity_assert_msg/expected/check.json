@@ -55,6 +55,7 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/pricing.rs",
             "value": "amount = 100",
             "context": "function_argument"
           },
@@ -66,11 +67,13 @@
           },
           {
             "line": 5,
+            "source_file": "tests/pricing.rs",
             "value": "discount_threshold = 100",
             "context": "function_argument"
           },
           {
             "line": 7,
+            "source_file": "tests/pricing.rs",
             "value": "\"actual={actual:?}\"",
             "context": "assertion_argument"
           }
@@ -81,6 +84,7 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/pricing.rs",
           "value": "amount = 100",
           "context": "function_argument"
         },
@@ -92,11 +96,13 @@
         },
         {
           "line": 5,
+          "source_file": "tests/pricing.rs",
           "value": "discount_threshold = 100",
           "context": "function_argument"
         },
         {
           "line": 7,
+          "source_file": "tests/pricing.rs",
           "value": "\"actual={actual:?}\"",
           "context": "assertion_argument"
         }
@@ -172,16 +178,19 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/pricing.rs",
             "value": "amount = 100",
             "context": "function_argument"
           },
           {
             "line": 5,
+            "source_file": "tests/pricing.rs",
             "value": "discount_threshold = 100",
             "context": "function_argument"
           },
           {
             "line": 7,
+            "source_file": "tests/pricing.rs",
             "value": "\"actual={actual:?}\"",
             "context": "assertion_argument"
           }
@@ -192,16 +201,19 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/pricing.rs",
           "value": "amount = 100",
           "context": "function_argument"
         },
         {
           "line": 5,
+          "source_file": "tests/pricing.rs",
           "value": "discount_threshold = 100",
           "context": "function_argument"
         },
         {
           "line": 7,
+          "source_file": "tests/pricing.rs",
           "value": "\"actual={actual:?}\"",
           "context": "assertion_argument"
         }
@@ -275,16 +287,19 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/pricing.rs",
             "value": "amount = 100",
             "context": "function_argument"
           },
           {
             "line": 5,
+            "source_file": "tests/pricing.rs",
             "value": "discount_threshold = 100",
             "context": "function_argument"
           },
           {
             "line": 7,
+            "source_file": "tests/pricing.rs",
             "value": "\"actual={actual:?}\"",
             "context": "assertion_argument"
           }
@@ -295,16 +310,19 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/pricing.rs",
           "value": "amount = 100",
           "context": "function_argument"
         },
         {
           "line": 5,
+          "source_file": "tests/pricing.rs",
           "value": "discount_threshold = 100",
           "context": "function_argument"
         },
         {
           "line": 7,
+          "source_file": "tests/pricing.rs",
           "value": "\"actual={actual:?}\"",
           "context": "assertion_argument"
         }

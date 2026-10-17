@@ -55,16 +55,19 @@
         "observed_values": [
           {
             "line": 6,
+            "source_file": "tests/fees.rs",
             "value": "400",
             "context": "assertion_argument"
           },
           {
             "line": 7,
+            "source_file": "tests/fees.rs",
             "value": "\"EU\"",
             "context": "assertion_argument"
           },
           {
             "line": 7,
+            "source_file": "tests/fees.rs",
             "value": "2000",
             "context": "assertion_argument"
           }
@@ -75,16 +78,19 @@
       "observed_values": [
         {
           "line": 6,
+          "source_file": "tests/fees.rs",
           "value": "400",
           "context": "assertion_argument"
         },
         {
           "line": 7,
+          "source_file": "tests/fees.rs",
           "value": "\"EU\"",
           "context": "assertion_argument"
         },
         {
           "line": 7,
+          "source_file": "tests/fees.rs",
           "value": "2000",
           "context": "assertion_argument"
         }
@@ -167,11 +173,13 @@
         "observed_values": [
           {
             "line": 13,
+            "source_file": "tests/fees.rs",
             "value": "900",
             "context": "assertion_argument"
           },
           {
             "line": 13,
+            "source_file": "tests/fees.rs",
             "value": "volume_litres = 50",
             "context": "function_argument"
           },
@@ -188,11 +196,13 @@
       "observed_values": [
         {
           "line": 13,
+          "source_file": "tests/fees.rs",
           "value": "900",
           "context": "assertion_argument"
         },
         {
           "line": 13,
+          "source_file": "tests/fees.rs",
           "value": "volume_litres = 50",
           "context": "function_argument"
         },

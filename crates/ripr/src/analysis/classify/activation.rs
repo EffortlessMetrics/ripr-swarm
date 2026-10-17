@@ -13,6 +13,8 @@ use super::text::{
 };
 use crate::domain::*;
 
+mod source_provenance;
+
 #[cfg(test)]
 pub(in crate::analysis) fn activation_evidence(
     probe: &Probe,
@@ -263,6 +265,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
                     .map(|parameter| format!("{parameter} = {value}"))
                     .unwrap_or(value);
                 facts.push(ValueFact {
+                    source_file: None,
                     line: call.line,
                     text: call.text.clone(),
                     value,
@@ -271,6 +274,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
             }
             for value in enum_variant_values(argument) {
                 facts.push(ValueFact {
+                    source_file: None,
                     line: call.line,
                     text: call.text.clone(),
                     context: path_value_context(&value),
@@ -288,6 +292,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
             }
             for value in scalar_values(&argument) {
                 facts.push(ValueFact {
+                    source_file: None,
                     line: assertion.line,
                     text: assertion.text.clone(),
                     value,
@@ -297,6 +302,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
         }
         for value in enum_variant_values(&assertion.text) {
             facts.push(ValueFact {
+                source_file: None,
                 line: assertion.line,
                 text: assertion.text.clone(),
                 context: path_value_context(&value),
@@ -311,6 +317,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
         if looks_like_table_row(trimmed) {
             for value in spelled_scalar_values(trimmed) {
                 facts.push(ValueFact {
+                    source_file: None,
                     line: line_number,
                     text: trimmed.to_string(),
                     value,
@@ -321,6 +328,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
         if looks_like_builder_method(trimmed) {
             for value in spelled_scalar_values(trimmed) {
                 facts.push(ValueFact {
+                    source_file: None,
                     line: line_number,
                     text: trimmed.to_string(),
                     value,
@@ -330,6 +338,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
         }
     }
 
+    source_provenance::attach_test_source(&mut facts, &test.file);
     sort_value_facts(&mut facts);
     facts
 }
@@ -414,6 +423,7 @@ fn observed_discriminator_values(
             && left_value.value == right_value.value
         {
             facts.push(ValueFact {
+                source_file: None,
                 line: row.first().map(|cell| cell.line).unwrap_or_default(),
                 text: format!(
                     "{} | {}; {}",
@@ -446,6 +456,7 @@ fn observed_discriminator_values(
             .is_some_and(|value| comparable_value(value) == comparable_value(&left_value.value))
         {
             facts.push(ValueFact {
+                source_file: None,
                 line: left_value.line,
                 text: left_value.text.clone(),
                 value: format!("{left} == {right}"),
@@ -463,6 +474,7 @@ fn observed_discriminator_values(
             index,
         ) {
             facts.push(ValueFact {
+                source_file: None,
                 line,
                 text: format!("{text} | argument names constant {right}"),
                 value: format!("{left} == {right}"),
@@ -1412,6 +1424,7 @@ fn element_boundary_observations(
         .iter()
         .filter(|run| view.tail.run_reaches_boundary(&run.elements, &boundary))
         .map(|run| ValueFact {
+            source_file: None,
             line: run.line,
             text: format!(
                 "{} | element {} = {boundary} of {}",
@@ -4029,12 +4042,14 @@ pub(super) fn sort_value_facts(facts: &mut Vec<ValueFact>) {
             .then(left.context.as_str().cmp(right.context.as_str()))
             .then(left.value.cmp(&right.value))
             .then(left.text.cmp(&right.text))
+            .then(left.source_file.cmp(&right.source_file))
     });
     facts.dedup_by(|left, right| {
         left.line == right.line
             && left.text == right.text
             && left.value == right.value
             && left.context == right.context
+            && left.source_file == right.source_file
     });
 }
 
@@ -6326,6 +6341,7 @@ assert_eq!(input.amount, 100);"#
 
     fn value_fact(line: usize, text: &str, value: &str, context: ValueContext) -> ValueFact {
         ValueFact {
+            source_file: None,
             line,
             text: text.to_string(),
             value: value.to_string(),

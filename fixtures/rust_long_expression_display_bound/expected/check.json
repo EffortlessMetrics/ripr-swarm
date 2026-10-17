@@ -53,11 +53,13 @@
         "observed_values": [
           {
             "line": 27,
+            "source_file": "src/lib.rs",
             "value": "\"stale_baseline\"",
             "context": "assertion_argument"
           },
           {
             "line": 27,
+            "source_file": "src/lib.rs",
             "value": "fallback = \"unknown\"",
             "context": "function_argument"
           }
@@ -68,11 +70,13 @@
       "observed_values": [
         {
           "line": 27,
+          "source_file": "src/lib.rs",
           "value": "\"stale_baseline\"",
           "context": "assertion_argument"
         },
         {
           "line": 27,
+          "source_file": "src/lib.rs",
           "value": "fallback = \"unknown\"",
           "context": "function_argument"
         }

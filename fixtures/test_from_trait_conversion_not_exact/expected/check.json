@@ -55,26 +55,31 @@
         "observed_values": [
           {
             "line": 11,
+            "source_file": "src/lib.rs",
             "value": "0",
             "context": "table_row"
           },
           {
             "line": 11,
+            "source_file": "src/lib.rs",
             "value": "1",
             "context": "table_row"
           },
           {
             "line": 11,
+            "source_file": "src/lib.rs",
             "value": "2",
             "context": "table_row"
           },
           {
             "line": 12,
+            "source_file": "src/lib.rs",
             "value": "points = 0",
             "context": "function_argument"
           },
           {
             "line": 12,
+            "source_file": "src/lib.rs",
             "value": "points = 2",
             "context": "function_argument"
           }
@@ -85,26 +90,31 @@
       "observed_values": [
         {
           "line": 11,
+          "source_file": "src/lib.rs",
           "value": "0",
           "context": "table_row"
         },
         {
           "line": 11,
+          "source_file": "src/lib.rs",
           "value": "1",
           "context": "table_row"
         },
         {
           "line": 11,
+          "source_file": "src/lib.rs",
           "value": "2",
           "context": "table_row"
         },
         {
           "line": 12,
+          "source_file": "src/lib.rs",
           "value": "points = 0",
           "context": "function_argument"
         },
         {
           "line": 12,
+          "source_file": "src/lib.rs",
           "value": "points = 2",
           "context": "function_argument"
         }

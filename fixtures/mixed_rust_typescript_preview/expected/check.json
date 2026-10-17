@@ -56,31 +56,37 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/pricing.rs",
             "value": "50",
             "context": "assertion_argument"
           },
           {
             "line": 5,
+            "source_file": "tests/pricing.rs",
             "value": "amount = 50",
             "context": "function_argument"
           },
           {
             "line": 5,
+            "source_file": "tests/pricing.rs",
             "value": "discount_threshold = 100",
             "context": "function_argument"
           },
           {
             "line": 10,
+            "source_file": "tests/pricing.rs",
             "value": "9_990",
             "context": "assertion_argument"
           },
           {
             "line": 10,
+            "source_file": "tests/pricing.rs",
             "value": "amount = 10_000",
             "context": "function_argument"
           },
           {
             "line": 10,
+            "source_file": "tests/pricing.rs",
             "value": "discount_threshold = 100",
             "context": "function_argument"
           }
@@ -96,31 +102,37 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/pricing.rs",
           "value": "50",
           "context": "assertion_argument"
         },
         {
           "line": 5,
+          "source_file": "tests/pricing.rs",
           "value": "amount = 50",
           "context": "function_argument"
         },
         {
           "line": 5,
+          "source_file": "tests/pricing.rs",
           "value": "discount_threshold = 100",
           "context": "function_argument"
         },
         {
           "line": 10,
+          "source_file": "tests/pricing.rs",
           "value": "9_990",
           "context": "assertion_argument"
         },
         {
           "line": 10,
+          "source_file": "tests/pricing.rs",
           "value": "amount = 10_000",
           "context": "function_argument"
         },
         {
           "line": 10,
+          "source_file": "tests/pricing.rs",
           "value": "discount_threshold = 100",
           "context": "function_argument"
         }

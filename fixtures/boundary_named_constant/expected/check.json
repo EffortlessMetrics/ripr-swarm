@@ -56,21 +56,25 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/pricing.rs",
             "value": "5_000",
             "context": "assertion_argument"
           },
           {
             "line": 5,
+            "source_file": "tests/pricing.rs",
             "value": "amount = 5_000",
             "context": "function_argument"
           },
           {
             "line": 6,
+            "source_file": "tests/pricing.rs",
             "value": "9_000",
             "context": "assertion_argument"
           },
           {
             "line": 6,
+            "source_file": "tests/pricing.rs",
             "value": "amount = 10_000",
             "context": "function_argument"
           },
@@ -82,11 +86,13 @@
           },
           {
             "line": 7,
+            "source_file": "tests/pricing.rs",
             "value": "18_000",
             "context": "assertion_argument"
           },
           {
             "line": 7,
+            "source_file": "tests/pricing.rs",
             "value": "amount = 20_000",
             "context": "function_argument"
           }
@@ -97,21 +103,25 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/pricing.rs",
           "value": "5_000",
           "context": "assertion_argument"
         },
         {
           "line": 5,
+          "source_file": "tests/pricing.rs",
           "value": "amount = 5_000",
           "context": "function_argument"
         },
         {
           "line": 6,
+          "source_file": "tests/pricing.rs",
           "value": "9_000",
           "context": "assertion_argument"
         },
         {
           "line": 6,
+          "source_file": "tests/pricing.rs",
           "value": "amount = 10_000",
           "context": "function_argument"
         },
@@ -123,11 +133,13 @@
         },
         {
           "line": 7,
+          "source_file": "tests/pricing.rs",
           "value": "18_000",
           "context": "assertion_argument"
         },
         {
           "line": 7,
+          "source_file": "tests/pricing.rs",
           "value": "amount = 20_000",
           "context": "function_argument"
         }
@@ -221,21 +233,25 @@
         "observed_values": [
           {
             "line": 12,
+            "source_file": "tests/pricing.rs",
             "value": "100",
             "context": "assertion_argument"
           },
           {
             "line": 12,
+            "source_file": "tests/pricing.rs",
             "value": "items = 3",
             "context": "function_argument"
           },
           {
             "line": 13,
+            "source_file": "tests/pricing.rs",
             "value": "90",
             "context": "assertion_argument"
           },
           {
             "line": 13,
+            "source_file": "tests/pricing.rs",
             "value": "parcels::BULK_ITEMS",
             "context": "constant"
           },
@@ -252,21 +268,25 @@
       "observed_values": [
         {
           "line": 12,
+          "source_file": "tests/pricing.rs",
           "value": "100",
           "context": "assertion_argument"
         },
         {
           "line": 12,
+          "source_file": "tests/pricing.rs",
           "value": "items = 3",
           "context": "function_argument"
         },
         {
           "line": 13,
+          "source_file": "tests/pricing.rs",
           "value": "90",
           "context": "assertion_argument"
         },
         {
           "line": 13,
+          "source_file": "tests/pricing.rs",
           "value": "parcels::BULK_ITEMS",
           "context": "constant"
         },
@@ -356,21 +376,25 @@
         "observed_values": [
           {
             "line": 18,
+            "source_file": "tests/pricing.rs",
             "value": "500",
             "context": "assertion_argument"
           },
           {
             "line": 18,
+            "source_file": "tests/pricing.rs",
             "value": "amount = 1_000",
             "context": "function_argument"
           },
           {
             "line": 19,
+            "source_file": "tests/pricing.rs",
             "value": "0",
             "context": "assertion_argument"
           },
           {
             "line": 19,
+            "source_file": "tests/pricing.rs",
             "value": "amount = 5_000",
             "context": "function_argument"
           }
@@ -381,21 +405,25 @@
       "observed_values": [
         {
           "line": 18,
+          "source_file": "tests/pricing.rs",
           "value": "500",
           "context": "assertion_argument"
         },
         {
           "line": 18,
+          "source_file": "tests/pricing.rs",
           "value": "amount = 1_000",
           "context": "function_argument"
         },
         {
           "line": 19,
+          "source_file": "tests/pricing.rs",
           "value": "0",
           "context": "assertion_argument"
         },
         {
           "line": 19,
+          "source_file": "tests/pricing.rs",
           "value": "amount = 5_000",
           "context": "function_argument"
         }

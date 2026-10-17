@@ -961,6 +961,7 @@ mod tests {
                     "boundary value missing",
                 ),
                 observed_values: vec![ValueFact {
+                    source_file: None,
                     line: 12,
                     text: "discounted_total(150)".to_string(),
                     value: "150".to_string(),

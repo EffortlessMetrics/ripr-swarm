@@ -57,6 +57,8 @@ Updated:
 Reason:
 RIPR-SPEC-0122: human check output prints the stub route or a No test stub here refusal for every probe family (#8412)
 
+RIPR-SPEC-0158 and #7805: additive source_file metadata on test-source values only; check.json lines otherwise byte-identical
+
 Command:
 `cargo xtask goldens bless collection_argument_wrong_field --reason "..."`
 

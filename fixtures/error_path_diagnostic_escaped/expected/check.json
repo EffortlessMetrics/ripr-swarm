@@ -55,16 +55,19 @@
         "observed_values": [
           {
             "line": 17,
+            "source_file": "src/lib.rs",
             "value": "10",
             "context": "assertion_argument"
           },
           {
             "line": 18,
+            "source_file": "src/lib.rs",
             "value": "\"read /\"error/\", (panic)\"",
             "context": "assertion_argument"
           },
           {
             "line": 18,
+            "source_file": "src/lib.rs",
             "value": "10",
             "context": "assertion_argument"
           }
@@ -75,16 +78,19 @@
       "observed_values": [
         {
           "line": 17,
+          "source_file": "src/lib.rs",
           "value": "10",
           "context": "assertion_argument"
         },
         {
           "line": 18,
+          "source_file": "src/lib.rs",
           "value": "\"read /\"error/\", (panic)\"",
           "context": "assertion_argument"
         },
         {
           "line": 18,
+          "source_file": "src/lib.rs",
           "value": "10",
           "context": "assertion_argument"
         }
@@ -160,16 +166,19 @@
         "observed_values": [
           {
             "line": 17,
+            "source_file": "src/lib.rs",
             "value": "10",
             "context": "assertion_argument"
           },
           {
             "line": 18,
+            "source_file": "src/lib.rs",
             "value": "\"read /\"error/\", (panic)\"",
             "context": "assertion_argument"
           },
           {
             "line": 18,
+            "source_file": "src/lib.rs",
             "value": "10",
             "context": "assertion_argument"
           }
@@ -180,16 +189,19 @@
       "observed_values": [
         {
           "line": 17,
+          "source_file": "src/lib.rs",
           "value": "10",
           "context": "assertion_argument"
         },
         {
           "line": 18,
+          "source_file": "src/lib.rs",
           "value": "\"read /\"error/\", (panic)\"",
           "context": "assertion_argument"
         },
         {
           "line": 18,
+          "source_file": "src/lib.rs",
           "value": "10",
           "context": "assertion_argument"
         }

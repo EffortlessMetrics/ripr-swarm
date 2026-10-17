@@ -344,3 +344,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — propagate_value_returned (30)
+
+Reason:
+RIPR-SPEC-0158 and #7805: independently audited additive source_file metadata only; all classification, oracle, evidence and human output preserved
+
+Command:
+`cargo xtask goldens bless propagate_value_returned --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -54,11 +54,13 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/flip.rs",
             "value": "Kind::Alpha",
             "context": "enum_variant"
           },
           {
             "line": 5,
+            "source_file": "tests/flip.rs",
             "value": "Kind::Beta",
             "context": "enum_variant"
           }
@@ -74,11 +76,13 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/flip.rs",
           "value": "Kind::Alpha",
           "context": "enum_variant"
         },
         {
           "line": 5,
+          "source_file": "tests/flip.rs",
           "value": "Kind::Beta",
           "context": "enum_variant"
         }

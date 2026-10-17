@@ -56,6 +56,7 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/split.rs",
             "value": "input = 10",
             "context": "function_argument"
           },
@@ -67,16 +68,19 @@
           },
           {
             "line": 6,
+            "source_file": "tests/split.rs",
             "value": "input = 9",
             "context": "function_argument"
           },
           {
             "line": 11,
+            "source_file": "tests/split.rs",
             "value": "true",
             "context": "assertion_argument"
           },
           {
             "line": 11,
+            "source_file": "tests/split.rs",
             "value": "input = 100",
             "context": "function_argument"
           }
@@ -87,6 +91,7 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/split.rs",
           "value": "input = 10",
           "context": "function_argument"
         },
@@ -98,16 +103,19 @@
         },
         {
           "line": 6,
+          "source_file": "tests/split.rs",
           "value": "input = 9",
           "context": "function_argument"
         },
         {
           "line": 11,
+          "source_file": "tests/split.rs",
           "value": "true",
           "context": "assertion_argument"
         },
         {
           "line": 11,
+          "source_file": "tests/split.rs",
           "value": "input = 100",
           "context": "function_argument"
         }
@@ -194,6 +202,7 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/split.rs",
             "value": "input = 10",
             "context": "function_argument"
           },
@@ -205,16 +214,19 @@
           },
           {
             "line": 6,
+            "source_file": "tests/split.rs",
             "value": "input = 9",
             "context": "function_argument"
           },
           {
             "line": 11,
+            "source_file": "tests/split.rs",
             "value": "true",
             "context": "assertion_argument"
           },
           {
             "line": 11,
+            "source_file": "tests/split.rs",
             "value": "input = 100",
             "context": "function_argument"
           }
@@ -225,6 +237,7 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/split.rs",
           "value": "input = 10",
           "context": "function_argument"
         },
@@ -236,16 +249,19 @@
         },
         {
           "line": 6,
+          "source_file": "tests/split.rs",
           "value": "input = 9",
           "context": "function_argument"
         },
         {
           "line": 11,
+          "source_file": "tests/split.rs",
           "value": "true",
           "context": "assertion_argument"
         },
         {
           "line": 11,
+          "source_file": "tests/split.rs",
           "value": "input = 100",
           "context": "function_argument"
         }

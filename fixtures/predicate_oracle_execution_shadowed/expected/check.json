@@ -54,11 +54,13 @@
         "observed_values": [
           {
             "line": 15,
+            "source_file": "src/lib.rs",
             "value": "90",
             "context": "assertion_argument"
           },
           {
             "line": 15,
+            "source_file": "src/lib.rs",
             "value": "amount = 100",
             "context": "function_argument"
           },
@@ -70,6 +72,7 @@
           },
           {
             "line": 15,
+            "source_file": "src/lib.rs",
             "value": "discount_threshold = 100",
             "context": "function_argument"
           }
@@ -80,11 +83,13 @@
       "observed_values": [
         {
           "line": 15,
+          "source_file": "src/lib.rs",
           "value": "90",
           "context": "assertion_argument"
         },
         {
           "line": 15,
+          "source_file": "src/lib.rs",
           "value": "amount = 100",
           "context": "function_argument"
         },
@@ -96,6 +101,7 @@
         },
         {
           "line": 15,
+          "source_file": "src/lib.rs",
           "value": "discount_threshold = 100",
           "context": "function_argument"
         }

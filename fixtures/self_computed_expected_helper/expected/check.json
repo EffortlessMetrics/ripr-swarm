@@ -54,6 +54,7 @@
         "observed_values": [
           {
             "line": 15,
+            "source_file": "src/lib.rs",
             "value": "subtotal = 250",
             "context": "function_argument"
           }
@@ -64,6 +65,7 @@
       "observed_values": [
         {
           "line": 15,
+          "source_file": "src/lib.rs",
           "value": "subtotal = 250",
           "context": "function_argument"
         }

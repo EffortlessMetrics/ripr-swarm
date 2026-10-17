@@ -54,6 +54,7 @@
         "observed_values": [
           {
             "line": 6,
+            "source_file": "tests/errors.rs",
             "value": "ParseSummaryError::MalformedSource",
             "context": "enum_variant"
           }
@@ -64,6 +65,7 @@
       "observed_values": [
         {
           "line": 6,
+          "source_file": "tests/errors.rs",
           "value": "ParseSummaryError::MalformedSource",
           "context": "enum_variant"
         }
@@ -138,6 +140,7 @@
         "observed_values": [
           {
             "line": 6,
+            "source_file": "tests/errors.rs",
             "value": "ParseSummaryError::MalformedSource",
             "context": "enum_variant"
           }
@@ -148,6 +151,7 @@
       "observed_values": [
         {
           "line": 6,
+          "source_file": "tests/errors.rs",
           "value": "ParseSummaryError::MalformedSource",
           "context": "enum_variant"
         }

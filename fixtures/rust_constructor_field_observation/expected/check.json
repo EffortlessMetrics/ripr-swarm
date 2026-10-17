@@ -54,6 +54,7 @@
         "observed_values": [
           {
             "line": 6,
+            "source_file": "tests/lower.rs",
             "value": "Storage::Our",
             "context": "enum_variant"
           }
@@ -64,6 +65,7 @@
       "observed_values": [
         {
           "line": 6,
+          "source_file": "tests/lower.rs",
           "value": "Storage::Our",
           "context": "enum_variant"
         }

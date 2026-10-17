@@ -54,6 +54,7 @@
         "observed_values": [
           {
             "line": 9,
+            "source_file": "tests/pricing.rs",
             "value": "90",
             "context": "assertion_argument"
           }
@@ -64,6 +65,7 @@
       "observed_values": [
         {
           "line": 9,
+          "source_file": "tests/pricing.rs",
           "value": "90",
           "context": "assertion_argument"
         }

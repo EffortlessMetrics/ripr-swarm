@@ -54,11 +54,13 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/weight_tests.rs",
             "value": "12",
             "context": "assertion_argument"
           },
           {
             "line": 5,
+            "source_file": "tests/weight_tests.rs",
             "value": "input = 4",
             "context": "function_argument",
             "provenance": "let _unused = || assert_eq!(weight(4), 12);"
@@ -70,11 +72,13 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/weight_tests.rs",
           "value": "12",
           "context": "assertion_argument"
         },
         {
           "line": 5,
+          "source_file": "tests/weight_tests.rs",
           "value": "input = 4",
           "context": "function_argument",
           "provenance": "let _unused = || assert_eq!(weight(4), 12);"

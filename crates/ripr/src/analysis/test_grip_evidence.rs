@@ -883,6 +883,7 @@ fn observed_value_facts_for_test(
             // Direct literal first (matches pre-v2 behavior).
             for value in scalar_values(&arg) {
                 observed.push(ValueFact {
+                    source_file: None,
                     line: call.line,
                     text: call.text.clone(),
                     value,
@@ -898,6 +899,7 @@ fn observed_value_facts_for_test(
             // same-file const / Some/Ok/Err).
             for (value, context) in env.resolve_at_call(&arg, call.line, &call.name, &call.text) {
                 observed.push(ValueFact {
+                    source_file: None,
                     line: call.line,
                     text: call.text.clone(),
                     value,

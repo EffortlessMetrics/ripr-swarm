@@ -55,11 +55,13 @@
         "observed_values": [
           {
             "line": 6,
+            "source_file": "tests/ledger_tests.rs",
             "value": "amount = 5",
             "context": "function_argument"
           },
           {
             "line": 7,
+            "source_file": "tests/ledger_tests.rs",
             "value": "145",
             "context": "assertion_argument"
           }
@@ -70,11 +72,13 @@
       "observed_values": [
         {
           "line": 6,
+          "source_file": "tests/ledger_tests.rs",
           "value": "amount = 5",
           "context": "function_argument"
         },
         {
           "line": 7,
+          "source_file": "tests/ledger_tests.rs",
           "value": "145",
           "context": "assertion_argument"
         }

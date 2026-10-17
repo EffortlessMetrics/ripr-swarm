@@ -54,11 +54,13 @@
         "observed_values": [
           {
             "line": 20,
+            "source_file": "src/heaters.rs",
             "value": "50",
             "context": "assertion_argument"
           },
           {
             "line": 20,
+            "source_file": "src/heaters.rs",
             "value": "Mode::Cold",
             "context": "enum_variant"
           }
@@ -69,11 +71,13 @@
       "observed_values": [
         {
           "line": 20,
+          "source_file": "src/heaters.rs",
           "value": "50",
           "context": "assertion_argument"
         },
         {
           "line": 20,
+          "source_file": "src/heaters.rs",
           "value": "Mode::Cold",
           "context": "enum_variant"
         }

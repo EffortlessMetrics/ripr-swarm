@@ -53,16 +53,19 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/controls.rs",
             "value": "\"a\"",
             "context": "assertion_argument"
           },
           {
             "line": 5,
+            "source_file": "tests/controls.rs",
             "value": "delim = 'x'",
             "context": "function_argument"
           },
           {
             "line": 5,
+            "source_file": "tests/controls.rs",
             "value": "input = \"ab\"",
             "context": "function_argument"
           }
@@ -73,16 +76,19 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/controls.rs",
           "value": "\"a\"",
           "context": "assertion_argument"
         },
         {
           "line": 5,
+          "source_file": "tests/controls.rs",
           "value": "delim = 'x'",
           "context": "function_argument"
         },
         {
           "line": 5,
+          "source_file": "tests/controls.rs",
           "value": "input = \"ab\"",
           "context": "function_argument"
         }
@@ -154,16 +160,19 @@
         "observed_values": [
           {
             "line": 10,
+            "source_file": "tests/controls.rs",
             "value": "\"ax\"",
             "context": "assertion_argument"
           },
           {
             "line": 10,
+            "source_file": "tests/controls.rs",
             "value": "delim = 'x'",
             "context": "function_argument"
           },
           {
             "line": 10,
+            "source_file": "tests/controls.rs",
             "value": "input = \"ax\"",
             "context": "function_argument"
           }
@@ -174,16 +183,19 @@
       "observed_values": [
         {
           "line": 10,
+          "source_file": "tests/controls.rs",
           "value": "\"ax\"",
           "context": "assertion_argument"
         },
         {
           "line": 10,
+          "source_file": "tests/controls.rs",
           "value": "delim = 'x'",
           "context": "function_argument"
         },
         {
           "line": 10,
+          "source_file": "tests/controls.rs",
           "value": "input = \"ax\"",
           "context": "function_argument"
         }
@@ -255,11 +267,13 @@
         "observed_values": [
           {
             "line": 15,
+            "source_file": "tests/controls.rs",
             "value": "delim = 'x'",
             "context": "function_argument"
           },
           {
             "line": 15,
+            "source_file": "tests/controls.rs",
             "value": "input = \"ax\"",
             "context": "function_argument"
           }
@@ -270,11 +284,13 @@
       "observed_values": [
         {
           "line": 15,
+          "source_file": "tests/controls.rs",
           "value": "delim = 'x'",
           "context": "function_argument"
         },
         {
           "line": 15,
+          "source_file": "tests/controls.rs",
           "value": "input = \"ax\"",
           "context": "function_argument"
         }

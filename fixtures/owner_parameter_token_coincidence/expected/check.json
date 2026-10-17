@@ -56,26 +56,31 @@
         "observed_values": [
           {
             "line": 15,
+            "source_file": "src/lib.rs",
             "value": "subtotal = 300",
             "context": "function_argument"
           },
           {
             "line": 16,
+            "source_file": "src/lib.rs",
             "value": "0",
             "context": "assertion_argument"
           },
           {
             "line": 21,
+            "source_file": "src/lib.rs",
             "value": "100",
             "context": "assertion_argument"
           },
           {
             "line": 21,
+            "source_file": "src/lib.rs",
             "value": "3",
             "context": "assertion_argument"
           },
           {
             "line": 21,
+            "source_file": "src/lib.rs",
             "value": "300",
             "context": "assertion_argument"
           }
@@ -86,26 +91,31 @@
       "observed_values": [
         {
           "line": 15,
+          "source_file": "src/lib.rs",
           "value": "subtotal = 300",
           "context": "function_argument"
         },
         {
           "line": 16,
+          "source_file": "src/lib.rs",
           "value": "0",
           "context": "assertion_argument"
         },
         {
           "line": 21,
+          "source_file": "src/lib.rs",
           "value": "100",
           "context": "assertion_argument"
         },
         {
           "line": 21,
+          "source_file": "src/lib.rs",
           "value": "3",
           "context": "assertion_argument"
         },
         {
           "line": 21,
+          "source_file": "src/lib.rs",
           "value": "300",
           "context": "assertion_argument"
         }

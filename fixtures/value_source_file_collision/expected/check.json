@@ -1,0 +1,291 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/value_source_file_collision/input",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":2,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:7727e957216649fdda2edaf42ae547d8f7e4412bfebcc04f79bfa7d58a0a6950","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:return_value:d4450aea",
+      "canonical_gap_id": "gap:rust:src/lib.rs:coverage_summary_receipt:return_value:return_value:none",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:coverage_summary_receipt:return_value:return_value:none",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "coverage_summary_receipt",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "none"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:d4450aea",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 5,
+        "expression": "None"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach coverage_summary_receipt: json_indexed_receipt, unrelated_coverage_summary_receipt_text"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: None"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach coverage_summary_receipt: json_indexed_receipt, unrelated_coverage_summary_receipt_text", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: None", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: None (line 5)", "related test src/lib.rs:10 json_indexed_receipt uses strong exact value oracle: assert_eq!(summary[\"status\"], \"not_collected\");", "related test src/decoy.rs:2 unrelated_coverage_summary_receipt_text uses weak relational check oracle: assert!(shared_context.contains(\"## UB Ledger Context\"));", "source function argument value present = false at line 11", "source assertion argument value \"## UB Ledger Context\" at line 12", "source assertion argument value \"not_collected\" at line 12", "source assertion argument value \"status\" at line 12"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"None","line":5}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: None", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach coverage_summary_receipt: json_indexed_receipt, unrelated_coverage_summary_receipt_text"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "11": "let summary = coverage_summary_receipt(false);",
+        "12": "assert!(shared_context.contains(\"## UB Ledger Context\"));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 11,
+            "source_file": "src/lib.rs",
+            "value": "present = false",
+            "context": "function_argument"
+          },
+          {
+            "line": 12,
+            "source_file": "src/decoy.rs",
+            "value": "\"## UB Ledger Context\"",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 12,
+            "source_file": "src/lib.rs",
+            "value": "\"not_collected\"",
+            "context": "assertion_argument",
+            "provenance": "assert_eq!(summary[\"status\"], \"not_collected\");"
+          },
+          {
+            "line": 12,
+            "source_file": "src/lib.rs",
+            "value": "\"status\"",
+            "context": "assertion_argument",
+            "provenance": "assert_eq!(summary[\"status\"], \"not_collected\");"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 11,
+          "source_file": "src/lib.rs",
+          "value": "present = false",
+          "context": "function_argument"
+        },
+        {
+          "line": 12,
+          "source_file": "src/decoy.rs",
+          "value": "\"## UB Ledger Context\"",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 12,
+          "source_file": "src/lib.rs",
+          "value": "\"not_collected\"",
+          "context": "assertion_argument",
+          "provenance": "assert_eq!(summary[\"status\"], \"not_collected\");"
+        },
+        {
+          "line": 12,
+          "source_file": "src/lib.rs",
+          "value": "\"status\"",
+          "context": "assertion_argument",
+          "provenance": "assert_eq!(summary[\"status\"], \"not_collected\");"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "json_indexed_receipt",
+          "file": "src/lib.rs",
+          "line": 10,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(summary[\"status\"], \"not_collected\");",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "unrelated_coverage_summary_receipt_text",
+          "file": "src/decoy.rs",
+          "line": 2,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(shared_context.contains(\"## UB Ledger Context\"));",
+          "relation_reason": "owner_named_test",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by name only"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "The related test `json_indexed_receipt` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
+      "suggested_next_action": "The related test `json_indexed_receipt` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:9f374af3",
+      "canonical_gap_id": "gap:rust:src/lib.rs:coverage_summary_receipt:return_value:return_value:some_string_new",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:coverage_summary_receipt:return_value:return_value:some_string_new",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "coverage_summary_receipt",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "some_string_new"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:9f374af3",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 5,
+        "expression": "Some(String::new())"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach coverage_summary_receipt: json_indexed_receipt, unrelated_coverage_summary_receipt_text"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"weak","confidence":"low","summary":"No complete owner-bound propagation witness found for returned value: None"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach coverage_summary_receipt: json_indexed_receipt, unrelated_coverage_summary_receipt_text", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: No complete owner-bound propagation witness found for returned value: None", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: None (line 5)", "related test src/lib.rs:10 json_indexed_receipt uses strong exact value oracle: assert_eq!(summary[\"status\"], \"not_collected\");", "related test src/decoy.rs:2 unrelated_coverage_summary_receipt_text uses weak relational check oracle: assert!(shared_context.contains(\"## UB Ledger Context\"));", "source function argument value present = false at line 11", "source assertion argument value \"## UB Ledger Context\" at line 12", "source assertion argument value \"not_collected\" at line 12", "source assertion argument value \"status\" at line 12"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"None","line":5}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No complete owner-bound propagation witness found for returned value: None", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach coverage_summary_receipt: json_indexed_receipt, unrelated_coverage_summary_receipt_text"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "11": "let summary = coverage_summary_receipt(false);",
+        "12": "assert!(shared_context.contains(\"## UB Ledger Context\"));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 11,
+            "source_file": "src/lib.rs",
+            "value": "present = false",
+            "context": "function_argument"
+          },
+          {
+            "line": 12,
+            "source_file": "src/decoy.rs",
+            "value": "\"## UB Ledger Context\"",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 12,
+            "source_file": "src/lib.rs",
+            "value": "\"not_collected\"",
+            "context": "assertion_argument",
+            "provenance": "assert_eq!(summary[\"status\"], \"not_collected\");"
+          },
+          {
+            "line": 12,
+            "source_file": "src/lib.rs",
+            "value": "\"status\"",
+            "context": "assertion_argument",
+            "provenance": "assert_eq!(summary[\"status\"], \"not_collected\");"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 11,
+          "source_file": "src/lib.rs",
+          "value": "present = false",
+          "context": "function_argument"
+        },
+        {
+          "line": 12,
+          "source_file": "src/decoy.rs",
+          "value": "\"## UB Ledger Context\"",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 12,
+          "source_file": "src/lib.rs",
+          "value": "\"not_collected\"",
+          "context": "assertion_argument",
+          "provenance": "assert_eq!(summary[\"status\"], \"not_collected\");"
+        },
+        {
+          "line": 12,
+          "source_file": "src/lib.rs",
+          "value": "\"status\"",
+          "context": "assertion_argument",
+          "provenance": "assert_eq!(summary[\"status\"], \"not_collected\");"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "json_indexed_receipt",
+          "file": "src/lib.rs",
+          "line": 10,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(summary[\"status\"], \"not_collected\");",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "unrelated_coverage_summary_receipt_text",
+          "file": "src/decoy.rs",
+          "line": 2,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(shared_context.contains(\"## UB Ledger Context\"));",
+          "relation_reason": "owner_named_test",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by name only"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "The related test `json_indexed_receipt` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
+      "suggested_next_action": "The related test `json_indexed_receipt` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
+      "language": "rust",
+      "source_currentness": "base_deleted"
+    }
+  ]
+}

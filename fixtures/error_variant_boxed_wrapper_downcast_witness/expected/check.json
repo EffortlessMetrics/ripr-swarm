@@ -55,11 +55,13 @@
         "observed_values": [
           {
             "line": 10,
+            "source_file": "tests/errors.rs",
             "value": "raw = \"@bad;\"",
             "context": "function_argument"
           },
           {
             "line": 11,
+            "source_file": "tests/errors.rs",
             "value": "ParseSummaryError::MalformedSource",
             "context": "enum_variant"
           }
@@ -70,11 +72,13 @@
       "observed_values": [
         {
           "line": 10,
+          "source_file": "tests/errors.rs",
           "value": "raw = \"@bad;\"",
           "context": "function_argument"
         },
         {
           "line": 11,
+          "source_file": "tests/errors.rs",
           "value": "ParseSummaryError::MalformedSource",
           "context": "enum_variant"
         }
@@ -148,11 +152,13 @@
         "observed_values": [
           {
             "line": 10,
+            "source_file": "tests/errors.rs",
             "value": "raw = \"@bad;\"",
             "context": "function_argument"
           },
           {
             "line": 11,
+            "source_file": "tests/errors.rs",
             "value": "ParseSummaryError::MalformedSource",
             "context": "enum_variant"
           }
@@ -163,11 +169,13 @@
       "observed_values": [
         {
           "line": 10,
+          "source_file": "tests/errors.rs",
           "value": "raw = \"@bad;\"",
           "context": "function_argument"
         },
         {
           "line": 11,
+          "source_file": "tests/errors.rs",
           "value": "ParseSummaryError::MalformedSource",
           "context": "enum_variant"
         }
@@ -241,11 +249,13 @@
         "observed_values": [
           {
             "line": 10,
+            "source_file": "tests/errors.rs",
             "value": "raw = \"@bad;\"",
             "context": "function_argument"
           },
           {
             "line": 11,
+            "source_file": "tests/errors.rs",
             "value": "ParseSummaryError::MalformedSource",
             "context": "enum_variant"
           }
@@ -256,11 +266,13 @@
       "observed_values": [
         {
           "line": 10,
+          "source_file": "tests/errors.rs",
           "value": "raw = \"@bad;\"",
           "context": "function_argument"
         },
         {
           "line": 11,
+          "source_file": "tests/errors.rs",
           "value": "ParseSummaryError::MalformedSource",
           "context": "enum_variant"
         }
@@ -334,11 +346,13 @@
         "observed_values": [
           {
             "line": 10,
+            "source_file": "tests/errors.rs",
             "value": "raw = \"@bad;\"",
             "context": "function_argument"
           },
           {
             "line": 11,
+            "source_file": "tests/errors.rs",
             "value": "ParseSummaryError::MalformedSource",
             "context": "enum_variant"
           }
@@ -349,11 +363,13 @@
       "observed_values": [
         {
           "line": 10,
+          "source_file": "tests/errors.rs",
           "value": "raw = \"@bad;\"",
           "context": "function_argument"
         },
         {
           "line": 11,
+          "source_file": "tests/errors.rs",
           "value": "ParseSummaryError::MalformedSource",
           "context": "enum_variant"
         }
@@ -416,16 +432,19 @@
         "observed_values": [
           {
             "line": 11,
+            "source_file": "tests/errors.rs",
             "value": "ParseSummaryError::MalformedSource",
             "context": "enum_variant"
           },
           {
             "line": 20,
+            "source_file": "tests/errors.rs",
             "value": "raw = \"@bad;\"",
             "context": "function_argument"
           },
           {
             "line": 23,
+            "source_file": "tests/errors.rs",
             "value": "ParseSummaryError::MalformedSource",
             "context": "enum_variant"
           }
@@ -436,16 +455,19 @@
       "observed_values": [
         {
           "line": 11,
+          "source_file": "tests/errors.rs",
           "value": "ParseSummaryError::MalformedSource",
           "context": "enum_variant"
         },
         {
           "line": 20,
+          "source_file": "tests/errors.rs",
           "value": "raw = \"@bad;\"",
           "context": "function_argument"
         },
         {
           "line": 23,
+          "source_file": "tests/errors.rs",
           "value": "ParseSummaryError::MalformedSource",
           "context": "enum_variant"
         }
@@ -530,16 +552,19 @@
         "observed_values": [
           {
             "line": 11,
+            "source_file": "tests/errors.rs",
             "value": "ParseSummaryError::MalformedSource",
             "context": "enum_variant"
           },
           {
             "line": 20,
+            "source_file": "tests/errors.rs",
             "value": "raw = \"@bad;\"",
             "context": "function_argument"
           },
           {
             "line": 23,
+            "source_file": "tests/errors.rs",
             "value": "ParseSummaryError::MalformedSource",
             "context": "enum_variant"
           }
@@ -550,16 +575,19 @@
       "observed_values": [
         {
           "line": 11,
+          "source_file": "tests/errors.rs",
           "value": "ParseSummaryError::MalformedSource",
           "context": "enum_variant"
         },
         {
           "line": 20,
+          "source_file": "tests/errors.rs",
           "value": "raw = \"@bad;\"",
           "context": "function_argument"
         },
         {
           "line": 23,
+          "source_file": "tests/errors.rs",
           "value": "ParseSummaryError::MalformedSource",
           "context": "enum_variant"
         }
@@ -643,11 +671,13 @@
         "observed_values": [
           {
             "line": 34,
+            "source_file": "tests/errors.rs",
             "value": "payload = \"payload?\"",
             "context": "function_argument"
           },
           {
             "line": 37,
+            "source_file": "tests/errors.rs",
             "value": "ChecksumError::MalformedPayload",
             "context": "enum_variant"
           }
@@ -658,11 +688,13 @@
       "observed_values": [
         {
           "line": 34,
+          "source_file": "tests/errors.rs",
           "value": "payload = \"payload?\"",
           "context": "function_argument"
         },
         {
           "line": 37,
+          "source_file": "tests/errors.rs",
           "value": "ChecksumError::MalformedPayload",
           "context": "enum_variant"
         }
@@ -734,11 +766,13 @@
         "observed_values": [
           {
             "line": 34,
+            "source_file": "tests/errors.rs",
             "value": "payload = \"payload?\"",
             "context": "function_argument"
           },
           {
             "line": 37,
+            "source_file": "tests/errors.rs",
             "value": "ChecksumError::MalformedPayload",
             "context": "enum_variant"
           }
@@ -749,11 +783,13 @@
       "observed_values": [
         {
           "line": 34,
+          "source_file": "tests/errors.rs",
           "value": "payload = \"payload?\"",
           "context": "function_argument"
         },
         {
           "line": 37,
+          "source_file": "tests/errors.rs",
           "value": "ChecksumError::MalformedPayload",
           "context": "enum_variant"
         }
@@ -825,11 +861,13 @@
         "observed_values": [
           {
             "line": 48,
+            "source_file": "tests/errors.rs",
             "value": "raw = \"zhex\"",
             "context": "function_argument"
           },
           {
             "line": 51,
+            "source_file": "tests/errors.rs",
             "value": "ParseSummaryError::MalformedSource",
             "context": "enum_variant"
           }
@@ -840,11 +878,13 @@
       "observed_values": [
         {
           "line": 48,
+          "source_file": "tests/errors.rs",
           "value": "raw = \"zhex\"",
           "context": "function_argument"
         },
         {
           "line": 51,
+          "source_file": "tests/errors.rs",
           "value": "ParseSummaryError::MalformedSource",
           "context": "enum_variant"
         }
@@ -916,11 +956,13 @@
         "observed_values": [
           {
             "line": 48,
+            "source_file": "tests/errors.rs",
             "value": "raw = \"zhex\"",
             "context": "function_argument"
           },
           {
             "line": 51,
+            "source_file": "tests/errors.rs",
             "value": "ParseSummaryError::MalformedSource",
             "context": "enum_variant"
           }
@@ -931,11 +973,13 @@
       "observed_values": [
         {
           "line": 48,
+          "source_file": "tests/errors.rs",
           "value": "raw = \"zhex\"",
           "context": "function_argument"
         },
         {
           "line": 51,
+          "source_file": "tests/errors.rs",
           "value": "ParseSummaryError::MalformedSource",
           "context": "enum_variant"
         }
@@ -1006,6 +1050,7 @@
         "observed_values": [
           {
             "line": 62,
+            "source_file": "tests/errors.rs",
             "value": "raw = \"way-too-long-input-that-exceeds-the-forty-char-limit!!\"",
             "context": "function_argument"
           }
@@ -1016,6 +1061,7 @@
       "observed_values": [
         {
           "line": 62,
+          "source_file": "tests/errors.rs",
           "value": "raw = \"way-too-long-input-that-exceeds-the-forty-char-limit!!\"",
           "context": "function_argument"
         }
@@ -1086,6 +1132,7 @@
         "observed_values": [
           {
             "line": 62,
+            "source_file": "tests/errors.rs",
             "value": "raw = \"way-too-long-input-that-exceeds-the-forty-char-limit!!\"",
             "context": "function_argument"
           }
@@ -1096,6 +1143,7 @@
       "observed_values": [
         {
           "line": 62,
+          "source_file": "tests/errors.rs",
           "value": "raw = \"way-too-long-input-that-exceeds-the-forty-char-limit!!\"",
           "context": "function_argument"
         }
@@ -1167,11 +1215,13 @@
         "observed_values": [
           {
             "line": 69,
+            "source_file": "tests/errors.rs",
             "value": "raw = \"#glyph\"",
             "context": "function_argument"
           },
           {
             "line": 72,
+            "source_file": "tests/errors.rs",
             "value": "GlyphError::MalformedGlyph",
             "context": "enum_variant"
           }
@@ -1182,11 +1232,13 @@
       "observed_values": [
         {
           "line": 69,
+          "source_file": "tests/errors.rs",
           "value": "raw = \"#glyph\"",
           "context": "function_argument"
         },
         {
           "line": 72,
+          "source_file": "tests/errors.rs",
           "value": "GlyphError::MalformedGlyph",
           "context": "enum_variant"
         }
@@ -1258,11 +1310,13 @@
         "observed_values": [
           {
             "line": 69,
+            "source_file": "tests/errors.rs",
             "value": "raw = \"#glyph\"",
             "context": "function_argument"
           },
           {
             "line": 72,
+            "source_file": "tests/errors.rs",
             "value": "GlyphError::MalformedGlyph",
             "context": "enum_variant"
           }
@@ -1273,11 +1327,13 @@
       "observed_values": [
         {
           "line": 69,
+          "source_file": "tests/errors.rs",
           "value": "raw = \"#glyph\"",
           "context": "function_argument"
         },
         {
           "line": 72,
+          "source_file": "tests/errors.rs",
           "value": "GlyphError::MalformedGlyph",
           "context": "enum_variant"
         }
@@ -1360,6 +1416,7 @@
         "observed_values": [
           {
             "line": 83,
+            "source_file": "tests/errors.rs",
             "value": "raw = \"&theme\"",
             "context": "function_argument"
           }
@@ -1370,6 +1427,7 @@
       "observed_values": [
         {
           "line": 83,
+          "source_file": "tests/errors.rs",
           "value": "raw = \"&theme\"",
           "context": "function_argument"
         }
@@ -1444,6 +1502,7 @@
         "observed_values": [
           {
             "line": 83,
+            "source_file": "tests/errors.rs",
             "value": "raw = \"&theme\"",
             "context": "function_argument"
           }
@@ -1454,6 +1513,7 @@
       "observed_values": [
         {
           "line": 83,
+          "source_file": "tests/errors.rs",
           "value": "raw = \"&theme\"",
           "context": "function_argument"
         }

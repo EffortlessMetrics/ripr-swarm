@@ -55,11 +55,13 @@
         "observed_values": [
           {
             "line": 7,
+            "source_file": "tests/errors.rs",
             "value": "x = -1",
             "context": "function_argument"
           },
           {
             "line": 8,
+            "source_file": "tests/errors.rs",
             "value": "\"error\"",
             "context": "assertion_argument"
           }
@@ -75,11 +77,13 @@
       "observed_values": [
         {
           "line": 7,
+          "source_file": "tests/errors.rs",
           "value": "x = -1",
           "context": "function_argument"
         },
         {
           "line": 8,
+          "source_file": "tests/errors.rs",
           "value": "\"error\"",
           "context": "assertion_argument"
         }
@@ -160,11 +164,13 @@
         "observed_values": [
           {
             "line": 7,
+            "source_file": "tests/errors.rs",
             "value": "x = -1",
             "context": "function_argument"
           },
           {
             "line": 8,
+            "source_file": "tests/errors.rs",
             "value": "\"error\"",
             "context": "assertion_argument"
           }
@@ -180,11 +186,13 @@
       "observed_values": [
         {
           "line": 7,
+          "source_file": "tests/errors.rs",
           "value": "x = -1",
           "context": "function_argument"
         },
         {
           "line": 8,
+          "source_file": "tests/errors.rs",
           "value": "\"error\"",
           "context": "assertion_argument"
         }

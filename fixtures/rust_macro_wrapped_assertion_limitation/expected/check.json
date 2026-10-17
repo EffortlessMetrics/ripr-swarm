@@ -42,11 +42,13 @@
         "observed_values": [
           {
             "line": 9,
+            "source_file": "tests/it.rs",
             "value": "a = 10",
             "context": "function_argument"
           },
           {
             "line": 9,
+            "source_file": "tests/it.rs",
             "value": "b = 3",
             "context": "function_argument"
           }
@@ -62,11 +64,13 @@
       "observed_values": [
         {
           "line": 9,
+          "source_file": "tests/it.rs",
           "value": "a = 10",
           "context": "function_argument"
         },
         {
           "line": 9,
+          "source_file": "tests/it.rs",
           "value": "b = 3",
           "context": "function_argument"
         }

@@ -72,3 +72,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — match_arm_selected_credit (7)
+
+Reason:
+RIPR-SPEC-0158 and #7805: independently audited additive source_file metadata only; all classification, oracle, evidence and human output preserved
+
+Command:
+`cargo xtask goldens bless match_arm_selected_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

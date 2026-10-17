@@ -10941,20 +10941,27 @@ id = "RIPR-SPEC-0158"
 name = "Bounded value transfer from exact test inputs"
 spec = "docs/specs/RIPR-SPEC-0158-bounded-value-transfer.md"
 tests = [
+  "crates/ripr/tests/value_source_file_provenance.rs",
   "crates/ripr/src/analysis/classify/value_transfer.rs::tests",
   "crates/ripr/src/analysis/classify/activation.rs::tests::activation_evidence_resolves_computed_local_boundary_operands",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_evaluates_exact_boundary_from_test_inputs",
 ]
 fixtures = [
+  "fixtures/value_source_file_collision",
   "fixtures/binding_predicate_equality_boundary",
   "fixtures/binding_value_family_matrix",
   "fixtures/binding_value_fail_closed",
 ]
 code = [
+  "crates/ripr/src/analysis/classify/activation/source_provenance.rs",
+  "crates/ripr/src/analysis/mod.rs::stable_source_path_text",
+  "crates/ripr/src/domain/probe.rs",
+  "crates/ripr/src/output/json/report.rs",
+  "crates/ripr/src/output/sarif.rs",
   "crates/ripr/src/analysis/classify/value_transfer.rs",
   "crates/ripr/src/analysis/classify/activation.rs",
 ]
-outputs = []
+outputs = ["schemas/ripr/check.schema.json", "docs/OUTPUT_SCHEMA.md"]
 metrics = [
   "unit_test_pass_rate",
   "golden_fixture_pass_rate",

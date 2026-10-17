@@ -1489,6 +1489,7 @@ mod tests {
         );
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                source_file: None,
                 line: 1,
                 text: "assert_eq!(gate(if false { 10 } else { 50 }), true); | first scalar"
                     .to_string(),
@@ -1516,6 +1517,7 @@ mod tests {
         );
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                source_file: None,
                 line: 1,
                 text: "assert_eq!(gate(10-offset), false); | first scalar".to_string(),
                 value: "input == 10".to_string(),
@@ -1573,6 +1575,7 @@ mod tests {
         );
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                source_file: None,
                 line: 1,
                 text: "assert_eq!(gate(LIMIT), true); | named constant".to_string(),
                 value: "input == 10".to_string(),
@@ -1630,6 +1633,7 @@ mod tests {
         );
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                source_file: None,
                 line: 1,
                 text: "assert_eq!(bulk_rate(parcels::BULK_ITEMS), 90); | argument names constant BULK_ITEMS"
                     .to_string(),
@@ -1686,6 +1690,7 @@ mod tests {
         );
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                source_file: None,
                 line: 1,
                 text: "assert_eq!(gate(LIMIT, make_context()), true); | named constant".to_string(),
                 value: "input == 10".to_string(),
@@ -1743,6 +1748,7 @@ mod tests {
         );
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                source_file: None,
                 line: 1,
                 text: "assert_eq!(gate(if false { 10 } else { 50 }, LIMIT), true); | first scalar"
                     .to_string(),
@@ -1793,6 +1799,7 @@ mod tests {
         );
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                source_file: None,
                 line: 1,
                 text: "assert_eq!(gate(if false { 10 } else { 50 }, 10), true); | first scalar"
                     .to_string(),
@@ -1838,6 +1845,7 @@ mod tests {
         );
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                source_file: None,
                 line: 1,
                 text: "assert_eq!(gate(LIMIT, 10), true); | named constant".to_string(),
                 value: "amount == threshold".to_string(),
@@ -2306,6 +2314,7 @@ mod tests {
         bound.end_line = 3;
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                source_file: None,
                 line: 1,
                 text: String::new(),
                 value: "input == \"alpha\"".to_string(),
@@ -2613,6 +2622,7 @@ mod tests {
         );
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                source_file: None,
                 line: 1,
                 text: "assert_eq!(classify(\"word\"), \"word\"); | helper hop".to_string(),
                 value: "final_label == \"alpha\"".to_string(),
@@ -2664,6 +2674,7 @@ mod tests {
     fn transferred_boundary_row(line: usize, assertion: &str) -> ActivationEvidence {
         ActivationEvidence {
             observed_values: vec![ValueFact {
+                source_file: None,
                 line,
                 text: format!("{assertion} | exact input qty = 10; literal operand 10 = 10"),
                 value: "qty == 10".to_string(),
@@ -2944,6 +2955,7 @@ mod tests {
         );
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                source_file: None,
                 line: 1,
                 text: format!("{line} | helper hop"),
                 value: "final_label == \"alpha\"".to_string(),
@@ -3023,6 +3035,7 @@ mod tests {
         );
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                source_file: None,
                 line: 1,
                 text: String::new(),
                 value: "input == 10".to_string(),
@@ -3050,6 +3063,7 @@ mod tests {
         );
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                source_file: None,
                 line: 1,
                 text: String::new(),
                 value: "input == 10".to_string(),
@@ -3157,6 +3171,7 @@ mod tests {
         };
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                source_file: None,
                 line: activation_line,
                 text: format!("{call_text} | input"),
                 value: "input == 10".to_string(),
@@ -3216,6 +3231,7 @@ mod tests {
         );
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                source_file: None,
                 line: 1,
                 text: "let got = gate(10); | input".to_string(),
                 value: "input == 10".to_string(),
@@ -3567,6 +3583,7 @@ mod tests {
             );
             let activation = ActivationEvidence {
                 observed_values: vec![ValueFact {
+                    source_file: None,
                     line: 3,
                     text: format!("{call_line} | element x = 0 of xs"),
                     value: "x == 0".to_string(),

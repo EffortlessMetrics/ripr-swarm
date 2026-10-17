@@ -55,16 +55,19 @@
         "observed_values": [
           {
             "line": 34,
+            "source_file": "src/lib.rs",
             "value": "\"3\"",
             "context": "assertion_argument"
           },
           {
             "line": 34,
+            "source_file": "src/lib.rs",
             "value": "3",
             "context": "assertion_argument"
           },
           {
             "line": 35,
+            "source_file": "src/lib.rs",
             "value": "retries = 3",
             "context": "function_argument"
           }
@@ -80,16 +83,19 @@
       "observed_values": [
         {
           "line": 34,
+          "source_file": "src/lib.rs",
           "value": "\"3\"",
           "context": "assertion_argument"
         },
         {
           "line": 34,
+          "source_file": "src/lib.rs",
           "value": "3",
           "context": "assertion_argument"
         },
         {
           "line": 35,
+          "source_file": "src/lib.rs",
           "value": "retries = 3",
           "context": "function_argument"
         }
@@ -170,16 +176,19 @@
         "observed_values": [
           {
             "line": 34,
+            "source_file": "src/lib.rs",
             "value": "\"3\"",
             "context": "assertion_argument"
           },
           {
             "line": 34,
+            "source_file": "src/lib.rs",
             "value": "3",
             "context": "assertion_argument"
           },
           {
             "line": 35,
+            "source_file": "src/lib.rs",
             "value": "retries = 3",
             "context": "function_argument"
           }
@@ -190,16 +199,19 @@
       "observed_values": [
         {
           "line": 34,
+          "source_file": "src/lib.rs",
           "value": "\"3\"",
           "context": "assertion_argument"
         },
         {
           "line": 34,
+          "source_file": "src/lib.rs",
           "value": "3",
           "context": "assertion_argument"
         },
         {
           "line": 35,
+          "source_file": "src/lib.rs",
           "value": "retries = 3",
           "context": "function_argument"
         }

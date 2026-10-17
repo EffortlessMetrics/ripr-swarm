@@ -55,11 +55,13 @@
         "observed_values": [
           {
             "line": 13,
+            "source_file": "src/lib.rs",
             "value": "90",
             "context": "assertion_argument"
           },
           {
             "line": 13,
+            "source_file": "src/lib.rs",
             "value": "amount = 100",
             "context": "function_argument",
             "provenance": "fn boundary() { assert_eq!(discounted_total(100, 100), 90); }"
@@ -72,23 +74,27 @@
           },
           {
             "line": 13,
+            "source_file": "src/lib.rs",
             "value": "discount_threshold = 100",
             "context": "function_argument",
             "provenance": "fn boundary() { assert_eq!(discounted_total(100, 100), 90); }"
           },
           {
             "line": 15,
+            "source_file": "src/lib.rs",
             "value": "91",
             "context": "assertion_argument"
           },
           {
             "line": 15,
+            "source_file": "src/lib.rs",
             "value": "amount = 101",
             "context": "function_argument",
             "provenance": "fn far() { assert_eq!(discounted_total(101, 100), 91); }"
           },
           {
             "line": 15,
+            "source_file": "src/lib.rs",
             "value": "discount_threshold = 100",
             "context": "function_argument",
             "provenance": "fn far() { assert_eq!(discounted_total(101, 100), 91); }"
@@ -100,11 +106,13 @@
       "observed_values": [
         {
           "line": 13,
+          "source_file": "src/lib.rs",
           "value": "90",
           "context": "assertion_argument"
         },
         {
           "line": 13,
+          "source_file": "src/lib.rs",
           "value": "amount = 100",
           "context": "function_argument",
           "provenance": "fn boundary() { assert_eq!(discounted_total(100, 100), 90); }"
@@ -117,23 +125,27 @@
         },
         {
           "line": 13,
+          "source_file": "src/lib.rs",
           "value": "discount_threshold = 100",
           "context": "function_argument",
           "provenance": "fn boundary() { assert_eq!(discounted_total(100, 100), 90); }"
         },
         {
           "line": 15,
+          "source_file": "src/lib.rs",
           "value": "91",
           "context": "assertion_argument"
         },
         {
           "line": 15,
+          "source_file": "src/lib.rs",
           "value": "amount = 101",
           "context": "function_argument",
           "provenance": "fn far() { assert_eq!(discounted_total(101, 100), 91); }"
         },
         {
           "line": 15,
+          "source_file": "src/lib.rs",
           "value": "discount_threshold = 100",
           "context": "function_argument",
           "provenance": "fn far() { assert_eq!(discounted_total(101, 100), 91); }"

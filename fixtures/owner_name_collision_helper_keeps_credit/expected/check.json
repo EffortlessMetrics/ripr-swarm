@@ -54,21 +54,25 @@
         "observed_values": [
           {
             "line": 26,
+            "source_file": "src/lib.rs",
             "value": "1",
             "context": "assertion_argument"
           },
           {
             "line": 26,
+            "source_file": "src/lib.rs",
             "value": "2",
             "context": "assertion_argument"
           },
           {
             "line": 26,
+            "source_file": "src/lib.rs",
             "value": "3",
             "context": "assertion_argument"
           },
           {
             "line": 26,
+            "source_file": "src/lib.rs",
             "value": "4",
             "context": "assertion_argument"
           }
@@ -79,21 +83,25 @@
       "observed_values": [
         {
           "line": 26,
+          "source_file": "src/lib.rs",
           "value": "1",
           "context": "assertion_argument"
         },
         {
           "line": 26,
+          "source_file": "src/lib.rs",
           "value": "2",
           "context": "assertion_argument"
         },
         {
           "line": 26,
+          "source_file": "src/lib.rs",
           "value": "3",
           "context": "assertion_argument"
         },
         {
           "line": 26,
+          "source_file": "src/lib.rs",
           "value": "4",
           "context": "assertion_argument"
         }

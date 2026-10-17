@@ -1392,6 +1392,28 @@ The evidence-first fields are additive in schema `0.2`:
   **in this map** — differing texts are retained per-value via the optional
   `provenance` field described below. This is a low-probability edge case; a
   future schema could use `"file:line"` composite keys.
+- Per-value objects may carry **optional `source_file`** (#7805), the
+  producer-owned originating file as stable path text (including the existing
+  percent encoding for reserved percent signs and native non-UTF8 bytes).
+  Native separators render as `/`; literal Unix backslashes encode as `%5C`
+  before display normalization, and a literal `%5C` spelling encodes as `%255C`.
+  Thus `src/odd\\receipt.rs` and `src/odd/receipt.rs` retain distinct identities.
+  The public struct field is `Option<String>`, so metadata serialization does
+  not require the native filename to be UTF-8. Ordinary Rust diff-test source values retain
+  their indexed test file. This additive field appears in both observed-value
+  arrays and SARIF; it grants no assertion execution, oracle admission, or
+  classification credit. Use it with `line` and the value-specific `provenance`
+  (or shared `assertion_texts` fallback) to identify the retained source. The
+  legacy numeric map remains unchanged and alone cannot identify a file.
+  Identical text at the same line in two files remains two sourced facts.
+  Omission means **unknown**, including legacy cached/serialized facts, other
+  producers, and derived facts without an originating-file witness; consumers
+  must not substitute the changed probe's file. Old JSON readers may ignore
+  the field, and old typed facts deserialize with `source_file = None`. Rust
+  callers constructing the public `ValueFact` struct must provide the new
+  field (`None` when unknown); this is a source-compatibility change for struct
+  literals despite the additive serialized contract. Rendering caps are
+  unchanged, so this does not promise complete inventory or oracle adequacy.
 - Per-value objects in `observed_values` carry an **optional `provenance`**
   field (additive, no `schema_version` bump, #3295 follow-up). It carries
   the fact's retained source text **whenever it differs from the shared

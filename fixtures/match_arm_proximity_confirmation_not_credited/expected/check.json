@@ -55,16 +55,19 @@
         "observed_values": [
           {
             "line": 37,
+            "source_file": "src/lib.rs",
             "value": "1_814_400",
             "context": "assertion_argument"
           },
           {
             "line": 42,
+            "source_file": "src/lib.rs",
             "value": "\"fortnight\"",
             "context": "assertion_argument"
           },
           {
             "line": 42,
+            "source_file": "src/lib.rs",
             "value": "Unit::Fortnight",
             "context": "enum_variant"
           }
@@ -75,16 +78,19 @@
       "observed_values": [
         {
           "line": 37,
+          "source_file": "src/lib.rs",
           "value": "1_814_400",
           "context": "assertion_argument"
         },
         {
           "line": 42,
+          "source_file": "src/lib.rs",
           "value": "\"fortnight\"",
           "context": "assertion_argument"
         },
         {
           "line": 42,
+          "source_file": "src/lib.rs",
           "value": "Unit::Fortnight",
           "context": "enum_variant"
         }

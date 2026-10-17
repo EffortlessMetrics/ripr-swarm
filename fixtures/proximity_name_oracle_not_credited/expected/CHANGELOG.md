@@ -189,3 +189,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — proximity_name_oracle_not_credited (17)
+
+Reason:
+RIPR-SPEC-0158 and #7805: retain equal source values from tests/owner_named.rs and tests/variants.rs as distinct rows; classification, stages, oracle attribution and repair remain unchanged
+
+Command:
+`cargo xtask goldens bless proximity_name_oracle_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

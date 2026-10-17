@@ -54,6 +54,7 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/score_tests.rs",
             "value": "base = 3",
             "context": "function_argument"
           }
@@ -64,6 +65,7 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/score_tests.rs",
           "value": "base = 3",
           "context": "function_argument"
         }

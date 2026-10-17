@@ -54,17 +54,20 @@
         "observed_values": [
           {
             "line": 3,
+            "source_file": "tests/support/dormant.rs",
             "value": "12",
             "context": "assertion_argument"
           },
           {
             "line": 3,
+            "source_file": "tests/support/dormant.rs",
             "value": "input = 4",
             "context": "function_argument",
             "provenance": "fn dormant() { assert_eq!(weight(4),12); }"
           },
           {
             "line": 3,
+            "source_file": "tests/weight_tests.rs",
             "value": "input = 4",
             "context": "function_argument",
             "provenance": "fn smoke() { let _ = weight(4); }"
@@ -76,17 +79,20 @@
       "observed_values": [
         {
           "line": 3,
+          "source_file": "tests/support/dormant.rs",
           "value": "12",
           "context": "assertion_argument"
         },
         {
           "line": 3,
+          "source_file": "tests/support/dormant.rs",
           "value": "input = 4",
           "context": "function_argument",
           "provenance": "fn dormant() { assert_eq!(weight(4),12); }"
         },
         {
           "line": 3,
+          "source_file": "tests/weight_tests.rs",
           "value": "input = 4",
           "context": "function_argument",
           "provenance": "fn smoke() { let _ = weight(4); }"
