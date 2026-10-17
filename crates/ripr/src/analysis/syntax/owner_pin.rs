@@ -1514,9 +1514,17 @@ fn macro_body_bindings(
                 }
                 // `use root::name;` of a verified drop-in binds the standard
                 // assertion's meaning, as it does outside a macro (#8149).
-                if end == start + 3
-                    && kind(start + 1) == Some(COLON2)
-                    && let (Some(root), Some(name)) = (word(start), word(start + 2))
+                // A token tree keeps `::` as two `:` tokens, so accept both.
+                let separator = if kind(start + 1) == Some(COLON2) {
+                    1
+                } else if kind(start + 1) == Some(COLON) && kind(start + 2) == Some(COLON) {
+                    2
+                } else {
+                    0
+                };
+                if separator > 0
+                    && end == start + 2 + separator
+                    && let (Some(root), Some(name)) = (word(start), word(start + 1 + separator))
                     && drop_in_ok(root, name, start > index + 1)
                 {
                     continue;
