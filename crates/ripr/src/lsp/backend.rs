@@ -7,8 +7,10 @@ use super::capabilities::{
 use super::client_features::ClientFeatureProfile;
 use super::config::{LspAnalysisConfig, validated_pulled_options};
 use super::diagnostics::{
-    DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache, WorkspaceDiagnostics,
-    diagnostic_refresh_plan, take_all_uris,
+    AnalysisPendingRecovery, DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache,
+    WorkspaceDiagnostics, analysis_pending_diagnostics, delivered_diagnostics_for_uri,
+    delivery_omission_diagnostic, diagnostic_refresh_plan, take_all_uris,
+    withdrawn_quarantine_diagnostics,
 };
 use super::hover::{
     classified_seam_hover_response, diagnostic_at_position, diagnostic_covers_position,
@@ -856,18 +858,22 @@ impl Backend {
                     })
                     .unwrap_or((None, None));
                 if !snapshot.served_diagnostics_for_uri(uri).is_empty()
-                    && let Some((path, reason)) = pending_quarantine
+                    && let Some((path, reason)) = pending_quarantine.as_ref()
                 {
                     self.client
                         .log_message(
                             MessageType::WARNING,
-                            quarantine_withdrawal_log_message(&path, reason),
+                            quarantine_withdrawal_log_message(path, *reason),
                         )
                         .await;
                 }
                 let version = self.negotiated_version(raw_version);
+                let items = pending_quarantine
+                    .as_ref()
+                    .map(|(_, reason)| withdrawn_quarantine_diagnostics(*reason))
+                    .unwrap_or_default();
                 self.client
-                    .publish_diagnostics(uri.clone(), Vec::new(), version)
+                    .publish_diagnostics(uri.clone(), items, version)
                     .await;
             }
         }
@@ -1180,11 +1186,11 @@ impl Backend {
         // so the new episode does not disclose a second time.
         let transitions =
             documents.note_refresh_analyzed(input_identity, pending_analyzed, pending_entered);
-        // `last_diagnostics` mirrors the client-visible state: quarantined
-        // documents were withdrawn (published empty), so the committed
-        // baseline carries an empty set for them (#1970). The next plan then
-        // re-publishes the full set when the quarantine lifts instead of
-        // diffing against diagnostics the client never saw.
+        // Quarantined documents keep an empty committed baseline even though
+        // the client receives a quarantine marker. When quarantine lifts, the
+        // next plan re-publishes the full saved-state set instead of diffing
+        // against findings the client was not shown as line-local diagnostics
+        // (#1970/#7771).
         let mut committed_diagnostics = snapshot.diagnostics_by_uri.clone();
         for (uri, diagnostics) in committed_diagnostics.iter_mut() {
             if documents
@@ -1302,6 +1308,13 @@ impl Backend {
     #[cfg(test)]
     pub(super) fn is_current_refresh_generation(&self, generation: u64) -> bool {
         self.refresh_scheduler.is_current_generation(generation)
+    }
+
+    #[cfg(test)]
+    pub(super) fn refresh_telemetry_for_test(
+        &self,
+    ) -> super::refresh_scheduler::RefreshTelemetrySnapshot {
+        self.refresh_scheduler.telemetry()
     }
 
     pub(super) fn workspace_revision(&self) -> u64 {
@@ -2599,6 +2612,16 @@ impl Backend {
             .and_then(|guard| guard.as_ref().cloned())
     }
 
+    /// The recovery route the pre-analysis pull marker may promise (#7774):
+    /// mirrors the `refresh_diagnostics` preconditions so a blocked state
+    /// never advertises a route that returns before analysis.
+    fn analysis_pending_recovery(&self) -> AnalysisPendingRecovery {
+        analysis_pending_recovery_for(
+            self.configuration_failure().as_ref(),
+            &self.workspace_root_authority(),
+        )
+    }
+
     /// Whether the most recent bounded disclosure window after an
     /// initialize-time failure commit expired without completing client
     /// delivery (#3802). Unreadable state fails closed: an unknown delivery
@@ -2981,6 +3004,57 @@ impl Backend {
             .map(|mut documents| (uri, documents.open(params)))
     }
 
+    /// Whether the document opened by the just-processed `didOpen` already
+    /// matches the persisted saved bytes the store recorded for it. A failed
+    /// store lock is treated as a changed input: the conservative route is
+    /// the interactive refresh, never silently skipping it.
+    fn open_document_matches_saved_content(&self, uri: &Uri) -> bool {
+        self.documents
+            .lock()
+            .ok()
+            .map(|documents| documents.open_matches_persisted_saved_content(uri))
+            .unwrap_or(false)
+    }
+
+    /// Whether a clean open still carries an input the committed snapshot
+    /// never analyzed: the file may have changed on disk while it was closed
+    /// and no watch event arrived, so the buffer matches the persisted bytes
+    /// while both differ from the bytes behind the session's seam evidence.
+    /// The opened Rust file's saved digest is compared with the digest the
+    /// committed snapshot captured for the same path; a captured mismatch
+    /// keeps the interactive refresh. An absent commitment (the file is
+    /// outside the committed snapshot, or the snapshot holds no captured
+    /// bytes for it) preserves the clean-open skip.
+    fn opened_file_differs_from_committed_snapshot(&self, uri: &Uri) -> bool {
+        let committed = self.latest_analysis.lock().ok().and_then(|latest| {
+            let snapshot = latest.as_ref()?;
+            let relative = super::uri::file_uri_relative_to_root(&snapshot.root, uri)?;
+            let analyzed_digest = snapshot.rust_consumed_sources.digest(&relative);
+            Some((relative, analyzed_digest))
+        });
+        let Some((_relative, Some(analyzed_digest))) = committed else {
+            return false;
+        };
+        let saved_digest_matches = self
+            .documents
+            .lock()
+            .ok()
+            .and_then(|documents| {
+                documents
+                    .state_for_uri(uri)
+                    .map(|state| state.saved_digest.as_deref() == Some(analyzed_digest.as_str()))
+            })
+            .unwrap_or(false);
+        !saved_digest_matches
+    }
+
+    /// Whether the refresh scheduler already holds analysis state (active,
+    /// pending, or completed). A failed lock reads as state present so the
+    /// conservative route is the interactive refresh.
+    fn refresh_scheduler_has_analysis_state(&self) -> bool {
+        self.refresh_scheduler.has_analysis_state()
+    }
+
     fn change_document(
         &self,
         params: DidChangeTextDocumentParams,
@@ -3136,13 +3210,12 @@ impl Backend {
             .ok()
             .and_then(|value| value.clone())
             .map(|snapshot| {
-                let mut diagnostics = snapshot.served_diagnostics_for_uri(uri);
-                if let Some(selection) = &snapshot.delivery_selection
-                    && let Some(omission) = selection.document_omissions().get(uri.as_str())
-                {
-                    diagnostics.push(delivery_omission_diagnostic(omission));
-                }
-                diagnostics
+                let omissions = snapshot
+                    .delivery_selection
+                    .as_ref()
+                    .map(|selection| selection.document_omissions())
+                    .unwrap_or_default();
+                delivered_diagnostics_for_uri(&snapshot, uri, &omissions)
             })
             .unwrap_or_default()
     }
@@ -3200,8 +3273,9 @@ impl Backend {
         }
     }
 
-    /// Withdraw a dirty document's line-local diagnostics (#1970): publish
-    /// an empty set (push delivery) and disclose the withdrawal once per
+    /// Withdraw a dirty document's line-local diagnostics (#1970/#7771):
+    /// publish one Information marker naming the quarantine reason and
+    /// restore route (push delivery) and disclose the withdrawal once per
     /// episode. A document with nothing served stays silent — there is no
     /// stale line identity to withdraw.
     async fn withdraw_document_diagnostics(&self, uri: &Uri, decision_version: Option<i32>) {
@@ -3211,13 +3285,17 @@ impl Backend {
             return;
         }
         self.disclose_withdrawal_once(uri).await;
+        let items = self
+            .document_quarantine(uri)
+            .map(|(_, reason)| withdrawn_quarantine_diagnostics(reason))
+            .unwrap_or_default();
         if !self.pull_diagnostics_enabled() {
             let version = self.negotiated_version(decision_version);
             self.client
-                .publish_diagnostics(uri.clone(), Vec::new(), version)
+                .publish_diagnostics(uri.clone(), items.clone(), version)
                 .await;
         }
-        self.set_last_diagnostics_for_uri(uri, Vec::new());
+        self.set_last_diagnostics_for_uri(uri, items);
     }
 
     /// Re-serve a document whose quarantine lifted (#1970): the buffer again
@@ -3246,12 +3324,12 @@ impl Backend {
 
     /// Publish one document's selection-filtered diagnostics during a
     /// refresh transaction, honoring the dirty-buffer quarantine against the
-    /// transaction's pending analyzed identity (#1970): a document
-    /// quarantined under the pending identity is published empty and its
-    /// withdrawal disclosed, instead of receiving saved-state line-local
-    /// diagnostics whose line identity no longer matches the client's
-    /// buffer. Does not touch `last_diagnostics`; the refresh transaction
-    /// commit owns that baseline.
+    /// transaction's pending analyzed identity (#1970/#7771): a document
+    /// quarantined under the pending identity is published as the
+    /// quarantine marker and its withdrawal disclosed, instead of receiving
+    /// saved-state line-local diagnostics whose line identity no longer
+    /// matches the client's buffer. Does not touch `last_diagnostics`; the
+    /// refresh transaction commit owns that baseline.
     async fn publish_served_diagnostics_for_transaction(
         &self,
         uri: &Uri,
@@ -3284,17 +3362,20 @@ impl Backend {
                 // commit.
                 if is_quarantined {
                     self.disclose_withdrawal_once(uri).await;
-                } else if let Some((path, reason)) = pending_quarantine {
+                } else if let Some((path, reason)) = pending_quarantine.as_ref() {
                     self.client
                         .log_message(
                             MessageType::WARNING,
-                            quarantine_withdrawal_log_message(&path, reason),
+                            quarantine_withdrawal_log_message(path, *reason),
                         )
                         .await;
                 }
             }
+            let items = pending_quarantine
+                .map(|(_, reason)| withdrawn_quarantine_diagnostics(reason))
+                .unwrap_or_default();
             self.client
-                .publish_diagnostics(uri.clone(), Vec::new(), version)
+                .publish_diagnostics(uri.clone(), items, version)
                 .await;
             return;
         }
@@ -5340,9 +5421,34 @@ impl LanguageServer for Backend {
                 .await;
             return;
         };
-        self.advance_workspace_revision();
+        // #1908's principle applied to open: a didOpen whose buffer already
+        // matches the persisted saved bytes recorded at open carries no new
+        // saved-workspace input (the analysis reads persisted bytes). When
+        // the session already holds refresh state, such an open neither
+        // advances the workspace revision nor schedules an interactive
+        // refresh: superseding a completed full-seam snapshot with a
+        // same-input deferred snapshot withdrew real seam evidence
+        // mid-journey and made every subsequent evidence-reading command
+        // (collectContext, rooted copies) disclose staleness (#7408 matrix).
+        // A fresh session still refreshes so the first opened document
+        // establishes the session's analysis, and a diverging recovered
+        // buffer, an unreadable saved identity, or a failed store lock all
+        // keep today's interactive refresh. A buffer matching the persisted
+        // bytes but differing from the digest the committed snapshot
+        // captured for the same Rust path keeps the refresh too: the file
+        // changed on disk while closed, so the session's committed evidence
+        // predates the input it would otherwise keep serving.
+        let open_matches_saved = self.open_document_matches_saved_content(&uri);
+        let session_has_analysis = self.refresh_scheduler_has_analysis_state();
         self.handle_document_quarantine_transition(&uri, transition, decision_version)
             .await;
+        if open_matches_saved
+            && session_has_analysis
+            && !self.opened_file_differs_from_committed_snapshot(&uri)
+        {
+            return;
+        }
+        self.advance_workspace_revision();
         // Interactive path: defer the seam inventory (RIPR-SPEC-0105).
         // Diff-scoped findings are complete; seams run on explicit refresh only.
         self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::DidOpen)
@@ -5730,28 +5836,27 @@ impl Backend {
         params: DocumentDiagnosticParams,
     ) -> LspResult<DocumentDiagnosticReportResult> {
         let Some((snapshot, result_ids)) = self.latest_pull_snapshot() else {
+            // Pre-analysis state (#7774): an empty report here would be
+            // indistinguishable from "analysis ran and found nothing",
+            // which is a completeness claim the server cannot support
+            // before the first snapshot commit. Serve the typed pending
+            // marker under a stable state identity instead, promising only
+            // the recovery route the current blocking state honors.
+            let recovery = self.analysis_pending_recovery();
             return Ok(
-                DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
-                    related_documents: None,
-                    full_document_diagnostic_report:
-                        tower_lsp_server::ls_types::FullDocumentDiagnosticReport {
-                            result_id: None,
-                            items: Vec::new(),
-                        },
-                })
-                .into(),
+                analysis_pending_document_report(params.previous_result_id, recovery).into(),
             );
         };
         let uri = params.text_document.uri;
-        // A quarantined (dirty-buffer) document is served an empty full
-        // report under a distinct result id (#1970): saved-state line-local
-        // diagnostics no longer match the client's buffer, and the distinct
-        // id keeps the client from treating the withdrawn state as the
-        // previously served one.
+        // A quarantined (dirty-buffer) document is served one Information
+        // marker under a distinct result id (#1970/#7771): saved-state
+        // line-local diagnostics no longer match the client's buffer, and
+        // the reason-folded id keeps the client from treating the withdrawn
+        // state as the previously served one.
         let quarantine = self.document_quarantine(&uri);
         let mut result_id = result_ids.document_id(&snapshot, &uri);
-        if quarantine.is_some() {
-            result_id = quarantined_document_result_id(&result_id);
+        if let Some((_, reason)) = quarantine {
+            result_id = quarantined_document_result_id(&result_id, reason);
         }
         if params.previous_result_id.as_deref() == Some(result_id.as_str()) {
             return Ok(DocumentDiagnosticReport::Unchanged(
@@ -5764,7 +5869,7 @@ impl Backend {
             )
             .into());
         }
-        if quarantine.is_some() {
+        if let Some((_, reason)) = quarantine {
             if !snapshot.served_diagnostics_for_uri(&uri).is_empty() {
                 self.disclose_withdrawal_once(&uri).await;
             }
@@ -5774,7 +5879,7 @@ impl Backend {
                     full_document_diagnostic_report:
                         tower_lsp_server::ls_types::FullDocumentDiagnosticReport {
                             result_id: Some(result_id),
-                            items: Vec::new(),
+                            items: withdrawn_quarantine_diagnostics(reason),
                         },
                 })
                 .into(),
@@ -5794,7 +5899,7 @@ impl Backend {
                 .log_message(MessageType::WARNING, disclosure)
                 .await;
         }
-        let diagnostics = snapshot.served_diagnostics_for_uri(&uri);
+        let diagnostics = result_ids.delivered_diagnostics_for_uri(&snapshot, &uri);
         Ok(
             DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
                 related_documents: None,
@@ -5820,7 +5925,15 @@ impl Backend {
         // snapshot fast path so a missing snapshot cannot skip the bound.
         check_previous_result_ids(&params.previous_result_ids)?;
         let Some((snapshot, result_ids)) = self.latest_pull_snapshot() else {
-            return Ok(WorkspaceDiagnosticReport { items: Vec::new() }.into());
+            // Pre-analysis state (#7774): serve the typed pending marker
+            // for every document the client already tracks, under the same
+            // stable state identity the document pull path uses, promising
+            // only the recovery route the current blocking state honors.
+            // A cold client with no previous result ids gets no items — a
+            // workspace report item needs a document URI, and the document
+            // pull path discloses the state for every open file.
+            let recovery = self.analysis_pending_recovery();
+            return Ok(analysis_pending_workspace_report(&params, recovery).into());
         };
         let mut uris = snapshot
             .diagnostics_by_uri
@@ -5857,24 +5970,24 @@ impl Backend {
             // are unconditional: `versionSupport` governs push
             // publications only, while the workspace report carries its
             // version directly (LSP 3.17).
-            let (quarantined, raw_version) = self
+            let (quarantine_reason, raw_version) = self
                 .with_document_state(&uri, |state| {
-                    let quarantined = quarantine_from_state(state).is_some();
+                    let reason = quarantine_from_state(state).map(|(_, reason)| reason);
                     let version = if state.buffer_authority_unknown {
                         None
                     } else {
                         state.version
                     };
-                    (quarantined, version)
+                    (reason, version)
                 })
-                .unwrap_or((false, None));
-            // Quarantined (dirty-buffer) documents serve an empty set under
-            // a distinct result id, same as the document pull handler
-            // (#1970); other documents are unaffected.
+                .unwrap_or((None, None));
+            // Quarantined (dirty-buffer) documents serve one Information
+            // marker under a distinct result id, same as the document pull
+            // handler (#1970/#7771); other documents are unaffected.
             let version = raw_version.map(i64::from);
             let mut result_id = result_ids.document_id(&snapshot, &uri);
-            if quarantined {
-                result_id = quarantined_document_result_id(&result_id);
+            if let Some(reason) = quarantine_reason {
+                result_id = quarantined_document_result_id(&result_id, reason);
             }
             let previous = params
                 .previous_result_ids
@@ -5901,13 +6014,13 @@ impl Backend {
                 }
                 disclosed = true;
             }
-            let diagnostics = if quarantined {
+            let diagnostics = if let Some(reason) = quarantine_reason {
                 if !snapshot.served_diagnostics_for_uri(&uri).is_empty() {
                     self.disclose_withdrawal_once(&uri).await;
                 }
-                Vec::new()
+                withdrawn_quarantine_diagnostics(reason)
             } else {
-                snapshot.served_diagnostics_for_uri(&uri)
+                result_ids.delivered_diagnostics_for_uri(&snapshot, &uri)
             };
             items.push(WorkspaceDocumentDiagnosticReport::Full(
                 WorkspaceFullDocumentDiagnosticReport {
@@ -6148,7 +6261,22 @@ impl Backend {
             && health.attempt_id.is_none()
             && health.reason.is_none()
             && health.current_input_identity.is_none();
-        if !legacy_test_snapshot && !health.allows_current_repairs() {
+        // A same-input refresh that is merely queued or in flight does not
+        // make the committed snapshot's evidence stale: the snapshot's
+        // evidence describes exactly the input the running refresh is
+        // re-deriving, so the copy serves current evidence instead of a
+        // staleness disclosure (#7408 matrix — the save's debounced refresh
+        // racing the context copy read the just-committed full-seam snapshot
+        // as stale). Staleness stays for inputs that genuinely moved.
+        let same_input_refresh_in_flight = matches!(
+            health.state,
+            AnalysisAttemptState::Queued | AnalysisAttemptState::Running
+        ) && health.current_input_identity.is_some()
+            && health.current_input_identity == snapshot.input_identity_id();
+        if !same_input_refresh_in_flight
+            && !legacy_test_snapshot
+            && !health.allows_current_repairs()
+        {
             return Some("analysis input is no longer current; refresh the workspace evidence");
         }
         if snapshot.seams_deferred {
@@ -6836,37 +6964,6 @@ fn push_budget_omission_disclosure(
     ))
 }
 
-/// One visible summary of the same budget omission the selection and log
-/// retain. This is a delivery limitation, never a source finding or action.
-fn delivery_omission_diagnostic(
-    omission: &crate::lsp::diagnostic_budget::DocumentDeliveryOmission,
-) -> Diagnostic {
-    Diagnostic {
-        severity: Some(tower_lsp_server::ls_types::DiagnosticSeverity::INFORMATION),
-        code: Some(tower_lsp_server::ls_types::NumberOrString::String(
-            super::diagnostic_catalog::DIAGNOSTIC_BUDGET_OMITTED_CODE.to_string(),
-        )),
-        source: Some("ripr".to_string()),
-        message: format!(
-            "Displayed diagnostics are a bounded subset: {} of {} current diagnostics were omitted. Narrow the diff or profile, or retrieve current details through {}. This document result is incomplete.",
-            omission.omitted_count, omission.total_count, omission.retrieval_route
-        ),
-        data: Some(serde_json::json!({
-            "kind": "delivery_limitation",
-            "scope": omission.scope,
-            "selected_count": omission.selected_count,
-            "omitted_count": omission.omitted_count,
-            "total_count": omission.total_count,
-            "count_budget": omission.count_budget,
-            "byte_budget": omission.byte_budget,
-            "snapshot_profile_budget_identity": omission.snapshot_profile_budget_identity,
-            "complete_evidence_identity": omission.complete_evidence_identity,
-            "retrieval_route": omission.retrieval_route,
-        })),
-        ..Default::default()
-    }
-}
-
 /// Restore the prior *served* publication during transaction rollback. The
 /// stored baseline contains raw diagnostics; publishing it directly would
 /// bypass the prior budget when a newer refresh is cancelled.
@@ -6908,11 +7005,103 @@ fn push_budget_unavailable_log_message(detail: &str) -> String {
     )
 }
 
-/// The pull result id for a quarantined document (#1970). Distinct from the
-/// served-set id so a client cannot treat the withdrawn (empty) report as
-/// unchanged relative to the previously served diagnostics.
-fn quarantined_document_result_id(base: &str) -> String {
-    format!("{base}:quarantined")
+/// The pull result id for a quarantined document (#1970/#7771). Distinct
+/// from the served-set id so a client cannot treat the withdrawn marker as
+/// unchanged relative to the previously served diagnostics. The reason is
+/// folded in so a later reason change cannot hide behind `unchanged`.
+fn quarantined_document_result_id(base: &str, reason: DocumentStalenessReason) -> String {
+    format!("{base}:{}:quarantined", reason.as_str())
+}
+
+/// The pull result identity for the pre-analysis state (#7774). A literal,
+/// not a payload digest: there is no snapshot to derive from and the served
+/// payload is the constant pending marker. The recovery id is folded in so
+/// a blocking-state change (for example configuration getting fixed)
+/// produces a fresh identity — the client re-renders the marker instead of
+/// holding a stale route behind `unchanged`.
+fn analysis_pending_result_id(recovery: &AnalysisPendingRecovery) -> String {
+    format!("ripr:analysis-pending:{}", recovery.recovery_id())
+}
+
+/// The recovery route the pre-analysis marker may promise (#7774 review):
+/// `refresh_diagnostics` returns before analysis when configuration has
+/// failed or the workspace root authority does not admit analysis, so a
+/// blocked state must surface its own route rather than save/refresh.
+fn analysis_pending_recovery_for(
+    configuration_failure: Option<&AnalysisFailure>,
+    authority: &WorkspaceRootAuthority,
+) -> AnalysisPendingRecovery {
+    if configuration_failure.is_some() {
+        return AnalysisPendingRecovery::FixConfiguration;
+    }
+    if authority.effective_root.is_none() || !authority.allows_analysis() {
+        return AnalysisPendingRecovery::RootBlocked(root_recovery_route(&authority.state));
+    }
+    AnalysisPendingRecovery::SaveOrRefresh
+}
+
+/// The pre-analysis document pull report (#7774): one Information marker
+/// under the stable pending identity, or `unchanged` when the client
+/// already holds exactly that report.
+fn analysis_pending_document_report(
+    previous_result_id: Option<String>,
+    recovery: AnalysisPendingRecovery,
+) -> DocumentDiagnosticReport {
+    let result_id = analysis_pending_result_id(&recovery);
+    if previous_result_id.as_deref() == Some(result_id.as_str()) {
+        return DocumentDiagnosticReport::Unchanged(RelatedUnchangedDocumentDiagnosticReport {
+            related_documents: None,
+            unchanged_document_diagnostic_report: UnchangedDocumentDiagnosticReport { result_id },
+        });
+    }
+    DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
+        related_documents: None,
+        full_document_diagnostic_report: tower_lsp_server::ls_types::FullDocumentDiagnosticReport {
+            result_id: Some(result_id),
+            items: analysis_pending_diagnostics(recovery),
+        },
+    })
+}
+
+/// The pre-analysis workspace pull report (#7774): the pending marker rides
+/// one full report per document URI the client already tracks, under the
+/// same stable identity as the document pull path; previously served
+/// pending reports answer `unchanged`. A cold client with an empty
+/// previous-result-id set gets an empty item list because a workspace
+/// report item requires a document URI — the document pull path discloses
+/// the state for every open file.
+fn analysis_pending_workspace_report(
+    params: &WorkspaceDiagnosticParams,
+    recovery: AnalysisPendingRecovery,
+) -> WorkspaceDiagnosticReport {
+    let result_id = analysis_pending_result_id(&recovery);
+    let mut items = Vec::with_capacity(params.previous_result_ids.len());
+    for entry in &params.previous_result_ids {
+        if entry.value == result_id {
+            items.push(WorkspaceDocumentDiagnosticReport::Unchanged(
+                WorkspaceUnchangedDocumentDiagnosticReport {
+                    uri: entry.uri.clone(),
+                    version: None,
+                    unchanged_document_diagnostic_report: UnchangedDocumentDiagnosticReport {
+                        result_id: result_id.clone(),
+                    },
+                },
+            ));
+            continue;
+        }
+        items.push(WorkspaceDocumentDiagnosticReport::Full(
+            WorkspaceFullDocumentDiagnosticReport {
+                uri: entry.uri.clone(),
+                version: None,
+                full_document_diagnostic_report:
+                    tower_lsp_server::ls_types::FullDocumentDiagnosticReport {
+                        result_id: Some(result_id.clone()),
+                        items: analysis_pending_diagnostics(recovery),
+                    },
+            },
+        ));
+    }
+    WorkspaceDiagnosticReport { items }
 }
 
 /// Disclosure emitted once per quarantine episode when a dirty document's
@@ -10743,6 +10932,7 @@ mod delivery_selection_parity_tests {
 
     /// Pull one document through the real async `textDocument/diagnostic`
     /// handler and return the served canonical ids plus the result id.
+    /// Typed delivery limitations are transport items, not canonical evidence.
     fn pulled_document(
         backend: &Backend,
         runtime: &tokio::runtime::Runtime,
@@ -10773,6 +10963,11 @@ mod delivery_selection_parity_tests {
             .and_then(serde_json::Value::as_array)
             .ok_or_else(|| format!("full document report had no items array: {json}"))?
             .iter()
+            .filter(|item| {
+                item["code"] != super::super::diagnostic_catalog::DIAGNOSTIC_BUDGET_OMITTED_CODE
+                    && item["code"]
+                        != super::super::diagnostic_catalog::DIAGNOSTIC_QUARANTINE_WITHDRAWN_CODE
+            })
             .map(|item| {
                 item.get("data")
                     .and_then(|data| data.get("diagnostic_id"))
@@ -10805,6 +11000,11 @@ mod delivery_selection_parity_tests {
         sorted.sort();
         sorted
     }
+
+    // Keep the payload oracles separate from the selected-ID-only tests.
+    mod analysis_pending_tests;
+    mod omission_tests;
+    mod quarantine_marker_tests;
 
     #[test]
     fn input_change_reset_clears_component_degradation_dedup() -> Result<(), String> {
@@ -11521,8 +11721,22 @@ mod quarantine_message_tests {
 
     #[test]
     fn quarantined_document_result_id_stays_distinct() {
-        assert_eq!(quarantined_document_result_id("doc:1"), "doc:1:quarantined");
-        assert_ne!(quarantined_document_result_id("doc:1"), "doc:1");
+        let diverges = quarantined_document_result_id(
+            "doc:1",
+            DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent,
+        );
+        let unanalyzed = quarantined_document_result_id(
+            "doc:1",
+            DocumentStalenessReason::NoAnalyzedSavedContent,
+        );
+        assert_eq!(
+            diverges,
+            "doc:1:buffer_diverges_from_analyzed_saved_content:quarantined"
+        );
+        assert_ne!(diverges, "doc:1");
+        assert_ne!(diverges, unanalyzed);
+        assert!(diverges.ends_with(":quarantined"));
+        assert!(unanalyzed.ends_with(":quarantined"));
     }
 
     #[test]

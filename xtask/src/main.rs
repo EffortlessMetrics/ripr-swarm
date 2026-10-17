@@ -42,6 +42,7 @@ mod public_proof;
 // ripr crate's LSP validator without widening ripr's public API.
 #[path = "../../crates/ripr/src/output/gap_source_subject/shared.rs"]
 mod gap_source_subject_shared;
+mod gh_pr_status_snapshot;
 mod identity_registry;
 mod issue_lifecycle_attempt;
 mod issue_lifecycle_contract_plan;
@@ -54,6 +55,7 @@ mod policy;
 #[cfg(test)]
 mod portable_consumer;
 mod product_gate_plan;
+mod provider_review_observations;
 mod public_api_surface;
 mod python_judged_panel;
 mod python_judged_panel_feedback;
@@ -271,9 +273,10 @@ use no_panic::{
 use policy::{
     check_allow_attributes, check_changelog_fragments, check_ci_lane_whitelist, check_covered_by,
     check_doc_roles, check_droid_review_config, check_executable_files, check_file_policy,
-    check_local_context, check_network_policy, check_no_panic_family, check_positioning_language,
-    check_process_policy, check_product_copy, check_proof_packs, check_release_targets,
-    check_static_language, check_text_encoding, check_workflows, qualify_python_wheelhouse,
+    check_local_context, check_network_policy, check_no_panic_family, check_packaged_readme,
+    check_positioning_language, check_process_policy, check_product_copy, check_proof_packs,
+    check_release_targets, check_static_language, check_text_encoding, check_workflows,
+    qualify_python_wheelhouse,
 };
 use public_api_surface::public_api_surface;
 #[cfg(test)]
@@ -328,6 +331,7 @@ pub(crate) use reports::{
 };
 #[cfg(test)]
 pub(crate) use reports::{
+    MUTATION_CALIBRATION_AGREEMENT_SAMPLE_LIMIT,
     MUTATION_CALIBRATION_STATIC_WITHOUT_RUNTIME_SAMPLE_LIMIT, MutationOutcomeRecord,
     SarifMissingBaseline, SarifPolicyMode, SarifPolicyResult, SarifPolicyThreshold,
     build_mutation_calibration_report, build_sarif_policy_report, mutation_calibration_report_json,
@@ -600,18 +604,35 @@ fn check_identity_registry() -> Result<(), String> {
 }
 
 fn precommit() -> Result<(), String> {
+    precommit_policy(false)
+}
+
+fn precommit_policy(collect_all: bool) -> Result<(), String> {
     ensure_reports_dir()?;
+    let preflight_receipt = std::env::var_os("RIPR_POLICY_PREFLIGHT_RECEIPT");
+    // CI rejects stale/partial proof before compilation-bearing file policy.
+    // Local ordering and its ordinary workflow check remain unchanged.
+    if collect_all && let Some(path) = &preflight_receipt {
+        repo_policy::verify_preflight(Path::new(path))?;
+    }
     run("cargo", &["fmt", "--check"])?;
-    check_static_language()?;
-    check_no_panic_family()?;
-    check_allow_attributes()?;
-    check_local_context()?;
+    if collect_all {
+        policy::check_policy_all()?;
+    } else {
+        check_static_language()?;
+        check_no_panic_family()?;
+        check_allow_attributes()?;
+        check_local_context()?;
+    }
     check_file_policy()?;
-    check_covered_by()?;
-    check_executable_files()?;
+    if !collect_all {
+        check_covered_by()?;
+        check_executable_files()?;
+    }
     check_text_encoding()?;
-    match std::env::var_os("RIPR_POLICY_PREFLIGHT_RECEIPT") {
-        Some(path) => repo_policy::verify_preflight(Path::new(&path))?,
+    match preflight_receipt {
+        Some(path) if !collect_all => repo_policy::verify_preflight(Path::new(&path))?,
+        Some(_) => {}
         None => check_workflows()?,
     }
     check_droid_review_config()?;
@@ -643,9 +664,18 @@ fn precommit() -> Result<(), String> {
     check_proof_packs()?;
     check_release_targets()?;
     check_dependencies()?;
-    check_process_policy()?;
-    check_network_policy()?;
-    check_lint_policy()?;
+    if !collect_all {
+        check_process_policy()?;
+        check_network_policy()?;
+        check_lint_policy()?;
+    }
+    publish_precommit_policy_report(collect_all)
+}
+
+fn publish_precommit_policy_report(ci_policy: bool) -> Result<(), String> {
+    if ci_policy {
+        return Ok(());
+    }
     let body = precommit_report_body();
     write_report("precommit.md", &body)
 }
@@ -1513,10 +1543,52 @@ fn vscode_package() -> Result<(), String> {
     fs::create_dir_all(&dist)
         .map_err(|err| format!("failed to create {}: {err}", dist.display()))?;
     let version = vscode_package_version(&extension_dir.join("package.json"))?;
-    run_cwd_command(&vscode_package_command(&version))?;
-    let summary = verify_packaged_vsix_inventory(&dist.join(format!("ripr-{version}.vsix")))?;
-    println!("{summary}");
+    let notices = load_repository_license_notices(&repo_root()?)?;
+    verify_source_vscode_license(&extension_dir.join("LICENSE"), &notices)?;
+    println!("{}", package_and_verify_vsix(&dist, &version, &notices)?);
     Ok(())
+}
+
+fn vscode_verify_vsix(args: &[String]) -> Result<(), String> {
+    let vsix_path = vscode_verify_vsix_path(args)?;
+    let notices = load_repository_license_notices(&repo_root()?)?;
+    println!("{}", verify_packaged_vsix(&vsix_path, &notices)?);
+    Ok(())
+}
+
+fn vscode_verify_vsix_path(args: &[String]) -> Result<PathBuf, String> {
+    let mut path = None;
+    for arg in args {
+        if arg == "--" {
+            continue;
+        }
+        if path.replace(PathBuf::from(arg)).is_some() {
+            return Err("vscode-verify-vsix accepts exactly one VSIX path".to_string());
+        }
+    }
+    path.filter(|value| !value.as_os_str().is_empty())
+        .ok_or_else(|| "vscode-verify-vsix requires a VSIX path".to_string())
+}
+
+fn package_and_verify_vsix(
+    dist: &Path,
+    version: &str,
+    notices: &RepositoryLicenseNotices,
+) -> Result<String, String> {
+    run_cwd_command(&vscode_package_command(version))?;
+    verify_packaged_vsix(&dist.join(format!("ripr-{version}.vsix")), notices)
+}
+
+/// Reads the built VSIX and applies the production inventory bounds plus
+/// regular-file complete-notice membership. Returns the one-line summary
+/// `vscode-package` prints.
+fn verify_packaged_vsix(
+    vsix_path: &Path,
+    notices: &RepositoryLicenseNotices,
+) -> Result<String, String> {
+    let summary = verify_packaged_vsix_inventory(vsix_path)?;
+    verify_packaged_vsix_license_notices(vsix_path, notices)?;
+    Ok(summary)
 }
 
 /// Reads the built VSIX and applies the production inventory bounds. Returns
@@ -1561,7 +1633,10 @@ fn read_vsix_inventory(vsix_path: &Path) -> Result<Vec<VsixEntry>, String> {
             )
         })?;
         entries.push(VsixEntry {
-            name: member.name().to_string(),
+            name: member
+                .name()
+                .map_err(|err| format!("failed to read archive member name: {err}"))?
+                .into_owned(),
             size: member.size(),
             compressed_size: member.compressed_size(),
         });
@@ -1618,6 +1693,197 @@ fn is_workspace_build_output(name: &str) -> bool {
         return true;
     }
     name.ends_with(".rlib") || name.ends_with(".rmeta")
+}
+
+/// `vsce package` ships `editors/vscode/LICENSE` as this archive member.
+const VSIX_LICENSE_TXT_ENTRY: &str = "extension/LICENSE.txt";
+const ROOT_LICENSE_MIT: &str = "LICENSE-MIT";
+const ROOT_LICENSE_APACHE: &str = "LICENSE-APACHE";
+/// The historic `editors/vscode/LICENSE` pointer is 174 bytes. Complete
+/// repository notices are larger; this bound rejects that pointer class
+/// even when the file is named `LICENSE.txt`.
+const COMPLETE_LICENSE_NOTICE_MIN_BYTES: usize = 256;
+/// POSIX `S_IFMT` / `S_IFREG`. Permission-only Unix modes have type 0 and
+/// stay accepted; any other explicit type (directory, FIFO, symlink) is not
+/// a regular LICENSE.txt member. `zip::ZipFile::is_file` only hides
+/// trailing-slash directories and `S_IFLNK`.
+const UNIX_FILE_TYPE_MASK: u32 = 0o170_000;
+const UNIX_S_IFREG: u32 = 0o100_000;
+/// APPNOTE DOS directory bit in the low 16 bits of central-directory
+/// `external_file_attributes`. Rejected even when the member name has no
+/// trailing slash and Unix type bits look regular.
+const DOS_DIRECTORY_ATTRIBUTE: u32 = 0x10;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RepositoryLicenseNotices {
+    mit: Vec<u8>,
+    apache: Vec<u8>,
+}
+
+fn load_repository_license_notices(root: &Path) -> Result<RepositoryLicenseNotices, String> {
+    let mit = read_complete_license_notice(root.join(ROOT_LICENSE_MIT), ROOT_LICENSE_MIT)?;
+    let apache = read_complete_license_notice(root.join(ROOT_LICENSE_APACHE), ROOT_LICENSE_APACHE)?;
+    if mit == apache {
+        return Err(
+            "LICENSE-MIT and LICENSE-APACHE are identical; repository notices must stay distinct"
+                .to_string(),
+        );
+    }
+    Ok(RepositoryLicenseNotices { mit, apache })
+}
+
+fn read_complete_license_notice(path: PathBuf, label: &str) -> Result<Vec<u8>, String> {
+    let bytes = fs::read(&path).map_err(|err| {
+        format!(
+            "failed to read complete {label} notice {}: {err}",
+            path.display()
+        )
+    })?;
+    if bytes.len() < COMPLETE_LICENSE_NOTICE_MIN_BYTES {
+        return Err(format!(
+            "{label} is {} bytes; complete repository notices must be at least {COMPLETE_LICENSE_NOTICE_MIN_BYTES} bytes",
+            bytes.len()
+        ));
+    }
+    Ok(bytes)
+}
+
+fn verify_source_vscode_license(
+    path: &Path,
+    notices: &RepositoryLicenseNotices,
+) -> Result<(), String> {
+    let actual = fs::read(path).map_err(|err| {
+        format!(
+            "failed to read {}: {err}; editors/vscode/LICENSE must carry the complete repository notices so raw vsce also ships them",
+            path.display()
+        )
+    })?;
+    require_license_bytes_contain_notices(&actual, notices, &path.display().to_string())
+}
+
+fn verify_packaged_vsix_license_notices(
+    vsix_path: &Path,
+    notices: &RepositoryLicenseNotices,
+) -> Result<(), String> {
+    let file = fs::File::open(vsix_path)
+        .map_err(|err| format!("packaged VSIX {} is missing: {err}", vsix_path.display()))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|err| format!("packaged VSIX {} is not a zip: {err}", vsix_path.display()))?;
+    let actual = read_vsix_license_txt_member(&mut archive, vsix_path)?;
+    require_license_bytes_contain_notices(
+        &actual,
+        notices,
+        &format!(
+            "packaged VSIX {} member {VSIX_LICENSE_TXT_ENTRY}",
+            vsix_path.display()
+        ),
+    )
+}
+
+fn read_vsix_license_txt_member(
+    archive: &mut zip::ZipArchive<fs::File>,
+    vsix_path: &Path,
+) -> Result<Vec<u8>, String> {
+    let mut member = archive.by_name(VSIX_LICENSE_TXT_ENTRY).map_err(|err| {
+        format!(
+            "packaged VSIX {} is missing {VSIX_LICENSE_TXT_ENTRY}: {err}; vsce ships editors/vscode/LICENSE as that member, and it must carry the complete repository LICENSE-MIT and LICENSE-APACHE notices",
+            vsix_path.display()
+        )
+    })?;
+    use zip::HasZipMetadata;
+    require_vsix_license_txt_regular_file(
+        vsix_path,
+        member.is_file(),
+        member.unix_mode(),
+        member.get_metadata().external_attributes,
+    )?;
+    let mut actual = Vec::new();
+    std::io::copy(&mut member, &mut actual).map_err(|err| {
+        format!(
+            "failed to read packaged VSIX {} member {VSIX_LICENSE_TXT_ENTRY}: {err}",
+            vsix_path.display()
+        )
+    })?;
+    Ok(actual)
+}
+
+fn require_vsix_license_txt_regular_file(
+    vsix_path: &Path,
+    is_file: bool,
+    unix_mode: Option<u32>,
+    external_attributes: u32,
+) -> Result<(), String> {
+    if !is_file {
+        return Err(vsix_license_txt_not_regular(vsix_path));
+    }
+    if let Some(mode) = unix_mode {
+        let file_type = mode & UNIX_FILE_TYPE_MASK;
+        if file_type != 0 && file_type != UNIX_S_IFREG {
+            return Err(vsix_license_txt_not_regular(vsix_path));
+        }
+    }
+    if external_attributes & DOS_DIRECTORY_ATTRIBUTE != 0 {
+        return Err(vsix_license_txt_not_regular(vsix_path));
+    }
+    Ok(())
+}
+
+fn vsix_license_txt_not_regular(vsix_path: &Path) -> String {
+    format!(
+        "packaged VSIX {} member {VSIX_LICENSE_TXT_ENTRY} is not a regular file",
+        vsix_path.display()
+    )
+}
+
+fn require_license_bytes_contain_notices(
+    actual: &[u8],
+    notices: &RepositoryLicenseNotices,
+    subject: &str,
+) -> Result<(), String> {
+    if actual.len() < COMPLETE_LICENSE_NOTICE_MIN_BYTES {
+        return Err(format!(
+            "{subject} is {} bytes; complete repository notices must be at least {COMPLETE_LICENSE_NOTICE_MIN_BYTES} bytes, not the historic editors/vscode/LICENSE pointer",
+            actual.len()
+        ));
+    }
+    require_notice_contained(actual, &notices.mit, subject, ROOT_LICENSE_MIT)?;
+    require_notice_contained(actual, &notices.apache, subject, ROOT_LICENSE_APACHE)?;
+    Ok(())
+}
+
+fn require_notice_contained(
+    haystack: &[u8],
+    notice: &[u8],
+    subject: &str,
+    label: &str,
+) -> Result<(), String> {
+    let needle = trim_ascii_bytes(notice);
+    if needle.is_empty() || !bytes_contain(haystack, needle) {
+        return Err(format!(
+            "{subject} does not contain the complete repository {label} notice"
+        ));
+    }
+    Ok(())
+}
+
+fn trim_ascii_bytes(bytes: &[u8]) -> &[u8] {
+    let Some(start) = bytes.iter().position(|byte| !byte.is_ascii_whitespace()) else {
+        return &[];
+    };
+    let end = bytes
+        .iter()
+        .rposition(|byte| !byte.is_ascii_whitespace())
+        .map_or(start, |index| index + 1);
+    bytes.get(start..end).unwrap_or(&[])
+}
+
+fn bytes_contain(haystack: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
 }
 
 fn vscode_test() -> Result<(), String> {
@@ -1717,10 +1983,13 @@ fn stage_vscode_test_server_archive(
     let mut member = zip
         .by_index(0)
         .map_err(|err| format!("failed to read archive member: {err}"))?;
-    if Path::new(member.name()).file_name() != Some(executable_name) {
+    let member_name = member
+        .name()
+        .map_err(|err| format!("failed to read archive member name: {err}"))?
+        .into_owned();
+    if Path::new(&member_name).file_name() != Some(executable_name) {
         return Err(format!(
-            "VS Code server proof archive member `{}` did not match the built executable",
-            member.name()
+            "VS Code server proof archive member `{member_name}` did not match the built executable"
         ));
     }
     let executable = extracted.join(executable_name);
@@ -2464,12 +2733,16 @@ fn command_catalog_ci_drift_violations_for_repo(
     Ok(command_catalog_ci_drift_violations(catalog, &enforced))
 }
 
-/// An enforced `cargo xtask precommit` invocation transitively enforces every
-/// gate in the precommit table (issue #2258): expand it so gates invoked only
+/// An enforced `cargo xtask precommit` or `cargo xtask ci-policy`
+/// invocation transitively enforces every gate
+/// in the precommit table (issues #2258, #7826): expand it so gates invoked only
 /// through precommit still count as CI-enforced. Advisory precommit
 /// invocations never reach the enforced set, so they expand nothing.
 fn expand_precommit_ci_invocations(enforced: &mut BTreeSet<WorkflowXtaskInvocation>) {
-    if !enforced.contains(&("precommit".to_string(), String::new())) {
+    if !["precommit", "ci-policy"]
+        .iter()
+        .any(|command| enforced.contains(&(command.to_string(), String::new())))
+    {
         return;
     }
     for gate in PRECOMMIT_GATE_COMMANDS {
@@ -3069,18 +3342,15 @@ pub(crate) fn pr_triage_report_impl() -> Result<(), String> {
 
 pub(crate) fn gh_pr_status_impl(args: &[String]) -> Result<(), String> {
     let number = parse_gh_pr_status_args(args)?;
-    let pr = collect_gh_pr_status(number)?;
-    let mut warnings = Vec::new();
-    let (required_contexts, required_contexts_available) =
-        match collect_required_status_contexts(&pr.base_ref_name) {
-            Ok(contexts) => (contexts, true),
-            Err(err) => {
-                warnings.push(format!(
-                    "required status context lookup failed; using status rollup only: {err}"
-                ));
-                (Vec::new(), false)
-            }
-        };
+    let observation = gh_pr_status_snapshot::collect_current(
+        number,
+        || collect_gh_pr_status(number),
+        collect_required_status_contexts,
+    )?;
+    let pr = parse_gh_pr_status_pull_request(&observation.pr.to_string())?;
+    let required_contexts = observation.contexts;
+    let required_contexts_available = observation.contexts_available;
+    let warnings = observation.warnings;
     let readiness = gh_pr_status_readiness(
         &pr,
         &required_contexts,
@@ -3138,32 +3408,25 @@ fn parse_positive_u64(value: &str, label: &str) -> Result<u64, String> {
     Ok(parsed)
 }
 
-fn collect_gh_pr_status(number: u64) -> Result<GhPrStatusPullRequest, String> {
-    let fields = [
-        "number",
-        "title",
-        "isDraft",
-        "mergeStateStatus",
-        "headRefName",
-        "baseRefName",
-        "reviewDecision",
-        "latestReviews",
-        "statusCheckRollup",
-    ]
-    .join(",");
-    let output = run_output_owned(
-        "gh",
-        &[
-            "pr".to_string(),
-            "view".to_string(),
-            number.to_string(),
-            "--json".to_string(),
-            fields,
-        ],
-    )?;
-    parse_gh_pr_status_pull_request(&output)
+fn collect_gh_pr_status(number: u64) -> Result<Value, String> {
+    collect_gh_pr_status_json_with(number, run_output_owned)
 }
 
+fn collect_gh_pr_status_json_with(
+    number: u64,
+    run: impl FnMut(&str, &[String]) -> Result<String, String>,
+) -> Result<Value, String> {
+    gh_pr_status_snapshot::collect_snapshot(number, run)
+}
+
+#[cfg(test)]
+fn collect_gh_pr_status_with(
+    number: u64,
+    run: impl FnMut(&str, &[String]) -> Result<String, String>,
+) -> Result<GhPrStatusPullRequest, String> {
+    let value = collect_gh_pr_status_json_with(number, run)?;
+    parse_gh_pr_status_pull_request(&value.to_string())
+}
 fn collect_required_status_contexts(base_ref_name: &str) -> Result<Vec<String>, String> {
     let repo_output = run_output("gh", &["repo", "view", "--json", "owner,name"])?;
     let repo_value: Value = serde_json::from_str(&repo_output)
@@ -3223,6 +3486,8 @@ fn parse_gh_pr_status_pull_request(text: &str) -> Result<GhPrStatusPullRequest, 
         review_decision: json_value_string(&item, "reviewDecision"),
         checks,
         reviews,
+        provider_review_observations:
+            provider_review_observations::ProviderReviewObservations::from_gh_value(&item),
     })
 }
 
@@ -3411,6 +3676,8 @@ fn gh_pr_status_markdown(
         }
     }
 
+    body.push_str(&pr.provider_review_observations.markdown());
+
     body.push_str("\n## Droid Status\n\n");
     append_markdown_list(
         &mut body,
@@ -3472,6 +3739,10 @@ fn gh_pr_status_json(
     body.push_str(&format!(
         "  \"review_decision\": \"{}\",\n",
         json_escape(&pr.review_decision)
+    ));
+    body.push_str(&format!(
+        "  \"provider_review_observations\": {},\n",
+        pr.provider_review_observations.json_value()
     ));
     body.push_str("  \"reviews\": [\n");
     for (index, review) in pr.reviews.iter().enumerate() {
@@ -8002,6 +8273,9 @@ fn test_efficiency_metrics(
 }
 
 fn test_efficiency_report_status(entries: &[TestEfficiencyEntry]) -> &'static str {
+    if entries.is_empty() {
+        return "not_run";
+    }
     if entries
         .iter()
         .any(|entry| entry.class != "strong_discriminator")
@@ -8010,6 +8284,12 @@ fn test_efficiency_report_status(entries: &[TestEfficiencyEntry]) -> &'static st
     } else {
         "pass"
     }
+}
+
+fn test_efficiency_report_explanation(entries: &[TestEfficiencyEntry]) -> Option<&'static str> {
+    entries.is_empty().then_some(
+        "No tests were selected; test-efficiency evidence was not established for this report. Run the report from the workspace root containing the Rust test sources.",
+    )
 }
 
 fn test_efficiency_report_markdown(
@@ -8033,6 +8313,10 @@ fn test_efficiency_report_markdown(
         duplicate_groups.len(),
         entries.len(),
     );
+
+    if let Some(explanation) = test_efficiency_report_explanation(entries) {
+        body.push_str(&format!("Explanation: {explanation}\n\n"));
+    }
 
     body.push_str("## Metrics\n\n| Metric | Value |\n| --- | ---: |\n");
     body.push_str(&format!("| Tests scanned | {} |\n", metrics.tests_scanned));
@@ -8233,6 +8517,12 @@ fn test_efficiency_report_json(
         counts.get("opaque").copied().unwrap_or(0)
     );
 
+    if let Some(explanation) = test_efficiency_report_explanation(entries) {
+        body.push_str(&format!(
+            "  \"explanation\": \"{}\",\n",
+            json_escape(explanation)
+        ));
+    }
     body.push_str("  \"reason_counts\": {\n");
     for (index, (reason, count)) in reason_counts.iter().enumerate() {
         if index > 0 {
@@ -13340,6 +13630,12 @@ fn check_doc_index() -> Result<(), String> {
 
 const DOC_ARTIFACT_LEDGER: &str = "policy/doc-artifacts.toml";
 const DOC_ARTIFACT_SCHEMA_VERSION: &str = "1.0";
+/// Count of unregistered RIPR-SPEC files when the reverse-direction ratchet
+/// was added (#1718). Lower this as specs are registered.
+const UNREGISTERED_SPEC_BASELINE: usize = 82;
+/// Newest-first bound for named unregistered specs in the reverse-direction
+/// violation (#7400). Remaining ids are summarized, not dropped silently.
+const UNREGISTERED_SPEC_MESSAGE_LIMIT: usize = 8;
 const SUPPORT_TIERS_PATH: &str = "docs/status/SUPPORT_TIERS.md";
 const RUST_REPAIR_TRUST_CORPUS_PATH: &str = "metrics/rust-repair-trust/corpus.json";
 const RUST_GAP_REPAIR_CAPABILITY: &str = "Rust gap repair loop";
@@ -13397,6 +13693,12 @@ struct DocArtifactEntry {
 }
 
 fn check_doc_artifacts() -> Result<(), String> {
+    check_doc_artifacts_with_unregistered_baseline(UNREGISTERED_SPEC_BASELINE)
+}
+
+fn check_doc_artifacts_with_unregistered_baseline(
+    unregistered_spec_baseline: usize,
+) -> Result<(), String> {
     let mut violations = doc_artifact_violations(Path::new("."), Path::new(DOC_ARTIFACT_LEDGER))?;
     // #1718: reverse-direction check — every RIPR-SPEC on disk must be registered
     // in the ledger. This is ratcheted: the current unregistered count is 82, so
@@ -13434,29 +13736,24 @@ fn check_doc_artifacts() -> Result<(), String> {
         }
         Err(err) => return Err(format!("failed to read {}: {err}", specs_dir.display())),
     };
-    let mut unregistered: Vec<String> = Vec::new();
+    let mut unregistered: Vec<(String, String)> = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         if let Some(spec_id) = spec_id_from_path(&path)
             && !registered.contains(&spec_id)
         {
-            unregistered.push(spec_id);
+            unregistered.push((spec_id, root_relative_path(Path::new("."), &path)));
         }
     }
     // Ratchet: fail only when the unregistered count GROWS beyond the baseline.
     // The baseline (82) is the count at HEAD when this check was added (#1718).
-    // As specs are registered, the baseline should be lowered in this constant.
-    const UNREGISTERED_SPEC_BASELINE: usize = 82;
-    if unregistered.len() > UNREGISTERED_SPEC_BASELINE
-        && let Some(excess) = unregistered.len().checked_sub(UNREGISTERED_SPEC_BASELINE)
-    {
-        violations.push(format!(
-            "reverse-direction: {excess} new RIPR-SPEC file(s) on disk are not registered in {} \
-             (baseline: {UNREGISTERED_SPEC_BASELINE}, current: {}). \
-             Register the new spec(s) or lower the baseline if the count was intentionally reduced.",
-            DOC_ARTIFACT_LEDGER,
-            unregistered.len()
-        ));
+    // As specs are registered, the baseline should be lowered in UNREGISTERED_SPEC_BASELINE.
+    if let Some(violation) = reverse_direction_unregistered_violation(
+        &unregistered,
+        unregistered_spec_baseline,
+        DOC_ARTIFACT_LEDGER,
+    ) {
+        violations.push(violation);
     }
     finish_policy_report(
         PolicyReportSpec {
@@ -13477,6 +13774,48 @@ fn check_doc_artifacts() -> Result<(), String> {
         },
         &violations,
     )
+}
+
+/// Name unregistered RIPR-SPEC ids when the reverse-direction ratchet trips.
+///
+/// The ratchet cannot tell a newly added spec from the grandfathered
+/// unregistered set, so the message lists unregistered identities. Newest spec
+/// ids are shown first so a typical `RIPR-SPEC-NNNN` addition survives the
+/// display bound; remaining entries are summarized with a truncation marker
+/// (#7400).
+fn reverse_direction_unregistered_violation(
+    unregistered: &[(String, String)],
+    baseline: usize,
+    ledger: &str,
+) -> Option<String> {
+    if unregistered.len() <= baseline {
+        return None;
+    }
+    let excess = unregistered.len().checked_sub(baseline)?;
+    Some(format!(
+        "reverse-direction: {excess} new RIPR-SPEC file(s) on disk are not registered in {ledger} \
+         (baseline: {baseline}, current: {}). \
+         unregistered: {}. \
+         Register the new spec(s) or lower the baseline if the count was intentionally reduced.",
+        unregistered.len(),
+        format_unregistered_spec_entries(unregistered),
+    ))
+}
+
+fn format_unregistered_spec_entries(unregistered: &[(String, String)]) -> String {
+    let mut ordered = unregistered.to_vec();
+    ordered.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+    let shown: Vec<String> = ordered
+        .iter()
+        .take(UNREGISTERED_SPEC_MESSAGE_LIMIT)
+        .map(|(id, path)| format!("{id} ({path})"))
+        .collect();
+    match ordered.len().checked_sub(shown.len()) {
+        Some(remaining) if remaining > 0 => {
+            format!("{}, … and {remaining} more", shown.join(", "))
+        }
+        _ => shown.join(", "),
+    }
 }
 
 fn doc_artifact_violations(root: &Path, ledger_path: &Path) -> Result<Vec<String>, String> {

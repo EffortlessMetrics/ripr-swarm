@@ -39,6 +39,62 @@ function manualTimeoutWait(timeout: Deferred): LifecycleWait {
 }
 
 suite('Extension Lifecycle Coordinator', () => {
+  test('pause reaps the session and permits a later explicit start', async () => {
+    const coordinator = new ExtensionLifecycleCoordinator();
+    const events: string[] = [];
+    let running = false;
+    const controller: LifecycleController = {
+      start: async () => { events.push('start'); running = true; },
+      stop: async () => { events.push('stop'); running = false; },
+      isRunning: () => running
+    };
+    await coordinator.start(controller);
+    await coordinator.pause(controller);
+    assert.strictEqual(running, false);
+    await coordinator.start(controller);
+    assert.deepStrictEqual(events, ['start', 'stop', 'start']);
+    await coordinator.stop(controller);
+    await assert.rejects(coordinator.start(controller), /terminal shutdown/);
+  });
+
+  test('a start overlapping pause waits for teardown before starting a replacement', async () => {
+    const coordinator = new ExtensionLifecycleCoordinator();
+    const events: string[] = [];
+    let running = false;
+    const controller: LifecycleController = {
+      start: async () => { events.push('start'); running = true; },
+      stop: async () => { events.push('stop'); running = false; },
+      isRunning: () => running
+    };
+    await coordinator.start(controller);
+    const pause = coordinator.pause(controller);
+    const start = coordinator.start(controller);
+    await Promise.all([pause, start]);
+    assert.deepStrictEqual(events, ['start', 'stop', 'start']);
+    assert.strictEqual(running, true);
+    await coordinator.stop(controller);
+  });
+
+  test('pause during restart stop cancels replacement and stops the session once', async () => {
+    const coordinator = new ExtensionLifecycleCoordinator();
+    const stopping = deferred(); const entered = deferred();
+    const events: string[] = [];
+    let running = false;
+    const controller: LifecycleController = {
+      start: async () => { events.push('start'); running = true; },
+      stop: async () => { events.push('stop'); entered.resolve(); await stopping.promise; running = false; },
+      isRunning: () => running
+    };
+    await coordinator.start(controller);
+    const restart = coordinator.restart(controller); await entered.promise;
+    const pause = coordinator.pause(controller); stopping.resolve();
+    await Promise.all([restart, pause]);
+    assert.deepStrictEqual(events, ['start', 'stop']);
+    assert.strictEqual(running, false);
+    await coordinator.stop(controller);
+    assert.deepStrictEqual(events, ['start', 'stop']);
+  });
+
   test('default lifecycle waiter rejects a real timeout with the typed timedOut error', async () => {
     const never = new Promise<void>(() => undefined);
     let caught: unknown;

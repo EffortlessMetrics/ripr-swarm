@@ -1,0 +1,22 @@
+{
+  "case_id": "cell-0231-log-raw-literal-captured",
+  "subject_id": "authored-log-template",
+  "origin": "authored",
+  "anchor": "src/lib.rs:71",
+  "behavior_family": "side_effect",
+  "test_shape": "captured_log_record_assert",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "static_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

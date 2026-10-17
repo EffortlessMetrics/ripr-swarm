@@ -68,6 +68,15 @@ and defeat reuse). An explicit `--perl-facts <path>` packet is recorded
 (path plus content hash) and remains supported. A failed artifact write
 fails the command: the user explicitly requested the artifact.
 
+If the producer outcome is `unsupported_input`, `check` exits `2` after
+rendering its ordinary incomplete report but neither creates nor replaces
+the reusable artifact. Report navigation retains the original input route,
+not `--from` the unwritten destination. This uses the existing outcome exit
+contract; valid and advisory `partial_with_limitations` writes and reuse are
+unchanged. The v1 schema has no outcome field, so earlier artifacts written
+from unsupported input cannot be identified retrospectively; regenerate
+such artifacts from a supported input. Other identity checks stay unchanged.
+
 `--diff -` (stdin) is not supported with `--write-artifact`: the consumed
 stdin bytes are not retained as a re-resolvable artifact input. The CLI
 refuses this combination before analysis or any artifact write, whether
@@ -204,7 +213,10 @@ recomputed one given the same render options. The one exception is
 navigation: the sibling commands `explain` prints and the context packet's
 `witness.explain_command` replay the source that produced the finding,
 `--diff`/`--base` on a fresh run and `--from <artifact>` on a reused one
-(#3952). Render-time knobs
+(#3952). An explicit mode remains in the sibling command even when it is
+`draft`: omitting `--mode draft` over a repository `mode = "ready"` would
+reload Ready and refuse the Draft artifact (#7873). Unoverridden Draft
+retains its existing omission. Render-time knobs
 (`--max-related-tests`, severity display, output format) are not part of
 the identity and are honored fresh at render time — including
 `--max-related-tests` beyond the `check --json` render cap, because the
@@ -244,6 +256,19 @@ artifact stores the uncapped related-tests list.
   gate, badge, or proof route.
 
 ## Acceptance Examples
+
+### Unsupported input preserves destinations and the incomplete report
+
+```text
+Given nonempty garbage, a truncated declared hunk, or mixed valid/malformed input,
+when `ripr check --diff bad.patch --json --write-artifact a.json` runs,
+then it exits 2 with the same incomplete report and direct-input navigation
+as the invocation without --write-artifact, retaining advisory findings.
+It does not create a.json or its absent parent, or replace existing bytes.
+`context --from` an absent destination refuses with check_artifact_unusable.
+An existing valid artifact stays reusable with its original context bytes.
+Valid and advisory partial input still write v1 artifacts and permit reuse.
+```
 
 ### Stdin artifact capture refuses before analysis or replacement
 
@@ -310,6 +335,14 @@ even though the `check --json` render caps related tests at 8.
 
 ## Test Mapping
 
+- `crates/ripr/tests/cli_smoke/unsupported_artifact.rs::unsupported_artifact_preserves_destinations_and_incomplete_report`
+  — unsupported-input report parity, new and sentinel destinations, absent
+  parent preservation, and downstream refusal of the absent artifact.
+- `crates/ripr/tests/cli_smoke/unsupported_artifact.rs::unsupported_artifact_preserves_valid_artifact_and_its_context`
+  — valid write/reuse and byte-identical preservation after a refused replacement.
+- `crates/ripr/tests/cli_smoke/unsupported_artifact.rs::unsupported_artifact_keeps_advisory_partial_write_and_reuse`
+  — incomplete advisory input remains writable and reusable.
+
 - `crates/ripr/tests/cli_smoke/check_artifact_stdin.rs::python_stdin_artifact_refusal_preserves_named_recovery`
   and `javascript_stdin_artifact_refusal_preserves_named_recovery` — real
   CLI admission refusal before analysis and artifact replacement, ordinary
@@ -368,6 +401,10 @@ even though the `check --json` render caps related tests at 8.
   — an artifact written with `--no-unchanged-tests` is consumable with the
   same flag and fails closed naming
   `analysis_options.include_unchanged_tests` without it.
+- `crates/ripr/tests/cli_smoke/artifact_mode_precedence.rs::context_artifact_navigation_preserves_mode_precedence`
+  — literal mode precedence through artifact-backed navigation and actual
+  nested-cwd replay, with a removed-mode refusal, default-mode omission,
+  unrelated render-cap, unchanged-test and cache-relocation controls.
 - `crates/ripr/tests/cli_smoke.rs::check_write_artifact_rejects_managed_perl_producer`
   — managed `[perl] producer` packet generation fails closed with the
   named limitation.

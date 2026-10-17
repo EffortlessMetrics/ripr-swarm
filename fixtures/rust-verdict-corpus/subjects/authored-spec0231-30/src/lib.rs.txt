@@ -1,0 +1,13 @@
+pub fn score(x: u32) -> u32 {
+    x * x
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn score_three_is_nine() {
+        std::assert_eq!(score(3), 9);
+    }
+}

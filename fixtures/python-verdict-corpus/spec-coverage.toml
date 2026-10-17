@@ -8,16 +8,14 @@
 # oracle, probe or test-shape behavior that a corpus case (a Python diff plus
 # runtime mutant truth from the subject's own tests) can label. An in-scope
 # example a case cannot label is waived with a reason; waived examples are
-# accounted for, never covered. RIPR-SPEC-0238 example 10 is neither covered
-# nor waived: it is left out for the reason in SPEC.md (it needs numpy in a
-# subject), and it is not impossible to label, so it stays visible as
-# uncovered.
+# accounted for, never covered. RIPR-SPEC-0238 example 10 is covered by
+# `authored-py-pytest-numpy`, whose tests need numpy to run (SPEC.md).
 #
 # `floor` is the covered-example count `verdict-corpus check` protects. Raise
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 39
+floor = 40
 
 # LSP Repair Packet Command
 [[spec]]
@@ -510,6 +508,24 @@ id = "RIPR-SPEC-0258"
 scope = "out"
 reason = "TypeScript analyzer rules; a Python case cannot label them"
 
+# Rust closures in iterator adaptors
+[[spec]]
+id = "RIPR-SPEC-0265"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a Python case cannot label them"
+
+# TypeScript strict custom matcher
+[[spec]]
+id = "RIPR-SPEC-0262"
+scope = "out"
+reason = "TypeScript analyzer rules; a Python case cannot label them"
+
+# Guarded side effect no test input enters
+[[spec]]
+id = "RIPR-SPEC-0263"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a Python case cannot label them"
+
 # Test Efficiency and Vacuity Signals
 [[unmeasured]]
 id = "RIPR-SPEC-0004"
@@ -529,3 +545,15 @@ reason = "acceptance examples are prose and code blocks, not numbered; Python co
 [[unmeasured]]
 id = "RIPR-SPEC-0201"
 reason = "acceptance examples are a table, not numbered; no Python corpus case covers same-class transitive reach yet"
+
+# Owner call shape projection for drill-in surfaces
+[[spec]]
+id = "RIPR-SPEC-0267"
+scope = "out"
+reason = "explain/context packet drill-in projection of an observed Rust signature; a Python case cannot label it"
+
+# Flow-sink evidence row collapses restated labels
+[[spec]]
+id = "RIPR-SPEC-0268"
+scope = "out"
+reason = "render-only collapse of a duplicated evidence row; a Python case cannot label it"

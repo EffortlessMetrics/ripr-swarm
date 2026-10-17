@@ -62,6 +62,7 @@ mod bounded_read;
 mod bun_bridge;
 mod classifier;
 mod committed_snapshot;
+mod custom_matcher_guard;
 mod deleted_lines;
 #[cfg(test)]
 mod deleted_lines_tests;
@@ -96,6 +97,7 @@ mod rejection_equality_tests;
 mod related_tests;
 #[cfg(test)]
 mod replaced_block_tests;
+mod spread_override_guard;
 mod static_limit;
 mod table_rows;
 #[cfg(test)]
@@ -104,6 +106,7 @@ mod tests_extract;
 #[cfg(test)]
 mod tests_extract_tests;
 pub(crate) mod tsconfig;
+mod typed_loose_equality_guard;
 mod types;
 mod workspace_packages;
 
@@ -119,6 +122,7 @@ pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
 pub(crate) use classifier::*;
 pub(crate) use committed_snapshot::*;
+pub(crate) use custom_matcher_guard::*;
 pub(crate) use discovery::*;
 pub(crate) use dropped_term_guard::*;
 pub(crate) use error_payload_guard::*;
@@ -135,6 +139,7 @@ pub(crate) use parse::*;
 pub(crate) use paths::*;
 pub(crate) use probe_shape::*;
 pub(crate) use related_tests::*;
+pub(crate) use spread_override_guard::*;
 pub(crate) use static_limit::*;
 pub(crate) use table_rows::*;
 pub(crate) use tests_extract::*;
@@ -143,6 +148,7 @@ pub(crate) use tsconfig::load_alias_map;
 pub(crate) use tsconfig::{
     TsAliasMap, TsAliasMapLoadGap, TsAliasUnresolveCause, load_alias_map_with_read_error,
 };
+pub(crate) use typed_loose_equality_guard::*;
 pub(crate) use types::*;
 
 /// TypeScript / JavaScript preview adapter.
@@ -591,10 +597,17 @@ impl TypeScriptAdapter {
                     finding.evidence.extend(discovery_evidence.clone());
                     // Inject verify-command evidence derived from the strongest
                     // related test and the package-discovery facts already
-                    // resolved above. Fail-closed: when the runner is
-                    // unresolved the named limitation
-                    // `typescript_test_runner_unresolved` is emitted instead
-                    // so consumers know why no command is available.
+                    // resolved above. Fail-closed: invent no command when
+                    // inference returns `None`. `typescript_test_runner_unresolved`
+                    // names a missing runner, so emit it only when neither a
+                    // framework nor a package-manager runner resolved. An empty
+                    // `related_tests` list also yields `None` (`max_by_key`
+                    // over an empty iterator); that is a missing test target,
+                    // not an unknown runner. When the runner is already known
+                    // (`typescript_test_runner: vitest`, mocha detected, npm
+                    // lockfile, …) omit the limitation rather than contradict
+                    // the detected name. Do not invent a second limitation
+                    // code for the no-related-test case (#7646).
                     let inferred_cmd = finding
                         .related_tests
                         .iter()
@@ -621,18 +634,9 @@ impl TypeScriptAdapter {
                             }
                         }
                         finding.evidence.retain(|ev| !ev.is_empty());
-                    } else {
-                        // Fail-closed: no verify command resolved. Emit the
-                        // named limitation so consumers know why no command is
-                        // available. This must fire whenever the inferred
-                        // command is `None` — not only when no framework was
-                        // detected: mocha has no file-target command mapping,
-                        // so a detected mocha framework with no lockfile/runner
-                        // evidence previously produced NEITHER a command NOR a
-                        // limitation, contradicting the contract documented
-                        // above. (When the command IS resolved the
-                        // `typescript_test_runner: <name>` evidence line
-                        // already identifies the runner, so no limitation.)
+                    } else if pkg_discovery.framework_hint.is_none()
+                        && pkg_discovery.runner_hint.is_none()
+                    {
                         finding.evidence.push(
                             "typescript_package_limitation: typescript_test_runner_unresolved"
                                 .to_string(),

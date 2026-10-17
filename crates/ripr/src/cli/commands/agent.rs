@@ -552,7 +552,13 @@ fn agent_verify_error_is_typed_refusal(error: &str) -> bool {
 }
 
 fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), CommandError> {
-    ensure_command_root(&options.root, "agent verify-execute")?;
+    if let Err(error) = ensure_command_root(&options.root, "agent verify-execute") {
+        print!(
+            "{}",
+            app::verification_execution::render_unusable_root(&error)
+        );
+        return Err(CommandError::Failure(error));
+    }
     let outcome = app::verification_execution::execute_verify_packet(
         &options.root,
         &options.packet,
@@ -1270,7 +1276,7 @@ fn run_agent_repair_phase(
             .map_err(|error| error.to_string())?;
             let mut policy =
                 crate::app::repair_attempt::edit_cage_policy_from_packet(&packet, &seam_id)
-                    .map_err(|error| before_phase_refusal(&seam_id, &error))?;
+                    .map_err(|error| before_phase_refusal(&seam_id, &root, &error))?;
             crate::app::repair_attempt::include_explicit_store_operational_write(
                 &mut policy,
                 &root,
@@ -1324,7 +1330,7 @@ fn run_agent_repair_phase(
             for path in &started.paths {
                 eprintln!(
                     "{}",
-                    terminal_safe(format!("ripr: wrote {}", path.display()))
+                    terminal_safe(format!("ripr: wrote {}", output::path::human_path(path)))
                 );
             }
 
@@ -1340,7 +1346,10 @@ fn run_agent_repair_phase(
             write_text_file(&packet_path, &packet)?;
             eprintln!(
                 "{}",
-                terminal_safe(format!("ripr: wrote {}", packet_path.display()))
+                terminal_safe(format!(
+                    "ripr: wrote {}",
+                    output::path::human_path(&packet_path)
+                ))
             );
             // Nothing prints on stdout here. The before-phase success stdout —
             // with `--json` the packet document carrying the additive
@@ -1374,7 +1383,7 @@ fn run_agent_repair_phase(
             );
             eprintln!(
                 "ripr: consuming attempt manifest {}",
-                attempt.manifest_path.display()
+                output::path::human_path(&attempt.manifest_path)
             );
             // #6033: remember which shared workflow artifacts existed before
             // this phase wrote its own (preserving the previous projection's
@@ -1506,6 +1515,15 @@ fn run_agent_repair_phase(
                     if agent_verify_error_is_typed_refusal(&error) {
                         if error == AGENT_VERIFY_INPUT_DRIFT_ERROR {
                             for line in repair_after_input_drift_lines(&root, store_ref, &attempt) {
+                                refusal.narrate(line);
+                            }
+                        } else if error.starts_with(AGENT_VERIFY_NO_MOVEMENT_PREFIX) {
+                            for line in repair_after_no_movement_lines(
+                                &root,
+                                store_ref,
+                                &attempt,
+                                &cage_policy,
+                            ) {
                                 refusal.narrate(line);
                             }
                         }
@@ -2235,6 +2253,40 @@ fn repair_after_commit_busy_lines(
     ]
 }
 
+/// Recovery for the verify authority's no-movement refusal. The policy was
+/// already validated from this attempt's retained packet; the compatibility
+/// packet can belong to a later attempt and is never recovery authority.
+fn repair_after_no_movement_lines(
+    root: &Path,
+    store: Option<&Path>,
+    attempt: &crate::app::repair_attempt::ResolvedRepairAttempt,
+    policy: &crate::edit_cage::EditCagePolicy,
+) -> Vec<String> {
+    use crate::agent::loop_commands::{bound_root, shell_arg};
+
+    let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
+    let attempt_arg = shell_arg(attempt.attempt_id.as_str());
+    let store_flag = crate::app::repair_attempt::quoted_store_flag(store);
+    let target = terminal_safe(policy.selected_target.path().to_string());
+    let edit = if policy.inline_test_module_target {
+        format!(
+            "add new test functions inside the existing `#[cfg(test)]` module of `{target}`; leave production code, the module declaration, and existing tests unchanged"
+        )
+    } else {
+        format!("make the focused test edit in `{target}`; leave production code unchanged")
+    };
+    vec![
+        format!(
+            "attempt `{}` remains `awaiting_edit` and still awaits the focused test edit.",
+            attempt.attempt_id.as_str()
+        ),
+        format!("to recover: {edit}, then rerun this after-phase command."),
+        format!(
+            "inspect the selected attempt with `ripr agent status --root {root_arg}{store_flag} --attempt {attempt_arg}`."
+        ),
+    ]
+}
+
 fn repair_after_input_drift_lines(
     root: &Path,
     store: Option<&Path>,
@@ -2361,11 +2413,21 @@ fn before_phase_dirty_premise_refusal(
 /// nothing was started, states the observable packet field (#4332 — the
 /// producer-jargon cause alone leaves the agent guessing what to look at),
 /// points at the surfaces that only offer a repair start for seams that
-/// pass this check, and points at the repair help carrying the scope
-/// boundary (#5210).
-fn before_phase_refusal(seam_id: &str, error: &str) -> String {
+/// pass this check, names the root-pinned `agent stub` forward route for
+/// the same state (#7735 — the pick-another-seam advice is a dead end when
+/// no seam can start a repair; `--root` keeps the route usable from any
+/// directory because the before phase does not require the shell to sit at
+/// the workspace, and `--kind` pins the probe family so a line holding
+/// several gap families cannot stub another seam), states the inline-test
+/// boundary with its remedy — an ambiguous multi-module inline layout
+/// proposes no target, while one governed inline module would qualify
+/// (#5210) — and points at the repair help carrying the scope boundary.
+fn before_phase_refusal(seam_id: &str, root: &Path, error: &str) -> String {
+    use crate::agent::loop_commands::{bound_root, shell_arg};
+
+    let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
     format!(
-        "seam `{seam_id}` has no test file ripr can route a repair to, so no repair attempt was started. In the seam's repair packet the observable state is `recommended_test.file: \"not_applicable\"` when no target was proposed (an inline-module proposal instead names the production file with an empty edit surface). Pick a seam whose `ripr pilot` output or review card shows a repair start. Repair scope, including the inline-test boundary, is in `ripr agent repair --help`. Cause: {error}"
+        "seam `{seam_id}` has no test file ripr can route a repair to, so no repair attempt was started. In the seam's repair packet the observable state is `recommended_test.file: \"not_applicable\"` when no target was proposed (an inline-module proposal instead names the production file with an empty edit surface). Pick a seam whose `ripr pilot` output or review card shows a repair start; when none does — for example a crate whose inline tests are spread over several `#[cfg(test)]` modules, where the ambiguous layout proposes no target and one governed inline module would qualify — add a `tests/`-surface test file, or move this gap forward with `ripr agent stub --root {root_arg} --at FILE:LINE --kind KIND` (FILE:LINE and KIND are the finding location and probe family `ripr check` prints for the same state). Repair scope, including the inline-test boundary, is in `ripr agent repair --help`. Cause: {error}"
     )
 }
 
@@ -2395,16 +2457,12 @@ pub(in crate::cli) fn before_phase_stdout(
         });
     if continuation.baseline_ambiguous {
         document.push_str(&before_phase_ambiguous_stdout_lines(
-            &continuation.next_command,
+            &crate::agent::human_after_phase_follow_up(&continuation.next_command),
         ));
     } else {
-        document.push_str(&format!(
-            "Next, after the test edit: {}\n",
-            continuation.next_command
-        ));
-        if let Some(form) =
-            crate::output::markdown::powershell_text_variant(&continuation.next_command)
-        {
+        let follow_up = crate::agent::human_after_phase_follow_up(&continuation.next_command);
+        document.push_str(&format!("Next, after the test edit: {follow_up}\n"));
+        if let Some(form) = crate::output::markdown::powershell_text_variant(&follow_up) {
             document.push_str(&format!("(PowerShell) {form}\n"));
         }
     }
@@ -3888,16 +3946,62 @@ mod before_phase_stdout_tests {
     }
 
     /// A packet the summary cannot read (no test file) still names where the
-    /// packet is and how to print it, rather than an empty stdout.
+    /// packet is and how to print it, rather than an empty stdout. The
+    /// trailer teaches `ripr continue` (#7879); JSON keeps the persisted
+    /// `--phase after` spelling.
     #[test]
     fn unreadable_packet_points_at_the_packet_file() -> Result<(), String> {
         let packet = r#"{"packets":[{"seam_id":"x"}]}"#;
         assert_eq!(
             before_phase_stdout(packet, "p", false, &continuation())?,
-            format!(
-                "Repair packet (JSON): p; add --json to print it here\nNext, after the test edit: {}\n",
-                continuation().next_command
-            )
+            "Repair packet (JSON): p; add --json to print it here\nNext, after the test edit: ripr continue --root . --attempt repair-attempt-0123456789abcdef01234567\n"
+        );
+        Ok(())
+    }
+
+    /// Human before-phase stdout names the ordinary `ripr continue` route
+    /// (#7879). JSON stdout keeps the persisted advanced spelling so a
+    /// driver that already consumes `--phase after` is unchanged.
+    #[test]
+    fn ordinary_human_stdout_names_ripr_continue() -> Result<(), String> {
+        let summary = before_phase_stdout(
+            PACKET,
+            "target/ripr/workflow/agent-packet.json",
+            false,
+            &continuation(),
+        )?;
+        assert!(
+            summary.contains(
+                "Next, after the test edit: ripr continue --root . --attempt repair-attempt-0123456789abcdef01234567"
+            ),
+            "{summary}"
+        );
+        assert!(
+            !summary.contains("ripr agent repair"),
+            "human stdout must not teach the advanced after spelling:\n{summary}"
+        );
+
+        let trust = BeforePhaseAttemptContinuation {
+            next_command: format!(
+                "{}{}",
+                continuation().next_command,
+                crate::agent::PYTHON_REPAIR_AUTHORIZATION_SUFFIX
+            ),
+            ..continuation()
+        };
+        let trust_summary = before_phase_stdout(
+            PACKET,
+            "target/ripr/workflow/agent-packet.json",
+            false,
+            &trust,
+        )?;
+        assert!(
+            trust_summary.contains(&trust.next_command),
+            "trust-bound after still names the authorization flags:\n{trust_summary}"
+        );
+        assert!(
+            !trust_summary.contains("ripr continue --root"),
+            "trust-bound after must not pretend `ripr continue` can supply authorization:\n{trust_summary}"
         );
         Ok(())
     }

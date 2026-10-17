@@ -4,6 +4,128 @@ Status of every way a developer can get `ripr`, observed 2026-10-04 against
 public registries, plus the reversible preparation for 0.11. Nothing here
 publishes, tags or submits anything; each outward step names who must act.
 
+## Upgrading from 0.10 to 0.11
+
+This is the **development upgrade guide**, not an announcement that 0.11 has
+been published. Use the installation instructions for the exact release or
+candidate you selected; the dated channel inventory below is not an instruction
+to install an unavailable version. Installing a registry package does not
+install the current development checkout.
+
+### Confirm which binary and repository you are using
+
+Record the old version before replacing it, then check the new installation:
+
+```bash
+ripr --version
+```
+
+Check the resolved executable with `command -v ripr` in Bash, or
+`Get-Command ripr -All` in PowerShell. Multiple Cargo, npm, Python, or manual
+installations can leave an older executable first on PATH. An alpha or RC
+installation is not the stable release merely because it belongs to 0.11.
+
+In the repository being upgraded, preserve existing work and configuration
+before regenerating anything:
+
+```bash
+git status --short
+ripr doctor
+ripr check --help
+```
+
+Keep a copy of custom workflow/configuration files, including untracked files;
+Git cannot recover an untracked file it never stored. `doctor` is a setup and
+migration diagnostic, not proof that tests pass or that all findings are sound.
+Do not remove the repository's toolchain pin to install RIPR; source-install
+compiler requirements and the project's own verification toolchain are separate.
+
+### Refresh generated CI without resetting configuration
+
+For a repository already using generated GitHub Actions, first inspect the
+0.11 generator's replacement plan:
+
+```bash
+ripr init --ci github --force --dry-run
+```
+
+After checking that plan and preserving workflow customizations, refresh:
+
+```bash
+ripr init --ci github --force
+git diff -- ripr.toml .github/workflows
+```
+
+With `--ci`, this refresh keeps an existing `ripr.toml` and replaces the
+generated workflow. **Do not substitute bare `ripr init --force`: that can
+reset configuration customizations.** Reapply intentional workflow edits and
+review the diff before committing. An unreleased generator may deliberately
+pin the latest published RIPR instead of its own development version; read its
+warning and inspect the emitted install/version steps. A successful refresh
+alone does not prove CI is running 0.11. See [CI](CI.md).
+
+### Re-select the diff and review suppressions
+
+Use the installed `check --help` (`check --help --all` lists every option) and
+[quickstart](QUICKSTART.md) to select the
+intended working-tree, staged, or committed comparison. Select `--base REF`
+when an explicit existing Git ref is required; do not assume an old invocation
+and the new default cover the same edits. Check the reported scope and files
+before interpreting findings. An empty or limited analysis is not a clean bill
+of health.
+
+Run a fresh analysis before changing old suppressions or baselines. A 0.10
+`finding_id` may no longer identify a current finding. Where the migration
+warning supplies a replacement, inspect the current finding and suppression
+reason before adopting that ID. Unmatched old selectors do not suppress a new
+finding; do not copy IDs from examples, mass-replace IDs, or broaden the policy
+just to reproduce an old count. Stricter evidence checks can legitimately
+change classifications. Review any adopted gate baseline and policy against
+the new evidence. See [configuration](CONFIGURATION.md).
+
+### Regenerate packets and retain old receipts as history
+
+Regenerate the start-here/first-PR packet with the new binary, using
+`ripr first-pr --help` and its current printed instructions. Follow the new
+packet's root, scope, selected ID and continuation commands; do not reuse a
+0.10 command merely because its output path still exists.
+
+When a receipt is rejected for predating HEAD binding, follow the diagnostic's
+fresh verification/receipt route. **Do not add a HEAD field or change a version
+string in the old JSON to make it pass.** Retain the original as historical
+evidence, and create a current receipt from current inputs. A repair attempt
+from another build may need a new before/edit/after transaction rather than a
+resume. Use the [command guide](COMMAND_HIERARCHY.md) and the printed recovery
+route; finding IDs, seam IDs and attempt IDs are not interchangeable.
+
+Keep actual project test execution separate from static before/after movement.
+A receipt saying static evidence improved does not, by itself, say the focused
+test ran or passed. Preserve failed, not-run and unsupported states rather than
+rewriting them as successful verification.
+
+### Let incompatible caches miss; check editor overrides
+
+The first analysis after a build/cache identity change can be cold. Let RIPR
+reject incompatible cache entries and recompute them; do not copy old cache
+identity fields into a new build or delete the whole `.ripr` directory, which
+can also contain policy and retained evidence. For a cache-specific diagnostic,
+inspect `ripr cache --help` and use only the scoped recovery it documents.
+No universal install-time or warm-analysis speed is promised by this guide.
+
+In VS Code, check the installed extension and the server version/path shown in
+RIPR's status/output. Updating the CLI does not update the extension, and an
+explicit `ripr.server.path` can keep selecting an older server. Check explicit
+user, workspace and folder settings when `[lsp]` configuration appears ignored;
+an explicit editor setting can override repository configuration. Preserve
+Workspace Trust and digest verification rather than disabling them to force an
+installation. See [editor setup](EDITOR_EXTENSION.md).
+
+The upgrade is ready for use when the intended binary and scope are selected,
+custom configuration is preserved, regenerated artifacts describe current
+inputs, and any selected focused verification has an honest recorded outcome.
+This guide does not itself establish the final installed 0.10-to-0.11 replay,
+all-platform acceptance, or public channel availability.
+
 ## Observed state
 
 | Channel | Public today | 0.11 state | Gap |

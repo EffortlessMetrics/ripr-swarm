@@ -2,12 +2,14 @@ use super::component_outcome::{AnalysisComponent, ComponentOutcome};
 use super::config::LspAnalysisConfig;
 use super::gap_artifacts::{
     GapArtifactKind, GapArtifactRejection, GapArtifactValidationContext, bind_portable_command,
-    validate_gap_artifact, validate_workspace_gap_artifact_report,
+    validate_gap_artifact, validate_workspace_gap_artifact_report, workspace_path_is_safe,
 };
-use super::state::{AnalysisSnapshot, HarnessFactsOnSnapshot, RefreshMetadata};
+use super::state::{
+    AnalysisSnapshot, DocumentStalenessReason, HarnessFactsOnSnapshot, RefreshMetadata,
+};
 use super::uri::{
     CappedArtifactRead, absolute_join, display_path, file_uri_for_path, path_from_file_uri,
-    read_artifact_capped,
+    path_is_within_root, read_artifact_capped,
 };
 use crate::agent::command_specs::{command_display_is_nonblank, command_displays_are_complete};
 use crate::analysis::ClassifiedSeam;
@@ -596,8 +598,8 @@ fn normalize_path_values(root: &Path, value: &mut serde_json::Value, key: Option
 
 /// Build the stable identity for one document's current diagnostic report.
 ///
-/// The identity is deliberately scoped to the document. A change in another
-/// document therefore does not invalidate an unchanged document report. The
+/// The identity is scoped to the document's delivered payload and the stored
+/// selection identity. Equivalent values retain an unchanged report. The
 /// digest covers exactly the diagnostics the document serves under the stored
 /// delivery selection (#1973), and the selection identity is part of the
 /// derivation, so a budget/profile/input change produces a new result
@@ -606,8 +608,16 @@ fn normalize_path_values(root: &Path, value: &mut serde_json::Value, key: Option
 /// removes checkout-root-specific paths before hashing, while the snapshot
 /// inputs capture changes that affect the whole projection.
 pub(super) fn document_diagnostic_result_id(snapshot: &AnalysisSnapshot, uri: &Uri) -> String {
+    document_diagnostic_result_id_with_omissions(snapshot, uri, &delivery_omissions(snapshot))
+}
+
+fn document_diagnostic_result_id_with_omissions(
+    snapshot: &AnalysisSnapshot,
+    uri: &Uri,
+    omissions: &BTreeMap<String, super::diagnostic_budget::DocumentDeliveryOmission>,
+) -> String {
     let relative_uri = normalized_document_uri(&snapshot.root, uri);
-    let served = snapshot.served_diagnostics_for_uri(uri);
+    let served = delivered_diagnostics_for_uri(snapshot, uri, omissions);
     let payload_digest = normalized_diagnostic_payload_digest(&snapshot.root, &served);
     stable_diagnostic_id(
         "ripr-document-diagnostics-v2",
@@ -629,6 +639,178 @@ pub(super) fn document_diagnostic_result_id(snapshot: &AnalysisSnapshot, uri: &U
             payload_digest.as_str(),
         ],
     )
+}
+
+fn delivery_omissions(
+    snapshot: &AnalysisSnapshot,
+) -> BTreeMap<String, super::diagnostic_budget::DocumentDeliveryOmission> {
+    snapshot
+        .delivery_selection
+        .as_ref()
+        .map(|selection| selection.document_omissions())
+        .unwrap_or_default()
+}
+
+/// Transport payload over the stored selection, including its shared typed
+/// limitation. Lookup uses the admitted stored URI, just like membership;
+/// request aliases and previous-only URIs cannot invent or lose a marker.
+pub(super) fn delivered_diagnostics_for_uri(
+    snapshot: &AnalysisSnapshot,
+    uri: &Uri,
+    omissions: &BTreeMap<String, super::diagnostic_budget::DocumentDeliveryOmission>,
+) -> Vec<Diagnostic> {
+    let mut diagnostics = snapshot.served_diagnostics_for_uri(uri);
+    if let Some((stored_uri, _)) = snapshot.diagnostics_entry_for_uri(uri)
+        && let Some(omission) = omissions.get(stored_uri.as_str())
+    {
+        diagnostics.push(delivery_omission_diagnostic(omission));
+    }
+    diagnostics
+}
+
+/// One visible summary of the same budget omission the selection and log
+/// retain. This is a delivery limitation, never a source finding or action.
+pub(super) fn delivery_omission_diagnostic(
+    omission: &super::diagnostic_budget::DocumentDeliveryOmission,
+) -> Diagnostic {
+    Diagnostic {
+        severity: Some(DiagnosticSeverity::INFORMATION),
+        code: Some(NumberOrString::String(
+            super::diagnostic_catalog::DIAGNOSTIC_BUDGET_OMITTED_CODE.to_string(),
+        )),
+        source: Some("ripr".to_string()),
+        message: format!(
+            "Displayed diagnostics are a bounded subset: {} of {} current diagnostics were omitted. Narrow the diff or profile, or retrieve current details through {}. This document result is incomplete.",
+            omission.omitted_count, omission.total_count, omission.retrieval_route
+        ),
+        data: Some(serde_json::json!({
+            "kind": "delivery_limitation",
+            "scope": omission.scope,
+            "selected_count": omission.selected_count,
+            "omitted_count": omission.omitted_count,
+            "total_count": omission.total_count,
+            "count_budget": omission.count_budget,
+            "byte_budget": omission.byte_budget,
+            "snapshot_profile_budget_identity": omission.snapshot_profile_budget_identity,
+            "complete_evidence_identity": omission.complete_evidence_identity,
+            "retrieval_route": omission.retrieval_route,
+        })),
+        ..Default::default()
+    }
+}
+
+/// One visible summary of a dirty-buffer withdrawal (#7771). This is a
+/// delivery limitation, never a source finding or action. Retracted when
+/// quarantine lifts because the restored publish re-serves the saved-state
+/// set.
+pub(super) fn quarantine_withdrawal_diagnostic(reason: DocumentStalenessReason) -> Diagnostic {
+    let (recovery_id, recovery) = match reason {
+        DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent => {
+            ("save_to_restore", "Save the file to restore them.")
+        }
+        DocumentStalenessReason::InvalidIncrementalChange => (
+            "undo_or_revert",
+            "Undo the edit or revert the file so ripr receives the full document again.",
+        ),
+        DocumentStalenessReason::NoAnalyzedSavedContent => (
+            "save_then_refresh",
+            "Save a new file first, then refresh (`ripr.refresh`) so ripr can restore them.",
+        ),
+    };
+    Diagnostic {
+        severity: Some(DiagnosticSeverity::INFORMATION),
+        code: Some(NumberOrString::String(
+            super::diagnostic_catalog::DIAGNOSTIC_QUARANTINE_WITHDRAWN_CODE.to_string(),
+        )),
+        source: Some("ripr".to_string()),
+        message: format!(
+            "ripr diagnostics for this file are paused: {}. {recovery}",
+            reason.description()
+        ),
+        data: Some(serde_json::json!({
+            "kind": "delivery_limitation",
+            "reason": reason.as_str(),
+            "recovery": recovery_id,
+        })),
+        ..Default::default()
+    }
+}
+
+pub(super) fn withdrawn_quarantine_diagnostics(reason: DocumentStalenessReason) -> Vec<Diagnostic> {
+    vec![quarantine_withdrawal_diagnostic(reason)]
+}
+
+/// The recovery route the pre-analysis marker may promise (#7774). Refresh
+/// only starts analysis when configuration is valid and the workspace root
+/// authority admits analysis, so a blocked state must not advertise
+/// save/refresh — a wrong actionable route is worse than none.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum AnalysisPendingRecovery {
+    /// Configuration valid, root admitted: the ordinary cold-start state.
+    SaveOrRefresh,
+    /// Configuration invalid: `refresh_diagnostics` returns before
+    /// analysis until the configuration is repaired.
+    FixConfiguration,
+    /// The root authority blocks analysis; carries the authority's own
+    /// recovery route (`refresh` or `select_root_and_restart`).
+    RootBlocked(&'static str),
+}
+
+impl AnalysisPendingRecovery {
+    pub(super) fn recovery_id(&self) -> &'static str {
+        match self {
+            Self::SaveOrRefresh => "save_or_refresh",
+            Self::FixConfiguration => "fix_configuration",
+            Self::RootBlocked(route) => route,
+        }
+    }
+
+    fn route_text(&self) -> &'static str {
+        match self {
+            Self::SaveOrRefresh => "Save a file or run `ripr.refresh` to start analysis.",
+            Self::FixConfiguration => {
+                "Fix the workspace configuration and reload it; analysis cannot start until the configuration is valid."
+            }
+            Self::RootBlocked("refresh") => "Run `ripr.refresh` to analyze the workspace.",
+            Self::RootBlocked(_) => {
+                "Select a single workspace root and restart the language server."
+            }
+        }
+    }
+}
+
+/// One visible summary of the pre-analysis state (#7774). Served on both
+/// pull paths while `latest_pull_snapshot()` is `None`: before the first
+/// analysis commit an empty report is byte-for-byte indistinguishable from
+/// "analysis ran and found nothing", which is a completeness claim the
+/// server cannot support. This is a delivery limitation, never a source
+/// finding or action; the first real snapshot commit retracts it because
+/// normal serving resumes automatically. The recovery route is the one the
+/// current blocking state actually honors.
+pub(super) fn analysis_pending_diagnostic(recovery: AnalysisPendingRecovery) -> Diagnostic {
+    let message = format!(
+        "ripr has not analyzed this workspace yet, so no findings are reported — \
+         this is not evidence of a clean workspace. {}",
+        recovery.route_text()
+    );
+    Diagnostic {
+        severity: Some(DiagnosticSeverity::INFORMATION),
+        code: Some(NumberOrString::String(
+            super::diagnostic_catalog::DIAGNOSTIC_ANALYSIS_PENDING_CODE.to_string(),
+        )),
+        source: Some("ripr".to_string()),
+        message,
+        data: Some(serde_json::json!({
+            "kind": "delivery_limitation",
+            "state": "no_snapshot",
+            "recovery": recovery.recovery_id(),
+        })),
+        ..Default::default()
+    }
+}
+
+pub(super) fn analysis_pending_diagnostics(recovery: AnalysisPendingRecovery) -> Vec<Diagnostic> {
+    vec![analysis_pending_diagnostic(recovery)]
 }
 
 /// The identity fragment the document result IDs bind to. For a committed
@@ -690,6 +872,7 @@ pub(super) fn complete_diagnostic_evidence_identity(snapshot: &AnalysisSnapshot)
 /// This is an observability/test identity; the LSP workspace report carries
 /// the per-document IDs because that is what clients use for unchanged data.
 pub(super) fn workspace_diagnostic_result_id(snapshot: &AnalysisSnapshot) -> String {
+    let omissions = delivery_omissions(snapshot);
     let mut parts = vec![
         snapshot.mode.as_str().to_string(),
         snapshot.diagnostic_profile.as_str().to_string(),
@@ -710,7 +893,9 @@ pub(super) fn workspace_diagnostic_result_id(snapshot: &AnalysisSnapshot) -> Str
     ];
     for uri in snapshot.diagnostics_by_uri.keys() {
         parts.push(normalized_document_uri(&snapshot.root, uri));
-        parts.push(document_diagnostic_result_id(snapshot, uri));
+        parts.push(document_diagnostic_result_id_with_omissions(
+            snapshot, uri, &omissions,
+        ));
     }
     stable_diagnostic_id(
         "ripr-workspace-diagnostics-v2",
@@ -727,20 +912,34 @@ pub(super) fn workspace_diagnostic_result_id(snapshot: &AnalysisSnapshot) -> Str
 pub(super) struct DiagnosticResultIdCache {
     snapshot: Arc<AnalysisSnapshot>,
     document_ids: BTreeMap<Uri, String>,
+    delivery_omissions: BTreeMap<String, super::diagnostic_budget::DocumentDeliveryOmission>,
     workspace_id: String,
 }
 
 impl DiagnosticResultIdCache {
     pub(super) fn for_snapshot(snapshot: Arc<AnalysisSnapshot>) -> Self {
+        // Derived once from the committed selection, never a second budget
+        // evaluation. Reuse it across document IDs and workspace pull items.
+        let delivery_omissions = delivery_omissions(&snapshot);
         let document_ids = snapshot
             .diagnostics_by_uri
             .keys()
-            .map(|uri| (uri.clone(), document_diagnostic_result_id(&snapshot, uri)))
+            .map(|uri| {
+                (
+                    uri.clone(),
+                    document_diagnostic_result_id_with_omissions(
+                        &snapshot,
+                        uri,
+                        &delivery_omissions,
+                    ),
+                )
+            })
             .collect();
         let workspace_id = workspace_diagnostic_result_id(&snapshot);
         Self {
             snapshot,
             document_ids,
+            delivery_omissions,
             workspace_id,
         }
     }
@@ -750,12 +949,20 @@ impl DiagnosticResultIdCache {
     }
 
     pub(super) fn document_id(&self, snapshot: &AnalysisSnapshot, uri: &Uri) -> String {
-        // Exact-key lookup only: the stored selection keys on the stored URI
-        // string; fuzzy URI matching is not part of the authority contract.
+        // Exact-key cache lookup; admitted aliases fall back to the same
+        // stored-document projection used for payload membership.
         self.document_ids
             .get(uri)
             .cloned()
             .unwrap_or_else(|| document_diagnostic_result_id(snapshot, uri))
+    }
+
+    pub(super) fn delivered_diagnostics_for_uri(
+        &self,
+        snapshot: &AnalysisSnapshot,
+        uri: &Uri,
+    ) -> Vec<Diagnostic> {
+        delivered_diagnostics_for_uri(snapshot, uri, &self.delivery_omissions)
     }
 }
 
@@ -2354,7 +2561,7 @@ fn diagnostic_for_gap_record_with_causal(
         code_description: None,
         source: Some("ripr".to_string()),
         message: gap_record_diagnostic_message(record),
-        related_information: None,
+        related_information: related_information_for_gap(root, record),
         tags: None,
         data: Some(gap_record_diagnostic_data_with_causal(
             root,
@@ -2601,19 +2808,19 @@ pub(super) fn diagnostic_severity_for_grip_class_with_config(
 /// suppressed). Diagnostic codes are prefixed with `ripr-seam-` so
 /// editor consumers can filter by code without parsing severity.
 ///
-/// `_root` is reserved for future range resolution: today seams do
-/// not carry a column, so we anchor the range to the full seam line
-/// (start char 0 to `MAX_DIAGNOSTIC_RANGE_WIDTH`). That way the
+/// `root` is the workspace bound for related-test URIs. Today seams do
+/// not carry a column, so the diagnostic range is still the full seam
+/// line (start char 0 to `MAX_DIAGNOSTIC_RANGE_WIDTH`). That way the
 /// squiggle always covers the seam origin even for deeply indented
 /// expressions — caught by chatgpt-codex on PR #241. When seams gain
-/// a stored column, this function can read the source via `_root` to
-/// produce a tighter range.
+/// a stored column, this function can also read the source via `root`
+/// to produce a tighter range.
 #[cfg(test)]
 pub(super) fn diagnostic_for_classified_seam(
-    _root: &Path,
+    root: &Path,
     entry: &ClassifiedSeam,
 ) -> Option<Diagnostic> {
-    diagnostic_for_classified_seam_with_config(_root, entry, &SeverityConfig::default())
+    diagnostic_for_classified_seam_with_config(root, entry, &SeverityConfig::default())
 }
 
 #[cfg(test)]
@@ -2626,7 +2833,7 @@ pub(super) fn diagnostic_for_classified_seam_with_config(
 }
 
 fn diagnostic_for_classified_seam_with_causal(
-    _root: &Path,
+    root: &Path,
     entry: &ClassifiedSeam,
     config: &SeverityConfig,
     causal_projection: Option<&CausalDeltaArtifact>,
@@ -2683,7 +2890,7 @@ fn diagnostic_for_classified_seam_with_causal(
         code_description: None,
         source: Some("ripr".to_string()),
         message: lsp_seam_message(entry),
-        related_information: None,
+        related_information: related_information_for_seam(root, entry),
         tags: None,
         data: Some(data),
     })
@@ -2902,13 +3109,16 @@ fn related_information_for_finding(
         .into_iter()
         .collect::<Vec<_>>();
     related.extend(examined_test_related_information(root, finding));
-    (!related.is_empty()).then_some(related)
+    nonempty_related_information(related)
 }
 
 /// Editor rows for the first examined tests that miss the change (#5344), so
 /// a click opens the test the finding is about and the message says why it
 /// does not catch the change.
 const MAX_EXAMINED_TEST_ROWS: usize = 3;
+
+/// Cap matches the seam hover related-test list (`hover.rs` `.take(5)`).
+const MAX_SEAM_RELATED_TEST_ROWS: usize = 5;
 
 fn examined_test_related_information(
     root: &Path,
@@ -2933,20 +3143,16 @@ fn examined_test_related_information(
                 test,
                 &finding.activation.missing_discriminators,
             )?;
-            let uri = file_uri_for_path(&absolute_join(root, &test.file)).ok()?;
-            Some(DiagnosticRelatedInformation {
-                location: Location {
-                    uri,
-                    range: crate::lsp::position::line_span_range(
-                        test.line.saturating_sub(1) as u32,
-                    ),
-                },
-                message: format!(
+            related_information_row(
+                root,
+                &test.file,
+                test.line,
+                format!(
                     "Related test `{}` {}: {why}",
                     test.name,
                     crate::output::related_test_miss::related_test_miss_label(test)
                 ),
-            })
+            )
         })
         .take(MAX_EXAMINED_TEST_ROWS)
         .collect()
@@ -2958,27 +3164,168 @@ fn fix_site_related_information(
 ) -> Option<DiagnosticRelatedInformation> {
     let witness = DiagnosticWitness::from_finding(finding)?;
     let fix_site = witness.fix_site.as_ref()?;
-    let path = absolute_join(root, Path::new(&fix_site.file));
-    let uri = file_uri_for_path(&path).ok()?;
     let line = fix_site
         .oracle_location
         .as_ref()
-        .map_or(fix_site.line, |location| location.line)
-        .saturating_sub(1) as u32;
+        .map_or(fix_site.line, |location| location.line);
     let oracle = fix_site
         .current_oracle
         .as_deref()
         .map_or_else(String::new, |oracle| format!(": {oracle}"));
-    Some(DiagnosticRelatedInformation {
-        location: Location {
-            uri,
-            range: crate::lsp::position::line_span_range(line),
-        },
-        message: format!(
+    related_information_row(
+        root,
+        Path::new(&fix_site.file),
+        line,
+        format!(
             "Fix site: related test `{}` has {} {} oracle{}",
             fix_site.test_name, fix_site.oracle_strength, fix_site.oracle_kind, oracle
         ),
+    )
+}
+
+fn related_information_for_seam(
+    root: &Path,
+    entry: &ClassifiedSeam,
+) -> Option<Vec<DiagnosticRelatedInformation>> {
+    let mut seen = Vec::new();
+    let rows = entry
+        .evidence
+        .related_tests
+        .iter()
+        .filter(|grip| {
+            let key = (&grip.test_name, &grip.file, grip.line);
+            let fresh = !seen.contains(&key);
+            if fresh {
+                seen.push(key);
+            }
+            fresh
+        })
+        .filter_map(|grip| {
+            related_information_row(
+                root,
+                &grip.file,
+                grip.line,
+                format!(
+                    "Related test `{}` has {} {} oracle",
+                    grip.test_name,
+                    grip.oracle_strength.as_str(),
+                    grip.oracle_kind.as_str(),
+                ),
+            )
+        })
+        .take(MAX_SEAM_RELATED_TEST_ROWS)
+        .collect();
+    nonempty_related_information(rows)
+}
+
+fn related_information_for_gap(
+    root: &Path,
+    record: &GapRecord,
+) -> Option<Vec<DiagnosticRelatedInformation>> {
+    let route = record.repair_route.as_ref()?;
+    let (related_path, related_name) = route
+        .related_test
+        .as_deref()
+        .and_then(non_empty)
+        .map(split_gap_related_test)
+        .unwrap_or((None, None));
+    let related_path = related_path.filter(|path| workspace_path_is_safe(root, path));
+    let target_file = route
+        .target_file
+        .as_deref()
+        .and_then(non_empty)
+        .filter(|path| workspace_path_is_safe(root, path));
+    let target_line = route
+        .target_line
+        .and_then(|line| usize::try_from(line).ok())
+        .filter(|line| *line > 0)
+        .unwrap_or(1);
+
+    let mut rows = Vec::new();
+    let mut seen = Vec::new();
+    let related_file = related_path.or(target_file);
+    if let Some(file) = related_file {
+        let line = if target_file == Some(file) {
+            target_line
+        } else {
+            1
+        };
+        let message = match related_name {
+            Some(name) => format!("Related test `{name}`"),
+            None => "Repair target".to_string(),
+        };
+        if let Some(row) = related_information_row(root, Path::new(file), line, message) {
+            seen.push(PathBuf::from(file));
+            rows.push(row);
+        }
+    }
+    if let Some(file) = target_file
+        && !seen.iter().any(|seen| seen.as_path() == Path::new(file))
+        && let Some(row) = related_information_row(
+            root,
+            Path::new(file),
+            target_line,
+            "Repair target".to_string(),
+        )
+    {
+        rows.push(row);
+    }
+    nonempty_related_information(rows)
+}
+
+/// Split a gap `related_test` into an optional workspace file and a display
+/// name. `module::test` is a name, not a path; only a left-hand side that
+/// looks like a file is treated as a navigation target.
+fn split_gap_related_test(raw: &str) -> (Option<&str>, Option<&str>) {
+    if let Some((path, name)) = raw.split_once("::") {
+        let path = path.trim();
+        let name = name.trim();
+        if looks_like_workspace_file(path) {
+            return (
+                (!path.is_empty()).then_some(path),
+                (!name.is_empty()).then_some(name),
+            );
+        }
+    }
+    if looks_like_workspace_file(raw) {
+        (Some(raw), None)
+    } else {
+        (None, Some(raw))
+    }
+}
+
+fn looks_like_workspace_file(path: &str) -> bool {
+    let path = Path::new(path);
+    path.extension().is_some() || path.components().nth(1).is_some()
+}
+
+/// Shared location builder for finding, seam, and gap related-information
+/// rows. Paths outside the workspace root are omitted so publication stays
+/// inside `workspace_diagnostics_are_root_contained`.
+fn related_information_row(
+    root: &Path,
+    file: &Path,
+    line: usize,
+    message: String,
+) -> Option<DiagnosticRelatedInformation> {
+    let path = absolute_join(root, file);
+    if !path_is_within_root(root, &path) {
+        return None;
+    }
+    let uri = file_uri_for_path(&path).ok()?;
+    Some(DiagnosticRelatedInformation {
+        location: Location {
+            uri,
+            range: crate::lsp::position::line_span_range(line.saturating_sub(1) as u32),
+        },
+        message,
     })
+}
+
+fn nonempty_related_information(
+    rows: Vec<DiagnosticRelatedInformation>,
+) -> Option<Vec<DiagnosticRelatedInformation>> {
+    (!rows.is_empty()).then_some(rows)
 }
 
 #[cfg(test)]
@@ -3031,7 +3378,8 @@ fn lsp_message(finding: &Finding) -> String {
         .then(|| DiagnosticWitness::from_finding(finding))
         .flatten()
         .and_then(|witness| {
-            let missing = witness.missing_discriminators.first()?.value.as_str();
+            let first = witness.missing_discriminators.first()?;
+            let missing = first.value.as_str();
             let subject = match witness.expected_sink.as_deref() {
                 Some("error_variant") => "Exact error variant",
                 Some("return_value") => "Exact return value",
@@ -3048,6 +3396,16 @@ fn lsp_message(finding: &Finding) -> String {
                 Some(site) => format!("`{}` has no producer-supplied oracle text", site.test_name),
                 None => "the exact fix site is unavailable".to_string(),
             };
+            // A guard no test enters is a missing input, not a missing
+            // assertion (RIPR-SPEC-0263): the fix is an input that enters it.
+            if first
+                .reason
+                .starts_with(crate::domain::GUARD_UNENTERED_REASON_PREFIX)
+            {
+                return Some(format!(
+                    "No related test input enters `{missing}`; {detail}."
+                ));
+            }
             Some(format!("{subject} `{missing}` is not observed; {detail}."))
         });
     if finding.recommended_next_step.is_none()
@@ -3171,8 +3529,10 @@ mod seam_diagnostic_tests {
     use crate::analysis::seams::{
         ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
     };
-    use crate::analysis::test_grip_evidence::TestGripEvidence;
-    use crate::domain::{Confidence, StageEvidence, StageState};
+    use crate::analysis::test_grip_evidence::{
+        RelatedTestGrip, RelationConfidence, RelationReason, TestGripEvidence, TestTargetEvidence,
+    };
+    use crate::domain::{Confidence, OracleKind, OracleStrength, StageEvidence, StageState};
     use crate::output::gap_decision_ledger::{GapAnchor, GapRepairRoute, ProjectionEligibility};
     use std::fs;
 
@@ -3211,6 +3571,20 @@ mod seam_diagnostic_tests {
             evidence,
             class,
         }
+    }
+
+    fn related_grip(name: &str, file: &str, line: usize) -> std::sync::Arc<RelatedTestGrip> {
+        std::sync::Arc::new(RelatedTestGrip {
+            test_name: name.to_string(),
+            file: PathBuf::from(file),
+            line,
+            test_target: Some(TestTargetEvidence::fixture(name, Path::new(file), line)),
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            evidence_summary: "exact value assertion".to_string(),
+            relation_reason: RelationReason::DirectOwnerCall,
+            relation_confidence: RelationConfidence::High,
+        })
     }
 
     #[test]
@@ -3389,6 +3763,184 @@ mod seam_diagnostic_tests {
             data["verification_commands"][0],
             "cargo xtask fixtures boundary_gap"
         );
+        let related = diagnostic
+            .related_information
+            .as_ref()
+            .ok_or_else(|| "expected gap related information".to_string())?;
+        assert_eq!(related.len(), 1);
+        assert_eq!(
+            related[0].location.uri.as_str(),
+            "file:///repo/tests/pricing.rs"
+        );
+        assert_eq!(related[0].location.range.start.line, 32);
+        assert_eq!(related[0].message, "Related test `discount_threshold`");
+        Ok(())
+    }
+
+    #[test]
+    fn gap_record_diagnostic_omits_unsafe_related_paths() -> Result<(), String> {
+        let mut record = gap_record(true);
+        if let Some(route) = record.repair_route.as_mut() {
+            route.target_file = Some("../outside.rs".to_string());
+            route.related_test = Some("../outside.rs::escaped".to_string());
+        }
+        let (_, diagnostic) = diagnostic_for_gap_record(
+            Path::new("/repo"),
+            Path::new("/repo/target/ripr/reports/gap-decision-ledger.json"),
+            &record,
+        )
+        .ok_or_else(|| "expected gap diagnostic".to_string())?;
+        if diagnostic.related_information.is_some() {
+            return Err(format!(
+                "unsafe related paths must not become relatedInformation: {:?}",
+                diagnostic.related_information
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn gap_record_diagnostic_treats_module_related_test_as_a_name() -> Result<(), String> {
+        let mut record = gap_record(true);
+        if let Some(route) = record.repair_route.as_mut() {
+            route.related_test = Some("pricing::discount_threshold".to_string());
+            route.target_file = Some("tests/pricing.rs".to_string());
+            route.target_line = Some(33);
+        }
+        let (_, diagnostic) = diagnostic_for_gap_record(
+            Path::new("/repo"),
+            Path::new("/repo/target/ripr/reports/gap-decision-ledger.json"),
+            &record,
+        )
+        .ok_or_else(|| "expected gap diagnostic".to_string())?;
+        let related = diagnostic
+            .related_information
+            .as_ref()
+            .ok_or_else(|| "expected gap related information".to_string())?;
+        assert_eq!(related.len(), 1);
+        assert_eq!(
+            related[0].location.uri.as_str(),
+            "file:///repo/tests/pricing.rs"
+        );
+        assert_eq!(related[0].location.range.start.line, 32);
+        assert_eq!(
+            related[0].message,
+            "Related test `pricing::discount_threshold`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn gap_record_diagnostic_emits_distinct_target_when_related_test_file_differs()
+    -> Result<(), String> {
+        let mut record = gap_record(true);
+        if let Some(route) = record.repair_route.as_mut() {
+            route.related_test = Some("tests/observer.rs::observes".to_string());
+            route.target_file = Some("tests/pricing.rs".to_string());
+            route.target_line = Some(33);
+        }
+        let (_, diagnostic) = diagnostic_for_gap_record(
+            Path::new("/repo"),
+            Path::new("/repo/target/ripr/reports/gap-decision-ledger.json"),
+            &record,
+        )
+        .ok_or_else(|| "expected gap diagnostic".to_string())?;
+        let related = diagnostic
+            .related_information
+            .as_ref()
+            .ok_or_else(|| "expected gap related information".to_string())?;
+        assert_eq!(related.len(), 2);
+        assert_eq!(
+            related[0].location.uri.as_str(),
+            "file:///repo/tests/observer.rs"
+        );
+        assert_eq!(related[0].location.range.start.line, 0);
+        assert_eq!(related[0].message, "Related test `observes`");
+        assert_eq!(
+            related[1].location.uri.as_str(),
+            "file:///repo/tests/pricing.rs"
+        );
+        assert_eq!(related[1].location.range.start.line, 32);
+        assert_eq!(related[1].message, "Repair target");
+        Ok(())
+    }
+
+    #[test]
+    fn seam_diagnostic_attaches_related_test_information() -> Result<(), String> {
+        let mut entry = classified(SeamGripClass::WeaklyGripped);
+        entry.evidence.related_tests = vec![related_grip(
+            "below_threshold_has_no_discount",
+            "tests/pricing.rs",
+            12,
+        )];
+        let diagnostic = diagnostic_for_classified_seam(Path::new("/repo"), &entry)
+            .ok_or_else(|| "expected seam diagnostic".to_string())?;
+        let related = diagnostic
+            .related_information
+            .as_ref()
+            .ok_or_else(|| "expected seam related information".to_string())?;
+        assert_eq!(related.len(), 1);
+        assert_eq!(
+            related[0].location.uri.as_str(),
+            "file:///repo/tests/pricing.rs"
+        );
+        assert_eq!(related[0].location.range.start.line, 11);
+        assert_eq!(
+            related[0].message,
+            "Related test `below_threshold_has_no_discount` has strong exact_value oracle"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn seam_diagnostic_omits_out_of_root_related_tests_and_keeps_in_root_rows() -> Result<(), String>
+    {
+        let mut entry = classified(SeamGripClass::WeaklyGripped);
+        entry.evidence.related_tests = vec![
+            related_grip("escaped", "../outside.rs", 4),
+            related_grip("kept", "tests/pricing.rs", 12),
+        ];
+        let diagnostic = diagnostic_for_classified_seam(Path::new("/repo"), &entry)
+            .ok_or_else(|| "expected seam diagnostic".to_string())?;
+        let related = diagnostic
+            .related_information
+            .as_ref()
+            .ok_or_else(|| "expected in-root related information".to_string())?;
+        assert_eq!(related.len(), 1);
+        assert_eq!(
+            related[0].message,
+            "Related test `kept` has strong exact_value oracle"
+        );
+        assert_eq!(
+            related[0].location.uri.as_str(),
+            "file:///repo/tests/pricing.rs"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn seam_diagnostic_caps_related_information_like_hover() -> Result<(), String> {
+        let mut entry = classified(SeamGripClass::WeaklyGripped);
+        entry.evidence.related_tests = (1..=6)
+            .map(|index| related_grip(&format!("case_{index}"), "tests/pricing.rs", index * 10))
+            .collect();
+        let diagnostic = diagnostic_for_classified_seam(Path::new("/repo"), &entry)
+            .ok_or_else(|| "expected seam diagnostic".to_string())?;
+        let related = diagnostic
+            .related_information
+            .as_ref()
+            .ok_or_else(|| "expected seam related information".to_string())?;
+        assert_eq!(related.len(), MAX_SEAM_RELATED_TEST_ROWS);
+        assert!(
+            related
+                .iter()
+                .all(|row| row.message.contains("Related test `case_")),
+            "expected retained rows to keep the finding-family related-test prefix: {related:?}"
+        );
+        assert!(
+            !related.iter().any(|row| row.message.contains("`case_6`")),
+            "the sixth related test must stay off the diagnostic: {related:?}"
+        );
         Ok(())
     }
 
@@ -3460,6 +4012,12 @@ mod seam_diagnostic_tests {
             return Err(format!(
                 "unexpected preview gap diagnostic message: {}",
                 diagnostic.message
+            ));
+        }
+        if diagnostic.related_information.is_some() {
+            return Err(format!(
+                "a gap without a repair route must not invent relatedInformation: {:?}",
+                diagnostic.related_information
             ));
         }
         let hover = crate::lsp::hover::diagnostic_hover_response(&diagnostic);
@@ -4681,6 +5239,28 @@ mod diagnostic_policy_tests {
             return Err("actionable profile published a static unknown".to_string());
         }
         Ok(())
+    }
+
+    #[test]
+    fn an_unentered_guard_reads_as_a_missing_input_not_an_assertion() {
+        let mut finding = policy_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.recommended_next_step = None;
+        finding.language_status = None;
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "if x > 10".to_string(),
+            reason: format!(
+                "{} `if x > 10`; observed `x` values: `4`",
+                crate::domain::GUARD_UNENTERED_REASON_PREFIX
+            ),
+            flow_sink: None,
+        }];
+        let message = lsp_message(&finding);
+        assert!(
+            message.starts_with("No related test input enters `if x > 10`;"),
+            "{message}"
+        );
+        assert!(!message.contains("is not observed"), "{message}");
     }
 
     #[test]

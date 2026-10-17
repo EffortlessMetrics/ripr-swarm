@@ -1,0 +1,61 @@
+{
+  "case_id": "spec0231-oracle-any-field-eq-literal",
+  "subject_id": "authored-spec0231-28",
+  "diff": "cases/spec0231-oracle-any-field-eq-literal.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 6
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction",
+  "test_shape": "iter_any_field_eq_literal",
+  "hard_case": "The oracle reads exact_value / strong (RIPR-SPEC-0231 rule 7). Before RIPR-SPEC-0225 decision 8 (#7858) the field-construction finding stayed weakly_exposed (\"no field-value assertion observes the constructed field\"): neither the `.any(|r| r.total == 33)` membership nor an indexed `assert_eq!(rows[1].total, 33)` was tied to the constructed element. The membership now credits the element because the other element builds `total` from 0, never 33; with a 33 there it would pass whatever the changed element holds. Truth is discriminated.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "[Row { total: 0 }, Row { total: a + b + 1 }]",
+        "mutated_line": "[Row { total: 0 }, Row { total: a + b + 1 }]",
+        "outcome": "tests_failed",
+        "failing_test": "tests::rows_carry_the_sum",
+        "equivalence_review": "not equivalent: rows(30, 3) totals 34"
+      },
+      {
+        "replacement": "[Row { total: 0 }, Row { total: a - b }]",
+        "mutated_line": "[Row { total: 0 }, Row { total: a - b }]",
+        "outcome": "tests_failed",
+        "failing_test": "tests::rows_carry_the_sum",
+        "equivalence_review": "not equivalent: rows(30, 3) totals 27"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "rows.iter().any(|r| r.total == 33) needs a row whose total is exactly 33, so any change to the sum kills. Spec cells: RIPR-SPEC-0231 example 28.",
+  "labeling_observation": {
+    "ripr_commit": "78312b335",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "exposed",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#28"
+  ],
+  "expected_oracle": {
+    "kind": "exact_value",
+    "strength": "strong",
+    "spec": "RIPR-SPEC-0231#28"
+  }
+}

@@ -320,7 +320,13 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig) -> String {
     out.push_str(&format!(
         "ripr static RIPR exposure analysis\nmode: {}\nroot: {}\n",
         output.mode.as_str(),
-        output.root.display()
+        // #7728: one session shows one spelling — the same `human_path`
+        // renderer doctor's root line uses, so a backslash-typed or
+        // drive-letter verbatim `\\?\`-prefixed root does not leak raw
+        // `Path::display` bytes here while every sibling surface renders the
+        // forward-slash form. UNC and volume verbatim prefixes keep their
+        // raw spelling by design (`human_path_text`).
+        crate::output::path::human_path(&output.root)
     ));
     // RIPR-SPEC-0255 (#7536): name the ripr.toml that governed the run, in
     // the header CI logs keep. Absence is the explicit built-in-defaults
@@ -379,7 +385,8 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput) {
         return;
     };
     out.push_str(&format!(
-        "Analysis outcome: {} ({}; {}).\n",
+        // #7756: labelled field line — no trailing period.
+        "Analysis outcome: {} ({}; {})\n",
         outcome.kind.plain_label(),
         if outcome.kind.is_complete() {
             "analysis complete"
@@ -390,7 +397,8 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput) {
     ));
     if outcome.limitations.is_empty() {
         out.push_str(&format!(
-            "  Counts: {} changed file(s), {} changed line(s), {} candidate line(s), {} probe(s), {} finding(s).\n\n",
+            // #7756: labelled field line — no trailing period.
+            "  Counts: {} changed file(s), {} changed line(s), {} candidate line(s), {} probe(s), {} finding(s)\n\n",
             outcome.counts.changed_file_count,
             outcome.counts.changed_line_count,
             outcome.counts.candidate_line_count,
@@ -467,10 +475,13 @@ fn render_language_file_breakdown(out: &mut String, output: &CheckOutput) {
     let parts = counts
         .iter()
         .filter(|count| count.files > 0)
-        .map(|count| format!("{}: {}", count.language, count.files))
+        // #7755: `=` keeps the key/value boundary readable without a second
+        // colon under the "Changed file(s) by language:" field label.
+        .map(|count| format!("{} = {}", count.language, count.files))
         .collect::<Vec<_>>()
         .join(", ");
-    out.push_str(&format!("Changed file(s) by language: {parts}.\n\n"));
+    // #7756: labelled field line — no trailing period.
+    out.push_str(&format!("Changed file(s) by language: {parts}\n\n"));
 }
 
 /// Emit the `--suppression-policy` application block (#1441): which policy
@@ -961,7 +972,27 @@ pub(crate) fn render_finding_with_context_command(
     // source fragments keep their exact bytes.
     let mut out =
         render_finding_with_config(finding, config, root, JsonPointerWording::ExplainNamesCheck);
-    out.push_str(&explain::render_verdict_explanation(finding));
+    // #7796: project the owner's observed call shape (the same producer
+    // `ripr agent stub` reads) into the verdict-change recipe. Only when the
+    // finding's recorded source still owns the analyzed root's checkout:
+    // for a base-deleted/moved/unresolved finding, or an analyzed candidate
+    // tree that is not the checkout, the on-disk file cannot speak for the
+    // finding and the recipe keeps the name-only form. The render itself
+    // never reads source files.
+    let owner_signature = match finding.source_currentness {
+        crate::domain::SourceCurrentness::CandidateCurrent => {
+            crate::analysis::owner_call_shape_at_line(
+                root,
+                &finding.probe.location.file,
+                finding.probe.location.line,
+            )
+        }
+        _ => None,
+    };
+    out.push_str(&explain::render_verdict_explanation(
+        finding,
+        owner_signature.as_deref(),
+    ));
     out.push_str(&format!("\nNext: {context_command}\n"));
     push_powershell_variant(&mut out, "", context_command);
     terminal_safe(out)
@@ -970,7 +1001,9 @@ pub(crate) fn render_finding_with_context_command(
 /// Follow a bash command line with its PowerShell form when PowerShell needs a
 /// different one, so a path or ref with an apostrophe still pastes as one
 /// argument. Commands that run unchanged print nothing extra, which keeps the
-/// ordinary output byte-identical.
+/// ordinary output byte-identical. Commands with no honest translation print
+/// the shared unavailable disclosure so a PowerShell reader is not left with
+/// silent Bash (#5422).
 fn push_powershell_variant(out: &mut String, indent: &str, command: &str) {
     if let Some(line) = crate::output::markdown::powershell_text_variant(command) {
         out.push_str(&format!("{indent}(PowerShell) {line}\n"));
@@ -979,6 +1012,8 @@ fn push_powershell_variant(out: &mut String, indent: &str, command: &str) {
 
 mod evidence_lines;
 mod explain;
+#[cfg(test)]
+mod hidden_locations_tests;
 mod sections;
 mod shared;
 mod triage;
@@ -988,7 +1023,7 @@ pub(crate) use sections::render_finding_with_config;
 
 #[cfg(test)]
 mod tests {
-    use super::{render, render_finding, render_with_config, terminal_safe};
+    use super::{render, render_finding, render_header_summary, render_with_config, terminal_safe};
     use crate::analysis::PreviewLanguageAdvisory;
     use crate::app::{CheckOutput, Mode};
     use crate::config::RiprConfig;
@@ -1096,6 +1131,51 @@ mod tests {
         let rendered = render_with_config(&output, &loaded);
 
         assert!(rendered.contains("root: repo\nconfig: repo/ripr.toml\n"));
+    }
+
+    /// #7728: the check header's root line must use the same
+    /// `output::path::human_path` spelling as doctor's root line, not raw
+    /// `Path::display`, so one session shows one spelling of the analyzed
+    /// root (a verbatim `\\?\`-prefixed root strips on Windows; a
+    /// backslash-typed root normalizes there; Unix keeps the identity).
+    #[test]
+    fn header_root_line_uses_human_path_not_raw_display() {
+        let spaced_root = format!("C:{}tmp{}probe win space", '\\', '\\');
+        for root_text in [
+            r"\\?\C:\tmp\probe win space".to_string(),
+            spaced_root,
+            "repo".to_string(),
+        ] {
+            let root = PathBuf::from(root_text);
+            let output = CheckOutput {
+                harness_projections: Vec::new(),
+                schema_version: "0.1".to_string(),
+                tool: "ripr".to_string(),
+                mode: Mode::Draft,
+                root: root.clone(),
+                base: Some("main".to_string()),
+                summary: Summary::default(),
+                findings: vec![],
+                preview_language_advisories: Vec::new(),
+                language_runs: Vec::new(),
+                no_scope_provided: false,
+                unanalyzed_working_tree: false,
+                untracked_working_tree_source_paths: Vec::new(),
+                unlinked_python_tests: None,
+                suppression: None,
+                analysis_outcome: None,
+                partial_scope: None,
+                analyzed_revisions: None,
+            };
+
+            let rendered = render_header_summary(&output, &RiprConfig::default());
+
+            let expected = format!("root: {}\n", crate::output::path::human_path(&root));
+            assert!(
+                rendered.contains(&expected),
+                "header must render the root through human_path: expected {expected:?} in {rendered:?}"
+            );
+        }
     }
 
     /// #5258: when the unanalyzed working-tree state is untracked files, the
@@ -1856,7 +1936,7 @@ mod tests {
         assert!(rendered.contains("(no_actionable_gap)"), "{rendered}");
         assert!(
             rendered.contains(
-                "  Safe next action: all findings are base-side evidence, not candidate edit targets; rerun with --format human-full to inspect the full evidence before treating this run as actionable.\n"
+                "  Safe next action: all findings are base-side evidence, not candidate edit targets; rerun with --format human-full to inspect the full evidence before treating this run as actionable\n"
             ),
             "{rendered}"
         );
@@ -1914,7 +1994,7 @@ mod tests {
         );
         assert!(
             rendered.contains(
-                "  Safe next action: no finding is resolved to the candidate (subject currentness unresolved); rerun with --format human-full to inspect the full evidence before treating this run as actionable.\n"
+                "  Safe next action: no finding is resolved to the candidate (subject currentness unresolved); rerun with --format human-full to inspect the full evidence before treating this run as actionable\n"
             ),
             "{rendered}"
         );
@@ -1944,7 +2024,7 @@ mod tests {
         );
         assert!(
             rendered.contains(
-                "  Safe next action: no finding is a candidate edit target (1 base-side, 1 unresolved currentness); rerun with --format human-full to inspect the full evidence before treating this run as actionable.\n"
+                "  Safe next action: no finding is a candidate edit target (1 base-side, 1 unresolved currentness); rerun with --format human-full to inspect the full evidence before treating this run as actionable\n"
             ),
             "{rendered}"
         );
@@ -2018,7 +2098,8 @@ mod tests {
     /// #5021: when a top gap is selected and the omitted set mixes
     /// lower-ranked candidates with base-side evidence, the count line names
     /// the mix with its own counts instead of promoting the base-side
-    /// findings to lower-priority candidates.
+    /// findings to lower-priority candidates. #7643: the bullets append each
+    /// finding's currentness category so the two clauses connect to rows.
     #[test]
     fn hidden_block_selected_mixed_omitted_names_base_side_count() {
         // Ranking ties break on file path (see `triage_rank`), so the
@@ -2043,11 +2124,11 @@ mod tests {
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/base.rs:1 (weakly_exposed)\n"),
+            rendered.contains("    - src/base.rs:1 (weakly_exposed, base-side)\n"),
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/lower.rs:1 (weakly_exposed)\n"),
+            rendered.contains("    - src/lower.rs:1 (weakly_exposed, lower-priority candidate)\n"),
             "{rendered}"
         );
     }
@@ -2135,7 +2216,7 @@ mod tests {
         );
         assert!(
             rendered.contains(
-                "    - … and 5 more omitted finding(s); every identity is in --format json.\n"
+                "    - … and 5 more omitted finding(s); every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"
             ),
             "{rendered}"
         );
@@ -2143,6 +2224,81 @@ mod tests {
             rendered.lines().count() < 150,
             "the default surface stays bounded with many findings"
         );
+    }
+
+    #[test]
+    fn hidden_identity_completeness_requires_unbounded_json() -> Result<(), String> {
+        let findings = (0..26)
+            .map(|index| {
+                let mut finding = sample_finding();
+                finding.id = format!("finding-{index}");
+                finding.probe.location = SourceLocation::new("src/f.rs", index + 1, 1);
+                finding.probe.id = ProbeId(format!("probe-{index}"));
+                if index == 0 {
+                    finding.probe.expression = "x".repeat(1_000_001);
+                }
+                finding
+            })
+            .collect::<Vec<_>>();
+        let output = bounded_output_with_findings(findings);
+        let bounded: serde_json::Value =
+            serde_json::from_str(&crate::output::json::render(&output))
+                .map_err(|error| error.to_string())?;
+        assert_eq!(bounded["findings"].as_array().map(Vec::len), Some(1));
+        assert_eq!(bounded["summary"]["findings"], 26);
+        assert_eq!(
+            bounded["run_limitations"][0]["downstream_consumable"],
+            false
+        );
+        let full = crate::output::json::render_with_config(
+            &output,
+            &crate::config::RiprConfig::default(),
+            None,
+        );
+        let full: serde_json::Value =
+            serde_json::from_str(&full).map_err(|error| error.to_string())?;
+        assert_eq!(full["findings"].as_array().map(Vec::len), Some(26));
+        assert_eq!(full["findings"][25]["id"], "finding-25");
+        let human = render(&output);
+        assert!(
+            human.contains("25 lower-priority finding(s) omitted"),
+            "{human}"
+        );
+        assert!(human.contains("5 more omitted finding(s)"), "{human}");
+        assert!(
+            human.contains("RIPR_CHECK_FINDINGS_BYTES=0"),
+            "full identity recovery must remove the JSON budget: {human}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn hidden_identity_window_discloses_only_a_real_tail() {
+        for (total, remainder) in [(0, 0), (1, 0), (21, 0), (22, 1)] {
+            let findings = (0..total)
+                .map(|index| {
+                    let mut finding = sample_finding();
+                    finding.id = format!("finding-{index}");
+                    finding.probe.id = ProbeId(format!("probe-{index}"));
+                    finding.probe.location = SourceLocation::new("src/f.rs", index + 1, 1);
+                    finding
+                })
+                .collect::<Vec<_>>();
+            let human = render(&bounded_output_with_findings(findings));
+            assert_eq!(
+                human.contains("RIPR_CHECK_FINDINGS_BYTES=0"),
+                remainder > 0,
+                "total {total}: {human}"
+            );
+            assert_eq!(
+                human.contains("more omitted finding(s)"),
+                remainder > 0,
+                "total {total}: {human}"
+            );
+            if remainder > 0 {
+                assert!(human.contains("1 more omitted finding(s)"), "{human}");
+            }
+        }
     }
 
     /// #4395(b): mixed-repo remainder must name the omitted preview-language
@@ -2373,7 +2529,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("Changed file(s) by language: python: 5, rust: 1."),
+            rendered.contains("Changed file(s) by language: python = 5, rust = 1"),
             "expected per-language breakdown line; got:\n{rendered}"
         );
 
@@ -2382,7 +2538,7 @@ mod tests {
         python_only.summary.changed_files_by_language[1].files = 0;
         let rendered = render(&python_only);
         assert!(
-            rendered.contains("Changed file(s) by language: python: 5.\n"),
+            rendered.contains("Changed file(s) by language: python = 5\n"),
             "zero-count languages are omitted; got:\n{rendered}"
         );
     }
@@ -2566,7 +2722,7 @@ mod tests {
         );
         assert!(
             rendered.contains(
-                "Safe next action: the working tree has no changed tracked files against `main`; make a change, or `git add -N <path>` a new file, and re-run."
+                "Safe next action: the working tree has no changed tracked files against `main`; make a change, or `git add -N <path>` a new file, and re-run"
             ),
             "{rendered}"
         );
@@ -2688,7 +2844,7 @@ mod tests {
         let mut finding = sample_finding();
         finding.class = ExposureClass::Exposed;
         finding.missing = vec![
-            "Related test reaches `applyDiscount` with a `exact_value` oracle; behavior observed."
+            "Related test reaches `applyDiscount` with an `exact_value` oracle; behavior observed."
                 .to_string(),
         ];
 
@@ -2988,7 +3144,7 @@ mod tests {
 
         assert!(rendered.contains("State: preview language, advisory only (preview_limited)"));
         let expected = format!(
-            "  Safe next action: this TypeScript preview finding's repair packet is not ready ({}); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`.\n",
+            "  Safe next action: this TypeScript preview finding's repair packet is not ready ({}); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`\n",
             super::sections::one_line(&why)
         );
         assert!(rendered.contains(&expected), "{rendered}");
@@ -3028,7 +3184,7 @@ mod tests {
                 .unwrap_or_default();
             assert!(
                 line.ends_with(
-                    "…); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`."
+                    "…); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`"
                 ),
                 "{class:?}: {line}"
             );
@@ -3107,7 +3263,7 @@ mod tests {
             "{rendered}"
         );
         assert!(rendered.contains(
-            "  Safe next action: preview-language evidence is advisory; a related test appears to observe this change, so there is no repair to make; verify independently before relying on it.\n"
+            "  Safe next action: preview-language evidence is advisory; a related test appears to observe this change, so there is no repair to make; verify independently before relying on it\n"
         ), "{rendered}");
         assert!(!rendered.contains("complete the missing repair-packet fields"));
         assert!(!rendered.contains("repair packet is not ready"));
@@ -3125,7 +3281,7 @@ mod tests {
         // command instead of a bare "verify independently" with no route.
         assert!(
             rendered.contains(
-                "  Safe next action: preview-language evidence is advisory; the repair packet is complete: in `tests/discount.test.ts`, add a focused assertion for the missing discriminator `amount == threshold`, shaped like `expect(result).toBe(expected)`; run `jest tests/discount.test.ts`, then rerun `ripr check`.\n"
+                "  Safe next action: preview-language evidence is advisory; the repair packet is complete: in `tests/discount.test.ts`, add a focused assertion for the missing discriminator `amount == threshold`, shaped like `expect(result).toBe(expected)`; run `jest tests/discount.test.ts`, then rerun `ripr check`\n"
             ),
             "{rendered}"
         );
@@ -3150,7 +3306,7 @@ mod tests {
 
         assert!(rendered.contains("State: preview language, advisory only (preview_limited)"));
         assert!(rendered.contains(
-            "  Safe next action: preview-language evidence is advisory; the repair packet is blocked by the named static limitation, not by missing fields; resolve the limitation and rerun preview evidence before acting.\n"
+            "  Safe next action: preview-language evidence is advisory; the repair packet is blocked by the named static limitation, not by missing fields; resolve the limitation and rerun preview evidence before acting\n"
         ));
         assert!(!rendered.contains("complete the missing repair-packet fields before acting"));
         assert!(!rendered.contains("the repair packet is complete but remains advisory"));
@@ -3200,7 +3356,7 @@ mod tests {
             "{rendered}"
         );
         assert!(rendered.contains(
-            "  Safe next action: this Python preview finding has no repair card (no Python test reaches this code), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add a test that calls it by hand, then rerun `ripr check`.\n"
+            "  Safe next action: this Python preview finding has no repair card (no Python test reaches this code), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add a test that calls it by hand, then rerun `ripr check`\n"
         ), "{rendered}");
         assert!(!rendered.contains("complete the missing repair-packet fields"));
     }
@@ -3444,6 +3600,21 @@ mod tests {
             Path::new("."),
         );
         assert!(!plain.contains("(PowerShell)"), "{plain}");
+        // U+201C inside a double-quoted span has no honest PowerShell form.
+        // The same character inside `'...'` is SameAsBash and stays silent.
+        let unavailable = super::render_finding_with_context_command(
+            &finding,
+            &config,
+            "ripr context --root \"foo\u{201c}bar\" --at probe:x",
+            Path::new("."),
+        );
+        assert!(
+            unavailable.contains(&format!(
+                "Next: ripr context --root \"foo\u{201c}bar\" --at probe:x\n(PowerShell) {}\n",
+                crate::output::markdown::POWERSHELL_UNAVAILABLE_DISCLOSURE
+            )),
+            "{unavailable}"
+        );
     }
 
     /// #4321: the exhaustive surface prints each finding's id once, so the
@@ -4127,7 +4298,7 @@ mod tests {
             "missing discriminator enabled == false: related tests do not use the changed value"
         ));
         assert!(rendered.contains("Next step\n"));
-        assert!(rendered.contains("Add assertion for disabled path result."));
+        assert!(rendered.contains("Add assertion for disabled path result"));
     }
 
     /// #4320: the 5-related-test window must disclose the total — the number
@@ -4986,7 +5157,7 @@ mod tests {
             digest.lines().all(|line| line.chars().count() <= 180),
             "no digest line exceeds the budget; got:\n{digest}"
         );
-        assert!(digest.contains("remedy."), "{digest}");
+        assert!(digest.contains("remedy"), "{digest}");
     }
 
     /// #4323: the default no-path guidance is ~330 characters and ends with
@@ -5019,7 +5190,7 @@ mod tests {
 
         assert!(
             flattened.ends_with(
-                "add a co-located test that reaches and observes the changed behavior so a discriminator exists."
+                "add a co-located test that reaches and observes the changed behavior so a discriminator exists"
             ),
             "digest must keep the remedy; got:\n{digest}"
         );

@@ -59,6 +59,7 @@ use std::{
 mod boundary;
 mod classify;
 mod deleted_lines;
+mod guard_activation;
 use classify::{PythonNoBehaviorContext, classify_change_with_context};
 #[cfg(test)]
 use classify::{classify_change, classify_change_with_old};
@@ -130,9 +131,9 @@ use sink_alignment::{
     fstring_template, oracle_is_pure_len_aggregate, oracle_text_observes_token,
     parse_dict_literal_fields,
 };
-pub(crate) use source_facts::detect_python_test_framework;
 #[cfg(test)]
 use source_facts::parse_module;
+pub(crate) use source_facts::{detect_python_test_framework, detect_python_test_frameworks};
 use source_facts::{extract_source_facts, source_fact_snapshot_observation};
 mod source_utils;
 use source_utils::{is_test_file, normalized_path};
@@ -946,6 +947,10 @@ impl PythonAdapter {
                     &all_owners,
                     &all_tests,
                     no_behavior,
+                    workspace_read
+                        .sources
+                        .get(&changed.path)
+                        .map(String::as_str),
                 ) {
                     findings.push(finding);
                 }

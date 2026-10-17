@@ -412,3 +412,27 @@ requires exact replay identities, independent judgments and derived denominators
 [The Rust quiet-set audit](https://github.com/EffortlessMetrics/ripr-swarm/issues/3164)
 separately samples credited and emitted behavior. Neither programme may inherit
 a stronger safety or support claim from the historical seven-case result.
+
+### Closing-line propagation subjects
+
+For a current-source Rust diff line containing only closing delimiters and
+one `?`, the producer may locate the complete enclosing parser-owned
+propagation expression. Its owner and source start must match the indexed
+function; stale text, parser fallback, mixed sibling code and nested return
+targets receive no new canonical subject. Removed fragments retain their
+original base-side evidence rather than acquiring an invented old expression.
+
+Complete subject identity does not establish activation of that `?` exit.
+The producer retains the original changed line, and the classifier refuses
+new token-only discriminator credit for that boundary until same-test
+changed-path activation is established. An exact assertion on another error
+exit remains unconfirmed. Assertion/macro admission and complete `Ok(())`
+owner-return pins are unchanged. This is the bounded current-side slice of
+[source ripr#1715](https://github.com/EffortlessMetrics/ripr/issues/1715).
+
+An exact oracle can remain strong even when activation of this particular `?`
+exit is unconfirmed. Existing observed inputs and generic error-path infection
+facts do not exclude preceding returns or resolve the fallible operand for the
+same asserted call. A test may already execute the exit; inspect that existing
+test before adding another. Confirming such activation requires a separate,
+producer-owned same-call path receipt and is outside this identity-only slice.

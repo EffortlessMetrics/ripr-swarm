@@ -1,0 +1,16 @@
+pub fn audit(n: u32) -> Vec<String> {
+    let mut lines = vec![String::from("start")];
+    lines.push(format!("audited {n}"));
+    lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn audit_logs_the_count() {
+        let lines = audit(42);
+        assert!(lines.iter().any(|l| l == "audited 42"), "{lines:?}");
+    }
+}

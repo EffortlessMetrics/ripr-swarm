@@ -31,6 +31,7 @@ pub fn classify_probe(
         workspace_complete,
         dependency_edges,
         &candidate_index,
+        None,
     )
 }
 
@@ -40,6 +41,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     workspace_complete: bool,
     dependency_edges: Option<&DependencyEdgeContext<'_>>,
     candidate_index: &RelatedTestCandidateIndex,
+    propagation_origin: Option<&crate::analysis::diff::ChangedLine>,
 ) -> Finding {
     let owner_fn = resolve_owner_function(probe, index);
     // #3296: one chain resolution per probe, shared by the relation
@@ -65,7 +67,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     // be reframed. The exposure class is never changed by this flag.
     let owner_assertion_shaped =
         owner_fn.is_some_and(|owner| is_assertion_shaped_owner(owner, index));
-    let context = ProbeContext::new(
+    let mut context = ProbeContext::new(
         probe,
         owner_fn,
         related_tests,
@@ -76,8 +78,10 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     .with_helper_chain(helper_chain)
     .with_file_use_statements(candidate_index.file_use_statements())
     .with_owner_pin_syntax(candidate_index.owner_pin_syntax())
+    .with_unseen_reach_names(candidate_index.unseen_reach_names())
     .with_test_value_facts(candidate_index.test_value_facts())
     .with_owner_caller_names(candidate_index.owner_caller_names());
+    context.propagation_origin = propagation_origin;
     let reveal_expression = parser_expression_for_probe(
         index,
         &probe.location.file,
@@ -2873,6 +2877,7 @@ fn far_above_threshold_discounts() {
                         kind: ProbeShapeKind::CallDeletion,
                         text: "watchdog_reason(\n    \"run-missing\",\n    receipt,\n)".into(),
                         value_consumed: false,
+                        source_lines: None,
                     }],
                     ..FileFacts::default()
                 },
@@ -2936,6 +2941,7 @@ fn far_above_threshold_discounts() {
                         kind: ProbeShapeKind::CallDeletion,
                         text: "watchdog_reason(\n    \"run-missing\",\n    receipt,\n)".into(),
                         value_consumed: false,
+                        source_lines: None,
                     }],
                     ..FileFacts::default()
                 },

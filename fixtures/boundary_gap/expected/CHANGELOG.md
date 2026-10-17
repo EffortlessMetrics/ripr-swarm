@@ -865,24 +865,15 @@ Apply the existing portable root/head/worktree normalization from
 raw-JSON placeholder commitment. The receipt retains its established portable
 projection; only dependent artifact hashes are refreshed.
 
-## Pending — #7809 corpus-currentness cache generation
+## Pending — boundary_gap (21)
 
-Reason: RIPR-SPEC-0229 advances classified cache generation 1.66 to 1.67.
-Refresh the real producer's portable before/after snapshots and dependent
-verify/receipt commitments. Only the generation and digests change: source
-corpus content hash, classifications, evidence, unchanged movement and the
-historical incomplete receipt's fail-closed routing are preserved.
+Reason:
+RIPR-SPEC-0002: re-bless human render copy/grammar fixes #7755 (double-colon labels), #7752 (a/an oracle articles), #7756 (trailing-period rule); formatting-only drift
 
-Commands: `ripr check --root fixtures/boundary_gap/input --format repo-exposure-json`,
-then the corpus's canonical `ripr agent verify`, `ripr agent receipt` and
-`ripr assistant-loop proof` commands. Apply the existing
-`normalize_unchanged_repo_exposure_producer_fixture` root/head/worktree and
-raw-JSON placeholder normalization. Retain the established portable receipt
-projection and refresh its producer-bound artifact hashes. Regenerated assistant
-proof and first-action routing remain unchanged.
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
 
 Updated:
-- `expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json`
-- `expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json`
-- `expected/first-useful-action/unchanged-after-attempt/agent-verify.json`
-- `expected/first-useful-action/unchanged-after-attempt/agent-receipt.json`
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -126,8 +126,8 @@ pub(crate) fn mask_comments_and_strings(text: &str) -> String {
 /// literal it masked in code (quote to closing quote, inclusive), so a
 /// caller can read char and byte literals back from the original text.
 pub(crate) fn mask_with_char_literals(text: &str) -> (String, Vec<(usize, usize)>) {
-    let (masked, char_literals, _) = scan(text);
-    (masked, char_literals)
+    let scanned = scan(text);
+    (scanned.masked, scanned.char_literals)
 }
 
 /// [`mask_comments_and_strings`], plus how many `"` the same scan read as
@@ -137,15 +137,41 @@ pub(crate) fn mask_with_char_literals(text: &str) -> (String, Vec<(usize, usize)
 /// fragment look string-unbalanced (#7130 review: the unbalanced-fragment
 /// fallback of an identity reader must not fire on commented quotes).
 pub(crate) fn mask_with_string_delimiter_quotes(text: &str) -> (String, usize) {
-    let (masked, _, quotes) = scan(text);
-    (masked, quotes)
+    let scanned = scan(text);
+    (scanned.masked, scanned.string_quotes)
+}
+
+/// Every terminated plain or raw string literal in `text`, as the byte
+/// offsets of its opening and closing delimiter quotes and whether it is a
+/// raw string, read by the same scan: a quote inside a comment (nested
+/// block comments included), a character literal or an escape never opens
+/// or closes one. The contents are `text[open + 1..close]`, escapes left
+/// unprocessed. An unterminated string is left out.
+pub(crate) fn string_literal_spans(text: &str) -> Vec<(usize, usize, bool)> {
+    scan(text).string_spans
+}
+
+/// What one [`scan`] pass reads from a text.
+struct Scanned {
+    /// The masked text, byte layout preserved.
+    masked: String,
+    /// Byte ranges of the character literals masked in code.
+    char_literals: Vec<(usize, usize)>,
+    /// How many `"` were string delimiters.
+    string_quotes: usize,
+    /// Delimiter offsets of every terminated string literal, and whether
+    /// it is raw.
+    string_spans: Vec<(usize, usize, bool)>,
 }
 
 /// One pass over `text` producing the masked output, the byte ranges of
-/// the character literals it masked, and the string-delimiter quote count.
-fn scan(text: &str) -> (String, Vec<(usize, usize)>, usize) {
+/// the character literals it masked, the string-delimiter quote count and
+/// the delimiter offsets of every terminated string literal.
+fn scan(text: &str) -> Scanned {
     let mut char_literals = Vec::new();
     let mut string_quotes = 0usize;
+    let mut string_spans = Vec::new();
+    let mut string_open = 0usize;
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(text.len());
     let mut state = MaskState::Code;
@@ -178,6 +204,7 @@ fn scan(text: &str) -> (String, Vec<(usize, usize)>, usize) {
                     } else {
                         state = MaskState::Str;
                     }
+                    string_open = index;
                     string_quotes += 1;
                     out.push(b' ');
                     index += 1;
@@ -245,6 +272,7 @@ fn scan(text: &str) -> (String, Vec<(usize, usize)>, usize) {
                 }
                 if byte == b'"' {
                     state = MaskState::Code;
+                    string_spans.push((string_open, index, false));
                     string_quotes += 1;
                     out.push(b' ');
                     index += 1;
@@ -272,6 +300,7 @@ fn scan(text: &str) -> (String, Vec<(usize, usize)>, usize) {
                     if closing == raw_hashes {
                         // Consume the closing quote and its hashes
                         // (closing + 1 bytes).
+                        string_spans.push((string_open, index, true));
                         string_quotes += 1;
                         out.extend(std::iter::repeat_n(b' ', closing + 1));
                         index += closing + 1;
@@ -291,11 +320,12 @@ fn scan(text: &str) -> (String, Vec<(usize, usize)>, usize) {
     // Masking only replaces whole characters with spaces (span edges are
     // character boundaries), so the output is always valid UTF-8; the
     // fallback keeps the input rather than panicking on a defect.
-    (
-        String::from_utf8(out).unwrap_or_else(|_| text.to_string()),
+    Scanned {
+        masked: String::from_utf8(out).unwrap_or_else(|_| text.to_string()),
         char_literals,
         string_quotes,
-    )
+        string_spans,
+    }
 }
 
 #[cfg(test)]
@@ -382,6 +412,32 @@ mod tests {
         let masked = mask_comments_and_strings(text);
         assert!(masked.contains("live(4);"), "{masked}");
         assert_eq!(masked.lines().count(), text.lines().count());
+    }
+
+    #[test]
+    fn string_literal_spans_follow_the_shared_scan() {
+        let contents = |text: &str| -> Vec<String> {
+            string_literal_spans(text)
+                .into_iter()
+                .map(|(open, close, _)| text[open + 1..close].to_string())
+                .collect()
+        };
+        // A nested block comment hides the literal inside it; only the
+        // live literal remains.
+        assert_eq!(
+            contents("vec![\"other\" /* a /* b */ \"audited 42\" */]"),
+            vec!["other".to_string()]
+        );
+        assert_eq!(
+            contents("f('\"', \"a\\\"b\", r#\"c\"d\"#) // \"gone\""),
+            vec!["a\\\"b".to_string(), "c\"d".to_string()]
+        );
+        assert!(contents("open(\"never closed").is_empty());
+        let raw: Vec<bool> = string_literal_spans("f(\"a\", r#\"b\"#)")
+            .into_iter()
+            .map(|(_, _, raw)| raw)
+            .collect();
+        assert_eq!(raw, vec![false, true]);
     }
 
     #[test]

@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "predicate_side_flip",
   "test_shape": "single_is_err_at_edge",
-  "hard_case": "Spec expects predicate exposed, judging only the changed-from mutant; runtime truth is partial because len >= 255 survives. ripr reads weakly_exposed, which fits the partial truth.",
+  "hard_case": "Runtime truth is partial because len >= 255 survives a lone check_edge(256).is_err(); rule 3 needs an Ok oracle on 255 in the same test, so ripr reads weakly_exposed. RIPR-SPEC-0227 example 2 now says weakly_exposed too (it read exposed before 2026-10-15, judging only the changed-from mutant).",
   "truth": {
     "state": "partially_discriminated",
     "method": "runtime_mutant_kill",

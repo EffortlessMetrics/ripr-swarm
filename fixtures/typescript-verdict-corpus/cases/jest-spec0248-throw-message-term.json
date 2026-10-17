@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "`throw new RangeError(\"limit \" + max)` drops `+ max`. The test calls `limitMessage(10, 5)` and asserts `toThrow(\"limit \")`; a string argument to `toThrow` matches any message that contains it, so `limit 5` and `limit ` both pass. RIPR-SPEC-0248 example 10: the error seam is outside the rule and the ladder's `exposed` stands. ripr reports `exposed` with exact_error_variant / strong, as the spec states; against the not-discriminated truth that is a false exposed verdict the spec accepts.",
+  "reasoning": "`throw new RangeError(\"limit \" + max)` drops `+ max`. The test calls `limitMessage(10, 5)` and asserts `toThrow(\"limit \")`; a string argument to `toThrow` matches any message that contains it, so `limit 5` and `limit ` both pass. RIPR-SPEC-0248 example 10: the error seam is outside the dropped-term rule. Since the 2026-10-14 RIPR-SPEC-0243 rule 4 amendment the change is message-only, and `toThrow(\"limit \")` cannot be shown to match exactly one of the two messages, so ripr reports `weakly_exposed`, the ideal gap. At labeling it reported `exposed` with exact_error_variant / strong, a false exposed verdict.",
   "labeling_observation": {
     "ripr_commit": "3480fb2",
     "full_checkout_verdict": "credited",

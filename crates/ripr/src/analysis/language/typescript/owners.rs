@@ -29,6 +29,10 @@ pub(crate) fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> 
         }
         let mut owners = without_reassigned_commonjs_exports(owners);
         mark_default_exported_bindings(&ret.program.body, &mut owners);
+        // #7507: a `let`/function owner rebound before its `export default`
+        // carries dead code at the declaration site — drop it so no finding
+        // can credit a test with observing it.
+        owners = without_reassigned_esm_bindings(&ret.program.body, owners);
         let entries = module_entries_by_owner(&ret.program.body, source);
         for owner in &mut owners {
             if owner.class_name.is_none()
@@ -210,18 +214,214 @@ fn without_reassigned_commonjs_exports(
         .filter(|(_, commonjs)| *commonjs)
         .map(|(owner, _)| owner.name.clone())
         .collect();
+    // #7507: every bare `module.exports = <fn>` assigns the SAME default
+    // slot, whatever the function id names it. Two such assignments mean the
+    // first value is dead — the name-grouping below would keep both because
+    // their ids differ. A bare assignment is exactly a CommonJS owner with
+    // `exported_as_default`; more than one of them fails closed together.
+    let bare_default_count = owners
+        .iter()
+        .filter(|(owner, commonjs)| *commonjs && owner.exported_as_default)
+        .count();
     owners
         .into_iter()
         .filter(|(owner, commonjs)| {
-            !*commonjs
-                || commonjs_names
-                    .iter()
-                    .filter(|name| **name == owner.name)
-                    .count()
-                    == 1
+            if !*commonjs {
+                return true;
+            }
+            if owner.exported_as_default && bare_default_count > 1 {
+                return false;
+            }
+            commonjs_names
+                .iter()
+                .filter(|name| **name == owner.name)
+                .count()
+                == 1
         })
         .map(|(owner, _)| owner)
         .collect()
+}
+
+/// Drop every ESM owner whose binding is reassigned after its declaration
+/// (#7507). `let price = (a) => ...; price = (a) => 140; export default
+/// price;` leaves the declared (changed) body dead: the export carries the
+/// second value, so a test observing `price(...)` never runs the changed
+/// code. Crediting it would read `exposed` for dead code — fail-closed, no
+/// owner. Only plain top-level identifier writes count (`price = ...`,
+/// `price += ...`, `++price`); member writes (`price.x = ...`) mutate the
+/// same value and keep the owner.
+fn without_reassigned_esm_bindings(
+    body: &[Statement<'_>],
+    owners: Vec<TypeScriptOwner>,
+) -> Vec<TypeScriptOwner> {
+    if owners.is_empty() {
+        return owners;
+    }
+    let reassigned = reassigned_top_level_bindings(body);
+    if reassigned.is_empty() {
+        return owners;
+    }
+    owners
+        .into_iter()
+        .filter(|owner| {
+            // A class method shares only the binding name with a reassigned
+            // top-level binding; its receiver keeps it live, so the
+            // name-only drop must not take it.
+            owner.class_name.is_some() || !reassigned.iter().any(|name| name == &owner.name)
+        })
+        .collect()
+}
+
+/// Names bound by a top-level `let|var|function` owner declaration that a
+/// later top-level statement plainly reassigns. `const` cannot reassign;
+/// only `let`/`var`/function bindings are candidates, but the walk records
+/// any plain identifier write and lets the caller intersect with its owners.
+fn reassigned_top_level_bindings(body: &[Statement<'_>]) -> Vec<String> {
+    let mut declared: Vec<String> = Vec::new();
+    for stmt in body {
+        match stmt {
+            Statement::VariableDeclaration(decl)
+                if decl.kind != oxc_ast::ast::VariableDeclarationKind::Const =>
+            {
+                for declarator in &decl.declarations {
+                    for identifier in declarator.id.get_binding_identifiers() {
+                        if !declared.iter().any(|name| name == identifier.name.as_str()) {
+                            declared.push(identifier.name.to_string());
+                        }
+                    }
+                }
+            }
+            Statement::FunctionDeclaration(func) => {
+                if let Some(id) = &func.id
+                    && !declared.iter().any(|name| name == id.name.as_str())
+                {
+                    declared.push(id.name.to_string());
+                }
+            }
+            // `export let price = ...` / `export function price() ...` bind
+            // exactly like their undecorated forms; without unwrapping, a
+            // later reassignment misses them and the dead owner stays
+            // credited.
+            Statement::ExportNamedDeclaration(export) => match &export.declaration {
+                Some(oxc_ast::ast::Declaration::VariableDeclaration(decl))
+                    if decl.kind != oxc_ast::ast::VariableDeclarationKind::Const =>
+                {
+                    for declarator in &decl.declarations {
+                        for identifier in declarator.id.get_binding_identifiers() {
+                            if !declared.iter().any(|name| name == identifier.name.as_str()) {
+                                declared.push(identifier.name.to_string());
+                            }
+                        }
+                    }
+                }
+                Some(oxc_ast::ast::Declaration::FunctionDeclaration(func)) => {
+                    if let Some(id) = &func.id
+                        && !declared.iter().any(|name| name == id.name.as_str())
+                    {
+                        declared.push(id.name.to_string());
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    if declared.is_empty() {
+        return Vec::new();
+    }
+    let mut reassigned = Vec::new();
+    for stmt in body {
+        // The declaration initializers themselves are not reassignments.
+        if matches!(
+            stmt,
+            Statement::VariableDeclaration(_) | Statement::FunctionDeclaration(_)
+        ) {
+            continue;
+        }
+        for name in assigned_identifiers_in_statement(stmt) {
+            if declared.iter().any(|bound| bound == &name)
+                && !reassigned.iter().any(|seen: &String| seen == &name)
+            {
+                reassigned.push(name);
+            }
+        }
+    }
+    // `UpdateExpression` (`price++`, `++price`) is covered by the walk above.
+    reassigned
+}
+
+/// Plain identifier writes inside one top-level statement: `name = ...`
+/// (any operator), `++name` / `name++`. Member, destructuring-pattern and
+/// computed writes are not plain bindings and are ignored.
+fn assigned_identifiers_in_statement(stmt: &Statement<'_>) -> Vec<String> {
+    use oxc_ast::ast::Expression;
+    let mut out = Vec::new();
+    fn push_ident(target: &oxc_ast::ast::IdentifierReference<'_>, out: &mut Vec<String>) {
+        if !out.iter().any(|seen: &String| seen == target.name.as_str()) {
+            out.push(target.name.to_string());
+        }
+    }
+    fn walk_expression(expression: &Expression<'_>, out: &mut Vec<String>) {
+        match expression {
+            Expression::AssignmentExpression(assign) => {
+                if let AssignmentTarget::AssignmentTargetIdentifier(target) = &assign.left {
+                    push_ident(target, out);
+                }
+                walk_expression(&assign.right, out);
+            }
+            Expression::UpdateExpression(update) => {
+                if let oxc_ast::ast::SimpleAssignmentTarget::AssignmentTargetIdentifier(target) =
+                    &update.argument
+                {
+                    push_ident(target, out);
+                }
+            }
+            Expression::SequenceExpression(seq) => {
+                for expression in &seq.expressions {
+                    walk_expression(expression, out);
+                }
+            }
+            Expression::ParenthesizedExpression(paren) => {
+                walk_expression(&paren.expression, out);
+            }
+            Expression::LogicalExpression(logical) => {
+                walk_expression(&logical.left, out);
+                walk_expression(&logical.right, out);
+            }
+            Expression::ConditionalExpression(conditional) => {
+                walk_expression(&conditional.test, out);
+                walk_expression(&conditional.consequent, out);
+                walk_expression(&conditional.alternate, out);
+            }
+            Expression::CallExpression(call) => {
+                walk_expression(&call.callee, out);
+                for argument in &call.arguments {
+                    if let Some(expression) = argument.as_expression() {
+                        walk_expression(expression, out);
+                    }
+                }
+            }
+            // Wrapper expressions: a write nested in `await`, a unary
+            // operator (`void (price = ...)`), or a binary expression
+            // still reassigns the binding (PR #7651 review).
+            Expression::AwaitExpression(awaited) => {
+                walk_expression(&awaited.argument, out);
+            }
+            Expression::UnaryExpression(unary) => {
+                walk_expression(&unary.argument, out);
+            }
+            Expression::BinaryExpression(binary) => {
+                walk_expression(&binary.left, out);
+                walk_expression(&binary.right, out);
+            }
+            Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_) => {}
+            _ => {}
+        }
+    }
+    if let Statement::ExpressionStatement(expression) = stmt {
+        walk_expression(&expression.expression, &mut out);
+    }
+    out
 }
 
 /// Mark a top-level function owner as the module's default export when a
@@ -715,6 +915,25 @@ pub(crate) fn contains_jsx_like_return(slice: &str) -> bool {
 pub(crate) fn extract_imports_from_statements(
     statements: &[Statement<'_>],
 ) -> Vec<TypeScriptImport> {
+    extract_imports_from_statements_inner(statements, true)
+}
+
+/// Imports for a TEST file (#7507): `export { x } from './y'` re-exports are
+/// NOT imports — recording them as `imported/local` bindings lets a test
+/// file's own re-export anchor a bare `owner(...)` call to the owner module,
+/// and a file-level `const owner = ...` shadow is then missed (file-level
+/// bindings never shadow imports). Owner-module indexing keeps the
+/// re-export hop via `extract_imports_from_statements`.
+pub(crate) fn extract_imports_for_test_file(
+    statements: &oxc_allocator::Vec<'_, Statement<'_>>,
+) -> Vec<TypeScriptImport> {
+    extract_imports_from_statements_inner(statements, false)
+}
+
+fn extract_imports_from_statements_inner(
+    statements: &[Statement<'_>],
+    include_reexports: bool,
+) -> Vec<TypeScriptImport> {
     let mut out: Vec<TypeScriptImport> = Vec::new();
     for stmt in statements {
         // ES module import declarations: `import { x } from './y'`
@@ -776,8 +995,12 @@ pub(crate) fn extract_imports_from_statements(
         // These appear as ExportNamedDeclaration with a source string and no
         // inline declaration.  We record each re-exported specifier as an
         // import so that `import_source_matches_owner` can resolve the
-        // re-export chain one hop back.
+        // re-export chain one hop back. Test files never use this hop
+        // (#7507): their re-exports are not imports.
         if let Statement::ExportNamedDeclaration(export) = stmt {
+            if !include_reexports {
+                continue;
+            }
             if export.declaration.is_none()
                 && let Some(re_source) = &export.source
             {

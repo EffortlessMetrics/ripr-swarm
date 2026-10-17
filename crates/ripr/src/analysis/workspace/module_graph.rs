@@ -1170,6 +1170,11 @@ fn read_module(workspace_root: &Path, file: &Path) -> ModuleRead {
 /// reads, so a committed-history diff walks HEAD content.
 fn read_source(workspace_root: &Path, file: &Path) -> SourceRead {
     let root = lexical(&normalize(workspace_root));
+    crate::analysis::input_boundary::observe_module_read(
+        workspace_root,
+        file,
+        file.strip_prefix(&root).is_err(),
+    );
     let bytes = match file.strip_prefix(&root) {
         Ok(relative) => {
             match crate::analysis::committed_source::read_source_bytes(workspace_root, relative) {

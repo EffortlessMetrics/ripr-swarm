@@ -24,22 +24,26 @@ pub(super) enum WorkspaceRootResolution {
 }
 
 /// The closed `CodeActionOptions.code_action_kinds` hierarchy (#1829,
-/// RIPR-SPEC-0129). This is the single source of truth for the advertised
-/// set: the code-action parity tests in `lsp/tests.rs` assert every emitted
-/// kind against these constants so the advertisement and the emitters
-/// cannot drift in the same direction. `quickfix.ripr` and
-/// `quickfix.ripr.verify` are advertised-but-unemitted (reserved); the emitters
-/// in `lsp/actions.rs` use `quickfix.ripr.inspect` / `quickfix.ripr.navigate`
-/// for per-diagnostic actions and `source.ripr.refresh` for the
-/// workspace-level refresh. Per-diagnostic actions sit under `quickfix`
-/// because VS Code's lightbulb / Quick Fix menu never lists `source.*`
-/// actions (they appear only under "Source Action..."); refresh is not a fix
-/// for one diagnostic, so it stays a source action.
-pub(super) const ADVERTISED_CODE_ACTION_KINDS: [&str; 5] = [
-    "quickfix.ripr",
+/// RIPR-SPEC-0129, #7773). This is the single source of truth for the
+/// advertised set, and it contains exactly the kinds the emitters in
+/// `lsp/actions.rs` produce: `quickfix.ripr.inspect` /
+/// `quickfix.ripr.navigate` for per-diagnostic actions and
+/// `source.ripr.refresh` for the workspace-level refresh. The code-action
+/// parity tests in `lsp/tests.rs` assert the set both ways — every emitted
+/// kind is advertised, and every advertised kind is emitted — so the
+/// advertisement and the emitters cannot drift in either direction.
+/// `quickfix.ripr` and `quickfix.ripr.verify` are deliberately NOT
+/// advertised: no emitter produces them, and advertising a kind the server
+/// never emits leaves clients that filter or keybind on the advertised set
+/// with permanent silence (#7773). The closed set can grow later — adding a
+/// kind once its emitter lands does not break clients. Per-diagnostic
+/// actions sit under `quickfix` because VS Code's lightbulb / Quick Fix
+/// menu never lists `source.*` actions (they appear only under "Source
+/// Action..."); refresh is not a fix for one diagnostic, so it stays a
+/// source action.
+pub(super) const ADVERTISED_CODE_ACTION_KINDS: [&str; 3] = [
     "quickfix.ripr.inspect",
     "quickfix.ripr.navigate",
-    "quickfix.ripr.verify",
     "source.ripr.refresh",
 ];
 

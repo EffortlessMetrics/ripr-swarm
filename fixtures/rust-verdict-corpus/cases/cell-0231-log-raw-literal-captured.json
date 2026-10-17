@@ -1,0 +1,52 @@
+{
+  "case_id": "cell-0231-log-raw-literal-captured",
+  "subject_id": "authored-log-template",
+  "diff": "cases/cell-0231-log-raw-literal-captured.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 71
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect",
+  "test_shape": "captured_log_record_assert",
+  "hard_case": "The record's template has escaped quotes and the test asserts its text with a raw literal (r#\"said \"quoted 10\" twice\"#), so the template's fragments must be found inside one raw literal, not split at its inner quotes.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "log::info!(\"said \\\"quoted {}\\\" twice\", amount - 5);",
+        "mutated_line": "log::info!(\"said \\\"quoted {}\\\" twice\", amount - 5);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::quote_logs_the_raw_record",
+        "equivalence_review": "not equivalent: the logged amount changes"
+      },
+      {
+        "replacement": "(delete the line)",
+        "mutated_line": "",
+        "outcome": "tests_failed",
+        "failing_test": "tests::quote_logs_the_raw_record",
+        "equivalence_review": "not equivalent: no record is logged"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "quote_logs_the_raw_record captures the record and requires the raw text said \"quoted 10\" twice, which both mutants change or remove. Spec cells: RIPR-SPEC-0096 log:: stays a capturable sink; RIPR-SPEC-0231 raw and cooked literals of the same text bind alike (#7133).",
+  "labeling_observation": {
+    "ripr_commit": "4711c122a",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

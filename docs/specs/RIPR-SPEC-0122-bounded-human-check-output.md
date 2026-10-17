@@ -121,6 +121,18 @@ remainder that does not exist:
 The two format-pointer lines are identical in both states, so a consumer
 scraping them does not need to know which heading was used.
 
+Hidden finding locations use the same shared location renderer as selected
+and full findings: paths under the analysis root carry `./` and a
+workspace-relative path. Outside-root paths, parent-traversal remainders and
+unrooted relative paths retain the shared renderer's fallback spelling and
+encoding. This presentation rule also applies when no finding is selected;
+it does not re-coordinate base-side findings or change their currentness.
+
+When the hidden identity list exceeds its 20-finding window, its remainder
+line names `--format json with RIPR_CHECK_FINDINGS_BYTES=0` for every identity.
+Default check JSON has its own findings-array byte budget; the explicit
+opt-out recovers the full finding set without changing either display cap.
+
 When a selected finding exists, the digest includes file and line, static
 exposure class, changed behavior, first missing discriminator when known,
 related test when known, suggested repair or verify command when known, and a
@@ -507,6 +519,9 @@ suggested write cannot fail on the same missing base.
 - `crates/ripr/src/output/human.rs::tests::hidden_block_unresolved_subject_run_names_the_unknown_not_base_side`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_mixed_currentness_run_names_base_side_and_unresolved_counts`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_list_discloses_remainder_beyond_its_window`
+- `crates/ripr/src/output/human.rs::tests::hidden_identity_completeness_requires_unbounded_json`
+- `crates/ripr/src/output/human.rs::tests::hidden_identity_window_discloses_only_a_real_tail`
+- `crates/ripr/src/output/json/mod.rs::tests::check_findings_completeness_at_byte_boundary`
 - `cargo xtask goldens check`
 
 ## Implementation Mapping

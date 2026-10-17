@@ -465,11 +465,13 @@ fn harness_executes_intended_test_and_printed_repair_agrees_with_status() -> Res
     let printed_after =
         printed_next_command(&String::from_utf8_lossy(&repair_before.stderr))?.to_string();
     let tokens = split_printed_ripr_command(&printed_after)?;
-    if !tokens.iter().any(|token| token == "--phase")
-        || tokens.windows(2).all(|pair| pair != ["--phase", "after"])
+    if tokens.get(1).map(String::as_str) != Some("continue")
+        || !tokens.iter().any(|token| token == "--root")
+        || !tokens.iter().any(|token| token == "--attempt")
+        || printed_after.contains("--phase after")
     {
         return Err(format!(
-            "before phase did not print an after command: {printed_after}"
+            "before phase must print `ripr continue --root … --attempt …`, not `--phase after`: {printed_after}"
         ));
     }
 
@@ -491,7 +493,7 @@ fn harness_executes_intended_test_and_printed_repair_agrees_with_status() -> Res
     }
 
     let after_phase = run_printed_ripr(&candidate, &roots.fixture, &roots.decoy, &printed_after)?;
-    require_success("printed agent repair --phase after", &after_phase)?;
+    require_success("printed ripr continue", &after_phase)?;
 
     let before_path = roots
         .fixture

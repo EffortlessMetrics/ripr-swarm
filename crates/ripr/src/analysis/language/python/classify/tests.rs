@@ -2,6 +2,7 @@
 
 use super::super::owners_tests::{extract_owners, extract_tests};
 use super::classify_change_with_old;
+use super::classify_change_with_source;
 use crate::domain::{ExposureClass, Finding, OracleStrength, StageState};
 use std::path::Path;
 
@@ -815,7 +816,7 @@ fn assert_strong_oracle_is_not_discrimination(finding: &Finding) {
     assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Weak);
     assert_eq!(
         finding.ripr.reveal.discriminate.summary,
-        "Related Python test uses a `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."
+        "Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."
     );
 }
 
@@ -862,7 +863,7 @@ fn exercised_default_retains_its_positive_discriminator_summary() -> Result<(), 
     assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Yes);
     assert_eq!(
         finding.ripr.reveal.discriminate.summary,
-        "Related Python test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated."
+        "Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."
     );
     Ok(())
 }
@@ -1464,5 +1465,245 @@ fn module_call_credit_keeps_boundary_and_identity_guards() -> Result<(), String>
         )?;
         assert_ne!(finding.class, ExposureClass::Exposed, "{tests}");
     }
+    Ok(())
+}
+
+// #7392: a return-value change inside a guarding `if` arm executes only for
+// call inputs that satisfy the guard. When every strong related call provably
+// fails the guard, the changed line never runs under an observed input, so a
+// strong exact-value oracle still passes either way.
+const QUOTE_SOURCE: &str = "def quote(total):\n    if total > 1000:\n        return round(total * 1.02, 2)\n    return round(total * 1.05, 2)\n";
+
+/// Added-line classification with the new-side source threaded in, matching
+/// the production diff path where the guarded-arm gate can read the owner
+/// body.
+fn classify_added_case(
+    source: &str,
+    tests: &str,
+    line: usize,
+    after: &str,
+) -> Result<Finding, String> {
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(Path::new("tests/test_subject.py"), tests);
+    classify_change_with_source(file, line, after, None, &owners, &tests, Some(source))
+        .ok_or_else(|| "behavioral fixture must produce a finding".to_string())
+}
+
+#[test]
+fn guarded_arm_return_value_below_guard_is_weakly_exposed() -> Result<(), String> {
+    let finding = classify_added_case(
+        QUOTE_SOURCE,
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(100.0) == 105.0\n",
+        3,
+        "        return round(total * 1.02, 2)",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.ripr.infect.state, StageState::Weak);
+    assert_eq!(finding.ripr.reveal.observe.state, StageState::Yes);
+    assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Weak);
+    assert!(
+        missing_boundary(&finding, "total > 1000").is_some(),
+        "{finding:?}"
+    );
+    assert!(observed(&finding, "total = 100.0"), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn guarded_arm_return_value_with_activating_input_stays_exposed() -> Result<(), String> {
+    let finding = classify_added_case(
+        QUOTE_SOURCE,
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(2000.0) == 2040.0\n",
+        3,
+        "        return round(total * 1.02, 2)",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+// The gate's premise is "EVERY strong related call provably fails the
+// guard". Each of the following shapes leaves that premise unprovable, so
+// the gate must fail open and keep the oracle verdict rather than
+// downgrading a return an observed input actually exercises.
+
+#[test]
+fn or_guard_with_activating_keyword_operand_stays_exposed() -> Result<(), String> {
+    // `quote(100.0, True)` enters the arm through `or force`; reading only
+    // the `total > 1000` comparison would exclude it.
+    let finding = classify_added_case(
+        "def quote(total, force):\n    if total > 1000 or force:\n        return round(total * 1.02, 2)\n    return round(total * 1.05, 2)\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(100.0, True) == 102.0\n",
+        3,
+        "        return round(total * 1.02, 2)",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn unreadable_strong_call_keeps_oracle_credit() -> Result<(), String> {
+    // `quote(*[2000.0])` binds no row (a `*args` unpack). The readable row
+    // alone cannot establish that every strong input fails the guard.
+    let finding = classify_added_case(
+        QUOTE_SOURCE,
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(100.0) == 105.0\n    assert quote(*[2000.0]) == 2040.0\n",
+        3,
+        "        return round(total * 1.02, 2)",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn rebound_parameter_keeps_oracle_credit() -> Result<(), String> {
+    // The owner rebinds `total` before the guard, so the guard reads 2000
+    // regardless of the call binding; the call input cannot be excluded.
+    let finding = classify_added_case(
+        "def quote(total):\n    total = 2000\n    if total > 1000:\n        return round(total * 1.02, 2)\n    return round(total * 1.05, 2)\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(100.0) == 2040.0\n",
+        4,
+        "        return round(total * 1.02, 2)",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+// #7874 counterexamples end to end: each call below enters the guarded arm
+// at runtime and its assertion discriminates the changed return, so the
+// verdict must stay `exposed` rather than a false `weakly_exposed`.
+
+#[test]
+fn mixed_boolean_conjunct_guard_keeps_oracle_credit() -> Result<(), String> {
+    // `quote(100.0, True, False)` enters `(total > 1000 and ready) or force`
+    // through `force`; the first conjunct evaluating false must not exclude
+    // the row before the whole-condition `or` is noticed.
+    let finding = classify_added_case(
+        "def quote(total, force, ready):\n    if total > 1000 and ready or force:\n        return round(total * 1.02, 2)\n    return round(total * 1.05, 2)\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(100.0, True, False) == 102.0\n",
+        3,
+        "        return round(total * 1.02, 2)",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn multi_character_augmented_rebinding_keeps_oracle_credit() -> Result<(), String> {
+    // `total **= 2` rebinds the parameter before the guard reads it.
+    let finding = classify_added_case(
+        "def quote(total):\n    total **= 2\n    if total > 1000:\n        return round(total * 1.02, 2)\n    return round(total * 1.05, 2)\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(100.0) == 10200.0\n",
+        4,
+        "        return round(total * 1.02, 2)",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn tuple_rebinding_keeps_oracle_credit() -> Result<(), String> {
+    // `total, other = 2000, 0` rebinds `total` through a destructuring
+    // target, so the call binding cannot exclude the row.
+    let finding = classify_added_case(
+        "def quote(total):\n    total, other = 2000, 0\n    if total > 1000:\n        return round(total * 1.02, 2)\n    return round(total * 1.05, 2)\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(100.0) == 2040.0\n",
+        4,
+        "        return round(total * 1.02, 2)",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn large_integer_guard_orders_exactly() -> Result<(), String> {
+    // Python orders `9007199254740993 > 9007199254740992` exactly; rounding
+    // both through f64 would falsely exclude the discriminating call.
+    let finding = classify_added_case(
+        "def quote(total):\n    if total > 9007199254740992:\n        return 42\n    return 0\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(9007199254740993) == 42\n",
+        3,
+        "        return 42",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn loop_body_rebinding_after_guard_keeps_oracle_credit() -> Result<(), String> {
+    // `total *= 20` after the guard inside the loop changes what the guard
+    // reads on the next iteration (the changed return executes for
+    // `quote(100.0)`), so the call binding cannot exclude the row.
+    let finding = classify_added_case(
+        "def quote(total):\n    for _ in range(3):\n        if total > 1000:\n            return round(total * 1.02, 2)\n        total *= 20\n    return round(total * 1.05, 2)\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(100.0) == 2040.0\n",
+        4,
+        "        return round(total * 1.02, 2)",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn reversed_tuple_rebinding_keeps_oracle_credit() -> Result<(), String> {
+    // The destructuring target with the parameter later on the line
+    // (`other, total = 2000, 0`) rebinds it the same as the leading form.
+    let finding = classify_added_case(
+        "def quote(total):\n    other, total = 2000, 0\n    if total > 1000:\n        return round(total * 1.02, 2)\n    return round(total * 1.05, 2)\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(100.0) == 2040.0\n",
+        4,
+        "        return round(total * 1.02, 2)",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn bool_numeric_guard_equality_follows_python() -> Result<(), String> {
+    // Python enters `flag == 1` for `flag=True`; mixed-kind literal equality
+    // would wrongly exclude the call.
+    let finding = classify_added_case(
+        "def quote(flag):\n    if flag == 1:\n        return 42\n    return 0\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(True) == 42\n",
+        3,
+        "        return 42",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn unguarded_return_value_with_source_keeps_oracle_credit() -> Result<(), String> {
+    let finding = classify_added_case(
+        "def quote(total):\n    return round(total * 1.05, 2)\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(100.0) == 105.0\n",
+        2,
+        "    return round(total * 1.05, 2)",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn guarded_arm_gate_stays_off_without_source() -> Result<(), String> {
+    // No-source entries (repo mode, deleted lines, the old test harness)
+    // keep the pre-gate verdict: without the owner body the gate cannot
+    // read the guard, so it fails open rather than downgrading.
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, QUOTE_SOURCE);
+    let tests = extract_tests(
+        Path::new("tests/test_subject.py"),
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(100.0) == 105.0\n",
+    );
+    let finding = classify_change_with_old(
+        file,
+        3,
+        "        return round(total * 1.02, 2)",
+        None,
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "behavioral fixture must produce a finding".to_string())?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
     Ok(())
 }

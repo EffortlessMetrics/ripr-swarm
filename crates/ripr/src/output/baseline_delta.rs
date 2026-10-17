@@ -104,6 +104,21 @@ struct DeltaItem {
     /// so `ripr baseline update --migrate-legacy-identities` can replace the
     /// reviewed legacy identity deterministically.
     canonical_replacement_candidate: Option<String>,
+    /// The two sides' producing-build identity when a baseline entry went
+    /// unmatched across an analyzer-version boundary (issue #7421). `None`
+    /// on every same-build item, so canonical renders stay byte-identical.
+    analyzer_version_discontinuity: Option<AnalyzerVersionDiscontinuity>,
+}
+
+/// The baseline and current sides' producing analyzer builds for one
+/// identity-discontinuity item (issue #7421). `baseline`/`current` are
+/// `None` when that side predates `subject.analyzer_version` recording
+/// (issue #5474): exactly one recorded side already proves the builds
+/// differed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AnalyzerVersionDiscontinuity {
+    baseline: Option<String>,
+    current: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -257,6 +272,11 @@ struct Evidence {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct BaselineParse {
     schema_version: Option<String>,
+    /// Producing-build identity recorded by `baseline create` from the source
+    /// gate decision's `subject.analyzer_version` (issue #7421). `None` on
+    /// baselines written before build identity was persisted; those cannot
+    /// prove same-build continuity and fail safe toward stale disclosure.
+    subject_analyzer_version: Option<String>,
     entries: Vec<BaselineRecord>,
     invalid_items: Vec<DeltaItem>,
     warnings: Vec<String>,
@@ -291,6 +311,11 @@ struct CurrentParse {
     /// a limitation envelope, so the status is the production-live
     /// disclosure that a delta is built from a failed evaluation.
     current_gate_status: Option<String>,
+    /// The current gate decision's producing-build identity
+    /// (`subject.analyzer_version`, issue #5474). Joined against the
+    /// baseline's recorded build so identity loss across an analyzer
+    /// upgrade is disclosed, never read as resolved (issue #7421).
+    subject_analyzer_version: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -446,7 +471,31 @@ pub(crate) fn build_baseline_delta_report(input: BaselineDeltaInput) -> Baseline
                         item
                     });
                 }
-                MatchResult::None => items.push(resolved_item(baseline_record)),
+                MatchResult::None => {
+                    // IDENTITY DISCONTINUITY (issue #7421): an unmatched
+                    // baseline entry across an analyzer-build boundary is
+                    // disclosed as stale, never silently resolved. The join
+                    // cannot distinguish "debt fixed" from "identity scheme
+                    // changed across analyzer builds" (#7250 is exactly such
+                    // a boundary), so the entry keeps the stale-bucket
+                    // semantics of the existing fallback-divergence refusal
+                    // and carries both sides' builds.
+                    match analyzer_version_discontinuity(
+                        baseline.subject_analyzer_version.as_deref(),
+                        current.subject_analyzer_version.as_deref(),
+                    ) {
+                        Some(discontinuity) => {
+                            warnings.push(format!(
+                                "baseline entry {} is absent from current evidence but the producing analyzer build changed (baseline `{}` -> current `{}`); treated as stale identity discontinuity, not resolved debt",
+                                baseline_record.identity.sort_key(),
+                                disclosed_version(discontinuity.baseline.as_deref()),
+                                disclosed_version(discontinuity.current.as_deref()),
+                            ));
+                            items.push(identity_discontinuity_item(baseline_record, discontinuity));
+                        }
+                        None => items.push(resolved_item(baseline_record)),
+                    }
+                }
             }
         }
 
@@ -674,6 +723,39 @@ pub(crate) fn render_baseline_delta_markdown(report: &BaselineDeltaReport) -> St
         }
     }
 
+    // Human-visible identity-discontinuity disclosure (issue #7421): every
+    // analyzer-version-crossing unmatched entry names both sides' builds, so
+    // an upgrade cannot silently read identity loss as resolved improvement.
+    // Exhaustive, like the legacy-fallback section: the JSON items carry the
+    // same set for machine consumers.
+    let discontinuity_items = report
+        .items
+        .iter()
+        .filter(|item| item.analyzer_version_discontinuity.is_some())
+        .collect::<Vec<_>>();
+    if !discontinuity_items.is_empty() {
+        out.push_str(&format!(
+            "\nAnalyzer-version identity discontinuities ({} total):\n",
+            discontinuity_items.len()
+        ));
+        for item in discontinuity_items {
+            out.push_str(&format!("- {}\n", item_headline(item)));
+            if let Some(discontinuity) = item.analyzer_version_discontinuity.as_ref() {
+                out.push_str(&format!(
+                    "  Baseline build: {}\n",
+                    disclosed_version(discontinuity.baseline.as_deref())
+                ));
+                out.push_str(&format!(
+                    "  Current build: {}\n",
+                    disclosed_version(discontinuity.current.as_deref())
+                ));
+            }
+            out.push_str(
+                "  Action: re-create the baseline with the current build (`ripr baseline create --from <current gate-decision> --force`) or verify the gap is genuinely fixed before treating it as resolved.\n",
+            );
+        }
+    }
+
     if !report.warnings.is_empty() {
         out.push_str("\nWarnings:\n");
         for warning in &report.warnings {
@@ -740,6 +822,7 @@ fn parse_baseline_records(path: &str, json_text: Result<String, String>) -> Base
 
     BaselineParse {
         schema_version,
+        subject_analyzer_version: string_field(value.pointer("/subject/analyzer_version")),
         entries,
         invalid_items,
         warnings: Vec::new(),
@@ -778,11 +861,24 @@ fn parse_current_decisions(path: &str, json_text: Result<String, String>) -> Cur
         };
     };
 
+    // Dropping an unidentifiable decision would turn an incomplete current
+    // denominator into apparent resolution of reviewed baseline debt.
+    let Some(decisions) = decisions
+        .iter()
+        .map(current_decision_from_value)
+        .collect::<Option<Vec<_>>>()
+    else {
+        return CurrentParse {
+            unavailable: true,
+            warnings: vec![format!(
+                "required current gate-decision input {path} contains a decision without stable identity"
+            )],
+            ..CurrentParse::default()
+        };
+    };
+
     CurrentParse {
-        decisions: decisions
-            .iter()
-            .filter_map(current_decision_from_value)
-            .collect(),
+        decisions,
         warnings: Vec::new(),
         unavailable: false,
         root: string_field(value.get("root")),
@@ -830,6 +926,7 @@ fn parse_current_decisions(path: &str, json_text: Result<String, String>) -> Cur
                 };
             }
         },
+        subject_analyzer_version: string_field(value.pointer("/subject/analyzer_version")),
     }
 }
 
@@ -1049,6 +1146,51 @@ fn foreign_root_join(baseline: &BaselineRecord, current_root: Option<&str>) -> O
     }
 }
 
+/// The two sides' producing-build pair when the baseline and the current
+/// gate decision provably come from different analyzer builds (issue #7421).
+/// Both sides recording the same build is continuity, and both sides
+/// recording no build (pre-#5474 artifacts on both ends, the old-vs-old
+/// control) carries no discontinuity evidence, so the legacy `resolved`
+/// behavior holds. Exactly one recorded side already proves the builds
+/// differed: the unrecorded side predates `subject.analyzer_version`
+/// persistence, so absence fails safe toward stale disclosure.
+fn analyzer_version_discontinuity(
+    baseline: Option<&str>,
+    current: Option<&str>,
+) -> Option<AnalyzerVersionDiscontinuity> {
+    match (baseline, current) {
+        (Some(baseline), Some(current)) if baseline == current => None,
+        (None, None) => None,
+        (baseline, current) => Some(AnalyzerVersionDiscontinuity {
+            baseline: baseline.map(ToOwned::to_owned),
+            current: current.map(ToOwned::to_owned),
+        }),
+    }
+}
+
+fn disclosed_version(version: Option<&str>) -> String {
+    version.map_or_else(|| "none recorded".to_string(), ToOwned::to_owned)
+}
+
+/// The stale item for one identity-discontinuity entry (issue #7421): the
+/// reason names both sides' builds and the refresh route, and the typed
+/// disclosure carries the two versions for machine consumers.
+fn identity_discontinuity_item(
+    baseline: &BaselineRecord,
+    discontinuity: AnalyzerVersionDiscontinuity,
+) -> DeltaItem {
+    let mut item = stale_item(
+        baseline,
+        format!(
+            "Reviewed baseline identity is absent from current gate-decision evidence, but the producing analyzer build changed (baseline `{}` -> current `{}`); the identity may have been invalidated by the upgrade rather than the debt resolved. Re-create the baseline with the current build (`ripr baseline create --from <current gate-decision> --force`) or verify the gap is genuinely fixed before treating it as resolved.",
+            disclosed_version(discontinuity.baseline.as_deref()),
+            disclosed_version(discontinuity.current.as_deref()),
+        ),
+    );
+    item.analyzer_version_discontinuity = Some(discontinuity);
+    item
+}
+
 /// Normalize repository-root spellings before comparison (issue #1964,
 /// review): separators unify, a single leading `./` folds away, and trailing
 /// slashes drop, so `.`, `./`, and `.\\` compare equal. Spellings that name
@@ -1110,6 +1252,7 @@ fn push_missing_input_items(
             stale_baseline_warning: false,
             matched_legacy_identity: None,
             canonical_replacement_candidate: None,
+            analyzer_version_discontinuity: None,
         });
     }
 }
@@ -1145,6 +1288,7 @@ fn matched_item(
         stale_baseline_warning: false,
         matched_legacy_identity: None,
         canonical_replacement_candidate: None,
+        analyzer_version_discontinuity: None,
     };
     // Every fallback-only join is a reviewable compatibility event (issue
     // #1964): the match kind, the warning flag, the retained legacy identity,
@@ -1188,6 +1332,7 @@ fn unmatched_current_item(current: &CurrentDecision) -> DeltaItem {
         stale_baseline_warning: false,
         matched_legacy_identity: None,
         canonical_replacement_candidate: None,
+        analyzer_version_discontinuity: None,
     }
 }
 
@@ -1219,6 +1364,7 @@ fn resolved_item(baseline: &BaselineRecord) -> DeltaItem {
         stale_baseline_warning: false,
         matched_legacy_identity: None,
         canonical_replacement_candidate: None,
+        analyzer_version_discontinuity: None,
     }
 }
 
@@ -1239,6 +1385,7 @@ fn stale_item(baseline: &BaselineRecord, reason: String) -> DeltaItem {
         stale_baseline_warning: false,
         matched_legacy_identity: None,
         canonical_replacement_candidate: None,
+        analyzer_version_discontinuity: None,
     }
 }
 
@@ -1259,6 +1406,7 @@ fn missing_current_input_item(baseline: &BaselineRecord) -> DeltaItem {
         stale_baseline_warning: false,
         matched_legacy_identity: None,
         canonical_replacement_candidate: None,
+        analyzer_version_discontinuity: None,
     }
 }
 
@@ -1288,6 +1436,7 @@ fn invalid_baseline_item(value: &Value) -> DeltaItem {
         stale_baseline_warning: false,
         matched_legacy_identity: None,
         canonical_replacement_candidate: None,
+        analyzer_version_discontinuity: None,
     }
 }
 
@@ -1487,6 +1636,21 @@ fn item_json(item: &DeltaItem, causal_projection: Option<&CausalDeltaArtifact>) 
                 .map_or(Value::Null, Value::String),
         );
     }
+    // Additive (issue #7421): present only on analyzer-version identity
+    // discontinuity items, so same-build items render byte-identical to
+    // before the disclosure existed. A `null` side records that side's build
+    // predates subject.analyzer_version persistence.
+    if let Some(discontinuity) = item.analyzer_version_discontinuity.as_ref()
+        && let Some(object) = output.as_object_mut()
+    {
+        object.insert(
+            "analyzer_version_discontinuity".to_string(),
+            json!({
+                "baseline_analyzer_version": discontinuity.baseline,
+                "current_analyzer_version": discontinuity.current,
+            }),
+        );
+    }
     output
 }
 
@@ -1596,6 +1760,78 @@ mod tests {
     };
     use serde_json::Value;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn baseline_delta_rejects_identityless_current_decisions() -> Result<(), String> {
+        use crate::output::baseline::{
+            baseline_create_report_from_gate_decision_json, render_baseline_create_json,
+        };
+        use crate::output::baseline_update::{
+            BaselineUpdateInput, build_baseline_update_remove_resolved,
+        };
+        use serde_json::json;
+
+        let source = json!({
+            "schema_version": "0.1",
+            "decisions": [{"seam_id": "reviewed", "decision": "advisory"}]
+        });
+        let created = baseline_create_report_from_gate_decision_json(
+            "gate.json",
+            "unix_ms:1",
+            &source.to_string(),
+        )?;
+        let baseline = render_baseline_create_json(&created)?;
+        let baseline_value: Value = serde_json::from_str(&baseline).map_err(|e| e.to_string())?;
+        assert_eq!(baseline_value["entries"].as_array().map(Vec::len), Some(1));
+        let warning = "required current gate-decision input current.json contains a decision without stable identity";
+
+        for malformed in [Value::Null, json!(42), json!({}), json!({"seam_id": "  "})] {
+            // A valid sibling must not hide a corrupt record in a partial denominator.
+            for decisions in [
+                json!([malformed]),
+                json!([source["decisions"][0], malformed]),
+            ] {
+                let current = json!({"schema_version": "0.1", "decisions": decisions});
+                let report = build_baseline_delta_report(BaselineDeltaInput {
+                    root: ".".to_string(),
+                    baseline_path: "baseline.json".to_string(),
+                    current_gate_decision_path: "current.json".to_string(),
+                    baseline_json: Ok(baseline.clone()),
+                    current_gate_decision_json: Ok(current.to_string()),
+                });
+                let rendered: Value = serde_json::from_str(&render_baseline_delta_json(&report)?)
+                    .map_err(|e| e.to_string())?;
+                assert_eq!(rendered["delta"]["resolved"], 0, "{rendered}");
+                assert_eq!(rendered["delta"]["still_present"], 0, "{rendered}");
+                assert_eq!(rendered["delta"]["missing_current_input"], 1, "{rendered}");
+                assert_eq!(rendered["items"][0]["identity"]["seam_id"], "reviewed");
+                assert!(
+                    rendered["warnings"]
+                        .as_array()
+                        .is_some_and(|warnings| warnings.contains(&json!(warning))),
+                    "{rendered}"
+                );
+                let markdown = render_baseline_delta_markdown(&report);
+                assert!(markdown.contains("Missing current input"));
+                assert!(markdown.contains(warning), "{markdown}");
+
+                for (remove_resolved, migrate_legacy_identities) in [(true, false), (false, true)] {
+                    let update = build_baseline_update_remove_resolved(BaselineUpdateInput {
+                        baseline_path: "baseline.json".to_string(),
+                        current_gate_decision_path: "current.json".to_string(),
+                        baseline_json: baseline.clone(),
+                        current_gate_decision_json: current.to_string(),
+                        remove_resolved,
+                        migrate_legacy_identities,
+                    });
+                    assert!(
+                        matches!(update, Err(error) if error.contains("without stable identity"))
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn baseline_delta_reports_all_primary_buckets() -> Result<(), String> {
@@ -2007,7 +2243,7 @@ mod tests {
             {"decision": "not_applicable", "seam_id": "suppressed-match", "gate_reason": "configured off", "evidence": {"configured_off": true}},
             {"seam_id": "unknown-decision", "evidence": {}},
             {"decision": "advisory", "seam_id": "duplicate", "evidence": {}},
-            {"decision": "advisory", "evidence": {}}
+            {"decision": "advisory", "source_id": "new-source", "evidence": {}}
           ]
         }"#;
 
@@ -2026,6 +2262,7 @@ mod tests {
         assert!(rendered.contains("\"acknowledged\": 1"));
         assert!(rendered.contains("\"suppressed\": 1"));
         assert!(rendered.contains("\"stale_baseline_entry\": 1"));
+        assert!(rendered.contains("\"new_policy_eligible\": 1"));
         assert!(rendered.contains("already joined by another baseline entry"));
         assert!(rendered.contains("waived by ripr-waive"));
         assert!(rendered.contains("configured off"));
@@ -2906,6 +3143,274 @@ mod tests {
             "{markdown}"
         );
         assert!(!markdown.contains("Analysis complete:"), "{markdown}");
+        Ok(())
+    }
+
+    #[test]
+    fn baseline_delta_discloses_analyzer_version_identity_discontinuity_as_stale()
+    -> Result<(), String> {
+        // Issue #7421 exact repro shape: a baseline written by a build that
+        // predated subject.analyzer_version persistence (the pre-#7250
+        // transition) diffed against current evidence from a different,
+        // versioned build. The renamed seam identity finds no current match;
+        // the old behavior silently counted it `resolved` and zero status
+        // read "achieved". The identity loss must be disclosed instead.
+        let baseline = r#"{
+          "schema_version": "0.1",
+          "kind": "gate_baseline",
+          "entries": [
+            {
+              "identity": {
+                "canonical_gap_id": "gap:19fe16a568d1c87e",
+                "seam_id": "98cec8f197508a31",
+                "fallback": "src/lib.rs:10:activation_unknown"
+              },
+              "path": "src/lib.rs",
+              "line": 10,
+              "static_class": "activation_unknown",
+              "decision": "advisory"
+            }
+          ]
+        }"#;
+        let current = r#"{
+          "schema_version": "0.1",
+          "subject": {
+            "analyzer_version": "0.11.0+9c88b96acd0f51b91c246de419946ca8692f4f8b"
+          },
+          "decisions": [
+            {
+              "decision": "advisory",
+              "canonical_gap_id": "gap:rust:src/lib.rs:shipping_cost:predicate_boundary:predicate:weight_grams==1_000",
+              "seam_id": "98d24ff19753a56d",
+              "static_class": "no_static_path",
+              "placement": {"path": "src/lib.rs", "line": 10},
+              "evidence": {}
+            }
+          ]
+        }"#;
+
+        let report = build_baseline_delta_report(BaselineDeltaInput {
+            root: ".".to_string(),
+            baseline_path: "baseline.json".to_string(),
+            current_gate_decision_path: "current.json".to_string(),
+            baseline_json: Ok(baseline.to_string()),
+            current_gate_decision_json: Ok(current.to_string()),
+        });
+        let rendered = render_baseline_delta_json(&report)?;
+        assert!(rendered.contains("\"resolved\": 0"), "{rendered}");
+        assert!(
+            rendered.contains("\"stale_baseline_entry\": 1"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("\"bucket\": \"stale_baseline_entry\""),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("\"analyzer_version_discontinuity\""),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("\"baseline_analyzer_version\": null"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "\"current_analyzer_version\": \"0.11.0+9c88b96acd0f51b91c246de419946ca8692f4f8b\""
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("stale identity discontinuity, not resolved debt"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("baseline `none recorded` -> current `0.11.0+9c88b96acd0f51b91c246de419946ca8692f4f8b`"),
+            "{rendered}"
+        );
+        let markdown = render_baseline_delta_markdown(&report);
+        assert!(
+            markdown.contains("Analyzer-version identity discontinuities (1 total):"),
+            "{markdown}"
+        );
+        assert!(
+            markdown.contains("Baseline build: none recorded"),
+            "{markdown}"
+        );
+        assert!(
+            markdown.contains("Current build: 0.11.0+9c88b96acd0f51b91c246de419946ca8692f4f8b"),
+            "{markdown}"
+        );
+        assert!(
+            markdown.contains("re-create the baseline with the current build"),
+            "{markdown}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn baseline_delta_discloses_version_crossing_when_both_sides_recorded() -> Result<(), String> {
+        // Issue #7421: once baselines persist their producing build, a
+        // recorded version mismatch is disclosed with both versions — and a
+        // canonical identity that persisted across the upgrade still joins
+        // normally, so the disclosure never over-reaches into successful
+        // matches.
+        let baseline = r#"{
+          "schema_version": "0.1",
+          "subject": {
+            "analyzer_version": "0.11.0+a079b4d61983f4f199cd1895af581a3495847093"
+          },
+          "entries": [
+            {
+              "identity": {
+                "canonical_gap_id": "gap:surviving",
+                "seam_id": "old-seam"
+              },
+              "path": "src/kept.rs",
+              "line": 2,
+              "static_class": "weakly_gripped",
+              "decision": "advisory"
+            },
+            {
+              "identity": {
+                "canonical_gap_id": "gap:renamed",
+                "seam_id": "old-renamed-seam"
+              },
+              "path": "src/renamed.rs",
+              "line": 5,
+              "static_class": "activation_unknown",
+              "decision": "advisory"
+            }
+          ]
+        }"#;
+        let current = r#"{
+          "schema_version": "0.1",
+          "subject": {
+            "analyzer_version": "0.11.0+9c88b96acd0f51b91c246de419946ca8692f4f8b"
+          },
+          "decisions": [
+            {
+              "decision": "advisory",
+              "canonical_gap_id": "gap:surviving",
+              "seam_id": "new-seam",
+              "static_class": "weakly_gripped",
+              "placement": {"path": "src/kept.rs", "line": 2},
+              "evidence": {}
+            }
+          ]
+        }"#;
+
+        let report = build_baseline_delta_report(BaselineDeltaInput {
+            root: ".".to_string(),
+            baseline_path: "baseline.json".to_string(),
+            current_gate_decision_path: "current.json".to_string(),
+            baseline_json: Ok(baseline.to_string()),
+            current_gate_decision_json: Ok(current.to_string()),
+        });
+        let rendered = render_baseline_delta_json(&report)?;
+        // The surviving canonical id still joins across the version boundary.
+        assert!(rendered.contains("\"still_present\": 1"), "{rendered}");
+        assert!(rendered.contains("\"resolved\": 0"), "{rendered}");
+        assert!(
+            rendered.contains("\"stale_baseline_entry\": 1"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "\"baseline_analyzer_version\": \"0.11.0+a079b4d61983f4f199cd1895af581a3495847093\""
+            ),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("baseline_match_kind"), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn baseline_delta_keeps_same_or_unversioned_builds_resolved() -> Result<(), String> {
+        // Issue #7421 control: without evidence that the producing build
+        // changed — both sides unversioned (the old-vs-old world) or both
+        // sides recording the same build — an absent baseline identity stays
+        // `resolved`. The discontinuity disclosure fires only across a
+        // provable build boundary.
+        let baseline_body = r#"{
+          "schema_version": "0.1",
+          "entries": [
+            {
+              "identity": {"canonical_gap_id": "gap:fixed"},
+              "path": "src/fixed.rs",
+              "line": 3,
+              "static_class": "weakly_gripped",
+              "decision": "advisory"
+            }
+          ]
+        }"#;
+        let baseline_with_version = baseline_body.replace(
+            "\"entries\":",
+            "\"subject\": {\"analyzer_version\": \"0.11.0+same\"},\n  \"entries\":",
+        );
+        assert!(baseline_with_version.contains("0.11.0+same"));
+        let unversioned_current = r#"{
+          "schema_version": "0.1",
+          "decisions": []
+        }"#;
+        let versioned_current = r#"{
+          "schema_version": "0.1",
+          "subject": {"analyzer_version": "0.11.0+same"},
+          "decisions": []
+        }"#;
+
+        let unversioned_report = build_baseline_delta_report(BaselineDeltaInput {
+            root: ".".to_string(),
+            baseline_path: "baseline.json".to_string(),
+            current_gate_decision_path: "current.json".to_string(),
+            baseline_json: Ok(baseline_body.to_string()),
+            current_gate_decision_json: Ok(unversioned_current.to_string()),
+        });
+        let rendered = render_baseline_delta_json(&unversioned_report)?;
+        assert!(rendered.contains("\"resolved\": 1"), "{rendered}");
+        assert!(
+            rendered.contains("\"stale_baseline_entry\": 0"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("analyzer_version_discontinuity"),
+            "{rendered}"
+        );
+
+        let same_version_report = build_baseline_delta_report(BaselineDeltaInput {
+            root: ".".to_string(),
+            baseline_path: "baseline.json".to_string(),
+            current_gate_decision_path: "current.json".to_string(),
+            baseline_json: Ok(baseline_with_version.clone()),
+            current_gate_decision_json: Ok(versioned_current.to_string()),
+        });
+        let rendered = render_baseline_delta_json(&same_version_report)?;
+        assert!(rendered.contains("\"resolved\": 1"), "{rendered}");
+        assert!(
+            rendered.contains("\"stale_baseline_entry\": 0"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("analyzer_version_discontinuity"),
+            "{rendered}"
+        );
+
+        // The same baseline against a genuinely different recorded build is
+        // disclosed, keeping this control honest.
+        let other_version_current = versioned_current.replace("0.11.0+same", "0.11.0+other");
+        let crossing_report = build_baseline_delta_report(BaselineDeltaInput {
+            root: ".".to_string(),
+            baseline_path: "baseline.json".to_string(),
+            current_gate_decision_path: "current.json".to_string(),
+            baseline_json: Ok(baseline_with_version),
+            current_gate_decision_json: Ok(other_version_current),
+        });
+        let rendered = render_baseline_delta_json(&crossing_report)?;
+        assert!(rendered.contains("\"resolved\": 0"), "{rendered}");
+        assert!(
+            rendered.contains("\"stale_baseline_entry\": 1"),
+            "{rendered}"
+        );
         Ok(())
     }
 

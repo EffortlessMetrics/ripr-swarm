@@ -1,0 +1,4 @@
+#[test]
+fn mock_checkout() {
+    assert_eq!(opaq::checkout(150), 20);
+}

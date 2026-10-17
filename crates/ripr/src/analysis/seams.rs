@@ -395,6 +395,10 @@ pub(crate) struct RepoSeam {
     required_discriminator: RequiredDiscriminator,
     expected_sink: ExpectedSink,
     span: Option<SeamSpan>,
+    /// Inclusive source coverage for match heads whose identity stays at the
+    /// `match` / `=>` token. Separate from calibration expression geometry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_lines: Option<(usize, usize)>,
     /// How a test calls the owner (#5357). Presentation only: not part of
     /// the seam ID. A seam deserialized from a cache entry written before
     /// the field existed reads `Unknown`, which renders no call.
@@ -592,6 +596,7 @@ impl RepoSeam {
             required_discriminator,
             expected_sink,
             span: None,
+            source_lines: None,
             owner_call: OwnerCallShape::Unknown,
         }
     }
@@ -601,6 +606,17 @@ impl RepoSeam {
     pub(crate) fn with_span(mut self, span: SeamSpan) -> Self {
         self.span = Some(span);
         self
+    }
+
+    /// Carry source coverage without changing display, ID or calibration span.
+    pub(crate) fn with_source_lines(mut self, lines: Option<(usize, usize)>) -> Self {
+        self.source_lines = lines;
+        self
+    }
+
+    pub(crate) fn source_lines(&self) -> Option<(usize, usize)> {
+        self.source_lines
+            .filter(|(start, end)| *start > 0 && start <= end)
     }
 
     /// Attach the owner's call shape read from the parser (#5357).

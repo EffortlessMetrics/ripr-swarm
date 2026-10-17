@@ -1,15 +1,18 @@
 use super::CheckInput;
 use super::check::check_with_progress;
 use super::progress::{AnalysisProgressScope, AnalysisProgressSink};
-use super::selector::select_finding;
+use super::selector::{FindingSelection, select_finding};
 use crate::config::RiprConfig;
 use crate::output;
 use std::path::Path;
 
 /// Computes findings and renders a single selected finding in human format.
 ///
-/// The selector can be either a finding identifier (for example
-/// `probe:path_to_file.rs:42:family`) or a `file:line` location.
+/// The selector can be a finding identifier (for example
+/// `probe:path_to_file.rs:42:family`), a canonical gap identity
+/// (`gap:...`), or a `file:line` location. A selector naming several
+/// findings refuses as ambiguous; one naming none refuses as a miss
+/// (#8166 Slice B).
 pub fn explain_finding(root: &Path, selector: &str) -> Result<String, String> {
     explain_finding_with_input(
         CheckInput {
@@ -85,13 +88,20 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
         check_with_progress(input, config, AnalysisProgressScope::Diff, sink)?
     };
     match select_finding(&output.findings, selector) {
-        Some(finding) => Ok(output::human::render_finding_with_context_command(
-            finding,
-            config,
-            &navigation.context_command(selector),
-            &output.root,
+        FindingSelection::Unique(finding) => {
+            Ok(output::human::render_finding_with_context_command(
+                finding,
+                config,
+                &navigation.context_command(selector),
+                &output.root,
+            ))
+        }
+        FindingSelection::Ambiguous(candidates) => Err(ambiguous_finding_match(
+            selector,
+            &candidates,
+            &navigation.list_command(),
         )),
-        None => Err(no_finding_matched_fresh_run(
+        FindingSelection::NoMatch => Err(no_finding_matched_fresh_run(
             selector,
             &navigation.list_command(),
             &root,
@@ -116,6 +126,37 @@ pub(crate) fn no_finding_matched(selector: &str, list_command: &str) -> String {
     format!(
         "no finding matched {selector:?};{syntax_hint} run `{list_command}` to list available finding ids"
     )
+}
+
+/// The ambiguity message for a selector naming several findings (#8166
+/// Slice B): refuse with the bounded candidate set instead of silently
+/// rendering the first match. Candidates are finding IDs, sorted, capped
+/// like the repair resolver's bounded ambiguity list.
+pub(crate) fn ambiguous_finding_match(
+    selector: &str,
+    candidates: &[&crate::domain::Finding],
+    list_command: &str,
+) -> String {
+    const MAX_LISTED: usize = 8;
+    let mut ids: Vec<&str> = candidates
+        .iter()
+        .map(|finding| finding.id.as_str())
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let listed: Vec<&str> = ids.iter().take(MAX_LISTED).copied().collect();
+    let mut message = format!(
+        "selector {selector:?} matched {} findings; select one explicitly: {}",
+        candidates.len(),
+        listed.join(", ")
+    );
+    if ids.len() > MAX_LISTED {
+        message.push_str(&format!(" (and {} more)", ids.len() - MAX_LISTED));
+    }
+    message.push_str(&format!(
+        "; run `{list_command}` to list available finding ids"
+    ));
+    message
 }
 
 /// The miss message for a fresh run, with the uncommitted-edits clause when
@@ -200,15 +241,22 @@ pub(crate) fn explain_finding_from_artifact_with_navigation_mode(
         asserted_base,
     )?;
     match select_finding(&findings, selector) {
-        Some(finding) => Ok(output::human::render_finding_with_context_command(
-            finding,
-            config,
-            &navigation.context_command(selector),
-            // The artifact was identity-verified against this root; the
-            // location renders against it like every fresh route (#5996).
-            &input.root,
+        FindingSelection::Unique(finding) => {
+            Ok(output::human::render_finding_with_context_command(
+                finding,
+                config,
+                &navigation.context_command(selector),
+                // The artifact was identity-verified against this root; the
+                // location renders against it like every fresh route (#5996).
+                &input.root,
+            ))
+        }
+        FindingSelection::Ambiguous(candidates) => Err(ambiguous_finding_match(
+            selector,
+            &candidates,
+            "ripr check --json",
         )),
-        None => Err(no_finding_matched(selector, "ripr check --json")),
+        FindingSelection::NoMatch => Err(no_finding_matched(selector, "ripr check --json")),
     }
 }
 #[cfg(test)]
@@ -285,9 +333,21 @@ mod tests {
         assert!(rendered.contains("Static exposure"));
         assert!(rendered.contains("no_static_path"));
         assert!(rendered.contains("InvoiceError::InvalidCurrency"));
-        let root = crate::agent::loop_commands::shell_arg(&sample_root().display().to_string());
+        // #7937: the expectation goes through the same rendering owners the
+        // drill-in builder uses (`bound_root` for the analyzed root,
+        // `bound_root_path` + `root_path_display` for the diff file, then
+        // `shell_arg`). Re-deriving the spelling from `Path::display`
+        // asserted the renderer's POSIX form against the renderer's own
+        // Windows form: a native-separator display spelling versus the
+        // stable-separator bound spelling, so the pin failed only where it
+        // was already honest.
+        let root = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root(&sample_root().display().to_string()),
+        );
         let diff = crate::agent::loop_commands::shell_arg(
-            &sample_root().join("example.diff").display().to_string(),
+            &crate::agent::loop_commands::root_path_display(
+                &crate::agent::loop_commands::bound_root_path(&sample_root().join("example.diff")),
+            ),
         );
         assert!(rendered.contains(
             &format!(
@@ -350,6 +410,59 @@ mod tests {
             "canonical gap: gap:typescript:typescript_preview:bac50022",
         )?;
         Ok(())
+    }
+
+    /// #8166 Slice B: `collection_argument_plain` carries two findings at
+    /// `src/lib.rs:3` (`call_deletion` and `side_effect`). A location
+    /// selector naming that line must refuse as ambiguous with the bounded
+    /// candidate set, never silently render the first match.
+    #[test]
+    fn explain_shared_location_refuses_as_ambiguous_naming_candidates() {
+        let result = explain_fixture("collection_argument_plain", "src/lib.rs:3");
+        let message = result
+            .err()
+            .unwrap_or_else(|| "ambiguous location must refuse, not render".to_string());
+        assert!(
+            message.contains("matched 2 findings"),
+            "ambiguous refusal must name the match count: {message}"
+        );
+        assert!(
+            message.contains("probe:src_lib.rs:call_deletion:1f64eda5"),
+            "ambiguous refusal must name the first candidate: {message}"
+        );
+        assert!(
+            message.contains("probe:src_lib.rs:side_effect:3ceb2918"),
+            "ambiguous refusal must name the second candidate: {message}"
+        );
+    }
+
+    /// #8166 Slice B: a unique canonical gap identity resolves exactly the
+    /// finding that carries it.
+    #[test]
+    fn explain_gap_identity_resolves_its_unique_finding() -> Result<(), String> {
+        let rendered = explain_fixture(
+            "collection_argument_plain",
+            "gap:rust:src/lib.rs:add:call_deletion:call_deletion:v.push_x*1",
+        )?;
+        require_contains(&rendered, "probe:src_lib.rs:call_deletion:1f64eda5")?;
+        require_not_contains(&rendered, "probe:src_lib.rs:side_effect:3ceb2918")
+    }
+
+    /// #8166 Slice B: zero matches still refuse with the no-match message,
+    /// including a 16-hex seam-shaped selector that names no finding in the
+    /// selected diff.
+    #[test]
+    fn explain_unmatched_and_seam_shaped_selectors_refuse_as_no_match() {
+        for selector in ["probe:not-a-real-id", "0123456789abcdef"] {
+            let result = explain_fixture("collection_argument_plain", selector);
+            let message = result
+                .err()
+                .unwrap_or_else(|| format!("unmatched selector {selector} must refuse"));
+            assert!(
+                message.contains(&format!("no finding matched {selector:?}")),
+                "zero-match refusal must keep the no-match message for {selector}: {message}"
+            );
+        }
     }
 
     #[test]

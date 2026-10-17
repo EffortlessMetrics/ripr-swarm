@@ -1,4 +1,4 @@
-<!-- section: Added -->
+<!-- section: Internal / CI -->
 - The Rust verdict corpus gains 54 authored cases over 15 small crates that
   test the way projects using common test libraries do: criterion, proptest,
   pretty_assertions, serial_test, mockall, insta, rstest, trybuild,
