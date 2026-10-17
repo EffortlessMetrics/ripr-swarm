@@ -808,6 +808,9 @@ pub(crate) struct DoctorPerlPreview {
     /// opt-in environment variable was not set. Reported so a user can see
     /// why the configured path was not probed.
     pub(crate) ignored_configured_executable: Option<String>,
+    /// Whether the canonical `perl-ripr-facts` exporter resolves on PATH. A
+    /// PATH-only fact: it says nothing about compatibility (see `exporter`).
+    pub(crate) canonical_exporter_on_path: bool,
     pub(crate) exporter: DoctorPerlExporter,
     /// The Perl fact packet schema this build consumes.
     pub(crate) expected_schema: String,

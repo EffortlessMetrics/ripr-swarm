@@ -15,6 +15,7 @@ mod owner_result_binding;
 mod reach_limit;
 mod related_tests;
 pub(crate) mod shared_grips;
+mod snapshot_owner_binding;
 mod value_contradiction;
 
 pub(crate) use value_contradiction::CONTRADICTION_DISCLOSURE;
@@ -30,7 +31,7 @@ use related_tests::{
 };
 
 use super::classify::{
-    assertion_observes_direct_collection, call_text_may_call_free_function,
+    assertion_observes_direct_collection_for_probe, call_text_may_call_free_function,
     direct_collection_mutation_receiver, mutexed_assertion_observes_collection_argument,
     owner_call_text, reach_evidence as classify_reach_evidence, relation_establishes_reach,
     test_calls_free_function,
@@ -2122,6 +2123,15 @@ fn oracle_discriminates_seam_in_test(
     index: &RustIndex,
     pin_syntax: &Mutex<crate::analysis::classify::OwnerPinSyntax>,
 ) -> bool {
+    // #8121: a snapshot admitted by kind for a return-value seam must also
+    // observe the owner's own result, not an unrelated value in the test.
+    if seam.kind() == SeamKind::ReturnValue
+        && matches!(oracle.kind, OracleKind::Snapshot)
+        && let Some(owner) = owner
+        && !snapshot_owner_binding::snapshot_observes_owner_result(&owner.name, oracle, test)
+    {
+        return false;
+    }
     oracle_discriminates_seam(seam, oracle)
         || direct_collection_mutation_receiver(seam.expression())
             .zip(owner)
@@ -2135,8 +2145,15 @@ fn oracle_discriminates_seam_in_test(
 
 fn oracle_discriminates_seam(seam: &RepoSeam, oracle: &super::facts::OracleFact) -> bool {
     if let Some(receiver) = direct_collection_mutation_receiver(seam.expression()) {
+        // #6640: a pure count read (`.len()`, `.is_empty()`) notices a
+        // deleted push, not a changed pushed value, so it discriminates
+        // only the call-presence seam.
         return collection_state_write_oracle_kind(&oracle.kind)
-            && assertion_observes_direct_collection(&oracle.text, receiver);
+            && assertion_observes_direct_collection_for_probe(
+                &oracle.text,
+                receiver,
+                seam.kind() == SeamKind::CallPresence,
+            );
     }
     if !oracle_kind_matches_seam(seam, &oracle.kind) {
         return false;

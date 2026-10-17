@@ -1300,3 +1300,30 @@ fn a_sequence_does_not_hide_a_test_compared_with_a_non_literal() -> Result<(), S
     require_classification("assert_eq!(vec![total(2), 3], vec![5, 3]);", &exact)?;
     Ok(())
 }
+
+#[test]
+fn indexing_by_a_test_does_not_pin_the_test() -> Result<(), String> {
+    let weak = (OracleKind::RelationalCheck, OracleStrength::Weak);
+    for text in [
+        "assert_eq!(table[(r == Err(E::Bad)) as usize], expected);",
+        "assert_eq!(table[usize::from(r == Err(E::Bad))], expected);",
+        "assert_eq!(table[matches!(r, Err(E::Bad)) as usize], 7);",
+        "assert_eq!(expected, table[(r == Err(E::Bad)) as usize]);",
+        "assert_eq!(grid[row][(r == Err(E::Bad)) as usize], expected);",
+        "assert_eq!(table[(r == Err(E::Bad)) as usize].name, expected);",
+        "assert_eq!(table[(r == Err(E::Bad)) as usize].len(), 3);",
+        "assert_eq!(table[(r == Err(E::Bad)) as usize][0], expected);",
+    ] {
+        require_classification(text, &weak)?;
+    }
+    // Indexing by a plain value still pins, and so does a test held apart
+    // from the index.
+    let exact = (OracleKind::ExactValue, OracleStrength::Strong);
+    require_classification("assert_eq!(table[total(2)], expected);", &exact)?;
+    require_classification("assert_eq!(table[i + 1], 7);", &exact)?;
+    require_classification("assert_eq!(table[0].f(r == 1), 7);", &exact)?;
+    require_classification("assert_eq!(vec![1, 2], vec![a, b]);", &exact)?;
+    let variant = (OracleKind::ExactErrorVariant, OracleStrength::Strong);
+    require_classification("assert_eq!(r == Err(E::Bad), true);", &variant)?;
+    Ok(())
+}

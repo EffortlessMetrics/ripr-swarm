@@ -67,6 +67,11 @@ trait PinAuthority {
     /// array or its iterator through a trait or macro, so the membership
     /// test may iterate something other than the returned elements.
     fn may_redefine_iteration(&self) -> bool;
+    /// The element type has no `Drop` impl in the workspace whose body is
+    /// non-empty, so dropping the receiver while unwinding from a failed
+    /// assertion cannot leave the process before the failure is reported
+    /// (#8084).
+    fn drop_is_plain(&self, type_name: &str) -> bool;
 }
 
 struct SharedAuthority<'a> {
@@ -119,6 +124,15 @@ impl PinAuthority for SharedAuthority<'_> {
         !self
             .syntax
             .iteration_closed(|| iteration_is_closed(self.index))
+    }
+
+    fn drop_is_plain(&self, type_name: &str) -> bool {
+        // The closed workspace premise is shared with the field-integer
+        // gate: a macro may generate a `Drop` impl no source scan can see.
+        if self.may_redefine_iteration() {
+            return false;
+        }
+        drop_is_plain(self.index, type_name)
     }
 }
 
@@ -351,6 +365,11 @@ fn observes_with(
     let Some(integer) = authority.field_integer(&array.type_name, &array.field) else {
         return false;
     };
+    // A non-plain `Drop` on the element type runs while unwinding from a
+    // failed assertion and may exit 0 before the failure is reported.
+    if !authority.drop_is_plain(&array.type_name) {
+        return false;
+    }
     let source = test.body.as_str();
     let Some(parse) = parse_clean_source_file(source) else {
         return false;
@@ -459,6 +478,92 @@ fn observes_with(
     ) && authority.admits_line(line)
 }
 
+/// Whether no `Drop` impl for `type_name` in the indexed workspace has a
+/// non-empty body. An unparseable source fails closed: its impls are
+/// invisible to this scan.
+fn drop_is_plain(index: &RustIndex, type_name: &str) -> bool {
+    index
+        .files()
+        .iter()
+        .all(|(_, facts)| drop_is_plain_in_source(&facts.source, type_name))
+}
+
+/// Names this source binds to the `Drop` trait besides `Drop` itself:
+/// `use std::ops::Drop as Cleanup;` makes `Cleanup` a Drop trait name.
+fn drop_alias_names(tree: &ast::SourceFile) -> Vec<String> {
+    let mut names = Vec::new();
+    fn walk(tree: &ast::UseTree, names: &mut Vec<String>) {
+        if let Some(rename) = tree.rename()
+            && let Some(path) = tree.path()
+            && squeeze(&path.syntax().text().to_string())
+                .rsplit("::")
+                .next()
+                .is_some_and(|last| last == "Drop")
+            && let Some(name) = rename.name()
+        {
+            names.push(name.text().to_string());
+        }
+        if let Some(list) = tree.use_tree_list() {
+            for child in list.use_trees() {
+                walk(&child, names);
+            }
+        }
+    }
+    for node in tree.syntax().descendants() {
+        if let Some(item) = ast::Use::cast(node)
+            && let Some(tree) = item.use_tree()
+        {
+            walk(&tree, &mut names);
+        }
+    }
+    names
+}
+
+fn drop_is_plain_in_source(source: &str, type_name: &str) -> bool {
+    let Some(parse) = parse_clean_source_file(source) else {
+        return false;
+    };
+    let aliases = drop_alias_names(&parse.tree());
+    parse.tree().syntax().descendants().all(|node| {
+        let Some(imp) = ast::Impl::cast(node) else {
+            return true;
+        };
+        let is_drop = imp.trait_().is_some_and(|path| {
+            squeeze(&path.syntax().text().to_string())
+                .rsplit("::")
+                .next()
+                .is_some_and(|last| {
+                    last == "Drop"
+                        || last.starts_with("Drop<")
+                        || aliases.iter().any(|alias| alias == last)
+                })
+        });
+        let is_type = imp.self_ty().is_some_and(|ty| {
+            let text = squeeze(&ty.syntax().text().to_string());
+            let last = text.rsplit("::").next().unwrap_or(&text);
+            last.split('<').next().unwrap_or(last) == type_name
+        });
+        if !is_drop || !is_type {
+            return true;
+        }
+        imp.assoc_item_list().is_some_and(|list| {
+            list.assoc_items().all(|item| {
+                let ast::AssocItem::Fn(function) = item else {
+                    return true;
+                };
+                if function.name().is_none_or(|name| name.text() != "drop") {
+                    return true;
+                }
+                function.body().is_some_and(|body| {
+                    body.stmt_list().is_some_and(|statements| {
+                        statements.statements().next().is_none() && statements.tail_expr().is_none()
+                    })
+                })
+            })
+        })
+    })
+}
+
 /// The owner's whole body is one array of struct literals, and the probe
 /// constructs `field` in exactly one of them.
 #[derive(Debug)]
@@ -470,6 +575,10 @@ struct ReturnedArray {
     /// The integer literal each other element builds `field` from, or
     /// `None` when that element builds it from anything else.
     others: Vec<Option<i128>>,
+    /// Every other element builds `field` from a literal or a plain path,
+    /// so constructing the array cannot leave the process (or settle the
+    /// test any other way) before the assertion runs (#8084).
+    siblings_plain: bool,
 }
 
 impl ReturnedArray {
@@ -560,11 +669,33 @@ impl ReturnedArray {
                 others.push(initializer.expr().as_ref().and_then(integer_literal));
             }
         }
+        let siblings_plain = fields.iter().enumerate().all(|(position, list)| {
+            position == index
+                || list
+                    .fields()
+                    .find(|initializer| {
+                        initializer
+                            .field_name()
+                            .is_some_and(|name| name.text() == field.as_str())
+                    })
+                    .is_some_and(|initializer| match initializer.expr() {
+                        // Shorthand `Row { total }` reads the plain path.
+                        None => true,
+                        Some(expr) => {
+                            integer_literal(&expr).is_some()
+                                || matches!(
+                                    unwrap_parens(expr),
+                                    ast::Expr::Literal(_) | ast::Expr::PathExpr(_)
+                                )
+                        }
+                    })
+        });
         Some(Self {
             type_name,
             field,
             index,
             others,
+            siblings_plain,
         })
     }
 
@@ -608,13 +739,14 @@ impl ReturnedArray {
             arguments.as_slice(),
         ) {
             ("assert_eq", [left, right]) => {
-                [(left, right), (right, left)]
-                    .into_iter()
-                    .any(|(read, expected)| {
-                        is_literal(expected)
-                            && (self.indexed_read(read, &is_receiver)
-                                || self.aliased_read(read, alias))
-                    })
+                self.siblings_plain
+                    && [(left, right), (right, left)]
+                        .into_iter()
+                        .any(|(read, expected)| {
+                            is_literal(expected)
+                                && (self.indexed_read(read, &is_receiver)
+                                    || self.aliased_read(read, alias))
+                        })
             }
             ("assert", [condition]) => {
                 self.membership(condition, integer, &is_receiver)
@@ -997,6 +1129,7 @@ mod tests {
         reaches: bool,
         integer: bool,
         redefines: bool,
+        drop_plain: bool,
         prefixes: std::cell::RefCell<Vec<Option<String>>>,
         fields: std::cell::RefCell<Vec<(String, String)>>,
     }
@@ -1008,6 +1141,7 @@ mod tests {
                 reaches: true,
                 integer: true,
                 redefines: false,
+                drop_plain: true,
                 prefixes: std::cell::RefCell::default(),
                 fields: std::cell::RefCell::default(),
             }
@@ -1030,6 +1164,9 @@ mod tests {
         }
         fn may_redefine_iteration(&self) -> bool {
             self.redefines
+        }
+        fn drop_is_plain(&self, _: &str) -> bool {
+            self.drop_plain
         }
     }
 
@@ -1114,6 +1251,38 @@ mod tests {
         }
         if pinned(negative, "#[test]", &membership("33"))? != Some(true) {
             return Err("a sibling of the opposite sign refused the pin".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_sibling_field_that_may_exit_before_the_assertion_observes_nothing() -> Result<(), String> {
+        // #8084: constructing an earlier element whose pinned field is a
+        // block (or any non-literal, non-path expression) may exit the
+        // process before the test reaches its assertion, so an indexed
+        // pin of the probed element observes nothing.
+        for array in [
+            "[Row { total: { std::process::exit(0) } }, Row { total: a + b + 0 }]",
+            "[Row { total: compute() }, Row { total: a + b + 0 }]",
+            "[Row { total: a * b }, Row { total: a + b + 0 }]",
+        ] {
+            let indexed = "        let rows = rows(30, 3);\n        assert_eq!(rows[1].total, 33);";
+            if pinned(array, "#[test]", indexed)? != Some(false) {
+                return Err(format!("expected no pin: {array}"));
+            }
+        }
+        // A sibling built from a plain path or literal cannot leave during
+        // construction, so the indexed pin still observes the probed field.
+        for array in [
+            "[Row { total: a }, Row { total: a + b + 0 }]",
+            "[Row { total: 7 }, Row { total: a + b + 0 }]",
+            "[Row { total }, Row { total: a + b + 0 }]",
+            "[Row { total: (-33) }, Row { total: a + b + 0 }]",
+        ] {
+            let indexed = "        let rows = rows(30, 3);\n        assert_eq!(rows[1].total, 33);";
+            if pinned(array, "#[test]", indexed)? != Some(true) {
+                return Err(format!("expected a pin: {array}"));
+            }
         }
         Ok(())
     }
@@ -1439,6 +1608,13 @@ mod tests {
                     ..Stub::admitting(&|_| true)
                 },
             ),
+            (
+                "the element's Drop",
+                Stub {
+                    drop_plain: false,
+                    ..Stub::admitting(&|_| true)
+                },
+            ),
         ] {
             if observes_with(&probe(), owner, test, &stub) {
                 return Err(format!("{label} refused, still pinned"));
@@ -1474,6 +1650,45 @@ mod tests {
             return Err(format!("asked {:?}", redefined.prefixes.borrow()));
         }
         Ok(())
+    }
+
+    #[test]
+    fn a_drop_impl_with_a_body_is_not_plain() {
+        let plain = |source: &str| drop_is_plain_in_source(source, "Row");
+        for (source, expected) in [
+            ("pub struct Row { pub total: u32 }", true),
+            ("impl Drop for Row { fn drop(&mut self) {} }", true),
+            (
+                "impl Drop for Row { fn drop(&mut self) { std::process::exit(0); } }",
+                false,
+            ),
+            (
+                "impl Drop for Row { fn drop(&mut self) { let _ = self.total; } }",
+                false,
+            ),
+            (
+                "impl Drop for Other { fn drop(&mut self) { std::process::exit(0); } }",
+                true,
+            ),
+            (
+                "impl std::ops::Drop for Row { fn drop(&mut self) { panic!() } }",
+                false,
+            ),
+            (
+                "pub struct Row {\n    pub total: u32,\n}\n\nimpl Drop for Row {\n    fn drop(&mut self) {\n    }\n}\n\npub fn rows(a: u32, b: u32) -> [Row; 2] {\n    [Row { total: 0 }, Row { total: a + b }]\n}",
+                true,
+            ),
+            (
+                "use std::ops::Drop as Cleanup;\nimpl Cleanup for Row { fn drop(&mut self) { std::process::exit(0); } }",
+                false,
+            ),
+            (
+                "use std::ops::Drop as Cleanup;\nimpl Cleanup for Row { fn drop(&mut self) {} }",
+                true,
+            ),
+        ] {
+            assert_eq!(plain(source), expected, "{source}");
+        }
     }
 
     /// A multi-byte character before a path root is read whole, not

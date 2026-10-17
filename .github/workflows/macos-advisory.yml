@@ -10,9 +10,13 @@ on:
 permissions:
   contents: read
 
+# Only a `merge-ready` labeled request shares this group, so a re-applied label
+# supersedes the older run for the same PR. Every other pull_request event
+# (opened, synchronize, reopened, other labels) gets a unique group: its jobs
+# are skipped and it can neither cancel nor replace a pending merge-ready run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'merge-ready') }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ (github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run' }}
+  cancel-in-progress: ${{ (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') }}
 
 # Advisory native macOS lane (#8391).
 #
@@ -120,7 +124,8 @@ jobs:
             echo "| test -p ripr --lib | $tests | ${result:-no test result line} |"
           } >> "$GITHUB_STEP_SUMMARY"
           if [ -z "$passed" ] || [ "$passed" -eq 0 ]; then
-            echo "::error::macOS library test run executed zero tests; evidence is not established"
+            grep -q '^error: could not compile' "$d/lib-tests.log" && kind="did not compile (build failure, not a test failure)" || kind="executed zero tests; evidence is not established"
+            echo "::error::macOS library test run $kind"
             exit 1
           fi
 

@@ -296,7 +296,7 @@ pub(crate) fn stub_route_location(
 ) -> Option<(String, usize, &'static str)> {
     let location = &finding.probe.location.file;
     let eligible = finding.class != ExposureClass::Exposed
-        && finding.probe.family.offers_stub_route()
+        && finding.probe.offers_stub_route()
         && location.extension().and_then(|ext| ext.to_str()) == Some("rs");
     if !eligible {
         return None;
@@ -319,6 +319,13 @@ pub(crate) fn stub_route_for_finding(
     finding: &Finding,
 ) -> Option<StubRoute> {
     let (file, line, kind) = stub_route_location(finding, root)?;
+    if let Some(name) = finding.probe.changed_const_name() {
+        let decision = const_consumer_route(root, config, &file, line, name)?;
+        return Some(StubRoute {
+            finding_id: finding.id.clone(),
+            decision,
+        });
+    }
     let resolution = resolve_at_location(root, config, &file, line, Some(kind)).ok()?;
     let decision = match resolution.outcome {
         Ok(_) => StubRouteDecision::Stub { file, line, kind },
@@ -329,6 +336,153 @@ pub(crate) fn stub_route_for_finding(
     Some(StubRoute {
         finding_id: finding.id.clone(),
         decision,
+    })
+}
+
+/// Seam kinds a constant's consumer is tried as, most common first.
+const CONSUMER_KINDS: [&str; 4] = ["return_value", "predicate", "error_path", "match_arm"];
+
+/// The most consuming functions of a changed constant tried for a stub.
+const CONSUMER_FN_LIMIT: usize = 6;
+
+/// A changed `const`/`static` has no seam, so the route goes to the first
+/// function in the same file that names it: a stub for that function is the
+/// place to pin the constant's effect. The first consumer that yields a stub
+/// wins; otherwise the first refusal names why. `None` when no consumer is
+/// found or none resolves, so nothing is printed.
+fn const_consumer_route(
+    root: &Path,
+    config: &RiprConfig,
+    file: &str,
+    const_line: usize,
+    name: &str,
+) -> Option<StubRouteDecision> {
+    let source = std::fs::read_to_string(root.join(file)).ok()?;
+    let lines = source.lines().collect::<Vec<_>>();
+    let code = code_lines_of(&source);
+    // Test modules (the parser's governed `cfg(test)` inventory) are never
+    // stub targets; an unparsed file has no consumer to find anyway.
+    let test_start = analysis::governed_cfg_test_modules(&source)?
+        .iter()
+        .map(|module| source[..module.item_start].matches('\n').count() + 1)
+        .min()
+        .unwrap_or(lines.len() + 1);
+    let mut seen_fns: Vec<(usize, usize)> = Vec::new();
+    let mut first_refusal = None;
+    for index in 0..lines.len() {
+        let line = index + 1;
+        if line == const_line
+            || line >= test_start
+            || !code
+                .get(index)
+                .is_some_and(|code| names_identifier(code, name))
+        {
+            continue;
+        }
+        if seen_fns
+            .iter()
+            .any(|&(start, end)| (start..=end).contains(&line))
+        {
+            continue;
+        }
+        let Some(span) = owner_fn_line_span(&source, line) else {
+            continue;
+        };
+        seen_fns.push(span);
+        if is_test_fn(&lines, span.0) {
+            continue;
+        }
+        if seen_fns.len() > CONSUMER_FN_LIMIT {
+            break;
+        }
+        for kind in CONSUMER_KINDS {
+            let Ok(resolution) = resolve_at_location(root, config, file, line, Some(kind)) else {
+                continue;
+            };
+            match resolution.outcome {
+                Ok(_) => {
+                    return Some(StubRouteDecision::Stub {
+                        file: file.to_string(),
+                        line,
+                        kind,
+                    });
+                }
+                Err(refusal) => {
+                    first_refusal.get_or_insert(StubRouteDecision::Refused {
+                        reason: refusal.reason(),
+                    });
+                }
+            }
+        }
+    }
+    first_refusal
+}
+
+/// `source` with string literals and comments blanked, keeping every newline
+/// so line numbers hold. Block comments nest and strings and block comments
+/// may span lines; a leading `*` is code (a dereference) unless a block
+/// comment is open. Raw strings are not recognised.
+fn code_lines_of(source: &str) -> Vec<String> {
+    let mut out = String::with_capacity(source.len());
+    let mut chars = source.chars().peekable();
+    let (mut block_depth, mut in_string, mut in_line_comment) = (0usize, false, false);
+    while let Some(c) = chars.next() {
+        if c == '\n' {
+            in_line_comment = false;
+            out.push('\n');
+        } else if in_line_comment {
+            out.push(' ');
+        } else if block_depth > 0 {
+            if c == '*' && chars.peek() == Some(&'/') {
+                chars.next();
+                block_depth -= 1;
+                out.push_str("  ");
+            } else if c == '/' && chars.peek() == Some(&'*') {
+                chars.next();
+                block_depth += 1;
+                out.push_str("  ");
+            } else {
+                out.push(' ');
+            }
+        } else if in_string {
+            if c == '\\' && chars.peek().is_some_and(|next| *next != '\n') {
+                chars.next();
+                out.push_str("  ");
+            } else {
+                in_string = c != '"';
+                out.push(' ');
+            }
+        } else if c == '"' {
+            in_string = true;
+            out.push(' ');
+        } else if c == '/' && chars.peek() == Some(&'/') {
+            chars.next();
+            in_line_comment = true;
+            out.push_str("  ");
+        } else if c == '/' && chars.peek() == Some(&'*') {
+            chars.next();
+            block_depth += 1;
+            out.push_str("  ");
+        } else {
+            out.push(c);
+        }
+    }
+    out.lines().map(str::to_string).collect()
+}
+
+/// Whether the function starting at `start` (1-based) carries `#[test]`.
+fn is_test_fn(lines: &[&str], start: usize) -> bool {
+    lines[start.saturating_sub(4)..start.min(lines.len())]
+        .iter()
+        .any(|text| text.trim().starts_with("#[test]"))
+}
+
+/// Whether `text` holds `name` as a whole identifier.
+fn names_identifier(text: &str, name: &str) -> bool {
+    let is_ident = |c: char| c.is_alphanumeric() || c == '_';
+    text.match_indices(name).any(|(at, _)| {
+        !text[..at].chars().next_back().is_some_and(is_ident)
+            && !text[at + name.len()..].chars().next().is_some_and(is_ident)
     })
 }
 
@@ -688,6 +842,34 @@ pub(crate) fn run_command(manifest: &str, stub: &RustTestStub) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn code_lines_blank_strings_and_comments_but_keep_dereferences() {
+        let uses =
+            |source: &str, line: usize| names_identifier(&code_lines_of(source)[line - 1], "CAP");
+        assert!(!uses("let s = \"CAP\";", 1));
+        assert!(!uses("let s = \"a\\\"CAP\";", 1));
+        assert!(!uses("x + 1 // CAP", 1));
+        assert!(!uses("/* CAP */", 1));
+        assert!(!uses("/*\n * the CAP applies\n */\nlet x = 1;", 2));
+        assert!(!uses("/* a /* b */ CAP */", 1));
+        assert!(!uses("let s = \"line one\nCAP two\";", 2));
+        assert!(uses("x.min(CAP) // cap", 1));
+        assert!(uses("let s = \"x\"; y.min(CAP)", 1));
+        assert!(uses("*total += CAP;", 1));
+        assert!(uses("let y = a\n    * CAP;", 2));
+        assert!(uses("/* c */ CAP", 1));
+        assert_eq!(code_lines_of("a\n// b\nc").len(), 3);
+    }
+
+    #[test]
+    fn names_identifier_matches_whole_identifiers_only() {
+        assert!(names_identifier("over.min(CAP) * rate", "CAP"));
+        assert!(names_identifier("CAP", "CAP"));
+        assert!(!names_identifier("over.min(CAPS)", "CAP"));
+        assert!(!names_identifier("MAX_CAP + 1", "CAP"));
+        assert!(!names_identifier("cap", "CAP"));
+    }
 
     #[test]
     fn at_selector_parses_file_and_line_and_refuses_junk() {
@@ -1095,9 +1277,8 @@ impl Size {
         );
         let note = off.at_note.ok_or("a substituted line must carry a note")?;
         assert!(
-            note.contains("src/lib.rs:8")
-                && note.contains("src/lib.rs:7")
-                && note.contains("nearest"),
+            note.starts_with("note: src/lib.rs:8 has no stubbable gap")
+                && note.ends_with(", src/lib.rs:7"),
             "{note}"
         );
         Ok(())

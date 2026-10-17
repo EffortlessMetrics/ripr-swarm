@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr doctor` now says when Perl is detected and compiled in but not enabled in `[languages] enabled`, names the `[perl] producer = "perl-ripr-facts"` config, and reports whether `perl-ripr-facts` is on PATH (typed `perl_preview.canonical_exporter_on_path`, PATH-only: it does not claim the exporter is compatible). A `partial` Perl fact packet with no change-linked relation (only `file_proximity`, or none) now classifies `static_unknown` instead of `reachable_unrevealed` or `no_static_path`, and still yields no repair signal (#8352).
