@@ -64,8 +64,17 @@ mod python_judged_panel_report;
 mod repo_readiness;
 mod schema_pattern;
 mod types;
+mod work_adapter_identity;
+mod work_burndown_identity;
+mod work_claim_identity;
+mod work_context_identity;
+mod work_intake_identity;
+mod work_plan_identity;
 mod work_portfolio;
+mod work_result_identity;
 mod work_selection_identity;
+mod work_synthesis_identity;
+mod work_wave_identity;
 pub(crate) use types::*;
 mod reports;
 mod ripr_swarm;
@@ -8273,6 +8282,9 @@ fn test_efficiency_metrics(
 }
 
 fn test_efficiency_report_status(entries: &[TestEfficiencyEntry]) -> &'static str {
+    if entries.is_empty() {
+        return "not_run";
+    }
     if entries
         .iter()
         .any(|entry| entry.class != "strong_discriminator")
@@ -8281,6 +8293,12 @@ fn test_efficiency_report_status(entries: &[TestEfficiencyEntry]) -> &'static st
     } else {
         "pass"
     }
+}
+
+fn test_efficiency_report_explanation(entries: &[TestEfficiencyEntry]) -> Option<&'static str> {
+    entries.is_empty().then_some(
+        "No tests were selected; test-efficiency evidence was not established for this report. Run the report from the workspace root containing the Rust test sources.",
+    )
 }
 
 fn test_efficiency_report_markdown(
@@ -8304,6 +8322,10 @@ fn test_efficiency_report_markdown(
         duplicate_groups.len(),
         entries.len(),
     );
+
+    if let Some(explanation) = test_efficiency_report_explanation(entries) {
+        body.push_str(&format!("Explanation: {explanation}\n\n"));
+    }
 
     body.push_str("## Metrics\n\n| Metric | Value |\n| --- | ---: |\n");
     body.push_str(&format!("| Tests scanned | {} |\n", metrics.tests_scanned));
@@ -8504,6 +8526,12 @@ fn test_efficiency_report_json(
         counts.get("opaque").copied().unwrap_or(0)
     );
 
+    if let Some(explanation) = test_efficiency_report_explanation(entries) {
+        body.push_str(&format!(
+            "  \"explanation\": \"{}\",\n",
+            json_escape(explanation)
+        ));
+    }
     body.push_str("  \"reason_counts\": {\n");
     for (index, (reason, count)) in reason_counts.iter().enumerate() {
         if index > 0 {

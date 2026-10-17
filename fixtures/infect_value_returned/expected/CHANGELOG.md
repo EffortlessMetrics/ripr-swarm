@@ -346,3 +346,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — infect_value_returned (30)
+
+Reason:
+RIPR-SPEC-0001: output contract changed - 7798 collapse tautological unknown-sink flow row when sink text restates the kind label
+
+Command:
+`cargo xtask goldens bless infect_value_returned --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — infect_value_returned (31)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless infect_value_returned --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

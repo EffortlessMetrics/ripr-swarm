@@ -166,15 +166,23 @@ fn validate_test_covered_by_recorded(
     commands: &[FilePolicyTestCommand],
     diagnostics: &mut Vec<CommandDiagnostic>,
 ) -> Result<Vec<TestCoverageObservation>, String> {
-    validate_test_covered_by_recorded_with(
-        path,
-        commands,
-        FilePolicyHost::current()?,
-        diagnostics,
-        |spawn| {
-            capture_output_with_timeout("cargo", &spawn.args, &[], spawn.timeout, spawn.description)
-        },
-    )
+    let host = FilePolicyHost::current()?;
+    // Cargo serializes builds on the target-dir lock, so the per-selector
+    // preparations below compile one package at a time. One combined build
+    // lets Cargo schedule them together; it only pre-fills the cache.
+    if let Some(args) = combined_preparation_args(commands, host) {
+        let captured = capture_output_with_timeout(
+            "cargo",
+            &args,
+            &[],
+            TEST_COVERED_BY_BUILD_TIMEOUT,
+            "test-valued covered_by combined build",
+        );
+        diagnostics.push(CommandDiagnostic::captured("cargo", &args, &captured));
+    }
+    validate_test_covered_by_recorded_with(path, commands, host, diagnostics, |spawn| {
+        capture_output_with_timeout("cargo", &spawn.args, &[], spawn.timeout, spawn.description)
+    })
 }
 
 fn validate_test_covered_by_recorded_with(
@@ -211,6 +219,70 @@ fn validate_test_covered_by_recorded_with(
             .ok_or_else(|| "test-valued covered_by enumeration produced no spawn".to_string())?;
         Ok(enumeration_result(output, TEST_COVERED_BY_LIST_TIMEOUT))
     })
+}
+
+/// One `cargo test --no-run` covering every applicable selector whose build
+/// is only `-p`, `--bin`, `--test` and lock flags. Selectors with any other
+/// shape are left to their own preparation. This is a cache fill, not
+/// evidence: a failure here is ignored and each selector still builds,
+/// lists and fails under its own spawn.
+fn combined_preparation_args(
+    commands: &[FilePolicyTestCommand],
+    host: FilePolicyHost,
+) -> Option<Vec<String>> {
+    let mut packages = BTreeSet::new();
+    let mut bins = BTreeSet::new();
+    let mut tests = BTreeSet::new();
+    let mut merged = 0usize;
+    for selector in commands {
+        if selector.host.is_some_and(|declared| declared != host)
+            || !is_cargo_test_command(&selector.command)
+        {
+            continue;
+        }
+        let words = selector.command.split_whitespace().skip(2);
+        let mut command_packages = BTreeSet::new();
+        let mut command_bins = BTreeSet::new();
+        let mut command_tests = BTreeSet::new();
+        let mut words = words.peekable();
+        let mut mergeable = true;
+        while let Some(word) = words.next() {
+            let target = match word {
+                "-p" | "--package" => Some(&mut command_packages),
+                "--bin" => Some(&mut command_bins),
+                "--test" => Some(&mut command_tests),
+                _ => None,
+            };
+            match target {
+                Some(set) => match words.next() {
+                    Some(value) if !value.starts_with('-') => {
+                        set.insert(value.to_string());
+                    }
+                    _ => mergeable = false,
+                },
+                // A test-name filter or a lock flag does not change the build.
+                None if matches!(word, "--locked" | "--offline") || !word.starts_with('-') => {}
+                None => mergeable = false,
+            }
+        }
+        if mergeable && !command_packages.is_empty() {
+            packages.extend(command_packages);
+            bins.extend(command_bins);
+            tests.extend(command_tests);
+            merged += 1;
+        }
+    }
+    if merged < 2 {
+        return None;
+    }
+    let mut args = vec!["test".to_string(), "--no-run".to_string()];
+    for (flag, values) in [("-p", packages), ("--bin", bins), ("--test", tests)] {
+        for value in values {
+            args.push(flag.to_string());
+            args.push(value);
+        }
+    }
+    Some(args)
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
@@ -502,6 +574,31 @@ mod tests {
                 assert_eq!(super::preparation_args_identity(&argv(&command)), expected);
             }
         }
+    }
+
+    #[test]
+    fn covered_by_combined_preparation_merges_only_plain_build_shapes() {
+        let commands = [
+            common(1, "cargo test -p xtask --bin xtask alpha"),
+            common(2, "cargo test -p ripr --locked --test mcp_stdio"),
+            common(3, "cargo test -p ripr --test causal_delta_fixture beta"),
+            common(4, "cargo test --workspace"),
+            common(5, "cargo test -p ripr --doc"),
+            common(6, "cargo test -p windows_only --test w"),
+        ];
+        let mut windows = commands.to_vec();
+        windows[5].host = Some(FilePolicyHost::Windows);
+        assert_eq!(
+            super::combined_preparation_args(&windows, FilePolicyHost::Unix),
+            Some(argv(
+                "test --no-run -p ripr -p xtask --bin xtask --test causal_delta_fixture --test mcp_stdio"
+            ))
+        );
+        assert_eq!(
+            super::combined_preparation_args(&commands[..1], FilePolicyHost::Unix),
+            None,
+            "a single selector needs no combined build"
+        );
     }
 
     #[test]

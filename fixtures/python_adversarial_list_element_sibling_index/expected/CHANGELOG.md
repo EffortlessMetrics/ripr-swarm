@@ -447,3 +447,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_list_element_sibling_index (21)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless python_adversarial_list_element_sibling_index --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

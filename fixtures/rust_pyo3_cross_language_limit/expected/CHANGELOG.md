@@ -201,3 +201,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_pyo3_cross_language_limit (18)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless rust_pyo3_cross_language_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

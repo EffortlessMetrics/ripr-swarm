@@ -85,13 +85,20 @@ all of these hold:
   shadow an outer `p`) with `const|let|var p = jest.fn(...)` or
   `vi.fn(...)`, or to a flat object literal whose `m` is such a call,
   whose keys are plain identifiers, which keys `m` once and which has no
-  spread that could replace it; amended 2026-10-15, `const|let|var p =
+  spread that could replace it; amended 2026-10-15 (#8138), the mock
+  call takes no argument or an arrow implementation that names neither
+  `function` nor `this` (optionally after `<T>` type arguments), the
+  literal's `m` value is that call and nothing more, and the call (or the
+  literal's closing `}`) ends the statement: `;`, the block's `}`, the
+  end of the body, or a line break before a line that opens with a word
+  other than `in`, `instanceof`, `as` or `satisfies`; amended
+  2026-10-15, `const|let|var p =
   f();` also reads as such a literal when `f` is a top-level, unexported,
   non-async, non-generator parameterless test-file factory whose whole
   body returns that literal (`function f() { return { m: jest.fn() }; }`
   or `const f = () => ({ m: jest.fn() });`) with `m` keyed to exactly a
   bare `jest.fn()` or `vi.fn()` (no implementation argument, nothing
-  after it), the file names `f` only in its declaration and direct calls
+  after it; `jest.fn ()` with a space is the same call), the file names `f` only in its declaration and direct calls
   `f(`, `f()` is the whole initializer closed by `;` or the block's end
   (a line break alone can continue the expression), and the file has no
   `eval`, `with` or `\u` escape;
@@ -293,6 +300,17 @@ and the rejected alternative. Recorded on #6654.
    returning a function mock, which this amendment does not need.
    Rejected: keep every helper-made mock medium, which leaves
    `jest-spec0243-ex30-factory-db` (a discriminated test) a false gap.
+9. **A mock binding is exactly a fresh mock (rule 1, amended
+   2026-10-15, #8138).** Adopted: the binding's value must be the mock
+   call alone, with no implementation or an arrow one, ended where the
+   statement ends. A named or `function` implementation can be called
+   with the mock object as `this` and record the asserted call on
+   itself, and a trailing `&& pre.write`, `.inner` or `.bind(pre)`
+   (including one on the next line) binds another object. Rejected:
+   refuse every implementation argument, which drops arrow
+   implementations (`jest.fn((m) => m)`) that cannot reach the mock.
+   Rejected: a full expression parse, which the text reader does not
+   have; the statement-end check reads only what can follow.
 
 ## Required Evidence
 
@@ -308,6 +326,8 @@ and the rejected alternative. Recorded on #6654.
   moves from `gap` to `credited`, and no other row moves.
 - Amended 2026-10-15 (mock factory): `jest-spec0243-ex30-factory-db`
   moves from `gap` to `credited`, and no other row moves.
+- Amended 2026-10-15 (#8138, decision 9): no corpus row moves; the
+  tightened binding refuses only shapes no corpus case uses.
 
 ## Non-Goals
 
@@ -352,7 +372,16 @@ and the rejected alternative. Recorded on #6654.
    (`jest.fn(function () { this.write(2); })`, `jest.fn() && pre.write`),
    a file that reassigns, passes on or shadows `makeDb` or calls `eval`,
    or a binding `makeDb().inner`, `makeDb()` continued on the next line
-   (`.inner`, `&& pre`) or `makeDb(1)` stays `weakly_exposed`.
+   (`.inner`, `&& pre`) or `makeDb(1)` stays `weakly_exposed`, and so
+   does a test that also calls `db.write(2)` itself. Amended 2026-10-15
+   (#8138): `const send = jest.fn((m: string) => m)`,
+   `vi.fn<(m: string) => void>()`, or `jest.fn()` with no `;` before a
+   new statement on the next line still reads `exposed`;
+   `jest.fn() && pre`, `jest.fn(record)`, `jest.fn(function () {})`, a
+   next line opening with `&&`, `.bind(pre)`, `instanceof` or `(pre)`,
+   or for example 2 `{ write: jest.fn() }.inner`,
+   `{ write: jest.fn().mockName("w") }` or `{ write: jest.fn() && pre.write }`
+   stays `weakly_exposed`.
 5. As example 1 with `send` not an owner parameter, with
    `const send = jest.spyOn(mailer, "send")`, a `jest.mock` factory mock
    or `const send = makeSend()`, with an object payload `{ id: 7 }`, or
@@ -412,7 +441,8 @@ and the rejected alternative. Recorded on #6654.
 - `crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs`
   pins examples 1 to 9 at the rule level;
   `mock_payload_on_a_test_file_factory_mock_is_credited` pins the amended
-  example 4.
+  example 4, and `mock_payload_binding_must_be_exactly_a_fresh_mock` pins
+  decision 9.
 - `fixtures/typescript-verdict-corpus` pins the amended example 4:
   `jest-spec0243-ex30-factory-db` reads `credited`.
 - `crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs`
@@ -431,7 +461,8 @@ and the rejected alternative. Recorded on #6654.
 
 - `crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs`:
   `MockCallFacts` (rule 1); `credits_with_factories`,
-  `factory_call_is_initializer` and `keys_mock_once` (decision 8), fed by
+  `factory_call_is_initializer` and `keys_mock_once` (decision 8),
+  `closed_mock_call` and `ends_statement` (decision 9), fed by
   `crates/ripr/src/analysis/language/typescript/tests_extract.rs`:
   `mock_factories`.
 - `crates/ripr/src/analysis/language/typescript/classifier.rs`:

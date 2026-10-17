@@ -10,6 +10,23 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
+fn tsconfig_path_aliases_resolve_by_default_and_explicit_false_opts_out() -> Result<(), String> {
+    let absent = tests_only_parse("")?;
+    if !absent.typescript().resolve_tsconfig_paths() {
+        return Err("a config without [typescript] must resolve tsconfig paths".to_string());
+    }
+    let empty_table = tests_only_parse("[typescript]\n")?;
+    if !empty_table.typescript().resolve_tsconfig_paths() {
+        return Err("an empty [typescript] table must keep the default".to_string());
+    }
+    let opted_out = tests_only_parse("[typescript]\nresolve_tsconfig_paths = false\n")?;
+    if opted_out.typescript().resolve_tsconfig_paths() {
+        return Err("explicit false must leave tsconfig paths unresolved".to_string());
+    }
+    Ok(())
+}
+
+#[test]
 fn semantic_config_diagnostic_locates_canonical_value_not_comment_or_other_leaf() {
     let source = "# reachable_unrevealed = \"eror\"\n[severity.seams]\nreachable_unrevealed = \"warning\"\n[severity.findings]\nreachable_unrevealed = \"eror\"\n";
     let diagnostic = parse_config_diagnostic(source).expect_err("invalid nested severity");
@@ -1442,7 +1459,7 @@ fn check_artifact_config_identity_hash_tracks_finding_affecting_fields_only() ->
     }
 
     // A finding-affecting change (TypeScript adapter option) changes it too.
-    let ts_changed = tests_only_parse("[typescript]\nresolve_tsconfig_paths = true\n")?;
+    let ts_changed = tests_only_parse("[typescript]\nresolve_tsconfig_paths = false\n")?;
     if check_artifact_config_identity_hash(&ts_changed) == base_hash {
         return Err(
             "typescript.resolve_tsconfig_paths change must change the config identity".to_string(),
@@ -2541,4 +2558,52 @@ fn load_for_root_parse_error_uses_the_human_path_and_keeps_canonical_source_path
         ));
     }
     Ok(())
+}
+
+#[test]
+fn config_error_display_keeps_misplaced_mode_hint_without_source() {
+    let err = tests_only_parse("mode = \"deep\"\n").expect_err("top-level mode must fail");
+    let compact = config_error_display_lines(&err, false);
+    assert_eq!(compact.len(), 1, "{compact:?}");
+    assert!(
+        compact[0].contains("belongs under [analysis]"),
+        "compact must keep the allowlisted hint: {compact:?}"
+    );
+    assert!(
+        !compact.join("\n").contains("mode = \"deep\""),
+        "compact must not print the source assignment: {compact:?}"
+    );
+    let verbose = config_error_display_lines(&err, true);
+    assert!(
+        verbose
+            .iter()
+            .any(|line| line.contains("unknown field `mode`")),
+        "verbose must keep the parser reason: {verbose:?}"
+    );
+    assert!(
+        verbose
+            .iter()
+            .any(|line| line.contains("belongs under [analysis]")),
+        "verbose must keep the allowlisted hint: {verbose:?}"
+    );
+    assert!(
+        !verbose.join("\n").contains("mode = \"deep\""),
+        "verbose must not restore the source excerpt: {verbose:?}"
+    );
+}
+
+#[test]
+fn config_error_display_keeps_unclosed_table_reason() {
+    let err = tests_only_parse("[languages\n").expect_err("unclosed table must fail");
+    let verbose = config_error_display_lines(&err, true);
+    assert!(
+        verbose
+            .iter()
+            .any(|line| line.contains("unclosed") || line.contains("expected")),
+        "verbose must keep the unclosed-table reason: {verbose:?}"
+    );
+    assert!(
+        !verbose.iter().any(|line| is_toml_source_excerpt_line(line)),
+        "verbose must not reprint the TOML snippet: {verbose:?}"
+    );
 }

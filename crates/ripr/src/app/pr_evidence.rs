@@ -328,6 +328,7 @@ fn changed_files(repo: &Path, options: &PrEvidenceOptions) -> Result<Vec<String>
     // so exotic names survive byte-exact; parsing rules come from the
     // shared authority in `decode_changed_files`, not from line splitting
     // here. The `--diff-filter=ACMR` scope contract is unchanged.
+    // Keep gitlinks in the inventory just as the saved packet diff does (#8209).
     let range = format!("{}...{}", options.base, options.head);
     let output = run_git_output_bytes(
         repo,
@@ -336,6 +337,7 @@ fn changed_files(repo: &Path, options: &PrEvidenceOptions) -> Result<Vec<String>
             "--name-only",
             "-z",
             "--diff-filter=ACMR",
+            "--ignore-submodules=none",
             range.as_str(),
         ],
     )?;

@@ -193,3 +193,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — predicate_oracle_execution_reached_uncalled (16)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless predicate_oracle_execution_reached_uncalled --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

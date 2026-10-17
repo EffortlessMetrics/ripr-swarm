@@ -68,6 +68,15 @@ and defeat reuse). An explicit `--perl-facts <path>` packet is recorded
 (path plus content hash) and remains supported. A failed artifact write
 fails the command: the user explicitly requested the artifact.
 
+If the producer outcome is `unsupported_input`, `check` exits `2` after
+rendering its ordinary incomplete report but neither creates nor replaces
+the reusable artifact. Report navigation retains the original input route,
+not `--from` the unwritten destination. This uses the existing outcome exit
+contract; valid and advisory `partial_with_limitations` writes and reuse are
+unchanged. The v1 schema has no outcome field, so earlier artifacts written
+from unsupported input cannot be identified retrospectively; regenerate
+such artifacts from a supported input. Other identity checks stay unchanged.
+
 `--diff -` (stdin) is not supported with `--write-artifact`: the consumed
 stdin bytes are not retained as a re-resolvable artifact input. The CLI
 refuses this combination before analysis or any artifact write, whether
@@ -248,6 +257,19 @@ artifact stores the uncapped related-tests list.
 
 ## Acceptance Examples
 
+### Unsupported input preserves destinations and the incomplete report
+
+```text
+Given nonempty garbage, a truncated declared hunk, or mixed valid/malformed input,
+when `ripr check --diff bad.patch --json --write-artifact a.json` runs,
+then it exits 2 with the same incomplete report and direct-input navigation
+as the invocation without --write-artifact, retaining advisory findings.
+It does not create a.json or its absent parent, or replace existing bytes.
+`context --from` an absent destination refuses with check_artifact_unusable.
+An existing valid artifact stays reusable with its original context bytes.
+Valid and advisory partial input still write v1 artifacts and permit reuse.
+```
+
 ### Stdin artifact capture refuses before analysis or replacement
 
 ```text
@@ -312,6 +334,14 @@ even though the `check --json` render caps related tests at 8.
 ```
 
 ## Test Mapping
+
+- `crates/ripr/tests/cli_smoke/unsupported_artifact.rs::unsupported_artifact_preserves_destinations_and_incomplete_report`
+  — unsupported-input report parity, new and sentinel destinations, absent
+  parent preservation, and downstream refusal of the absent artifact.
+- `crates/ripr/tests/cli_smoke/unsupported_artifact.rs::unsupported_artifact_preserves_valid_artifact_and_its_context`
+  — valid write/reuse and byte-identical preservation after a refused replacement.
+- `crates/ripr/tests/cli_smoke/unsupported_artifact.rs::unsupported_artifact_keeps_advisory_partial_write_and_reuse`
+  — incomplete advisory input remains writable and reusable.
 
 - `crates/ripr/tests/cli_smoke/check_artifact_stdin.rs::python_stdin_artifact_refusal_preserves_named_recovery`
   and `javascript_stdin_artifact_refusal_preserves_named_recovery` — real

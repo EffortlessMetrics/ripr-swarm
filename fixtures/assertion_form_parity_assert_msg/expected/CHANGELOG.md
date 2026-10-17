@@ -261,3 +261,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — assertion_form_parity_assert_msg (19)
+
+Reason:
+RIPR-SPEC-0001: output contract changed — 7798 collapse tautological unknown-sink flow row when sink text restates the kind label
+
+Command:
+`cargo xtask goldens bless assertion_form_parity_assert_msg --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — assertion_form_parity_assert_msg (20)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless assertion_form_parity_assert_msg --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -51,3 +51,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — human_full_shared_parse_port (5)
+
+Reason:
+RIPR-SPEC-0122: #7643 hidden-block bullets append each finding's currentness category when the omitted set mixes categories, connecting the count line's clauses to its rows
+
+Command:
+`cargo xtask goldens bless human_full_shared_parse_port --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — human_full_shared_parse_port (6)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless human_full_shared_parse_port --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

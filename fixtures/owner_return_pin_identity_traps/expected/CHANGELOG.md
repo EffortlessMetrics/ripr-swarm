@@ -191,3 +191,51 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_identity_traps (17)
+
+Reason:
+RIPR-SPEC-0001: output contract changed - 7798 collapse tautological unknown-sink flow row when sink text restates the kind label
+
+Command:
+`cargo xtask goldens bless owner_return_pin_identity_traps --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — owner_return_pin_identity_traps (18)
+
+Reason:
+RIPR-SPEC-0108: #7642 matched oracle rows with a proximity-only relation now carry no_call_path on exposed and unknown classes so sibling tests no longer render as unqualified oracle evidence
+
+Command:
+`cargo xtask goldens bless owner_return_pin_identity_traps --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — owner_return_pin_identity_traps (19)
+
+Reason:
+RIPR-SPEC-0122: #7643 hidden-block bullets append each finding's currentness category when the omitted set mixes categories, connecting the count line's clauses to its rows
+
+Command:
+`cargo xtask goldens bless owner_return_pin_identity_traps --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — owner_return_pin_identity_traps (20)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_identity_traps --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

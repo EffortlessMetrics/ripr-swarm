@@ -349,6 +349,17 @@ evidence record names `constructor_field_owner_ambiguous` with repair route
 `analysis/constructor-field-observation`. RIPR must not choose one owner or
 promote the seam from the ambiguous path.
 
+Snapshot syntax and a matching field spelling alone do not establish an Insta
+snapshot's expected bytes or bind the observed receiver to the constructor's
+returned field (#8120/#8121). Such a `field_construction` observation keeps
+discrimination weak rather than closing the seam, including when an expected
+file is absent, stale, or only a `.snap.new` exists. Inline expected text does
+not establish that another receiver's same-named field observes the owner.
+This bounded admission rule does not read or qualify committed snapshots;
+exact snapshot binding and projection remain separate work. Independent exact
+field assertions can still supply strong discrimination. The delivered
+expect-test equality-operand admission retains its existing behavior.
+
 A `field_construction` seam whose related test already activates the owner and
 weakly observes one constructed field on a parser-backed *direct* owner-result
 binding emits a compatible `RequiredDiscriminator::FieldValue` missing fact

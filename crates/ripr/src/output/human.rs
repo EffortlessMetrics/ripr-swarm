@@ -143,8 +143,8 @@ pub(crate) fn render_bounded_with_config_and_navigation(
     drill_in: Option<&FindingDrillIn>,
     provenance: CheckDiffProvenance,
 ) -> String {
-    let mut out = render_header_summary(output, config);
-    render_analysis_outcome_disclosure(&mut out, output);
+    let mut out = render_header_summary(output, config, true);
+    render_analysis_outcome_disclosure(&mut out, output, true);
     render_suppression_policy_block(&mut out, output);
     render_partial_scope_disclosure(&mut out, output);
 
@@ -191,9 +191,9 @@ pub(crate) fn render_full_with_config_and_navigation(
     config: &RiprConfig,
     drill_in: Option<&FindingDrillIn>,
 ) -> String {
-    let mut out = render_header_summary(output, config);
+    let mut out = render_header_summary(output, config, false);
 
-    render_analysis_outcome_disclosure(&mut out, output);
+    render_analysis_outcome_disclosure(&mut out, output, false);
     render_suppression_policy_block(&mut out, output);
     render_partial_scope_disclosure(&mut out, output);
 
@@ -315,12 +315,21 @@ fn render_analyzed_revisions(out: &mut String, output: &CheckOutput) {
     }
 }
 
-fn render_header_summary(output: &CheckOutput, config: &RiprConfig) -> String {
+/// `plain` selects the bounded (default) human wording (#8165): plain words
+/// only, no schema tokens. `human-full` passes `false` and keeps the schema
+/// summary byte-for-byte.
+fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool) -> String {
     let mut out = String::new();
     out.push_str(&format!(
         "ripr static RIPR exposure analysis\nmode: {}\nroot: {}\n",
         output.mode.as_str(),
-        output.root.display()
+        // #7728: one session shows one spelling — the same `human_path`
+        // renderer doctor's root line uses, so a backslash-typed or
+        // drive-letter verbatim `\\?\`-prefixed root does not leak raw
+        // `Path::display` bytes here while every sibling surface renders the
+        // forward-slash form. UNC and volume verbatim prefixes keep their
+        // raw spelling by design (`human_path_text`).
+        crate::output::path::human_path(&output.root)
     ));
     // RIPR-SPEC-0255 (#7536): name the ripr.toml that governed the run, in
     // the header CI logs keep. Absence is the explicit built-in-defaults
@@ -352,21 +361,65 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig) -> String {
         .as_ref()
         .map_or(0, |suppression| suppression.suppressed.len());
     let unsuppressed = output.summary.findings.saturating_sub(suppressed);
-    out.push_str(&format!(
-        "Summary: {} probe(s), {} exposed, {} weakly_exposed, {} reachable_unrevealed, \
-         {} no_static_path, {} infection_unknown, {} propagation_unknown, {} static_unknown; \
-         {} of {} finding(s) unsuppressed\n\n",
-        output.summary.probes,
-        output.summary.exposed,
-        output.summary.weakly_exposed,
-        output.summary.reachable_unrevealed,
-        output.summary.no_static_path,
-        output.summary.infection_unknown,
-        output.summary.propagation_unknown,
-        output.summary.static_unknown,
-        unsuppressed,
-        output.summary.findings,
-    ));
+    if plain {
+        // #8165: plain words via the same labels the digest uses
+        // (`ExposureClass::plain_label`); the three unknown classes share
+        // the one plain word `unknown`, so their counts sum into one bucket
+        // named only when non-zero. Never a snake_case schema token here.
+        let s = &output.summary;
+        if s.probes == 0 {
+            out.push_str(&format!(
+                "Summary: 0 probes analyzed; {} {} unsuppressed\n\n",
+                unsuppressed,
+                if unsuppressed == 1 {
+                    "finding"
+                } else {
+                    "findings"
+                },
+            ));
+        } else {
+            let unknown = s
+                .infection_unknown
+                .saturating_add(s.propagation_unknown)
+                .saturating_add(s.static_unknown);
+            let mut classes = format!(
+                "{} exposed, {} weak, {} unrevealed, {} no path",
+                s.exposed, s.weakly_exposed, s.reachable_unrevealed, s.no_static_path,
+            );
+            if unknown > 0 {
+                classes.push_str(&format!(", {unknown} unknown"));
+            }
+            out.push_str(&format!(
+                "Summary: {} {} ({}); {} of {} {} unsuppressed\n\n",
+                s.probes,
+                if s.probes == 1 { "probe" } else { "probes" },
+                classes,
+                unsuppressed,
+                s.findings,
+                if s.findings == 1 {
+                    "finding"
+                } else {
+                    "findings"
+                },
+            ));
+        }
+    } else {
+        out.push_str(&format!(
+            "Summary: {} probe(s), {} exposed, {} weakly_exposed, {} reachable_unrevealed, \
+             {} no_static_path, {} infection_unknown, {} propagation_unknown, {} static_unknown; \
+             {} of {} finding(s) unsuppressed\n\n",
+            output.summary.probes,
+            output.summary.exposed,
+            output.summary.weakly_exposed,
+            output.summary.reachable_unrevealed,
+            output.summary.no_static_path,
+            output.summary.infection_unknown,
+            output.summary.propagation_unknown,
+            output.summary.static_unknown,
+            unsuppressed,
+            output.summary.findings,
+        ));
+    }
     render_language_file_breakdown(&mut out, output);
     out
 }
@@ -374,21 +427,36 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig) -> String {
 /// Render the producer-owned completeness contract before any empty-finding
 /// message. A limitation is therefore visible even when the parser produced
 /// no source findings; zero findings never upgrades an incomplete run.
-fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput) {
+fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, plain: bool) {
     let Some(outcome) = &output.analysis_outcome else {
         return;
     };
-    out.push_str(&format!(
-        // #7756: labelled field line — no trailing period.
-        "Analysis outcome: {} ({}; {})\n",
-        outcome.kind.plain_label(),
-        if outcome.kind.is_complete() {
-            "analysis complete"
-        } else {
-            "analysis incomplete"
-        },
-        outcome.kind.as_str()
-    ));
+    if plain {
+        // #8165: plain wording only; the `(; <kind token>)` suffix stays on
+        // the `human-full` surface below.
+        out.push_str(&format!(
+            // #7756: labelled field line — no trailing period.
+            "Analysis outcome: {} ({})\n",
+            outcome.kind.plain_label(),
+            if outcome.kind.is_complete() {
+                "analysis complete"
+            } else {
+                "analysis incomplete"
+            },
+        ));
+    } else {
+        out.push_str(&format!(
+            // #7756: labelled field line — no trailing period.
+            "Analysis outcome: {} ({}; {})\n",
+            outcome.kind.plain_label(),
+            if outcome.kind.is_complete() {
+                "analysis complete"
+            } else {
+                "analysis incomplete"
+            },
+            outcome.kind.as_str()
+        ));
+    }
     if outcome.limitations.is_empty() {
         out.push_str(&format!(
             // #7756: labelled field line — no trailing period.
@@ -421,15 +489,24 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput) {
         }
     }
     for limitation in &outcome.limitations {
-        // Plain words lead; the schema tokens follow in parentheses so the
-        // line still greps against JSON and docs (#4323).
-        out.push_str(&format!(
-            "  Limitation: {} during {} ({} at {})",
-            limitation.kind.plain_label(),
-            limitation.producer_stage.plain_label(),
-            limitation.kind.as_str(),
-            limitation.producer_stage.as_str()
-        ));
+        // Plain words lead; on the full surface the schema tokens follow in
+        // parentheses so the line still greps against JSON and docs (#4323).
+        // The bounded surface drops the tokens (#8165).
+        if plain {
+            out.push_str(&format!(
+                "  Limitation: {} during {}",
+                limitation.kind.plain_label(),
+                limitation.producer_stage.plain_label(),
+            ));
+        } else {
+            out.push_str(&format!(
+                "  Limitation: {} during {} ({} at {})",
+                limitation.kind.plain_label(),
+                limitation.producer_stage.plain_label(),
+                limitation.kind.as_str(),
+                limitation.producer_stage.as_str()
+            ));
+        }
         if let Some(path) = &limitation.path {
             out.push_str(&format!("; file: {path}"));
         }
@@ -437,8 +514,8 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput) {
             out.push_str(&format!("; affected items: {count}"));
         }
         let recovery = limitation.recovery.kind;
-        let recovery_label = if recovery.plain_label() == recovery.as_str() {
-            recovery.as_str().to_string()
+        let recovery_label = if plain || recovery.plain_label() == recovery.as_str() {
+            recovery.plain_label().to_string()
         } else {
             format!("{} ({})", recovery.plain_label(), recovery.as_str())
         };
@@ -966,7 +1043,27 @@ pub(crate) fn render_finding_with_context_command(
     // source fragments keep their exact bytes.
     let mut out =
         render_finding_with_config(finding, config, root, JsonPointerWording::ExplainNamesCheck);
-    out.push_str(&explain::render_verdict_explanation(finding));
+    // #7796: project the owner's observed call shape (the same producer
+    // `ripr agent stub` reads) into the verdict-change recipe. Only when the
+    // finding's recorded source still owns the analyzed root's checkout:
+    // for a base-deleted/moved/unresolved finding, or an analyzed candidate
+    // tree that is not the checkout, the on-disk file cannot speak for the
+    // finding and the recipe keeps the name-only form. The render itself
+    // never reads source files.
+    let owner_signature = match finding.source_currentness {
+        crate::domain::SourceCurrentness::CandidateCurrent => {
+            crate::analysis::owner_call_shape_at_line(
+                root,
+                &finding.probe.location.file,
+                finding.probe.location.line,
+            )
+        }
+        _ => None,
+    };
+    out.push_str(&explain::render_verdict_explanation(
+        finding,
+        owner_signature.as_deref(),
+    ));
     out.push_str(&format!("\nNext: {context_command}\n"));
     push_powershell_variant(&mut out, "", context_command);
     terminal_safe(out)
@@ -997,7 +1094,7 @@ pub(crate) use sections::render_finding_with_config;
 
 #[cfg(test)]
 mod tests {
-    use super::{render, render_finding, render_with_config, terminal_safe};
+    use super::{render, render_finding, render_header_summary, render_with_config, terminal_safe};
     use crate::analysis::PreviewLanguageAdvisory;
     use crate::app::{CheckOutput, Mode};
     use crate::config::RiprConfig;
@@ -1063,10 +1160,11 @@ mod tests {
         // RIPR-SPEC-0255 (#7536): built-in defaults are an explicit absence —
         // no config line, never a fake path.
         assert!(!rendered.contains("\nconfig:"));
-        // #4322: canonical class tokens, unknown classes kept separate, and an
-        // unsuppressed/total denominator.
+        // #8165 (superseding the #4322 header wording on this surface): the
+        // bounded summary uses plain words, sums the unknown classes into
+        // one `unknown` bucket, and keeps the unsuppressed/total denominator.
         assert!(rendered.contains(
-            "Summary: 8 probe(s), 1 exposed, 2 weakly_exposed, 1 reachable_unrevealed, 1 no_static_path, 1 infection_unknown, 1 propagation_unknown, 1 static_unknown; 0 of 0 finding(s) unsuppressed"
+            "Summary: 8 probes (1 exposed, 2 weak, 1 unrevealed, 1 no path, 3 unknown); 0 of 0 findings unsuppressed"
         ));
         assert!(rendered.contains("No diff-derived static exposure probes found."));
         assert!(!rendered.contains("Next:"));
@@ -1105,6 +1203,51 @@ mod tests {
         let rendered = render_with_config(&output, &loaded);
 
         assert!(rendered.contains("root: repo\nconfig: repo/ripr.toml\n"));
+    }
+
+    /// #7728: the check header's root line must use the same
+    /// `output::path::human_path` spelling as doctor's root line, not raw
+    /// `Path::display`, so one session shows one spelling of the analyzed
+    /// root (a verbatim `\\?\`-prefixed root strips on Windows; a
+    /// backslash-typed root normalizes there; Unix keeps the identity).
+    #[test]
+    fn header_root_line_uses_human_path_not_raw_display() {
+        let spaced_root = format!("C:{}tmp{}probe win space", '\\', '\\');
+        for root_text in [
+            r"\\?\C:\tmp\probe win space".to_string(),
+            spaced_root,
+            "repo".to_string(),
+        ] {
+            let root = PathBuf::from(root_text);
+            let output = CheckOutput {
+                harness_projections: Vec::new(),
+                schema_version: "0.1".to_string(),
+                tool: "ripr".to_string(),
+                mode: Mode::Draft,
+                root: root.clone(),
+                base: Some("main".to_string()),
+                summary: Summary::default(),
+                findings: vec![],
+                preview_language_advisories: Vec::new(),
+                language_runs: Vec::new(),
+                no_scope_provided: false,
+                unanalyzed_working_tree: false,
+                untracked_working_tree_source_paths: Vec::new(),
+                unlinked_python_tests: None,
+                suppression: None,
+                analysis_outcome: None,
+                partial_scope: None,
+                analyzed_revisions: None,
+            };
+
+            let rendered = render_header_summary(&output, &RiprConfig::default(), false);
+
+            let expected = format!("root: {}\n", crate::output::path::human_path(&root));
+            assert!(
+                rendered.contains(&expected),
+                "header must render the root through human_path: expected {expected:?} in {rendered:?}"
+            );
+        }
     }
 
     /// #5258: when the unanalyzed working-tree state is untracked files, the
@@ -1232,9 +1375,9 @@ mod tests {
         assert!(!rendered.contains("Untracked files"), "{rendered}");
     }
 
-    /// #4322: the three unknown classes answer *which* discriminator
-    /// machinery is missing, so the header must keep them separate instead of
-    /// summing them into one bucket.
+    /// #8165: on the bounded surface the three unknown classes share the
+    /// one plain word `unknown`, so the header sums them into one bucket;
+    /// `human-full` keeps them separate (asserted below).
     #[test]
     fn summary_header_keeps_the_unknown_classes_separate() {
         let output = CheckOutput {
@@ -1268,14 +1411,22 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains(
+            rendered.contains("Summary: 9 probes (0 exposed, 0 weak, 0 unrevealed, 0 no path, 9 unknown); 9 of 9 findings unsuppressed"),
+            "bounded summary must sum the unknown classes in plain words; got:\n{rendered}"
+        );
+        for token in ["infection_unknown", "propagation_unknown", "static_unknown"] {
+            assert!(
+                !rendered.contains(token),
+                "bounded summary must not leak {token}; got:\n{rendered}"
+            );
+        }
+
+        let full = super::render_full_with_config(&output, &RiprConfig::default());
+        assert!(
+            full.contains(
                 "3 infection_unknown, 5 propagation_unknown, 1 static_unknown; 9 of 9 finding(s) unsuppressed"
             ),
-            "unknown classes must render separately; got:\n{rendered}"
-        );
-        assert!(
-            !rendered.contains(" unknown\n"),
-            "the summed unknown bucket must not return; got:\n{rendered}"
+            "human-full must keep the unknown classes separate; got:\n{full}"
         );
     }
 
@@ -1325,15 +1476,17 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("; 1 of 2 finding(s) unsuppressed"),
+            rendered.contains("; 1 of 2 findings unsuppressed"),
             "the denominator must disclose the suppressed remainder; got:\n{rendered}"
         );
     }
 
-    /// #4322: the header tokens are the canonical `ExposureClass` wire
-    /// tokens, so grepping the header against finding lines (or the spec
-    /// vocabulary) succeeds. The distinctive per-class counts pin both token
-    /// and position; adding a class without extending the header fails here.
+    /// #8165: the bounded header names every class in plain words (the
+    /// unknown classes summed); the canonical `ExposureClass` wire tokens
+    /// stay on `human-full`, so grepping that surface against finding lines
+    /// (or the spec vocabulary) still succeeds. The distinctive per-class
+    /// counts pin both word and position; adding a class without extending
+    /// the header fails here.
     #[test]
     fn summary_header_names_every_class_with_its_canonical_token() {
         let output = CheckOutput {
@@ -1370,13 +1523,38 @@ mod tests {
 
         let rendered = render(&output);
 
-        assert!(rendered.contains(
+        assert!(
+            rendered.contains(
+                "Summary: 7 probes (1 exposed, 2 weak, 3 unrevealed, 4 no path, 18 unknown); \
+                 7 of 7 findings unsuppressed"
+            ),
+            "bounded header must name every class in plain words; got:\n{rendered}"
+        );
+        // No canonical token may leak into the bounded header.
+        for class in [
+            ExposureClass::WeaklyExposed,
+            ExposureClass::ReachableUnrevealed,
+            ExposureClass::NoStaticPath,
+            ExposureClass::InfectionUnknown,
+            ExposureClass::PropagationUnknown,
+            ExposureClass::StaticUnknown,
+        ] {
+            assert!(
+                !rendered.contains(class.as_str()),
+                "bounded header must not carry the canonical token {}; got:\n{rendered}",
+                class.as_str()
+            );
+        }
+
+        let full = super::render_full_with_config(&output, &RiprConfig::default());
+        assert!(full.contains(
             "Summary: 7 probe(s), 1 exposed, 2 weakly_exposed, 3 reachable_unrevealed, \
              4 no_static_path, 5 infection_unknown, 6 propagation_unknown, 7 static_unknown; \
              7 of 7 finding(s) unsuppressed"
         ));
-        // Token-to-taxonomy binding: every canonical token appears in the
-        // header, so a renamed or added class cannot silently diverge.
+        // Token-to-taxonomy binding on human-full: every canonical token
+        // appears in the header, so a renamed or added class cannot
+        // silently diverge.
         for class in [
             ExposureClass::Exposed,
             ExposureClass::WeaklyExposed,
@@ -1387,8 +1565,8 @@ mod tests {
             ExposureClass::StaticUnknown,
         ] {
             assert!(
-                rendered.contains(class.as_str()),
-                "header must carry the canonical token {}; got:\n{rendered}",
+                full.contains(class.as_str()),
+                "human-full header must carry the canonical token {}; got:\n{full}",
                 class.as_str()
             );
         }
@@ -1459,6 +1637,63 @@ mod tests {
         Ok(())
     }
 
+    /// #8165: limitation lines on the bounded surface drop their
+    /// parenthesized kind/stage tokens; the full surface keeps them.
+    #[test]
+    fn bounded_limitation_lines_drop_schema_tokens() -> Result<(), String> {
+        let output = partial_outcome_output(vec![sample_finding()])?;
+        let rendered = render(&output);
+        assert!(
+            rendered.contains("  Limitation: "),
+            "missing limitation line:\n{rendered}"
+        );
+        for line in rendered.lines().filter(|line| line.contains("Limitation:")) {
+            assert!(
+                !line.contains(" at ") || !line.contains('('),
+                "bounded limitation leaked a schema token: {line}"
+            );
+        }
+        assert!(
+            !rendered.contains("combined_hunk_unsupported at diff_parse"),
+            "bounded render leaked limitation schema tokens:\n{rendered}"
+        );
+        let full = super::render_full_with_config(&output, &RiprConfig::default());
+        assert!(
+            full.contains("combined_hunk_unsupported at diff_parse"),
+            "human-full must retain limitation schema tokens:\n{full}"
+        );
+        Ok(())
+    }
+
+    /// #8165: every class plain label is prose, never a snake_case wire
+    /// token, so a future class cannot silently leak its token into the
+    /// bounded summary. `exposed` legitimately reuses its single plain
+    /// word.
+    #[test]
+    fn every_class_plain_label_is_prose_not_a_wire_token() {
+        for class in [
+            ExposureClass::Exposed,
+            ExposureClass::WeaklyExposed,
+            ExposureClass::ReachableUnrevealed,
+            ExposureClass::NoStaticPath,
+            ExposureClass::InfectionUnknown,
+            ExposureClass::PropagationUnknown,
+            ExposureClass::StaticUnknown,
+        ] {
+            assert!(
+                !class.plain_label().contains('_'),
+                "plain label for {class:?} is not plain: {}",
+                class.plain_label()
+            );
+            if class.plain_label() == class.as_str() {
+                assert!(
+                    !class.as_str().contains('_'),
+                    "{class:?} reuses a snake_case token as its plain label"
+                );
+            }
+        }
+    }
+
     // #4952: the EOL-only churn disclosure is a churn-shape note, not an
     // incompleteness, so a complete run carrying it renders the limitation
     // without the incomplete-scope hedges.
@@ -1525,7 +1760,7 @@ mod tests {
         assert!(rendered.contains("analysis complete"), "{rendered}");
         assert!(
             rendered.contains(
-                "Limitation: some files changed only in line endings during parsing the diff (eol_only_churn at diff_parse)"
+                "Limitation: some files changed only in line endings during parsing the diff"
             ),
             "{rendered}"
         );
@@ -1551,7 +1786,11 @@ mod tests {
             !rendered.contains("Zero findings is not a clean result"),
             "{rendered}"
         );
-        assert!(rendered.contains("eol_only_churn"), "{rendered}");
+        assert!(
+            rendered.contains("some files changed only in line endings"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("eol_only_churn"), "{rendered}");
         Ok(())
     }
 
@@ -1715,7 +1954,7 @@ mod tests {
             };
             let rendered = render(&output);
             assert!(
-                rendered.contains("State: preview language, advisory only (preview_limited)"),
+                rendered.contains("State: preview language, advisory only"),
                 "{rendered}"
             );
             assert!(
@@ -1835,11 +2074,11 @@ mod tests {
         let rendered = render(&bounded_output_with_findings(findings));
 
         assert!(
-            rendered.contains("    - src/f1.rs:1 (weakly_exposed)\n"),
+            rendered.contains("    - src/f1.rs:1 (weak)\n"),
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/f2.rs:1 (weakly_exposed)\n"),
+            rendered.contains("    - src/f2.rs:1 (weak)\n"),
             "{rendered}"
         );
     }
@@ -1862,7 +2101,10 @@ mod tests {
 
         let rendered = render(&bounded_output_with_findings(findings));
 
-        assert!(rendered.contains("(no_actionable_gap)"), "{rendered}");
+        assert!(
+            rendered.contains("State: no gap selected for repair"),
+            "{rendered}"
+        );
         assert!(
             rendered.contains(
                 "  Safe next action: all findings are base-side evidence, not candidate edit targets; rerun with --format human-full to inspect the full evidence before treating this run as actionable\n"
@@ -1878,11 +2120,11 @@ mod tests {
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/base_0.rs:1 (weakly_exposed)\n"),
+            rendered.contains("    - src/base_0.rs:1 (weak)\n"),
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/base_1.rs:1 (weakly_exposed)\n"),
+            rendered.contains("    - src/base_1.rs:1 (weak)\n"),
             "{rendered}"
         );
         assert!(
@@ -1910,7 +2152,10 @@ mod tests {
 
         let rendered = render(&bounded_output_with_findings(findings));
 
-        assert!(rendered.contains("(no_actionable_gap)"), "{rendered}");
+        assert!(
+            rendered.contains("State: no gap selected for repair"),
+            "{rendered}"
+        );
         assert!(
             !rendered.contains("base-side evidence"),
             "unknown currentness must not read as base-side:\n{rendered}"
@@ -1978,7 +2223,7 @@ mod tests {
         let rendered = render(&bounded_output_with_findings(findings));
 
         assert!(
-            rendered.contains("; 3 of 3 finding(s) unsuppressed"),
+            rendered.contains("; 3 of 3 findings unsuppressed"),
             "header denominator must count unsuppressed findings; got:\n{rendered}"
         );
         assert!(
@@ -2007,7 +2252,10 @@ mod tests {
 
         let rendered = render(&bounded_output_with_findings(vec![selected, base]));
 
-        assert!(rendered.contains("(top_gap)"), "{rendered}");
+        assert!(
+            rendered.contains("State: a test gap to inspect or repair"),
+            "{rendered}"
+        );
         assert!(
             rendered.contains(
                 "  All 1 omitted finding(s) are base-side evidence, not candidate edit targets.\n"
@@ -2019,7 +2267,7 @@ mod tests {
             "base-side evidence must not read as lower-priority:\n{rendered}"
         );
         assert!(
-            rendered.contains("    - src/base.rs:1 (weakly_exposed)\n"),
+            rendered.contains("    - src/base.rs:1 (weak)\n"),
             "{rendered}"
         );
     }
@@ -2027,7 +2275,8 @@ mod tests {
     /// #5021: when a top gap is selected and the omitted set mixes
     /// lower-ranked candidates with base-side evidence, the count line names
     /// the mix with its own counts instead of promoting the base-side
-    /// findings to lower-priority candidates.
+    /// findings to lower-priority candidates. #7643: the bullets append each
+    /// finding's currentness category so the two clauses connect to rows.
     #[test]
     fn hidden_block_selected_mixed_omitted_names_base_side_count() {
         // Ranking ties break on file path (see `triage_rank`), so the
@@ -2052,11 +2301,11 @@ mod tests {
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/base.rs:1 (weakly_exposed)\n"),
+            rendered.contains("    - src/base.rs:1 (weak, base-side)\n"),
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/lower.rs:1 (weakly_exposed)\n"),
+            rendered.contains("    - src/lower.rs:1 (weak, lower-priority candidate)\n"),
             "{rendered}"
         );
     }
@@ -2249,7 +2498,7 @@ mod tests {
 
         let rendered = render(&bounded_output_with_findings(vec![rust, python]));
 
-        assert!(rendered.contains("State: a test gap to inspect or repair (top_gap)"));
+        assert!(rendered.contains("State: a test gap to inspect or repair"));
         assert!(rendered.contains("File: src/lib.rs:4"));
         assert!(!rendered.contains("File: src/margin.py:2"));
         assert!(
@@ -2303,7 +2552,7 @@ mod tests {
 
         let rendered = render(&bounded_output_with_findings(findings));
 
-        assert!(rendered.contains("State: preview language, advisory only (preview_limited)"));
+        assert!(rendered.contains("State: preview language, advisory only"));
         assert!(
             rendered.contains(
                 "  2 lower-priority finding(s) omitted from default human output (Python preview: 2).\n"
@@ -2510,7 +2759,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(rendered.contains("Start here:"));
-        assert!(rendered.contains("State: a test gap to inspect or repair (top_gap)"));
+        assert!(rendered.contains("State: a test gap to inspect or repair"));
         assert!(rendered.contains("599 lower-priority finding(s) omitted"));
         assert!(rendered.contains("--format human-full"));
         assert!(rendered.lines().count() < 150);
@@ -2562,9 +2811,9 @@ mod tests {
 
         let rendered = render(&output);
 
-        assert!(rendered.contains("State: a test gap to inspect or repair (top_gap)"));
+        assert!(rendered.contains("State: a test gap to inspect or repair"));
         assert!(rendered.contains("File: src/actionable.rs:9"));
-        assert!(rendered.contains("Static exposure: unrevealed (reachable_unrevealed, "));
+        assert!(rendered.contains("Static exposure: unrevealed (severity: "));
         assert!(!rendered.contains("File: src/exposed.rs:1"));
     }
 
@@ -2594,9 +2843,140 @@ mod tests {
         let rendered = render(&output);
 
         assert!(rendered.contains("Start here:"));
-        assert!(rendered.contains("State: nothing in scope (missing_scope)"));
+        assert!(rendered.contains("State: nothing in scope"));
         assert!(rendered.contains("provide an analysis scope"));
         assert!(rendered.contains("No diff-derived static exposure probes found."));
+    }
+
+    /// #8165: the bounded (default) render leaks no schema token, while
+    /// the human-full render keeps them. Forbidden promotion terms never
+    /// appear in either.
+    #[test]
+    fn bounded_human_output_speaks_plain_language_only() {
+        let output = bounded_output_with_findings(vec![sample_finding()]);
+        let rendered = render(&output);
+        for leaked in [
+            "(top_gap)",
+            "(missing_scope)",
+            "(no_actionable_gap)",
+            "(static_limited)",
+            "(preview_limited)",
+            "(weakly_exposed",
+            "(reachable_unrevealed",
+            "(no_static_path",
+            "(infection_unknown",
+            "(propagation_unknown",
+            "(static_unknown",
+            "; no_scope",
+            "; complete",
+            "weakly_exposed,",
+            "reachable_unrevealed,",
+        ] {
+            assert!(
+                !rendered.contains(leaked),
+                "bounded output leaked schema token {leaked}:\n{rendered}"
+            );
+        }
+        for summary in rendered.lines().filter(|line| line.starts_with("Summary:")) {
+            assert!(
+                !summary.contains("weakly_exposed") && !summary.contains("reachable_unrevealed"),
+                "Summary leaked a schema token: {summary}"
+            );
+        }
+        for plain in ["weak", "State: a test gap to inspect or repair"] {
+            assert!(rendered.contains(plain), "missing {plain}:\n{rendered}");
+        }
+        let full = super::render_full_with_config(&output, &RiprConfig::default());
+        assert!(
+            full.contains("weakly_exposed"),
+            "human-full must retain schema tokens:\n{full}"
+        );
+        assert!(!rendered.contains("killed") && !full.contains("killed")); // ripr-allow: static-language: control enumerates the promotion term it rejects
+        assert!(!rendered.contains("survived") && !full.contains("survived")); // ripr-allow: static-language: control enumerates the promotion term it rejects
+        assert!(!rendered.contains("untested") && !full.contains("untested")); // ripr-allow: static-language: control enumerates the promotion term it rejects
+        assert!(!rendered.contains("proven") && !full.contains("proven")); // ripr-allow: static-language: control enumerates the promotion term it rejects
+        assert!(!rendered.contains("adequate") && !full.contains("adequate")); // ripr-allow: static-language: control enumerates the promotion term it rejects
+    }
+
+    /// Snake_case identifiers on the bounded render that are data, not
+    /// renderer-controlled labels: producer prose, ids and CLI spellings
+    /// (RIPR-SPEC-0122 treats these as data).
+    fn wire_token_leaks(rendered: &str) -> Vec<String> {
+        let mut leaks = Vec::new();
+        for line in rendered.lines() {
+            let trimmed = line.trim_start();
+            if line.starts_with("root:")
+                || trimmed.starts_with("ripr ")
+                || trimmed.starts_with("Canonical gap:")
+                || trimmed.starts_with("Related test:")
+            {
+                continue;
+            }
+            for word in line.split(|c: char| !(c.is_ascii_lowercase() || c == '_')) {
+                if word.contains('_')
+                    && !word.starts_with('_')
+                    && !word.ends_with('_')
+                    && !leaks.iter().any(|seen: &String| seen == word)
+                {
+                    leaks.push(word.to_string());
+                }
+            }
+        }
+        leaks
+    }
+
+    #[test]
+    fn wire_token_scan_discriminates_a_leaked_token() {
+        assert!(wire_token_leaks("State: a gap to repair (top_gap)").contains(&"top_gap".into()));
+        assert!(
+            wire_token_leaks("Summary: 1 probe (1 weakly_exposed)")
+                .contains(&"weakly_exposed".into())
+        );
+        assert!(wire_token_leaks("  Static exposure: weak (severity: warning)").is_empty());
+        // Data lines are carved out, not the rest of the screen.
+        assert!(
+            wire_token_leaks("  Related test: tests/a.rs:2 test_name\n  ripr explain probe:a_b")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn bounded_render_carries_no_snake_case_wire_token_for_any_class() {
+        let classes = [
+            ExposureClass::Exposed,
+            ExposureClass::WeaklyExposed,
+            ExposureClass::ReachableUnrevealed,
+            ExposureClass::NoStaticPath,
+            ExposureClass::InfectionUnknown,
+            ExposureClass::PropagationUnknown,
+            ExposureClass::StaticUnknown,
+        ];
+        for class in classes {
+            // More findings than the digest shows, so the Hidden list renders.
+            let findings = (0..12)
+                .map(|n| {
+                    let mut finding = sample_finding();
+                    finding.class = class.clone();
+                    finding.id = format!("probe:sample.rs:{n}:predicate");
+                    finding.probe.location.line = n + 1;
+                    finding
+                })
+                .collect::<Vec<_>>();
+            let rendered = render(&bounded_output_with_findings(findings));
+            assert!(
+                wire_token_leaks(&rendered).is_empty(),
+                "{class:?}: bounded render leaked {:?}:\n{rendered}",
+                wire_token_leaks(&rendered)
+            );
+        }
+        for no_scope in [false, true] {
+            let rendered = render(&empty_live_output(no_scope));
+            assert!(
+                wire_token_leaks(&rendered).is_empty(),
+                "empty render (no_scope {no_scope}) leaked {:?}:\n{rendered}",
+                wire_token_leaks(&rendered)
+            );
+        }
     }
 
     fn empty_live_output(no_scope_provided: bool) -> CheckOutput {
@@ -2759,9 +3139,9 @@ mod tests {
 
         let rendered = render(&output);
 
-        assert!(rendered.contains("State: preview language, advisory only (preview_limited)"));
+        assert!(rendered.contains("State: preview language, advisory only"));
         assert!(rendered.contains("preview-language evidence is advisory"));
-        assert!(!rendered.contains("State: a test gap to inspect or repair (top_gap)"));
+        assert!(!rendered.contains("State: a test gap to inspect or repair"));
     }
 
     // #2273: an `exposed` finding can carry an observation rationale (not a
@@ -3070,7 +3450,7 @@ mod tests {
 
         let rendered = render(&output);
 
-        assert!(rendered.contains("State: preview language, advisory only (preview_limited)"));
+        assert!(rendered.contains("State: preview language, advisory only"));
         let expected = format!(
             "  Safe next action: this TypeScript preview finding's repair packet is not ready ({}); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`\n",
             super::sections::one_line(&why)
@@ -3187,7 +3567,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("State: preview language, advisory only (preview_limited)"),
+            rendered.contains("State: preview language, advisory only"),
             "{rendered}"
         );
         assert!(rendered.contains(
@@ -3204,7 +3584,7 @@ mod tests {
 
         let rendered = render(&output);
 
-        assert!(rendered.contains("State: preview language, advisory only (preview_limited)"));
+        assert!(rendered.contains("State: preview language, advisory only"));
         // The complete packet names its own action, test file, and verify
         // command instead of a bare "verify independently" with no route.
         assert!(
@@ -3232,7 +3612,7 @@ mod tests {
 
         let rendered = render(&output);
 
-        assert!(rendered.contains("State: preview language, advisory only (preview_limited)"));
+        assert!(rendered.contains("State: preview language, advisory only"));
         assert!(rendered.contains(
             "  Safe next action: preview-language evidence is advisory; the repair packet is blocked by the named static limitation, not by missing fields; resolve the limitation and rerun preview evidence before acting\n"
         ));
@@ -3254,7 +3634,7 @@ mod tests {
 
         let rendered = render(&output);
 
-        assert!(rendered.contains("State: preview language, advisory only (preview_limited)"));
+        assert!(rendered.contains("State: preview language, advisory only"));
         assert!(
             rendered.contains(
                 "  Safe next action: this TypeScript preview finding's repair packet is not ready ("
@@ -3280,7 +3660,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("State: preview language, advisory only (preview_limited)"),
+            rendered.contains("State: preview language, advisory only"),
             "{rendered}"
         );
         assert!(rendered.contains(
@@ -3419,7 +3799,7 @@ mod tests {
 
         let rendered = render(&output);
 
-        assert!(rendered.contains("State: a test gap to inspect or repair (top_gap)"));
+        assert!(rendered.contains("State: a test gap to inspect or repair"));
         assert!(rendered.contains("File: src/stable.rs:10"));
         assert!(!rendered.contains("File: src/preview.ts:1"));
         assert!(
@@ -3942,7 +4322,7 @@ mod tests {
 
         let rendered = render(&output);
 
-        assert!(rendered.contains("State: no gap selected for repair (no_actionable_gap)"));
+        assert!(rendered.contains("State: no gap selected for repair"));
         assert!(rendered.contains("all findings are suppressed by policy"));
         assert!(!rendered.contains("inspect the named static limitation"));
         assert!(!rendered.contains("Next: drill into the top finding:"));

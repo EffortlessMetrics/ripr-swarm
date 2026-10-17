@@ -10,13 +10,28 @@ ripr uses static analysis; it does not run mutants or write the test for you.
 
 ## Installation
 
-Install the published CLI with Cargo:
+Fastest, with no Rust toolchain: download the checksummed prebuilt 0.10.0
+archive (about a second here). This example is Linux x86-64; the
+[release](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.10.0) also
+has macOS and Windows archives. On macOS set `t=aarch64-apple-darwin` (Apple
+silicon) or `t=x86_64-apple-darwin` (Intel); macOS ships `shasum`, not
+`sha256sum`, so the verify step falls back to `shasum -a 256`:
+
+```bash
+v=0.10.0; t=x86_64-unknown-linux-gnu; f=ripr-server-v$v-$t.tar.gz
+b=https://github.com/EffortlessMetrics/ripr/releases/download/v$v
+curl -fsSLO $b/$f && curl -fsSLO $b/$f.sha256
+echo "$(cat $f.sha256)  $f" | { sha256sum -c - || shasum -a 256 -c -; } && tar xzf $f \
+  && export PATH="$PWD:$PATH"   # ./ripr is now first on PATH for this shell
+```
+
+Or install the published CLI with Cargo, which compiles from source:
 
 ```bash
 cargo install ripr
 ```
 
-This requires Rust 1.95 or newer. Git must be available for the diff workflow.
+Cargo requires Rust 1.95 or newer. Git must be available for the diff workflow.
 The editor installation below normally does not require Cargo.
 
 If Cargo refuses because ripr requires rustc 1.95, run `rustup update stable`.
@@ -66,11 +81,22 @@ For another installation method or a pinned server, see
 
 ## CLI First Hour
 
-From a Rust repository on a branch with committed changes:
+From a Rust repository with a change to inspect:
 
 ```bash
 ripr check
 ```
+
+In this development build, `check` uses uncommitted tracked edits when present,
+otherwise committed history against the default base. On a clean checkout of
+the base branch, edit a tracked source file and run `ripr check` again. For a new
+file, first use `git add -N PATH` so it enters the tracked diff. See
+[Choose the change](#choose-the-change) for explicit diff selection.
+
+Use `ripr doctor` to diagnose setup if analysis cannot complete; it is not a
+required first step. To explore a clean repository without making a change,
+use the separate [repository exploration](#explore-the-repository) path,
+`ripr pilot --root .`.
 
 No `ripr.toml` is required. The development CLI prints a summary and a bounded
 `Start here:` section with a finding, a no-action result, or the limitation
@@ -126,8 +152,9 @@ ripr check --base REF
 ```
 
 On an unchanged base branch, an empty diff is expected. To analyze a saved patch,
-use `ripr check --diff PATH`, replacing `PATH` with your patch file. Details and
-options are available in `ripr help check`.
+use `ripr check --diff PATH`, replacing `PATH` with your patch file. The common
+options are in `ripr help check`; `ripr help check --all` lists every option,
+output format, and environment variable.
 
 ### Explore the repository
 

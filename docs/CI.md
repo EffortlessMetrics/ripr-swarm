@@ -652,6 +652,18 @@ synthetic success replaces it. Runner-minute savings remain unmeasured until a
 natural lifecycle is observed. `xtask/tests/pr_readiness_workflow_contract.rs`
 checks parsed event/config contracts, not hosted provider execution.
 
+UB Review prepares the locked `owner_return_pin_fallible_literal/input` fixture
+before invoking the action, matching required Rust CI. Its offline identity
+probe needs `anyhow = 1.0.100` in the runner's default Cargo home. The pinned
+action sanitizes sensor environments and drops `HOME` and `CARGO_HOME`; this
+workflow therefore must not redirect those homes. A custom sensor-home route
+needs separate preparation and verification. Fetch failures remain failures;
+a green advisory wrapper does not make failed or missing sensor evidence pass.
+Historical run `38859874238` retains its `cargo-test` exit 101 and separate
+invalid command/timeout evidence. Adding preparation does not reclassify that
+run or establish recovery of every sensor; the repaired hosted producer still
+needs its own evidence.
+
 - Open PRs as Draft (`gh pr create --draft`), then follow the
   [Draft to Ready handoff](PR_AUTOMATION.md#draft-to-ready-handoff) before
   requesting qualification. A PR opened directly as Ready never receives a
@@ -717,12 +729,19 @@ cargo xtask release-readiness --version "$release_version"
 The unlocked install resolution step builds the packaged crate the way
 `cargo install ripr` without `--locked` does: it unpacks the `.crate`, deletes
 its `Cargo.lock`, re-resolves, and checks. It catches a dependency that only
-compiles under the committed lock (#3787):
+compiles under the committed lock (#3787). The Actions Bash step uses errexit;
+each prerequisite is a separate command so its failure stops the step before
+the final check (#8330):
 
 ```bash
 cargo package -p ripr --no-verify
-tar xzf "target/package/ripr-$release_version.crate" -C "$RUNNER_TEMP"
-cd "$RUNNER_TEMP/ripr-$release_version" && rm Cargo.lock && cargo generate-lockfile
+package_id="$(cargo pkgid -p ripr)"
+package_version="${package_id##*#}"
+test -n "$package_version"
+tar xzf "target/package/ripr-$package_version.crate" -C "$RUNNER_TEMP"
+cd "$RUNNER_TEMP/ripr-$package_version"
+rm Cargo.lock
+cargo generate-lockfile
 cargo check --target-dir "$RUNNER_TEMP/unlocked-target"
 ```
 

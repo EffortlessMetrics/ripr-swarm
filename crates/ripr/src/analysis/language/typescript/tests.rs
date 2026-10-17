@@ -3963,7 +3963,7 @@ fn extract_tests_collects_assertions_nested_in_loop_switch_and_label_bodies() {
 }
 
 #[test]
-fn extract_tests_collects_assertions_nested_in_try_catch_finally() {
+fn extract_tests_withholds_caught_assertions_but_reads_handler_and_finally() {
     let tests = extract_tests(
         Path::new("tests/lib.test.ts"),
         r#"test("try-catch", () => {
@@ -3978,10 +3978,9 @@ fn extract_tests_collects_assertions_nested_in_try_catch_finally() {
 "#,
     );
     assert_eq!(tests.len(), 1);
-    assert_eq!(tests[0].assertions.len(), 3);
-    assert_eq!(tests[0].assertions[0].matcher, "toEqual");
-    assert_eq!(tests[0].assertions[1].matcher, "toBeDefined");
-    assert_eq!(tests[0].assertions[2].matcher, "toHaveBeenCalled");
+    assert_eq!(tests[0].assertions.len(), 2);
+    assert_eq!(tests[0].assertions[0].matcher, "toBeDefined");
+    assert_eq!(tests[0].assertions[1].matcher, "toHaveBeenCalled");
 }
 
 #[test]
@@ -9903,7 +9902,7 @@ fn unresolved_alias_import_names_the_import_in_no_reach_text() -> Result<(), Str
     assert!(
         missing.starts_with(
             "Test `discounts` imports `applyDiscount` through non-relative specifier `@/owner`, which ripr did not resolve"
-        ) && missing.contains("`[typescript] resolve_tsconfig_paths` is unset or false"),
+        ) && missing.contains("`[typescript] resolve_tsconfig_paths` is false"),
         "missing must name the import and the typed cause, got: {missing}"
     );
     assert!(

@@ -612,7 +612,9 @@ mod tests {
         let Some((route, redirect)) = producer.split_once(" > ") else {
             return Err("producer must persist its output".to_string());
         };
-        let redirect = redirect.trim_matches('\'').replace('\\', "/");
+        let redirect = redirect
+            .trim_matches(|ch| ch == '\'' || ch == '"')
+            .replace('\\', "/");
         assert!(
             route.starts_with("ripr agent verify ") && redirect.ends_with(verify_input),
             "producer redirect {redirect} must land on the receipt input {verify_input}"

@@ -544,6 +544,45 @@ fn pilot_summary_md_names_unlisted_seams_on_an_owners_first_pick_only() {
 }
 
 #[test]
+fn pilot_summary_json_marks_the_actionable_total_as_a_lower_bound_after_a_seam_limit()
+-> Result<(), String> {
+    // #6739: the JSON consumer must be able to tell a complete count from a
+    // lower bound, exactly as the Markdown "at least N" wording does.
+    let entries = [classified_in_owner(
+        SeamGripClass::WeaklyGripped,
+        "src/a.rs",
+        "a::clone",
+        10,
+    )];
+    let limit = crate::analysis::SeamLimitInfo {
+        analyzed: 3,
+        total: 7,
+        source: crate::analysis::SeamLimitSource::Configured,
+    };
+    let artifacts = pilot_artifacts();
+    let mut context = pilot_context(&artifacts);
+    context.seam_limit = Some(&limit);
+    let limited: serde_json::Value =
+        serde_json::from_str(&render_pilot_summary_json(&entries, context))
+            .map_err(|err| err.to_string())?;
+    assert_eq!(limited["actionable_seams_total"], 1);
+    assert_eq!(limited["actionable_seams_total_is_lower_bound"], true);
+    assert_eq!(
+        limited["seam_limit"],
+        serde_json::json!({"analyzed": 3, "total": 7, "source": "configured"})
+    );
+
+    context.seam_limit = None;
+    let exact: serde_json::Value =
+        serde_json::from_str(&render_pilot_summary_json(&entries, context))
+            .map_err(|err| err.to_string())?;
+    assert_eq!(exact["actionable_seams_total"], 1);
+    assert_eq!(exact["actionable_seams_total_is_lower_bound"], false);
+    assert!(exact["seam_limit"].is_null(), "{exact}");
+    Ok(())
+}
+
+#[test]
 fn pilot_summary_md_marks_owner_counts_as_lower_bounds_after_a_seam_limit() {
     // #6602: a seam limit dropped classified seams before ranking, so a
     // function may have more seams than the kept slice shows.
@@ -864,7 +903,7 @@ fn pilot_summary_json_contains_config_state_artifacts_and_next_commands() {
         &[entry],
         context,
     ));
-    assert!(json.contains(r#""schema_version": "0.3""#));
+    assert!(json.contains(r#""schema_version": "0.4""#));
     assert!(json.contains(r#""status": "complete""#));
     assert!(json.contains(r#""state": "loaded""#));
     assert!(json.contains(r#""top_actionable_seams""#));
@@ -956,10 +995,16 @@ fn pilot_summary_md_pairs_bash_next_commands_with_powershell_variants() -> Resul
         "powershell after-snapshot translation missing:\n{md}"
     );
     // Disclosure precedes the first copyable command, mirroring the landed
-    // agent_workflow ordering, and states the cmd.exe boundary.
+    // agent_workflow ordering, and states the host shell boundary (#7729:
+    // cmd.exe unsupported off Windows; the Windows console named on it).
+    let boundary = if cfg!(windows) {
+        "Windows console"
+    } else {
+        "cmd.exe is not supported"
+    };
     let disclosure = md
-        .find("cmd.exe is not supported")
-        .ok_or_else(|| format!("pilot markdown must state the cmd.exe boundary: {md}"))?;
+        .find(boundary)
+        .ok_or_else(|| format!("pilot markdown must state the host shell boundary: {md}"))?;
     let first_fence = md
         .find("```bash")
         .ok_or_else(|| format!("pilot markdown must fence the bash commands: {md}"))?;
@@ -1084,7 +1129,7 @@ fn timeout_summary_json_is_partial_and_points_to_retry() {
     };
 
     let json = render_pilot_timeout_summary_json(context);
-    assert!(json.contains(r#""schema_version": "0.3""#));
+    assert!(json.contains(r#""schema_version": "0.4""#));
     assert!(json.contains(r#""status": "partial""#));
     assert!(json.contains(r#""reason": "timeout""#));
     assert!(json.contains(r#""actionable_seams_total": null"#));
@@ -1176,9 +1221,14 @@ fn timeout_summary_md_pairs_bash_retry_with_powershell_variant() -> Result<(), S
         !md.contains("```powershell"),
         "an unchanged retry must not repeat as a PowerShell block:\n{md}"
     );
-    let disclosure = md
-        .find("cmd.exe is not supported")
-        .ok_or_else(|| format!("pilot timeout markdown must state the cmd.exe boundary: {md}"))?;
+    let boundary = if cfg!(windows) {
+        "Windows console"
+    } else {
+        "cmd.exe is not supported"
+    };
+    let disclosure = md.find(boundary).ok_or_else(|| {
+        format!("pilot timeout markdown must state the host shell boundary: {md}")
+    })?;
     let first_fence = md
         .find("```bash")
         .ok_or_else(|| format!("pilot timeout markdown must fence the bash command: {md}"))?;

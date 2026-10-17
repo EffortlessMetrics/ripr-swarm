@@ -37,6 +37,8 @@ const PILOT_RETRY_TIMEOUT_MS: u64 = 240_000;
 /// would pass verify's comparability check against a `ripr check` after
 /// snapshot and compare two different populations. Verify then refuses it
 /// rather than misreporting.
+/// Diff-bound generated-source selection also withholds identity whenever its
+/// source/evidence inputs differ from ordinary repo exposure.
 fn write_pilot_repo_exposure_json(
     path: &Path,
     input: &CheckInput,
@@ -154,27 +156,42 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                 );
             },
             {
-                let root = input.root.clone();
+                let input = input.clone();
                 let cfg = config.clone();
                 let sink = progress.as_ref().map(Arc::clone);
-                move || run_pilot_inventory(&root, &cfg, sink.as_ref())
+                move || {
+                    // The loaded change selects both the generated-source view
+                    // and later change-first ranking, inside the same deadline.
+                    let change = load_pilot_current_change(&input, git_timeout);
+                    let report = run_pilot_inventory(
+                        &input.root,
+                        &cfg,
+                        &change.changed_files(),
+                        sink.as_ref(),
+                    )?;
+                    Ok((report, change))
+                }
             },
         )?
     } else {
-        PilotAnalysisResult::Complete(analysis::ClassifiedSeamsReport {
-            classified: Vec::new(),
-            corpus_key: None,
-            limit_info: None,
-            skipped_generated: Vec::new(),
-            naming_only_skips: Vec::new(),
-        })
+        PilotAnalysisResult::Complete((
+            analysis::ClassifiedSeamsReport {
+                classified: Vec::new(),
+                corpus_key: None,
+                diff_bound_corpus: false,
+                limit_info: None,
+                skipped_generated: Vec::new(),
+                naming_only_skips: Vec::new(),
+            },
+            load_pilot_current_change(&input, git_timeout),
+        ))
     };
     // The timeout hint floors at the budget actually spent, so an
     // extended run does not suggest a smaller --timeout-ms than it used
     // (#5443). The printed retry also stays inside an interactive cap
     // instead of multiplying the spent budget by four (#7427).
     let spent_timeout_ms = options.timeout_ms.saturating_add(extension_ms.unwrap_or(0));
-    let PilotAnalysisResult::Complete(report) = analysis_result else {
+    let PilotAnalysisResult::Complete((report, current_change)) = analysis_result else {
         // #7425: a timeout overwrites only the two summaries. Remove leftover
         // repo-exposure and seam-packet files from an earlier complete run so
         // the packet directory does not present them as this run's outputs.
@@ -214,6 +231,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // budget wins when both fire; inventory limit is the outer bound).
     let mut classified = report.classified;
     let corpus_key = report.corpus_key;
+    let diff_bound_corpus = report.diff_bound_corpus;
     let mut inventory_limit_info = report.limit_info;
     let generated_skip = output::repo_exposure::GeneratedRustSkip::from_paths(
         report.skipped_generated,
@@ -223,7 +241,6 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // changed seam past the cut is kept and can still rank change-first. A
     // changed seam pilot cannot recommend is not kept: it would displace an
     // actionable seam and leave nothing to recommend.
-    let current_change = load_pilot_current_change(&input, git_timeout);
     // #6943: the inventory seam limit cuts before the change is known, so on
     // a large repo it can drop the very seams the developer changed. Classify
     // the change's own files in what is left of pilot's deadline and add its
@@ -270,8 +287,27 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // A snapshot holding seams `ripr check` never classifies is not the same
     // population as its after snapshot, so it is written without identity.
     let change_seams_added = folded.added > 0;
+    // Source admission is independent of the inventory cap. Without a
+    // supplement (or after a failed one), an absent changed source still
+    // needs the shared disclosure; observing file presence does not clear
+    // the failed supplement's classification caveat.
+    let absent_file_limitations = if let Some(limitations) = folded.absent_file_limitations {
+        Some(limitations)
+    } else if rust_enabled {
+        if current_change.changed_rust_files().is_empty() {
+            None
+        } else {
+            Some(analysis::absent_changed_rust_file_limitations(
+                &input.root,
+                &config,
+                &current_change.changed_files(),
+            )?)
+        }
+    } else {
+        None
+    };
     let current_change = current_change
-        .with_absent_file_limitations(folded.absent_file_limitations)
+        .with_absent_file_limitations(absent_file_limitations)
         .with_seams_counted(&classified, folded.caveat_limit);
     let pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
         current_change.keeps_past_budget(entry)
@@ -337,7 +373,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         output::render::detect_python_repo_exposure_guidance_pub(&input.root, &classified);
     // The existing context is available only for the check-comparable full
     // population. Keep base None, matching pilot's printed after command.
-    let snapshot_context = if pilot_budget_truncated || change_seams_added {
+    let snapshot_context = if pilot_budget_truncated || change_seams_added || diff_bound_corpus {
         None
     } else {
         Some(
@@ -432,15 +468,20 @@ fn classify_change_past_seam_limit(
         );
     }
     let (root, config, change) = (root.to_path_buf(), config.clone(), change.clone());
+    let changed_paths = change.changed_files();
     Some(
         match run_pilot_analysis_with_timeout(
             remaining_ms,
             None,
             || {},
             move || {
-                analysis::classify_seams_in_files_at_with_config(&root, &config, &files, &|seam| {
-                    change.touches_seam(seam)
-                })
+                analysis::classify_seams_in_files_at_with_config(
+                    &root,
+                    &config,
+                    &files,
+                    &changed_paths,
+                    &|seam| change.touches_seam(seam),
+                )
             },
         ) {
             Ok(PilotAnalysisResult::Complete(classified)) => Ok(classified),
@@ -464,10 +505,10 @@ fn name_diff_only_files(
     change: &output::pilot::PilotCurrentChange,
     remaining_ms: u64,
 ) -> Vec<(PathBuf, analysis::DiffOnlySource)> {
-    let files = change.changed_rust_files();
-    if files.is_empty() {
+    if change.changed_rust_files().is_empty() {
         return Vec::new();
     }
+    let files = change.changed_files();
     let missed = || {
         eprintln!(
             "ripr pilot: could not check the current change for build scripts or xtask files within its deadline"
@@ -519,11 +560,12 @@ fn pilot_progress_sink(quiet: bool) -> Option<Arc<CliProgressSink>> {
 fn run_pilot_inventory(
     root: &Path,
     config: &RiprConfig,
+    changed_paths: &[PathBuf],
     sink: Option<&Arc<CliProgressSink>>,
 ) -> Result<analysis::ClassifiedSeamsReport, String> {
     app::repo_inventory_with_progress(
         sink.map(|sink| &**sink as &dyn crate::app::AnalysisProgressSink),
-        || analysis::inventory_classified_seams_report_at_with_config(root, config),
+        || analysis::inventory_pilot_seams_report_at_with_config(root, config, changed_paths),
         Ok,
     )
 }
@@ -1065,6 +1107,7 @@ mod tests {
                 Ok(analysis::ClassifiedSeamsReport {
                     classified: Vec::new(),
                     corpus_key: None,
+                    diff_bound_corpus: false,
                     limit_info: None,
                     skipped_generated: Vec::new(),
                     naming_only_skips: Vec::new(),

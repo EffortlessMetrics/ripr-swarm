@@ -377,10 +377,11 @@ fn refuse_agent_packet(options: &AgentPacketOptions, error: CoreError, json: boo
     )
 }
 
-/// Recovery for an unknown `--seam-id`. Cold agents most often pass the
-/// `probe:...` finding ID that `ripr check` prints; the error must name where
-/// seam IDs come from instead of leaving "not found" as a dead end. The
-/// pilot command names the same root the failing call used.
+/// Recovery for an unknown `--seam-id`. Cold agents most often pass one of
+/// the IDs `ripr check` prints (`probe:...` finding ID, `gap:...` canonical
+/// gap ID); the error must name that family mismatch and where seam IDs
+/// come from instead of leaving "not found" as a dead end. The pilot
+/// command names the same root the failing call used.
 pub(super) fn unknown_seam_id_hint(root: &Path, seam_id: &str) -> String {
     // `bound_root` over the raw path, like the LSP routes: `display_path`
     // would turn a literal backslash in a Unix path into a separator (#4287).
@@ -392,6 +393,8 @@ pub(super) fn unknown_seam_id_hint(root: &Path, seam_id: &str) -> String {
     );
     if seam_id.starts_with("probe:") {
         format!("`probe:...` is a `ripr check` finding ID, not a seam ID; run {pilot}")
+    } else if seam_id.starts_with("gap:") {
+        format!("`gap:...` is a `ripr check` canonical gap ID, not a seam ID; run {pilot}")
     } else {
         format!("Run {pilot}")
     }
@@ -552,7 +555,13 @@ fn agent_verify_error_is_typed_refusal(error: &str) -> bool {
 }
 
 fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), CommandError> {
-    ensure_command_root(&options.root, "agent verify-execute")?;
+    if let Err(error) = ensure_command_root(&options.root, "agent verify-execute") {
+        print!(
+            "{}",
+            app::verification_execution::render_unusable_root(&error)
+        );
+        return Err(CommandError::Failure(error));
+    }
     let outcome = app::verification_execution::execute_verify_packet(
         &options.root,
         &options.packet,
@@ -1324,7 +1333,7 @@ fn run_agent_repair_phase(
             for path in &started.paths {
                 eprintln!(
                     "{}",
-                    terminal_safe(format!("ripr: wrote {}", path.display()))
+                    terminal_safe(format!("ripr: wrote {}", output::path::human_path(path)))
                 );
             }
 
@@ -1340,7 +1349,10 @@ fn run_agent_repair_phase(
             write_text_file(&packet_path, &packet)?;
             eprintln!(
                 "{}",
-                terminal_safe(format!("ripr: wrote {}", packet_path.display()))
+                terminal_safe(format!(
+                    "ripr: wrote {}",
+                    output::path::human_path(&packet_path)
+                ))
             );
             // Nothing prints on stdout here. The before-phase success stdout —
             // with `--json` the packet document carrying the additive
@@ -1374,7 +1386,7 @@ fn run_agent_repair_phase(
             );
             eprintln!(
                 "ripr: consuming attempt manifest {}",
-                attempt.manifest_path.display()
+                output::path::human_path(&attempt.manifest_path)
             );
             // #6033: remember which shared workflow artifacts existed before
             // this phase wrote its own (preserving the previous projection's

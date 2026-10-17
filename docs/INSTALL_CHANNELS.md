@@ -66,7 +66,8 @@ alone does not prove CI is running 0.11. See [CI](CI.md).
 
 ### Re-select the diff and review suppressions
 
-Use the installed `check --help` and [quickstart](QUICKSTART.md) to select the
+Use the installed `check --help` (`check --help --all` lists every option) and
+[quickstart](QUICKSTART.md) to select the
 intended working-tree, staged, or committed comparison. Select `--base REF`
 when an explicit existing Git ref is required; do not assume an old invocation
 and the new default cover the same edits. Check the reported scope and files
@@ -173,7 +174,9 @@ times the source route and the scoreboard records it as
 `first_run.install_seconds`. The nightly `first-run-install.yml` workflow runs
 that walk and ingests it, but the metric has no committed baseline sample yet,
 so nothing fails on a slower install until one is committed from that
-workflow's report; the prebuilt route is not timed by the walk.
+workflow's report. `cargo xtask first-run --install-archive VERSION` times the
+prebuilt route (download, checksum, extract) and walks the extracted
+executable; its sample is kept apart from the source-install metric.
 
 ## What blocks a developer who is not us
 
