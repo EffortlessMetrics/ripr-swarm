@@ -6,12 +6,14 @@ mod call_identity;
 mod changed_span;
 mod context;
 mod decision;
+mod diff_touched;
 mod effect_carrier;
 mod element_field_pin;
 mod flow;
 mod gap_admission;
 mod helper_transfer;
 mod infection;
+mod macro_item_names;
 mod match_transfer;
 mod operand_pin;
 mod owner_pin;
@@ -50,6 +52,7 @@ pub(in crate::analysis) use decision::{
     classify, confidence_score, ensure_unknown_stop_reason, exact_oracle_gap_next_step,
     missing_evidence, recommended_next_step, stop_reasons,
 };
+pub(in crate::analysis) use diff_touched::DiffTouchedTests;
 pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
 pub(in crate::analysis) use element_field_pin::observes_returned_element_field;
 pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence_with_witness};
@@ -65,7 +68,7 @@ pub(in crate::analysis) use helper_transfer::{
     hop_reach_keeps_weak_oracle_gap, resolve_chain, returned_ledger,
     returned_ledger_caller_is_observed, selected_inherent_calls,
 };
-pub(in crate::analysis) use infection::infection_evidence_with_boundary_input;
+pub(in crate::analysis) use infection::infection_evidence_for_owner;
 pub(in crate::analysis) use operand_pin::operand_only_pin;
 pub(in crate::analysis) use owner_pin::{
     AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, direct_call_name,

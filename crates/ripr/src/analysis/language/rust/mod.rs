@@ -1849,6 +1849,7 @@ impl RustAdapter {
         enabled_languages: &[LanguageId],
         rust_config: &crate::config::RustLanguageConfig,
     ) -> Result<LanguageDiffResult, String> {
+        let _syntax_memo = crate::analysis::syntax::run_memo::enter();
         // Exclude conventional generated surfaces before hard line limits and
         // partial-diff budgeting so machine output cannot consume the budget
         // that protects actionable source analysis.
@@ -2135,6 +2136,12 @@ impl RustAdapter {
         let mut related_test_candidate_index = None;
         let property_macro_mentions =
             oracles::PropertyMacroMentionIndex::new(&index, &options.root);
+        // #8387: tests this diff adds or changes lead their relation tier.
+        // Ranking only; nothing is admitted or lifted.
+        let diff_touched = classify::DiffTouchedTests::from_changed_files(
+            &analyzable_changed_files,
+            index.tests().iter(),
+        );
         let transitive_reach = classify::TransitiveReachIndex::new(&index);
 
         let rust_changed_for_presence = analyzable_changed_files
@@ -2301,6 +2308,7 @@ impl RustAdapter {
                             .with_withheld_macro_bindings(std::mem::take(
                                 &mut withheld_macro_bindings,
                             ))
+                            .with_diff_touched(diff_touched.clone())
                     });
                 let mut finding = classifier::classify_probe_with_candidate_index(
                     &probe,
@@ -2710,6 +2718,7 @@ impl RustAdapter {
         oracle_policy: &OraclePolicy,
         rust_config: &crate::config::RustLanguageConfig,
     ) -> Result<LanguageRepoResult, String> {
+        let _syntax_memo = crate::analysis::syntax::run_memo::enter();
         let rust_files = workspace::discover_rust_files(&options.root)?;
         let generated_sources = GeneratedRustSources::for_repo(&options.root, rust_config);
         let skipped_files = rust_files
@@ -4629,6 +4638,61 @@ mod tests {
             None,
             "a root-package owner must keep the full selection"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_skips_direct_cfg_helpers_and_keeps_production_controls() -> Result<(), String>
+    {
+        let root = temp_root("direct-cfg-helper-role")?;
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/data/source-role-corpus/cases/direct_cfg_helpers/src/lib.rs"
+        ));
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='direct-cfg-role'\nversion='0.1.0'\nedition='2021'\n",
+        )?;
+        write(&root.join("src/lib.rs"), source)?;
+        let added = source
+            .lines()
+            .map(|line| format!("+{line}\n"))
+            .collect::<String>();
+        let patch = format!(
+            "diff --git a/src/lib.rs b/src/lib.rs\nnew file mode 100644\n--- /dev/null\n+++ b/src/lib.rs\n@@ -0,0 +1,{} @@\n{added}",
+            source.lines().count()
+        );
+        let changed = diff::parse_unified_diff(&patch);
+        let result = RustAdapter.analyze_diff(
+            &diff_options(root, AnalysisMode::Draft),
+            &OraclePolicy::default(),
+            &changed,
+        )?;
+        for name in [
+            "production_lease",
+            "alternative_control",
+            "nontest_control",
+            "lookalike_control",
+        ] {
+            assert!(
+                result.findings.iter().any(|finding| finding
+                    .probe
+                    .owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.0.ends_with(&format!("::{name}")))),
+                "production control missing: {name}"
+            );
+        }
+        for name in ["standalone_helper", "conjunct_helper", "inline_helper"] {
+            assert!(
+                result.findings.iter().all(|finding| finding
+                    .probe
+                    .owner
+                    .as_ref()
+                    .is_none_or(|owner| !owner.0.ends_with(&format!("::{name}")))),
+                "test-only helper leaked into production findings: {name}"
+            );
+        }
         Ok(())
     }
 

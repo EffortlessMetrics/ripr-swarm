@@ -216,6 +216,7 @@ fn reveal_evidence_with_expression(
         cross_package_name_defeats,
         return_admission,
         arm_selector,
+        None,
     );
     (
         outcome.observe,
@@ -252,6 +253,7 @@ pub(in crate::analysis) fn reveal_outcome(
     cross_package_name_defeats: &dyn Fn(&TestSummary, &str) -> bool,
     return_admission: &ReturnOracleAdmission<'_>,
     arm_selector: Option<&ArmSelector>,
+    diff_touched: Option<&super::DiffTouchedTests>,
 ) -> RevealOutcome {
     if related_tests.is_empty() {
         return RevealOutcome {
@@ -281,7 +283,7 @@ pub(in crate::analysis) fn reveal_outcome(
         return_admission,
         arm_selector,
     );
-    let (related, related_tests_total) = finalize_related_tests(analysis.related);
+    let (related, related_tests_total) = finalize_related_tests(analysis.related, diff_touched);
     let observe = build_observe_evidence(analysis.matched_any, analysis.refused_context);
     let discriminate = if analysis.refused_context && !analysis.matched_any {
         StageEvidence::new(
@@ -3857,6 +3859,9 @@ pub(in crate::analysis) fn file_imports_foreign_callee_name(
     crate_names: &std::collections::BTreeSet<String>,
 ) -> bool {
     use_statements_import_foreign_callee_name(&file_use_statements(source), callee, crate_names)
+        // #7985: a macro that may define an item of the name rebinds it as
+        // an import does, for every direct caller of this shared gate.
+        || super::macro_item_names::macro_may_define_item_named(source, callee)
 }
 
 /// The crate-identifier form of a manifest name: hyphens normalize to
@@ -3879,9 +3884,31 @@ fn crate_identifier(name: &str) -> String {
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct FileUseStatements {
     by_file: std::cell::RefCell<std::collections::BTreeMap<std::path::PathBuf, Vec<String>>>,
+    /// #7985: per file and name, whether a macro invocation may define an
+    /// item of that name.
+    macro_defined:
+        std::cell::RefCell<std::collections::BTreeMap<(std::path::PathBuf, String), bool>>,
 }
 
 impl FileUseStatements {
+    /// #7985: whether a macro in `source` may define an item named
+    /// `callee`, which makes a bare call of the name ambiguous exactly as a
+    /// foreign import does. Scanned once per file and name.
+    pub(in crate::analysis) fn macro_may_define_callee_name(
+        &self,
+        file: &std::path::Path,
+        source: &str,
+        callee: &str,
+    ) -> bool {
+        let key = (file.to_path_buf(), callee.to_string());
+        if let Some(known) = self.macro_defined.borrow().get(&key) {
+            return *known;
+        }
+        let defined = super::macro_item_names::macro_may_define_item_named(source, callee);
+        self.macro_defined.borrow_mut().insert(key, defined);
+        defined
+    }
+
     /// `use_statements_import_foreign_callee_name` over `source`'s statements,
     /// scanning `source` only on the first query for `file`. Every caller
     /// must pass the indexed source that `file` resolves to.
@@ -4269,13 +4296,31 @@ pub(in crate::analysis) fn contains_as_whole_word(text: &str, token: &str) -> bo
     false
 }
 
-fn finalize_related_tests(mut related: Vec<RelatedTest>) -> (Vec<RelatedTest>, usize) {
+/// Dedup, rank and cap the related-test rows.
+///
+/// #8387: tests the diff touches may now lead the capped render window ahead
+/// of untouched tests in the same confidence tier, so the primary related
+/// test and the repair target can change by design. No row is added or
+/// lifted a tier.
+fn finalize_related_tests(
+    mut related: Vec<RelatedTest>,
+    diff_touched: Option<&super::DiffTouchedTests>,
+) -> (Vec<RelatedTest>, usize) {
     related.sort_by(|a, b| a.name.cmp(&b.name).then(a.line.cmp(&b.line)));
     related.dedup_by(|a, b| a.name == b.name && a.oracle == b.oracle);
     // Renderers present the first entry as the primary related test, so the
     // strongest relation leads. The sort is stable: name and line order holds
     // within one confidence tier, and the dedup above is unchanged.
-    related.sort_by_key(|test| std::cmp::Reverse(related_test_rank(test)));
+    //
+    // #8387: within one confidence tier a test the diff itself adds or
+    // changes leads, ahead of name order and ahead of the render cap below.
+    // A test counts as touched when the diff adds a line inside its span
+    // (`line` is its start line; matching is span-aware). Ranking only: no
+    // row is added or lifted a tier.
+    let touched = |test: &RelatedTest| {
+        diff_touched.is_some_and(|touched| touched.touches(&test.file, test.line))
+    };
+    related.sort_by_key(|test| (std::cmp::Reverse(related_test_rank(test)), !touched(test)));
     // #5344: tests listed only as examined misses are packed separately and
     // only into slots the oracle rows leave free, so the oracle rows, their
     // order and their packing are exactly what they were before misses were
@@ -4283,6 +4328,12 @@ fn finalize_related_tests(mut related: Vec<RelatedTest>) -> (Vec<RelatedTest>, u
     // readiness) reads this window.
     let (mut oracle_rows, unmatched): (Vec<_>, Vec<_>) =
         related.into_iter().partition(|test| !test.is_unmatched());
+    // #8386: a bare `.unwrap()`/`.expect()` setup statement is not the
+    // decisive oracle when the same test also has a real matched assertion;
+    // listing both rows quoted the setup as a "smoke only" miss beside the
+    // test's actual assertion. The row is dropped only in that case, so a
+    // test whose sole oracle is the unwrap/expect stays listed as smoke.
+    drop_setup_unwrap_rows_beside_assertions(&mut oracle_rows);
     // Same post-dedup row unit as before; retain the total separately without
     // exposing discarded rows to downstream evidence/target selection.
     let matched_total = oracle_rows.len() + unmatched.len();
@@ -4298,6 +4349,51 @@ fn finalize_related_tests(mut related: Vec<RelatedTest>) -> (Vec<RelatedTest>, u
 }
 
 const RELATED_TESTS_RENDER_CAP: usize = 8;
+
+/// True for an extracted smoke row whose text is a bare `x.unwrap()` or
+/// `x.expect("..")` statement rather than an assertion macro. Such a row is
+/// test setup that the extractor counts as a smoke check (#8386).
+fn is_bare_unwrap_expect_row(test: &RelatedTest) -> bool {
+    if test.oracle_kind != OracleKind::SmokeOnly || test.oracle_strength != OracleStrength::Smoke {
+        return false;
+    }
+    let Some(text) = test.oracle.as_deref() else {
+        return false;
+    };
+    let text = text.trim().trim_end_matches(';').trim_end();
+    !text.contains("assert")
+        && !text.contains("matches!")
+        && !text.contains('\n')
+        && (text.ends_with(".unwrap()") || ends_with_expect_of_one_literal(text))
+}
+
+/// `recv.expect("message")`, where the argument is exactly one string
+/// literal. Anything else (a chained call, an escaped quote) stays a row.
+fn ends_with_expect_of_one_literal(text: &str) -> bool {
+    let Some((_, rest)) = text.rsplit_once(".expect(") else {
+        return false;
+    };
+    rest.strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix("\")"))
+        .is_some_and(|message| !message.contains(['"', '\\']))
+}
+
+/// Remove bare unwrap/expect setup rows from tests that also have another
+/// matched oracle row, so each such test reports its real assertion alone.
+fn drop_setup_unwrap_rows_beside_assertions(rows: &mut Vec<RelatedTest>) {
+    let with_real_oracle: std::collections::BTreeSet<(String, std::path::PathBuf, usize)> = rows
+        .iter()
+        .filter(|test| test.oracle.is_some() && !is_bare_unwrap_expect_row(test))
+        .map(|test| (test.name.clone(), test.file.clone(), test.line))
+        .collect();
+    if with_real_oracle.is_empty() {
+        return;
+    }
+    rows.retain(|test| {
+        !(is_bare_unwrap_expect_row(test)
+            && with_real_oracle.contains(&(test.name.clone(), test.file.clone(), test.line)))
+    });
+}
 
 fn pack_unique_tests_first(related: Vec<RelatedTest>, cap: usize) -> Vec<RelatedTest> {
     let mut packed = Vec::with_capacity(cap.min(related.len()));
@@ -5319,34 +5415,135 @@ mod tests {
         }
     }
 
+    fn smoke_row(name: &str, line: usize, text: &str) -> RelatedTest {
+        RelatedTest {
+            oracle: Some(text.to_string()),
+            oracle_kind: OracleKind::SmokeOnly,
+            oracle_strength: OracleStrength::Smoke,
+            ..related(name, line, Some(RelationReason::DirectOwnerCall))
+        }
+    }
+
+    fn oracle_texts(rows: &[RelatedTest]) -> Vec<(&str, &str)> {
+        rows.iter()
+            .map(|row| (row.name.as_str(), row.oracle.as_deref().unwrap_or("")))
+            .collect()
+    }
+
+    /// #8386: `let v = f().unwrap(); assert_eq!(v, ..)` is one test; the
+    /// setup statement must not appear as a second, "smoke only" row.
+    #[test]
+    fn setup_unwrap_row_is_dropped_beside_the_same_tests_assertion() {
+        let (finalized, total) = finalize_related_tests(vec![
+            smoke_row("parses_small", 3, "parse(\"5\").unwrap();"),
+            RelatedTest {
+                oracle: Some("assert_eq!(v, 5);".to_string()),
+                ..related("parses_small", 3, Some(RelationReason::DirectOwnerCall))
+            },
+            smoke_row("setup_expect", 9, "parse(\"5\").expect(\"parses\");"),
+            RelatedTest {
+                oracle: Some("assert!(v.is_ok());".to_string()),
+                oracle_kind: OracleKind::SmokeOnly,
+                oracle_strength: OracleStrength::Smoke,
+                ..related("setup_expect", 9, Some(RelationReason::DirectOwnerCall))
+            },
+        ]);
+        assert_eq!(
+            oracle_texts(&finalized),
+            vec![
+                ("parses_small", "assert_eq!(v, 5);"),
+                ("setup_expect", "assert!(v.is_ok());")
+            ]
+        );
+        assert_eq!(total, 2);
+    }
+
+    /// The drop is conditional: a test whose only oracle is the unwrap, a
+    /// same-named test elsewhere, a real smoke assertion and a chained call
+    /// all stay listed.
+    #[test]
+    fn setup_unwrap_row_stays_when_it_is_the_tests_only_oracle() {
+        let (finalized, total) = finalize_related_tests(vec![
+            smoke_row("only_unwrap", 3, "parse(\"5\").unwrap();"),
+            smoke_row("other_test", 20, "parse(\"5\").unwrap();"),
+            RelatedTest {
+                file: PathBuf::from("tests/other.rs"),
+                oracle: Some("assert_eq!(v, 5);".to_string()),
+                ..related("other_test", 20, Some(RelationReason::DirectOwnerCall))
+            },
+            smoke_row("chained", 30, "parse(\"5\").unwrap().len();"),
+            smoke_row(
+                "chained",
+                30,
+                "parse(\"5\").expect(\"a\").expect(\"b\").len();",
+            ),
+            smoke_row("real_smoke", 40, "assert!(parse(\"5\").is_ok());"),
+            smoke_row("real_smoke", 40, "parse(\"5\").unwrap();"),
+        ]);
+        assert_eq!(total, 6);
+        let mut got: Vec<(String, String, String)> = finalized
+            .iter()
+            .map(|row| {
+                (
+                    row.name.clone(),
+                    row.file.display().to_string(),
+                    row.oracle.clone().unwrap_or_default(),
+                )
+            })
+            .collect();
+        got.sort();
+        let row = |n: &str, f: &str, o: &str| (n.to_string(), f.to_string(), o.to_string());
+        let mut want = vec![
+            row("only_unwrap", "tests/lib.rs", "parse(\"5\").unwrap();"),
+            row("other_test", "tests/lib.rs", "parse(\"5\").unwrap();"),
+            row("other_test", "tests/other.rs", "assert_eq!(v, 5);"),
+            row("chained", "tests/lib.rs", "parse(\"5\").unwrap().len();"),
+            row(
+                "chained",
+                "tests/lib.rs",
+                "parse(\"5\").expect(\"a\").expect(\"b\").len();",
+            ),
+            row(
+                "real_smoke",
+                "tests/lib.rs",
+                "assert!(parse(\"5\").is_ok());",
+            ),
+        ];
+        want.sort();
+        assert_eq!(got, want);
+    }
+
     /// Renderers show the first related test as the primary one, so the
     /// finalized order must lead with the strongest relation rather than
     /// the alphabetically first name.
     #[test]
     fn finalized_related_tests_lead_with_the_strongest_relation() {
-        let (finalized, _) = finalize_related_tests(vec![
-            related(
-                "a_same_file_neighbor",
-                3,
-                Some(RelationReason::SameTestFile),
-            ),
-            related("b_unknown_origin", 5, None),
-            related(
-                "c_direct_owner_call",
-                9,
-                Some(RelationReason::DirectOwnerCall),
-            ),
-            related(
-                "c_direct_owner_call",
-                9,
-                Some(RelationReason::DirectOwnerCall),
-            ),
-            related(
-                "d_direct_owner_call",
-                1,
-                Some(RelationReason::DirectOwnerCall),
-            ),
-        ]);
+        let (finalized, _) = finalize_related_tests(
+            vec![
+                related(
+                    "a_same_file_neighbor",
+                    3,
+                    Some(RelationReason::SameTestFile),
+                ),
+                related("b_unknown_origin", 5, None),
+                related(
+                    "c_direct_owner_call",
+                    9,
+                    Some(RelationReason::DirectOwnerCall),
+                ),
+                related(
+                    "c_direct_owner_call",
+                    9,
+                    Some(RelationReason::DirectOwnerCall),
+                ),
+                related(
+                    "d_direct_owner_call",
+                    1,
+                    Some(RelationReason::DirectOwnerCall),
+                ),
+            ],
+            None,
+        );
         let names: Vec<&str> = finalized.iter().map(|test| test.name.as_str()).collect();
         let ranks: Vec<u8> = finalized.iter().map(related_test_rank).collect();
         let mut descending = ranks.clone();
@@ -5355,6 +5552,66 @@ mod tests {
         assert_eq!(names.first(), Some(&"c_direct_owner_call"));
         assert_eq!(names.last(), Some(&"b_unknown_origin"));
         assert_eq!(names.len(), 4, "duplicate entries still dedup: {names:?}");
+    }
+
+    /// #8387: a test the diff adds or changes leads its confidence tier and
+    /// survives the render cap, but is never lifted above a higher tier.
+    #[test]
+    fn finalized_related_tests_lead_with_diff_touched_tests_within_a_tier() {
+        let mut input: Vec<_> = (0..10)
+            .map(|index| {
+                related(
+                    &format!("case_{index:02}"),
+                    10 + index,
+                    Some(RelationReason::WeakTokenSubstring),
+                )
+            })
+            .collect();
+        input.push(related(
+            "strong_direct_call",
+            1,
+            Some(RelationReason::DirectOwnerCall),
+        ));
+        let files = [crate::analysis::diff::ChangedFile {
+            path: input[9].file.clone(),
+            added_lines: vec![crate::analysis::diff::ChangedLine {
+                line: 19,
+                text: String::new(),
+                new_side_line: 19,
+            }],
+            removed_lines: Vec::new(),
+        }];
+        let tests = [TestSummary {
+            name: "case_09".to_string(),
+            file: input[9].file.clone(),
+            start_line: 19,
+            end_line: 25,
+            body: Default::default(),
+            calls: Vec::new(),
+            assertions: Vec::new(),
+            literals: Vec::new(),
+            attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+        }];
+        let touched =
+            crate::analysis::classify::DiffTouchedTests::from_changed_files(&files, &tests);
+        assert!(
+            touched.touches(&input[9].file, 19),
+            "setup: case_09 touched"
+        );
+
+        let (plain, _) = finalize_related_tests(input.clone(), None);
+        assert!(
+            plain.iter().all(|test| test.name != "case_09"),
+            "setup: without the diff signal the cap drops case_09: {plain:?}"
+        );
+
+        let (ranked, total) = finalize_related_tests(input, Some(&touched));
+        let names: Vec<&str> = ranked.iter().map(|test| test.name.as_str()).collect();
+        assert_eq!(total, 11);
+        assert_eq!(names[0], "strong_direct_call", "a higher tier still leads");
+        assert_eq!(names[1], "case_09", "the touched test leads its tier");
     }
 
     #[test]
@@ -5369,7 +5626,7 @@ mod tests {
                     )
                 })
                 .collect();
-            let (packed, total) = finalize_related_tests(input.clone());
+            let (packed, total) = finalize_related_tests(input.clone(), None);
             assert_eq!(total, count);
             assert_eq!(packed.len(), count.min(RELATED_TESTS_RENDER_CAP));
             let previous_prefix = if count > RELATED_TESTS_RENDER_CAP {
@@ -5397,7 +5654,7 @@ mod tests {
         let mut second_oracle = first;
         second_oracle.oracle = Some("assert_eq!(different_observer, 2);".to_string());
         input.push(second_oracle); // A distinct oracle row remains the count unit.
-        let (packed, total) = finalize_related_tests(input);
+        let (packed, total) = finalize_related_tests(input, None);
         assert_eq!(total, 10);
         assert_eq!(packed.len(), 8);
         assert_eq!(
@@ -6010,6 +6267,7 @@ mod tests {
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
                 },
+                None,
                 None,
             )
             .owner_pin_credited
@@ -8456,6 +8714,25 @@ return Err(\"typed pin\".into());
             file_imports_foreign_callee_name(import, "expect_response", &foreign_names),
             "a foreign first segment must still defeat"
         );
+    }
+
+    /// #7985: the shared gate (also read by the owner-pin callers) treats a
+    /// macro that may define the name as a rebind; an unrelated macro is not.
+    #[test]
+    fn macro_defined_same_name_is_a_foreign_rebind_for_every_gate_caller() {
+        let crate_names = std::collections::BTreeSet::new();
+        let defines = "macro_rules! fake {\n    () => { fn expect_response() {} };\n}\nfake!();\n";
+        assert!(file_imports_foreign_callee_name(
+            defines,
+            "expect_response",
+            &crate_names
+        ));
+        let unrelated = defines.replace("fn expect_response", "fn other_name");
+        assert!(!file_imports_foreign_callee_name(
+            &unrelated,
+            "expect_response",
+            &crate_names
+        ));
     }
 
     /// #3731 review (G1): the cross-package same-name defeat threads

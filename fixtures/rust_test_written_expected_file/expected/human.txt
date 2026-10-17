@@ -16,14 +16,14 @@ Start here:
   Canonical gap: gap:rust:src/lib.rs:render:return_value:return_value:x*3
   Changed behavior: x * 3
   Missing discriminator: No strong discriminator was detected
-  Related test (1 of 2 matched rows): tests/render.rs:2 renders (assertion too weak to tell the old behavior from the new)
+  Related test: tests/render.rs:2 renders (ripr could not confirm that this assertion observes the changed behavior)
   Next step: The related test `renders` already asserts an exact value; the gap is not the assertion
     shape. Add a test input where the changed branch behaves differently and keep the exact
     assertion
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     - reach yes: Related tests appear to reach render: renders
     - infection yes: Reachable tests can plausibly activate this changed behavior
-    - 9 more detail line(s) in --format human-full
+    - 8 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_test_written_expected_file/input --diff <cwd>/fixtures/rust_test_written_expected_file/diff.patch --mode fast probe:src_lib.rs:return_value:8711762f
