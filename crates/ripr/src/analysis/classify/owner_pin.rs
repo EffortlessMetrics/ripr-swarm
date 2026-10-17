@@ -7087,7 +7087,7 @@ fn expected_reads_written_file(
         };
         let after = rest.trim_start().strip_prefix(ident)?;
         let boundary = after.trim_start();
-        if !(boundary.starts_with('=') && !boundary.starts_with("==")) {
+        if !boundary.starts_with('=') || boundary.starts_with("==") {
             return None;
         }
         Some(boundary[1..].to_string())
