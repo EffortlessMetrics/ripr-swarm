@@ -858,16 +858,11 @@ pub(super) fn owner_result_locals(test: &PythonTest, callees: &[String]) -> Vec<
         let value = value.trim_start();
         // The whole assigned value must be the owner call, so the local holds
         // its result on every path (`r = sign(0)`, not `r = sign(0) or 1`).
-        let is_whole_call = callees.iter().any(|callee| {
-            value.strip_prefix(callee.as_str()).is_some_and(|rest| {
-                let open = value_start + callee.len() + (rest.len() - rest.trim_start().len());
-                rest.trim_start().starts_with('(')
-                    && super::no_behavior::matching_call_paren(body, open).is_some_and(|close| {
-                        let after = body[close + 1..].split('\n').next().unwrap_or_default();
-                        let after = after.trim();
-                        after.is_empty() || after.starts_with('#')
-                    })
-            })
+        // A sole-argument materializer (`r = list(gen(0))`) keeps that result.
+        let is_whole_call = whole_owner_call_end(body, value_start, callees).is_some_and(|end| {
+            let after = body[end..].split('\n').next().unwrap_or_default();
+            let after = after.trim();
+            after.is_empty() || after.starts_with('#')
         });
         if super::static_limits::is_simple_python_identifier(target)
             && !value.starts_with('=')
@@ -884,6 +879,38 @@ pub(super) fn owner_result_locals(test: &PythonTest, callees: &[String]) -> Vec<
     locals.sort();
     locals.dedup();
     locals
+}
+
+/// End (exclusive) of the expression at `start` when it is exactly one owner
+/// call, optionally wrapped in sole-argument [`MATERIALIZING_WRAPPERS`].
+fn whole_owner_call_end(body: &str, start: usize, callees: &[String]) -> Option<usize> {
+    let value = &body[start..];
+    for callee in callees {
+        if let Some(rest) = value.strip_prefix(callee.as_str()) {
+            let open = start + callee.len() + (rest.len() - rest.trim_start().len());
+            if rest.trim_start().starts_with('(') {
+                return super::no_behavior::matching_call_paren(body, open).map(|close| close + 1);
+            }
+        }
+    }
+    for wrapper in MATERIALIZING_WRAPPERS {
+        let Some(rest) = value.strip_prefix(wrapper) else {
+            continue;
+        };
+        let trimmed = rest.trim_start();
+        if !trimmed.starts_with('(') {
+            continue;
+        }
+        let open = start + wrapper.len() + (rest.len() - trimmed.len());
+        let close = super::no_behavior::matching_call_paren(body, open)?;
+        let inner = open + 1 + (body[open + 1..].len() - body[open + 1..].trim_start().len());
+        let inner_end = whole_owner_call_end(body, inner, callees)?;
+        return body[inner_end..close]
+            .trim()
+            .is_empty()
+            .then_some(close + 1);
+    }
+    None
 }
 
 /// Open-bracket depth at byte `idx` of `text`, skipping quoted strings, so a
@@ -956,8 +983,49 @@ pub(super) fn oracle_operand_calls(text: &str, callee: &str) -> bool {
     text.match_indices(&needle).any(|(idx, _)| {
         python_callee_start_has_boundary(text, idx)
             && !line_prefix_looks_like_comment_or_string(text, idx)
-            && bracket_depth_at(text, idx) == depth
+            && reaches_operand_depth(text, idx, idx + needle.len() - 1, depth)
     })
+}
+
+/// Builtins that only re-materialize their one argument, so a call wrapped in
+/// them (`list(utils.sign(0))`) still asserts the owner's output. Any other
+/// wrapper may ignore it (`always_true(utils.sign(0))`).
+const MATERIALIZING_WRAPPERS: [&str; 5] = ["list", "tuple", "set", "frozenset", "sorted"];
+
+/// Whether the call starting at `start` (its `(` at `open`) sits at the
+/// asserted operand `depth`, directly or only inside materializing wrappers
+/// that take it as their sole argument.
+fn reaches_operand_depth(text: &str, start: usize, open: usize, depth: usize) -> bool {
+    let (mut start, mut open) = (start, open);
+    loop {
+        let here = bracket_depth_at(text, start);
+        if here == depth {
+            return true;
+        }
+        if here < depth {
+            return false;
+        }
+        let Some(close) = super::no_behavior::matching_call_paren(text, open) else {
+            return false;
+        };
+        if !text[close + 1..].trim_start().starts_with(')') {
+            return false;
+        }
+        let Some(before) = text[..start].trim_end().strip_suffix('(') else {
+            return false;
+        };
+        let name_start = before
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| !is_python_identifier_char(*ch))
+            .map_or(0, |(at, ch)| at + ch.len_utf8());
+        if !MATERIALIZING_WRAPPERS.contains(&&before[name_start..])
+            || before[..name_start].ends_with('.')
+        {
+            return false;
+        }
+        (start, open) = (name_start, before.len());
+    }
 }
 
 /// Whether an assertion's text names the local `name` as an asserted operand
@@ -1983,6 +2051,13 @@ mod oracle_operand_tests {
             ("assert always_true(utils.sign(0)) == True", false),
             ("self.assertTrue(always_true(utils.sign(0)))", false),
             ("assert myutils.sign(0) == 0", false),
+            ("assert list(utils.sign(0)) == []", true),
+            ("self.assertEqual(list(utils.sign(0)), [])", true),
+            ("self.assertEqual(sorted(list(utils.sign(0))), [])", true),
+            ("assert always_true(list(utils.sign(0))) == True", false),
+            ("assert list(always_true(utils.sign(0))) == []", false),
+            ("assert list(utils.sign(0), 1) == []", false),
+            ("assert x.list(utils.sign(0)) == []", false),
         ] {
             assert_eq!(oracle_operand_calls(text, "utils.sign"), expected, "{text}");
         }
