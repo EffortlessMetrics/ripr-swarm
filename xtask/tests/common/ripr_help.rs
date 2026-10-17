@@ -3,6 +3,7 @@ use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub fn workspace() -> PathBuf {
@@ -14,6 +15,10 @@ mod help_capture_io;
 
 pub struct Scratch(pub PathBuf);
 
+// Concurrent tests in one process can read the same clock tick, so the
+// nonce also carries a process-wide sequence number.
+static SCRATCH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
 impl Scratch {
     pub fn new(label: &str) -> Result<Self, String> {
         let parent = std::env::temp_dir();
@@ -22,7 +27,11 @@ impl Scratch {
             .duration_since(UNIX_EPOCH)
             .map_err(|error| format!("scratch nonce clock relative to UNIX epoch: {error}"))?
             .as_nanos();
-        let root = parent.join(format!("ripr-{label}-{}-{nonce}", std::process::id()));
+        let sequence = SCRATCH_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let root = parent.join(format!(
+            "ripr-{label}-{}-{nonce}-{sequence}",
+            std::process::id()
+        ));
         help_capture_io::create_root(&root)?;
         Ok(Self(root))
     }

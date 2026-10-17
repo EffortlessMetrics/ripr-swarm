@@ -869,16 +869,29 @@ fn is_trivial_message_pattern(pattern: &Expr, source: &str) -> bool {
 }
 
 /// The string literal `name` is bound to when the file has exactly one
-/// assignment to it (`name = '.*'`) and that assignment is a plain literal.
+/// assignment to it (`name = '.*'`) and that assignment is a plain literal
+/// (`name = None` reads as the empty pattern).
 fn name_bound_once_to_literal(source: &str, name: &str) -> Option<String> {
     let mut assignments = source.lines().filter_map(|line| {
         let (target, value) = line.split_once('=')?;
         let value = value.strip_prefix('=').map_or(Some(value), |_| None)?;
-        (target.trim() == name).then(|| value.trim())
+        (target.trim() == name).then(|| {
+            // An unspaced `name=None` is a default argument (a wrapped
+            // signature or call), not an assignment.
+            if value.trim() == "None" && !(target.ends_with(' ') && value.starts_with(' ')) {
+                "<default-argument>"
+            } else {
+                value.trim()
+            }
+        })
     });
     let value = assignments.next()?;
     if assignments.next().is_some() {
         return None;
+    }
+    // `name = None` disables matching like `''` does: it admits any message.
+    if value == "None" {
+        return Some(String::new());
     }
     let value = value.strip_prefix('r').unwrap_or(value);
     let quote = value.chars().next().filter(|ch| matches!(ch, '\'' | '"'))?;
