@@ -2904,10 +2904,12 @@ impl OwnerReturnPin {
         // #8097: an expected operand read from a file the test itself may
         // write fixes nothing: the test rewrites the golden from the owner
         // before comparing, so every mutant of the owner survives.
+        // Fail-closed like the neighbouring golden guard: unknown file
+        // facts cannot prove the import set is rename-free.
         let renamed_fs_import = index
             .files()
             .get(&test.file)
-            .is_some_and(|facts| file_renames_fs_or_env_import(&facts.source));
+            .is_none_or(|facts| file_renames_fs_or_env_import(&facts.source));
         if expected_reads_written_file(test, renamed_fs_import, expected) {
             return false;
         }
@@ -7025,52 +7027,105 @@ fn expected_reads_written_file(
     if reads_file(expected) {
         return true;
     }
-    // Reduce `&want`, `want.as_str()`, `want.clone()`, `want.trim()` to
-    // the plain identifier whose binding may hold the file read.
-    let mut operand = expected.trim().trim_start_matches('&').trim();
-    for suffix in [".as_str()", ".clone()", ".trim()", ".as_ref()"] {
-        if let Some(stripped) = operand.strip_suffix(suffix) {
-            operand = stripped.trim();
+    // Reduce wrappers (`&want`, `&mut want`, `(want)`, `want.as_str()`,
+    // `want.clone()`, ...) until stable, leaving the plain identifier
+    // whose binding may hold the file read.
+    let reduce = |mut text: &str| -> String {
+        loop {
+            let before = text;
+            text = text
+                .trim()
+                .trim_start_matches('&')
+                .trim_start_matches('*')
+                .trim();
+            if text.starts_with("mut ") {
+                text = text[4..].trim_start();
+            }
+            if text.starts_with('(') && text.ends_with(')') {
+                text = text[1..text.len() - 1].trim();
+            }
+            for suffix in [".as_str()", ".clone()", ".trim()", ".as_ref()", ".unwrap()"] {
+                if let Some(stripped) = text.strip_suffix(suffix) {
+                    text = stripped.trim();
+                }
+            }
+            if text == before {
+                return text.to_string();
+            }
         }
-    }
-    if !is_plain_identifier(operand) {
-        return false;
-    }
-    // Follow plain-identifier bindings (`let [mut] w2 = want;`,
-    // `w2 = want;`) a few hops; a hop whose statement reads a file
-    // settles it.
+    };
+    let operand = reduce(expected);
+    // A method/parse chain rooted at a plain binding
+    // (`want.trim().parse::<i32>().unwrap()`) still draws its value from
+    // that binding.
+    let operand = if is_plain_identifier(&operand) {
+        operand
+    } else {
+        let root: String = operand
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        if root.is_empty() || !is_plain_identifier(&root) {
+            return false;
+        }
+        root
+    };
+    // Follow plain-identifier bindings a few hops. Every statement that
+    // binds the current identifier counts (`let [mut] x = ..`, `x = ..`,
+    // also inside blocks); any of them reading a file settles it, and
+    // each plain-identifier right-hand side is followed in turn.
     let masked = mask_comments_and_strings(&test.body);
     let statements: Vec<&str> = masked.split(';').collect();
-    let mut current = operand;
+    let binding_rhs = |statement: &str, ident: &str| -> Option<String> {
+        // A `let` binding may sit behind a block opener fragment.
+        let rest = match statement.find("let ") {
+            Some(at) => {
+                let rest = statement[at + 4..].trim_start();
+                rest.strip_prefix("mut ").unwrap_or(rest)
+            }
+            None => statement.trim_start(),
+        };
+        let after = rest.trim_start().strip_prefix(ident)?;
+        let boundary = after.trim_start();
+        if !(boundary.starts_with('=') && !boundary.starts_with("==")) {
+            return None;
+        }
+        Some(boundary[1..].to_string())
+    };
+    let mut frontier = vec![operand];
+    let mut visited: Vec<String> = Vec::new();
     for _ in 0..4 {
-        let binding = statements.iter().find_map(|statement| {
-            let statement = statement.trim();
-            let rest = statement
-                .strip_prefix("let ")
-                .map(|rest| rest.trim_start().strip_prefix("mut ").unwrap_or(rest))
-                .unwrap_or(statement);
-            let rest = rest.trim_start();
-            let after = rest.strip_prefix(current)?;
-            after
-                .chars()
-                .next()
-                .is_some_and(|next| !(next.is_alphanumeric() || next == '_'))
-                .then_some(statement)
-        });
-        let Some(binding) = binding else {
-            return false;
-        };
-        if reads_file(binding) {
-            return true;
+        let mut next: Vec<String> = Vec::new();
+        for ident in &frontier {
+            for statement in &statements {
+                let Some(rhs) = binding_rhs(statement, ident) else {
+                    continue;
+                };
+                if reads_file(&rhs) || reads_file(statement) {
+                    return true;
+                }
+                let reduced = reduce(&rhs);
+                let reduced = if is_plain_identifier(&reduced) {
+                    reduced
+                } else {
+                    reduced
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_')
+                        .collect()
+                };
+                if is_plain_identifier(&reduced)
+                    && !visited.contains(&reduced)
+                    && !next.contains(&reduced)
+                {
+                    next.push(reduced);
+                }
+            }
         }
-        let Some(rhs) = binding.split('=').nth(1) else {
-            return false;
-        };
-        let rhs = rhs.trim().trim_start_matches('&').trim();
-        if !is_plain_identifier(rhs) {
+        visited.extend(frontier);
+        if next.is_empty() {
             return false;
         }
-        current = rhs;
+        frontier = next;
     }
     false
 }
