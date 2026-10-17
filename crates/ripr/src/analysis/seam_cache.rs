@@ -2945,6 +2945,7 @@ impl ShardedCacheEnvelope {
 std::thread_local! {
     // Thread-owned counters observe real codec work without interference from parallel tests.
     static INTEGRITY_WORK: std::cell::Cell<(usize, usize, usize)> = const { std::cell::Cell::new((0, 0, 0)) };
+    static INTEGRITY_HASH_UPDATES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static INTEGRITY_VEC_HIGH_WATER: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -3035,11 +3036,13 @@ fn encode_checksummed_pretty_to_writer<T: serde::Serialize, W: std::io::Write>(
 /// Unkeyed checksum integrity does not authenticate a writer who can recompute the digest.
 fn semantic_body_digest<T: serde::Serialize>(domain: &str, body: &T) -> Result<String, String> {
     use sha2::{Digest, Sha256};
-    // The serializer feeds SHA-256 directly: warm admission never buffers a second body.
+    // The serializer streams into SHA-256: warm admission never retains a second body.
     struct ChecksumWriter(Sha256);
     impl std::io::Write for ChecksumWriter {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
             self.0.update(bytes);
+            #[cfg(test)]
+            INTEGRITY_HASH_UPDATES.with(|count| count.set(count.get().saturating_add(1)));
             Ok(bytes.len())
         }
 
@@ -3050,7 +3053,13 @@ fn semantic_body_digest<T: serde::Serialize>(domain: &str, body: &T) -> Result<S
     let mut writer = ChecksumWriter(Sha256::new());
     writer.0.update(domain.as_bytes());
     writer.0.update([0]);
+    // Coalesce tiny serializer fragments before SHA updates. Scratch stays
+    // fixed-size; draining before finalization preserves every trailing byte.
+    let mut writer = std::io::BufWriter::with_capacity(8 * 1024, writer);
     serde_json::to_writer(&mut writer, body)
+        .map_err(|err| format!("encode integrity body failed: {err}"))?;
+    let writer = writer
+        .into_inner()
         .map_err(|err| format!("encode integrity body failed: {err}"))?;
     #[cfg(test)]
     INTEGRITY_WORK.with(|work| {
@@ -3154,6 +3163,8 @@ impl CorpusFingerprintEnvelope {
 }
 
 /// Codec module owns serialization format and integrity emission.
+#[cfg(test)]
+mod digest_tests;
 mod related_test_table;
 
 mod codec {

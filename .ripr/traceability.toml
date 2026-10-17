@@ -9595,6 +9595,11 @@ id = "RIPR-SPEC-0123"
 name = "targeted Rust rerun"
 spec = "docs/specs/RIPR-SPEC-0123-targeted-rerun.md"
 tests = [
+  "crates/ripr/src/analysis/seam_cache/digest_tests.rs::digest_preserves_independent_byte_oracle_across_buffer_boundaries",
+  "crates/ripr/src/analysis/seam_cache/digest_tests.rs::digest_coalesces_token_writes_without_retaining_the_body",
+  "crates/ripr/src/analysis/seam_cache/digest_tests.rs::digest_consumes_a_stream_before_the_whole_body_is_serialized",
+  "crates/ripr/src/analysis/seam_cache/digest_tests.rs::digest_refuses_serialization_failure_after_partial_buffer_flush",
+  "crates/ripr/src/analysis/seam_cache/digest_tests.rs::real_file_facts_keep_original_cache_bytes_and_integrity",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_multiline_constructor",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_parameter_inputs_preserved",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_terminal_type_arguments",
