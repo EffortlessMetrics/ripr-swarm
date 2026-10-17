@@ -470,6 +470,22 @@ field keeps its meaning, and every field this version adds is additive for a
 consumer that ignores unknown keys. Reverting the change restores `0.3`
 exactly, so a revert is the migration path for a consumer that cannot yet adapt.
 
+### Doctor canonical next action (additive, no `schema_version` bump, #6986)
+
+`ripr doctor --json` carries an optional `canonical_next_action` object: the
+same `canonical_next_action.v1` DTO that `ripr check --format json` embeds
+(#7258), produced by the decision the human `- Safe next action:` line follows
+rather than re-inferred for the machine document. It is present only when the
+first-command state is a precise recovery: `stop.kind` is `doctor_recovery`,
+`stop.check_name` names the failing check (`root_directory`, `config`, or
+`cargo_toml` for the generic failed-prerequisite case), `stop.recovery_route`
+is the recovery prose, `action_class` is `satisfy_prerequisite`, and `command`
+is absent because a recovery is not a runnable command. The key is omitted when
+the state names a runnable command, and for the `source-build` profile. The
+document root is `canonical_next_action.subject.root`; doctor reads no diff, so
+`diff_source` is the fixed no-base committed mode, never a live-tree claim. The
+human line and this object agree by construction (Control 9).
+
 ### What `--json` now probes, and where that shows up
 
 Both surfaces read one probe per run, so `ripr doctor --json` performs the
@@ -16130,11 +16146,11 @@ target/ripr/pilot/pilot-summary.md
 stdout and suppresses the human terminal. Packet files are still written under
 `--out`. There is no `--json` alias.
 
-`pilot-summary.json` uses schema `0.3`:
+`pilot-summary.json` uses schema `0.4`:
 
 ```json
 {
-  "schema_version": "0.3",
+  "schema_version": "0.4",
   "tool": "ripr",
   "scope": "repo",
   "status": "complete",
@@ -16161,6 +16177,8 @@ stdout and suppresses the human terminal. Packet files are still written under
     "pilot_summary_md"
   ],
   "actionable_seams_total": 1,
+  "actionable_seams_total_is_lower_bound": false,
+  "seam_limit": null,
   "withheld_static_limitations_total": 0,
   "top_actionable_seams": [
     {
@@ -16380,7 +16398,7 @@ If analysis exceeds the pilot budget, `pilot-summary.json` is still written with
 
 ```json
 {
-  "schema_version": "0.3",
+  "schema_version": "0.4",
   "tool": "ripr",
   "scope": "repo",
   "status": "partial",
@@ -16416,9 +16434,22 @@ If analysis exceeds the pilot budget, `pilot-summary.json` is still written with
 
 Field contract:
 
-- `schema_version` — currently `"0.3"`. `0.3` withholds static limitations
+- `schema_version` — currently `"0.4"`. `0.4` adds
+  `actionable_seams_total_is_lower_bound` and `seam_limit` to complete
+  summaries (#6739). `0.3` withholds static limitations
   from the ranking and adds `withheld_static_limitations_total` (#5497);
   `actionable_seams_total` no longer counts `opaque` or `*_unknown` seams.
+- `actionable_seams_total_is_lower_bound` — complete summaries only. `true`
+  when a seam limit cut the classified seams before ranking, so
+  `actionable_seams_total` counts only the kept seams and seams past the cut
+  may hold more; `false` when no limit applied and the total is exact. The
+  Markdown summary says "at least N" in the same case.
+- `seam_limit` — complete summaries only. `null` when no limit applied;
+  otherwise `{"analyzed": <kept>, "total": <available>, "source":
+  "default"|"configured"}`, where `source` names whether the cap is the
+  built-in default or an explicit `RIPR_REPO_EXPOSURE_SEAM_LIMIT` /
+  `RIPR_PILOT_SEAM_BUDGET` setting. Partial (timeout) summaries carry neither
+  field; their `actionable_seams_total` is `null`.
 - `scope` — always `"repo"`.
 - `status` — `"complete"` when repo exposure and agent seam packet artifacts
   were written, or `"partial"` when the command stopped at a diagnostic summary.
