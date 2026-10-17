@@ -5,9 +5,8 @@ name: Pilot Ranking
 # scored share, function diversity, verdict counts and pick count on the
 # `ranking` scoreboard against metrics/dx-scoreboard/pilot-ranking-baseline.json.
 # Advisory and late: it runs nightly, on demand, and when a pull request that
-# touches pilot ranking, seam grading or this answer key is opened ready or
-# leaves draft. Like the required lanes, a push after that reruns it only
-# through a draft-to-ready toggle. It never runs cargo-mutants; the labels are
+# touches pilot ranking, seam grading or this answer key carries the
+# merge-ready label. A push after the label reruns it. It never runs cargo-mutants; the labels are
 # committed. The path filter lists the direct inputs to the ranking; the
 # nightly run covers changes further away. Network use (fetching the five
 # pinned crates) stays inside this workflow.
@@ -52,7 +51,7 @@ concurrency:
 
 jobs:
   ranking:
-    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && ((github.event.action == 'labeled' && github.event.label.name == 'merge-ready') || contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action)))) && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft))
+    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && ((github.event.action == 'labeled' && github.event.label.name == 'merge-ready') || contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action)))) && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

@@ -84,10 +84,10 @@ jobs:
     # #4252: the Rust-only feature lane (#2400, #3128) otherwise runs only in
     # the Windows advisory workflow, whose verdict hid this step's result
     # until #4229. It runs before merge on PRs that change the Rust crate,
-    # fixtures, or Cargo manifests, and on every push to main; label events
-    # and docs-only PRs skip the compile, matching the routed lane's posture.
+    # fixtures, or Cargo manifests, and on every push to main; on PRs the merge-ready label
+    # starts it, and docs-only PRs skip the compile.
     name: Rust-only feature lane
-    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && ((github.event.action == 'labeled' && github.event.label.name == 'merge-ready') || contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action)))) && (github.event_name != 'pull_request' || contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action))
+    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && ((github.event.action == 'labeled' && github.event.label.name == 'merge-ready') || contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action))))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

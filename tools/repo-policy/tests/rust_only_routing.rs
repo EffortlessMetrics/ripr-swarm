@@ -349,7 +349,7 @@ fn event_commit_bindings_are_exact_and_history_is_available() -> TestResult {
             .lines()
             .any(|line| line == "          fetch-depth: 0")
     );
-    assert!(detector.lines().any(|line| line == "    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && ((github.event.action == 'labeled' && github.event.label.name == 'merge-ready') || contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action)))) && (github.event_name != 'pull_request' || contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action))"));
+    assert!(detector.lines().any(|line| line == "    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && ((github.event.action == 'labeled' && github.event.label.name == 'merge-ready') || contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action))))"));
     assert!(
         !detector
             .lines()
