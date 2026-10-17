@@ -83,6 +83,57 @@ pub(crate) fn canonical_gap_identity(entry: &ClassifiedSeam) -> Option<Canonical
     })
 }
 
+/// Whether a `ripr check` finding ID (`probe:...`, or `repo-probe:...` for a
+/// whole-repo probe) names this seam (#8166 residual).
+///
+/// Like [`producer_gap_id_names_seam`], the ID is read from the seam side:
+/// the probe fingerprint is re-minted from the seam's file, the probe family
+/// its kind names, its owner, and its own source expression, with the same
+/// content-addressed fingerprint the probe producer uses. A changed line the
+/// seam does not carry therefore never matches. Several seams can still
+/// share one re-minted ID (the fingerprint carries no line); the caller owns
+/// that uniqueness decision. The collision ordinal (`.2`, ...) a repeated
+/// probe ID carries is re-minted too, so an ordinal names the same seam set
+/// its base ID does.
+pub(crate) fn probe_id_names_seam(item: &str, entry: &ClassifiedSeam) -> bool {
+    let prefix = if item.starts_with("probe:") {
+        "probe"
+    } else if item.starts_with("repo-probe:") {
+        "repo-probe"
+    } else {
+        return false;
+    };
+    let ordinal = item
+        .rsplit_once(':')
+        .and_then(|(_, fp)| fp.rsplit_once('.'))
+        .and_then(|(_, ordinal)| ordinal.parse::<u32>().ok())
+        .unwrap_or(1);
+    let sanitized = super::sanitize_path(entry.seam.file());
+    let owner = crate::domain::SymbolId(entry.seam.owner().to_string());
+    const FAMILIES: [crate::domain::ProbeFamily; 8] = [
+        crate::domain::ProbeFamily::Predicate,
+        crate::domain::ProbeFamily::ReturnValue,
+        crate::domain::ProbeFamily::ErrorPath,
+        crate::domain::ProbeFamily::CallDeletion,
+        crate::domain::ProbeFamily::FieldConstruction,
+        crate::domain::ProbeFamily::SideEffect,
+        crate::domain::ProbeFamily::MatchArm,
+        crate::domain::ProbeFamily::StaticUnknown,
+    ];
+    FAMILIES.iter().any(|family| {
+        super::seam_kind_for_probe_family(family.as_str()) == Some(entry.seam.kind())
+            && super::fingerprint_probe_id(
+                prefix,
+                &sanitized,
+                family.as_str(),
+                &owner.0,
+                &super::normalize_expression(entry.seam.expression()),
+                ordinal,
+            )
+            .0 == item
+    })
+}
+
 /// Whether a Rust producer gap id as `ripr check` prints it names this seam.
 /// That id is minted from the changed line, not from the seam, so it joins on
 /// the seam's stable file, owner, kind and source expression. A shared id
@@ -416,6 +467,48 @@ mod tests {
         assert_eq!(second_gap.group_size, 2);
         assert_eq!(first_gap.reason, CANONICAL_GAP_REASON);
         Ok(())
+    }
+
+    /// #8166 residual: the `probe:` ID `ripr check` prints re-mints from the
+    /// seam it names (file, family-from-kind, owner, seam expression), and
+    /// from no other seam. Two seams sharing those fields share the ID; the
+    /// resolver caller owns that ambiguity.
+    #[test]
+    fn probe_id_names_only_the_seam_it_was_minted_from() {
+        let entry = classified_gap("src/pricing.rs::pricing::discounted_total", 88, "x");
+        // Mint the ID exactly as the diff probe producer does: the
+        // content-addressed fingerprint over sanitized path, family, owner
+        // and normalized expression.
+        let id = crate::analysis::fingerprint_probe_id(
+            "probe",
+            &crate::analysis::sanitize_path(entry.seam.file()),
+            "predicate",
+            entry.seam.owner(),
+            &crate::analysis::normalize_expression(entry.seam.expression()),
+            1,
+        )
+        .0;
+        assert!(
+            probe_id_names_seam(&id, &entry),
+            "own probe ID must name its seam: {id}"
+        );
+        // A fingerprint over a different expression names no seam here.
+        let other = classified_gap_with_expression(
+            "src/pricing.rs::pricing::discounted_total",
+            88,
+            "amount < threshold",
+            "x",
+        );
+        assert!(!probe_id_names_seam(&id, &other));
+        // A stale fingerprint (no seam carries it) names nothing.
+        assert!(!probe_id_names_seam(
+            "probe:src_pricing.rs:predicate:00000000",
+            &entry
+        ));
+        // The duplicate-expression twin shares the re-minted ID: the matcher
+        // credits both, so the resolver must refuse as ambiguous.
+        let twin = classified_gap("src/pricing.rs::pricing::discounted_total", 99, "x");
+        assert!(probe_id_names_seam(&id, &twin));
     }
 
     #[test]

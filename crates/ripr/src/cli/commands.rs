@@ -41,7 +41,9 @@ mod swarm_command;
 #[path = "commands/task_first.rs"]
 mod task_first;
 
-pub(super) use agent::{agent, before_phase_stdout, run_before_repair_with_identity};
+pub(super) use agent::{
+    agent, before_phase_stdout, run_before_repair_with_identity, translate_agent_repair_seam_id,
+};
 pub(super) use context::context;
 // Flag-documenting help bodies live beside their parsers so `cli::help`
 // suggestions mine the same text `--help` prints.

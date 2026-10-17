@@ -787,6 +787,241 @@ fn repair_refuses_a_producer_gap_id_that_names_several_seams() -> Result<(), Str
     Ok(())
 }
 
+/// The `probe:` finding ID a printed check drill-down line names, when the
+/// bounded check output offers one.
+fn printed_probe_identity(check_stdout: &str) -> Option<String> {
+    check_stdout.split_whitespace().find_map(|word| {
+        word.starts_with("probe:")
+            .then(|| word.trim_matches(|c| c == '"' || c == '\'').to_string())
+    })
+}
+
+/// #8166 residual (F1/F2): the three IDs one check screen prints for one
+/// finding must each work in the surface that names them — the `probe:`
+/// finding ID in `ripr repair` and `ripr agent repair`, and the seam ID in
+/// `ripr explain`. Stale cross-namespace IDs refuse with no attempt, and a
+/// truly unknown agent `--seam-id` keeps its wrong-namespace hint.
+#[test]
+fn cross_namespace_ids_round_trip_between_check_explain_and_repair() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-cross-namespace")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    weaken_boundary_predicate(root)?;
+    let check = run_worktree_check(root, &root_arg)?;
+    let stdout = stdout_text(&check);
+    let seam_id = printed_repair_identity(&stdout)
+        .ok_or_else(|| format!("eligible top finding must print a repair line:\n{stdout}"))?;
+    let probe_id = printed_probe_identity(&stdout)
+        .ok_or_else(|| format!("check must print a probe finding ID:\n{stdout}"))?;
+
+    // Reverse direction: the seam ID explains the same finding.
+    let explained = run_ripr(
+        root,
+        &[
+            "explain",
+            "--root",
+            &root_arg,
+            "--base",
+            "HEAD",
+            "--worktree",
+            &seam_id,
+        ],
+    )?;
+    assert_exit(&explained, 0, "explain with the seam ID check printed");
+    assert!(
+        stdout_text(&explained).contains(&probe_id),
+        "explain by seam ID must render the same finding:\n{}",
+        stdout_text(&explained)
+    );
+
+    // Stale probe ID: no seam carries its fingerprint, so both repair
+    // surfaces refuse and start nothing.
+    let stale = "probe:src_lib.rs:predicate:00000000";
+    let repair_stale = run_ripr(root, &["repair", stale, "--root", &root_arg])?;
+    assert_exit(&repair_stale, 3, "repair with a stale probe ID");
+    let stale_stderr = stderr_text(&repair_stale);
+    assert!(
+        stale_stderr.contains("names no seam") && stale_stderr.contains("stale"),
+        "stale probe refusal must name the stale mapping:\n{stale_stderr}"
+    );
+    assert!(
+        !stale_stderr.contains("not a repair subject"),
+        "stale probe refusal must not use the legacy blanket rejection:\n{stale_stderr}"
+    );
+    let agent_stale = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            stale,
+            "--phase",
+            "before",
+        ],
+    )?;
+    assert_exit(&agent_stale, 2, "agent repair with a stale probe ID");
+    assert!(
+        stderr_text(&agent_stale).contains("not a seam ID"),
+        "truly unknown agent seam ID keeps the wrong-namespace hint:\n{}",
+        stderr_text(&agent_stale)
+    );
+    assert!(
+        attempt_ids(root).is_empty(),
+        "stale cross-namespace IDs must create no attempt"
+    );
+
+    // Forward direction: commit the weakened predicate (the before phase
+    // pins HEAD), then the probe ID starts the same seam check printed.
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "weaken the boundary predicate")?;
+    let repair = run_ripr(root, &["repair", &probe_id, "--root", &root_arg])?;
+    assert_exit(&repair, 0, "repair with the probe ID check printed");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1, "exactly one attempt must be created");
+    assert_eq!(read_manifest(root, &ids[0])?["seam_id"], seam_id);
+    Ok(())
+}
+
+/// #8166 residual (F1): `ripr agent repair --seam-id` accepts the `probe:`
+/// finding ID when it uniquely maps to an eligible seam.
+#[test]
+fn agent_repair_accepts_the_probe_id_check_prints() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-agent-probe")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    weaken_boundary_predicate(root)?;
+    let check = run_worktree_check(root, &root_arg)?;
+    let stdout = stdout_text(&check);
+    let seam_id = printed_repair_identity(&stdout)
+        .ok_or_else(|| format!("eligible top finding must print a repair line:\n{stdout}"))?;
+    let probe_id = printed_probe_identity(&stdout)
+        .ok_or_else(|| format!("check must print a probe finding ID:\n{stdout}"))?;
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "weaken the boundary predicate")?;
+    let repair = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            &probe_id,
+            "--phase",
+            "before",
+        ],
+    )?;
+    assert_exit(&repair, 0, "agent repair with the probe ID check printed");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1, "exactly one attempt must be created");
+    assert_eq!(read_manifest(root, &ids[0])?["seam_id"], seam_id);
+    Ok(())
+}
+
+/// #8166 residual (F2): a `file:line` location naming exactly one seam is a
+/// repair subject; one naming no seam refuses with no attempt.
+#[test]
+fn repair_accepts_a_unique_file_line_location() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-repair-file-line")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let stale = run_ripr(root, &["repair", "src/lib.rs:99", "--root", &root_arg])?;
+    assert_exit(&stale, 3, "repair with a file:line naming no seam");
+    assert!(
+        stderr_text(&stale).contains("names no seam"),
+        "stale location refusal must name the miss:\n{}",
+        stderr_text(&stale)
+    );
+    assert!(
+        attempt_ids(root).is_empty(),
+        "a stale location starts nothing"
+    );
+    let repair = run_ripr(root, &["repair", "src/lib.rs:2", "--root", &root_arg])?;
+    assert_exit(&repair, 0, "repair with a unique file:line location");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1, "exactly one attempt must be created");
+    assert_eq!(read_manifest(root, &ids[0])?["seam_id"], FIXTURE_SEAM);
+    Ok(())
+}
+
+/// #8166 residual: two seams sharing file, owner, kind and expression share
+/// one re-minted probe ID; it must refuse with the bounded candidate list
+/// and start nothing, never pick the first seam. (The same
+/// several-matches branch refuses an ambiguous `file:line` location.)
+#[test]
+fn repair_refuses_an_ambiguous_probe_id() -> Result<(), String> {
+    let fixture = Fixture::dir("facade-repair-probe-ambiguous")?;
+    let root = &fixture.root;
+    populate_duplicate_expression_fixture(root)?;
+    // Weaken both duplicate predicates identically, so check mints one probe
+    // ID that both seams still re-mint.
+    let lib = root.join("src/lib.rs");
+    let source = std::fs::read_to_string(&lib).map_err(|e| e.to_string())?;
+    std::fs::write(
+        &lib,
+        source.replace("amount >= threshold", "amount > threshold"),
+    )
+    .map_err(|e| e.to_string())?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let check = run_worktree_check(root, &root_arg)?;
+    let probe_id = printed_probe_identity(&stdout_text(&check))
+        .ok_or_else(|| format!("check must print a probe ID:\n{}", stdout_text(&check)))?;
+    let repair = run_ripr(root, &["repair", &probe_id, "--root", &root_arg])?;
+    assert_exit(&repair, 3, "repair with an ambiguous probe ID");
+    let stderr = stderr_text(&repair);
+    assert!(
+        stderr.contains("names 2 seams; select one explicitly"),
+        "ambiguous probe ID must refuse with the candidate list:\n{stderr}"
+    );
+    assert!(
+        attempt_ids(root).is_empty(),
+        "an ambiguous probe ID must create no attempt"
+    );
+    Ok(())
+}
+
+/// #8166 residual (F3): a static-limited top finding (no static test path)
+/// keeps its limitation guidance and prints no runnable `ripr repair` line,
+/// while its explain/context drill-down stays.
+#[test]
+fn check_drill_down_omits_repair_for_a_static_limited_finding() -> Result<(), String> {
+    let fixture = Fixture::dir("facade-check-drilldown-static-limited")?;
+    let root = &fixture.root;
+    std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        "#[test]\nfn unrelated() {\n    assert_eq!(1 + 1, 2);\n}\n",
+    )
+    .map_err(|e| e.to_string())?;
+    init_repo(root)?;
+    run_git(root, &["add", "Cargo.toml", "src", "tests"])?;
+    git_commit(root, "fixture source")?;
+    weaken_boundary_predicate(root)?;
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "weaken the boundary predicate")?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let check = run_ripr(root, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+    let stdout = stdout_text(&check);
+    assert!(
+        stdout.contains("limited by static analysis"),
+        "the finding must be static-limited:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Next: drill into the top finding:") && stdout.contains("ripr explain"),
+        "explain/context drill-down must stay:\n{stdout}"
+    );
+    assert!(
+        printed_repair_identity(&stdout).is_none() && !stdout.contains("ripr repair"),
+        "a static-limited finding must print no runnable repair line:\n{stdout}"
+    );
+    Ok(())
+}
+
 /// Both percent spellings exist, so an accidental codec substitution selects
 /// a real, wrong repository instead of merely producing a missing-path error.
 #[test]
