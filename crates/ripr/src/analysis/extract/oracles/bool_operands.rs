@@ -592,9 +592,8 @@ fn conjunct_states_relation(conjunct: &str) -> bool {
 /// other side may be `false`, so the test may be asserted false: like a
 /// `matches!` compared with a non-literal, it fails closed.
 fn compares_test_with_non_literal(line: &str) -> bool {
-    let literal = |side: &str| literal_spelling_value(&mask_comments_and_strings(side)).is_some();
     let comparison = assertion_comparison(line);
-    let (mut left, mut right): (&str, &str) = match &comparison {
+    let (left, right): (&str, &str) = match &comparison {
         Some(AssertionComparison::Operands { left, right, .. }) => (left, right),
         Some(AssertionComparison::Condition(condition)) => {
             let Some(sides) = whole_comparison_sides(condition) else {
@@ -604,6 +603,12 @@ fn compares_test_with_non_literal(line: &str) -> bool {
         }
         None => return false,
     };
+    sides_compare_test_with_non_literal(left, right)
+}
+
+/// `compares_test_with_non_literal` for the two sides of one comparison.
+fn sides_compare_test_with_non_literal<'a>(mut left: &'a str, mut right: &'a str) -> bool {
+    let literal = |side: &str| literal_spelling_value(&mask_comments_and_strings(side)).is_some();
     // A literal side asserts the other side's comparison, so that
     // comparison is read in turn (`assert_eq!((r == Err(E::Bad)) as u8 == 0,
     // true)`; review of #8110).
@@ -615,18 +620,159 @@ fn compares_test_with_non_literal(line: &str) -> bool {
             (left, right) = inner;
             continue;
         }
+        // Two sequences of the same length are equal when every element
+        // pair is, so each pair is read on its own
+        // (`vec![r == Err(E::Bad)]` against `vec![expected]`; #8101).
+        if let (Some(left), Some(right)) = (sequence_elements(left), sequence_elements(right)) {
+            return left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(&right)
+                    .any(|(left, right)| sides_compare_test_with_non_literal(left, right));
+        }
         let other = match (literal(left), literal(right)) {
-            (false, false) => return is_bool_test(left) || is_bool_test(right),
+            (false, false) => {
+                return is_bool_test(left)
+                    || is_bool_test(right)
+                    || arithmetic_over_test(left)
+                    || arithmetic_over_test(right)
+                    || indexed_by_test(left)
+                    || indexed_by_test(right);
+            }
             (true, false) => right,
             (false, true) => left,
             (true, true) => return false,
         };
+        if arithmetic_over_test(other) || indexed_by_test(other) {
+            return true;
+        }
         let (core, _, _) = strip_negations(other);
         let Some(sides) = whole_comparison_sides(core) else {
             return false;
         };
         (left, right) = sides;
     }
+}
+
+/// The elements of `side` when it is one array or `vec!` literal
+/// (`[a, b]`, `vec![a, b]`).
+fn sequence_elements(side: &str) -> Option<Vec<String>> {
+    let side = side.trim();
+    let array = side.strip_prefix("vec!").map_or(side, str::trim_start);
+    let contents = super::arguments::delimited_contents_at(array, 0)
+        .filter(|contents| array.starts_with('[') && contents.len() + 2 == array.len())?;
+    Some(super::arguments::split_top_level_commas(&contents))
+}
+
+/// Whether `side` indexes something by a test
+/// (`table[(r == Err(E::Bad)) as usize]`; #8101). The table may hold the same
+/// value at both positions, so the lookup no longer says whether the test
+/// held, whatever it is compared with.
+fn indexed_by_test(side: &str) -> bool {
+    let masked = mask_comments_and_strings(side);
+    let mut depth = 0usize;
+    let mut open_at = None;
+    for (at, ch) in masked.char_indices() {
+        match ch {
+            '(' | '{' => depth += 1,
+            ')' | '}' => depth = depth.saturating_sub(1),
+            '[' => {
+                if depth == 0 {
+                    open_at = Some(at);
+                }
+                depth += 1;
+            }
+            ']' => {
+                depth = depth.saturating_sub(1);
+                // Every top-level bracket group is read, whatever follows it
+                // (`table[test].name`, `table[test][0]`).
+                if let (0, Some(open)) = (depth, open_at.take()) {
+                    let indexes_a_value = masked[..open]
+                        .trim_end()
+                        .chars()
+                        .next_back()
+                        .is_some_and(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | ')' | ']'));
+                    let index = masked[open + 1..at].trim();
+                    if indexes_a_value
+                        && (is_bool_test(index)
+                            || bool_preserving_operand(index).is_some_and(is_bool_test))
+                    {
+                        return true;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Whether `side` is arithmetic over an integer-cast test and another
+/// non-literal term (`k * (r == Err(E::Bad)) as u32`; #8101). The other term
+/// may be zero, so the sum or product no longer says whether the test held,
+/// whatever it is compared with.
+fn arithmetic_over_test(side: &str) -> bool {
+    let masked = mask_comments_and_strings(side);
+    let terms = arithmetic_terms(&masked);
+    if terms.len() < 2 {
+        return false;
+    }
+    let literal = |term: &str| {
+        let term = unwrap_parentheses(term.trim());
+        literal_spelling_value(term).is_some()
+            || (term.starts_with(|c: char| c.is_ascii_digit())
+                && term
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.')))
+    };
+    let Some(test) = terms
+        .iter()
+        .position(|term| bool_preserving_operand(term).is_some_and(is_bool_test))
+    else {
+        return false;
+    };
+    terms
+        .iter()
+        .enumerate()
+        .any(|(index, term)| index != test && !literal(term))
+}
+
+/// The terms of `text` split at its binary `+ - * / %` operators outside any
+/// group. An operator with no operand before it (a deref or a negation) and
+/// the `->` arrow do not split.
+fn arithmetic_terms(text: &str) -> Vec<&str> {
+    let mut terms = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    let mut previous: Option<char> = None;
+    let mut chars = text.char_indices().peekable();
+    while let Some((index, ch)) = chars.next() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            '+' | '-' | '*' | '/' | '%' if depth == 0 => {
+                let after_operand = previous
+                    .is_some_and(|p| p.is_alphanumeric() || matches!(p, '_' | ')' | ']' | '}'));
+                let arrow = ch == '-' && chars.peek().is_some_and(|&(_, next)| next == '>');
+                if after_operand && !arrow {
+                    if let Some(term) = text.get(start..index) {
+                        terms.push(term.trim());
+                    }
+                    start = index + ch.len_utf8();
+                    previous = None;
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        if !ch.is_whitespace() {
+            previous = Some(ch);
+        }
+    }
+    if let Some(term) = text.get(start..) {
+        terms.push(term.trim());
+    }
+    terms
 }
 
 /// The arguments of `left` and `right` when both are one call of the same

@@ -1,3 +1,10 @@
+//! Human (terminal) rendering of `ripr check` output.
+//!
+//! Renders a `CheckOutput` as bounded or full text: header summary, analysis
+//! outcome disclosures (working-tree, committed-history, unanalyzed scope),
+//! and per-finding drill-in. Classification lives upstream; triage and
+//! next-action selection are delegated to the `triage` submodule and `domain`.
+
 use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn, FindingNavigation};
 use crate::config::RiprConfig;
 use crate::domain::Finding;
@@ -129,11 +136,14 @@ fn render_no_scope_note(output: &CheckOutput) -> String {
              The compared base was `{base}`; an empty result here means no behavior changed against it.\n",
         )
     } else {
-        "\nNote: no analysis scope was provided — `ripr check` is diff-first. \
-         Run `ripr check --base BASE` with BASE set to an existing ref to analyze your changes, or \
-         `ripr check --root . --format repo-exposure-md` for a full-repo scan. \
-         An empty result here does NOT mean your changed behavior is covered.\n"
-            .to_string()
+        format!(
+            "\nNote: no analysis scope was provided — `ripr check` is diff-first. \
+             Run `{}` with BASE set to an existing ref to analyze your changes, or \
+             `{}` for whole-repository exploration. \
+             An empty result here does NOT mean your changed behavior is covered.\n",
+            crate::domain::NO_SCOPE_BASE_COMMAND,
+            crate::domain::WHOLE_REPO_PILOT_COMMAND,
+        )
     }
 }
 
@@ -990,16 +1000,7 @@ fn render_language_runs(out: &mut String, output: &CheckOutput) {
 pub(crate) fn advisory_language_names(
     advisory: &crate::analysis::PreviewLanguageAdvisory,
 ) -> (String, String) {
-    let language = language_display_name(&advisory.language);
-    if advisory.language != "typescript" || advisory.javascript_file_count == 0 {
-        return (language.clone(), language);
-    }
-    let family = "TypeScript/JavaScript".to_string();
-    if advisory.javascript_file_count >= advisory.file_count {
-        (family, "JavaScript".to_string())
-    } else {
-        (family.clone(), family)
-    }
+    advisory.prose_names()
 }
 
 /// Prose name for a language wire string (`typescript` -> `TypeScript`),
@@ -1829,6 +1830,95 @@ mod tests {
         assert!(rendered.contains("Next: drill into the top finding:"));
         assert!(rendered.contains(&format!("  ripr explain {finding_id}\n")));
         assert!(rendered.contains(&format!("  ripr context --at {finding_id}\n")));
+        // #8166 Slice C: without a producer-established repair route, the
+        // drill-down offers no repair line.
+        assert!(!rendered.contains("ripr repair"), "{rendered}");
+    }
+
+    /// #8166 Slice C: a repair route established for the top finding prints
+    /// `ripr repair <seam-id>` in the bounded drill-down, naming the seam
+    /// identity the repair resolver accepts — never the `probe:` finding
+    /// ID. A route bound to another finding, and the human-full form, print
+    /// no repair line.
+    #[test]
+    fn bounded_human_output_prints_repair_only_for_the_routed_top_finding() {
+        let finding = sample_finding();
+        let finding_id = finding.id.clone();
+        let output = CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                probes: 1,
+                findings: 1,
+                weakly_exposed: 1,
+                ..Summary::default()
+            },
+            findings: vec![finding],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+            analyzed_revisions: None,
+        };
+        let config = crate::config::RiprConfig::default();
+        let routed = crate::app::FindingDrillIn::Commands(
+            crate::app::FindingNavigation::legacy().with_repair_route(Some(
+                crate::app::RepairRoute {
+                    finding_id: finding_id.clone(),
+                    seam_id: "67fc764ba37d77bd".to_string(),
+                },
+            )),
+        );
+        let rendered = super::render_bounded_with_config_and_navigation(
+            &output,
+            &config,
+            Some(&routed),
+            crate::app::CheckDiffProvenance::CommittedHistory,
+        );
+        assert!(
+            rendered.contains(
+                "Next: drill into the top finding:\n  ripr explain probe:sample.rs:7:predicate\n  ripr context --at probe:sample.rs:7:predicate\n  ripr repair 67fc764ba37d77bd\n"
+            ),
+            "the eligible top finding must print its seam repair line:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("ripr repair probe:"),
+            "the repair line must never name the finding ID:\n{rendered}"
+        );
+
+        let other = crate::app::FindingDrillIn::Commands(
+            crate::app::FindingNavigation::legacy().with_repair_route(Some(
+                crate::app::RepairRoute {
+                    finding_id: "probe:other".to_string(),
+                    seam_id: "67fc764ba37d77bd".to_string(),
+                },
+            )),
+        );
+        let rendered_other = super::render_bounded_with_config_and_navigation(
+            &output,
+            &config,
+            Some(&other),
+            crate::app::CheckDiffProvenance::CommittedHistory,
+        );
+        assert!(
+            !rendered_other.contains("ripr repair"),
+            "a route for another finding must print no repair line:\n{rendered_other}"
+        );
+
+        let full = super::render_full_with_config_and_navigation(&output, &config, Some(&routed));
+        assert!(
+            !full.contains("ripr repair"),
+            "human-full keeps its existing drill-in contract:\n{full}"
+        );
     }
 
     /// A Python preview finding; `carded` controls whether the Python repair
@@ -2844,7 +2934,10 @@ mod tests {
 
         assert!(rendered.contains("Start here:"));
         assert!(rendered.contains("State: nothing in scope"));
-        assert!(rendered.contains("provide an analysis scope"));
+        // The triage line names the canonical pair (domain::next_action):
+        // a concrete diff scope or whole-repository pilot exploration.
+        assert!(rendered.contains("`ripr check --base BASE`"));
+        assert!(rendered.contains("`ripr pilot --root .`"));
         assert!(rendered.contains("No diff-derived static exposure probes found."));
     }
 
@@ -2896,6 +2989,87 @@ mod tests {
         assert!(!rendered.contains("untested") && !full.contains("untested")); // ripr-allow: static-language: control enumerates the promotion term it rejects
         assert!(!rendered.contains("proven") && !full.contains("proven")); // ripr-allow: static-language: control enumerates the promotion term it rejects
         assert!(!rendered.contains("adequate") && !full.contains("adequate")); // ripr-allow: static-language: control enumerates the promotion term it rejects
+    }
+
+    /// Snake_case identifiers on the bounded render that are data, not
+    /// renderer-controlled labels: producer prose, ids and CLI spellings
+    /// (RIPR-SPEC-0122 treats these as data).
+    fn wire_token_leaks(rendered: &str) -> Vec<String> {
+        let mut leaks = Vec::new();
+        for line in rendered.lines() {
+            let trimmed = line.trim_start();
+            if line.starts_with("root:")
+                || trimmed.starts_with("ripr ")
+                || trimmed.starts_with("Canonical gap:")
+                || trimmed.starts_with("Related test:")
+            {
+                continue;
+            }
+            for word in line.split(|c: char| !(c.is_ascii_lowercase() || c == '_')) {
+                if word.contains('_')
+                    && !word.starts_with('_')
+                    && !word.ends_with('_')
+                    && !leaks.iter().any(|seen: &String| seen == word)
+                {
+                    leaks.push(word.to_string());
+                }
+            }
+        }
+        leaks
+    }
+
+    #[test]
+    fn wire_token_scan_discriminates_a_leaked_token() {
+        assert!(wire_token_leaks("State: a gap to repair (top_gap)").contains(&"top_gap".into()));
+        assert!(
+            wire_token_leaks("Summary: 1 probe (1 weakly_exposed)")
+                .contains(&"weakly_exposed".into())
+        );
+        assert!(wire_token_leaks("  Static exposure: weak (severity: warning)").is_empty());
+        // Data lines are carved out, not the rest of the screen.
+        assert!(
+            wire_token_leaks("  Related test: tests/a.rs:2 test_name\n  ripr explain probe:a_b")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn bounded_render_carries_no_snake_case_wire_token_for_any_class() {
+        let classes = [
+            ExposureClass::Exposed,
+            ExposureClass::WeaklyExposed,
+            ExposureClass::ReachableUnrevealed,
+            ExposureClass::NoStaticPath,
+            ExposureClass::InfectionUnknown,
+            ExposureClass::PropagationUnknown,
+            ExposureClass::StaticUnknown,
+        ];
+        for class in classes {
+            // More findings than the digest shows, so the Hidden list renders.
+            let findings = (0..12)
+                .map(|n| {
+                    let mut finding = sample_finding();
+                    finding.class = class.clone();
+                    finding.id = format!("probe:sample.rs:{n}:predicate");
+                    finding.probe.location.line = n + 1;
+                    finding
+                })
+                .collect::<Vec<_>>();
+            let rendered = render(&bounded_output_with_findings(findings));
+            assert!(
+                wire_token_leaks(&rendered).is_empty(),
+                "{class:?}: bounded render leaked {:?}:\n{rendered}",
+                wire_token_leaks(&rendered)
+            );
+        }
+        for no_scope in [false, true] {
+            let rendered = render(&empty_live_output(no_scope));
+            assert!(
+                wire_token_leaks(&rendered).is_empty(),
+                "empty render (no_scope {no_scope}) leaked {:?}:\n{rendered}",
+                wire_token_leaks(&rendered)
+            );
+        }
     }
 
     fn empty_live_output(no_scope_provided: bool) -> CheckOutput {
@@ -6300,11 +6474,12 @@ mod tests {
             rendered.contains("does NOT mean your changed behavior is covered"),
             "expected honesty note; got:\n{rendered}"
         );
-        // Bug 2 regression guard: the recommended full-repo-scan command must be
-        // --format repo-exposure-md, not --mode fast (which is a speed tier).
+        // Canonical whole-repo route (domain::next_action): guidance names
+        // `ripr pilot --root .`, the docs-canonical exploration route — not
+        // --mode fast (a speed tier) and not the repo-exposure check format.
         assert!(
-            rendered.contains("--format repo-exposure-md"),
-            "expected --format repo-exposure-md in guidance; got:\n{rendered}"
+            rendered.contains("`ripr pilot --root .`"),
+            "expected pilot guidance; got:\n{rendered}"
         );
         assert!(
             !rendered.contains("--mode fast"),
@@ -6392,10 +6567,11 @@ mod tests {
     }
 
     #[test]
-    fn guidance_recommends_format_repo_exposure_md_not_mode_fast() {
-        // Bug 2 regression guard: the human guidance string must recommend
-        // --format repo-exposure-md for a full-repo scan, NOT --mode fast.
-        // --mode is a speed tier on the diff path; it does NOT provide scope.
+    fn guidance_recommends_pilot_not_mode_fast() {
+        // Canonical whole-repo route (domain::next_action): the human
+        // guidance must recommend `ripr pilot --root .` for whole-repository
+        // exploration, NOT --mode fast (a speed tier on the diff path, which
+        // does NOT provide scope) and not the repo-exposure check format.
         let output = CheckOutput {
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
@@ -6420,8 +6596,8 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("--format repo-exposure-md"),
-            "guidance must recommend --format repo-exposure-md for full-repo scan; got:\n{rendered}"
+            rendered.contains("`ripr pilot --root .`"),
+            "guidance must recommend pilot for whole-repository exploration; got:\n{rendered}"
         );
         assert!(
             !rendered.contains("--mode fast"),

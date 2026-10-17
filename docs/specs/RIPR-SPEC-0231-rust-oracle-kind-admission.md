@@ -314,7 +314,18 @@ Two pattern terms are used below.
    still pins (`assert_eq!(x as u8, 3)`). The same one-argument constructor
    (`Some`, `Ok` or `Err`) around both sides compares what it wraps, so a
    test compared with a non-literal through it caps
-   (`assert_eq!(Some(r == Err(E::Bad)), Some(expected))`; #8101). Such a comparison asserted by a
+   (`assert_eq!(Some(r == Err(E::Bad)), Some(expected))`; #8101). Arithmetic
+   over an integer-cast test and another non-literal term caps too, whatever
+   it is compared with (`assert_eq!(k * (r == Err(E::Bad)) as u32, n)`;
+   #8101); beside only literals it still pins
+   (`assert_eq!((r == Err(E::Bad)) as u32 + 1, 2)`). Two
+   arrays or `vec!` literals of the same length compare element by element, so
+   a test compared with a non-literal inside one caps
+   (`assert_eq!(vec![r == Err(E::Bad)], vec![expected])`; #8101). A side
+   that indexes by a test caps whatever it is compared with, because the table
+   may hold one value at both positions
+   (`assert_eq!(table[(r == Err(E::Bad)) as usize], expected)`; #8101),
+   including when a field, method or further index follows it. Such a comparison asserted by a
    boolean literal caps the same way (`assert_eq!((r == Err(E::Bad)) as u8
    == 0, true)`, `assert_eq!((r == Err(E::Bad)) == flag, true)`), and a
    path call to `not` negates like `!` (`assert_eq!(Not::not(r ==

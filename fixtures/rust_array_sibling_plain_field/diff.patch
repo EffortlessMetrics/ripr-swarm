@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -3,7 +3,7 @@ pub struct Row {
+ }
+ 
+ pub fn rows(a: u32, b: u32) -> [Row; 2] {
+-    [Row { total: a }, Row { total: a - b }]
++    [Row { total: a }, Row { total: a + b }]
+ }
+ 
+ #[cfg(test)]

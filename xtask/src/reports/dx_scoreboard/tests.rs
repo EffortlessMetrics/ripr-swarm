@@ -1202,7 +1202,18 @@ fn first_run_rows_map_to_gates_and_list_verdicts() {
             .collect()
     };
     assert_eq!(get("first_run.failed_steps")[0]["value"], json!(1));
-    assert_eq!(get("first_run.over_budget_steps")[0]["value"], json!(2));
+    // Only the slow `check` step is over its time budget; the 2374-line
+    // workflow is counted on its own metric.
+    assert_eq!(get("first_run.over_budget_steps")[0]["value"], json!(1));
+    assert_eq!(
+        get("first_run.over_budget_steps")[0]["evidence"],
+        json!("a/check secs 12 > 10")
+    );
+    assert_eq!(get("first_run.over_budget_workflows")[0]["value"], json!(1));
+    assert_eq!(
+        get("first_run.over_budget_workflows")[0]["evidence"],
+        json!("a/init_ci workflow_lines 2374 > 1500")
+    );
     assert_eq!(get("first_run.friction_events")[0]["value"], json!(2.0));
     assert_eq!(get("first_run.unknown_verdicts")[0]["value"], json!(1));
     assert_eq!(
@@ -3585,5 +3596,99 @@ fn a_non_draft_checkout_config_still_produces_a_draft_warm_check_sample() -> Res
         "{}",
         admit_check_document(&draft_document, &wrong_subject).reason()
     );
+    Ok(())
+}
+
+#[test]
+fn ingested_first_run_rows_name_the_ripr_build_and_install_route() -> Result<(), String> {
+    let row = |ripr: &str, step: &str| {
+        format!(
+            r#"{{"schema":"first_run_row.v1","ripr":"{ripr}","case":"_setup","step":"{step}","metric":"secs","value":40.0,"budget":null,"better":"lower"}}"#
+        )
+    };
+    let published = parse_ingest_text(&row("ripr 0.10.0", "install_published"))?;
+    assert_eq!(
+        ingested_identity(&published),
+        Some((
+            "ripr 0.10.0".to_string(),
+            "cargo install ripr --locked".to_string()
+        ))
+    );
+    let archive = parse_ingest_text(&row("ripr 0.10.0", "install_archive"))?;
+    assert_eq!(
+        ingested_identity(&archive),
+        Some((
+            "ripr 0.10.0".to_string(),
+            "prebuilt release archive".to_string()
+        ))
+    );
+    // Without an install step the route is unknown, so no identity is invented.
+    let walk_only = parse_ingest_text(&row("ripr 0.10.0", "check"))?;
+    assert_eq!(ingested_identity(&walk_only), None);
+    Ok(())
+}
+
+#[test]
+fn ingested_receipt_and_failed_install_identities() -> Result<(), String> {
+    let receipt = |ripr: &str, step: &str| {
+        json!({
+            "schema_version": FIRST_RUN_SCHEMA_VERSION,
+            "ripr": ripr,
+            "binary": "/tmp/run-specific/ripr",
+            "setup": [{"step": step, "secs": 3.0}],
+            "cases": [],
+        })
+    };
+    assert_eq!(
+        ingested_identity(&receipt("ripr 0.10.0", "install_archive")),
+        Some((
+            "ripr 0.10.0".to_string(),
+            "prebuilt release archive".to_string()
+        ))
+    );
+    // A failed install writes `unavailable`, which names no ripr.
+    assert_eq!(
+        ingested_identity(&receipt("unavailable", "install_published")),
+        None
+    );
+    Ok(())
+}
+
+#[test]
+fn ingested_identity_fills_an_empty_context_and_never_replaces_a_measured_one() -> Result<(), String>
+{
+    let dir = crate::tests::temp_dir("dx-ingested-identity");
+    let unusable = dir.join("walk-only.jsonl");
+    let usable = dir.join("rows.jsonl");
+    let row = |step: &str| {
+        format!(
+            r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.10.0","case":"_setup","step":"{step}","metric":"secs","value":40.0,"budget":null,"better":"lower"}}"#
+        )
+    };
+    fs::write(&unusable, row("check")).map_err(|err| err.to_string())?;
+    fs::write(&usable, row("install_published")).map_err(|err| err.to_string())?;
+    let files = [dir.join("missing.jsonl"), unusable, usable];
+
+    let mut empty = RunContext::default();
+    record_ingested_identity(&mut empty, &files);
+    assert_eq!(empty.analyzer_version, "ripr 0.10.0");
+    assert_eq!(empty.binary, "cargo install ripr --locked");
+
+    let mut measured = RunContext {
+        analyzer_version: "ripr 0.11.0".to_string(),
+        binary: "target/release/ripr".to_string(),
+        ..RunContext::default()
+    };
+    record_ingested_identity(&mut measured, &files);
+    assert_eq!(measured.analyzer_version, "ripr 0.11.0");
+    assert_eq!(measured.binary, "target/release/ripr");
+
+    let mut partial = RunContext {
+        binary: "target/release/ripr".to_string(),
+        ..RunContext::default()
+    };
+    record_ingested_identity(&mut partial, &files);
+    assert!(partial.analyzer_version.is_empty());
+    assert_eq!(partial.binary, "target/release/ripr");
     Ok(())
 }

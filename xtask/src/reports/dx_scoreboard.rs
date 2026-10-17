@@ -51,8 +51,11 @@ const RUST_CORPUS_SMOKE_SCHEMA_VERSION: &str = "ripr-rust-corpus-smoke-v1";
 /// Receipt written by `cargo xtask pilot-ranking score` (pilot's top picks
 /// judged against the checked-in mutation answer key); converted on ingest.
 const PILOT_RANKING_SCHEMA_VERSION: &str = super::pilot_ranking::RECEIPT_SCHEMA_VERSION;
-/// Row metrics that carry their own per-step `budget`.
-const FIRST_RUN_BUDGETED: [&str; 3] = ["secs", "stdout_lines", "workflow_lines"];
+/// Row metrics that carry their own per-step time or output-length `budget`.
+const FIRST_RUN_BUDGETED: [&str; 2] = ["secs", "stdout_lines"];
+/// The generated workflow's size, budgeted on its own so a large `init_ci`
+/// file is not read as a slow or noisy step.
+const FIRST_RUN_WORKFLOW_LINES: &str = "workflow_lines";
 const DEFAULT_CONFIG: &str = "benchmarks/dx_scoreboard/scoreboards.toml";
 const DEFAULT_CORPUS_DIR: &str = "target/ripr/dx-scoreboard/corpus";
 const DEFAULT_TIMEOUT_MS: u64 = 900_000;
@@ -194,7 +197,8 @@ pub(crate) fn dx_scoreboard(args: &[String]) -> Result<(), String> {
         samples.extend(load_ingest(path, &config)?);
     }
     samples.extend(file_samples(&config, &options.boards)?);
-    let context = measure::measure(&config, &options, &mut samples)?;
+    let mut context = measure::measure(&config, &options, &mut samples)?;
+    record_ingested_identity(&mut context, &options.ingest);
     let baseline = match &options.baseline {
         Some(path) => Some(check_baseline(read_json(path)?).map_err(|err| {
             format!(
@@ -511,6 +515,68 @@ pub(crate) fn parse_ingest_text(text: &str) -> Result<Value, String> {
     Ok(json!({"schema_version": FIRST_RUN_ROW_SCHEMA_VERSION, "rows": rows}))
 }
 
+/// The ripr build and install route a first-run ingest file names. A run that
+/// only ingests (the nightly `first-run-install` lane) measures no binary of
+/// its own, so without this the report records an empty identity and a
+/// committed baseline cannot say which ripr it describes. The route is a label
+/// derived from the walk's install step, not the receipt's `binary`, which for
+/// the archive route is a path inside one run's output directory. A failed
+/// install reports its version as `unavailable`, which names no ripr.
+pub(crate) fn ingested_identity(value: &Value) -> Option<(String, String)> {
+    let version_of = |v: &Value| {
+        v.as_str()
+            .filter(|t| !t.is_empty() && *t != "unavailable")
+            .map(str::to_string)
+    };
+    let route_of = |steps: &mut dyn Iterator<Item = Option<&str>>| {
+        let mut found = None;
+        for step in steps.flatten() {
+            match step {
+                "install_published" => return Some("cargo install ripr --locked"),
+                "install_archive" => found = Some("prebuilt release archive"),
+                _ => {}
+            }
+        }
+        found
+    };
+    let (version, route) = match value["schema_version"].as_str() {
+        Some(FIRST_RUN_SCHEMA_VERSION) => (
+            version_of(&value["ripr"])?,
+            route_of(
+                &mut value["setup"]
+                    .as_array()?
+                    .iter()
+                    .map(|s| s["step"].as_str()),
+            )?,
+        ),
+        Some(FIRST_RUN_ROW_SCHEMA_VERSION) => {
+            let rows = value["rows"].as_array()?;
+            (
+                rows.iter().find_map(|row| version_of(&row["ripr"]))?,
+                route_of(&mut rows.iter().map(|row| row["step"].as_str()))?,
+            )
+        }
+        _ => return None,
+    };
+    Some((version, route.to_string()))
+}
+
+/// Fill an empty analyzer version and binary from the first ingest file that
+/// names them. A measured identity is never replaced.
+fn record_ingested_identity(context: &mut RunContext, ingest: &[PathBuf]) {
+    if !context.analyzer_version.is_empty() || !context.binary.is_empty() {
+        return;
+    }
+    let found = ingest.iter().find_map(|path| {
+        let text = fs::read_to_string(path).ok()?;
+        ingested_identity(&parse_ingest_text(&text).ok()?)
+    });
+    if let Some((version, binary)) = found {
+        context.analyzer_version = version;
+        context.binary = binary;
+    }
+}
+
 pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>, String> {
     if value["schema_version"].as_str() == Some(FIRST_RUN_SCHEMA_VERSION) {
         let converted = first_run_to_input(value)?;
@@ -727,8 +793,10 @@ fn is_source_install_step(name: &str) -> bool {
 ///
 /// - failed steps: `exit` rows that are not 0, and steps with rows but no
 ///   `exit` row (a walk cut off mid-step);
-/// - over-budget steps: `secs`, `stdout_lines` and `workflow_lines` rows over
-///   the row's `budget`;
+/// - over-budget steps: `secs` and `stdout_lines` rows over the row's
+///   `budget`;
+/// - over-budget workflows: `workflow_lines` rows over the row's `budget`,
+///   counted apart because file size says nothing about step speed;
 /// - walk seconds per case (setup excluded), compared per case at 50% plus
 ///   0.5 s, the walk's 1.5x-plus-0.5 s rule applied to each case's total
 ///   rather than to every step;
@@ -765,6 +833,7 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
     }
     let mut steps: Vec<Step> = Vec::new();
     let mut over = Vec::new();
+    let mut over_workflow = Vec::new();
     let mut friction = 0.0;
     let mut verdicts = Vec::new();
     for (index, row) in rows.iter().enumerate() {
@@ -845,6 +914,12 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
         {
             over.push(format!("{case}/{step} {metric} {value} > {budget}"));
         }
+        if metric == FIRST_RUN_WORKFLOW_LINES
+            && let Some(budget) = row["budget"].as_f64()
+            && value > budget
+        {
+            over_workflow.push(format!("{case}/{step} {metric} {value} > {budget}"));
+        }
     }
     let cases: Vec<String> =
         steps
@@ -892,6 +967,7 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
     let mut out = vec![
         json!({"id": "first_run.failed_steps", "value": failed.len(), "evidence": list(&failed)}),
         json!({"id": "first_run.over_budget_steps", "value": over.len(), "evidence": list(&over)}),
+        json!({"id": "first_run.over_budget_workflows", "value": over_workflow.len(), "evidence": list(&over_workflow)}),
     ];
     // An install-only walk ran no cases, so a zero here would read as "no
     // friction, no unknown verdicts" rather than "not measured".
