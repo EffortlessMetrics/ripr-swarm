@@ -11389,10 +11389,16 @@ fn routed_rust_merge_ready_event_matrix_withholds_unrequested_context() -> Resul
             "implementation job `rust-github` must not use `always()`",
         );
     }
-    let cleanup_comment = replace_once(
+    let cleanup_comment_hosted = replace_once(
+        hosted,
+        "    uses: ./.github/workflows/rust-gates.yml\n",
+        "    uses: ./.github/workflows/rust-gates.yml\n    # cleanup may use always()\n",
+    );
+    let cleanup_comment = replace_once(workflow, hosted, &cleanup_comment_hosted);
+    assert_eq!(
+        replace_once(&cleanup_comment, "    # cleanup may use always()\n", ""),
         workflow,
-        "    uses: ./.github/workflows/rust-gates.yml\n    with:\n      runner-config: '\"ubuntu-latest\"'",
-        "    uses: ./.github/workflows/rust-gates.yml\n    # cleanup may use always()\n    with:\n      runner-config: '\"ubuntu-latest\"'",
+        "the permitted-comment control must preserve every other workflow byte"
     );
     assert!(
         routed_rust_ready_event_contract_violations(&cleanup_comment).is_empty(),
