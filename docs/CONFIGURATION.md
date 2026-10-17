@@ -296,6 +296,17 @@ and recompute its digest. This contract does not cover every cache family or
 provide provenance signatures. Reuse performs one semantic-body serialization
 and SHA-256 operation per envelope; no cache-speed improvement is claimed.
 
+Because a repository could therefore ship a digest-valid entry of its own
+(#7780), the seam-fact, classified-seam and file-fact caches refuse every
+entry when Git tracks any file under the cache root: the lookup reports an
+ignored cache entry naming the condition and the run recomputes. A cache root
+outside any Git work tree (for example `RIPR_CACHE_DIR` elsewhere) is
+unaffected. When Git cannot answer (dubious ownership, a damaged repository, a
+5-second deadline) the cache is refused rather than assumed clean. An
+extracted archive carries no Git evidence, so this does not defend against a
+planted cache delivered that way. The corpus-fingerprint cache binds its
+entries to the checkout path hash and is unchanged.
+
 To relocate the cache to a different directory (e.g., for a read-only
 source checkout):
 

@@ -128,10 +128,11 @@ fn copy_classified(
         }
         copy_bytes(&path, &bytes, source, report)?;
     }
-    let copied = RepoSeamFactCache {
-        dir: relocated(&cache.dir, source, &report.cache_dir)?,
-        sharded_dir: relocated(&cache.sharded_dir, source, &report.cache_dir)?,
-    };
+    let copied = RepoSeamFactCache::rooted_at(
+        relocated(&cache.dir, source, &report.cache_dir)?,
+        relocated(&cache.sharded_dir, source, &report.cache_dir)?,
+        report.cache_dir.clone(),
+    );
     match copied.load_classified_seams_with_fallback(key) {
         CacheLoad::Hit(_) => {
             report.classified_entries += 1;
@@ -231,10 +232,11 @@ pub(crate) fn export_current(root: &Path, output: &Path) -> Result<CacheExportRe
         ]
         .into_iter()
         .map(|cache| {
-            Ok(RepoSeamFactCache {
-                dir: relocated(&cache.dir, &raw_base, &source)?,
-                sharded_dir: relocated(&cache.sharded_dir, &raw_base, &source)?,
-            })
+            Ok(RepoSeamFactCache::rooted_at(
+                relocated(&cache.dir, &raw_base, &source)?,
+                relocated(&cache.sharded_dir, &raw_base, &source)?,
+                source.clone(),
+            ))
         })
         .collect::<Result<Vec<_>, String>>()?;
         let facts = RepoFileFactCache::at(root);
@@ -404,10 +406,11 @@ mod tests {
                 .all(|path| path.file_name() != Some(std::ffi::OsStr::new("unreferenced.json")))
         );
         for cache in &fixture.caches {
-            let copied = RepoSeamFactCache {
-                dir: relocated(&cache.dir, &fixture.source, &fixture.output)?,
-                sharded_dir: relocated(&cache.sharded_dir, &fixture.source, &fixture.output)?,
-            };
+            let copied = RepoSeamFactCache::rooted_at(
+                relocated(&cache.dir, &fixture.source, &fixture.output)?,
+                relocated(&cache.sharded_dir, &fixture.source, &fixture.output)?,
+                fixture.output.clone(),
+            );
             assert!(
                 matches!(copied.load_classified_seams_with_fallback(&fixture.key), CacheLoad::Hit((seams, _, _)) if seams.len() == 2)
             );
