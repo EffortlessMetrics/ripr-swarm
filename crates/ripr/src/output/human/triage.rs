@@ -5,7 +5,7 @@ use crate::config::RiprConfig;
 use crate::domain::{
     CanonicalNextActionV1, ExposureClass, Finding, LanguageId, NextActionAlternative,
     NextActionCheckCase, NextActionCurrentness, NextActionDiffSource, NextActionInput,
-    NextActionProducer, NextActionStop, ProbeFamily, StaticLimitKind, current_command_platform,
+    NextActionProducer, NextActionStop, StaticLimitKind, current_command_platform,
     select_canonical_next_action,
 };
 use crate::output::path::display_path;
@@ -318,13 +318,7 @@ pub(crate) fn render_human_triage(
                 && finding.static_limit_kind
                     != Some(StaticLimitKind::RustAssertionContextUnresolved)
                 && !super::sections::untraced_reach_weak_finding(finding)
-                && matches!(
-                    finding.probe.family,
-                    ProbeFamily::Predicate
-                        | ProbeFamily::ReturnValue
-                        | ProbeFamily::ErrorPath
-                        | ProbeFamily::MatchArm
-                )
+                && finding.probe.family.offers_stub_route()
                 && finding
                     .probe
                     .location
@@ -1021,8 +1015,9 @@ mod tests {
     use super::*;
     use crate::app::Mode;
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, NextActionClass, Probe, ProbeId, RevealEvidence,
-        RiprEvidence, SourceCurrentness, SourceLocation, StageEvidence, StageState, Summary,
+        ActivationEvidence, Confidence, DeltaKind, NextActionClass, Probe, ProbeFamily, ProbeId,
+        RevealEvidence, RiprEvidence, SourceCurrentness, SourceLocation, StageEvidence, StageState,
+        Summary,
     };
     use std::path::PathBuf;
 
