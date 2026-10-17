@@ -699,7 +699,7 @@ fn runs_plainly(node: &SyntaxNode) -> bool {
             && !ast::LoopExpr::can_cast(node.kind())
             && !ast::AwaitExpr::can_cast(node.kind())
             && !is_short_circuit(&node)
-            && !(ast::Item::can_cast(node.kind()) && !ast::MacroCall::can_cast(node.kind()))
+            && (!ast::Item::can_cast(node.kind()) || ast::MacroCall::can_cast(node.kind()))
             && !ast::BlockExpr::cast(node).is_some_and(|block| {
                 block.async_token().is_some()
                     || block.label().is_some()
