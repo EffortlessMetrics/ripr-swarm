@@ -31,7 +31,9 @@
 mod macro_argument;
 mod returned_ledger;
 pub(crate) use returned_ledger::{ReturnedLedger, returned_ledger};
+mod field_projection;
 mod selected_inherent_call;
+pub(in crate::analysis) use field_projection::{FieldProjectionReceipt, field_projection_receipt};
 pub(in crate::analysis) use selected_inherent_call::{
     SelectedInherentCall, selected_inherent_calls,
 };

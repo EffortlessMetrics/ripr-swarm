@@ -253,10 +253,13 @@ pub(crate) fn ts_changed_value_is_observed(
             // read; the effect branch below confirms it by kind.
             let credited_mock = !value_family
                 && matches!(assertion.oracle_kind, OracleKind::MockExpectation)
-                && assertion
-                    .mock_payload
-                    .as_ref()
-                    .is_some_and(|payload| mock_facts.credits(payload, &candidate.test.body_text));
+                && assertion.mock_payload.as_ref().is_some_and(|payload| {
+                    mock_facts.credits_with_factories(
+                        payload,
+                        &candidate.test.body_text,
+                        &candidate.test.mock_factories_in_file,
+                    )
+                });
             // RIPR-SPEC-0250: a credited `toMatchObject` pin lists the changed
             // field and observes the whole owner result, so it sees the sink.
             if value_family && pin_facts.credits(&candidate.test.file, assertion) {
@@ -4395,7 +4398,11 @@ pub(crate) fn strongest_family_matching_oracle(
                 (_, Some(payload))
                     if effect_family
                         && matches!(assertion.oracle_kind, OracleKind::MockExpectation)
-                        && mock_facts.credits(payload, &candidate.test.body_text) =>
+                        && mock_facts.credits_with_factories(
+                            payload,
+                            &candidate.test.body_text,
+                            &candidate.test.mock_factories_in_file,
+                        ) =>
                 {
                     (OracleKind::MockExpectation, OracleStrength::Strong)
                 }
@@ -4440,10 +4447,13 @@ fn project_credited_mock_rows(
         }
         let credited = candidate.test.assertions.iter().find(|assertion| {
             matches!(assertion.oracle_kind, OracleKind::MockExpectation)
-                && assertion
-                    .mock_payload
-                    .as_ref()
-                    .is_some_and(|payload| mock_facts.credits(payload, &candidate.test.body_text))
+                && assertion.mock_payload.as_ref().is_some_and(|payload| {
+                    mock_facts.credits_with_factories(
+                        payload,
+                        &candidate.test.body_text,
+                        &candidate.test.mock_factories_in_file,
+                    )
+                })
         });
         if let Some(assertion) = credited {
             row.oracle_kind = OracleKind::MockExpectation;
@@ -4940,8 +4950,10 @@ pub(crate) fn classify_change_with_alias_state(
             StageState::Yes,
             StageState::Yes,
             vec![format!(
-                "Related test reaches `{}` with a `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.",
+                // #7752: the article follows the oracle-kind label ("an `exact_value`").
+                "Related test reaches `{}` with {} `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.",
                 owner.name,
+                crate::domain::indefinite_article(strongest_kind.as_str()),
                 strongest_kind.as_str()
             )],
         )
@@ -5137,7 +5149,9 @@ pub(crate) fn classify_change_with_alias_state(
         )
     } else if strongest_strength >= OracleStrength::Strong.rank() && observation_confirmed {
         format!(
-            "Related test uses a `{}` oracle; static evidence suggests the changed behavior is discriminated.",
+            // #7752: the article follows the oracle-kind label ("an `exact_value`").
+            "Related test uses {} `{}` oracle; static evidence suggests the changed behavior is discriminated.",
+            crate::domain::indefinite_article(strongest_kind.as_str()),
             strongest_kind.as_str()
         )
     } else if strongest_strength >= OracleStrength::Strong.rank() && !boundary_witnessed {

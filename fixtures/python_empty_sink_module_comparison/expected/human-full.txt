@@ -5,10 +5,10 @@ config: <cwd>/fixtures/python_empty_sink_module_comparison/input/ripr.toml
 
 Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
 
-Changed file(s) by language: python: 1.
+Changed file(s) by language: python = 1
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
 
 WARNING src/constants.py:1
   id: probe:src_constants.py:python_preview:904eec8a
@@ -33,14 +33,14 @@ Static exposure
 Evidence
   - reach yes: 1 related Python test(s) found for owner `<module>`
   - infection yes: Changed Python expression can alter preview-classified predicate behavior: `x = 1`
-  - propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink.
+  - propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink
   - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
-  - discriminator weak: Related Python test uses a `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.
+  - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
   - local flow reaches unknown sink: x = 1 (line 1)
   - related test tests/test_constants.py:4 test_constants uses strong exact value oracle: assert module == 2
 
 Weakness
-  - A strong Python oracle reaches `<module>`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output.
+  - A strong Python oracle reaches `<module>`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output
 
 Repair placement
   suggested file: tests/test_constants.py

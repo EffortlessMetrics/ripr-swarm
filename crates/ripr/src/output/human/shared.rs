@@ -2,7 +2,7 @@
 //! This is presentation only; the legacy library route never builds a catalogue.
 
 use super::evidence_lines::evidence_path_entries;
-use super::sections::push_evidence_line;
+use super::sections::{push_evidence_line, trim_field_period};
 use crate::domain::Finding;
 use crate::output::next_step::reconcile_next_step;
 use std::collections::BTreeMap;
@@ -123,7 +123,10 @@ impl SharedReport {
                 if let Some(label) = shared.and_then(|index| report.entries[index].label.as_ref()) {
                     format!("  shared guidance: {label}\n")
                 } else {
-                    format!("  - {text}\n")
+                    // #7756: the unshared per-finding guidance line is a
+                    // list-item value, so it carries no trailing period
+                    // either (Devin review on #8096).
+                    format!("  - {}\n", trim_field_period(&text))
                 }
             });
             report.findings.push(sections);
@@ -175,7 +178,9 @@ impl SharedReport {
                 .join(", ");
             let mut payload = String::new();
             if entry.guidance {
-                payload.push_str(&format!("  {}\n", entry.text));
+                // #7756: catalogue guidance values follow the same
+                // no-trailing-period rule as the per-finding render.
+                payload.push_str(&format!("  {}\n", trim_field_period(&entry.text)));
             } else {
                 push_evidence_line(&mut payload, &entry.text);
             }

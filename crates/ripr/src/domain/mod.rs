@@ -52,6 +52,7 @@ pub use diagnostic_witness::{
     DiagnosticWitnessLimitation,
 };
 pub(crate) use diagnostic_witness::{perl_suggested_related_test, python_suggested_related_test};
+pub(crate) use evidence::indefinite_article;
 pub use evidence::{
     Confidence, OracleKind, OracleStrength, RelationConfidence, RelationReason, RevealEvidence,
     RiprEvidence, StageEvidence, StageState,

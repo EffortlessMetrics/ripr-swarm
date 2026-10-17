@@ -39,8 +39,9 @@ traceability without reconstructing intent from chat history.
    `precommit`, or required merge qualification. Other edits still need their
    applicable checks, and hosted required CI remains authoritative for merge.
 
-4. For Rust product work, check the workspace before building executables or
-   running the full test suite:
+4. For focused Rust product work, start with the
+   [package, target, and feature selection examples](docs/TESTING.md#focused-local-iteration).
+   For workspace-wide compilation feedback, run:
 
    ```bash
    cargo check --workspace --all-targets
@@ -58,6 +59,27 @@ traceability without reconstructing intent from chat history.
    ```bash
    cargo run -p ripr -- check --diff crates/ripr/examples/sample/example.diff
    ```
+
+Before fixture or golden checks, prepare the canonical locked Rust fixture:
+
+```bash
+cargo xtask goldens prepare
+cargo xtask fixtures owner_return_pin_fallible_literal
+```
+
+Preparation prints the effective absolute `CARGO_HOME`, selected `RUSTUP_HOME`
+when set, repository toolchain pin and actual Cargo/rustc versions. Keep that
+same environment for subsequent checks. `--offline` supports a seeded registry
+cache. The command fetches only the locked fixture manifest and verifies offline
+metadata; it does not build the workspace or change expected outputs. Fixture
+readiness and offline preparation also disable Rustup auto-installation, including
+the Cargo/rustc version probes: a missing pin refuses instead of downloading a
+toolchain. Ordinary online preparation preserves the caller's Rustup policy.
+Fixture checks refuse missing prerequisites with the selected environment and repair
+command, rather than treating availability drift as a reason to bless goldens.
+A fetch in another Cargo home does not prepare the subprocess. Sanitized external
+sensors need their own compatible preparation boundary; this local command does
+not forward ambient homes into them or qualify advisory CI (#7920).
 
 The first `cargo xtask ...` invocation compiles the `xtask` crate itself, so
 it is slower than later runs. Once the workspace builds, `cargo xtask

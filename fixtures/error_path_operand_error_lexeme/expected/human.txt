@@ -4,12 +4,12 @@ root: fixtures/error_path_operand_error_lexeme/input
 
 Summary: 2 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 2 of 2 finding(s) unsuppressed
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s).
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
 
 Start here:
   State: a test gap to inspect or repair (top_gap)
-  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:5
   Static exposure: weak (weakly_exposed, warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
@@ -19,7 +19,7 @@ Start here:
   Related test: src/lib.rs:14 reads_successfully (ripr could not confirm that this assertion observes the changed behavior)
   Next step: The related test `reads_successfully` already asserts an exact value; the gap is not
     the assertion shape. Add a test input that executes the changed error arm and assert the exact
-    variant or payload it produces.
+    variant or payload it produces
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     - reach yes: Related tests appear to reach read_all: reads_successfully
     - infection yes: Reachable tests can plausibly activate this changed behavior
@@ -31,6 +31,6 @@ Next: drill into the top finding:
 
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - fixtures/error_path_operand_error_lexeme/input/src/lib.rs:5 (static_unknown)
+    - ./src/lib.rs:5 (static_unknown)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
