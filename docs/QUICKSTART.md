@@ -10,13 +10,25 @@ ripr uses static analysis; it does not run mutants or write the test for you.
 
 ## Installation
 
-Install the published CLI with Cargo:
+Fastest, with no Rust toolchain: download the checksummed prebuilt 0.10.0
+archive (about a second here). This example is Linux x86-64; the
+[release](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.10.0) also
+has macOS and Windows archives:
+
+```bash
+v=0.10.0; t=x86_64-unknown-linux-gnu; f=ripr-server-v$v-$t.tar.gz
+b=https://github.com/EffortlessMetrics/ripr/releases/download/v$v
+curl -fsSLO $b/$f && curl -fsSLO $b/$f.sha256
+echo "$(cat $f.sha256)  $f" | sha256sum -c - && tar xzf $f   # puts ./ripr here; move it onto your PATH
+```
+
+Or install the published CLI with Cargo, which compiles from source:
 
 ```bash
 cargo install ripr
 ```
 
-This requires Rust 1.95 or newer. Git must be available for the diff workflow.
+Cargo requires Rust 1.95 or newer. Git must be available for the diff workflow.
 The editor installation below normally does not require Cargo.
 
 If Cargo refuses because ripr requires rustc 1.95, run `rustup update stable`.
