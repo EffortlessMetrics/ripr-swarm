@@ -594,7 +594,10 @@ fn stub_body(
         )
         .ok_or(TestStubRefusal::ParameterUnsupported)?;
         let (binding_ty, argument, mutable) = match strip_mut_reference(&ty) {
-            Some(inner) => (inner.trim().to_string(), format!("&mut {binding}"), true),
+            Some(inner) => {
+                let (owned, argument) = owned_mut_binding(inner.trim(), &binding);
+                (owned, argument, true)
+            }
             None => (ty.clone(), binding.clone(), false),
         };
         let keyword = if mutable { "let mut" } else { "let" };
@@ -1174,6 +1177,61 @@ fn replace_word(text: &str, word: &str, replacement: &str) -> String {
     out
 }
 
+/// The owned local and call argument for a `&mut <inner>` parameter. A bare
+/// `let x: <inner>` is only sound when `<inner>` is sized, so unsized targets
+/// get an owned stand-in that the `&mut` argument coerces to: `[T]` a
+/// `Vec<T>`, `str` a `String`, and `dyn Trait` a `Box<dyn Trait>` reborrowed
+/// through `&mut *x`.
+fn owned_mut_binding(inner: &str, binding: &str) -> (String, String) {
+    // `&mut (dyn A + B)` parenthesizes the object type.
+    let inner = match inner
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'))
+    {
+        Some(object) if object.trim_start().starts_with("dyn ") => object.trim(),
+        _ => inner,
+    };
+    if let Some(element) = inner
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        .filter(|element| !is_array_length_suffix(element))
+    {
+        return (
+            format!("std::vec::Vec<{}>", element.trim()),
+            format!("&mut {binding}"),
+        );
+    }
+    if inner == "str" {
+        return ("std::string::String".to_string(), format!("&mut {binding}"));
+    }
+    if inner.starts_with("dyn ") {
+        return (
+            format!("std::boxed::Box<{inner}>"),
+            format!("&mut *{binding}"),
+        );
+    }
+    (inner.to_string(), format!("&mut {binding}"))
+}
+
+/// True when the text between the outer brackets of `[..]` is `T; N`, a
+/// sized array, rather than a slice element that merely contains an array
+/// (`[u8; 4]` inside `[[u8; 4]]`): a `;` at bracket depth zero.
+fn is_array_length_suffix(element: &str) -> bool {
+    let mut depth = 0usize;
+    element.chars().any(|c| match c {
+        '[' | '(' | '<' => {
+            depth += 1;
+            false
+        }
+        ']' | ')' | '>' => {
+            depth = depth.saturating_sub(1);
+            false
+        }
+        ';' => depth == 0,
+        _ => false,
+    })
+}
+
 /// The referent of a `&mut T`, `&'_ mut T` or `&'a mut T` parameter type.
 fn strip_mut_reference(ty: &str) -> Option<&str> {
     let rest = ty.strip_prefix('&')?.trim_start();
@@ -1221,7 +1279,10 @@ fn input_hint(seam: &RepoSeam, binding: &str) -> String {
         RequiredDiscriminator::BoundaryValue { description }
             if description.contains(binding) && !description.trim().is_empty() =>
         {
-            format!(" so that {}", one_line(description))
+            match relational_boundary(seam) {
+                Some(boundary) => format!(" so that {boundary}"),
+                None => format!(" so that {}", one_line(description)),
+            }
         }
         RequiredDiscriminator::ErrorVariant { variant } if !variant.trim().is_empty() => {
             format!(" so the call returns {}", one_line(variant))
@@ -1233,13 +1294,36 @@ fn input_hint(seam: &RepoSeam, binding: &str) -> String {
     }
 }
 
+/// The input condition that tells a relational boundary from its neighbor.
+/// `a > b` and `a >= b` (or `<`, `<=`) differ only where the operands are
+/// equal, so a test that picks inputs satisfying the changed comparison
+/// itself (`a > b`) passes under both; the discriminating inputs are the
+/// equal ones.
+fn relational_boundary(seam: &RepoSeam) -> Option<String> {
+    if seam.kind() != SeamKind::PredicateBoundary {
+        return None;
+    }
+    let comparison = single_comparison(seam.expression())?;
+    matches!(comparison.op.as_str(), "<" | "<=" | ">" | ">=").then(|| {
+        format!(
+            "{} == {} (where `{}` and its neighbor differ)",
+            one_line(comparison.lhs.trim()),
+            one_line(comparison.rhs.trim()),
+            comparison.op
+        )
+    })
+}
+
 fn discriminator_hint(seam: &RepoSeam) -> String {
     match seam.required_discriminator() {
         RequiredDiscriminator::BoundaryValue { description }
         | RequiredDiscriminator::ReturnValue { description }
             if !description.trim().is_empty() =>
         {
-            format!(" when {}", one_line(description))
+            match relational_boundary(seam) {
+                Some(boundary) => format!(" when {boundary}"),
+                None => format!(" when {}", one_line(description)),
+            }
         }
         RequiredDiscriminator::MatchArmTaken { arm } if !arm.trim().is_empty() => {
             format!(" when the `{}` arm runs", one_line(arm))
