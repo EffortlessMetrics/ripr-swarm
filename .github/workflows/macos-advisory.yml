@@ -1,0 +1,133 @@
+name: macOS Advisory
+
+on:
+  schedule:
+    - cron: "53 5 * * *"
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'merge-ready') }}
+
+# Advisory native macOS lane (#8391).
+#
+# CI had no macOS cargo clippy or test lane. The only macOS jobs built and
+# archived the server or pasted printed commands, so `cfg(target_os = "linux")`
+# gating (dead code or unexercised branches on macOS, #8055/#8060), `/var` ->
+# `/private/var` temp directories, and APFS case/normalization behavior had a
+# standing signal only when a maintainer ran a native macOS build by hand.
+#
+# Contract, mirroring `windows-advisory.yml`:
+#
+#   - **Clippy and test outcomes are advisory.** A lint or test failure is shown
+#     in the job summary and does not fail the job or gate merges.
+#   - **Evidence generation is not advisory.** A missing log or exit status, or a
+#     test run that executed zero tests, fails the job. A lane that reports
+#     success while proving nothing is a false-confidence surface.
+#
+# Not a required check. Do not promote it to required until the first runs show
+# which macOS-only failures are real and the lane is stable.
+#
+# Triggers:
+#   - schedule: a daily standing signal independent of PR traffic.
+#   - workflow_dispatch: manual run.
+#   - pull_request: only when the `merge-ready` label is applied (the per-head
+#     request from the merge-ready label flow, #4984/#8327; a later push does not
+#     rerun it, re-apply the label) AND the PR carries `macos-ci` or `full-ci`.
+#     Add `macos-ci` first, then `merge-ready` last. The guard below uses the
+#     same shape as the other gated lanes so the two compose.
+#
+# What runs (sized to stay inside the job budget on a cold cache):
+#   - `cargo clippy -p ripr -p xtask --all-targets -- -D warnings`
+#   - `cargo test -p ripr --lib`
+# The integration suites (cli_smoke, portable_consumer*, mcp_stdio) are not run
+# here; the TMPDIR-symlink experiment from #8391 is separate follow-up.
+
+jobs:
+  macos-advisory:
+    name: macos-advisory
+    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'macos-ci') || contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    runs-on: macos-15
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@1.95
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ripr-macos-advisory-1.95
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Record host
+        shell: bash
+        run: |
+          uname -a
+          sw_vers
+          rustc --version
+          cargo --version
+
+      - name: Clippy (advisory outcome)
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/macos-advisory"
+          set +e
+          cargo clippy -p ripr -p xtask --all-targets -- -D warnings 2>&1 | tee "$RUNNER_TEMP/macos-advisory/clippy.log"
+          echo "${PIPESTATUS[0]}" > "$RUNNER_TEMP/macos-advisory/clippy.status"
+          exit 0
+
+      - name: Library tests (advisory outcome)
+        shell: bash
+        run: |
+          set +e
+          cargo test -p ripr --lib --no-fail-fast 2>&1 | tee "$RUNNER_TEMP/macos-advisory/lib-tests.log"
+          echo "${PIPESTATUS[0]}" > "$RUNNER_TEMP/macos-advisory/lib-tests.status"
+          exit 0
+
+      - name: Summarize and enforce evidence
+        shell: bash
+        run: |
+          d="$RUNNER_TEMP/macos-advisory"
+          missing=0
+          for f in clippy.log clippy.status lib-tests.log lib-tests.status; do
+            if [ ! -s "$d/$f" ]; then
+              echo "::error::missing evidence file $f"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+          clippy=$(cat "$d/clippy.status")
+          tests=$(cat "$d/lib-tests.status")
+          result=$(grep -E '^test result:' "$d/lib-tests.log" | tail -n 1 || true)
+          passed=$(printf '%s' "$result" | sed -n 's/^test result: [a-zA-Z]*\. \([0-9]*\) passed.*/\1/p')
+          {
+            echo "## macOS advisory"
+            echo
+            echo "| Check | Exit status | Detail |"
+            echo "| --- | --- | --- |"
+            echo "| clippy -p ripr -p xtask --all-targets | $clippy | advisory |"
+            echo "| test -p ripr --lib | $tests | ${result:-no test result line} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$passed" ] || [ "$passed" -eq 0 ]; then
+            echo "::error::macOS library test run executed zero tests; evidence is not established"
+            exit 1
+          fi
+
+      - name: Upload macOS advisory logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-advisory-logs
+          path: ${{ runner.temp }}/macos-advisory/
+          if-no-files-found: ignore
