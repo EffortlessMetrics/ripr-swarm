@@ -2311,8 +2311,10 @@ fn extract_parser_oracles(
     // sees. Its whole expression is the oracle, graded `snapshot` / medium
     // (RIPR-SPEC-0231 step 6); the line scan below must
     // not also read the `.assert_debug_eq(..)` continuation of a multi-line
-    // expectation as an assertion of its own.
-    let mut expect_test_lines = Vec::new();
+    // expectation as an assertion of its own. #7911: drop only that
+    // continuation (or a duplicate of the comparison), not a sibling
+    // oracle that shares a line.
+    let mut expect_test_comparisons = Vec::new();
     for method_call in function
         .syntax()
         .descendants()
@@ -2357,7 +2359,7 @@ fn extract_parser_oracles(
             (OracleKind::Snapshot, OracleStrength::Medium)
         };
         let line = line_index.line(range.start());
-        expect_test_lines.push(line..=line_index.line_for_range_end(range.end()));
+        expect_test_comparisons.push(assertion_text.clone());
         assertions.push(OracleFact {
             line,
             kind,
@@ -2407,9 +2409,9 @@ fn extract_parser_oracles(
         .into_iter()
         .filter(|oracle| !guarded_matches.match_start_lines.contains(&oracle.line))
         .filter(|oracle| {
-            !expect_test_lines
+            !expect_test_comparisons
                 .iter()
-                .any(|lines| lines.contains(&oracle.line))
+                .any(|comparison| is_expect_test_continuation(&oracle.text, comparison))
         })
     {
         assertions.push(oracle);
@@ -2421,6 +2423,15 @@ fn extract_parser_oracles(
     assertions.sort_by(|a, b| a.line.cmp(&b.line).then(a.text.cmp(&b.text)));
     assertions.dedup_by(|a, b| a.line == b.line && a.text == b.text);
     assertions
+}
+
+/// True when a line-scanned oracle is the parsed expect-test comparison
+/// itself or only its `.assert_*` continuation, not a sibling assertion
+/// sharing a line (#7911).
+fn is_expect_test_continuation(oracle_text: &str, comparison_text: &str) -> bool {
+    let oracle = oracle_text.trim().trim_end_matches(';').trim();
+    let comparison = comparison_text.trim().trim_end_matches(';').trim();
+    !oracle.is_empty() && (comparison == oracle || comparison.ends_with(oracle))
 }
 
 /// Whether this `unwrap_err()` / `expect_err(..)` call is the whole value of
@@ -3641,6 +3652,99 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
         );
 
         assert!(nodes.is_empty());
+    }
+
+    /// #7911: a parsed expect-test comparison must not drop a sibling
+    /// `assert_eq!` that shares its line. The line-scan filter exists to
+    /// hide the comparison's own `.assert_*` continuation, not every
+    /// oracle on that line.
+    #[test]
+    fn a_same_line_assert_eq_beside_an_expect_test_comparison_is_kept() {
+        let function = "fn scores() {\n    expect![[\"w12\"]].assert_eq(&render(4)); assert_eq!(other(), 2);\n}\n";
+        let oracles = parser_oracles_for_function(function, 1).unwrap_or_default();
+        assert!(
+            oracles.iter().any(|oracle| {
+                oracle.text.contains("expect![[") && oracle.text.contains("assert_eq(&render(4))")
+            }),
+            "parsed expect-test comparison must remain: {oracles:?}"
+        );
+        assert!(
+            oracles
+                .iter()
+                .any(|oracle| oracle.text.contains("assert_eq!(other(), 2)")),
+            "sibling assert_eq on the same line must remain: {oracles:?}"
+        );
+    }
+
+    /// #7911: `ensure!` is line-scanned, not a parser assertion macro, so
+    /// the expect-test line filter is the only thing that can drop it.
+    #[test]
+    fn a_same_line_line_scanned_oracle_beside_an_expect_test_comparison_is_kept() {
+        let function = "fn scores() {\n    expect![[\"w12\"]].assert_eq(&render(4)); ensure!(other() == 2, \"must be two\");\n}\n";
+        let oracles = parser_oracles_for_function(function, 1).unwrap_or_default();
+        assert!(
+            oracles.iter().any(|oracle| {
+                oracle.text.contains("expect![[") && oracle.text.contains("assert_eq(&render(4))")
+            }),
+            "parsed expect-test comparison must remain: {oracles:?}"
+        );
+        assert!(
+            oracles
+                .iter()
+                .any(|oracle| oracle.text.contains("ensure!(other() == 2")),
+            "sibling line-scanned ensure! on the same line must remain: {oracles:?}"
+        );
+    }
+
+    /// Control: the filter must still hide a multi-line comparison's
+    /// `.assert_debug_eq(..)` continuation, which the line scanner would
+    /// otherwise read as its own custom `assert_*` helper.
+    #[test]
+    fn a_multiline_expect_test_continuation_is_not_a_second_oracle() {
+        let function = "fn renders() {\n    expect![[r#\"\n        Row { w: 12 }\n    \"#]]\n    .assert_debug_eq(&row(4));\n}\n";
+        let oracles = parser_oracles_for_function(function, 1).unwrap_or_default();
+        let expect_oracles: Vec<_> = oracles
+            .iter()
+            .filter(|oracle| {
+                oracle.text.contains("expect![[") || oracle.text.contains(".assert_debug_eq")
+            })
+            .collect();
+        assert_eq!(
+            expect_oracles.len(),
+            1,
+            "multi-line expect-test comparison must stay one oracle: {oracles:?}"
+        );
+        assert!(
+            expect_oracles[0].text.contains("expect![[")
+                && expect_oracles[0].text.contains(".assert_debug_eq"),
+            "the one oracle must be the whole comparison: {oracles:?}"
+        );
+        assert_eq!(expect_oracles[0].kind, OracleKind::Snapshot, "{oracles:?}");
+        assert_eq!(
+            expect_oracles[0].strength,
+            OracleStrength::Medium,
+            "{oracles:?}"
+        );
+    }
+
+    /// #7911: a line-scanned sibling on the comparison's continuation
+    /// line is not itself that continuation, so it must stay.
+    #[test]
+    fn a_line_scanned_oracle_on_an_expect_test_continuation_line_is_kept() {
+        let function = "fn renders() {\n    expect![[r#\"\n        Row { w: 12 }\n    \"#]]\n    .assert_debug_eq(&row(4)); ensure!(other() == 2, \"must be two\");\n}\n";
+        let oracles = parser_oracles_for_function(function, 1).unwrap_or_default();
+        assert!(
+            oracles.iter().any(|oracle| {
+                oracle.text.contains("expect![[") && oracle.text.contains(".assert_debug_eq")
+            }),
+            "parsed expect-test comparison must remain: {oracles:?}"
+        );
+        assert!(
+            oracles
+                .iter()
+                .any(|oracle| oracle.text.contains("ensure!(other() == 2")),
+            "sibling ensure! on the continuation line must remain: {oracles:?}"
+        );
     }
 }
 
