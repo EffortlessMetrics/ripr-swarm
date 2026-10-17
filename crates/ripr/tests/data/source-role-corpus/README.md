@@ -15,6 +15,7 @@ directories verbatim through `facts::build_index`.
 | `explicit_test_target` | explicit `[[test]]` target with `#[test]` | executable test not registered; test target seeding production probes |
 | `naming_lookalike` | confirmed naming convention vs unconfirmed lookalike (`src/price_test.rs`) | naming convention promoted to role authority |
 | `cfg_variants` | plain, nested-conjunct, and negated `cfg(test)` forms | test-first-only or "any token named test" cfg recognition |
+| `direct_cfg_helpers` | direct function test gates, inline control, and production alternatives | standalone `cfg(test)` helper mistaken for production; helper fabricated as executable test |
 
 ## Mutation discrimination
 
@@ -48,3 +49,19 @@ facts), cache currentness (covered by
 `facts::harness_registry::tests::cached_index_applies_registrations_identically`
 and the facts-cache schema version), helper transfer and repair
 targeting (covered by `classify` unit fixtures).
+
+## Standalone helper CLI reproduction
+
+From the repository root, build the current CLI and run:
+
+```sh
+cargo build -p ripr --bin ripr
+./target/debug/ripr check --root crates/ripr/tests/data/source-role-corpus/cases/direct_cfg_helpers --diff crates/ripr/tests/data/source-role-corpus/cases/direct_cfg_helpers/input.diff --mode draft --format json
+```
+
+The retained diff changes equivalent field initializers at lines 6, 13 and 23.
+Only line 6 is a production probe. The directly gated helper at line 13 stays
+indexed as evidence, with no executable `TestFact`; the inline helper at line
+23 stays excluded. The corpus keeps exactly one executable test. Additional
+unchanged `any(test, feature)`, non-test and lookalike controls remain production
+roles; the Rust diff regression separately changes them to verify their probes.

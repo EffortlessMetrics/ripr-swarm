@@ -1,0 +1,83 @@
+2026-10-17T10:35:32.8076168Z [1m[92m     Running[0m tests\owner_pin_execution.rs (target\debug\deps\owner_pin_execution-700c72e39ac9d0eb.exe)
+2026-10-17T10:35:32.8229776Z 
+2026-10-17T10:35:32.8230461Z running 33 tests
+2026-10-17T10:35:33.5281155Z test aliased_outside_module_beside_a_same_named_module_is_not_credited ... ok
+2026-10-17T10:35:33.7266871Z test a_leading_colon_thread_path_refuses_spawned_thread_credit ... ok
+2026-10-17T10:35:33.7283827Z test an_out_of_line_super_glob_refuses_spawned_thread_credit ... ok
+2026-10-17T10:35:33.7316030Z test an_extern_crate_named_thread_refuses_spawned_thread_credit ... ok
+2026-10-17T10:35:34.4087131Z test drop_in_crate_admission_matches_cargo_resolution ... ok
+2026-10-17T10:35:35.4976474Z test empty_macro_arguments_cannot_activate_a_real_far_oracle ... ok
+2026-10-17T10:35:35.7999002Z test equality_family_admission_preserves_mixed_oracle_identity_and_projection ... ok
+2026-10-17T10:35:36.7178258Z test constant_row_table_pairs_each_row_with_its_boundary_input ... ok
+2026-10-17T10:35:41.3177697Z test fallible_literal_runtime_pair_and_message_escape_execute_the_real_test ... ok
+2026-10-17T10:35:41.3326039Z test bool_owner_assert_pin_matched_static_and_runtime_controls ... ok
+2026-10-17T10:35:41.7630619Z test field_projected_collection::field_projected_collection_public_check_pins_exact_observation ... ok
+2026-10-17T10:35:41.8839063Z test lexical_source_values_do_not_claim_observed_oracles ... ok
+2026-10-17T10:35:44.1661835Z test equality_oracle_family_matched_static_and_runtime_controls ... ok
+2026-10-17T10:35:49.2207078Z test local_empty_macro_preserves_independent_equality_execution ... ok
+2026-10-17T10:35:52.0486371Z test macro_use_module_admission_matches_runtime ... ok
+2026-10-17T10:35:52.9975095Z test literal_json_constructor_matches_real_callback_and_runtime_controls ... FAILED
+2026-10-17T10:35:54.4405907Z test member_crate_import_admission_matches_cargo_resolution ... ok
+2026-10-17T10:35:54.4830627Z test owner_pin_refused_rows_do_not_crowd_out_admitted_oracles ... ok
+2026-10-17T10:35:54.6410762Z test owner_pin_review_admission_controls ... ok
+2026-10-17T10:35:54.7192669Z test owner_pin_shared_admission_keeps_credit_on_one_admitted_oracle ... ok
+2026-10-17T10:35:54.7399466Z test owner_pin_token_overlap_cannot_bypass_oracle_admission ... ok
+2026-10-17T10:36:01.7184236Z test predicate_pairing_cannot_reuse_refused_boundary_equalities ... ok
+2026-10-17T10:36:02.3177848Z test raw_path_shadow_module_keeps_the_mutant_green ... ok
+2026-10-17T10:36:02.8747559Z test reexported_value_under_a_unit_struct_name_is_not_credited ... ok
+2026-10-17T10:36:03.4475434Z test field_projected_collection::field_projected_collection_compiling_behavioral_mutants ... ok
+2026-10-17T10:36:03.5225978Z test tokio_test_regains_the_exact_oracle_but_not_the_boundary ... ok
+2026-10-17T10:36:07.4712474Z test trait_shadow_corpus_matches_compiled_owner_dispatch ... ok
+2026-10-17T10:36:08.4369512Z test owner_pin_matched_static_and_runtime_controls ... ok
+2026-10-17T10:36:09.0004355Z test unstable_is_partitioned_custom_default_matched_controls ... ok
+2026-10-17T10:36:09.3319547Z test unit_struct_receiver_matched_static_and_runtime_controls ... ok
+2026-10-17T10:36:10.4693594Z test wrapper_argument_admission_matches_runtime ... ok
+2026-10-17T10:36:15.1955191Z test spawned_thread_assertion_matched_static_and_runtime_controls ... ok
+2026-10-17T10:36:20.4495152Z test equality_execution_uses_statement_prefix_and_closure_invocation ... ok
+2026-10-17T10:36:20.4495551Z 
+2026-10-17T10:36:20.4499123Z failures:
+2026-10-17T10:36:20.4499356Z 
+2026-10-17T10:36:20.4499685Z ---- literal_json_constructor_matches_real_callback_and_runtime_controls stdout ----
+2026-10-17T10:36:20.4500044Z 
+2026-10-17T10:36:20.4500504Z thread 'literal_json_constructor_matches_real_callback_and_runtime_controls' (5448) panicked at crates\ripr\tests\owner_pin_execution.rs:3485:13:
+2026-10-17T10:36:20.4501223Z assertion `left == right` failed: nested_literal, broken=false: 
+2026-10-17T10:36:20.4501518Z running 1 test
+2026-10-17T10:36:20.4501822Z test save_success_is_observed_with_absent_empty_and_nonempty_text ... FAILED
+2026-10-17T10:36:20.4502071Z 
+2026-10-17T10:36:20.4502138Z failures:
+2026-10-17T10:36:20.4502257Z 
+2026-10-17T10:36:20.4502322Z failures:
+2026-10-17T10:36:20.4502584Z     save_success_is_observed_with_absent_empty_and_nonempty_text
+2026-10-17T10:36:20.4502852Z 
+2026-10-17T10:36:20.4503157Z test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+2026-10-17T10:36:20.4503427Z 
+2026-10-17T10:36:20.4503852Z ; [1m[93mwarning[0m[1m[97m: unused import: `SchemaError`[0m
+2026-10-17T10:36:20.4504185Z  [1m[96m--> [0mtests\save.rs:1:29
+2026-10-17T10:36:20.4504437Z   [1m[96m|[0m
+2026-10-17T10:36:20.4508470Z [1m[96m1[0m [1m[96m|[0m use demo::{did_save_params, SchemaError};
+2026-10-17T10:36:20.4508839Z   [1m[96m|[0m                             [1m[93m^^^^^^^^^^^[0m
+2026-10-17T10:36:20.4509119Z   [1m[96m|[0m
+2026-10-17T10:36:20.4509744Z   [1m[96m= [0m[1m[97mnote[0m: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+2026-10-17T10:36:20.4510016Z 
+2026-10-17T10:36:20.4510363Z [1m[93mwarning[0m: `demo` (test "save") generated 1 warning (run `cargo fix --test "save" -p demo` to apply 1 suggestion)
+2026-10-17T10:36:20.4510904Z [1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+2026-10-17T10:36:20.4511932Z [1m[92m     Running[0m tests\save.rs (D:\a\ripr-swarm\ripr-swarm\target\ripr-owner-pin-3056-146\runtime-target\debug\deps\save-1e66569741fe3c9a.exe)
+2026-10-17T10:36:20.4512346Z 
+2026-10-17T10:36:20.4512569Z thread 'save_success_is_observed_with_absent_empty_and_nonempty_text' (8044) panicked at tests\save.rs:7:5:
+2026-10-17T10:36:20.4512955Z assertion `left == right` failed
+2026-10-17T10:36:20.4513269Z   left: Err(SchemaError { method: None, path: "", expected: "", observed: "" })
+2026-10-17T10:36:20.4513609Z  right: Ok(())
+2026-10-17T10:36:20.4513887Z note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+2026-10-17T10:36:20.4514294Z [1m[91merror[0m: test failed, to rerun pass `--test save`
+2026-10-17T10:36:20.4514547Z 
+2026-10-17T10:36:20.4514671Z   left: false
+2026-10-17T10:36:20.4514859Z  right: true
+2026-10-17T10:36:20.4515141Z note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+2026-10-17T10:36:20.4515405Z 
+2026-10-17T10:36:20.4515408Z 
+2026-10-17T10:36:20.4515481Z failures:
+2026-10-17T10:36:20.4515750Z     literal_json_constructor_matches_real_callback_and_runtime_controls
+2026-10-17T10:36:20.4515977Z 
+2026-10-17T10:36:20.4516204Z test result: FAILED. 32 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 47.61s
+2026-10-17T10:36:20.4516468Z 
+2026-10-17T10:36:20.4516701Z [1m[91merror[0m: test failed, to rerun pass `-p ripr --test owner_pin_execution`

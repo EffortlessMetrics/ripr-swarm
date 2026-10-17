@@ -12,6 +12,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[path = "owner_pin_execution/field_projected_collection.rs"]
 mod field_projected_collection;
 
+#[path = "owner_pin_execution/literal_json_output.rs"]
+mod literal_json_output;
+
 struct Scratch(PathBuf);
 
 impl Scratch {
@@ -3476,18 +3479,7 @@ fn literal_json_constructor_matches_real_callback_and_runtime_controls() -> Resu
                     ("CARGO_BUILD_JOBS".into(), "1".into()),
                 ],
             )?;
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            assert!(
-                stdout.contains("running 1 test") && stdout.contains("0 ignored"),
-                "{case}, broken={broken}: no executed subject: {stdout}; {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            assert_eq!(
-                output.status.success(),
-                !broken || !admitted,
-                "{case}, broken={broken}: {stdout}; {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
+            literal_json_output::assert_runtime_output(case, broken, admitted, &output);
             if broken && admitted {
                 assert!(
                     String::from_utf8_lossy(&output.stderr)

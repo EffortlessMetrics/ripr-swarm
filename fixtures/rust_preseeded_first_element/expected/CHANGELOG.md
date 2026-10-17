@@ -49,3 +49,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_preseeded_first_element (5)
+
+Reason:
+RIPR-SPEC-0122: human check output prints the stub route or a No test stub here refusal for every probe family (#8412)
+
+Command:
+`cargo xtask goldens bless rust_preseeded_first_element --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

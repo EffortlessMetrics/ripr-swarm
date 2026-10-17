@@ -26,6 +26,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/collection_argument_macro_constructor/input --diff <cwd>/fixtures/collection_argument_macro_constructor/diff.patch --mode fast probe:src_lib.rs:call_deletion:1f64eda5
   ripr context --root <cwd>/fixtures/collection_argument_macro_constructor/input --diff <cwd>/fixtures/collection_argument_macro_constructor/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:1f64eda5
+No test stub here: the change shows up as a side effect or call, which needs an observer or mock ripr cannot write
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
