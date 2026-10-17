@@ -3990,7 +3990,9 @@ mod tests {
                     "{warning}"
                 );
                 assert!(
-                    warning.contains(&output::path::human_path(&root)),
+                    warning.contains(&crate::agent::loop_commands::shell_arg(
+                        &output::path::human_path(&root)
+                    )),
                     "{warning}"
                 );
             }
