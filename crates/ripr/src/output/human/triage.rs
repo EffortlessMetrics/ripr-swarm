@@ -708,16 +708,26 @@ fn selected_hidden_line(omitted: &[&Finding]) -> String {
             suffix
         ),
         (base_side, 0, lower_priority) => format!(
-            "  {} lower-priority finding(s) omitted; {} base-side evidence, not candidate edit targets{}.\n",
-            lower_priority, base_side, suffix
+            "  {} finding(s) omitted: {} lower-priority, {} base-side evidence (not candidate edit targets){}.\n",
+            omitted.len(),
+            lower_priority,
+            base_side,
+            suffix
         ),
         (0, unresolved, lower_priority) => format!(
-            "  {} lower-priority finding(s) omitted; {} unresolved currentness, not candidate edit targets{}.\n",
-            lower_priority, unresolved, suffix
+            "  {} finding(s) omitted: {} lower-priority, {} unresolved currentness (not candidate edit targets){}.\n",
+            omitted.len(),
+            lower_priority,
+            unresolved,
+            suffix
         ),
         (base_side, unresolved, lower_priority) => format!(
-            "  {} lower-priority finding(s) omitted; {} base-side evidence and {} unresolved currentness, not candidate edit targets{}.\n",
-            lower_priority, base_side, unresolved, suffix
+            "  {} finding(s) omitted: {} lower-priority, {} base-side evidence and {} unresolved currentness (the last two are not candidate edit targets){}.\n",
+            omitted.len(),
+            lower_priority,
+            base_side,
+            unresolved,
+            suffix
         ),
     }
 }

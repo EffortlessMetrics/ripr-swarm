@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/currentness_matrix_python_deleted_statement/input
 config: <cwd>/fixtures/currentness_matrix_python_deleted_statement/input/ripr.toml
 
-Summary: 3 probes (3 exposed, 0 weak, 0 unrevealed, 0 no path); 3 of 3 findings unsuppressed
+Summary: 3 probes (3 exposed, 0 weak, 0 unrevealed, 0 no path); 3 of 3 findings unsuppressed (2 base-side evidence, not candidate edit targets)
 
 Changed file(s) by language: python = 1
 

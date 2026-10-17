@@ -368,6 +368,7 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
         .as_ref()
         .map_or(0, |suppression| suppression.suppressed.len());
     let unsuppressed = output.summary.findings.saturating_sub(suppressed);
+    let base_side = base_side_summary_note(output);
     if plain {
         // #8165: plain words via the same labels the digest uses
         // (`ExposureClass::plain_label`); the three unknown classes share
@@ -376,7 +377,7 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
         let s = &output.summary;
         if s.probes == 0 {
             out.push_str(&format!(
-                "Summary: 0 probes analyzed; {} {} unsuppressed\n\n",
+                "Summary: 0 probes analyzed; {} {} unsuppressed{base_side}\n\n",
                 unsuppressed,
                 if unsuppressed == 1 {
                     "finding"
@@ -397,7 +398,7 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
                 classes.push_str(&format!(", {unknown} unknown"));
             }
             out.push_str(&format!(
-                "Summary: {} {} ({}); {} of {} {} unsuppressed\n\n",
+                "Summary: {} {} ({}); {} of {} {} unsuppressed{base_side}\n\n",
                 s.probes,
                 if s.probes == 1 { "probe" } else { "probes" },
                 classes,
@@ -414,7 +415,7 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
         out.push_str(&format!(
             "Summary: {} probe(s), {} exposed, {} weakly_exposed, {} reachable_unrevealed, \
              {} no_static_path, {} infection_unknown, {} propagation_unknown, {} static_unknown; \
-             {} of {} finding(s) unsuppressed\n\n",
+             {} of {} finding(s) unsuppressed{base_side}\n\n",
             output.summary.probes,
             output.summary.exposed,
             output.summary.weakly_exposed,
@@ -429,6 +430,24 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
     }
     render_language_file_breakdown(&mut out, output);
     out
+}
+
+/// #8389: base-side findings (`base_deleted`, `moved_or_renamed`) are counted
+/// in the probe and finding totals but are never candidate edit targets, so
+/// the Summary names how many of the counted findings are base-side instead
+/// of leaving a pure-deletion diff reading as that many actionable findings.
+/// Empty when none are present; the totals themselves are unchanged.
+fn base_side_summary_note(output: &CheckOutput) -> String {
+    let base_side = output
+        .findings
+        .iter()
+        .filter(|finding| finding.source_currentness.is_base_side())
+        .count();
+    if base_side == 0 {
+        String::new()
+    } else {
+        format!(" ({base_side} base-side evidence, not candidate edit targets)")
+    }
 }
 
 /// Render the producer-owned completeness contract before any empty-finding
@@ -796,9 +815,29 @@ fn render_all_no_path_disclosure(out: &mut String, output: &CheckOutput) {
     } else {
         "add co-located tests that observe the changed behavior"
     };
+    // #8389: the lead sentence follows the classes, not the reach rollup. A
+    // `no_static_path` finding is the only class that asserts absence of a
+    // path; the three unknown classes mean ripr could not classify the change,
+    // so a header reading `0 no_static_path ... 1 static_unknown` must not be
+    // followed by a footer claiming ripr "found no static test path".
+    let unclassified = s.infection_unknown + s.propagation_unknown + s.static_unknown;
+    let lead = if unclassified == 0 {
+        format!(
+            "ripr found no static test path for any of the {all_no_path_count} changed expression(s) in this diff."
+        )
+    } else if s.no_static_path == 0 {
+        format!(
+            "ripr could not classify any of the {all_no_path_count} changed expression(s) in this diff well enough to establish a static test path."
+        )
+    } else {
+        format!(
+            "ripr established no static test path for any of the {all_no_path_count} changed expression(s) in this diff ({} found no path, {unclassified} could not be classified).",
+            s.no_static_path
+        )
+    };
     let mut note = format!(
-        "Note: ripr found no static test path for any of the {} changed expression(s) in this diff. {} This is not a coverage assessment. A test may already exercise these changes through macros, helper-call chains, or integration tests that ripr's static model does not yet trace; if none does, {}.",
-        all_no_path_count, scope_summary, repair
+        "Note: {lead} {} This is not a coverage assessment. A test may already exercise these changes through macros, helper-call chains, or integration tests that ripr's static model does not yet trace; if none does, {}.",
+        scope_summary, repair
     );
     // #6340: name the tests ripr cannot link to a Rust change. Human output
     // only; the verdict and every other format are unchanged.
@@ -2383,7 +2422,7 @@ mod tests {
 
         assert!(
             rendered.contains(
-                "  1 lower-priority finding(s) omitted; 1 base-side evidence, not candidate edit targets.\n"
+                "  2 finding(s) omitted: 1 lower-priority, 1 base-side evidence (not candidate edit targets).\n"
             ),
             "{rendered}"
         );
@@ -2394,6 +2433,52 @@ mod tests {
         assert!(
             rendered.contains("    - src/lower.rs:1 (weak, lower-priority candidate)\n"),
             "{rendered}"
+        );
+    }
+
+    /// #8389: the Summary names how many counted findings are base-side
+    /// evidence, and the Hidden count equals the listed bullets; an output
+    /// with no base-side finding keeps the Summary line unchanged.
+    #[test]
+    fn summary_names_base_side_findings_and_hidden_total_matches_bullets() {
+        let mut selected = sample_finding();
+        selected.id = "selected-gap".to_string();
+        selected.probe.location = SourceLocation::new("src/selected.rs", 1, 1);
+        let mut base_a = sample_finding();
+        base_a.id = "omitted-base-a".to_string();
+        base_a.probe.location = SourceLocation::new("src/a.rs", 1, 1);
+        base_a.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        let mut base_b = sample_finding();
+        base_b.id = "omitted-base-b".to_string();
+        base_b.probe.location = SourceLocation::new("src/b.rs", 1, 1);
+        base_b.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        let mut lower = sample_finding();
+        lower.id = "omitted-lower".to_string();
+        lower.probe.location = SourceLocation::new("src/lower.rs", 1, 1);
+
+        let with_base = render(&bounded_output_with_findings(vec![
+            selected.clone(),
+            base_a,
+            base_b,
+            lower.clone(),
+        ]));
+        assert!(
+            with_base.contains("unsuppressed (2 base-side evidence, not candidate edit targets)\n"),
+            "{with_base}"
+        );
+        assert!(
+            with_base.contains(
+                "  3 finding(s) omitted: 1 lower-priority, 2 base-side evidence (not candidate edit targets).\n"
+            ),
+            "{with_base}"
+        );
+        assert_eq!(with_base.matches("(weak, base-side)").count(), 2);
+        assert_eq!(with_base.matches("lower-priority candidate)").count(), 1);
+
+        let without_base = render(&bounded_output_with_findings(vec![selected, lower]));
+        assert!(
+            !without_base.contains("base-side evidence"),
+            "{without_base}"
         );
     }
 
@@ -2420,7 +2505,7 @@ mod tests {
 
         assert!(
             rendered.contains(
-                "  1 lower-priority finding(s) omitted; 1 unresolved currentness, not candidate edit targets.\n"
+                "  2 finding(s) omitted: 1 lower-priority, 1 unresolved currentness (not candidate edit targets).\n"
             ),
             "{rendered}"
         );
@@ -6697,6 +6782,50 @@ mod tests {
         }
     }
 
+    /// #8389: the footer's lead sentence follows the finding classes. Only
+    /// `no_static_path` asserts an absent path; a mix names both counts and an
+    /// all-unknown set never claims a path was "found" absent.
+    #[test]
+    fn all_no_path_note_lead_follows_the_classes_not_the_reach_rollup() {
+        let flat = |summary: Summary| {
+            render(&python_note_output(summary, None))
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let only_no_path = flat(no_path_summary());
+        assert!(
+            only_no_path.contains("ripr found no static test path for any of the 2 changed"),
+            "{only_no_path}"
+        );
+        let mixed = flat(Summary {
+            no_static_path: 1,
+            static_unknown: 1,
+            ..no_path_summary()
+        });
+        assert!(
+            mixed.contains(
+                "ripr established no static test path for any of the 2 changed expression(s) in this diff (1 found no path, 1 could not be classified)."
+            ),
+            "{mixed}"
+        );
+        assert!(!mixed.contains("ripr found no static test path"), "{mixed}");
+        let unknown_only = flat(Summary {
+            no_static_path: 0,
+            infection_unknown: 1,
+            propagation_unknown: 1,
+            ..no_path_summary()
+        });
+        assert!(
+            unknown_only.contains("ripr could not classify any of the 2 changed"),
+            "{unknown_only}"
+        );
+        assert!(
+            !unknown_only.contains("found no static test path"),
+            "{unknown_only}"
+        );
+    }
+
     /// #6340: the closing note names Python tests ripr does not link.
     #[test]
     fn no_path_note_names_python_tests_when_present() {
@@ -6730,7 +6859,10 @@ mod tests {
             ..no_path_summary()
         };
         let rendered = render(&python_note_output(unknown_only, python_tests(false)));
-        assert!(rendered.contains("found no static test path"), "{rendered}");
+        assert!(
+            rendered.contains("could not classify any of the 2 changed expression(s)"),
+            "{rendered}"
+        );
         assert!(!rendered.contains("Python test file"), "{rendered}");
 
         let no_rust = Summary {
@@ -6849,10 +6981,12 @@ mod tests {
 
         let rendered = render(&output);
 
+        let flat = rendered.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(
-            rendered
-                .contains("ripr found no static test path for any of the 1 changed expression(s)"),
-            "expected disclosure for static_unknown finding; got:\n{rendered}"
+            flat.contains(
+                "ripr could not classify any of the 1 changed expression(s) in this diff well enough to establish a static test path"
+            ) && !flat.contains("found no static test path"),
+            "static_unknown must not read as a found absence of a path (#8389); got:\n{rendered}"
         );
     }
 
@@ -6901,8 +7035,9 @@ mod tests {
 
         let rendered = render(&output);
 
+        let flat = rendered.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(
-            rendered.contains("analyzed: 2 changed expression(s) and 1 statically linked related"),
+            flat.contains("analyzed: 2 changed expression(s) and 1 statically linked related"),
             "expected related-test count disclosure; got:\n{rendered}"
         );
     }
@@ -7096,7 +7231,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("ripr found no static test path for any"),
+            rendered.contains("ripr could not classify any of the 1 changed expression(s)"),
             "a callee-only (reach weak) finding must not suppress the all-no-path note; got:\n{rendered}"
         );
     }
