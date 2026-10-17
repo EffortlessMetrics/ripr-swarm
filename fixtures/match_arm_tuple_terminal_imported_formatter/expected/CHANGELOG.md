@@ -28,7 +28,7 @@ Updated:
 ## Pending — match_arm_tuple_terminal_imported_formatter (3)
 
 Reason:
-RIPR-SPEC-0122: #8389 Summary names base-side findings; fixture added by #7836 after #8493 blessed the rest
+RIPR-SPEC-0122: #8389 Summary names base-side findings; #8493 changed the Summary renderer without re-blessing these fixtures added by #7836
 
 Command:
 `cargo xtask goldens bless match_arm_tuple_terminal_imported_formatter --reason "..."`
