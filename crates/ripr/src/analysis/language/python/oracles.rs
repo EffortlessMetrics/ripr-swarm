@@ -873,6 +873,39 @@ fn is_trivial_message_pattern(pattern: &Expr, source: &str, call_start: usize) -
     pattern_admits_any_message(text)
 }
 
+/// The line holding the `:` that ends a `def` signature starting at
+/// `def_line`: the first colon outside strings and brackets. `None` when no
+/// such line is found.
+fn signature_end(lines: &[&str], def_line: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    for (index, line) in lines.iter().enumerate().skip(def_line) {
+        let mut escaped = false;
+        for ch in line.chars() {
+            if let Some(open) = quote {
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == open {
+                    quote = None;
+                }
+                continue;
+            }
+            match ch {
+                '\'' | '"' => quote = Some(ch),
+                '#' => break,
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth = depth.saturating_sub(1),
+                ':' if depth == 0 => return Some(index),
+                _ => {}
+            }
+        }
+        quote = None;
+    }
+    None
+}
+
 /// The source lines a bare `name` at `call_start` can be bound by: the
 /// enclosing function's body plus module-level (unindented) lines, so a
 /// same-named binding in another function cannot supply the pattern. `None`
@@ -919,12 +952,20 @@ fn visible_scope_text(source: &str, name: &str, call_start: usize) -> Option<Str
         return Some(source.to_string());
     };
     let def_indent = indent(lines[def_line]);
-    let body_start = (def_line..lines.len())
-        .find(|&index| {
-            let code = lines[index].split('#').next().unwrap_or("").trim_end();
-            code.ends_with(':')
-        })
-        .unwrap_or(def_line);
+    // A def nested in another def or in an `if`/`try` block reads names the
+    // enclosing scope binds, which this scan does not model: keep the whole
+    // file, as before.
+    let nested = (0..def_line).any(|index| {
+        let line = lines[index];
+        let trimmed = line.trim_start();
+        !trimmed.is_empty()
+            && !trimmed.starts_with('#')
+            && indent(line) < def_indent
+            && !trimmed.starts_with("class ")
+    });
+    let Some(body_start) = signature_end(&lines, def_line).filter(|_| !nested) else {
+        return Some(source.to_string());
+    };
     let signature = lines[def_line..=body_start].join("\n");
     if super::mentions_python_name(&signature, name) {
         return None;

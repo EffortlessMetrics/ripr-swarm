@@ -664,6 +664,29 @@ fn a_match_name_is_read_from_its_own_function_not_the_whole_file() -> Result<(),
 }
 
 #[test]
+fn a_scoped_match_name_survives_signatures_line_endings_and_nesting() -> Result<(), String> {
+    let broad = |body: &str| -> Result<(), String> {
+        assert_ne!(parse_class(body)?, ExposureClass::Exposed, "{body}");
+        Ok(())
+    };
+    // A `#` inside a default string and a colon inside a default dict do not
+    // end the signature early and hide the body's binding.
+    broad(
+        "def test_parse(tag=\"#\", opts={\"k\": 1}):\n    pattern = \".*\"\n    with pytest.raises(ValueError, match=pattern):\n        parse(\"\")\n",
+    )?;
+    // CRLF line endings keep the byte offsets aligned.
+    broad(
+        &"def test_other():\n    pass\n\n\ndef test_parse():\n    pattern = \".*\"\n    with pytest.raises(ValueError, match=pattern):\n        parse(\"\")\n"
+            .replace('\n', "\r\n"),
+    )?;
+    // A nested def keeps reading the enclosing function's binding.
+    broad(
+        "def test_parse():\n    pattern = \".*\"\n\n    def check():\n        with pytest.raises(ValueError, match=pattern):\n            parse(\"\")\n\n    check()\n",
+    )?;
+    Ok(())
+}
+
+#[test]
 fn a_parametrize_mark_does_not_stand_in_for_example_rows() -> Result<(), String> {
     assert_eq!(
         passed_class(
