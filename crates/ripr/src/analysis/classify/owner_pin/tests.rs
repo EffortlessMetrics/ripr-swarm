@@ -4636,14 +4636,26 @@ fn a_bound_trusted_macros_arguments_are_opaque_to_other_trusted_names() {
             ))
         )
     };
+    // The issue's own shape. Its definition body also binds through
+    // `macro_rules! $name`, so this case alone does not isolate the new rule.
     assert!(refused(&format!(
         "{define}vec!(assert_eq!(#[cfg(test)] mod tests;));\n"
     )));
-    // Fixpoint: `format!` becomes bound through `vec!`'s arguments, so its
-    // own arguments are opaque in turn.
-    assert!(refused(&format!(
-        "{define}vec!(format!(assert_eq!(1, 1)));\n"
-    )));
+    // Isolating cases: `vec` is bound without its body making `assert_eq`
+    // ambiguous, so only the arguments of `vec!` can reach it.
+    let not_refused: Vec<&str> = [
+        // An import of a foreign `vec`.
+        "use ext::vec;\nvec!(assert_eq!(#[cfg(test)] mod tests;));\n",
+        // A local `vec` whose body binds only a non-trusted name.
+        "macro_rules! vec { () => { macro_rules! other { () => {}; } }; }\nvec!(assert_eq!(#[cfg(test)] mod tests;));\n",
+        // Fixpoint: `vec!(format)` binds `format`, which is then opaque, even
+        // though its call precedes the `vec!` call that binds it.
+        "use ext::vec;\nformat!(assert_eq!(1, 1));\nvec!(format);\n",
+    ]
+    .into_iter()
+    .filter(|other| !refused(other))
+    .collect();
+    assert!(not_refused.is_empty(), "not refused: {not_refused:?}");
     // Discriminating negatives: an unbound `vec!` keeps its arguments
     // trusted, and a locally defined `vec!` whose expansion cannot bind a
     // name stays transparent (#6648).
@@ -10273,8 +10285,10 @@ fn a_macro_body_that_binds_a_trusted_name_makes_it_ambiguous() {
     ] {
         assert_eq!(refusal(other), None, "{other}");
     }
-    // #5941: a trusted-named macro with a binding site is opaque, so its
-    // arguments name `assert_eq` as tokens even when the body only renames.
+    // #5941, intentional over-refusal: a trusted-named macro with any binding
+    // site is opaque, so `vec!(assert_eq)` counts as a mention of `assert_eq`
+    // even though these bodies only rename or path-extend their argument. The
+    // earlier "binds nothing" expectation for them is dropped on purpose.
     for other in [
         "macro_rules! vec { ($n:ident) => { use $n as check; }; }\nvec!(assert_eq);\n",
         "macro_rules! vec { ($n:ident) => { use $n::path; }; }\nvec!(assert_eq);\n",
