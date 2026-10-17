@@ -39,6 +39,7 @@ mod proof_route;
 mod python_repair_driver;
 mod python_repair_trust;
 mod python_repair_verification;
+mod real_crate_dogfood;
 mod receipts;
 mod recommendation;
 pub(crate) mod release;
@@ -114,9 +115,10 @@ pub(crate) use dx_scoreboard::dx_scoreboard;
 pub(crate) use eval_sweep::eval_sweep;
 pub(crate) use first_pr::first_pr;
 pub(crate) use fixtures::{
-    FixtureCheckFormat, fixture_dirs, fixtures, fixtures_with_args, golden_drift, goldens,
-    goldens_check, is_manifest_only_fixture_dir, normalize_fixture_human_output,
-    normalize_fixture_json_output, ripr_fixture_binary, run_fixture_check, yes_no,
+    FixtureCheckFormat, PrecommitGoldens, fixture_dirs, fixtures, fixtures_with_args, golden_drift,
+    golden_staleness_trigger, goldens, goldens_check, goldens_check_for_precommit,
+    is_manifest_only_fixture_dir, normalize_fixture_human_output, normalize_fixture_json_output,
+    ripr_fixture_binary, run_fixture_check, yes_no,
 };
 #[cfg(test)]
 pub(crate) use fixtures::{
@@ -158,6 +160,7 @@ pub(crate) use pr_evidence::ripr_pr;
 pub(crate) use pr_evidence_summary::ripr_pr_summary;
 pub(crate) use proof_route::{pr_summary_proof_route_section, proof};
 pub(crate) use python_repair_trust::python_repair_trust;
+pub(crate) use real_crate_dogfood::real_crate_dogfood;
 pub(crate) use receipts::{receipts, receipts_write};
 pub(crate) use recommendation::recommendation_calibration;
 pub(crate) use release::release_readiness;

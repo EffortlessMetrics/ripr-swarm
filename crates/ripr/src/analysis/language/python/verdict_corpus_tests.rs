@@ -1078,6 +1078,91 @@ fn a_removed_term_that_every_asserted_input_makes_zero_is_not_discriminated() ->
     Ok(())
 }
 
+#[test]
+fn an_unasserted_owner_call_does_not_block_an_inactive_term() -> Result<(), String> {
+    // #7562: `quote(1000)` is a discarded expression statement (fee 499), but
+    // the only strong assertion observes `quote(6000)` where the fee is 0.
+    // Removing the term still passes the test, so the finding should
+    // downgrade. An asserted nonzero fee must still block. Assigned, nested,
+    // or passed-on calls are unclear and still block.
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    quote(1000)\n    assert quote(6000)[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::WeaklyExposed
+    );
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    quote(1000)\n    result = quote(6000)\n    assert result[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::WeaklyExposed
+    );
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    assert quote(6000)[\"total_cents\"] == 6000\n    assert quote(1000)[\"total_cents\"] == 1499\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    unused = quote(1000)\n    assert quote(6000)[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    print(quote(1000))\n    assert quote(6000)[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    let assigned =
+        quote_module("    total = subtotal_cents\n    return {\"total_cents\": total}\n");
+    assert_eq!(
+        quote_module_class(
+            &assigned,
+            16,
+            "    total = subtotal_cents + shipping_fee(subtotal_cents)",
+            "def test_quote():\n    quote(1000)\n    assert quote(6000)[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // Two owner calls on one line: the covering statement cannot pick a
+    // single observation, so the nonzero call still blocks.
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    quote(6000); collected.append(quote(1000))\n    assert quote(6000)[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // An attribute that shares the bound local's name is not a local read.
+    // The assertion still observes `quote(6000)` so the finding would stay
+    // `exposed` unless `out = quote(6000)` were falsely marked observed.
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    quote(1000)\n    out = quote(6000)\n    assert quote(6000)[\"total_cents\"] == other.out\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    let nested_store = quote_module("    return sink.append(subtotal_cents)\n");
+    assert_eq!(
+        quote_module_class(
+            &nested_store,
+            16,
+            "    return sink.append(subtotal_cents + shipping_fee(subtotal_cents))",
+            "def test_quote():\n    quote(1000)\n    assert quote(6000)[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
 const BIG: &str = "def check(n):\n    if n > 10:\n        raise KeyError(\"big\")\n    return n\n";
 const BIG_OLD: &str = "    if n >= 10:";
 

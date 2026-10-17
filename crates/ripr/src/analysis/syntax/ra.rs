@@ -125,6 +125,20 @@ pub(crate) fn parser_oracles_for_function(
     function_text: &str,
     function_start_line: usize,
 ) -> Option<Vec<OracleFact>> {
+    // Pure in the text and start line; overlapping indexes of one diff run
+    // re-extract the same helpers (#5363).
+    super::run_memo::memoize(
+        super::run_memo::Product::FunctionOracles,
+        function_start_line,
+        function_text,
+        || parser_oracles_for_function_uncached(function_text, function_start_line),
+    )
+}
+
+fn parser_oracles_for_function_uncached(
+    function_text: &str,
+    function_start_line: usize,
+) -> Option<Vec<OracleFact>> {
     let parse = parse_clean_source_file(function_text)?;
     let function = parse
         .tree()
@@ -563,7 +577,7 @@ fn summarize_file_with_collectors(
         let returns = extract_return_facts(&body, start_line);
         let literals = extract_literal_facts(&body, start_line);
         let probe_shapes = extract_probe_shapes(&function, text, &shared_source, &line_index);
-        // A plain helper inside an inline `#[cfg(test)]` module is test
+        // A helper gated directly on test or inside a test-required module is test
         // infrastructure even when it has no `#[test]` attribute. Classify
         // that role at the producer boundary so diff probes, seam inventory,
         // evidence relation, and every downstream renderer consume the same
@@ -573,7 +587,12 @@ fn summarize_file_with_collectors(
         let has_test_attribute = has_test_attribute(&function);
         let source_role = if has_test_attribute {
             FunctionSourceRole::TestAttribute
-        } else if is_cfg_test_module_member(&function) {
+        } else if cfg_predicates::attributes_require_test(
+            function
+                .attrs()
+                .map(|attr| attr.syntax().text().to_string()),
+        ) || is_cfg_test_module_member(&function)
+        {
             FunctionSourceRole::CfgTestModule
         } else {
             FunctionSourceRole::Production
@@ -2263,6 +2282,30 @@ fn extract_parser_oracles(
         });
     }
 
+    for call in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::CallExpr::cast)
+        .filter(is_result_expect_err_ufcs)
+    {
+        if !uncompared_unwrap_err_statement(&call, text) {
+            continue;
+        }
+        let range = call.syntax().text_range();
+        let call_text = slice_text(text, range.start(), range.end())
+            .trim()
+            .trim_end_matches(';')
+            .to_string();
+        assertions.push(OracleFact {
+            line: line_index.line(range.start()),
+            kind: OracleKind::BroadError,
+            strength: OracleStrength::Weak,
+            observed_tokens: extract_identifier_tokens(&call_text),
+            text: call_text,
+            ok_value_observed: None,
+        });
+    }
+
     // #6578: an expect-test comparison (`expect![[..]].assert_eq(actual)`)
     // is a method call on the macro's value, which the macro walk above never
     // sees. Its whole expression is the oracle, graded `snapshot` / medium
@@ -2380,12 +2423,13 @@ fn extract_parser_oracles(
     assertions
 }
 
-/// Whether this `unwrap_err()` call is the whole value of a statement that
-/// never compares it (RIPR-SPEC-0227 decision 2): the statement text and the
-/// rest of the enclosing block go through `uncompared_unwrap_err`, so both
-/// adapters admit the same shapes.
-fn uncompared_unwrap_err_statement(method_call: &ast::MethodCallExpr, text: &str) -> bool {
-    let Some(statement) = method_call.syntax().parent() else {
+/// Whether this `unwrap_err()` / `expect_err(..)` call is the whole value of
+/// a statement that never compares it (RIPR-SPEC-0227 decision 2): the
+/// statement text and the rest of the enclosing block go through
+/// `uncompared_unwrap_err`, so both adapters admit the same shapes. Method
+/// calls and UFCS `Result::expect_err(<call>, <msg>)` share this gate.
+fn uncompared_unwrap_err_statement(expr: &impl AstNode, text: &str) -> bool {
+    let Some(statement) = expr.syntax().parent() else {
         return false;
     };
     if ast::LetStmt::cast(statement.clone()).is_none()
@@ -2400,9 +2444,27 @@ fn uncompared_unwrap_err_statement(method_call: &ast::MethodCallExpr, text: &str
         .map_or(range.end(), |block| block.text_range().end());
     let rest = slice_text(text, range.end(), block_end);
     crate::analysis::extract::uncompared_unwrap_err(&statement_text, &rest).is_some_and(|value| {
-        let call = method_call.syntax().text().to_string();
+        let call = expr.syntax().text().to_string();
         value.split_whitespace().eq(call.split_whitespace())
     })
+}
+
+fn is_result_expect_err_ufcs(call: &ast::CallExpr) -> bool {
+    let Some(ast::Expr::PathExpr(path_expr)) = call.expr() else {
+        return false;
+    };
+    let Some(path) = path_expr.path() else {
+        return false;
+    };
+    let Some(name) = path.segment().and_then(|segment| segment.name_ref()) else {
+        return false;
+    };
+    name.text() == "expect_err"
+        && path
+            .qualifier()
+            .and_then(|qualifier| qualifier.segment())
+            .and_then(|segment| segment.name_ref())
+            .is_some_and(|qualifier| qualifier.text() == "Result")
 }
 
 /// Token-local leaf form of [`is_assertion_macro`] for scanners that see
@@ -3006,6 +3068,38 @@ mod tests {
                 .is_some_and(|function| function.source_role == FunctionSourceRole::Production),
             "production control must remain production role"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn ra_adapter_marks_direct_cfg_helpers_without_registering_tests() -> Result<(), Box<dyn Error>>
+    {
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/data/source-role-corpus/cases/direct_cfg_helpers/src/lib.rs"
+        ));
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
+        assert_eq!(facts.tests.len(), 1);
+        for name in [
+            "production_lease",
+            "alternative_control",
+            "nontest_control",
+            "lookalike_control",
+        ] {
+            assert!(
+                facts.functions.iter().any(|function| function.name == name
+                    && function.source_role == FunctionSourceRole::Production),
+                "production control: {name}"
+            );
+        }
+        for name in ["standalone_helper", "conjunct_helper", "inline_helper"] {
+            assert!(
+                facts.functions.iter().any(|function| function.name == name
+                    && function.source_role == FunctionSourceRole::CfgTestModule),
+                "evidence-only helper: {name}"
+            );
+            assert!(facts.tests.iter().all(|test| test.name != name));
+        }
         Ok(())
     }
 

@@ -41,7 +41,7 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach seconds: seconds_total, bridge_fortnight, from_str_fortnight", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: Unit::Fortnight =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches match arm result: Unit::Fortnight => (line 23)", "related test src/lib.rs:36 seconds_total uses smoke smoke only oracle: Unit::from_str(s).unwrap()", "related test src/lib.rs:36 seconds_total uses strong exact value oracle: assert_eq!(total, 1_814_400);", "related test src/lib.rs:45 bridge_fortnight uses strong exact value oracle: assert_eq!(seconds_bridge(Unit::Fortnight), 1_209_600);", "related test src/lib.rs:50 from_str_fortnight uses strong exact value oracle: assert!(matches!(Unit::from_str(\"fortnight\"), Ok(Unit::Fortnight)));", "source assertion argument value 1_814_400 at line 41", "source assertion argument value 1_209_600 at line 46", "source enum variant value Unit::Fortnight at line 46", "source assertion argument value \"fortnight\" at line 51", "source enum variant value Unit::Fortnight at line 51"],
+      "evidence_path": ["reach yes: Related tests appear to reach seconds: seconds_total, bridge_fortnight, from_str_fortnight", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: Unit::Fortnight =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches match arm result: Unit::Fortnight => (line 23)", "related test src/lib.rs:36 seconds_total uses strong exact value oracle: assert_eq!(total, 1_814_400);", "related test src/lib.rs:45 bridge_fortnight uses strong exact value oracle: assert_eq!(seconds_bridge(Unit::Fortnight), 1_209_600);", "related test src/lib.rs:50 from_str_fortnight uses strong exact value oracle: assert!(matches!(Unit::from_str(\"fortnight\"), Ok(Unit::Fortnight)));", "source assertion argument value 1_814_400 at line 41", "source assertion argument value 1_209_600 at line 46", "source enum variant value Unit::Fortnight at line 46", "source assertion argument value \"fortnight\" at line 51", "source enum variant value Unit::Fortnight at line 51"],
       "flow_sinks": [
         {"kind":"match_arm","text":"Unit::Fortnight =>","line":23}
       ],
@@ -112,18 +112,8 @@
       ],
       "missing_discriminators": [
       ],
-      "related_tests_total": 4,
+      "related_tests_total": 3,
       "related_tests": [
-        {
-          "name": "seconds_total",
-          "file": "src/lib.rs",
-          "line": 36,
-          "oracle_strength": "smoke",
-          "oracle_kind": "smoke_only",
-          "oracle": "Unit::from_str(s).unwrap()",
-          "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
-        },
         {
           "name": "seconds_total",
           "file": "src/lib.rs",

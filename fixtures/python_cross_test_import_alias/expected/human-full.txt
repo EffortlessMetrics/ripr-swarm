@@ -1,0 +1,79 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_cross_test_import_alias/input
+config: <cwd>/fixtures/python_cross_test_import_alias/input/ripr.toml
+
+Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+WARNING src/shop.py:2
+  id: probe:src_shop.py:python_preview:3e5b25e0
+
+Changed
+  after:      return amount * 3
+
+Probe
+  family: return_value
+  delta:  value
+  owner:  python:src/shop.py::fee
+  canonical gap: gap:python:src/shop.py:fee:return_value:return_value:amount*3
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  weakly_exposed (warning, confidence 0.40)
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `fee`
+  - infection yes: Changed Python return expression can alter the owner return value: `return amount * 3`
+  - propagation yes: Changed Python return value is already at the owner output boundary
+  - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
+  - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
+  - local flow reaches returned value: return amount * 3 (line 2)
+  - related test tests/test_shop.py:5 test_fee_return uses strong exact value oracle: assert quote(10) == 30
+
+Weakness
+  - A strong Python oracle reaches `fee`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output
+  - missing discriminator return value == <expected value>: changed Python returned-value at line 2 lacks a concrete repair discriminator
+
+Python repair card (preview/advisory)
+  card version: python_repair_card.v1
+  canonical gap: gap:python:src/shop.py:fee:return_value:return_value:amount*3
+  authority: preview_advisory_only (python/preview)
+  repair action: strengthen_existing_test
+  changed owner: fee
+  changed behavior: return_value changed at src/shop.py:2: `return amount * 3`
+  current test evidence: tests/test_shop.py:5 test_fee_return currently has oracle_strength=strong, oracle_kind=exact_value: assert quote(10) == 30
+  missing discriminator: return value == <expected value>
+  recommended test shape: Strengthen the existing pytest exact return-value assertion for `return value == <expected value>`.
+  suggested assertion: Assert the returned value equals the expected value for the changed inputs.
+  suggested file: tests/test_shop.py
+  suggested test: test_fee_return
+  pytest node: tests/test_shop.py::test_fee_return
+  verify: python -m pytest tests/test_shop.py::test_fee_return (high)
+  receipt: unavailable_until_python_gap_ledger
+  receipt guidance: Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.
+  stop conditions:
+    - Stop if imports, fixtures, or test setup cannot call the changed owner.
+    - Stop if the expected value for the missing discriminator is ambiguous.
+    - Stop if adding the test appears to require a production-code edit.
+  limits:
+    - Syntax-first Python preview evidence only.
+    - No source edits, generated tests, mutation execution, provider calls, or gate authority.
+    - Verify success alone is not a gap-closure receipt.
+
+Next step
+  Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `return value == <expected value>`
+Drill in:
+  ripr explain --root <cwd>/fixtures/python_cross_test_import_alias/input --diff <cwd>/fixtures/python_cross_test_import_alias/diff.patch --mode fast probe:src_shop.py:python_preview:3e5b25e0
+  ripr context --root <cwd>/fixtures/python_cross_test_import_alias/input --diff <cwd>/fixtures/python_cross_test_import_alias/diff.patch --mode fast --at probe:src_shop.py:python_preview:3e5b25e0
+
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.
