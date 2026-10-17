@@ -470,6 +470,7 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence/snapshot_owner_binding.rs::tests::reads_and_comparisons_are_not_assignments",
   "crates/ripr/src/analysis/test_grip_evidence/snapshot_owner_binding.rs::tests::plain_and_compound_assignments_are_assignments",
   "crates/ripr/src/analysis/test_grip_evidence/snapshot_owner_binding.rs::tests::literals_and_comments_are_blanked_across_lines_keeping_newlines",
+  "crates/ripr/src/analysis/test_grip_evidence/snapshot_owner_binding.rs::tests::escaped_quote_char_literal_is_consumed_whole",
   "crates/ripr/src/analysis/test_grip_evidence/snapshot_owner_binding.rs::tests::pattern_binders_withdraw_and_wrapped_calls_are_not_the_owner_result",
   "crates/ripr/tests/snapshot_field_admission.rs::snapshot_of_another_receiver_cannot_close_the_owner_field",
   "crates/ripr/tests/snapshot_field_admission.rs::snapshot_without_an_expected_file_cannot_close_the_owner_field",

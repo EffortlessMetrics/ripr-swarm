@@ -209,7 +209,9 @@ fn blank_literals_and_comments(text: &str) -> String {
         }
         if ch == '\'' {
             if next == Some('\\') {
-                at += 2;
+                // Skip the opening quote, the backslash and the escaped
+                // character first, so `'\''` does not stop on its own escape.
+                at += 3;
                 while at < chars.len() && chars[at] != '\'' {
                     at += 1;
                 }
@@ -448,6 +450,19 @@ mod tests {
             " make_count(2).to_string();",
         ] {
             assert!(!initializer_is_owner_call(other, "make_count"), "{other}");
+        }
+    }
+
+    #[test]
+    fn escaped_quote_char_literal_is_consumed_whole() {
+        for source in [
+            "f('\\'','a'); keep();",
+            "f('\\'', 'a'); keep();",
+            "f('\\n','a'); keep();",
+        ] {
+            let blanked = blank_literals_and_comments(source);
+            assert!(!blanked.contains('\''), "{source} -> {blanked}");
+            assert!(blanked.contains("keep();"), "{source} -> {blanked}");
         }
     }
 
