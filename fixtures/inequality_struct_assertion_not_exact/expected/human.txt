@@ -26,6 +26,8 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/inequality_struct_assertion_not_exact/input --diff <cwd>/fixtures/inequality_struct_assertion_not_exact/diff.patch --mode fast probe:src_lib.rs:field_construction:a4a69e05
   ripr context --root <cwd>/fixtures/inequality_struct_assertion_not_exact/input --diff <cwd>/fixtures/inequality_struct_assertion_not_exact/diff.patch --mode fast --at probe:src_lib.rs:field_construction:a4a69e05
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/inequality_struct_assertion_not_exact/input --at src/lib.rs:8 --kind field_construction
 
 More:
   Full evidence: rerun with --format human-full
