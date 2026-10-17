@@ -119,14 +119,18 @@ pub(super) fn compose_index_source_roles(index: &mut RustIndex, workspace_root: 
             .collect()
     };
 
+    let outside_module_tree = files_outside_module_tree(index, workspace_root, &resolutions);
+
     // Phase 2 (mutable): record provenance and grant evidence roles.
     let mut granted: BTreeSet<PathBuf> = BTreeSet::new();
-    for (file, context, provenance) in resolutions {
+    for (file, context, mut provenance) in resolutions {
         if context == Context::RequiresTest {
             granted.insert(file.clone());
         }
-        let has_provenance =
-            !provenance.edges.is_empty() || provenance.earliest_unresolved_reason.is_some();
+        provenance.outside_module_tree = outside_module_tree.contains(&file);
+        let has_provenance = !provenance.edges.is_empty()
+            || provenance.earliest_unresolved_reason.is_some()
+            || provenance.outside_module_tree;
         if has_provenance && let Some(facts) = index.files.get_mut(&file) {
             facts.role_provenance = provenance;
         }
@@ -135,6 +139,67 @@ pub(super) fn compose_index_source_roles(index: &mut RustIndex, workspace_root: 
         return;
     }
     apply_cfg_test_module_grants(index, &granted);
+}
+
+/// The files positively outside every crate's module tree (#7426): plain
+/// `src/<name>.rs` files of a package whose crate root is indexed, that no
+/// resolved module or include edge reaches.
+///
+/// Fail closed. Nothing is reported while the workspace has an unresolved
+/// include, a lexical-fallback file (which emits no `mod` declarations) or a
+/// `#[path]` whose target is unknown, because any of those may compile an
+/// unlinked file. Only the direct `src/<name>.rs` shape qualifies: its sole
+/// possible parent is a crate root's top-level `mod <name>;`, which the
+/// producer captures. Deeper files could be declared from an inline module,
+/// which the producer does not capture, so they are never reported.
+fn files_outside_module_tree(
+    index: &RustIndex,
+    workspace_root: &Path,
+    resolutions: &[(PathBuf, Context, SourceRoleProvenance)],
+) -> BTreeSet<PathBuf> {
+    let unresolved_composition = !index.include_limitations.is_empty()
+        || index.files.values().any(|facts| {
+            facts.used_lexical_fallback
+                || facts
+                    .module_declarations
+                    .iter()
+                    .any(|declaration| declaration.path_target == ModulePathTarget::Unknown)
+        });
+    if unresolved_composition {
+        return BTreeSet::new();
+    }
+    let mut crate_roots = CrateRoots::default();
+    let mut outside = BTreeSet::new();
+    for (file, context, provenance) in resolutions {
+        let unlinked = *context == Context::Production
+            && provenance.edges.is_empty()
+            && provenance.earliest_unresolved_reason.is_none()
+            && !index.include_parents.contains_key(file);
+        if !unlinked || crate_roots.is_crate_root(workspace_root, file) {
+            continue;
+        }
+        let Some(package_dir) = crate_roots.package_manifest_dir(workspace_root, file) else {
+            continue;
+        };
+        let Ok(relative) = file.strip_prefix(&package_dir) else {
+            continue;
+        };
+        let direct_src_module = matches!(
+            relative.components().collect::<Vec<_>>().as_slice(),
+            [Component::Normal(dir), Component::Normal(name)]
+                if dir.to_str() == Some("src")
+                    && name.to_str().is_some_and(|name| name.ends_with(".rs"))
+        );
+        let package_root_indexed = ["lib.rs", "main.rs"].iter().any(|root| {
+            index
+                .files
+                .contains_key(&package_dir.join("src").join(root))
+        });
+        if direct_src_module && package_root_indexed {
+            outside.insert(file.clone());
+        }
+    }
+    outside
 }
 
 /// Grants the evidence-only `CfgTestModule` role to `Production` functions of
@@ -675,6 +740,7 @@ impl ContextResolver<'_> {
                     earliest_unresolved_reason: Some(
                         REASON_MODULE_CYCLE_OR_DEPTH_LIMIT.to_string(),
                     ),
+                    outside_module_tree: false,
                 },
             );
         }
@@ -688,6 +754,7 @@ impl ContextResolver<'_> {
                 let provenance = SourceRoleProvenance {
                     edges: Vec::new(),
                     earliest_unresolved_reason: context.unresolved_reason(),
+                    outside_module_tree: false,
                 };
                 (context, provenance)
             }
@@ -2192,6 +2259,100 @@ mod tests {
             FunctionSourceRole::CfgTestModule,
             "the second sibling's out-of-line module child composes its evidence role"
         );
+        Ok(())
+    }
+
+    fn outside_tree(index: &RustIndex, file: &str) -> bool {
+        index
+            .files()
+            .get(Path::new(file))
+            .is_some_and(|facts| facts.role_provenance.outside_module_tree)
+    }
+
+    /// #7426: a `src/<name>.rs` that no `mod` declaration reaches is outside
+    /// the module tree; the declared sibling is the negative control.
+    #[test]
+    fn undeclared_src_file_is_outside_the_module_tree() -> Result<(), String> {
+        let root = temp_dir("orphan-file")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(&root, "src/lib.rs", "mod linked;\n")?,
+            write(&root, "src/linked.rs", "pub fn reached() -> i32 { 1 }\n")?,
+            write(&root, "src/orphan.rs", "pub fn stranded() -> i32 { 2 }\n")?,
+        ];
+
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+
+        assert!(outside_tree(&index, "src/orphan.rs"));
+        assert!(!outside_tree(&index, "src/linked.rs"));
+        assert!(!outside_tree(&index, "src/lib.rs"));
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// Fail closed: an unresolvable `#[path]` may compile any file, so no
+    /// file is reported outside the tree.
+    #[test]
+    fn unresolved_path_attribute_suppresses_the_outside_tree_marker() -> Result<(), String> {
+        let root = temp_dir("orphan-unresolved-path")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                "#[cfg_attr(feature = \"alt\", path = \"alt/elsewhere.rs\")]\nmod elsewhere;\n",
+            )?,
+            write(&root, "src/orphan.rs", "pub fn stranded() -> i32 { 2 }\n")?,
+        ];
+
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+
+        assert!(!outside_tree(&index, "src/orphan.rs"));
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// Deeper files may be declared from an inline module the producer does
+    /// not capture, so only direct `src/<name>.rs` files are ever reported.
+    #[test]
+    fn nested_undeclared_file_is_never_reported_outside_the_tree() -> Result<(), String> {
+        let root = temp_dir("orphan-nested")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(&root, "src/lib.rs", "pub mod outer { pub mod inner; }\n")?,
+            write(
+                &root,
+                "src/outer/inner.rs",
+                "pub fn nested() -> i32 { 3 }\n",
+            )?,
+        ];
+
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+
+        assert!(!outside_tree(&index, "src/outer/inner.rs"));
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// A package whose crate root is not indexed gives no positive evidence.
+    #[test]
+    fn missing_crate_root_never_marks_a_file_outside_the_tree() -> Result<(), String> {
+        let root = temp_dir("orphan-no-root")?;
+        write_manifest(&root)?;
+        let files = vec![write(
+            &root,
+            "src/orphan.rs",
+            "pub fn stranded() -> i32 { 2 }\n",
+        )?];
+
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+
+        assert!(!outside_tree(&index, "src/orphan.rs"));
+        let _ = fs::remove_dir_all(&root);
         Ok(())
     }
 }
