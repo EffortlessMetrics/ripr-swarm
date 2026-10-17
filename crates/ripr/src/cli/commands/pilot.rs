@@ -97,6 +97,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         ));
     }
 
+    crate::atomic_file::ensure_default_output_contained(&options.root)?;
     let config = load_for_root(&options.root)?;
     // Refuse an invalid RIPR_PILOT_SEAM_BUDGET (#4529) before the analysis
     // it would bound, not after it.

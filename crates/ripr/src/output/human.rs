@@ -1,3 +1,10 @@
+//! Human (terminal) rendering of `ripr check` output.
+//!
+//! Renders a `CheckOutput` as bounded or full text: header summary, analysis
+//! outcome disclosures (working-tree, committed-history, unanalyzed scope),
+//! and per-finding drill-in. Classification lives upstream; triage and
+//! next-action selection are delegated to the `triage` submodule and `domain`.
+
 use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn, FindingNavigation};
 use crate::config::RiprConfig;
 use crate::domain::Finding;
@@ -990,16 +997,7 @@ fn render_language_runs(out: &mut String, output: &CheckOutput) {
 pub(crate) fn advisory_language_names(
     advisory: &crate::analysis::PreviewLanguageAdvisory,
 ) -> (String, String) {
-    let language = language_display_name(&advisory.language);
-    if advisory.language != "typescript" || advisory.javascript_file_count == 0 {
-        return (language.clone(), language);
-    }
-    let family = "TypeScript/JavaScript".to_string();
-    if advisory.javascript_file_count >= advisory.file_count {
-        (family, "JavaScript".to_string())
-    } else {
-        (family.clone(), family)
-    }
+    advisory.prose_names()
 }
 
 /// Prose name for a language wire string (`typescript` -> `TypeScript`),
@@ -1829,6 +1827,95 @@ mod tests {
         assert!(rendered.contains("Next: drill into the top finding:"));
         assert!(rendered.contains(&format!("  ripr explain {finding_id}\n")));
         assert!(rendered.contains(&format!("  ripr context --at {finding_id}\n")));
+        // #8166 Slice C: without a producer-established repair route, the
+        // drill-down offers no repair line.
+        assert!(!rendered.contains("ripr repair"), "{rendered}");
+    }
+
+    /// #8166 Slice C: a repair route established for the top finding prints
+    /// `ripr repair <seam-id>` in the bounded drill-down, naming the seam
+    /// identity the repair resolver accepts — never the `probe:` finding
+    /// ID. A route bound to another finding, and the human-full form, print
+    /// no repair line.
+    #[test]
+    fn bounded_human_output_prints_repair_only_for_the_routed_top_finding() {
+        let finding = sample_finding();
+        let finding_id = finding.id.clone();
+        let output = CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                probes: 1,
+                findings: 1,
+                weakly_exposed: 1,
+                ..Summary::default()
+            },
+            findings: vec![finding],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+            analyzed_revisions: None,
+        };
+        let config = crate::config::RiprConfig::default();
+        let routed = crate::app::FindingDrillIn::Commands(
+            crate::app::FindingNavigation::legacy().with_repair_route(Some(
+                crate::app::RepairRoute {
+                    finding_id: finding_id.clone(),
+                    seam_id: "67fc764ba37d77bd".to_string(),
+                },
+            )),
+        );
+        let rendered = super::render_bounded_with_config_and_navigation(
+            &output,
+            &config,
+            Some(&routed),
+            crate::app::CheckDiffProvenance::CommittedHistory,
+        );
+        assert!(
+            rendered.contains(
+                "Next: drill into the top finding:\n  ripr explain probe:sample.rs:7:predicate\n  ripr context --at probe:sample.rs:7:predicate\n  ripr repair 67fc764ba37d77bd\n"
+            ),
+            "the eligible top finding must print its seam repair line:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("ripr repair probe:"),
+            "the repair line must never name the finding ID:\n{rendered}"
+        );
+
+        let other = crate::app::FindingDrillIn::Commands(
+            crate::app::FindingNavigation::legacy().with_repair_route(Some(
+                crate::app::RepairRoute {
+                    finding_id: "probe:other".to_string(),
+                    seam_id: "67fc764ba37d77bd".to_string(),
+                },
+            )),
+        );
+        let rendered_other = super::render_bounded_with_config_and_navigation(
+            &output,
+            &config,
+            Some(&other),
+            crate::app::CheckDiffProvenance::CommittedHistory,
+        );
+        assert!(
+            !rendered_other.contains("ripr repair"),
+            "a route for another finding must print no repair line:\n{rendered_other}"
+        );
+
+        let full = super::render_full_with_config_and_navigation(&output, &config, Some(&routed));
+        assert!(
+            !full.contains("ripr repair"),
+            "human-full keeps its existing drill-in contract:\n{full}"
+        );
     }
 
     /// A Python preview finding; `carded` controls whether the Python repair

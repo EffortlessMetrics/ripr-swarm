@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main, master]
   workflow_dispatch:
@@ -10,18 +10,18 @@ on:
 permissions:
   contents: read
 
-# Cancel in-flight runs on the same PR when new commits are pushed
-# (`synchronize`), but never on label or other PR-action events. The
-# label-event cancellation bug described in docs/CI.md caused in-progress runs
-# to be cancelled on label toggling.
+# Only a `merge-ready` labeled request shares this group, so a re-applied label
+# supersedes the older run for the same PR. Every other pull_request event
+# (opened, synchronize, reopened, other labels) gets a unique group: its jobs
+# are skipped and it can neither cancel nor replace a pending merge-ready run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ (github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run' }}
+  cancel-in-progress: ${{ (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') }}
 
 jobs:
   release-proof:
     name: Perl and release proof
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -90,10 +90,10 @@ jobs:
     # #4252: the Rust-only feature lane (#2400, #3128) otherwise runs only in
     # the Windows advisory workflow, whose verdict hid this step's result
     # until #4229. It runs before merge on PRs that change the Rust crate,
-    # fixtures, or Cargo manifests, and on every push to main; label events
-    # and docs-only PRs skip the compile, matching the routed lane's posture.
+    # fixtures, or Cargo manifests, and on every push to main; on PRs the merge-ready label
+    # starts it, and docs-only PRs skip the compile.
     name: Rust-only feature lane
-    if: github.event_name != 'pull_request' || contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action)
+    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -164,7 +164,7 @@ jobs:
     # Routed Rust already runs the declared 1.95.0 toolchain on every ordinary
     # PR and main push. Keep the duplicate named proof only for explicit full
     # CI and manual investigation.
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci')))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -177,7 +177,7 @@ jobs:
       - run: cargo check --workspace --all-targets
 
   vscode:
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:

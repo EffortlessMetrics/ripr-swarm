@@ -1,3 +1,11 @@
+//! The `tower-lsp-server` `LanguageServer` implementation for the ripr sidecar.
+//!
+//! [`Backend`] owns client handles, workspace roots, open-document state,
+//! refresh and publication barriers, and the config-pull coordinator. It
+//! delegates analysis scheduling to `refresh_scheduler`, diagnostic shaping to
+//! `diagnostics`, and code actions to `actions`; keep protocol plumbing here
+//! and decisions in those owners.
+
 use super::AnalysisStatusNotification;
 use super::actions::{code_action_response, disable_retained_analysis_actions, resolve_action};
 use super::capabilities::{
@@ -3016,6 +3024,25 @@ impl Backend {
             .unwrap_or(false)
     }
 
+    /// Adopt the committed snapshot's analyzed identity for a clean open of a
+    /// Rust file the snapshot already analyzed byte-for-byte, so reopening an
+    /// unchanged file does not quarantine it as never analyzed. Returns
+    /// whether the document is now clean.
+    fn adopt_committed_snapshot_for_clean_open(&self, uri: &Uri) -> bool {
+        let committed = self.latest_analysis.lock().ok().and_then(|latest| {
+            let snapshot = latest.as_ref()?;
+            let relative = super::uri::file_uri_relative_to_root(&snapshot.root, uri)?;
+            let digest = snapshot.rust_consumed_sources.digest(&relative)?;
+            Some((digest, snapshot.input_identity_id()))
+        });
+        let Some((digest, input_identity)) = committed else {
+            return false;
+        };
+        self.documents.lock().ok().is_some_and(|mut documents| {
+            documents.adopt_committed_identity(uri, &digest, input_identity)
+        })
+    }
+
     /// Whether a clean open still carries an input the committed snapshot
     /// never analyzed: the file may have changed on disk while it was closed
     /// and no watch event arrived, so the buffer matches the persisted bytes
@@ -3637,11 +3664,23 @@ fn path_is_detectable_source_dir_python(root: &Path, path: &Path) -> bool {
 
 /// Root-relative components of `path` when `path` sits below `root`. Root
 /// components compare with the platform path rule (case-insensitive on
-/// Windows), mirroring the LSP URI authority's containment rule. `.` and
+/// Windows and macOS), mirroring the LSP URI authority's containment rule. `.` and
 /// `..` resolve on both sides first, including a root this process built
 /// with a relative join (`crates/ripr/../..`). A collapsed file URI and
 /// that uncollapsed root are the same directory.
 fn root_relative_components(root: &Path, path: &Path) -> Option<Vec<String>> {
+    root_relative_components_on(
+        root,
+        path,
+        crate::output::path::host_paths_case_insensitive(),
+    )
+}
+
+fn root_relative_components_on(
+    root: &Path,
+    path: &Path,
+    case_insensitive: bool,
+) -> Option<Vec<String>> {
     let root = super::uri::normalize_path(root);
     let path = super::uri::normalize_path(path);
     fn component_names(path: &Path) -> Vec<Option<String>> {
@@ -3665,7 +3704,7 @@ fn root_relative_components(root: &Path, path: &Path) -> Option<Vec<String>> {
         let (Some(expected), Some(actual)) = (expected, actual) else {
             return None;
         };
-        let matched = if cfg!(windows) {
+        let matched = if case_insensitive {
             expected.eq_ignore_ascii_case(actual)
         } else {
             expected == actual
@@ -3926,9 +3965,9 @@ mod workspace_input_tests {
         assert!(WorkspaceInputKind::PythonSourcePresence.reloads_repository_config());
         assert!(!WorkspaceInputKind::PythonSourcePresence.invalidates_workspace_graph());
 
-        if cfg!(windows) {
-            // Source-directory markers resolve through the Windows
-            // filesystem, so differently-cased components classify the same.
+        if crate::output::path::host_paths_case_insensitive() {
+            // Source-directory markers resolve through the case-insensitive
+            // host filesystem (Windows, macOS), so differently-cased components classify the same.
             let upper = root.join("SRC").join("app.py");
             assert_eq!(
                 workspace_input_kind(&root, &upper),
@@ -3936,6 +3975,21 @@ mod workspace_input_tests {
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn root_relative_components_follow_explicit_host_case_rule() {
+        let root = Path::new("/Work/Repo");
+        let path = Path::new("/work/repo/src/lib.rs");
+        assert_eq!(
+            root_relative_components_on(root, path, true),
+            Some(vec!["src".to_string(), "lib.rs".to_string()])
+        );
+        assert_eq!(root_relative_components_on(root, path, false), None);
+        assert_eq!(
+            root_relative_components_on(root, Path::new("/Work/Repo/src/Lib.rs"), false),
+            Some(vec!["src".to_string(), "Lib.rs".to_string()])
+        );
     }
 
     #[test]
@@ -4564,10 +4618,15 @@ fn blocked_root_message(root: &WorkspaceRootAuthority) -> Option<String> {
         };
         format!(" {label}: {listed}.")
     };
-    // The stored details already name the recovery for ambiguous, removed
-    // and changed roots; an unavailable root only says what the client sent.
+    // The stored details already name the recovery for removed and changed
+    // roots; an unavailable root only says what the client sent. An
+    // ambiguous set lists its folders above, so the guidance names the only
+    // recovery the server implements: one folder per window, then a restart
+    // (#7461). No server command, setting, or request selects a root.
     let guidance = match root.state {
-        WorkspaceRootState::WorkspaceAmbiguous => " ripr analyzes one workspace root per server.",
+        WorkspaceRootState::WorkspaceAmbiguous => {
+            " ripr analyzes one workspace root per server. Remove the extra folder from the workspace (or open each repository in its own editor session), then restart the language server. In VS Code, the `ripr: Select Workspace Root` command picks one folder and restarts instead."
+        }
         WorkspaceRootState::RootUnavailable => {
             " Open the repository folder as the editor's workspace root, then restart the language server."
         }
@@ -4581,12 +4640,21 @@ fn blocked_root_message(root: &WorkspaceRootAuthority) -> Option<String> {
     ))
 }
 
+/// Recovery route for workspace-root states that stop analysis until the
+/// editor holds a single workspace root and the server restarts (#7461).
+/// The name describes the end state the user must produce because no server
+/// command, setting, or request implements a root-selection step; a
+/// `select_*` route would name a phantom action. One wording owner for both
+/// the status projection and the top-limitation payload so they cannot drift
+/// apart.
+const SINGLE_ROOT_RESTART_ROUTE: &str = "use_single_workspace_root_and_restart";
+
 fn root_recovery_route(state: &WorkspaceRootState) -> &'static str {
     match state {
         WorkspaceRootState::SelectedSingleRoot => "refresh",
-        WorkspaceRootState::WorkspaceAmbiguous => "select_root_and_restart",
-        WorkspaceRootState::RootUnavailable => "select_root_and_restart",
-        WorkspaceRootState::RootRemoved => "select_root_and_restart",
+        WorkspaceRootState::WorkspaceAmbiguous => SINGLE_ROOT_RESTART_ROUTE,
+        WorkspaceRootState::RootUnavailable => SINGLE_ROOT_RESTART_ROUTE,
+        WorkspaceRootState::RootRemoved => SINGLE_ROOT_RESTART_ROUTE,
         WorkspaceRootState::RootChanged => "refresh",
     }
 }
@@ -5409,7 +5477,7 @@ impl LanguageServer for Backend {
         // The store records exactly the params version with the open
         // decision (#1747); capture it before `params` moves.
         let decision_version = Some(params.text_document.version);
-        let Some((uri, transition)) = self.open_document(params) else {
+        let Some((uri, mut transition)) = self.open_document(params) else {
             // A failed store lock means the document was never registered;
             // skip every downstream mutation so the store, the workspace
             // revision, and the committed snapshot cannot diverge.
@@ -5438,6 +5506,18 @@ impl LanguageServer for Backend {
         // captured for the same Rust path keeps the refresh too: the file
         // changed on disk while closed, so the session's committed evidence
         // predates the input it would otherwise keep serving.
+        if transition == QuarantineTransition::Entered
+            && self.refresh_scheduler_has_analysis_state()
+            && self.adopt_committed_snapshot_for_clean_open(&uri)
+        {
+            // The open created the document already quarantined as never
+            // analyzed and the adoption lifted that. Report the lift so the
+            // committed diagnostics are re-served: a stale withdrawal marker
+            // from an earlier dirty episode may still be the last publish.
+            transition = QuarantineTransition::Exited {
+                was_disclosed: false,
+            };
+        }
         let open_matches_saved = self.open_document_matches_saved_content(&uri);
         let session_has_analysis = self.refresh_scheduler_has_analysis_state();
         self.handle_document_quarantine_transition(&uri, transition, decision_version)
@@ -7583,17 +7663,17 @@ fn top_limitation_dto(
             WorkspaceRootState::WorkspaceAmbiguous => (
                 "workspace_ambiguous",
                 "workspace root authority is ambiguous; analysis input is not selected",
-                "select_root_and_restart",
+                SINGLE_ROOT_RESTART_ROUTE,
             ),
             WorkspaceRootState::RootUnavailable => (
                 "input_invalid",
                 "workspace root authority is unavailable; analysis input is not selected",
-                "select_root_and_restart",
+                SINGLE_ROOT_RESTART_ROUTE,
             ),
             WorkspaceRootState::RootRemoved => (
                 "input_invalid",
                 "the selected workspace root was removed; analysis input is invalid",
-                "select_root_and_restart",
+                SINGLE_ROOT_RESTART_ROUTE,
             ),
             WorkspaceRootState::RootChanged => (
                 "snapshot_stale",
