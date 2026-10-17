@@ -271,6 +271,16 @@ pub(crate) fn render_human_triage(
                 out.push_str(&format!(
                     "  Safe next action: the working tree has no changed tracked files against `{base}`; make a change, or `git add -N <path>` a new file, and re-run\n"
                 ));
+            } else if let Some(base) = output.base.as_deref()
+                && let Some(candidate) = empty_diff_base_candidate(output, base)
+            {
+                // The analyzed base resolved to HEAD itself, so committing
+                // or `--worktree` against it stays empty; the one canonical
+                // remediation is the probed other base, named identically
+                // on stderr by the check hedge (#7644).
+                out.push_str(&format!(
+                    "  Safe next action: no changed files were compared against `{base}`; pass `--base {candidate}` to compare against `{candidate}` instead\n"
+                ));
             } else if let Some(base) = output.base.as_deref() {
                 // "tracked" (#5258): `--worktree` diffs tracked edits only,
                 // so the line must not promise it covers untracked files.
@@ -557,6 +567,24 @@ pub(crate) fn canonical_next_action_for_triage(
         limitations,
     };
     select_canonical_next_action(&input)
+}
+
+/// The probed `--base` candidate for an empty result whose analyzed base
+/// resolved to HEAD's own commit: the first other branch whose range
+/// against HEAD is non-empty, never the current `base`. `None` when the
+/// analyzed revisions do not establish base == HEAD, so the ordinary
+/// commit/`--worktree` action keeps owning those states.
+fn empty_diff_base_candidate(output: &CheckOutput, base: &str) -> Option<String> {
+    let revisions = output.analyzed_revisions.as_ref()?;
+    match (
+        revisions.base_commit.as_deref(),
+        revisions.head_commit.as_deref(),
+    ) {
+        (Some(base_commit), Some(head_commit)) if base_commit == head_commit => {}
+        _ => return None,
+    }
+    crate::analysis::another_base_candidate(&output.root, None)
+        .filter(|candidate| !candidate.is_empty() && candidate != base)
 }
 
 /// The scope identity bound when triage selected no finding: the compared
@@ -1391,6 +1419,83 @@ mod tests {
             return Err(format!(
                 "serialized dot root must stay '.', got {}",
                 encoded["subject"]["root"]
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn scope_missing_names_the_probed_base_candidate_when_base_is_head() -> Result<(), String> {
+        // The stdout Safe next action and the stderr hedge must name the
+        // same probed `--base` candidate, not divergent remediations.
+        let dir =
+            std::env::temp_dir().join(format!("ripr-triage-empty-diff-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let git = |args: &[&str]| -> Result<(), String> {
+            let status = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .status()
+                .map_err(|e| e.to_string())?;
+            if status.success() {
+                Ok(())
+            } else {
+                Err(format!("git {args:?} failed"))
+            }
+        };
+        let setup = (|| -> Result<(), String> {
+            git(&["init", "-b", "master"])?;
+            git(&["config", "user.email", "ripr@example.invalid"])?;
+            git(&["config", "user.name", "ripr test"])?;
+            std::fs::write(dir.join("README"), "init").map_err(|e| e.to_string())?;
+            git(&["add", "."])?;
+            git(&["commit", "-m", "init"])?;
+            git(&["branch", "base-candidate"])?;
+            std::fs::write(dir.join("README"), "second").map_err(|e| e.to_string())?;
+            git(&["add", "."])?;
+            git(&["commit", "-m", "second"])?;
+            Ok(())
+        })();
+        if let Err(error) = setup {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err(error);
+        }
+        let mut output = test_output(Vec::new());
+        output.root = dir.clone();
+        output.base = Some("master".to_string());
+        output.no_scope_provided = true;
+        output.analyzed_revisions = Some(crate::analysis::AnalyzedRevisions {
+            base_ref: "master".to_string(),
+            base_commit: Some("abc".to_string()),
+            merge_base_commit: None,
+            head_commit: Some("abc".to_string()),
+            working_tree: false,
+        });
+        let triage = HumanTriage {
+            state: HumanTriageState::MissingScope,
+            selected: None,
+            omitted: Vec::new(),
+        };
+        let mut out = String::new();
+        render_human_triage(
+            &mut out,
+            &triage,
+            &output,
+            &crate::config::RiprConfig::default(),
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        if !out.contains("pass `--base base-candidate`") {
+            return Err(format!(
+                "safe next action must name the probed candidate, got:\n{out}"
+            ));
+        }
+        if out.contains("commit a change and re-run") {
+            return Err(format!(
+                "divergent commit remediation must not shadow the candidate, got:\n{out}"
             ));
         }
         Ok(())
