@@ -354,8 +354,8 @@ The copy describes an earlier run, may be stale for the current HEAD, and is
 not current evidence.
 
 Current inputs contain exposure or ledger evidence only. They do not establish
-complete test-efficiency measurement or bind that evidence to current candidate
-bytes. Known actionable counts remain informational; complete unresolved debt
+complete test-efficiency measurement, bind that evidence to current candidate
+bytes, or dispose of blocked and unsupported scope. Known actionable counts remain informational; complete unresolved debt
 and candidate authority remain indeterminate, so --check cannot pass from these
 inputs. No ripr command produces the missing inputs yet (tracked in #7222), so
 these receipts stay indeterminate by design. This command does not scan a
