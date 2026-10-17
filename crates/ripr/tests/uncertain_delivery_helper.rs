@@ -118,7 +118,7 @@ fn boundary(helper: &str, caller: &str) -> Result<Finding, String> {
 }
 
 #[test]
-fn direct_oracle_is_credited_but_fallible_helpers_retain_their_two_refusal_edges()
+fn direct_and_plain_helper_oracles_are_credited_while_closure_helpers_stay_refused()
 -> Result<(), String> {
     let direct = boundary("", "assert_eq!(gate(10), true);\nOk(())")?;
     assert_eq!(
@@ -134,20 +134,27 @@ fn direct_oracle_is_credited_but_fallible_helpers_retain_their_two_refusal_edges
         plain.related_tests.iter().any(|t| t.name == "boundary"),
         "plain caller is retained"
     );
+    // Since #8089 a returned plain fallible helper's panic assertion is
+    // credited to the calling test (the refusal this witness once retained).
+    assert_eq!(
+        plain.class,
+        ripr::ExposureClass::Exposed,
+        "plain fallible helper assertion is now credited: {plain:?}"
+    );
     assert!(
         plain
             .related_tests
             .iter()
             .filter(|t| t.name == "boundary")
-            .all(|t| t.oracle.is_none()),
-        "plain fallible helper still lacks downstream assertion context: {plain:?}"
+            .all(|t| t.oracle.as_deref() == Some("assert_eq!(gate(input), want);")),
+        "plain helper oracle is the copied helper assertion: {plain:?}"
     );
     assert!(
         plain
             .evidence
             .iter()
-            .any(|e| e.contains("could not identify the test function uniquely")),
-        "plain helper assertion was copied, then refused downstream: {plain:?}"
+            .all(|e| !e.contains("could not identify the test function uniquely")),
+        "plain helper no longer reaches the downstream uniqueness refusal: {plain:?}"
     );
     assert!(
         plain.related_tests.iter().any(|t| t.name == "boundary"

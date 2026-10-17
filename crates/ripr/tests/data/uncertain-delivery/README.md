@@ -23,7 +23,7 @@ both real caller rows. It pins no production probes in the cfg-test helper
 and no oracle credit for its callers. Source lines are resolved from the
 frozen source instead of treating historical line numbers as identities.
 
-The argument/return/observer chain has two distinct limitations:
+The argument/return/observer chain retains one limitation and one positive control:
 
 1. Both native tests tail-return `uncertain_delivery_retry(false/true)`. The
    helper defines and invokes `make_transport`, then observes delivery results,
@@ -33,11 +33,11 @@ The argument/return/observer chain has two distinct limitations:
    mutable transport and fallible helper result are not established observer
    links for the changed production owner. Recognition of `ensure!` exists.
 2. A reduced plain fallible helper copies its `gate(input)` call and
-   `assert_eq!` oracle, but downstream assertion admission cannot locate that
-   helper-line assertion inside the calling test. The finding explicitly says
-   `could not identify the test function uniquely`; caller oracle credit is
-   withheld. Direct in-test observation is the positive control. Sibling,
-   uninvoked and wrong-binding controls cannot expose the changed owner.
+   `assert_eq!` oracle, and since #8089 the calling test is credited with that
+   panic assertion (`Exposed`, exact-value oracle). This replaces the earlier
+   downstream `could not identify the test function uniquely` refusal. Direct
+   in-test observation remains the positive control. Sibling, uninvoked and
+   wrong-binding controls cannot expose the changed owner.
 
 These are limitation witnesses, not an endorsement of missing assertions.
 Do not broadly relax closure, binding, execution or effect attribution based
