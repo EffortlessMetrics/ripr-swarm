@@ -8,6 +8,8 @@
 # Network behavior must stay in explicit adapter or release surfaces. Unit tests
 # and domain logic should not acquire hidden network dependencies.
 
+crates/ripr/tests/data/uncertain-delivery/github_delivery.rs|TcpStream|3|analysis/test-helpers|#7818: byte-exact UB #1440 source fixture consumed only via include_str; retains the original fake-transport type text, never compiled or executed by this parser test. No network behavior added.
+crates/ripr/tests/data/uncertain-delivery/github_delivery.rs|curl|2|analysis/test-helpers|#7818: byte-exact inert source fixture retains one run_curl_json_send name and one fake-response-loss comment; no curl execution or network behavior added.
 .github/workflows/droid-security-scan.yml|curl|1|ci/droid|Droid action bootstrap downloads a pinned GitHub CLI archive when the self-hosted runner does not provide gh.
 .github/workflows/droid.yml|curl|1|ci/droid|Droid action bootstrap downloads a pinned GitHub CLI archive when the self-hosted runner does not provide gh.
 .github/workflows/publish-extension.yml|curl|1|release/ci|Release workflow polls GitHub Releases for the server manifest before publishing extension packages.

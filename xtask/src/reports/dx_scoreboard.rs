@@ -51,8 +51,11 @@ const RUST_CORPUS_SMOKE_SCHEMA_VERSION: &str = "ripr-rust-corpus-smoke-v1";
 /// Receipt written by `cargo xtask pilot-ranking score` (pilot's top picks
 /// judged against the checked-in mutation answer key); converted on ingest.
 const PILOT_RANKING_SCHEMA_VERSION: &str = super::pilot_ranking::RECEIPT_SCHEMA_VERSION;
-/// Row metrics that carry their own per-step `budget`.
-const FIRST_RUN_BUDGETED: [&str; 3] = ["secs", "stdout_lines", "workflow_lines"];
+/// Row metrics that carry their own per-step time or output-length `budget`.
+const FIRST_RUN_BUDGETED: [&str; 2] = ["secs", "stdout_lines"];
+/// The generated workflow's size, budgeted on its own so a large `init_ci`
+/// file is not read as a slow or noisy step.
+const FIRST_RUN_WORKFLOW_LINES: &str = "workflow_lines";
 const DEFAULT_CONFIG: &str = "benchmarks/dx_scoreboard/scoreboards.toml";
 const DEFAULT_CORPUS_DIR: &str = "target/ripr/dx-scoreboard/corpus";
 const DEFAULT_TIMEOUT_MS: u64 = 900_000;
@@ -790,8 +793,10 @@ fn is_source_install_step(name: &str) -> bool {
 ///
 /// - failed steps: `exit` rows that are not 0, and steps with rows but no
 ///   `exit` row (a walk cut off mid-step);
-/// - over-budget steps: `secs`, `stdout_lines` and `workflow_lines` rows over
-///   the row's `budget`;
+/// - over-budget steps: `secs` and `stdout_lines` rows over the row's
+///   `budget`;
+/// - over-budget workflows: `workflow_lines` rows over the row's `budget`,
+///   counted apart because file size says nothing about step speed;
 /// - walk seconds per case (setup excluded), compared per case at 50% plus
 ///   0.5 s, the walk's 1.5x-plus-0.5 s rule applied to each case's total
 ///   rather than to every step;
@@ -828,6 +833,7 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
     }
     let mut steps: Vec<Step> = Vec::new();
     let mut over = Vec::new();
+    let mut over_workflow = Vec::new();
     let mut friction = 0.0;
     let mut verdicts = Vec::new();
     for (index, row) in rows.iter().enumerate() {
@@ -908,6 +914,12 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
         {
             over.push(format!("{case}/{step} {metric} {value} > {budget}"));
         }
+        if metric == FIRST_RUN_WORKFLOW_LINES
+            && let Some(budget) = row["budget"].as_f64()
+            && value > budget
+        {
+            over_workflow.push(format!("{case}/{step} {metric} {value} > {budget}"));
+        }
     }
     let cases: Vec<String> =
         steps
@@ -955,6 +967,7 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
     let mut out = vec![
         json!({"id": "first_run.failed_steps", "value": failed.len(), "evidence": list(&failed)}),
         json!({"id": "first_run.over_budget_steps", "value": over.len(), "evidence": list(&over)}),
+        json!({"id": "first_run.over_budget_workflows", "value": over_workflow.len(), "evidence": list(&over_workflow)}),
     ];
     // An install-only walk ran no cases, so a zero here would read as "no
     // friction, no unknown verdicts" rather than "not measured".

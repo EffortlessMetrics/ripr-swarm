@@ -26,6 +26,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/observation_unverified_call_deletion/input --diff <cwd>/fixtures/observation_unverified_call_deletion/diff.patch --mode fast probe:src_lib.rs:call_deletion:c13d820a
   ripr context --root <cwd>/fixtures/observation_unverified_call_deletion/input --diff <cwd>/fixtures/observation_unverified_call_deletion/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:c13d820a
+No test stub here: the change shows up as a side effect or call, which needs an observer or mock ripr cannot write
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

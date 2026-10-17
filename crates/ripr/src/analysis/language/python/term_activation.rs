@@ -21,21 +21,28 @@
 //! callee's guarded parameter must take a value the boundary rule already
 //! resolves (`boundary.rs`): a literal argument, or an owner parameter that a
 //! strong related call binds to a literal. The term is inactive only when
-//! every such call resolves and every one evaluates the term to `0`; any
-//! unresolved call, or no call at all, leaves the verdict to the other rules.
+//! every strong related call a strong assertion observes resolves and every
+//! one evaluates the term to `0`. A discarded expression statement whose
+//! owner does not store the changed expression is ignored (#7562). Any
+//! unresolved call, unclear observation, or no observed call at all, leaves
+//! the verdict to the other rules.
 
 use super::assertion_selection::PythonAssertionFocus;
 use super::boundary::{
     PythonOwnerCallValues, literal_value, static_operand, strong_owner_call_values,
     unrebound_constants,
 };
+use super::effect_alignment::ChangedEffect;
 use super::module_constants::{body_bound_names, mentions_identifier};
-use super::no_behavior::split_top_level_args;
+use super::no_behavior::{call_arglists_with_offsets, split_top_level_args};
 use super::related_tests::{PythonRelatedCandidate, python_text_hides_code};
-use super::source_utils::text_for_range;
-use super::{PythonOwner, PythonParameter};
-use crate::domain::{OwnerKind, ValueContext, ValueFact};
-use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
+use super::source_utils::{SourceText, line_for_range_end, line_for_range_start, text_for_range};
+use super::static_limits::has_identifier_boundary;
+use super::{PythonAssertion, PythonOwner, PythonParameter, PythonTest, expr_full_name};
+use crate::domain::{OracleStrength, OwnerKind, ValueContext, ValueFact};
+use rustpython_parser::ast::{self, Expr, Mod, Ranged, Stmt};
+use rustpython_parser::text_size::TextSize;
+use rustpython_parser::{Mode, parse};
 
 /// A function body that is one guarded return of literals:
 /// `if <parameter> <op> <operand>: return <then>` then `return <else>`.
@@ -420,6 +427,7 @@ pub(super) fn python_inactive_term_evidence(
     let then_value = static_operand(&guard.then_value, &callee_constants)?;
     let else_value = static_operand(&guard.else_value, &callee_constants)?;
     let rows = strong_owner_call_values(owner, related_candidates, focus)?;
+    let rows = observed_term_call_rows(owner, related_candidates, focus, old_line, new_line, rows)?;
     if rows.is_empty() {
         return None;
     }
@@ -468,13 +476,301 @@ pub(super) fn python_inactive_term_evidence(
     Some(PythonTermEvidence {
         discriminator: format!("{} != 0", term.text),
         reason: format!(
-            "static evidence gives the changed term `{}` the value 0 in every strong related test call ({}; `{}` {branch}), so those calls read the same asserted result with or without it",
+            "static evidence gives the changed term `{}` the value 0 in every strong related test call a strong assertion observes ({}; `{}` {branch}), so those calls read the same asserted result with or without it",
             term.text,
             values.join(", "),
             callee.name,
         ),
         observed_values,
     })
+}
+
+/// Keep only owner-call rows a strong assertion observes (#7562).
+///
+/// A discarded expression statement whose owner has no side-effecting store
+/// of the changed expression is ignored. Any row whose observation is unclear
+/// blocks the downgrade, as does an empty observed set.
+fn observed_term_call_rows(
+    owner: &PythonOwner,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+    old_line: &str,
+    new_line: &str,
+    rows: Vec<PythonOwnerCallValues>,
+) -> Option<Vec<PythonOwnerCallValues>> {
+    let no_store = return_change_has_no_effect_store(old_line, new_line, owner);
+    let mut observed = Vec::new();
+    for row in rows {
+        match call_observation(owner, related_candidates, focus, &row, no_store) {
+            CallObservation::Observed => observed.push(row),
+            CallObservation::Discarded => {}
+            CallObservation::Unclear => return None,
+        }
+    }
+    (!observed.is_empty()).then_some(observed)
+}
+
+/// How a strong related owner-call row is observed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CallObservation {
+    /// The call sits in a strong assertion, or its result local is read by one.
+    Observed,
+    /// A top-level expression statement whose result is discarded, and the
+    /// owner does not store the changed expression.
+    Discarded,
+    /// Nested, assigned-but-unread, passed on, or otherwise not established unused.
+    Unclear,
+}
+
+fn call_observation(
+    owner: &PythonOwner,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+    row: &PythonOwnerCallValues,
+    no_store: bool,
+) -> CallObservation {
+    let Some(candidate) = candidate_for_row(related_candidates, row.line) else {
+        return CallObservation::Unclear;
+    };
+    let strong = strong_admitted_assertions(candidate.test, focus);
+    if strong.iter().any(|assertion| assertion.line == row.line) {
+        return CallObservation::Observed;
+    }
+    classify_body_call(owner, candidate.test, &strong, row, no_store)
+        .unwrap_or(CallObservation::Unclear)
+}
+
+fn candidate_for_row<'a>(
+    related_candidates: &'a [PythonRelatedCandidate<'a>],
+    line: usize,
+) -> Option<&'a PythonRelatedCandidate<'a>> {
+    related_candidates.iter().find(|candidate| {
+        let start = candidate.test.line;
+        let end = start + candidate.test.body_text.lines().count().saturating_sub(1);
+        line >= start && line <= end
+    })
+}
+
+fn strong_admitted_assertions<'a>(
+    test: &'a PythonTest,
+    focus: &PythonAssertionFocus,
+) -> Vec<&'a PythonAssertion> {
+    test.assertions
+        .iter()
+        .filter(|assertion| {
+            focus.admits(assertion)
+                && assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
+        })
+        .collect()
+}
+
+fn classify_body_call(
+    owner: &PythonOwner,
+    test: &PythonTest,
+    strong: &[&PythonAssertion],
+    row: &PythonOwnerCallValues,
+    no_store: bool,
+) -> Option<CallObservation> {
+    let source = dedent_python(&test.body_text);
+    let Mod::Module(module) = parse(&source, Mode::Module, "<python-term-call-body>").ok()? else {
+        return None;
+    };
+    let body = test_function_body(module.body)?;
+    let parsed = SourceText::new(&source);
+    let source_line = row.line.checked_sub(test.line)? + 1;
+    let offset = offset_of_line_code(&source, source_line)?;
+    let covering = body
+        .iter()
+        .find(|stmt| range_contains(stmt.range(), offset))?;
+    if owner_call_count_on_line(&row.text, owner, test) > 1 {
+        return Some(CallObservation::Unclear);
+    }
+    if strong_assertion_covers_stmt(covering, strong, test, &parsed) {
+        return Some(CallObservation::Observed);
+    }
+    Some(match covering {
+        Stmt::Expr(expr) if is_owner_call_expr(expr.value.as_ref(), owner, test) => {
+            if no_store {
+                CallObservation::Discarded
+            } else {
+                CallObservation::Unclear
+            }
+        }
+        Stmt::Assign(assign) => bound_owner_result(assign, owner, test, strong, row.line),
+        Stmt::AnnAssign(assign) => match (assign.target.as_ref(), assign.value.as_deref()) {
+            (Expr::Name(name), Some(value)) if is_owner_call_expr(value, owner, test) => {
+                later_strong_assertion_reads(strong, row.line, name.id.as_str())
+            }
+            _ => CallObservation::Unclear,
+        },
+        _ => CallObservation::Unclear,
+    })
+}
+
+fn test_function_body(body: Vec<Stmt>) -> Option<Vec<Stmt>> {
+    match body.len() {
+        1 => match body.into_iter().next()? {
+            Stmt::FunctionDef(function) => Some(function.body),
+            Stmt::AsyncFunctionDef(function) => Some(function.body),
+            other => Some(vec![other]),
+        },
+        _ => Some(body),
+    }
+}
+
+fn strong_assertion_covers_stmt(
+    stmt: &Stmt,
+    strong: &[&PythonAssertion],
+    test: &PythonTest,
+    parsed: &SourceText<'_>,
+) -> bool {
+    let start = test.line + line_for_range_start(parsed, stmt.range()) - 1;
+    let end = test.line + line_for_range_end(parsed, stmt.range()) - 1;
+    strong
+        .iter()
+        .any(|assertion| assertion.line >= start && assertion.line <= end)
+}
+
+fn bound_owner_result(
+    assign: &ast::StmtAssign,
+    owner: &PythonOwner,
+    test: &PythonTest,
+    strong: &[&PythonAssertion],
+    row_line: usize,
+) -> CallObservation {
+    let [target] = assign.targets.as_slice() else {
+        return CallObservation::Unclear;
+    };
+    let Expr::Name(name) = target else {
+        return CallObservation::Unclear;
+    };
+    if !is_owner_call_expr(assign.value.as_ref(), owner, test) {
+        return CallObservation::Unclear;
+    }
+    later_strong_assertion_reads(strong, row_line, name.id.as_str())
+}
+
+fn later_strong_assertion_reads(
+    strong: &[&PythonAssertion],
+    row_line: usize,
+    local: &str,
+) -> CallObservation {
+    if strong.iter().any(|assertion| {
+        assertion.line > row_line && assertion_reads_local(&assertion.gate_text, local)
+    }) {
+        CallObservation::Observed
+    } else {
+        CallObservation::Unclear
+    }
+}
+
+fn is_owner_call_expr(expr: &Expr, owner: &PythonOwner, test: &PythonTest) -> bool {
+    let Expr::Call(call) = expr else {
+        return false;
+    };
+    let Some(name) = expr_full_name(call.func.as_ref()) else {
+        return false;
+    };
+    name == owner.name
+        || test
+            .imports
+            .iter()
+            .any(|import| import.imported == owner.name && import.alias == name)
+        || name
+            .rsplit_once('.')
+            .is_some_and(|(_, last)| last == owner.name)
+}
+
+fn assertion_reads_local(text: &str, local: &str) -> bool {
+    !local.is_empty()
+        && text.match_indices(local).any(|(idx, _)| {
+            has_identifier_boundary(text, idx, local.len()) && !text[..idx].ends_with('.')
+        })
+}
+
+fn owner_call_count_on_line(line: &str, owner: &PythonOwner, test: &PythonTest) -> usize {
+    owner_call_names(owner, test)
+        .iter()
+        .map(|name| call_arglists_with_offsets(line, name, false).len())
+        .sum()
+}
+
+fn owner_call_names(owner: &PythonOwner, test: &PythonTest) -> Vec<String> {
+    let mut names = vec![owner.name.clone()];
+    names.extend(
+        test.imports
+            .iter()
+            .filter(|import| import.imported == owner.name)
+            .map(|import| import.alias.clone()),
+    );
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn return_change_has_no_effect_store(old_line: &str, new_line: &str, owner: &PythonOwner) -> bool {
+    ChangedEffect::of(old_line, Some(new_line), owner).is_none()
+        && ChangedEffect::of(new_line, Some(old_line), owner).is_none()
+        && return_line_is_value_expression(old_line)
+        && return_line_is_value_expression(new_line)
+}
+
+fn return_line_is_value_expression(line: &str) -> bool {
+    let Some(rest) = line.trim().strip_prefix("return") else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    if rest.is_empty() || rest.starts_with('(') {
+        return false;
+    }
+    let ident_len = rest
+        .find(|ch: char| !(ch.is_alphanumeric() || ch == '_' || ch == '.'))
+        .unwrap_or(rest.len());
+    ident_len == 0 || !rest[ident_len..].trim_start().starts_with('(')
+}
+
+fn offset_of_line_code(source: &str, line: usize) -> Option<TextSize> {
+    if line == 0 {
+        return None;
+    }
+    let start = if line == 1 {
+        0
+    } else {
+        source
+            .match_indices('\n')
+            .nth(line - 2)
+            .map(|(idx, _)| idx + 1)?
+    };
+    let rest = source.get(start..)?;
+    let indent = rest
+        .chars()
+        .take_while(|ch| *ch == ' ' || *ch == '\t')
+        .map(char::len_utf8)
+        .sum::<usize>();
+    u32::try_from(start.checked_add(indent)?)
+        .ok()
+        .map(TextSize::from)
+}
+
+fn range_contains(range: rustpython_parser::text_size::TextRange, offset: TextSize) -> bool {
+    range.start() <= offset && offset < range.end()
+}
+
+fn dedent_python(source: &str) -> String {
+    let min_indent = source
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.len() - line.trim_start().len())
+        .min()
+        .unwrap_or(0);
+    if min_indent == 0 {
+        return source.to_string();
+    }
+    source
+        .lines()
+        .map(|line| line.get(min_indent..).unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The literal a call argument takes in one owner call: a literal, an owner

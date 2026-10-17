@@ -444,7 +444,7 @@ document.
 | `config_defaults` | The effective configuration: `source_path` (`null` when the built-in defaults apply), `analysis_mode`, `lsp_seam_diagnostics`, `suppressions_path`, `bun_ub_profile_configured`, `bun_ub_test_roots[]`, `bun_ub_bridge_hints` (the bridge-hints path, `null` when the profile is absent). The whole field is `null` when the configuration could not be loaded, so it never claims a default the run did not verify. |
 | `cache` | Always an object in a released document, never `null`: `cache_dir`, `relocated_by_env` (whether `RIPR_CACHE_DIR` relocated it), `size_bytes`, `size_display`, and `artifact_ignore` (whether git ignore rules cover ripr's own artifact root `target/ripr`: `no_artifacts`, `ignored`, `not_checked`, or `unignored` with the exact warning line the human screen prints), and `artifact_tracking` (whether git's index tracks files under `target/ripr`, independent of ignore rules: `untracked`, `not_checked`, or `tracked` with the exact warning line naming `git rm --cached -r -- target/ripr`). `size_bytes` is `0` when the directory does not exist or cannot be read, which is a legitimate state, not a failed measurement. A producer that stopped reporting the cache fails the published schema instead of validating. |
 | `test_surfaces[]` | One or more entries per detected language: `language`, `framework` (`null` when no framework marker was confirmed), and `evidence` (the exact `<language>: …` fragment the human screen prints). Perl carries its adapter, runner, and first-command status lines as additional entries. |
-| `perl_preview` | `null` when the marker scan found no Perl project. Otherwise `pm_files`, `pl_files`, `t_files`, `adapter_compiled`, `producer`, `ignored_configured_executable`, `exporter` (`state` of `compatible` / `incompatible` / `not_found`, plus `executable` and `version`), `expected_schema`, `test_roots[]`, `frameworks[]`, `runners[]`, and `next_command`. |
+| `perl_preview` | `null` when the marker scan found no Perl project. Otherwise `pm_files`, `pl_files`, `t_files`, `adapter_compiled`, `producer`, `ignored_configured_executable`, `canonical_exporter_on_path`, `exporter` (`state` of `compatible` / `incompatible` / `not_found`, plus `executable` and `version`), `expected_schema`, `test_roots[]`, `frameworks[]`, `runners[]`, and `next_command`. |
 
 `languages` keeps its own meaning and is **not** the same set as
 `detected_languages`: `languages` is what `ripr.toml` enables, while
@@ -469,6 +469,22 @@ closed shape, must be updated before it accepts a `0.4` document. Every `0.3`
 field keeps its meaning, and every field this version adds is additive for a
 consumer that ignores unknown keys. Reverting the change restores `0.3`
 exactly, so a revert is the migration path for a consumer that cannot yet adapt.
+
+### Doctor canonical next action (additive, no `schema_version` bump, #6986)
+
+`ripr doctor --json` carries an optional `canonical_next_action` object: the
+same `canonical_next_action.v1` DTO that `ripr check --format json` embeds
+(#7258), produced by the decision the human `- Safe next action:` line follows
+rather than re-inferred for the machine document. It is present only when the
+first-command state is a precise recovery: `stop.kind` is `doctor_recovery`,
+`stop.check_name` names the failing check (`root_directory`, `config`, or
+`cargo_toml` for the generic failed-prerequisite case), `stop.recovery_route`
+is the recovery prose, `action_class` is `satisfy_prerequisite`, and `command`
+is absent because a recovery is not a runnable command. The key is omitted when
+the state names a runnable command, and for the `source-build` profile. The
+document root is `canonical_next_action.subject.root`; doctor reads no diff, so
+`diff_source` is the fixed no-base committed mode, never a live-tree claim. The
+human line and this object agree by construction (Control 9).
 
 ### What `--json` now probes, and where that shows up
 
@@ -2199,16 +2215,18 @@ JSON fields:
   `rust_macro_wrapped_test_call_unresolved`, or
   `rust_macro_wrapped_assertion_unresolved`, or
   `rust_value_propagation_unresolved`, or
+  `rust_field_match_selector_unresolved`, or
   `wrapper_error_binding_unresolved`, or
   `python_transitive_reach_unresolved`, or
   `rust_assertion_context_unresolved`, or
   `rust_log_capture_unresolved`, or
   `rust_panic_outcome_unresolved`.
+- `rust_field_match_selector_unresolved`: a plain owner-parameter field selects a changed statement-free tail match. A strong oracle in a directly calling test exists, but the field value at that invocation and whether an assertion observes that invocation's return are unresolved. The match header and unique direct-arm lines may carry this metadata; computed selectors, local bindings, nested matches, guarded arms and ambiguous same-line subjects are excluded. This does not establish an `Option` type, same-invocation proof, coverage, or absence of a test gap. Finding/probe IDs, classes, RIPR stages, missing discriminators and raw class counts are unchanged. The existing typed-limitation contract withholds canonical repair-gap projection and can change repair readiness and derived gate routing; this names uncertainty, not resolved test debt. Inspect the existing call/assertion before adding a test. The optional kind uses the existing wire shape/version; consumers still require their own producer compatibility qualification.
 - `static_limitation` is an additive optional per-finding object emitted only
   when a finding with `static_limit_kind` also carries a complete structured
   limitation detail. Current Rust transitive-reach, integration public-API path,
   macro-reach, direct test macro-call, macro-wrapped assertion,
-  value-propagation, wrapper-error-binding, and Python same-class transitive-reach
+  value-propagation, field-match-selector, wrapper-error-binding, and Python same-class transitive-reach
   limitations populate it from the same evidence lines rendered in human output. Fields are
   `kind`, `last_established_edge`, `first_unresolved_edge`, `analyzer_route`,
   and `non_claim`. The object is absent for static limits that do not have all
@@ -2407,7 +2425,7 @@ nothing yet prints empty:
   {
     "scope_status": "no_scope_provided",
     "category": "no_scope_disclosure",
-    "why": "no analysis scope provided; ripr check is diff-first; empty result does not mean changed behavior is covered; run ripr check --base BASE with BASE set to an existing ref or ripr check --root . --format repo-exposure-md"
+    "why": "no analysis scope provided; ripr check is diff-first; empty result does not mean changed behavior is covered; run ripr check --base BASE with BASE set to an existing ref or ripr pilot --root . for whole-repository exploration"
   }
 ]
 ```
@@ -2697,6 +2715,8 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 - `rust_macro_wrapped_assertion_unresolved` -- (RIPR-SPEC-0120, additive) A Rust test reaches the changed owner, but its assertion-like custom macro is not classified as an oracle. Classification stays `reachable_unrevealed`; this is a named limitation, not an oracle, coverage, or repair-packet claim.
 
 - `rust_value_propagation_unresolved` -- (RIPR-SPEC-0150, additive) A changed Rust value-producing binding reaches a same-owner equality predicate through a bounded `map_or` shape that ripr cannot fully resolve. Classification stays `static_unknown`; this is a named limitation, not a propagation, coverage, or repair claim.
+
+- `rust_field_match_selector_unresolved` -- (RIPR-SPEC-0229, additive, #8479) A plain owner-parameter field selects a changed tail match, but the field value at the invocation and whether an assertion observes that invocation's return remain unresolved. Classification stays `weakly_exposed`; canonical repair-gap projection is withheld. Inspect the existing call/assertion before adding a test; this is a named limitation, not exposure credit or resolved test debt.
 
 - `rust_subprocess_binary_reach_unresolved` -- (additive) An integration test invokes a Cargo-built binary, but ripr does not yet map that binary target back to the changed owner. Classification stays `no_static_path`; this is a named limitation, not a subprocess reach or receipt claim.
 
@@ -13018,6 +13038,27 @@ pass/fail authority. See
 reviewer, developer, maintainer, and coding-agent workflow over the generated
 panel.
 
+## GitHub PR Status Review Subjects
+
+The advisory `cargo xtask gh-pr-status --pr <number>` JSON report keeps
+`schema_version: "0.1"` and adds `head_commit`, the observed full PR head SHA.
+Each entry in `reviews` retains `author` and `state` and adds `commit`, the
+original review commit SHA, plus `currentness`: `current_head`, `stale_for_head`,
+or `subject_unavailable`. Missing identities are empty strings in JSON and
+`unknown` in Markdown. Malformed or ambiguous identities remain unavailable.
+
+The live collector requests `headRefOid`, `latestReviews`, and `reviews` from
+GitHub CLI. It joins the latest summaries to full review subjects by exact
+author, submission time, and state; an absent or ambiguous join supplies no
+commit identity. For an `APPROVED` aggregate, no latest approval of the exact
+head means `safe_next_action: "wait"`, with an explanatory warning. Original
+stale reviews stay visible; they are not silently attributed to the new head.
+
+This attribution is advisory. It does not establish substantive or independent
+review, required approval counts, protection satisfaction, integration proof,
+or permission to merge. The retained current-head control preserves the
+existing advisory action; the command performs no PR mutation.
+
 ## Report Packet Index
 
 RIPR-SPEC-0024 defines the report packet index contract. The index is the
@@ -17986,7 +18027,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.80",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.82",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -18686,7 +18727,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.42",
+    "schema_version": "1.43",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -18697,7 +18738,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.80",
+      "schema_version": "1.82",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
