@@ -211,7 +211,7 @@ fn summary_line(ran: &Ran) -> &str {
 
 fn assert_found_change(ran: &Ran, what: &str) -> Result<(), String> {
     assert_sane(ran, what)?;
-    if ran.code != Some(0) || !summary_line(ran).starts_with("Summary: 1 probe(s)") {
+    if ran.code != Some(0) || !summary_line(ran).starts_with("Summary: 1 probe (") {
         return Err(format!(
             "{what}: expected one probe, got {:?}\n{}\n{}",
             ran.code, ran.stdout, ran.stderr
