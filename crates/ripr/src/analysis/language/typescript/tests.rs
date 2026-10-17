@@ -5851,6 +5851,44 @@ fn classify_probe_shape_reads_a_returned_ternary_as_its_condition_boundary() {
 }
 
 #[test]
+fn classify_probe_shape_reads_a_declared_arrow_and_paren_ternary_as_its_condition_boundary() {
+    // A concise arrow body and a parenthesized ternary are the same
+    // conditional as `return cond ? a : b`: only `total == 100` flips them.
+    for line in [
+        "export const tax = (total: number): number => (total > 100 ? total * 2 : total * 3);",
+        "export const tax = (total: number): number => total > 100 ? total * 2 : total * 3;",
+        "const tax = async (total: number) => total > 100 ? total * 2 : total * 3;",
+        "    return (total > 100 ? total * 2 : total * 3);",
+    ] {
+        assert_eq!(
+            classify_probe_shape(line).0,
+            ProbeFamily::Predicate,
+            "{line}"
+        );
+        assert_eq!(
+            typescript_boundary_discriminator(line).as_deref(),
+            Some("total == 100"),
+            "{line}"
+        );
+    }
+    // A balanced parenthesized condition is not unwrapped: it stays
+    // unparsed (fail closed), as it did before arrow bodies were read.
+    assert_eq!(
+        typescript_boundary_discriminator("    return (total > 100) ? 1 : 2;"),
+        None
+    );
+    // Not a declared body: a callback arrow in a call, a block body, and an
+    // arm comparison read no condition boundary from the arrow form.
+    for line in [
+        "const totals = rows.map((row) => row.total > 100 ? 1 : 2);",
+        "export const tax = (total: number) => { return total > 100 ? 1 : 2; };",
+        "export const ready = (total: number) => total > 100;",
+    ] {
+        assert_eq!(typescript_boundary_discriminator(line), None, "{line}");
+    }
+}
+
+#[test]
 fn classify_probe_shape_reads_a_returned_comparison_as_its_boundary() {
     // `expect(isLarge(500)).toBe(true)` holds before and after `>=` -> `>`.
     let line = "    return total > 100;";
