@@ -111,8 +111,8 @@ groups them as duplicative without recommending deletion.
 
 Current and planned tests:
 
-- `xtask/src/tests.rs::test_efficiency_empty_selection_is_not_evidence_of_pass`
-- `xtask/src/tests.rs::test_efficiency_nonempty_selection_keeps_pass_and_warn`
+- `xtask/src/tests/test_analysis.rs::test_efficiency_empty_selection_is_not_evidence_of_pass`
+- `xtask/src/tests/test_analysis.rs::test_efficiency_nonempty_selection_keeps_pass_and_warn`
 - `xtask/src/main.rs::test_efficiency_ledger_records_owner_oracle_values_and_limitations`
 - `xtask/src/main.rs::test_efficiency_reports_are_advisory`
 - `xtask/src/main.rs::test_efficiency_signals_likely_vacuous_and_possibly_circular_tests`
@@ -123,7 +123,7 @@ Current and planned tests:
   opaque-helper cases
 - `crates/ripr/src/output/badge/tests.rs::badge_plus_accepts_empty_not_run_report_with_optional_explanation`
 - `crates/ripr/src/output/badge/tests.rs::badge_plus_optional_explanation_preserves_nonempty_ledger`
-- `xtask/src/tests.rs::report_index_preserves_test_efficiency_not_run_with_explanation`
+- `xtask/src/tests/report.rs::report_index_preserves_test_efficiency_not_run_with_explanation`
 
 ## Implementation Mapping
 

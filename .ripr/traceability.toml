@@ -419,14 +419,14 @@ id = "RIPR-SPEC-0004"
 name = "test efficiency and vacuity signals"
 spec = "docs/specs/RIPR-SPEC-0004-test-efficiency.md"
 tests = [
-  "xtask/src/tests.rs::test_efficiency_empty_selection_is_not_evidence_of_pass",
-  "xtask/src/tests.rs::test_efficiency_nonempty_selection_keeps_pass_and_warn",
+  "xtask/src/tests/test_analysis.rs::test_efficiency_empty_selection_is_not_evidence_of_pass",
+  "xtask/src/tests/test_analysis.rs::test_efficiency_nonempty_selection_keeps_pass_and_warn",
   "xtask/src/main.rs::test_efficiency_ledger_records_owner_oracle_values_and_limitations",
   "xtask/src/main.rs::test_efficiency_reports_are_advisory",
   "xtask/src/main.rs::test_efficiency_signals_likely_vacuous_and_possibly_circular_tests",
   "crates/ripr/src/output/badge/tests.rs::badge_plus_accepts_empty_not_run_report_with_optional_explanation",
   "crates/ripr/src/output/badge/tests.rs::badge_plus_optional_explanation_preserves_nonempty_ledger",
-  "xtask/src/tests.rs::report_index_preserves_test_efficiency_not_run_with_explanation",
+  "xtask/src/tests/report.rs::report_index_preserves_test_efficiency_not_run_with_explanation",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -990,9 +990,9 @@ tests = [
   "crates/ripr/src/output/first_pr/preflight.rs::tests::fifo_ripr_toml_is_present_not_ok_and_does_not_block",
   "crates/ripr/src/cli/commands_agent_support.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults",
   "crates/ripr/src/cli/commands_agent_support.rs::tests::unreadable_ripr_toml_lookup_is_not_built_in_defaults",
-  "xtask/src/tests.rs::public_docs_state_python_marker_auto_when_no_ripr_toml",
-  "xtask/src/tests.rs::python_marker_auto_docs_accept_required_phrases",
-  "xtask/src/tests.rs::python_marker_auto_docs_reject_opt_in_python_lumping",
+  "xtask/src/tests/misc_b.rs::public_docs_state_python_marker_auto_when_no_ripr_toml",
+  "xtask/src/tests/misc_b.rs::python_marker_auto_docs_accept_required_phrases",
+  "xtask/src/tests/misc_b.rs::python_marker_auto_docs_reject_opt_in_python_lumping",
   "crates/ripr/src/config.rs::tests::config_file_sets_core_operational_defaults",
   "crates/ripr/src/config.rs::tests::closer_config_is_skipped_when_the_analysis_root_is_the_workspace",
   "crates/ripr/src/config.rs::tests::closer_config_is_skipped_when_the_workspace_has_no_ripr_toml",
@@ -6316,7 +6316,7 @@ tests = [
   "crates/ripr/src/output/review_comments.rs::tests::spec0068_actionable_card_carries_verify_and_receipt_commands",
   "crates/ripr/src/output/review_comments.rs::tests::actionable_review_card_writes_every_receipt_input",
   "crates/ripr/src/agent/loop_commands.rs::tests::analysis_outcome_preserves_selected_base_and_default_compatibility",
-  "xtask/src/tests.rs::dogfood_blocking_gate_report_is_self_contained",
+  "xtask/src/tests/dogfood.rs::dogfood_blocking_gate_report_is_self_contained",
   "crates/ripr/tests/agent_command_journey.rs::review_card_and_gate_commands_persist_fresh_receipt_inputs",
   "crates/ripr/src/output/gate/repair_route.rs::tests::review_card_outcome_step_is_carried_without_changing_completeness",
   "crates/ripr/src/output/first_useful_action/tests.rs::repair_start_carries_optional_outcome_without_inventing_it",
@@ -8112,9 +8112,9 @@ tests = [
   "crates/ripr/tests/snapshot_field_admission.rs::snapshot_without_an_expected_file_cannot_close_the_owner_field",
   "crates/ripr/tests/owner_pin_execution.rs::trait_shadow_corpus_matches_compiled_owner_dispatch",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::error_path_operand_error_lexeme_does_not_confirm_observation",
-  "xtask/src/tests.rs::evidence_promotion_human_oracle_line_matches_real_rust_evidence",
-  "xtask/src/tests.rs::evidence_promotion_human_oracle_line_rejects_diagnostic_overrides",
-  "xtask/src/tests.rs::evidence_promotion_semantic_assertions_retain_related_test_identity",
+  "xtask/src/tests/evidence.rs::evidence_promotion_human_oracle_line_matches_real_rust_evidence",
+  "xtask/src/tests/evidence.rs::evidence_promotion_human_oracle_line_rejects_diagnostic_overrides",
+  "xtask/src/tests/evidence.rs::evidence_promotion_semantic_assertions_retain_related_test_identity",
   "xtask/src/evidence_promotion.rs::related_test_assertion_tests::requires_source_identity",
   "xtask/src/main.rs::check_evidence_promotion_honesty",
   "xtask/src/main.rs::tests::evidence_promotion_honesty_accepts_complete_pinned_external_tier",
@@ -12352,15 +12352,15 @@ id = "RIPR-SPEC-0191"
 name = "Portable native RIPR consumer packet"
 spec = "docs/specs/RIPR-SPEC-0191-portable-native-consumer-packet.md"
 tests = [
-  "xtask/src/tests.rs::file_policy_allowlist_accepts_host_scoped_coverage",
-  "xtask/src/tests.rs::file_policy_allowlist_rejects_malformed_host_coverage",
-  "xtask/src/tests.rs::file_policy_allowlist_toml_comments_preserve_coverage_commands",
-  "xtask/src/tests.rs::file_policy_allowlist_toml_strings_preserve_decoded_selectors",
-  "xtask/src/tests.rs::file_policy_allowlist_toml_spans_preserve_entry_order_and_lines",
-  "xtask/src/tests.rs::file_policy_allowlist_toml_keeps_legacy_fields_and_common_empty_array",
-  "xtask/src/tests.rs::file_policy_allowlist_toml_preserves_value_admission_for_ignored_metadata",
-  "xtask/src/tests.rs::file_policy_allowlist_toml_keeps_governed_field_refusals",
-  "xtask/src/tests.rs::policy_checker_facade_runs_current_repo_checks",
+  "xtask/src/tests/misc_a.rs::file_policy_allowlist_accepts_host_scoped_coverage",
+  "xtask/src/tests/misc_a.rs::file_policy_allowlist_rejects_malformed_host_coverage",
+  "xtask/src/tests/misc_a.rs::file_policy_allowlist_toml_comments_preserve_coverage_commands",
+  "xtask/src/tests/misc_a.rs::file_policy_allowlist_toml_strings_preserve_decoded_selectors",
+  "xtask/src/tests/misc_a.rs::file_policy_allowlist_toml_spans_preserve_entry_order_and_lines",
+  "xtask/src/tests/misc_a.rs::file_policy_allowlist_toml_keeps_legacy_fields_and_common_empty_array",
+  "xtask/src/tests/misc_a.rs::file_policy_allowlist_toml_preserves_value_admission_for_ignored_metadata",
+  "xtask/src/tests/misc_a.rs::file_policy_allowlist_toml_keeps_governed_field_refusals",
+  "xtask/src/tests/misc_b.rs::policy_checker_facade_runs_current_repo_checks",
   "xtask/src/policy/file_policy.rs::tests::test_covered_by_host_selection_retains_common_and_discloses_inapplicable",
   "xtask/src/policy/file_policy.rs::tests::test_covered_by_empty_applicable_host_selector_is_rejected",
   "xtask/src/policy/file_policy.rs::tests::test_covered_by_unknown_host_family_is_rejected",
@@ -16220,7 +16220,7 @@ id = "RIPR-SPEC-0253"
 name = "local collect-all policy scans"
 spec = "docs/specs/RIPR-SPEC-0253-local-collect-all-policy.md"
 tests = [
-  "xtask/src/tests.rs::ci_policy_publication_preserves_local_report_and_local_io_failures",
+  "xtask/src/tests/misc_a.rs::ci_policy_publication_preserves_local_report_and_local_io_failures",
   "xtask/tests/policy_all.rs::ci_policy_collects_real_cheap_failures_before_expensive_work",
   "xtask/tests/policy_all.rs::policy_all_healthy_fixture_passes_with_original_leaf_reports",
   "xtask/tests/policy_all.rs::policy_all_reports_two_independent_violations_and_runs_later_leaves",
