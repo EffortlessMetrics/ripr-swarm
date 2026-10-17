@@ -1297,6 +1297,8 @@ tests = [
   "crates/ripr/src/cli/commands/pilot.rs::tests::remove_unwritten_timeout_packet_siblings_unlinks_a_symlink_and_keeps_its_target",
   "crates/ripr/src/cli/commands/pilot.rs::tests::remove_unwritten_timeout_packet_siblings_refuses_a_directory",
   "crates/ripr/src/output/pilot/tests.rs::timeout_summary_json_is_partial_and_points_to_retry",
+  "crates/ripr/src/output/pilot/tests/timeout_retry.rs::timeout_json_retry_preserves_format_and_unknown_analysis",
+  "crates/ripr/tests/cli_smoke/pilot_timeout_retry.rs::timeout_json_retry_replays_as_json_from_a_foreign_directory",
   "crates/ripr/src/output/pilot/tests.rs::timeout_summary_md_explains_partial_status_and_retry_command",
   "crates/ripr/tests/cli_smoke.rs::pilot_accepts_python_project_without_ripr_config",
   "crates/ripr/tests/cli_smoke.rs::pilot_projects_python_repair_card_for_git_diff",
@@ -15176,6 +15178,12 @@ id = "RIPR-SPEC-0229"
 name = "Match-arm selection names the unselected arm"
 spec = "docs/specs/RIPR-SPEC-0229-match-arm-selection-discriminator.md"
 tests = [
+  "crates/ripr/tests/field_match_selector.rs::field_match_selector_names_all_three_rows_without_credit_or_wire_shape_change",
+  "crates/ripr/tests/field_match_selector.rs::field_match_selector_never_borrows_an_unrelated_or_overwritten_observation",
+  "crates/ripr/tests/field_match_selector.rs::a_direct_parameter_match_keeps_its_genuine_unselected_arm_gap",
+  "crates/ripr/tests/field_match_selector.rs::ffi_binding_keeps_its_prior_limitation_without_field_selector_detail",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::field_selector_limit_refuses_ambiguous_or_computed_subjects",
+  "crates/ripr/src/analysis/language/rust/probes.rs::tests::field_selector_metadata_preserves_facts_and_refuses_stale_or_prior_limits",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::sibling_variant_input_selects_other_arm",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::matching_input_selects_and_any_selecting_call_wins",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::opaque_or_unreadable_inputs_never_select_other",
