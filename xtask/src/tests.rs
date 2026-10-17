@@ -12656,6 +12656,51 @@ fn report_status_parser_reads_markdown_and_json() {
 }
 
 #[test]
+fn report_index_preserves_test_efficiency_not_run_with_explanation() -> Result<(), String> {
+    with_temp_cwd("report-index-efficiency-not-run", |root| {
+        write(
+            &root.join("target/ripr/reports/test-efficiency.json"),
+            r#"{
+  "schema_version": "0.1",
+  "status": "not_run",
+  "advisory": true,
+  "explanation": "No tests were selected; test-efficiency evidence was not established for this report. Run the report from the workspace root containing the Rust test sources.",
+  "tests": [],
+  "metrics": {"tests_scanned": 0}
+}"#,
+        );
+        write(
+            &root.join("target/ripr/reports/test-efficiency.md"),
+            "# ripr test efficiency\n\nStatus: not_run\n\nTests scanned: 0\n\nExplanation: No tests were selected; test-efficiency evidence was not established for this report. Run the report from the workspace root containing the Rust test sources.\n",
+        );
+        let reports = super::report_index_entries()?;
+        assert_eq!(reports.len(), 2);
+        for entry in &reports {
+            assert_eq!(entry.status, "not_run", "{}", entry.file);
+        }
+        let json: Value =
+            serde_json::from_str(&super::report_index_json("pass", &reports, &[], &[], &[]))
+                .map_err(|err| err.to_string())?;
+        let indexed = json["reports"]
+            .as_array()
+            .ok_or("missing indexed reports")?;
+        assert_eq!(indexed.len(), 2);
+        for entry in indexed {
+            assert_eq!(entry["status"], "not_run");
+        }
+        let markdown = super::report_index_markdown("pass", &reports, &[], &[], &[]);
+        for file in ["test-efficiency.json", "test-efficiency.md"] {
+            assert!(
+                markdown
+                    .lines()
+                    .any(|line| line.contains(file) && line.contains("not_run"))
+            );
+        }
+        Ok(())
+    })
+}
+
+#[test]
 fn report_index_missing_expected_tracks_changed_surfaces() {
     let reports = vec![ReportIndexEntry {
         file: "pr-summary.md".to_string(),
@@ -13744,6 +13789,85 @@ fn creates_invoice_smoke() {
             .iter()
             .any(|limitation| limitation.contains("broad oracle"))
     );
+}
+
+#[test]
+fn test_efficiency_empty_selection_is_not_evidence_of_pass() -> Result<(), String> {
+    with_temp_cwd("efficiency-empty-selection", |root| {
+        for with_source in [false, true] {
+            if with_source {
+                let source_root = root.join("crates/ripr/src");
+                fs::create_dir_all(&source_root).map_err(|e| e.to_string())?;
+                fs::write(source_root.join("lib.rs"), "pub fn value() -> u32 { 1 }\n")
+                    .map_err(|e| e.to_string())?;
+            }
+            super::test_efficiency_report_impl()?;
+            let report_dir = root.join("target/ripr/reports");
+            let markdown = fs::read_to_string(report_dir.join("test-efficiency.md"))
+                .map_err(|e| e.to_string())?;
+            let json: Value = serde_json::from_str(
+                &fs::read_to_string(report_dir.join("test-efficiency.json"))
+                    .map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+            assert_eq!(json["status"], "not_run", "with_source={with_source}");
+            assert_eq!(json["metrics"]["tests_scanned"], 0);
+            assert_eq!(json["tests"], serde_json::json!([]));
+            assert_eq!(json["advisory"], true);
+            let explanation = json["explanation"].as_str().ok_or("missing explanation")?;
+            assert!(explanation.contains("No tests were selected"));
+            assert!(explanation.contains("evidence was not established"));
+            assert!(explanation.contains("workspace root"));
+            assert!(markdown.contains("Status: not_run"));
+            assert!(markdown.contains(explanation));
+            assert!(markdown.contains("Tests scanned: 0"));
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn test_efficiency_nonempty_selection_keeps_pass_and_warn() -> Result<(), String> {
+    with_temp_cwd("efficiency-selected-controls", |root| {
+        let source_root = root.join("crates/ripr/src");
+        fs::create_dir_all(&source_root).map_err(|e| e.to_string())?;
+        for (body, class, status) in [
+            (
+                "assert_eq!(create_invoice(100), expected_invoice);",
+                "strong_discriminator",
+                "pass",
+            ),
+            (
+                "let status = run_cli();\n    assert!(status.success());",
+                "smoke_only",
+                "warn",
+            ),
+        ] {
+            fs::write(
+                source_root.join("lib.rs"),
+                format!("#[test]\nfn selected() {{\n    {body}\n}}\n"),
+            )
+            .map_err(|e| e.to_string())?;
+            super::test_efficiency_report_impl()?;
+            let report_dir = root.join("target/ripr/reports");
+            let markdown = fs::read_to_string(report_dir.join("test-efficiency.md"))
+                .map_err(|e| e.to_string())?;
+            let json: Value = serde_json::from_str(
+                &fs::read_to_string(report_dir.join("test-efficiency.json"))
+                    .map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+            assert_eq!(json["metrics"]["tests_scanned"], 1);
+            assert_eq!(json["tests"].as_array().map(Vec::len), Some(1));
+            assert_eq!(json["tests"][0]["class"], class);
+            assert_eq!(json["status"], status);
+            assert_eq!(json["advisory"], true);
+            assert!(json.get("explanation").is_none());
+            assert!(markdown.contains(&format!("Status: {status}")));
+            assert!(!markdown.contains("Explanation:"));
+        }
+        Ok(())
+    })
 }
 
 #[test]

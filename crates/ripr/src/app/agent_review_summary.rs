@@ -560,7 +560,15 @@ mod tests {
         let root = unique_agent_review_summary_test_dir("path-arguments");
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
 
-        assert_review_summary_matches_fixture(&root, Path::new("repo root"), "path-with-spaces")?;
+        // Host-specific fixtures: recovery commands are quoted for the
+        // running host's shell (#7729), so the spaced root renders with
+        // single quotes off Windows and double quotes on it.
+        let spaced_case = if cfg!(windows) {
+            "path-with-spaces-windows"
+        } else {
+            "path-with-spaces"
+        };
+        assert_review_summary_matches_fixture(&root, Path::new("repo root"), spaced_case)?;
         #[cfg(windows)]
         assert_review_summary_matches_fixture(
             &root,
@@ -926,9 +934,18 @@ mod tests {
             bash_fence < powershell_fence,
             "bash form must be presented before the PowerShell variant"
         );
+        // Host-aware shell boundary (#7729): off Windows the disclosure
+        // states cmd.exe is unsupported; on Windows the commands are
+        // double-quoted for the Windows console, so the disclosure names
+        // the consoles they paste into instead.
+        let boundary_disclosed = if cfg!(windows) {
+            rendered.contains("Windows console")
+        } else {
+            rendered.contains("cmd.exe is not supported.")
+        };
         assert!(
-            rendered.contains("cmd.exe is not supported."),
-            "next command presentation must state the cmd.exe boundary:\n{rendered}"
+            boundary_disclosed,
+            "next command presentation must state the host shell boundary:\n{rendered}"
         );
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;

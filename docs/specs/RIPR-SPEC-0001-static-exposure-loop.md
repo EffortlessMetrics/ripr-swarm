@@ -26,6 +26,17 @@ changed behavior
 -> recommended targeted test intent
 ```
 
+The explicit `check --diff FILE --output-dir NEW_DIRECTORY` output-set adapter
+enters that diff pipeline once and projects native badge JSON, detail JSON and
+human output with their existing policies and presentation context (#8169).
+Its bounded input-custody observations and final manifest prevent admitting a
+successful complete output set after observed input drift or render/write
+failure. Native analysis/refusal states and exit behavior remain authoritative;
+publication completeness cannot imply analysis completeness. The output-set
+contract and its supported input boundaries are in
+[Output Schema](../OUTPUT_SCHEMA.md#native-diff-output-set).
+
+
 A changed line that only opens or closes a block (`}`, `});`, `} else {`,
 `else {`) seeds no probe when its contiguous changed run also holds a
 behavioral line and every block it closes was opened inside that run, as

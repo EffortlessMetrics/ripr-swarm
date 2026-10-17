@@ -13,13 +13,25 @@
 
 use crate::cli::help;
 
+/// The help route an unknown-argument error points at. `check`'s default help
+/// is a one-screen summary that omits advanced flags, so a mistyped option
+/// there is sent to the exhaustive reference.
+fn help_pointer(command: &str) -> String {
+    if command == "check" {
+        "ripr check --help --all".to_string()
+    } else {
+        format!("ripr {command} --help")
+    }
+}
+
 /// Build the error for an unrecognized argument to `command`.
 ///
 /// `command` is the space-separated command path as the user would type it
 /// (`"check"`, `"agent brief"`, `"policy readiness"`), which is also what the
-/// help pointer names. Every `ripr` command path accepts `--help` directly, so
-/// the pointer is uniform.
+/// help pointer names. Every `ripr` command path accepts `--help` directly;
+/// `check` points at `--help --all` (see [`help_pointer`]).
 pub(crate) fn unknown_argument(command: &str, arg: &str) -> String {
+    let pointer = help_pointer(command);
     // `--version` is a process-level identity query scoped to the top level
     // (`parse.rs`); a subcommand that does not implement its own version
     // contract rejects it. Naming the spelling that works (#4318) beats
@@ -27,14 +39,14 @@ pub(crate) fn unknown_argument(command: &str, arg: &str) -> String {
     // the user asked for the version, not a similar flag.
     if matches!(arg, "--version" | "-V") && !implements_local_version(command) {
         return format!(
-            "unknown {command} argument {arg:?}. `ripr --version` reports the binary version. Run `ripr {command} --help`."
+            "unknown {command} argument {arg:?}. `ripr --version` reports the binary version. Run `{pointer}`."
         );
     }
     match closest_flag(command, arg) {
         Some(suggestion) => format!(
-            "unknown {command} argument {arg:?}. Did you mean `{suggestion}`? Run `ripr {command} --help`."
+            "unknown {command} argument {arg:?}. Did you mean `{suggestion}`? Run `{pointer}`."
         ),
-        None => format!("unknown {command} argument {arg:?}. Run `ripr {command} --help`."),
+        None => format!("unknown {command} argument {arg:?}. Run `{pointer}`."),
     }
 }
 
@@ -333,7 +345,20 @@ mod tests {
         let message = unknown_argument("check", "--forma");
         assert_eq!(
             message,
-            "unknown check argument \"--forma\". Did you mean `--format`? Run `ripr check --help`."
+            "unknown check argument \"--forma\". Did you mean `--format`? Run `ripr check --help --all`."
+        );
+    }
+
+    /// #8158 item 2: the default `check --help` is a short summary, but typo
+    /// suggestions keep mining the exhaustive reference, so a mistyped
+    /// advanced flag is still named even though the summary omits it (the
+    /// omission itself is pinned in `cli_help_hierarchy`).
+    #[test]
+    fn advanced_flag_typos_are_suggested_from_the_exhaustive_reference() {
+        let message = unknown_argument("check", "--candidate-tre");
+        assert!(
+            message.contains("Did you mean `--candidate-tree`?"),
+            "{message}"
         );
     }
 
@@ -342,7 +367,7 @@ mod tests {
         let message = unknown_argument("check", "--totally-unrelated-flag");
         assert_eq!(
             message,
-            "unknown check argument \"--totally-unrelated-flag\". Run `ripr check --help`."
+            "unknown check argument \"--totally-unrelated-flag\". Run `ripr check --help --all`."
         );
     }
 
@@ -356,7 +381,7 @@ mod tests {
             assert_eq!(
                 message,
                 format!(
-                    "unknown check argument {arg:?}. `ripr --version` reports the binary version. Run `ripr check --help`."
+                    "unknown check argument {arg:?}. `ripr --version` reports the binary version. Run `ripr check --help --all`."
                 )
             );
         }
@@ -378,7 +403,7 @@ mod tests {
         let message = unknown_argument("check", "--wat");
         assert_eq!(
             message,
-            "unknown check argument \"--wat\". Run `ripr check --help`."
+            "unknown check argument \"--wat\". Run `ripr check --help --all`."
         );
     }
 
@@ -418,7 +443,10 @@ mod tests {
     fn unknown_argument_does_not_suggest_a_flag_for_a_positional() {
         let message = unknown_argument("check", "report.json");
         assert!(!message.contains("Did you mean"), "{message}");
-        assert!(message.contains("Run `ripr check --help`."), "{message}");
+        assert!(
+            message.contains("Run `ripr check --help --all`."),
+            "{message}"
+        );
     }
 
     /// Command paths whose flags live in a parent help body still resolve.

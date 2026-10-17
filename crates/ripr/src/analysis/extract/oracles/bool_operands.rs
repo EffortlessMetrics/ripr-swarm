@@ -609,6 +609,12 @@ fn compares_test_with_non_literal(line: &str) -> bool {
     // true)`; review of #8110).
     loop {
         (left, right) = (left.trim(), right.trim());
+        // The same constructor around both sides compares what it wraps
+        // (`Some(r == Err(E::Bad))` against `Some(expected)`; #8101).
+        if let Some(inner) = shared_constructor_arguments(left, right) {
+            (left, right) = inner;
+            continue;
+        }
         let other = match (literal(left), literal(right)) {
             (false, false) => return is_bool_test(left) || is_bool_test(right),
             (true, false) => right,
@@ -621,6 +627,21 @@ fn compares_test_with_non_literal(line: &str) -> bool {
         };
         (left, right) = sides;
     }
+}
+
+/// The arguments of `left` and `right` when both are one call of the same
+/// value constructor with one argument (`Some(a)` and `Some(b)`). Equal
+/// wrappers are equal exactly when what they wrap is, so a comparison of the
+/// wrappers is a comparison of the arguments.
+fn shared_constructor_arguments<'a>(left: &'a str, right: &'a str) -> Option<(&'a str, &'a str)> {
+    let argument = |side: &'a str, constructor: &str| {
+        let rest = side.strip_prefix(constructor)?.trim_start();
+        let contents = super::arguments::parenthesized_contents(rest)?;
+        (super::arguments::split_top_level_commas(contents).len() == 1).then_some(contents)
+    };
+    ["Some", "Ok", "Err"]
+        .iter()
+        .find_map(|constructor| Some((argument(left, constructor)?, argument(right, constructor)?)))
 }
 
 /// The two sides of `condition` when its whole is one `==` or `!=`

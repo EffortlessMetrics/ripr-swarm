@@ -286,6 +286,30 @@
       ]
     },
     {
+      "id": "rust_seeded_expectation_cannot_confirm_guarded_push",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/seeded_push_after_early_return",
+      "vector": "seeded_collection_expectation_restates_pre_push_state_after_early_exit",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "ts_reexported_expect_cannot_credit_local_rejection_helper",
       "language": "typescript",
       "tier": "pure",
@@ -9108,10 +9132,319 @@
       "control": "must_stay_weakly_exposed",
       "probe_family": "field_construction",
       "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_one_hop_field_projection",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/one_hop_field_projection",
+      "vector": "exact_one_hop_field_observer_identity_projected_positive_two_fields",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_one_hop_field_projection_wrong_sink",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/one_hop_field_projection_wrong_sink",
+      "vector": "exact_one_hop_field_observer_identity_wrong_sink_strong",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_one_hop_field_projection_discarded",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/one_hop_field_projection_discarded",
+      "vector": "exact_one_hop_field_observer_identity_discarded_owner_result",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_one_hop_field_projection_sibling",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/one_hop_field_projection_sibling",
+      "vector": "exact_one_hop_field_observer_identity_sibling_field",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_field_snapshot_wrong_receiver_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-field-snapshot-wrong-receiver.json",
+      "vector": "snapshot_field_name_without_expected_value_and_owner_receiver_binding",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::make_record",
+          "expression": "items: count + 0",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
+      "id": "rust_field_snapshot_missing_expected_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-field-snapshot-missing-expected.json",
+      "vector": "snapshot_field_name_without_expected_value_and_owner_receiver_binding",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::make_record",
+          "expression": "items: count + 0",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
+      "id": "rust_preseeded_first_element_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_preseeded_first_element",
+      "vector": "first_element_read_of_preseeded_collection_cannot_confirm_push",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_preseeded_first_element_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_preseeded_first_element",
+      "vector": "first_element_read_of_preseeded_collection_cannot_confirm_push",
+      "probe_family": "call_deletion",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_pushed_element_last_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_pushed_element_last",
+      "vector": "last_element_read_observes_pushed_element",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ],
+      "control": "must_stay_exposed"
+    },
+    {
+      "id": "rust_pushed_element_last_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_pushed_element_last",
+      "vector": "last_element_read_observes_pushed_element",
+      "probe_family": "call_deletion",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ],
+      "control": "must_stay_exposed"
+    },
+    {
+      "id": "ts_caught_assertion_cannot_confirm_rejection",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_caught_assertion",
+      "vector": "catch_swallows_awaited_rejection_matcher_failure",
+      "probe_family": "error_path",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "unknown",
+          "strength": "unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_map_overwrite_count_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_map_overwrite_count",
+      "vector": "len_count_cannot_confirm_insert_overwriting_preexisting_key",
+      "probe_family": "call_deletion",
+      "assertions": [
         { "type": "must_not_report_clean" },
         { "type": "expected_finding_count", "count": 1 },
         { "type": "must_not_promote" },
         { "type": "expected_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_map_overwrite_count_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_map_overwrite_count",
+      "vector": "len_count_cannot_confirm_insert_overwriting_preexisting_key",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_map_insert_count_empty_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_map_insert_count_empty",
+      "vector": "len_count_confirms_insert_into_empty_map",
+      "probe_family": "call_deletion",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ],
+      "control": "must_stay_exposed"
+    },
+    {
+      "id": "rust_map_insert_count_empty_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_map_insert_count_empty",
+      "vector": "len_count_cannot_confirm_changed_insert_value",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "ts_mock_payload_wrapped_impl_not_a_fresh_mock",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_mock_payload_iife_impl",
+      "vector": "wrapped_mock_implementation_not_a_fresh_mock_binding",
+      "control": "must_stay_weakly_exposed",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" },
+        { "type": "expected_oracle", "kind": "mock_expectation", "strength": "medium" }
       ]
     }
   ]
