@@ -682,6 +682,51 @@ fn check_prints_the_stub_refusal_for_a_field_construction_finding() -> Result<()
     scratch.cleanup()
 }
 
+/// `check` output for a one-line change to line 2 of a scratch crate.
+fn check_for_changed_line_two(lib: &str, old: &str, new: &str) -> Result<String, String> {
+    let scratch = Scratch::new()?;
+    let root = scratch.directory.clone();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"stub_const\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), lib).map_err(|error| error.to_string())?;
+    let diff = one_line_diff(&scratch, "src/lib.rs", old, new)?;
+    let stdout = check_human(&root, &diff)?;
+    scratch.cleanup()?;
+    Ok(stdout)
+}
+
+/// #8361: a changed `const` has no seam of its own, so `check` routes it to
+/// the function that consumes it, and the stub it names is the one
+/// `agent stub --at` writes for that function.
+#[test]
+fn check_routes_a_changed_constant_to_its_consumer() -> Result<(), String> {
+    const LIB: &str = "//! caps\nconst CAP: u64 = 5_000;\n\npub fn billed(units: u64) -> u64 {\n    units.min(CAP) * 2\n}\n";
+    let stdout =
+        check_for_changed_line_two(LIB, "const CAP: u64 = 10_000;", "const CAP: u64 = 5_000;")?;
+    assert!(stdout.contains("Write a test for it:"), "{stdout}");
+    assert!(
+        stdout.contains("--at src/lib.rs:5 --kind return_value"),
+        "the route names the consuming function's return value: {stdout}"
+    );
+    Ok(())
+}
+
+/// A constant nothing in the file consumes has no function to stub, so
+/// `check` prints no route for it.
+#[test]
+fn check_prints_no_route_for_an_unconsumed_constant() -> Result<(), String> {
+    const LIB: &str = "//! caps\nconst CAP: u64 = 5_000;\n\npub fn billed(units: u64) -> u64 {\n    units * 2\n}\n";
+    let stdout =
+        check_for_changed_line_two(LIB, "const CAP: u64 = 10_000;", "const CAP: u64 = 5_000;")?;
+    assert!(stdout.contains("src/lib.rs:2"), "{stdout}");
+    assert!(!stdout.contains("Write a test for it:"), "{stdout}");
+    assert!(!stdout.contains("No test stub here"), "{stdout}");
+    Ok(())
+}
+
 /// #5471: without `--kind` no `check` finding vouches for the location, so a
 /// bare `--at` keeps the gap filter: a seam the tests already pin is not
 /// stubbed, while an unpinned one in the same file still is.

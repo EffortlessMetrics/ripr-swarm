@@ -291,7 +291,7 @@ pub(crate) fn stub_route_location(
 ) -> Option<(String, usize, &'static str)> {
     let location = &finding.probe.location.file;
     let eligible = finding.class != ExposureClass::Exposed
-        && finding.probe.family.offers_stub_route()
+        && finding.probe.offers_stub_route()
         && location.extension().and_then(|ext| ext.to_str()) == Some("rs");
     if !eligible {
         return None;
@@ -314,6 +314,13 @@ pub(crate) fn stub_route_for_finding(
     finding: &Finding,
 ) -> Option<StubRoute> {
     let (file, line, kind) = stub_route_location(finding, root)?;
+    if let Some(name) = finding.probe.changed_const_name() {
+        let decision = const_consumer_route(root, config, &file, line, name)?;
+        return Some(StubRoute {
+            finding_id: finding.id.clone(),
+            decision,
+        });
+    }
     let resolution = resolve_at_location(root, config, &file, line, Some(kind)).ok()?;
     let decision = match resolution.outcome {
         Ok(_) => StubRouteDecision::Stub { file, line, kind },
@@ -324,6 +331,75 @@ pub(crate) fn stub_route_for_finding(
     Some(StubRoute {
         finding_id: finding.id.clone(),
         decision,
+    })
+}
+
+/// Seam kinds a constant's consumer is tried as, most common first.
+const CONSUMER_KINDS: [&str; 4] = ["return_value", "predicate", "error_path", "match_arm"];
+
+/// The most consuming functions of a changed constant tried for a stub.
+const CONSUMER_FN_LIMIT: usize = 6;
+
+/// A changed `const`/`static` has no seam, so the route goes to the first
+/// function in the same file that names it: a stub for that function is the
+/// place to pin the constant's effect. The first consumer that yields a stub
+/// wins; otherwise the first refusal names why. `None` when no consumer is
+/// found or none resolves, so nothing is printed.
+fn const_consumer_route(
+    root: &Path,
+    config: &RiprConfig,
+    file: &str,
+    const_line: usize,
+    name: &str,
+) -> Option<StubRouteDecision> {
+    let source = std::fs::read_to_string(root.join(file)).ok()?;
+    let mut seen_fns = Vec::new();
+    let mut first_refusal = None;
+    for (index, text) in source.lines().enumerate() {
+        let line = index + 1;
+        let code = text.trim_start();
+        if line == const_line || code.starts_with("//") || !names_identifier(text, name) {
+            continue;
+        }
+        let Some(span) = owner_fn_line_span(&source, line) else {
+            continue;
+        };
+        if seen_fns.contains(&span) {
+            continue;
+        }
+        if seen_fns.len() == CONSUMER_FN_LIMIT {
+            break;
+        }
+        seen_fns.push(span);
+        for kind in CONSUMER_KINDS {
+            let Ok(resolution) = resolve_at_location(root, config, file, line, Some(kind)) else {
+                continue;
+            };
+            match resolution.outcome {
+                Ok(_) => {
+                    return Some(StubRouteDecision::Stub {
+                        file: file.to_string(),
+                        line,
+                        kind,
+                    });
+                }
+                Err(refusal) => {
+                    first_refusal.get_or_insert(StubRouteDecision::Refused {
+                        reason: refusal.reason(),
+                    });
+                }
+            }
+        }
+    }
+    first_refusal
+}
+
+/// Whether `text` holds `name` as a whole identifier.
+fn names_identifier(text: &str, name: &str) -> bool {
+    let is_ident = |c: char| c.is_alphanumeric() || c == '_';
+    text.match_indices(name).any(|(at, _)| {
+        !text[..at].chars().next_back().is_some_and(is_ident)
+            && !text[at + name.len()..].chars().next().is_some_and(is_ident)
     })
 }
 
@@ -673,6 +749,15 @@ pub(crate) fn run_command(manifest: &str, stub: &RustTestStub) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn names_identifier_matches_whole_identifiers_only() {
+        assert!(names_identifier("over.min(CAP) * rate", "CAP"));
+        assert!(names_identifier("CAP", "CAP"));
+        assert!(!names_identifier("over.min(CAPS)", "CAP"));
+        assert!(!names_identifier("MAX_CAP + 1", "CAP"));
+        assert!(!names_identifier("cap", "CAP"));
+    }
 
     #[test]
     fn at_selector_parses_file_and_line_and_refuses_junk() {
