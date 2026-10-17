@@ -120,7 +120,7 @@ Consumes everything in Layer 1, plus:
 Before activation, the trusted VS Code extension admits a resolved server only
 after a bounded, standard JSON-RPC 2.0 `initialize` → `initialized` →
 `shutdown` → `exit` exchange over LSP stdio. Admission requires the exact
-surface the active client consumes: full saved-document synchronization,
+surface the active client consumes: incremental document synchronization (`openClose`, `change` 2, no `willSave`),
 UTF-16 positions, hover, code actions, pull diagnostics, workspace folders,
 and the complete current server-executed `ripr.collect*`/refresh command set.
 `codeAction/resolve` and work-done progress remain optional because their

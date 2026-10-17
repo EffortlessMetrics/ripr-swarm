@@ -7187,8 +7187,17 @@ fn analysis_pending_workspace_report(
 /// Disclosure emitted once per quarantine episode when a dirty document's
 /// line-local diagnostics are withdrawn (#1970).
 fn quarantine_withdrawal_log_message(path: &Path, reason: DocumentStalenessReason) -> String {
+    let recovery = match reason {
+        DocumentStalenessReason::InvalidIncrementalChange => {
+            "close and reopen the file to re-establish the buffer"
+        }
+        DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent
+        | DocumentStalenessReason::NoAnalyzedSavedContent => {
+            "save the file to analyze the new saved state"
+        }
+    };
     format!(
-        "ripr: line-local diagnostics withdrawn for {}: {} ({}); save the file to analyze the new saved state",
+        "ripr: line-local diagnostics withdrawn for {}: {} ({}); {recovery}",
         path.display(),
         reason.description(),
         reason.as_str(),
@@ -11828,6 +11837,22 @@ mod quarantine_message_tests {
         assert!(message.contains("/workspace/src/lib.rs"));
         assert!(message.contains("buffer_diverges_from_analyzed_saved_content"));
         assert!(message.contains("save the file"));
+    }
+
+    #[test]
+    fn quarantine_withdrawal_log_message_route_follows_reason() {
+        let path = Path::new("/workspace/src/lib.rs");
+        let unanalyzed = quarantine_withdrawal_log_message(
+            path,
+            DocumentStalenessReason::NoAnalyzedSavedContent,
+        );
+        assert!(unanalyzed.contains("save the file"));
+        let invalid = quarantine_withdrawal_log_message(
+            path,
+            DocumentStalenessReason::InvalidIncrementalChange,
+        );
+        assert!(invalid.contains("close and reopen"));
+        assert!(!invalid.contains("save the file"));
     }
 
     #[test]
