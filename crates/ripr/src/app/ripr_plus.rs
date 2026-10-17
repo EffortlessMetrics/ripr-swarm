@@ -358,7 +358,7 @@ complete test-efficiency measurement, bind that evidence to current candidate
 bytes, or dispose of blocked and unsupported scope. Known actionable counts remain informational; complete unresolved debt
 and candidate authority remain indeterminate, so --check cannot pass from these
 inputs. No ripr command produces the missing inputs yet (tracked in #7222), so
-these receipts stay indeterminate by design. This command does not scan a
+these receipts stay indeterminate until that lands. This command does not scan a
 repository or turn raw seams into debt.
 ";
 
@@ -402,7 +402,7 @@ pub(crate) fn qualify_legacy_receipt(mut receipt: Value) -> Result<Value, String
         .as_array_mut()
         .ok_or_else(|| "RIPR+ receipt warnings must be an array".to_string())?;
     let warning = json!(
-        "Exposure/ledger counts alone do not establish complete RIPR+ zero. Complete test-efficiency measurement, current-candidate binding and blocked/unsupported scope disposition are not established, and no ripr command produces those inputs yet (tracked in #7222), so this receipt stays indeterminate by design. Do not use it as a zero gate."
+        "Exposure/ledger counts alone do not establish complete RIPR+ zero. Complete test-efficiency measurement, current-candidate binding and blocked/unsupported scope disposition are not established, and no ripr command produces those inputs yet (tracked in #7222), so this receipt stays indeterminate until that lands. Do not use it as a zero gate."
     );
     if !warnings.contains(&warning) {
         warnings.push(warning);
@@ -1100,6 +1100,13 @@ mod tests {
             "{warning}"
         );
         assert!(warning.contains("#7222"), "{warning}");
+        assert!(!warning.contains("by design"), "{warning}");
+        // The help text carries the same disclosure (pinned so a revert fails).
+        assert!(
+            PLUS_HELP.contains("No ripr command produces the missing inputs yet"),
+            "{PLUS_HELP}"
+        );
+        assert!(!PLUS_HELP.contains("by design"), "{PLUS_HELP}");
         assert!(
             !warning.contains("inspect the source evidence"),
             "{warning}"

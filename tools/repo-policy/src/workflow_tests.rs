@@ -961,6 +961,11 @@ fn routed_rust_request_event_matrix_and_context_regressions() {
         ),
         (
             "labeled",
+            Some("macos-ci"),
+            RoutedRustEventRoute::BookkeepingOnly,
+        ),
+        (
+            "labeled",
             Some("merge-ready"),
             RoutedRustEventRoute::LaunchFullGate,
         ),

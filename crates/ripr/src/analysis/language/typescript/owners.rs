@@ -362,15 +362,57 @@ fn dead_reassigned_esm_bindings(body: &[Statement<'_>]) -> Vec<String> {
         }
     }
     // `UpdateExpression` (`price++`, `++price`) is covered by the walk above.
+    // `export default price` snapshots the value for default importers only.
+    // A binding that is also a named export (`export let price`, `export {
+    // price }`, `export { price as alias }`) is live for named importers, who
+    // observe the later write, so the snapshot cannot excuse it (fail-closed).
+    let named_exports = named_exported_locals(body);
     reassigned
         .into_iter()
         .filter(|(name, reassigned_at)| {
-            !snapshot_exports
-                .iter()
-                .any(|(exported, exported_at)| exported == name && *exported_at < *reassigned_at)
+            named_exports.iter().any(|exported| exported == name)
+                || !snapshot_exports.iter().any(|(exported, exported_at)| {
+                    exported == name && *exported_at < *reassigned_at
+                })
         })
         .map(|(name, _)| name)
         .collect()
+}
+
+/// Local names a top-level source-less named export exposes as live
+/// bindings: `export let|var|function name`, `export { name }` and
+/// `export { name as alias }` (but not `as default`, which the caller treats
+/// separately).
+fn named_exported_locals(body: &[Statement<'_>]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for stmt in body {
+        let Statement::ExportNamedDeclaration(export) = stmt else {
+            continue;
+        };
+        match &export.declaration {
+            Some(oxc_ast::ast::Declaration::VariableDeclaration(decl)) => {
+                for declarator in &decl.declarations {
+                    for identifier in declarator.id.get_binding_identifiers() {
+                        out.push(identifier.name.to_string());
+                    }
+                }
+            }
+            Some(oxc_ast::ast::Declaration::FunctionDeclaration(func)) => {
+                if let Some(id) = &func.id {
+                    out.push(id.name.to_string());
+                }
+            }
+            _ => {}
+        }
+        if export.source.is_none() {
+            for specifier in &export.specifiers {
+                if let Some(name) = specifier.local.identifier_name() {
+                    out.push(name.to_string());
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Local name snapshotted by `export default ident` / `export default

@@ -47,6 +47,7 @@ mod identity_registry;
 mod issue_lifecycle_attempt;
 mod issue_lifecycle_contract_plan;
 mod issue_lifecycle_intake;
+mod issue_lifecycle_real_rows;
 mod no_panic;
 mod orchestration_attempt;
 mod output_enum_contracts;

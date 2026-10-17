@@ -677,7 +677,8 @@ pub struct AnalysisOptions {
     /// `tsconfig.json` / `jsconfig.json` and uses alias maps to resolve
     /// non-relative import specifiers during owner↔test discovery.
     ///
-    /// Default: `false` (opt-in, fail-closed per RIPR-SPEC-0099).
+    /// Default: `true` (opt-out via `[typescript] resolve_tsconfig_paths = false`;
+    /// fail-closed per RIPR-SPEC-0099).
     pub resolve_tsconfig_paths: bool,
     /// Path to a `ripr-perl-facts-v1` packet file for the Perl adapter
     /// (Campaign 31, #1429). When `None`, the Perl adapter returns a named

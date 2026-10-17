@@ -124,7 +124,8 @@ jobs:
             echo "| test -p ripr --lib | $tests | ${result:-no test result line} |"
           } >> "$GITHUB_STEP_SUMMARY"
           if [ -z "$passed" ] || [ "$passed" -eq 0 ]; then
-            echo "::error::macOS library test run executed zero tests; evidence is not established"
+            grep -q '^error: could not compile' "$d/lib-tests.log" && kind="did not compile (build failure, not a test failure)" || kind="executed zero tests; evidence is not established"
+            echo "::error::macOS library test run $kind"
             exit 1
           fi
 

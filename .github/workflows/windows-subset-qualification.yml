@@ -224,10 +224,16 @@ jobs:
                   drive = 'Q' + ':'
                   root = drive + r'\synthetic-selector-fixture literal'
                   diff = root + r'\fixture change.diff'
-                  expected = f"ripr check --root '{drive}/synthetic-selector-fixture literal' --diff '{drive}/synthetic-selector-fixture literal/fixture change.diff' --json"
+                  expected = f'ripr check --root "{drive}/synthetic-selector-fixture literal" --diff "{drive}/synthetic-selector-fixture literal/fixture change.diff" --json'
                   self.assertEqual(self.ns['recovery_command'](root, diff, windows=True), expected)
                   stderr = ('No finding. Retry `' + expected + '`.').encode()
                   self.assertEqual(self.ns['printed_recovery'](stderr, root, diff, windows=True), expected)
+                  stale = expected.replace('"', "'")
+                  for wrong in (stale, expected.replace('--json', '--no-cache'),
+                                expected.replace('fixture change.diff', 'wrong.diff'),
+                                expected.replace('synthetic-selector-fixture literal', 'wrong root', 1)):
+                      with self.subTest(command=wrong), self.assertRaises(RuntimeError):
+                          self.ns['printed_recovery'](('`' + wrong + '`').encode(), root, diff, windows=True)
 
               def test_recovery_refuses_changed_scope_or_literal(self):
                   command = self.ns['recovery_command'](self.root, self.out)
@@ -830,7 +836,8 @@ jobs:
               paths = [str(fixture), str(diff)]
               if windows:
                   paths = [p.removeprefix("\\\\?\\").replace("\\", "/") for p in paths]
-              return f"ripr check --root '{paths[0]}' --diff '{paths[1]}' --json"
+              quote = '"' if windows else "'"
+              return f"ripr check --root {quote}{paths[0]}{quote} --diff {quote}{paths[1]}{quote} --json"
 
           def printed_recovery(stderr, fixture, diff, windows=None):
               matches = re.findall(chr(96) + r"(ripr check [^\x60]+)" + chr(96), stderr.decode())
