@@ -14500,6 +14500,41 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0269"
+name = "Task/result/receipt schemas bind the selected-work portfolio basis"
+spec = "docs/specs/RIPR-SPEC-0269-task-result-selected-work-basis.md"
+tests = [
+  "xtask/src/work_result_identity.rs::tests::work_result_identity_committed_corpus_five_scenarios_hold",
+  "xtask/src/work_result_identity.rs::tests::work_result_identity_wrong_inputs_fail_stale_or_wrong_input",
+  "xtask/src/work_result_identity.rs::tests::work_result_identity_embedded_selection_reuses_shared_laws",
+  "xtask/src/work_result_identity.rs::tests::work_result_identity_result_schema_has_no_singleton_fields",
+  "xtask/src/work_result_identity.rs::tests::work_result_identity_valid_results_bind_their_selections",
+  "xtask/src/work_result_identity.rs::tests::work_result_identity_legacy_refs_read_only_no_authority",
+  "xtask/src/work_result_identity.rs::tests::work_result_identity_human_and_json_projections_agree",
+  "xtask/src/work_result_identity.rs::tests::work_result_identity_deterministic_output",
+  "xtask/src/work_result_identity.rs::tests::work_result_identity_corpus_loader_fails_closed",
+  "xtask/src/work_result_identity.rs::tests::work_result_identity_committed_provenance_covers_every_corpus_byte",
+  "xtask/src/work_result_identity.rs::tests::work_result_identity_command_mutate_nothing_mutation_negative",
+  "xtask/src/work_result_identity.rs::tests::work_result_identity_basis_facts_for_corpus_authoring",
+]
+fixtures = [
+  "fixtures/work_result_identity",
+]
+code = [
+  "xtask/src/work_result_identity.rs",
+  "xtask/src/work_selection_identity.rs",
+  "xtask/src/command.rs",
+  "xtask/src/dispatch.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0269-task-result-selected-work-basis.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
 [[behavior]]
 id = "RIPR-SPEC-0244"
 name = "Shared selected-work identity schemas and legacy compatibility"

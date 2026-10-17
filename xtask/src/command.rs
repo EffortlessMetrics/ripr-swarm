@@ -178,6 +178,7 @@ pub(crate) enum XtaskCommand {
     WorkCandidates(Vec<String>),
     WorkExplain(Vec<String>),
     WorkSelectionCheck(Vec<String>),
+    WorkResultCheck(Vec<String>),
     Unknown(String),
 }
 
@@ -376,6 +377,13 @@ impl XtaskCommand {
                     Some("check") => Self::WorkSelectionCheck(rest[2..].to_vec()),
                     _ => Self::Unknown(format!(
                         "work selection {}",
+                        rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
+                    )),
+                },
+                Some("result") => match rest.get(1).map(|arg| arg.as_str()) {
+                    Some("check") => Self::WorkResultCheck(rest[2..].to_vec()),
+                    _ => Self::Unknown(format!(
+                        "work result {}",
                         rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
                     )),
                 },
@@ -2360,6 +2368,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Validates committed SelectedWorkIdentityV1 packets against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR A, RIPR-SPEC-0244); wrong repository/issue/action/basis/worktree/head identities fail with exact recompile/reconcile routes, legacy active-goal/current-work-item refs stay read-only with no authority, and no GitHub, branch, worktree, claim, spec, campaign or source state is touched.",
+        ),
+        command_entry(
+            "work result check [--corpus <dir>] [--json]",
+            "report_only",
+            "target/ripr/reports/work-result-check.{json,md}",
+            false,
+            false,
+            "Validates committed WorkTaskResultV1 rows against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR B, RIPR-SPEC-0269, consuming #1633); every result must bind repository, portfolio-snapshot identity, basis head and the selected-work identity it extends, a result for another repository/snapshot/issue/action/basis/worktree/head fails stale or wrong-input with exact recompile/reconcile routes, legacy active-goal/current-work-item refs stay read-only with no authority, and no GitHub, branch, worktree, claim, spec, campaign or source state is touched.",
         ),
     ]
 }

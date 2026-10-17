@@ -460,6 +460,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "swarm-plan-packet-corpus"
                     | "work_portfolio"
                     | "work_selection_identity"
+                    | "work_result_identity"
                     | "typescript-bun-ub-calibration"
                     | "typescript-preview-false-actionable-audit"
                     | "typescript-preview-repair-loop"

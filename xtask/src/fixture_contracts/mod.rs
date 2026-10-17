@@ -98,6 +98,7 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
     crate::work_selection_identity::validate_work_selection_identity_fixture_corpus(
         &mut violations,
     );
+    crate::work_result_identity::validate_work_result_identity_fixture_corpus(&mut violations);
     validate_blind_journey_execute_fixture_corpus(&mut violations)?;
     validate_blind_journey_installed_rust_fixture(&mut violations)?;
     validate_blind_journey_installed_python_fixture(&mut violations)?;
