@@ -14,11 +14,11 @@ Start here:
   Static exposure: exposed (info, confidence 1.00)
   Canonical gap: gap:rust:src/lib.rs:seconds:match_arm:match_arm:unit_fortnight
   Changed behavior: Unit::Fortnight =>
-  Related test (1 of 4 matched rows): src/lib.rs:36 seconds_total
+  Related test (1 of 3 matched rows): src/lib.rs:36 seconds_total
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
     - reach yes: Related tests appear to reach seconds: seconds_total, bridge_fortnight, from_str_fortnight
     - infection yes: Reachable tests can plausibly activate this changed behavior
-    - 13 more detail line(s) in --format human-full
+    - 12 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/match_arm_proximity_wrapper_confirms/input --diff <cwd>/fixtures/match_arm_proximity_wrapper_confirms/diff.patch --mode fast probe:src_lib.rs:match_arm:9e71545f

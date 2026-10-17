@@ -4226,6 +4226,12 @@ fn finalize_related_tests(mut related: Vec<RelatedTest>) -> (Vec<RelatedTest>, u
     // readiness) reads this window.
     let (mut oracle_rows, unmatched): (Vec<_>, Vec<_>) =
         related.into_iter().partition(|test| !test.is_unmatched());
+    // #8386: a bare `.unwrap()`/`.expect()` setup statement is not the
+    // decisive oracle when the same test also has a real matched assertion;
+    // listing both rows quoted the setup as a "smoke only" miss beside the
+    // test's actual assertion. The row is dropped only in that case, so a
+    // test whose sole oracle is the unwrap/expect stays listed as smoke.
+    drop_setup_unwrap_rows_beside_assertions(&mut oracle_rows);
     // Same post-dedup row unit as before; retain the total separately without
     // exposing discarded rows to downstream evidence/target selection.
     let matched_total = oracle_rows.len() + unmatched.len();
@@ -4241,6 +4247,51 @@ fn finalize_related_tests(mut related: Vec<RelatedTest>) -> (Vec<RelatedTest>, u
 }
 
 const RELATED_TESTS_RENDER_CAP: usize = 8;
+
+/// True for an extracted smoke row whose text is a bare `x.unwrap()` or
+/// `x.expect("..")` statement rather than an assertion macro. Such a row is
+/// test setup that the extractor counts as a smoke check (#8386).
+fn is_bare_unwrap_expect_row(test: &RelatedTest) -> bool {
+    if test.oracle_kind != OracleKind::SmokeOnly || test.oracle_strength != OracleStrength::Smoke {
+        return false;
+    }
+    let Some(text) = test.oracle.as_deref() else {
+        return false;
+    };
+    let text = text.trim().trim_end_matches(';').trim_end();
+    !text.contains("assert")
+        && !text.contains("matches!")
+        && !text.contains('\n')
+        && (text.ends_with(".unwrap()") || ends_with_expect_of_one_literal(text))
+}
+
+/// `recv.expect("message")`, where the argument is exactly one string
+/// literal. Anything else (a chained call, an escaped quote) stays a row.
+fn ends_with_expect_of_one_literal(text: &str) -> bool {
+    let Some((_, rest)) = text.rsplit_once(".expect(") else {
+        return false;
+    };
+    rest.strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix("\")"))
+        .is_some_and(|message| !message.contains(['"', '\\']))
+}
+
+/// Remove bare unwrap/expect setup rows from tests that also have another
+/// matched oracle row, so each such test reports its real assertion alone.
+fn drop_setup_unwrap_rows_beside_assertions(rows: &mut Vec<RelatedTest>) {
+    let with_real_oracle: std::collections::BTreeSet<(String, std::path::PathBuf, usize)> = rows
+        .iter()
+        .filter(|test| test.oracle.is_some() && !is_bare_unwrap_expect_row(test))
+        .map(|test| (test.name.clone(), test.file.clone(), test.line))
+        .collect();
+    if with_real_oracle.is_empty() {
+        return;
+    }
+    rows.retain(|test| {
+        !(is_bare_unwrap_expect_row(test)
+            && with_real_oracle.contains(&(test.name.clone(), test.file.clone(), test.line)))
+    });
+}
 
 fn pack_unique_tests_first(related: Vec<RelatedTest>, cap: usize) -> Vec<RelatedTest> {
     let mut packed = Vec::with_capacity(cap.min(related.len()));
@@ -5226,6 +5277,104 @@ mod tests {
             relation_confidence: reason.map(RelationReason::confidence),
             miss: None,
         }
+    }
+
+    fn smoke_row(name: &str, line: usize, text: &str) -> RelatedTest {
+        RelatedTest {
+            oracle: Some(text.to_string()),
+            oracle_kind: OracleKind::SmokeOnly,
+            oracle_strength: OracleStrength::Smoke,
+            ..related(name, line, Some(RelationReason::DirectOwnerCall))
+        }
+    }
+
+    fn oracle_texts(rows: &[RelatedTest]) -> Vec<(&str, &str)> {
+        rows.iter()
+            .map(|row| (row.name.as_str(), row.oracle.as_deref().unwrap_or("")))
+            .collect()
+    }
+
+    /// #8386: `let v = f().unwrap(); assert_eq!(v, ..)` is one test; the
+    /// setup statement must not appear as a second, "smoke only" row.
+    #[test]
+    fn setup_unwrap_row_is_dropped_beside_the_same_tests_assertion() {
+        let (finalized, total) = finalize_related_tests(vec![
+            smoke_row("parses_small", 3, "parse(\"5\").unwrap();"),
+            RelatedTest {
+                oracle: Some("assert_eq!(v, 5);".to_string()),
+                ..related("parses_small", 3, Some(RelationReason::DirectOwnerCall))
+            },
+            smoke_row("setup_expect", 9, "parse(\"5\").expect(\"parses\");"),
+            RelatedTest {
+                oracle: Some("assert!(v.is_ok());".to_string()),
+                oracle_kind: OracleKind::SmokeOnly,
+                oracle_strength: OracleStrength::Smoke,
+                ..related("setup_expect", 9, Some(RelationReason::DirectOwnerCall))
+            },
+        ]);
+        assert_eq!(
+            oracle_texts(&finalized),
+            vec![
+                ("parses_small", "assert_eq!(v, 5);"),
+                ("setup_expect", "assert!(v.is_ok());")
+            ]
+        );
+        assert_eq!(total, 2);
+    }
+
+    /// The drop is conditional: a test whose only oracle is the unwrap, a
+    /// same-named test elsewhere, a real smoke assertion and a chained call
+    /// all stay listed.
+    #[test]
+    fn setup_unwrap_row_stays_when_it_is_the_tests_only_oracle() {
+        let (finalized, total) = finalize_related_tests(vec![
+            smoke_row("only_unwrap", 3, "parse(\"5\").unwrap();"),
+            smoke_row("other_test", 20, "parse(\"5\").unwrap();"),
+            RelatedTest {
+                file: PathBuf::from("tests/other.rs"),
+                oracle: Some("assert_eq!(v, 5);".to_string()),
+                ..related("other_test", 20, Some(RelationReason::DirectOwnerCall))
+            },
+            smoke_row("chained", 30, "parse(\"5\").unwrap().len();"),
+            smoke_row(
+                "chained",
+                30,
+                "parse(\"5\").expect(\"a\").expect(\"b\").len();",
+            ),
+            smoke_row("real_smoke", 40, "assert!(parse(\"5\").is_ok());"),
+            smoke_row("real_smoke", 40, "parse(\"5\").unwrap();"),
+        ]);
+        assert_eq!(total, 6);
+        let mut got: Vec<(String, String, String)> = finalized
+            .iter()
+            .map(|row| {
+                (
+                    row.name.clone(),
+                    row.file.display().to_string(),
+                    row.oracle.clone().unwrap_or_default(),
+                )
+            })
+            .collect();
+        got.sort();
+        let row = |n: &str, f: &str, o: &str| (n.to_string(), f.to_string(), o.to_string());
+        let mut want = vec![
+            row("only_unwrap", "tests/lib.rs", "parse(\"5\").unwrap();"),
+            row("other_test", "tests/lib.rs", "parse(\"5\").unwrap();"),
+            row("other_test", "tests/other.rs", "assert_eq!(v, 5);"),
+            row("chained", "tests/lib.rs", "parse(\"5\").unwrap().len();"),
+            row(
+                "chained",
+                "tests/lib.rs",
+                "parse(\"5\").expect(\"a\").expect(\"b\").len();",
+            ),
+            row(
+                "real_smoke",
+                "tests/lib.rs",
+                "assert!(parse(\"5\").is_ok());",
+            ),
+        ];
+        want.sort();
+        assert_eq!(got, want);
     }
 
     /// Renderers show the first related test as the primary one, so the
