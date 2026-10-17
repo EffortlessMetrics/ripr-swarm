@@ -613,9 +613,10 @@ fn not_a_work_tree_message(root: &Path) -> String {
     format!(
         "`{}` is not inside a Git work tree (the analysis did not run). ripr diffs \
          committed history, so run it from inside your repository, or pass `--root <path>` \
-         pointing at one. For a repository-free scan of the current sources, use \
-         `ripr check --root . --format repo-exposure-md`.",
-        root.display()
+         pointing at one. For whole-repository exploration of the current sources \
+         without Git history, use `{}`.",
+        root.display(),
+        crate::domain::WHOLE_REPO_PILOT_COMMAND,
     )
 }
 
@@ -920,8 +921,9 @@ fn resolve_default_base(root: &Path, git_timeout: Option<Duration>) -> Result<St
     Err(format!(
         "could not resolve a default base (no origin/main, origin/master, or local main/master \
          found).{} Pass `--base <ref>` to diff against a specific ref, or run \
-         `ripr check --root . --format repo-exposure-md` for a full-repo scan.",
-        default_base_failure_context(root, git_timeout)
+         `{}` for whole-repository exploration.",
+        default_base_failure_context(root, git_timeout),
+        crate::domain::WHOLE_REPO_PILOT_COMMAND,
     ))
 }
 
@@ -2991,8 +2993,8 @@ mod tests {
             "expected --base guidance in message, got: {err}"
         );
         assert!(
-            err.contains("--format repo-exposure-md"),
-            "expected --format repo-exposure-md guidance in message, got: {err}"
+            err.contains("ripr pilot --root ."),
+            "expected pilot guidance in message, got: {err}"
         );
         assert!(
             err.contains("no commits yet"),

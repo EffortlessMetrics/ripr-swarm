@@ -951,3 +951,11 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+### #8479 — classified-cache generation parity
+
+The unchanged-after-attempt before/after corpus generation moves from 1.81 to
+1.82 for the metadata-only field-selector limitation (RIPR-SPEC-0229). Content
+commitments and dependent verify/receipt byte hashes follow that exact change.
+Routing, unchanged movement, incomplete receipt and all tamper controls remain.
+The live producer normalization test validates this bounded fixture update.

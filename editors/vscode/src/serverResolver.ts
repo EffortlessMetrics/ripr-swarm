@@ -103,6 +103,7 @@ export async function resolveServer(
     return { message: 'ripr.server.version is invalid.', detail };
   }
   let downloadFailure: string | undefined;
+  let earlyPathResult: ResolvedServer | ResolveFailure | undefined;
 
   if (platform) {
     const bundled = bundledServerPath(context, platform);
@@ -134,6 +135,19 @@ export async function resolveServer(
       output.appendLine(`Skipping completed cached server: ${cachedResult.detail}`);
     }
 
+    // An unpinned configuration prefers a compatible `ripr` already on PATH
+    // (cargo install, binstall, a package manager) over a first-run download
+    // (#5314). Pinning `ripr.server.version` asks for that exact managed
+    // release, so the download keeps its place there.
+    if (config.autoDownload && config.serverVersion.trim().length === 0) {
+      earlyPathResult = await probePathServer(runtime);
+      if (isResolved(earlyPathResult)) {
+        output.appendLine('Using ripr on PATH; skipping the managed server download.');
+        return earlyPathResult;
+      }
+      output.appendLine(`ripr on PATH is not usable (${earlyPathResult.detail}); trying the managed download.`);
+    }
+
     if (config.autoDownload) {
       try {
         const downloaded = await downloadServer(context, config, platform, version, output);
@@ -158,19 +172,12 @@ export async function resolveServer(
     downloadFailure = `No prebuilt ripr server target is known for ${process.platform}/${process.arch}.`;
   }
 
-  // On Windows, spawning with shell: false does no PATHEXT resolution, so
-  // ripr.bat/ripr.cmd shims (Scoop, Chocolatey, manual PATH) fail to start
-  // even though `ripr` works in a terminal (#2079). The command is the
-  // constant string 'ripr --version' — no user input reaches the shell.
-  const probeWithShell = process.platform === 'win32';
-  const pathResult = await runtime.probeCandidate('ripr', 'path', 'ripr on PATH', probeWithShell, 'unmanaged');
-  const resolvedPathResult: ResolvedServer | ResolveFailure =
-    isResolved(pathResult) && probeWithShell ? { ...pathResult, needsShell: true } : pathResult;
-  if (isResolved(resolvedPathResult)) {
+  const pathResult = earlyPathResult ?? (await probePathServer(runtime));
+  if (isResolved(pathResult)) {
     if (downloadFailure) {
       output.appendLine(`Using PATH fallback after managed server resolution failed: ${downloadFailure}`);
     }
-    return resolvedPathResult;
+    return pathResult;
   }
 
   const autoDownloadHint = config.autoDownload
@@ -186,6 +193,18 @@ export async function resolveServer(
       .filter((line): line is string => Boolean(line))
       .join('\n')
   };
+}
+
+async function probePathServer(
+  runtime: ServerResolverRuntime
+): Promise<ResolvedServer | ResolveFailure> {
+  // On Windows, spawning with shell: false does no PATHEXT resolution, so
+  // ripr.bat/ripr.cmd shims (Scoop, Chocolatey, manual PATH) fail to start
+  // even though `ripr` works in a terminal (#2079). The command is the
+  // constant string 'ripr --version' — no user input reaches the shell.
+  const probeWithShell = process.platform === 'win32';
+  const pathResult = await runtime.probeCandidate('ripr', 'path', 'ripr on PATH', probeWithShell, 'unmanaged');
+  return isResolved(pathResult) && probeWithShell ? { ...pathResult, needsShell: true } : pathResult;
 }
 
 /**
