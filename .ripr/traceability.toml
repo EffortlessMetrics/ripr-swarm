@@ -15252,6 +15252,17 @@ id = "RIPR-SPEC-0229"
 name = "Match-arm selection names the unselected arm"
 spec = "docs/specs/RIPR-SPEC-0229-match-arm-selection-discriminator.md"
 tests = [
+  "crates/ripr/tests/field_match_selector.rs::raw_identifier_option_shadows_cannot_borrow_prelude_identity",
+  "crates/ripr/tests/field_match_selector.rs::an_imported_statement_macro_cannot_supply_an_unread_option_binding",
+  "crates/ripr/tests/field_match_selector.rs::a_field_selector_cannot_credit_an_assertion_that_does_not_execute",
+  "crates/ripr/src/analysis/classify/arm_selection/field_selector.rs::tests::unread_statement_macros_refuse_field_identity_but_standard_assertions_remain",
+  "crates/ripr/tests/field_match_selector.rs::a_foreign_option_constant_cannot_name_the_selected_field_arm",
+  "crates/ripr/src/analysis/classify/arm_selection/field_selector.rs::pattern_currentness_tests::original_foreign_patterns_and_changed_owner_bodies_cannot_borrow_admission",
+  "crates/ripr/tests/field_match_selector.rs::a_direct_record_selector_is_paired_with_its_own_asserted_call",
+  "crates/ripr/tests/field_match_selector.rs::a_direct_record_sibling_names_the_missing_arm_and_wrong_calls_never_credit_it",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_field_selector_cannot_retain_admission_from_an_older_workspace",
+  "crates/ripr/src/analysis/classify/arm_selection/field_selector.rs::tests::direct_record_projection_keeps_the_exact_field_and_constructor",
+  "crates/ripr/src/analysis/classify/arm_selection/field_selector.rs::tests::record_and_option_namespace_ambiguity_never_admits_a_field",
   "crates/ripr/src/output/schemas.rs::tests::corpus_consumer_versions_match_live_cache_identity",
   "crates/ripr/tests/match_arm_assert_admission.rs::direct_and_eager_helper_assertions_remain_admitted",
   "crates/ripr/tests/match_arm_assert_admission.rs::shadowed_and_skipped_assertions_are_refused",
@@ -15375,12 +15386,17 @@ tests = [
   "crates/ripr/tests/match_guard_edit.rs::an_added_guard_conjunct_keeps_the_arm_head",
 ]
 fixtures = [
+  "fixtures/field_match_raw_option_shadow",
+  "fixtures/field_match_macro_option_shadow",
+  "fixtures/field_match_unexecuted_assertion",
+  "fixtures/field_match_foreign_option_constant",
   "fixtures/match_arm_shadowed_assert",
   "fixtures/match_arm_blind",
   "fixtures/match_arm_expected_side_trap",
   "fixtures/match_arm_selected_credit",
 ]
 code = [
+  "crates/ripr/src/analysis/classify/arm_selection/field_selector.rs",
   "crates/ripr/src/analysis/classify/owner_pin.rs",
   "crates/ripr/src/analysis/syntax/owner_pin.rs",
   "crates/ripr/src/analysis/classify/gap_admission.rs",

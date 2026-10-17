@@ -431,9 +431,6 @@ impl ClassifiedProbeEvidence {
         // Every diff-classifier consumer of a covered equality uses this same
         // decision. Keep the original TestSummary and assertion cardinality;
         // filtering a clone would manufacture singleton matching fallbacks.
-        let assertion_admitted = |test: &TestSummary, assertion: &OracleFact| {
-            pin_syntax.admits_equality_assertion(context.probe, test, assertion, context.index)
-        };
         let sibling_exclusion_admitted = |test: &TestSummary, assertion: &OracleFact| {
             pin_syntax.admits_assertion_context(test, assertion, context.index)
         };
@@ -489,6 +486,14 @@ impl ClassifiedProbeEvidence {
                     // RIPR-SPEC-0229 decision 7: a constant-row table's cells (#5328).
                     .with_table_rows(context.related_tests.iter().map(|(test, _)| *test))
             });
+        let field_oracle_needs_admission = arm_selector
+            .as_ref()
+            .is_some_and(ArmSelector::field_oracle_needs_admission);
+        let assertion_admitted = |test: &TestSummary, assertion: &OracleFact| {
+            pin_syntax.admits_equality_assertion(context.probe, test, assertion, context.index)
+                && (!field_oracle_needs_admission
+                    || pin_syntax.admits(test, assertion, context.index))
+        };
         // RIPR-SPEC-0094 Part D: the state a deleted `self.callee(..)` writes,
         // established once per probe; `None` keeps the Part C reading.
         let effect_carrier = context.owner_fn.and_then(|owner| {
