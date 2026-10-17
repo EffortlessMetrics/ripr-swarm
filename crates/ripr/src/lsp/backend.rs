@@ -7189,7 +7189,7 @@ fn analysis_pending_workspace_report(
 fn quarantine_withdrawal_log_message(path: &Path, reason: DocumentStalenessReason) -> String {
     let recovery = match reason {
         DocumentStalenessReason::InvalidIncrementalChange => {
-            "close and reopen the file to re-establish the buffer"
+            "revert the file or close and reopen it so ripr receives the full document again"
         }
         DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent
         | DocumentStalenessReason::NoAnalyzedSavedContent => {

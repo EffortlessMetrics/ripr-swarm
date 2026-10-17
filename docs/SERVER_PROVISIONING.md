@@ -31,7 +31,7 @@ Before activation commits to any candidate, the extension first checks
 `ripr lsp --stdio`: framed `initialize`, `initialized`, `shutdown`, and `exit`.
 Each response must use JSON-RPC 2.0, the active request id, and exactly one of a
 structurally valid `result` or `error`. Initialize must identify a versioned
-`ripr` server, select UTF-16, and advertise incremental document synchronization, hover,
+`ripr` server, select UTF-16, and advertise document synchronization (open/close, full or incremental changes, `didSave` without text), hover,
 code actions, pull diagnostics, workspace folders, and the complete command set
 the extension executes. Only code-action resolve and work-done progress remain
 typed optional evidence because the client has fallbacks for their absence.
