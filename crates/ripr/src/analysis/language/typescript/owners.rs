@@ -32,6 +32,8 @@ pub(crate) fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> 
         // #7507: a `let`/function owner rebound before its `export default`
         // carries dead code at the declaration site — drop it so no finding
         // can credit a test with observing it.
+        // #7812: keep the original owner when `export default ident`
+        // snapshots the binding before that reassignment.
         owners = without_reassigned_esm_bindings(&ret.program.body, owners);
         let entries = module_entries_by_owner(&ret.program.body, source);
         for owner in &mut owners {
@@ -243,11 +245,13 @@ fn without_reassigned_commonjs_exports(
 }
 
 /// Drop every ESM owner whose binding is reassigned after its declaration
-/// (#7507). `let price = (a) => ...; price = (a) => 140; export default
+/// and not captured by an earlier snapshot `export default ident` (#7507,
+/// #7812). `let price = (a) => ...; price = (a) => 140; export default
 /// price;` leaves the declared (changed) body dead: the export carries the
 /// second value, so a test observing `price(...)` never runs the changed
 /// code. Crediting it would read `exposed` for dead code — fail-closed, no
-/// owner. Only plain top-level identifier writes count (`price = ...`,
+/// owner. The reverse order snapshots the first arrow, so that owner stays.
+/// Only plain top-level identifier writes count (`price = ...`,
 /// `price += ...`, `++price`); member writes (`price.x = ...`) mutate the
 /// same value and keep the owner.
 fn without_reassigned_esm_bindings(
@@ -257,7 +261,7 @@ fn without_reassigned_esm_bindings(
     if owners.is_empty() {
         return owners;
     }
-    let reassigned = reassigned_top_level_bindings(body);
+    let reassigned = dead_reassigned_esm_bindings(body);
     if reassigned.is_empty() {
         return owners;
     }
@@ -273,10 +277,13 @@ fn without_reassigned_esm_bindings(
 }
 
 /// Names bound by a top-level `let|var|function` owner declaration that a
-/// later top-level statement plainly reassigns. `const` cannot reassign;
-/// only `let`/`var`/function bindings are candidates, but the walk records
-/// any plain identifier write and lets the caller intersect with its owners.
-fn reassigned_top_level_bindings(body: &[Statement<'_>]) -> Vec<String> {
+/// later top-level statement plainly reassigns, unless a snapshot
+/// `export default ident` captured that binding first (#7812). `const`
+/// cannot reassign; only `let`/`var`/function bindings are candidates, but
+/// the walk records any plain identifier write and lets the caller
+/// intersect with its owners. Live `export { ident as default }` is not a
+/// snapshot, so a later write still drops (fail-closed).
+fn dead_reassigned_esm_bindings(body: &[Statement<'_>]) -> Vec<String> {
     let mut declared: Vec<String> = Vec::new();
     for stmt in body {
         match stmt {
@@ -329,8 +336,15 @@ fn reassigned_top_level_bindings(body: &[Statement<'_>]) -> Vec<String> {
     if declared.is_empty() {
         return Vec::new();
     }
-    let mut reassigned = Vec::new();
+    let mut snapshot_exports: Vec<(String, u32)> = Vec::new();
+    let mut reassigned: Vec<(String, u32)> = Vec::new();
     for stmt in body {
+        if let Some(name) = snapshot_default_export_local(stmt)
+            && declared.iter().any(|bound| bound == &name)
+            && !snapshot_exports.iter().any(|(seen, _)| seen == &name)
+        {
+            snapshot_exports.push((name, stmt.span().start));
+        }
         // The declaration initializers themselves are not reassignments.
         if matches!(
             stmt,
@@ -338,16 +352,83 @@ fn reassigned_top_level_bindings(body: &[Statement<'_>]) -> Vec<String> {
         ) {
             continue;
         }
+        let offset = stmt.span().start;
         for name in assigned_identifiers_in_statement(stmt) {
             if declared.iter().any(|bound| bound == &name)
-                && !reassigned.iter().any(|seen: &String| seen == &name)
+                && !reassigned.iter().any(|(seen, _)| seen == &name)
             {
-                reassigned.push(name);
+                reassigned.push((name, offset));
             }
         }
     }
     // `UpdateExpression` (`price++`, `++price`) is covered by the walk above.
+    // `export default price` snapshots the value for default importers only.
+    // A binding that is also a named export (`export let price`, `export {
+    // price }`, `export { price as alias }`) is live for named importers, who
+    // observe the later write, so the snapshot cannot excuse it (fail-closed).
+    let named_exports = named_exported_locals(body);
     reassigned
+        .into_iter()
+        .filter(|(name, reassigned_at)| {
+            named_exports.iter().any(|exported| exported == name)
+                || !snapshot_exports.iter().any(|(exported, exported_at)| {
+                    exported == name && *exported_at < *reassigned_at
+                })
+        })
+        .map(|(name, _)| name)
+        .collect()
+}
+
+/// Local names a top-level source-less named export exposes as live
+/// bindings: `export let|var|function name`, `export { name }` and
+/// `export { name as alias }` (but not `as default`, which the caller treats
+/// separately).
+fn named_exported_locals(body: &[Statement<'_>]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for stmt in body {
+        let Statement::ExportNamedDeclaration(export) = stmt else {
+            continue;
+        };
+        match &export.declaration {
+            Some(oxc_ast::ast::Declaration::VariableDeclaration(decl)) => {
+                for declarator in &decl.declarations {
+                    for identifier in declarator.id.get_binding_identifiers() {
+                        out.push(identifier.name.to_string());
+                    }
+                }
+            }
+            Some(oxc_ast::ast::Declaration::FunctionDeclaration(func)) => {
+                if let Some(id) = &func.id {
+                    out.push(id.name.to_string());
+                }
+            }
+            _ => {}
+        }
+        if export.source.is_none() {
+            for specifier in &export.specifiers {
+                if let Some(name) = specifier.local.identifier_name() {
+                    out.push(name.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Local name snapshotted by `export default ident` / `export default
+/// (ident)`. Live `export { ident as default }` is not a snapshot.
+fn snapshot_default_export_local(stmt: &Statement<'_>) -> Option<String> {
+    let Statement::ExportDefaultDeclaration(export) = stmt else {
+        return None;
+    };
+    let mut expression = export.declaration.as_expression()?;
+    while let Expression::ParenthesizedExpression(paren) = expression {
+        expression = &paren.expression;
+    }
+    match expression {
+        Expression::Identifier(ident) => Some(ident.name.to_string()),
+        _ => None,
+    }
 }
 
 /// Plain identifier writes inside one top-level statement: `name = ...`

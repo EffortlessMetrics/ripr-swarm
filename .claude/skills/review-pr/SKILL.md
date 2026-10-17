@@ -174,11 +174,14 @@ Track:
 - test oracle;
 - public claim;
 - generated relationships;
+- golden drift inherited from a main change;
 - conflict resolution;
 - integration basis;
 - candidate head identity.
 
 Refresh only dimensions changed by a later edit. Unrelated `main` movement does not invalidate the review.
+
+Golden drift inherited from a main change has one mainline repair owner. Do not re-bless main-caused drift inside an unrelated candidate PR, and do not block an unrelated candidate on drift already owned by that mainline repair. Drift introduced by the candidate's own diff remains the candidate's repair responsibility, and no golden is re-blessed without independent semantic justification.
 
 # Valid outcomes
 

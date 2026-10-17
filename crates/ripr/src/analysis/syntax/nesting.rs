@@ -50,6 +50,42 @@ pub(crate) fn parse_clean_source_file(text: &str) -> Option<Parse<SourceFile>> {
 /// current edition alone and its whole file fell to lexical fallback. The
 /// 2021 parse is used only when it is error-free.
 pub(crate) fn parse_source_file(text: &str) -> Parse<SourceFile> {
+    if text.len() > PARSE_CACHE_MAX_BYTES {
+        return parse_source_file_uncached(text);
+    }
+    PARSE_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some(position) = cache.iter().position(|(source, _)| source == text) {
+            // Move-to-front keeps the hot file resident.
+            let entry = cache.remove(position);
+            let parse = entry.1.clone();
+            cache.insert(0, entry);
+            return parse;
+        }
+        let parse = parse_source_file_uncached(text);
+        cache.insert(0, (text.to_string(), parse.clone()));
+        cache.truncate(PARSE_CACHE_ENTRIES);
+        parse
+    })
+}
+
+/// Per-thread memo of recent parses, keyed by the full source text (equality,
+/// never a hash), so a hit is exactly the parse a fresh call would return.
+/// Classification asks the same file the same question once per
+/// (probe, related test) pair; without the memo each ask re-parsed the whole
+/// file (regex `64ad0b6`: 148 s, nearly all in this reparse). Parses are
+/// immutable green trees, so sharing a clone is observationally identical.
+const PARSE_CACHE_ENTRIES: usize = 4;
+const PARSE_CACHE_MAX_BYTES: usize = 512 * 1024;
+
+type ParseCacheEntries = Vec<(String, Parse<SourceFile>)>;
+
+thread_local! {
+    static PARSE_CACHE: std::cell::RefCell<ParseCacheEntries> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn parse_source_file_uncached(text: &str) -> Parse<SourceFile> {
     let parse = SourceFile::parse(text, Edition::CURRENT);
     if parse.errors().is_empty() {
         return parse;
@@ -282,6 +318,49 @@ pub(crate) fn non_code_token_end(text: &str, index: usize) -> Option<usize> {
     Some(end.min(text.len()))
 }
 
+/// 1-based lines of `text` that hold only block-comment content (`/* .. */`,
+/// `/*! .. */`, `/** .. */`, including interior lines). A line that also
+/// carries code before the opening or after the closing delimiter is not
+/// listed. Line comments are not listed; callers already skip them by prefix.
+pub(crate) fn block_comment_only_lines(text: &str) -> std::collections::BTreeSet<usize> {
+    let mut lines = std::collections::BTreeSet::new();
+    if !text.contains("/*") {
+        return lines;
+    }
+    let mut line_starts = vec![0usize];
+    line_starts.extend(text.match_indices('\n').map(|(offset, _)| offset + 1));
+    let line_of = |offset: usize| line_starts.partition_point(|start| *start <= offset);
+    let line_start = |line: usize| line_starts[line - 1];
+    let mut index = 0;
+    while index < text.len() {
+        match non_code_token_end(text, index) {
+            Some(end) if end > index => {
+                if text[index..].starts_with("/*") {
+                    let first = line_of(index);
+                    let last = line_of(end.saturating_sub(1).max(index));
+                    let before_blank = text[line_start(first)..index].trim().is_empty();
+                    let line_end = text[end..]
+                        .find('\n')
+                        .map_or(text.len(), |offset| end + offset);
+                    let after_blank = text[end..line_end].trim().is_empty();
+                    for line in first..=last {
+                        let opens_with_code = line == first && !before_blank;
+                        let closes_with_code = line == last && !after_blank;
+                        if !opens_with_code && !closes_with_code {
+                            lines.insert(line);
+                        }
+                    }
+                }
+                index = end;
+            }
+            _ => {
+                index += text[index..].chars().next().map_or(1, char::len_utf8);
+            }
+        }
+    }
+    lines
+}
+
 fn skip_line(bytes: &[u8], mut index: usize) -> usize {
     while bytes.get(index).is_some_and(|b| *b != b'\n') {
         index += 1;
@@ -373,7 +452,54 @@ fn skip_char_or_lifetime(text: &str, index: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    /// #8389: the memo returns exactly the parse a fresh call would, for
+    /// repeated and interleaved sources, so classification results cannot
+    /// depend on call order.
+    #[test]
+    fn parse_source_file_memo_matches_a_fresh_parse_for_interleaved_sources() {
+        let sources = [
+            "fn a() { let x = 1; }\n",
+            "struct W; impl W { fn f(&self) {} }\n",
+            "fn broken( {\n",
+        ];
+        for round in 0..3 {
+            for text in sources.iter().chain(sources.iter().rev()) {
+                let cached = parse_source_file(text);
+                let fresh = parse_source_file_uncached(text);
+                assert_eq!(
+                    format!("{:#?}", cached.syntax_node()),
+                    format!("{:#?}", fresh.syntax_node()),
+                    "round {round}: {text}"
+                );
+                assert_eq!(cached.errors().len(), fresh.errors().len(), "{text}");
+            }
+        }
+        // More distinct sources than cache slots still return correct parses.
+        for n in 0..(PARSE_CACHE_ENTRIES * 2) {
+            let text = format!("fn f{n}() {{}}\n");
+            let parse = parse_source_file(&text);
+            assert!(parse.errors().is_empty(), "{text}");
+            assert!(format!("{:?}", parse.syntax_node()).contains("SOURCE_FILE"));
+            assert!(parse.syntax_node().text().to_string() == text, "{text}");
+        }
+    }
+
     use super::*;
+
+    #[test]
+    fn block_comment_only_lines_lists_interior_lines_and_not_code_lines() {
+        let source = "fn f() {}\n/* name: value\n   x < y\n*/\nlet a = 1; /* tail */\n/* head */ let b = 2;\nlet s = \"/* not a comment\";\nlet c = 3;\n";
+        let lines = block_comment_only_lines(source);
+        assert_eq!(lines.into_iter().collect::<Vec<_>>(), vec![2, 3, 4]);
+    }
+
+    #[test]
+    fn block_comment_only_lines_handles_doc_blocks_and_nesting() {
+        let source =
+            "/*! crate\n For example:\n*/\n/** doc /* nested */ still\ncomment */\nfn g() {}\n";
+        let lines = block_comment_only_lines(source);
+        assert_eq!(lines.into_iter().collect::<Vec<_>>(), vec![1, 2, 3, 4, 5]);
+    }
 
     #[test]
     fn a_rust_2021_gen_identifier_parses_clean_and_real_errors_do_not() {

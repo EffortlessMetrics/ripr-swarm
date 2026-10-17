@@ -3,8 +3,8 @@
 //! Oracle extraction intentionally retains deferred assertions. This query
 //! admits only uniquely identified assertions on ordinary statement paths,
 //! optionally through one syntactically bound, directly invoked closure.
-//! A test may also borrow the `assert_eq!` of one test-local check helper it
-//! calls eagerly (#6482); see [`local_helper_assertions`].
+//! A test may also borrow the `assert_eq!` or `assert!` of one test-local check
+//! helper it calls eagerly (#6482, #7788); see [`local_helper_assertions`].
 
 mod fallible_check;
 mod literal_json;
@@ -890,6 +890,63 @@ fn macro_binding_ambiguities(
                     }
                 }
             }
+        }
+    }
+    // A trusted name with a binding site is no longer a known macro, so its
+    // arguments are only tokens too (#5941): `vec!(assert_eq!(mod tests;))`
+    // beside `macro_rules! vec` can emit `macro_rules! assert_eq` and the
+    // module whose tests then use it. The first pass skips trusted calls, so
+    // run to a fixpoint: a name bound through one call's arguments makes its
+    // own calls opaque in turn.
+    let mut bound: BTreeSet<String> = ambiguous.iter().map(|(name, _)| name.clone()).collect();
+    let mut reported = BTreeSet::new();
+    loop {
+        let before = bound.len();
+        for node in parse.tree().syntax().descendants() {
+            let Some(call) = ast::MacroCall::cast(node.clone()) else {
+                continue;
+            };
+            let Some(path) = call.path() else { continue };
+            let path = path.syntax().text().to_string();
+            if !bound.contains(path.trim_start_matches("r#")) || !is_trusted_macro(&path, trusted) {
+                continue;
+            }
+            let Some(tree) = call.token_tree() else {
+                continue;
+            };
+            let tokens: Vec<_> = tree
+                .syntax()
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .filter(|token| !token.kind().is_trivia())
+                .collect();
+            // As for an untrusted wrapper: a macro whose only definition
+            // shows an expansion that cannot bind a name stays transparent.
+            if binding_free_local_wrapper(&binding_free, &call, &tokens, trusted) {
+                continue;
+            }
+            for token in &tokens {
+                let name = token.text().trim_start_matches("r#");
+                if trusted.contains(&name) {
+                    bound.insert(name.to_string());
+                    let line = line_of(&node);
+                    if !reported.insert((name.to_string(), line, path.clone())) {
+                        continue;
+                    }
+                    ambiguous.push((
+                        name.to_string(),
+                        MacroBindingSite {
+                            line,
+                            kind: MacroBindingKind::MacroArgument(path.clone()),
+                            scope: None,
+                            crate_local: false,
+                        },
+                    ));
+                }
+            }
+        }
+        if bound.len() == before {
+            break;
         }
     }
     ambiguous
@@ -2076,8 +2133,13 @@ fn local_helper_assertions(
             .descendants()
             .filter_map(ast::MacroCall::cast)
         {
+            // The same candidate spellings as the test's own assertions.
+            // Their execution and bindings still pass the shared helper gate.
             if call.path().is_none_or(|path| {
-                !names_candidate_assertion(&path.syntax().text().to_string(), &["assert_eq"])
+                !names_candidate_assertion(
+                    &path.syntax().text().to_string(),
+                    &["assert_eq", "assert"],
+                )
             }) {
                 continue;
             }

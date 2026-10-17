@@ -42,6 +42,7 @@
       "items": { "type": "string", "minLength": 1 }
     },
     "binary": { "$ref": "#/$defs/binary_identity" },
+    "canonical_next_action": { "$ref": "#/$defs/canonical_next_action" },
     "detected_languages": {
       "description": "Languages the root marker scan found, whether or not the configuration enables them (schema 0.4). Omitted when no marker was found.",
       "type": "array",
@@ -67,6 +68,107 @@
     "perl_preview": { "$ref": "#/$defs/perl_preview" }
   },
   "$defs": {
+    "canonical_next_action": {
+      "description": "Canonical next action (canonical_next_action.v1, #6986) for a precise doctor recovery, produced by the same decision the human `- Safe next action:` line follows. Additive, no schema_version bump. Omitted when the first-command state names a runnable command rather than a recovery, and for the source-build profile; `stop.check_name` names the failing check.",
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "schema_version",
+        "producer",
+        "subject",
+        "action_class",
+        "non_claim"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "canonical_next_action.v1"
+        },
+        "producer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "subject": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": [
+            "root",
+            "diff_source"
+          ],
+          "properties": {
+            "root": {
+              "type": "string",
+              "minLength": 1
+            },
+            "diff_source": {
+              "type": "object"
+            },
+            "item": {
+              "$ref": "#/$defs/nullable_string"
+            }
+          }
+        },
+        "currentness": {
+          "type": "object"
+        },
+        "action_class": {
+          "type": "string",
+          "enum": [
+            "run_command",
+            "inspect_details",
+            "choose_item",
+            "choose_attempt",
+            "satisfy_prerequisite",
+            "retry_current_subject",
+            "terminal_no_action",
+            "unsupported_or_limited"
+          ]
+        },
+        "command": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "stop": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "required": [
+            "kind",
+            "check_name"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string"
+            },
+            "check_name": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "expected_transition": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "alternatives": {
+          "type": "array"
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "non_claim": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "doctor_status": {
       "description": "The top-level outcome. `fail` is what maps to the exit code documented in docs/EXIT_CODES.md.",
       "enum": ["pass", "fail"]
@@ -304,6 +406,7 @@
         "adapter_compiled",
         "producer",
         "ignored_configured_executable",
+        "canonical_exporter_on_path",
         "exporter",
         "expected_schema",
         "test_roots",
@@ -323,6 +426,10 @@
         "ignored_configured_executable": {
           "description": "A configured `[perl].executable` the opt-in gate refused to run. Reported so a user can see why the configured path was not probed.",
           "$ref": "#/$defs/nullable_string"
+        },
+        "canonical_exporter_on_path": {
+          "description": "Whether the canonical `perl-ripr-facts` exporter resolves on PATH. PATH-only; says nothing about compatibility (see `exporter`).",
+          "type": "boolean"
         },
         "exporter": { "$ref": "#/$defs/perl_exporter" },
         "expected_schema": { "type": "string", "minLength": 1 },

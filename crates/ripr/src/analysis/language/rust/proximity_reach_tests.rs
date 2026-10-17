@@ -791,3 +791,158 @@ fn a_trait_default_method_owner_keeps_the_gap() -> Result<(), String> {
     assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
     Ok(())
 }
+
+// #6778: one two-line diff asks the proximity gate about two arms. Count
+// actual lazy graph builds through the retained Rust adapter, not calls to
+// its cheap constructor, and pin output separately from the resource oracle.
+const TWO_ARM_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -20,6 +20,6 @@ impl FromStr for Unit {\n pub fn seconds(u: Unit) -> u64 {\n     match u {\n-        Unit::Week => 600_000,\n-        Unit::Fortnight => 1_296_000,\n+        Unit::Week => 604_800,\n+        Unit::Fortnight => 1_209_600,\n     }\n }\n";
+
+fn shared_reach_source() -> String {
+    // Keep the retained fixture bytes local so packaged crate tests do not
+    // acquire a compile-time dependency on the repository fixture directory.
+    let source = r#"use std::str::FromStr;
+
+#[derive(Debug, PartialEq)]
+pub enum Unit {
+    Week,
+    Fortnight,
+}
+
+impl FromStr for Unit {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, ()> {
+        match s {
+            "week" => Ok(Unit::Week),
+            "fortnight" => Ok(Unit::Fortnight),
+            _ => Err(()),
+        }
+    }
+}
+
+pub fn seconds(u: Unit) -> u64 {
+    match u {
+        Unit::Week => 604_800,
+        Unit::Fortnight => 1_209_600,
+    }
+}
+
+pub fn seconds_bridge(u: Unit) -> u64 {
+    seconds(u)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn seconds_total() {
+        let total: u64 = ["week", "fortnight"]
+            .iter()
+            .map(|s| seconds(Unit::from_str(s).unwrap()))
+            .sum();
+        assert_eq!(total, 1_814_400);
+    }
+
+    #[test]
+    fn bridge_fortnight() {
+        assert_eq!(seconds_bridge(Unit::Fortnight), 1_209_600);
+    }
+
+    #[test]
+    fn from_str_fortnight() {
+        assert!(matches!(Unit::from_str("fortnight"), Ok(Unit::Fortnight)));
+    }
+}
+"#;
+    format!(
+        "{source}\npub fn fixture(u: Unit) -> u64 {{\n    match u {{ Unit::Week => 604_800, Unit::Fortnight => 1_209_600 }}\n}}\n"
+    )
+}
+
+impl Fixture {
+    fn arm_findings(&self) -> Result<Vec<Finding>, String> {
+        let result = RustAdapter.analyze_diff(
+            &AnalysisOptions {
+                root: self.0.clone(),
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                perl_producer_failure: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &diff::parse_unified_diff(TWO_ARM_DIFF),
+        )?;
+        let arms: Vec<_> = result
+            .findings
+            .into_iter()
+            .filter(|finding| finding.probe.family == crate::domain::ProbeFamily::MatchArm)
+            .collect();
+        assert_eq!(arms.len(), 2, "both changed arms must reach classification");
+        Ok(arms)
+    }
+}
+
+fn fortnight_class(findings: &[Finding]) -> Result<ExposureClass, String> {
+    findings
+        .iter()
+        .find(|finding| finding.probe.expression == "Unit::Fortnight =>")
+        .map(|finding| finding.class.clone())
+        .ok_or_else(|| "missing changed Fortnight arm".to_string())
+}
+
+#[test]
+fn proximity_graph_is_shared_across_changed_arms_cold_and_warm() -> Result<(), String> {
+    use crate::analysis::classify::TransitiveReachIndex;
+
+    let fixture = Fixture::new("shared-graph", &shared_reach_source())?;
+    let start = TransitiveReachIndex::graph_build_count();
+    let cold = fixture.arm_findings()?;
+    assert_eq!(fortnight_class(&cold)?, ExposureClass::Exposed);
+    assert_eq!(TransitiveReachIndex::graph_build_count() - start, 1);
+
+    let start = TransitiveReachIndex::graph_build_count();
+    let warm = fixture.arm_findings()?;
+    assert_eq!(
+        serde_json::to_string(&cold).map_err(|e| e.to_string())?,
+        serde_json::to_string(&warm).map_err(|e| e.to_string())?
+    );
+    assert_eq!(TransitiveReachIndex::graph_build_count() - start, 1);
+    Ok(())
+}
+
+#[test]
+fn proximity_graph_rebuilds_after_a_same_path_helper_edit() -> Result<(), String> {
+    use crate::analysis::classify::TransitiveReachIndex;
+
+    let source = shared_reach_source();
+    let fixture = Fixture::new("edited-graph", &source)?;
+    let before = fixture.arm_findings()?;
+    assert_eq!(fortnight_class(&before)?, ExposureClass::Exposed);
+
+    // Both versions return the same literal to the test, but the edited
+    // helper calls the independent implementation and cannot run `seconds`.
+    let edited = source.replacen("    seconds(u)\n", "    fixture(u)\n", 1);
+    assert_ne!(source, edited, "the helper edit must change its call edge");
+    fs::write(fixture.0.join("src/lib.rs"), edited).map_err(|e| e.to_string())?;
+    let start = TransitiveReachIndex::graph_build_count();
+    let after = fixture.arm_findings()?;
+    assert_eq!(fortnight_class(&after)?, ExposureClass::WeaklyExposed);
+    assert_eq!(TransitiveReachIndex::graph_build_count() - start, 1);
+
+    fs::write(fixture.0.join("src/lib.rs"), source).map_err(|e| e.to_string())?;
+    let restored = fixture.arm_findings()?;
+    assert_eq!(
+        serde_json::to_string(&before).map_err(|e| e.to_string())?,
+        serde_json::to_string(&restored).map_err(|e| e.to_string())?
+    );
+    Ok(())
+}

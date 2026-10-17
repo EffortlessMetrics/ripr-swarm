@@ -164,6 +164,7 @@ fn doctor_json(
     {
         report.add_advisory_check("linker_temp_redirect", advisory);
     }
+    report.attach_canonical_next_action(root);
     println!("{}", report.render_json()?);
     output::doctor::doctor_report_result(&report)
 }
@@ -580,6 +581,10 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
     lines.extend(detected_languages_lines(
         &environment.facts.detected_languages,
         &environment.facts.unanalyzed_source_languages,
+    ));
+    lines.extend(perl_not_enabled_line(
+        &environment.facts.detected_languages,
+        environment.facts.perl_preview.as_ref(),
     ));
     // Compact keeps the ignored-[perl].executable disclosure: the full
     // Perl preview dump is verbose-only, but this line is a safety
@@ -1930,6 +1935,33 @@ fn ignored_perl_executable_disclosure(refused: &str) -> String {
     )
 }
 
+/// One line for a workspace where Perl is detected and its adapter is compiled
+/// in but `[languages] enabled` omits it: `ripr check` skips Perl until the
+/// config says otherwise. Names the managed-mode config and whether the
+/// canonical exporter is on PATH. Silent when Perl is enabled, not detected,
+/// not compiled (the detected-languages line already says so), or when
+/// enablement is unknown (config failed to load).
+fn perl_not_enabled_line(
+    detected: &[output::doctor::DoctorDetectedLanguage],
+    preview: Option<&output::doctor::DoctorPerlPreview>,
+) -> Option<String> {
+    let perl = detected
+        .iter()
+        .find(|language| language.language == LanguageId::Perl.as_str())?;
+    if !perl.adapter_available || perl.enabled != Some(false) {
+        return None;
+    }
+    let exporter = crate::domain::PERL_FACT_EXPORTER;
+    let on_path = match preview {
+        Some(p) if p.canonical_exporter_on_path => "is on PATH",
+        Some(_) => "is NOT on PATH",
+        None => "PATH state unknown",
+    };
+    Some(format!(
+        "~ Perl is detected but not enabled, so `ripr check` skips it. Add \"perl\" to `enabled` under `[languages]` and set `producer = \"{exporter}\"` under `[perl]` in ripr.toml; `{exporter}` {on_path}"
+    ))
+}
+
 fn ignored_perl_executable_compact_line(
     preview: Option<&output::doctor::DoctorPerlPreview>,
 ) -> Option<String> {
@@ -2066,6 +2098,7 @@ fn probe_perl_preview(
         adapter_compiled,
         producer: producer_configured.clone(),
         ignored_configured_executable: refused_executable.map(|path| path.display().to_string()),
+        canonical_exporter_on_path: doctor_program(crate::domain::PERL_FACT_EXPORTER).is_some(),
         exporter: exporter_typed(&exporter),
         expected_schema: crate::app::PERL_FACT_PACKET_SCHEMA.to_string(),
         test_roots: detect_perl_test_roots(root),
@@ -3270,6 +3303,87 @@ mod tests {
         );
     }
 
+    fn perl_preview_with_exporter_on_path(on_path: bool) -> output::doctor::DoctorPerlPreview {
+        output::doctor::DoctorPerlPreview {
+            pm_files: 1,
+            pl_files: 0,
+            t_files: 0,
+            adapter_compiled: true,
+            producer: None,
+            ignored_configured_executable: None,
+            canonical_exporter_on_path: on_path,
+            exporter: output::doctor::DoctorPerlExporter {
+                state: output::doctor::DoctorPerlExporterState::NotFound,
+                executable: None,
+                version: None,
+            },
+            expected_schema: "1".to_string(),
+            test_roots: Vec::new(),
+            frameworks: Vec::new(),
+            runners: Vec::new(),
+            next_command: "next".to_string(),
+        }
+    }
+
+    #[test]
+    fn perl_detected_but_not_enabled_names_config_and_exporter_path_state() {
+        let mut perl = detected_entry(LanguageId::Perl, true);
+        perl.enabled = Some(false);
+        let detected = [perl];
+
+        let missing =
+            perl_not_enabled_line(&detected, Some(&perl_preview_with_exporter_on_path(false)))
+                .unwrap_or_default();
+        assert!(missing.contains("detected but not enabled"), "{missing}");
+        assert!(missing.contains("[languages]"), "{missing}");
+        assert!(
+            missing.contains("producer = \"perl-ripr-facts\""),
+            "{missing}"
+        );
+        assert!(missing.contains("[perl]"), "{missing}");
+        assert!(
+            missing.contains("`perl-ripr-facts` is NOT on PATH"),
+            "{missing}"
+        );
+
+        let found =
+            perl_not_enabled_line(&detected, Some(&perl_preview_with_exporter_on_path(true)))
+                .unwrap_or_default();
+        assert!(found.contains("`perl-ripr-facts` is on PATH"), "{found}");
+    }
+
+    #[test]
+    fn perl_not_enabled_line_stays_silent_when_it_would_mislead() {
+        let preview = perl_preview_with_exporter_on_path(true);
+        let mut enabled = detected_entry(LanguageId::Perl, true);
+        enabled.enabled = Some(true);
+        let mut unknown = detected_entry(LanguageId::Perl, true);
+        unknown.enabled = None;
+        let mut not_compiled = detected_entry(LanguageId::Perl, false);
+        not_compiled.enabled = Some(false);
+        let mut rust = detected_entry(LanguageId::Rust, true);
+        rust.enabled = Some(false);
+        for case in [enabled, unknown, not_compiled, rust] {
+            assert_eq!(
+                perl_not_enabled_line(std::slice::from_ref(&case), Some(&preview)),
+                None,
+                "{case:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn compact_screen_carries_perl_not_enabled_line() {
+        let report = passing_report();
+        let mut environment = empty_environment();
+        let mut perl = detected_entry(LanguageId::Perl, true);
+        perl.enabled = Some(false);
+        environment.facts.detected_languages = vec![perl];
+        environment.facts.perl_preview = Some(perl_preview_with_exporter_on_path(false));
+        let text = render_screen(&report, &environment, false, true).join("\n");
+        assert!(text.contains("Perl is detected but not enabled"), "{text}");
+    }
+
     #[test]
     fn compact_discloses_ignored_perl_executable() {
         let report = passing_report();
@@ -3281,6 +3395,7 @@ mod tests {
             adapter_compiled: false,
             producer: Some("perl-ripr-facts".to_string()),
             ignored_configured_executable: Some("sh".to_string()),
+            canonical_exporter_on_path: false,
             exporter: output::doctor::DoctorPerlExporter {
                 state: output::doctor::DoctorPerlExporterState::NotFound,
                 executable: None,
@@ -3325,6 +3440,7 @@ mod tests {
             adapter_compiled: false,
             producer: Some("perl-ripr-facts".to_string()),
             ignored_configured_executable: Some("sh\n! doctor checks passed\u{1b}[2J".to_string()),
+            canonical_exporter_on_path: false,
             exporter: output::doctor::DoctorPerlExporter {
                 state: output::doctor::DoctorPerlExporterState::NotFound,
                 executable: None,
@@ -3625,6 +3741,7 @@ mod tests {
             adapter_compiled: false,
             producer: Some("perl-ripr-facts".to_string()),
             ignored_configured_executable: Some("sh".to_string()),
+            canonical_exporter_on_path: false,
             exporter: output::doctor::DoctorPerlExporter {
                 state: output::doctor::DoctorPerlExporterState::NotFound,
                 executable: None,

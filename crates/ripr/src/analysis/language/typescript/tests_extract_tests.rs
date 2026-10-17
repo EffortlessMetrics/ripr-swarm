@@ -665,6 +665,124 @@ describe("suite", { skip: false, concurrency: 1 }, () => {
     assert!(detect_partial_test_extraction(file, source, &tests).is_none());
 }
 
+#[test]
+fn report_snippet_collapses_complete_multiline_spans_before_bounding() {
+    for newline in ["\n", "\r\n"] {
+        let source = format!(
+            "test({newline}{}'id',{newline}{}() => {{ work(); }}{newline});",
+            " ".repeat(64),
+            " ".repeat(64)
+        );
+        assert!(source.chars().count() > 80);
+        assert_eq!(
+            snippet_for_span(&source, 0, source.len()),
+            "test( 'id', () => { work(); } );"
+        );
+    }
+}
+
+#[test]
+fn report_snippet_keeps_selected_file_boundaries_and_refuses_invalid_spans() {
+    for newline in ["\n", "\r\n"] {
+        let source = format!("first();{newline}decoy();{newline}last();");
+        assert_eq!(snippet_for_span(&source, 0, 8), "first();");
+        assert_eq!(
+            snippet_for_span(&source, source.len() - 7, source.len()),
+            "last();"
+        );
+        assert_eq!(snippet_for_span(&source, source.len(), source.len()), "");
+        assert_eq!(
+            snippet_for_span(&source, source.len() + 1, source.len() + 1),
+            ""
+        );
+        assert_eq!(snippet_for_span(&source, 8, 0), "");
+    }
+    assert_eq!(snippet_for_span("界", 1, 3), "");
+}
+
+#[test]
+fn report_snippet_marks_only_display_overflow_and_counts_unicode_scalars() {
+    for length in [77, 78, 79, 80] {
+        let source = "界".repeat(length);
+        assert_eq!(snippet_for_span(&source, 0, source.len()), source);
+    }
+    let source = "界".repeat(81);
+    assert_eq!(
+        snippet_for_span(&source, 0, source.len()),
+        format!("{}...", "界".repeat(77))
+    );
+    let source = format!("first{}{}", " ".repeat(100), "界".repeat(90));
+    assert_eq!(
+        snippet_for_span(&source, 0, source.len()),
+        format!("first {}...", "界".repeat(71))
+    );
+    // A long raw span that normalizes to exactly the bound is still complete.
+    let source = format!(" {}{} ", "界".repeat(80), "\r\n".repeat(100));
+    assert_eq!(snippet_for_span(&source, 0, source.len()), "界".repeat(80));
+}
+
+#[test]
+fn report_snippet_partial_test_disclosure_preserves_file_line_and_closing_tokens()
+-> Result<(), String> {
+    let file = Path::new("test/selected.test.js");
+    for newline in ["\n", "\r\n"] {
+        let source = format!(
+            "import {{ test }} from 'node:test';{newline}async function register() {{{newline}  await test({newline}{}'id',{newline}{}() => {{ expect(nanoid().length).toBe(21); }}{newline}  );{newline}}}{newline}",
+            " ".repeat(64),
+            " ".repeat(64)
+        );
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "helper registrations must stay unindexed");
+        let gap = detect_partial_test_extraction(file, &source, &tests)
+            .ok_or_else(|| "expected a real partial-extraction gap".to_string())?;
+        assert_eq!(gap.file, file);
+        assert_eq!(gap.sample_line, 3);
+        assert_eq!(
+            gap.snippet,
+            "test( 'id', () => { expect(nanoid().length).toBe(21); } )"
+        );
+        let limitation = test_extraction_partial_limitation(&gap);
+        assert_eq!(limitation.sample_source, "test/selected.test.js:3");
+        assert!(
+            limitation
+                .why_not_actionable
+                .contains(&format!("`{}`", gap.snippet))
+        );
+        assert!(
+            limitation
+                .evidence_lines()
+                .iter()
+                .any(|line| line.contains(&gap.snippet))
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn report_snippet_partial_owner_disclosure_preserves_selected_source_identity() -> Result<(), String>
+{
+    let file = Path::new("src/selected.ts");
+    for newline in ["\n", "\r\n"] {
+        let source = format!(
+            "class Decoy {{ ordinary() {{ return 0; }} }}{newline}class Selected {{{newline}  chosen = ({newline}{}value: number{newline}  ) => value + 1;{newline}}}{newline}",
+            " ".repeat(100)
+        );
+        let gap = detect_owner_extraction_gap(file, &source, &[4])
+            .ok_or_else(|| "expected a real unsupported class-field owner".to_string())?;
+        assert_eq!(gap.file, file);
+        assert_eq!(gap.sample_line, 4);
+        assert_eq!(gap.snippet, "chosen = ( value: number ) => value + 1;");
+        let limitation = owner_extraction_partial_limitation(&gap);
+        assert_eq!(limitation.sample_source, "src/selected.ts:4");
+        assert!(
+            limitation
+                .why_not_actionable
+                .contains(&format!("`{}`", gap.snippet))
+        );
+    }
+    Ok(())
+}
+
 /// RIPR-SPEC-0249 / RIPR-SPEC-0250 (amended 2026-10-15): a test file's
 /// identity helpers are the top-level, unexported one-parameter functions
 /// whose body is exactly `return p;` (or an arrow `p => p`) and whose name

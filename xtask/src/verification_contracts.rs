@@ -458,6 +458,7 @@ const CONTRACTS: &[VerificationContract] = &[
             "cache",
             "test_surfaces[]",
             "perl_preview",
+            "canonical_next_action",
         ],
     },
     VerificationContract {

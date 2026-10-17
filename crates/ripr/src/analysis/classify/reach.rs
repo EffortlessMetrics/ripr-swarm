@@ -181,25 +181,34 @@ pub(in crate::analysis) fn includes_external_docs(source: &str) -> bool {
     if !source.contains("doc") || !source.contains('!') {
         return false;
     }
-    #[cfg(test)]
-    EXTERNAL_DOCS_PARSE_COUNT.with(|count| count.set(count.get() + 1));
-    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
-        return true;
-    };
-    parse
-        .tree()
-        .syntax()
-        .descendants()
-        .filter_map(ast::Attr::cast)
-        .any(|attribute| {
-            attribute.meta().is_some_and(|meta| {
-                meta.skip_cfg_attrs().into_iter().any(|meta| {
-                    meta.simple_name().is_some_and(|name| name == "doc")
-                        && matches!(meta, ast::Meta::KeyValueMeta(value)
-                        if !matches!(value.expr(), Some(ast::Expr::Literal(_))))
+    // Pure in the source text, and rescanned for every overlapping index a
+    // diff run builds (#5363), so a run scope computes each text once.
+    crate::analysis::syntax::run_memo::memoize(
+        crate::analysis::syntax::run_memo::Product::ExternalDocs,
+        0,
+        source,
+        || {
+            #[cfg(test)]
+            EXTERNAL_DOCS_PARSE_COUNT.with(|count| count.set(count.get() + 1));
+            let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+                return true;
+            };
+            parse
+                .tree()
+                .syntax()
+                .descendants()
+                .filter_map(ast::Attr::cast)
+                .any(|attribute| {
+                    attribute.meta().is_some_and(|meta| {
+                        meta.skip_cfg_attrs().into_iter().any(|meta| {
+                            meta.simple_name().is_some_and(|name| name == "doc")
+                                && matches!(meta, ast::Meta::KeyValueMeta(value)
+                                if !matches!(value.expr(), Some(ast::Expr::Literal(_))))
+                        })
+                    })
                 })
-            })
-        })
+        },
+    )
 }
 
 /// Parser-backed owner ids carry their impl segment
