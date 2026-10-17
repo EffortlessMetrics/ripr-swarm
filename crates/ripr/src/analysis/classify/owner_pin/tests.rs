@@ -2358,6 +2358,36 @@ fn only_a_plain_assert_eq_against_an_owner_free_value_pins() {
 }
 
 #[test]
+fn a_test_written_expected_file_lends_no_weight_pin() {
+    // #8097: the test rewrites its expected file from the owner before
+    // comparing, inline or through a plain (annotated) binding.
+    for body in [
+        "    std::fs::write(\"w.txt\", weight(4).to_string()).unwrap();\n    assert_eq!(weight(4), std::fs::read_to_string(\"w.txt\").unwrap().parse::<u32>().unwrap());",
+        "    std::fs::write(\"w.txt\", weight(4).to_string()).unwrap();\n    let want: String = std::fs::read_to_string(\"w.txt\").unwrap();\n    assert_eq!(weight(4), want.parse::<u32>().unwrap());",
+        "    std::fs::write(\"w.txt\", weight(4).to_string()).unwrap();\n    let want = std::fs::read_to_string(\"w.txt\").unwrap();\n    let got = want;\n    assert_eq!(weight(4), got.parse::<u32>().unwrap());",
+    ] {
+        let tests = format!("use demo::weight;\n\n#[test]\nfn weighs() {{\n{body}\n}}\n");
+        assert!(weight_admitted(&tests).is_empty(), "{body}");
+    }
+    // A committed golden read with no writer still pins, and assigning a
+    // file read into a *field* does not bind the plain local of the same
+    // name.
+    let tests = "use demo::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), std::fs::read_to_string(\"w.txt\").unwrap().parse::<u32>().unwrap());\n}\n";
+    assert_eq!(
+        weight_admitted(tests),
+        vec![
+            "assert_eq!(weight(4), std::fs::read_to_string(\"w.txt\").unwrap().parse::<u32>().unwrap());"
+                .to_string()
+        ]
+    );
+    let tests = "use demo::weight;\n\n#[test]\nfn weighs() {\n    std::fs::write(\"w.txt\", \"x\").unwrap();\n    let want = 12;\n    holder.want = std::fs::read_to_string(\"w.txt\").unwrap().parse::<u32>().unwrap();\n    assert_eq!(weight(4), want);\n}\n";
+    assert_eq!(
+        weight_admitted(tests),
+        vec!["assert_eq!(weight(4), want);".to_string()]
+    );
+}
+
+#[test]
 fn a_constant_initialized_through_the_owner_is_not_an_independent_expected_value() {
     let test = |items: &str| {
         format!(
@@ -3332,6 +3362,7 @@ fn a_cfg_gated_owner_is_not_reached_by_a_bare_call() {
         let chain = SourceRoleProvenance {
             edges: vec![module_edge(LIB, "src/scale.rs", "scale", line, false)],
             earliest_unresolved_reason: None,
+            ..Default::default()
         };
         let ix = index_with_provenance(&files, &[("src/scale.rs", chain)]);
         let owner = ix.functions().iter().find(|function| {
@@ -3422,6 +3453,7 @@ fn an_ancestor_file_a_cfg_may_drop_gates_the_owner() {
         let chain = |edges: Vec<SourceRoleProvenanceEdge>| SourceRoleProvenance {
             edges,
             earliest_unresolved_reason: None,
+            ..Default::default()
         };
         let ix = index_with_provenance(
             &files,
@@ -3877,6 +3909,7 @@ fn an_out_of_line_super_glob_pins_past_the_declaring_parent() {
                 SourceRoleProvenance {
                     edges: vec![module_edge(LIB, "src/scale.rs", "scale", 1, false)],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
             (
@@ -3890,6 +3923,7 @@ fn an_out_of_line_super_glob_pins_past_the_declaring_parent() {
                         true,
                     )],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
         ],
@@ -3918,6 +3952,7 @@ fn an_out_of_line_super_use_pins_past_the_declaring_parent() {
                 SourceRoleProvenance {
                     edges: vec![module_edge(LIB, "src/scale.rs", "scale", 1, false)],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
             (
@@ -3931,6 +3966,7 @@ fn an_out_of_line_super_use_pins_past_the_declaring_parent() {
                         true,
                     )],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
         ],
@@ -3960,6 +3996,7 @@ fn an_out_of_line_super_glob_refuses_past_a_parent_twin() {
                 SourceRoleProvenance {
                     edges: vec![module_edge(LIB, "src/scale.rs", "scale", 1, false)],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
             (
@@ -3973,6 +4010,7 @@ fn an_out_of_line_super_glob_refuses_past_a_parent_twin() {
                         true,
                     )],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
         ],
@@ -5791,6 +5829,45 @@ fn refusal_site_lookups_pay_at_most_two_full_index_passes() {
     );
 }
 
+/// #8282: the seam walk shares one run-scoped [`OwnerPinSyntax`] per
+/// [`CompactGripContext`], so the #8255 two-full-index-pass bound holds
+/// for an entire walk however many seams consult the macro-binding
+/// authority. Every fixture owner is a `Vec::push` state write whose
+/// related test asserts on a differently named binding: the direct
+/// collection observer fails (the asserted subject is not the owner's
+/// receiver), so each seam's evidence takes the collection-argument path
+/// whose first authority check pays the trusted-macro ambiguity pass. A
+/// per-seam fresh instance paid it once per seam here.
+#[test]
+fn seam_walk_pays_at_most_two_full_index_passes() {
+    const PUSH_LIB: &str = "pub fn keep_first(v: &mut Vec<u32>, x: u32) {\n    v.push(x * 1);\n}\npub fn keep_second(v: &mut Vec<u32>, x: u32) {\n    v.push(x * 1);\n}\npub fn keep_third(v: &mut Vec<u32>, x: u32) {\n    v.push(x * 1);\n}\n";
+    const PUSH_TESTS: &str = "use demo::{keep_first, keep_second, keep_third};\n\n#[test]\nfn keeps_all() {\n    let mut first = Vec::new();\n    keep_first(&mut first, 11);\n    let mut second = Vec::new();\n    keep_second(&mut second, 12);\n    let mut third = Vec::new();\n    keep_third(&mut third, 13);\n    assert_eq!(first, vec![11]);\n    assert_eq!(second, vec![12]);\n    assert_eq!(third, vec![13]);\n}\n";
+    const KEEP_TESTS: &str = "tests/keep_tests.rs";
+    let index = index(&[(LIB, PUSH_LIB), (KEEP_TESTS, PUSH_TESTS)]);
+    let seams =
+        crate::analysis::seam_inventory::inventory_seams_from_index(&[PathBuf::from(LIB)], &index);
+    assert!(
+        seams.len() >= 3,
+        "fixture must yield one state-write seam per push owner, got {}",
+        seams.len()
+    );
+    let context = crate::analysis::test_grip_evidence::CompactGripContext::new(&index);
+    for seam in &seams {
+        crate::analysis::test_grip_evidence::compact_evidence_for_seam(seam, &context);
+    }
+    let passes = context.workspace_scan_passes();
+    assert!(
+        passes >= 1,
+        "the walk must consult the shared macro-binding authority for the bound to mean anything"
+    );
+    assert!(
+        passes <= 2,
+        "{} full-index passes for a {}-seam walk",
+        passes,
+        seams.len()
+    );
+}
+
 const GAUGE_LIB: &str = "pub trait Gauge {\n    fn base(&self) -> usize;\n\n    fn tally(&self) -> usize {\n        self.base() + 1\n    }\n}\n\npub struct Meter;\n\nimpl Meter {\n    pub fn new() -> Self {\n        Meter\n    }\n}\n\nimpl Gauge for Meter {\n    fn base(&self) -> usize {\n        0\n    }\n}\n";
 
 /// #5320: a default method's receiver binding `let m = Meter::new()` pins
@@ -6728,6 +6805,7 @@ fn an_out_of_line_parent_module_shadow_of_the_receiver_refuses_the_pin() {
                 SourceRoleProvenance {
                     edges: vec![module_edge(LIB, HELPERS, "helpers", 12, true)],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
             (
@@ -6738,6 +6816,7 @@ fn an_out_of_line_parent_module_shadow_of_the_receiver_refuses_the_pin() {
                         module_edge(HELPERS, CHILD, "stack_tests", 5, false),
                     ],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
         ],
@@ -6771,6 +6850,7 @@ fn an_out_of_line_test_without_a_parent_shadow_keeps_its_pin() {
                 SourceRoleProvenance {
                     edges: vec![module_edge(LIB, HELPERS, "helpers", 12, true)],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
             (
@@ -6781,6 +6861,7 @@ fn an_out_of_line_test_without_a_parent_shadow_keeps_its_pin() {
                         module_edge(HELPERS, CHILD, "stack_tests", 1, false),
                     ],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
         ],
@@ -6810,6 +6891,7 @@ fn a_parent_root_rename_of_the_receiver_refuses_the_pin() {
                     SourceRoleProvenance {
                         edges: vec![module_edge(LIB, HELPERS, "helpers", 12, true)],
                         earliest_unresolved_reason: None,
+                        ..Default::default()
                     },
                 ),
                 (
@@ -6820,6 +6902,7 @@ fn a_parent_root_rename_of_the_receiver_refuses_the_pin() {
                             module_edge(HELPERS, CHILD, "stack_tests", 3, false),
                         ],
                         earliest_unresolved_reason: None,
+                        ..Default::default()
                     },
                 ),
             ],
@@ -6854,6 +6937,7 @@ fn a_parent_root_plain_import_of_the_receiver_keeps_its_pin() {
                 SourceRoleProvenance {
                     edges: vec![module_edge(LIB, HELPERS, "helpers", 12, true)],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
             (
@@ -6864,6 +6948,7 @@ fn a_parent_root_plain_import_of_the_receiver_keeps_its_pin() {
                         module_edge(HELPERS, CHILD, "stack_tests", 3, false),
                     ],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
         ],
@@ -6901,6 +6986,7 @@ mod stack_tests;
                 SourceRoleProvenance {
                     edges: vec![module_edge(LIB, HELPERS, "helpers", 1, false)],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
             (
@@ -6911,6 +6997,7 @@ mod stack_tests;
                         module_edge(HELPERS, CHILD, "stack_tests", 12, true),
                     ],
                     earliest_unresolved_reason: None,
+                    ..Default::default()
                 },
             ),
         ],

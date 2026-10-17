@@ -694,7 +694,10 @@ pub(super) fn related_test_rank_key(
         seam,
         owner_fn,
         context.index,
-        &crate::analysis::classify::OwnerPinSyntax::default(),
+        // #8282: the run's shared instance, like every other walk stage; a
+        // per-key fresh instance re-paid the whole-index lazily computed
+        // facts once per (seam, related test) rank.
+        context.pin_syntax_mutex(),
     );
     RelatedTestRankKey {
         relation_confidence: reason.confidence().rank(),

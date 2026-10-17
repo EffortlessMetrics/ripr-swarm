@@ -1809,6 +1809,58 @@ fn pilot_offers_agent_repair_only_past_the_repair_packet_flip() -> Result<(), St
     Ok(())
 }
 
+/// The repair-start line family follows the canonical pilot decision (#6986):
+/// an eligible top seam yields a pilot-delegated stop whose route is the
+/// printed command, and the negative control (a seam past the flip) yields a
+/// typed limitation and no repair line anywhere on the screen.
+#[test]
+fn pilot_repair_line_follows_the_canonical_pilot_decision() -> Result<(), String> {
+    use crate::domain::{NextActionClass, NextActionProducer, NextActionStop};
+
+    let artifacts = pilot_artifacts();
+    let root = Path::new(".");
+
+    let eligible = route_ready_entry(&["tests/pricing.rs"]);
+    let action = commands::canonical_next_action_for_pilot(root, &eligible)?;
+    assert_eq!(action.producer(), NextActionProducer::PilotDelegation);
+    assert_eq!(action.action_class(), NextActionClass::InspectDetails);
+    let Some(NextActionStop::PilotDelegated {
+        transaction_ref,
+        route,
+    }) = action.stop()
+    else {
+        return Err(format!(
+            "expected pilot delegation, got {:?}",
+            action.stop()
+        ));
+    };
+    assert_eq!(transaction_ref, eligible.seam.id().as_str());
+    assert_eq!(
+        commands::repair_start_command(root, &eligible).as_deref(),
+        Some(route.as_str())
+    );
+    let entries = [eligible];
+    let terminal = render_pilot_terminal(&entries, pilot_context(&artifacts));
+    assert!(terminal.contains(&format!("  repair this seam: {route}\n")));
+    assert!(terminal.contains(&format!("  1. {route}\n")));
+
+    // Negative control: past the flip no delegation is bound, so the decision
+    // is a typed limitation and the screen carries no repair route.
+    let ineligible = route_ready_entry(&["tests/pricing.rs", "tests/pricing.test.ts"]);
+    let action = commands::canonical_next_action_for_pilot(root, &ineligible)?;
+    assert_eq!(action.action_class(), NextActionClass::UnsupportedOrLimited);
+    assert!(matches!(
+        action.stop(),
+        Some(NextActionStop::Unsupported { .. })
+    ));
+    assert_eq!(commands::repair_start_command(root, &ineligible), None);
+    let entries = [ineligible];
+    let terminal = render_pilot_terminal(&entries, pilot_context(&artifacts));
+    assert!(!terminal.contains("agent repair --root"), "{terminal}");
+    assert!(!terminal.contains("Next, in order:"), "{terminal}");
+    Ok(())
+}
+
 fn discovered_files(
     entries: &[(crate::domain::LanguageId, &str)],
 ) -> Vec<(crate::domain::LanguageId, PathBuf)> {
@@ -1816,6 +1868,49 @@ fn discovered_files(
         .iter()
         .map(|(language, path)| (*language, PathBuf::from(path)))
         .collect()
+}
+
+/// #4908: real discovery tags every TS/JS-family file `TypeScript`; pilot
+/// splits the JavaScript-family files into the documented `javascript` route.
+#[test]
+fn pilot_language_routes_split_real_discovery_javascript_files() {
+    use crate::domain::LanguageId;
+
+    let root = Path::new(".");
+    let enabled = [LanguageId::Rust, LanguageId::TypeScript];
+    let routes_of = |entries: &[(LanguageId, &str)]| {
+        PilotLanguageRoutes::from_discovered(root, false, &enabled, &discovered_files(entries))
+            .routes
+            .iter()
+            .map(|route| (route.language, route.file_count))
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        routes_of(&[
+            (LanguageId::TypeScript, "web/a.js"),
+            (LanguageId::TypeScript, "web/b.mjs"),
+            (LanguageId::TypeScript, "web/c.cjs"),
+            (LanguageId::TypeScript, "web/d.jsx"),
+        ]),
+        vec![(LanguageId::JavaScript, 4)],
+        "a JS-only repository gets only the javascript route"
+    );
+    assert_eq!(
+        routes_of(&[
+            (LanguageId::TypeScript, "web/a.js"),
+            (LanguageId::TypeScript, "web/b.ts"),
+            (LanguageId::TypeScript, "web/c.mts"),
+            (LanguageId::TypeScript, "web/types.d.ts"),
+        ]),
+        vec![(LanguageId::TypeScript, 3), (LanguageId::JavaScript, 1)],
+        "a mixed repository keeps both routes with each file counted once"
+    );
+    assert_eq!(
+        routes_of(&[(LanguageId::TypeScript, "web/b.ts")]),
+        vec![(LanguageId::TypeScript, 1)],
+        "a TypeScript-only repository is unchanged"
+    );
 }
 
 #[test]

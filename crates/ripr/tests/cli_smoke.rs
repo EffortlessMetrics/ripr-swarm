@@ -5349,7 +5349,10 @@ fn first_pr_check_exits_2_for_a_blocked_packet_but_write_mode_exits_0() -> Resul
     let root = unique_temp_workspace("first-pr-blocked-exit");
     std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
     let run = |extra: &[&str]| -> Result<Output, String> {
-        let mut args = vec!["first-pr", "--root", "."];
+        // Select the base explicitly so this gate test works beneath a
+        // detached CI checkout with no default-base refs. The tests above
+        // cover default-base discovery with isolated Git repositories.
+        let mut args = vec!["first-pr", "--root", ".", "--base", "HEAD"];
         args.extend_from_slice(extra);
         run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &args).map_err(|err| err.to_string())
     };
@@ -5867,7 +5870,17 @@ fn agent_card_identity_is_portable_across_equivalent_checkout_roots()
     let clone = run_command(
         "git",
         Some(&root),
-        &["clone", &root.to_string_lossy(), &second.to_string_lossy()],
+        &[
+            "clone",
+            // Windows Git defaults to autocrlf=true, which would rewrite the
+            // clone's working tree as CRLF. This test varies only the
+            // absolute root; line-ending spelling has its own test below
+            // (#5270).
+            "-c",
+            "core.autocrlf=false",
+            &root.to_string_lossy(),
+            &second.to_string_lossy(),
+        ],
     )?;
     assert!(
         clone.status.success(),
@@ -5904,6 +5917,49 @@ fn agent_card_identity_is_portable_across_equivalent_checkout_roots()
     );
     std::fs::remove_dir_all(&root)?;
     std::fs::remove_dir_all(&second)?;
+    Ok(())
+}
+
+/// #5270 / #7203: a checkout whose working tree spells line breaks as CRLF
+/// (Windows `core.autocrlf=true`) mints the same seam ID as the LF checkout,
+/// so the card finds the seam by the same ID. Runs on every host: the CRLF
+/// spelling is written explicitly instead of relying on the host's Git
+/// defaults.
+#[test]
+fn agent_card_finds_the_same_seam_in_a_crlf_spelled_checkout()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unbuilt_repair_fixture("agent-card-crlf-checkout")?;
+    let source = std::fs::read_to_string(root.join("src/lib.rs"))?;
+    assert!(
+        !source.contains('\r'),
+        "precondition: the fixture source is LF-spelled"
+    );
+    std::fs::write(root.join("src/lib.rs"), source.replace('\n', "\r\n"))?;
+    let crlf = std::fs::read(root.join("src/lib.rs"))?;
+    assert!(
+        crlf.windows(2).any(|pair| pair == b"\r\n"),
+        "precondition: the fixture source is now CRLF-spelled"
+    );
+    run_git(&root, &["add", "src/lib.rs"])?;
+    commit_repair_fixture(&root, &["-qm", "crlf spelling"])?;
+
+    let root_arg = root.display().to_string();
+    let card = run_ripr(&[
+        "agent",
+        "card",
+        "--root",
+        &root_arg,
+        "--seam-id",
+        BOUNDARY_GAP_SEAM_ID,
+        "--json",
+    ]);
+    assert_success(&card);
+    let card: serde_json::Value = serde_json::from_slice(&card.stdout)?;
+    assert_eq!(
+        card["subject"]["seam_id"], BOUNDARY_GAP_SEAM_ID,
+        "a CRLF-spelled checkout must keep the LF seam ID: {card:#}"
+    );
+    std::fs::remove_dir_all(root)?;
     Ok(())
 }
 
@@ -15528,6 +15584,64 @@ fn pilot_snapshot_is_the_agent_verify_baseline() -> Result<(), Box<dyn std::erro
         "{report}"
     );
     std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+/// #7426: a `src/<name>.rs` that no `mod` declaration reaches is never
+/// compiled, so no test can import it. Pilot must not rank it as a test gap;
+/// it reads `opaque` (withheld and counted), while the declared sibling with
+/// the same shape still ranks as a true gap.
+#[test]
+fn pilot_withholds_a_file_outside_the_module_tree_and_keeps_a_linked_gap()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("pilot-orphan-file");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"shop\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(root.join("src/lib.rs"), "pub mod linked;\n")?;
+    let fee = "pub fn shipping_fee(weight: i32, free_limit: i32) -> i32 {\n    if weight > free_limit { 5 } else { 0 }\n}\n";
+    std::fs::write(root.join("src/linked.rs"), fee)?;
+    std::fs::write(root.join("src/orphan.rs"), fee)?;
+
+    let pilot = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&root),
+        &["pilot", "--root", ".", "--mode", "draft"],
+    )?;
+    assert_success(&pilot);
+    let exposure: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/pilot/repo-exposure.json"),
+    )?)?;
+    let class_of = |file: &str| {
+        exposure["seams"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|seam| seam["owner"] == format!("src/{file}.rs::shipping_fee"))
+            .map(|seam| seam["grip_class"].as_str().unwrap_or_default().to_string())
+            .collect::<Vec<_>>()
+    };
+    // Preconditions: the fixture really holds one orphan and one linked gap.
+    assert_eq!(class_of("orphan"), ["opaque"], "{exposure}");
+    assert_eq!(class_of("linked"), ["ungripped"], "{exposure}");
+
+    let summary: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/pilot/pilot-summary.json"),
+    )?)?;
+    assert_eq!(summary["withheld_static_limitations_total"], 1, "{summary}");
+    let ranked = summary["top_actionable_seams"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|seam| seam["owner"].as_str().unwrap_or_default())
+        .collect::<Vec<_>>();
+    assert!(ranked.contains(&"src/linked.rs::shipping_fee"), "{summary}");
+    assert!(
+        !ranked.contains(&"src/orphan.rs::shipping_fee"),
+        "{summary}"
+    );
     Ok(())
 }
 

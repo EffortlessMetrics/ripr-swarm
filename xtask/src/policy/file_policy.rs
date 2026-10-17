@@ -261,6 +261,9 @@ fn combined_preparation_args(
                     _ => mergeable = false,
                 },
                 // A test-name filter or a lock flag does not change the build.
+                // Positionals only filter which tests run, never what `--no-run`
+                // compiles; a selector whose build a positional could change
+                // must not reach this arm.
                 None if matches!(word, "--locked" | "--offline") || !word.starts_with('-') => {}
                 None => mergeable = false,
             }
@@ -598,6 +601,17 @@ mod tests {
             super::combined_preparation_args(&commands[..1], FilePolicyHost::Unix),
             None,
             "a single selector needs no combined build"
+        );
+        assert_eq!(
+            super::combined_preparation_args(
+                &[
+                    common(1, "cargo test --bin xtask alpha"),
+                    common(2, "cargo test --test mcp_stdio"),
+                ],
+                FilePolicyHost::Unix,
+            ),
+            None,
+            "selectors without -p cannot be merged"
         );
     }
 
