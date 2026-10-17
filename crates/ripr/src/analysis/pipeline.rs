@@ -201,6 +201,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
         if let Some(overlay) = overlay {
             result.uncommitted_source_paths = overlay.dirty_source_paths();
             result.untracked_source_paths = overlay.untracked_source_paths();
+            result.ignored_source_paths = overlay.ignored_source_paths();
         }
         result.analyzed_revisions = analyzed_revisions;
         bind_effective_base(&mut result, loaded.effective_base)?;
@@ -348,9 +349,12 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
                 }
                 // RIPR-SPEC-0116: the working-tree diff covers tracked files
                 // only; name the untracked routed files it cannot contain so
-                // the output can say so.
-                let untracked =
-                    committed_source::untracked_routed_paths(&options.root, options.git_timeout);
+                // the output can say so. #7467: gitignored routed files are
+                // excluded from both diffs, so they are named the same way.
+                let excluded = committed_source::untracked_and_ignored_routed_paths(
+                    &options.root,
+                    options.git_timeout,
+                );
                 let analyzed = probe_base.as_deref().map(|base| {
                     // The loader already resolved the base commit and this
                     // diff's merge-base origin; reuse both instead of
@@ -364,7 +368,7 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
                         loaded_merge_base.as_deref(),
                     )
                 });
-                (untracked, analyzed)
+                (excluded, analyzed)
             })
         });
         #[cfg(test)]
@@ -377,10 +381,10 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
             language_config,
             &loaded.text,
         );
-        let (untracked, analyzed) = match probes.join() {
+        let (excluded, analyzed) = match probes.join() {
             Ok(pair) => pair,
             // A panicked probe worker fails closed exactly like a failed
-            // probe: the untracked disclosure refuses the run and the
+            // probe: the exclusion disclosure refuses the run and the
             // revision naming stays absent.
             Err(_) => (
                 Err("untracked-routed-files probe worker panicked"
@@ -390,7 +394,9 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
             ),
         };
         let mut result = result?;
-        result.untracked_source_paths = untracked?;
+        let (untracked, ignored) = excluded?;
+        result.untracked_source_paths = untracked;
+        result.ignored_source_paths = ignored;
         result.analyzed_revisions = analyzed;
         bind_effective_base(&mut result, loaded.effective_base)?;
         Ok(result)
@@ -1543,6 +1549,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         uncommitted_source_paths: Vec::new(),
         analyzed_revisions: None,
         untracked_source_paths: Vec::new(),
+        ignored_source_paths: Vec::new(),
         rust_diagnostic_origins,
         rust_consumed_sources,
     })
@@ -1761,6 +1768,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
         uncommitted_source_paths: Vec::new(),
         analyzed_revisions: None,
         untracked_source_paths: Vec::new(),
+        ignored_source_paths: Vec::new(),
         rust_diagnostic_origins,
         rust_consumed_sources,
     })
