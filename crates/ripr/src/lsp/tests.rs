@@ -8700,6 +8700,18 @@ fn saved_editor_line_falls_back_to_the_first_editor_line_when_expression_is_empt
 }
 
 #[test]
+fn saved_editor_line_handles_a_cr_only_file_without_a_trailing_terminator() {
+    assert_eq!(
+        super::diagnostics::saved_editor_line("a\rb", 0, "b"),
+        Some((1, "b".to_string()))
+    );
+    assert_eq!(
+        super::diagnostics::saved_editor_line("a\rb\r", 0, "b"),
+        Some((1, "b".to_string()))
+    );
+}
+
+#[test]
 fn saved_editor_line_keeps_the_analyzer_line_without_a_bare_cr() {
     let contents = "a\r\nb\r\nc\n";
     assert_eq!(
