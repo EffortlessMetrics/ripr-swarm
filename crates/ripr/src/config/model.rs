@@ -383,16 +383,28 @@ impl SuppressionsConfig {
 
 /// `[typescript]` opt-in configuration for the TypeScript preview adapter.
 ///
-/// All options default to `false` / off. This section may be absent from
+/// `resolve_tsconfig_paths` defaults to `true`; any other option added here
+/// defaults to `false` / off. This section may be absent from
 /// `ripr.toml`; absence is equivalent to `TypescriptConfig::default()`.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TypescriptConfig {
     /// When `true`, the adapter reads `compilerOptions.paths` from `tsconfig.json`
     /// (or `jsconfig.json`) and uses the alias map to resolve non-relative import
     /// specifiers to workspace files during owner↔test discovery.
     ///
-    /// Default: `false` (opt-in, fail-closed per RIPR-SPEC-0099).
+    /// Default: `true` (RIPR-SPEC-0099 amendment): `@/owner`-style aliases are
+    /// near-universal in real TypeScript projects, so leaving them unresolved
+    /// turned every aliased test into a false `no_static_path`. An explicit
+    /// `resolve_tsconfig_paths = false` restores the fail-closed behavior.
     pub resolve_tsconfig_paths: bool,
+}
+
+impl Default for TypescriptConfig {
+    fn default() -> Self {
+        Self {
+            resolve_tsconfig_paths: true,
+        }
+    }
 }
 
 impl TypescriptConfig {

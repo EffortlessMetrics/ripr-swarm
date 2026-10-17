@@ -1,0 +1,12 @@
+{
+ "schema_version": "work_result_identity_provenance.v1",
+ "repository": "EffortlessMetrics/ripr-swarm",
+ "captured_at": "2026-10-09T12:00:00Z",
+ "capture_method": "authored task-result corpus for the RIPR-SPEC-0269 selected-work task-result law checker against the committed RIPR-SPEC-0244 selection corpus",
+ "files": [
+  {
+   "path": "corpus.json",
+   "sha256": "75946cdc1131654578c987e68a8fb807c99faaedf81824578ab9f358aca98daf"
+  }
+ ]
+}
