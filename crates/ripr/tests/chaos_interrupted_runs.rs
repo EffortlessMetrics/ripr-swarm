@@ -644,11 +644,18 @@ exit 66
     }
 
     fn temporary_path(fixture: &Fixture, marker: &Path) -> Result<PathBuf, String> {
-        let tmp = PathBuf::from(
+        let reported = PathBuf::from(
             fs::read_to_string(marker.with_extension("path"))
                 .map_err(|error| error.to_string())?
                 .trim_end(),
         );
+        // The exporter runs in the fixture root and is handed a root-relative
+        // output path, so a relative report names a file under that root.
+        let tmp = if reported.is_relative() {
+            fixture.root.join(reported)
+        } else {
+            reported
+        };
         let cache = fixture.root.join("managed-packets");
         let parent = tmp.parent().ok_or("packet temporary path has no parent")?;
         // Accept the old shared location so baseline/wrong-implementation
