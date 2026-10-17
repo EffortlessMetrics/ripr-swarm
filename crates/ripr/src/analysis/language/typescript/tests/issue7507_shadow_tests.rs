@@ -329,6 +329,108 @@ fn issue7507_owner_rebound_before_default_export_is_dead() -> Result<(), String>
     Ok(())
 }
 
+/// #7812: `export default price` snapshots the binding. A later reassignment
+/// must not drop the captured first arrow, or a change in `n - 20` is silent.
+#[test]
+fn issue7812_default_export_before_reassignment_keeps_captured_owner() -> Result<(), String> {
+    let source = "let price = (n) => n - 20; export default price; price = (n) => 140;\n";
+    let owners = owners_of_lib(source);
+    let owner = price_owner_named(&owners)?;
+    if owner.class_name.is_some() {
+        return Err(format!(
+            "captured default must be the top-level binding: {owners:?}"
+        ));
+    }
+    if !owner.exported_as_default {
+        return Err("captured default-export owner must carry exported_as_default".to_string());
+    }
+    let text = owner
+        .source_text
+        .as_deref()
+        .ok_or_else(|| format!("captured owner must retain source text: {owner:?}"))?;
+    if !text.contains("n - 20") {
+        return Err(format!(
+            "captured owner must remain the first arrow, got {text:?}"
+        ));
+    }
+    if text.contains("140") {
+        return Err(format!(
+            "reassign-after-export must not credit the later function, got {text:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// A change in the captured `n - 20` body must produce a finding. Dropping
+/// the owner for any later reassignment made this line silent (#7812).
+#[test]
+fn issue7812_change_in_captured_default_body_yields_a_finding() -> Result<(), String> {
+    let source = "let price = (n) => n - 20; export default price; price = (n) => 140;\n";
+    let owners = owners_of_lib(source);
+    let tests = tests_of(
+        "import price from '../src/lib';\ntest('p', () => {\n  expect(price(150)).toBe(130);\n});\n",
+    );
+    assert_single_strong_exact(&tests, "price(150)")?;
+    classify_change(
+        Path::new(LIB_FILE),
+        1,
+        source.trim_end(),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "change in captured `n - 20` must yield a finding".to_string())?;
+    Ok(())
+}
+
+/// Fail-closed: reassignment still precedes the snapshot, so the first
+/// arrow stays dead and the later function is not credited as an owner.
+#[test]
+fn issue7812_reassign_before_export_does_not_credit_later_function() -> Result<(), String> {
+    let source = "let price = (n) => n - 20; price = (n) => 140; export default price;\n";
+    let owners = owners_of_lib(source);
+    if owners.iter().any(|owner| owner.name == "price") {
+        return Err(format!(
+            "reassign-before-export must stay fail-closed with no owner: {owners:?}"
+        ));
+    }
+    let tests = tests_of(
+        "import price from '../src/lib';\ntest('p', () => {\n  expect(price(150)).toBe(140);\n});\n",
+    );
+    if classify_change(
+        Path::new(LIB_FILE),
+        1,
+        source.trim_end(),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .is_some()
+    {
+        return Err("reassign-before-export must not start emitting a finding".to_string());
+    }
+    Ok(())
+}
+
+/// `export { price as default }` is a live binding, not a snapshot. Keep
+/// dropping the rebound owner (fail-closed) rather than crediting the
+/// first arrow after a later write.
+#[test]
+fn issue7812_live_export_as_default_before_reassignment_stays_dropped() -> Result<(), String> {
+    let source = "let price = (n) => n - 20; export { price as default }; price = (n) => 140;\n";
+    let owners = owners_of_lib(source);
+    if owners.iter().any(|owner| owner.name == "price") {
+        return Err(format!(
+            "live `export {{ price as default }}` must stay fail-closed on reassignment: {owners:?}"
+        ));
+    }
+    Ok(())
+}
+
 #[test]
 fn issue7507_conflicting_bare_module_exports_yield_no_owner() -> Result<(), String> {
     let source = "module.exports = function alpha(amount) { return amount - 20; };\nmodule.exports = function beta(amount) { return amount - 20; };\n";

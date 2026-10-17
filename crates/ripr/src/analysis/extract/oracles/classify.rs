@@ -1784,8 +1784,8 @@ fn ok_literal() {
     /// (#7604). A mock's own `expect_*` call still reads as one.
     #[test]
     fn spec_0227_uncompared_expect_err_reads_like_unwrap_err() -> Result<(), String> {
-        use OracleKind::{BroadError, ExactErrorVariant, MockExpectation};
-        use OracleStrength::{Medium, Strong, Weak};
+        use OracleKind::{BroadError, ExactErrorVariant, MockExpectation, SmokeOnly};
+        use OracleStrength::{Medium, Smoke, Strong, Weak};
         let cases = [
             (
                 "expect_err_underscore_binding",
@@ -1811,6 +1811,44 @@ fn ok_literal() {
                 "expect_err_grouped_call",
                 "(check(300)).expect_err(\"too long\");",
                 vec![(BroadError, Weak)],
+            ),
+            // Optional whitespace between `expect_err` and `(` is still
+            // `Result::expect_err`, not mockall's `expect_err` (#7979).
+            (
+                "expect_err_spaced",
+                "check(300).expect_err ( \"too long\" );",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_ufcs",
+                "Result::expect_err(check(300), \"too long\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_ufcs_spaced",
+                "Result::expect_err (check(300), \"too long\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_ufcs_error_mapped",
+                "Result::expect_err(check(300).map_err(Wrap), \"too long\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_ufcs_fallback_error",
+                "Result::expect_err(check(300).and(Err(E::Other)), \"too long\");",
+                vec![],
+            ),
+            // A returned or operand UFCS value is used, not discarded.
+            (
+                "expect_err_ufcs_returned",
+                "return Result::expect_err(check(300), \"too long\");",
+                vec![],
+            ),
+            (
+                "expect_err_ufcs_negated",
+                "!Result::expect_err(check(300), \"too long\");",
+                vec![],
             ),
             (
                 "expect_err_compared_binding",
@@ -1844,6 +1882,19 @@ fn ok_literal() {
                 "mock.expect_err();",
                 vec![(MockExpectation, Medium)],
             ),
+            // `expect_err` at byte 0 is not `.expect_err` / `Result::expect_err`;
+            // the matcher must not subtract before that check (debug overflow
+            // on GitHub Hosted ripr-pr).
+            (
+                "mock_expectation_for_err_method_at_line_start",
+                "expect_err();",
+                vec![(MockExpectation, Medium)],
+            ),
+            (
+                "mock_expectation_message_at_line_start",
+                "expect_err(\"too long\");",
+                vec![(MockExpectation, Medium)],
+            ),
             (
                 "mock_expectation_for_err_method_configured",
                 "mock.expect_err().returning(|| ());",
@@ -1859,6 +1910,11 @@ fn ok_literal() {
             (
                 "mock_expectation_for_err_method_spaced",
                 "MockFoo::new().expect_err( );",
+                vec![(MockExpectation, Medium)],
+            ),
+            (
+                "mock_expectation_for_err_method_space_before_paren",
+                "MockFoo::new().expect_err ();",
                 vec![(MockExpectation, Medium)],
             ),
             // A comment is not an argument.
@@ -1896,8 +1952,159 @@ fn ok_literal() {
                 "check(300).expect_err(&check(400).expect_err(\"x\").to_string());",
                 vec![(BroadError, Weak)],
             ),
+            // rustfmt wraps long expect_err messages and method chains. The
+            // lexical fallback must join through the first depth-0 `;` so it
+            // reads the same weak broad_error as the parser (#7955).
+            (
+                "expect_err_wrapped_message",
+                "check(300).expect_err(\n        \"too long\",\n    );",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_split_let",
+                "let _e = check(300)\n        .expect_err(\"too long\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "unwrap_err_split_let",
+                "let _e = check(300)\n        .unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_semicolon_in_message",
+                "check(300).expect_err(\n        \"too long; still too long\",\n    );",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_then_unwrap_same_row",
+                "check(1).expect_err(\"a\"); check(2).unwrap();",
+                vec![(BroadError, Weak), (SmokeOnly, Smoke)],
+            ),
+            (
+                "expect_err_method_on_error_wrapped",
+                "let k = check(300)\n        .expect_err(\"too long\")\n        .kind();",
+                vec![],
+            ),
+            (
+                "unwrap_err_fallback_wrapped",
+                "check(300)\n        .and(Err(E::Other))\n        .unwrap_err();",
+                vec![],
+            ),
+            // Innermost `{` is a real block; an enclosing `(` around a
+            // closure must not hide the statement inside it (#7955).
+            (
+                "unwrap_err_in_block",
+                "{\n        check(300)\n            .unwrap_err();\n    }",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "unwrap_err_in_invoked_closure",
+                "(|| {\n        check(300)\n            .unwrap_err();\n    })();",
+                vec![(BroadError, Weak)],
+            ),
         ];
         assert_both_adapters_read(&cases)
+    }
+
+    /// Parser method-call ranges sit on `.unwrap_err()`, so dual-adapter
+    /// kind parity cannot pin first-line attribution. The lexical fallback
+    /// must still credit the `let` line (#7955).
+    #[test]
+    fn spec_0227_lexical_fallback_attributes_wrapped_statement_to_first_line() -> Result<(), String>
+    {
+        let facts = crate::analysis::extract::extract_assertions(
+            "let _e = check(300)\n        .unwrap_err();",
+            3,
+        );
+        let fact = facts
+            .first()
+            .ok_or_else(|| "expected one wrapped unwrap_err fact".to_string())?;
+        if facts.len() != 1
+            || fact.line != 3
+            || fact.kind != OracleKind::BroadError
+            || fact.strength != OracleStrength::Weak
+        {
+            return Err(format!("wanted line 3 BroadError/Weak, got {facts:?}"));
+        }
+        Ok(())
+    }
+
+    /// Same-row smoke-first: `.unwrap(` must not hide a later uncompared
+    /// `expect_err` on that row. Compared as a kind bag because the parser
+    /// walks source order while the line scanner sorts by text (#7955).
+    #[test]
+    fn spec_0227_same_row_unwrap_does_not_hide_later_expect_err() -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        use OracleKind::{BroadError, SmokeOnly};
+        use OracleStrength::{Smoke, Weak};
+        let body = r#"check(2).unwrap(); check(1).expect_err("a");"#;
+        let lexical = crate::analysis::extract::extract_assertions(body, 1)
+            .into_iter()
+            .map(|fact| (fact.kind, fact.strength))
+            .collect::<Vec<_>>();
+        let expected = [(BroadError, Weak), (SmokeOnly, Smoke)];
+        if !kind_bag_matches(&lexical, &expected) {
+            return Err(format!("line scanner read {lexical:?}"));
+        }
+        let source = "#[test]\nfn same_row_smoke_first() {\n    check(2).unwrap(); check(1).expect_err(\"a\");\n}\n";
+        let facts =
+            RaRustSyntaxAdapter.summarize_file(std::path::Path::new("src/lib.rs"), source)?;
+        let test = facts
+            .tests
+            .iter()
+            .find(|test| test.name == "same_row_smoke_first")
+            .ok_or_else(|| "parser lost test same_row_smoke_first".to_string())?;
+        let parsed = test
+            .assertions
+            .iter()
+            .map(|fact| (fact.kind.clone(), fact.strength.clone()))
+            .collect::<Vec<_>>();
+        if !kind_bag_matches(&parsed, &expected) {
+            return Err(format!("parser read {parsed:?}"));
+        }
+        Ok(())
+    }
+
+    fn kind_bag_matches(
+        actual: &[(OracleKind, OracleStrength)],
+        expected: &[(OracleKind, OracleStrength)],
+    ) -> bool {
+        if actual.len() != expected.len() {
+            return false;
+        }
+        let mut remaining = actual.to_vec();
+        for wanted in expected {
+            match remaining.iter().position(|got| got == wanted) {
+                Some(index) => {
+                    remaining.remove(index);
+                }
+                None => return false,
+            }
+        }
+        remaining.is_empty()
+    }
+
+    /// A `}` or `;` on an earlier row is not a statement boundary when
+    /// `(` / `[` are still open, or after a mismatched closer. The join
+    /// must not mint BroadError/Weak there (#7955).
+    #[test]
+    fn spec_0227_lexical_fallback_ignores_unwrap_err_in_unclosed_delimiters() -> Result<(), String>
+    {
+        for body in [
+            "consume(\n    {}\n    check(300)\n        .unwrap_err();",
+            "let values = [\n    {}\n    check(300)\n        .unwrap_err();",
+            "];\n{}\ncheck(300)\n    .unwrap_err();",
+            "consume([\n)];\n{}\ncheck(300)\n    .unwrap_err();",
+            "consume(\n/*\n)\n*/\n{}\ncheck(300)\n    .unwrap_err();",
+        ] {
+            let facts = crate::analysis::extract::extract_assertions(body, 3);
+            if !facts.is_empty() {
+                return Err(format!(
+                    "wanted no lexical facts in unclosed context, got {facts:?}"
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// A named test body and the oracle kinds both adapters must read.
