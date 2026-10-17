@@ -522,17 +522,23 @@ pub(crate) fn untracked_and_ignored_routed_paths(
     Ok((untracked, ignored.into_iter().collect()))
 }
 
+const MAX_IGNORED_WALK_ENTRIES: usize = 200_000;
+
 /// Routed source files below ignored directories, as root-relative
 /// `/`-separated keys. No-follow like discovery: a symlinked directory is
 /// not descended and symlinked files are not sources. Names that are not
 /// valid UTF-8 key no overlay lookup and cannot be named in JSON, so they
-/// are skipped rather than invented lossily.
+/// are skipped rather than invented lossily. The walk visits at most
+/// [`MAX_IGNORED_WALK_ENTRIES`] entries so a `target/` or `node_modules/` tree
+/// cannot dominate a check; past the cap the disclosure may be incomplete but
+/// never invents a path.
 fn expand_ignored_directories(
     root: &Path,
     directories: &[String],
     tracked_within: &BTreeSet<String>,
 ) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
+    let mut visited = 0usize;
     let mut stack: Vec<(PathBuf, String)> = directories
         .iter()
         .map(|directory| (root.join(directory), directory.clone()))
@@ -542,6 +548,10 @@ fn expand_ignored_directories(
             continue;
         };
         for entry in entries.flatten() {
+            visited += 1;
+            if visited > MAX_IGNORED_WALK_ENTRIES {
+                return out;
+            }
             // `file_type` does not follow links, so symlinked entries match
             // neither arm below.
             let Ok(kind) = entry.file_type() else {
