@@ -1747,6 +1747,18 @@ fn subtest_table_that_never_varies_default_is_weakly_exposed() -> Result<(), Str
     Ok(())
 }
 
+/// An unvaried nonzero default still fails after `return None`, so the table
+/// remains a discriminator. Constant is not the same as undetectable.
+#[test]
+fn subtest_table_that_never_varies_nonzero_default_stays_exposed() -> Result<(), String> {
+    let finding = last_finding(
+        "import unittest\nfrom src.subject import last\n\nclass LastTests(unittest.TestCase):\n    def test_default(self):\n        for iterable, default in [\n            ([], 0),\n            (iter([]), 0),\n        ]:\n            with self.subTest(iterable=iterable, default=default):\n                self.assertEqual(last(iterable, default=default), default)\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(finding.activation.missing_discriminators.is_empty());
+    Ok(())
+}
+
 /// Positive control for #6651: one row that varies `default` keeps `exposed`.
 #[test]
 fn subtest_table_that_varies_default_stays_exposed() -> Result<(), String> {

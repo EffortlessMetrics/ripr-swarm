@@ -7,9 +7,13 @@
 //! `subTest` row passes `default=None` and asserts equality to that same
 //! column, so `return default` -> `return None` still passes (#6651).
 //!
-//! Fail closed toward not-`exposed` only when static evidence sees the table
-//! and can prove the operand is unvaried. An unreadable table, a non-table
-//! strong test, or a row that varies the operand keeps today's verdict.
+//! Fail closed toward not-`exposed` only when static evidence sees the table,
+//! the expected column is the same unvaried literal as the operand, and that
+//! literal matches the replacement return (`return default` -> `return None`
+//! with every row `default=None`). An unreadable table, a non-table strong
+//! test, a row that varies the operand, or an unvaried value that would still
+//! fail after the replacement (`default=0` vs `return None`) keeps today's
+//! verdict.
 
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::boundary::{literal_value, literals_equal};
@@ -46,6 +50,10 @@ pub(super) fn python_unvaried_table_operand(
     focus: &PythonAssertionFocus,
 ) -> Option<UnvariedTableOperand> {
     let operand = changed_returned_parameter(old_line_text, line_text, owner)?;
+    // `return default` -> `return None` is invisible only when the unvaried
+    // row value is the replacement literal. A constant `default=0` still
+    // fails after `return None`, so that table remains a discriminator.
+    let replacement = other_return_literal(old_line_text, line_text, &operand)?;
     let mut saw_table = false;
     for candidate in related_candidates {
         if !candidate.relation.uses_oracle() {
@@ -63,7 +71,14 @@ pub(super) fn python_unvaried_table_operand(
             // A strong oracle that is not table-driven may still discriminate.
             return None;
         };
-        if !table_does_not_vary(candidate.test, owner, &operand, &table, assertion) {
+        if !table_does_not_vary(
+            candidate.test,
+            owner,
+            &operand,
+            &replacement,
+            &table,
+            assertion,
+        ) {
             return None;
         }
         saw_table = true;
@@ -91,8 +106,7 @@ fn changed_returned_parameter(
 }
 
 fn returned_parameter(line_text: &str, owner: &PythonOwner) -> Option<String> {
-    let expr = line_text.trim().strip_prefix("return ")?.trim();
-    let expr = expr.split('#').next()?.trim();
+    let expr = returned_expr(line_text)?;
     if !is_simple_python_identifier(expr) {
         return None;
     }
@@ -101,6 +115,26 @@ fn returned_parameter(line_text: &str, owner: &PythonOwner) -> Option<String> {
         .iter()
         .any(|parameter| parameter.name == expr)
         .then(|| expr.to_string())
+}
+
+fn returned_expr(line_text: &str) -> Option<&str> {
+    let expr = line_text.trim().strip_prefix("return ")?.trim();
+    Some(expr.split('#').next()?.trim())
+}
+
+/// Literal on the side of the return that is not the changed parameter.
+fn other_return_literal(
+    old_line_text: Option<&str>,
+    new_line_text: &str,
+    operand: &str,
+) -> Option<String> {
+    [Some(new_line_text), old_line_text]
+        .into_iter()
+        .flatten()
+        .find_map(|line| {
+            let expr = returned_expr(line)?;
+            (expr != operand).then(|| literal_value(expr)).flatten()
+        })
 }
 
 fn table_cases(test: &PythonTest) -> Option<PythonParametrizeCases> {
@@ -116,6 +150,7 @@ fn table_does_not_vary(
     test: &PythonTest,
     owner: &PythonOwner,
     operand: &str,
+    replacement: &str,
     table: &PythonParametrizeCases,
     assertion: &PythonAssertion,
 ) -> bool {
@@ -130,14 +165,20 @@ fn table_does_not_vary(
     let Some((owner_call, expected)) = owner_call_and_expected(&stmts, &names) else {
         return false;
     };
-    let expected_from_table = expr_plain_name(expected).is_some_and(|name| columns.contains(&name));
-    if !expected_from_table {
+    let Some(expected_name) = expr_plain_name(expected).filter(|name| columns.contains(name))
+    else {
         return false;
-    }
+    };
     let Some(column) = operand_column(owner_call, operand, owner, &columns) else {
         return false;
     };
-    unvaried_column_value(&table.cases, &column).is_some()
+    let Some(operand_value) = unvaried_column_value(&table.cases, &column) else {
+        return false;
+    };
+    let Some(expected_value) = unvaried_column_value(&table.cases, &expected_name) else {
+        return false;
+    };
+    literals_equal(&operand_value, &expected_value) && literals_equal(&operand_value, replacement)
 }
 
 fn owner_names(owner: &PythonOwner, test: &PythonTest) -> Vec<String> {
