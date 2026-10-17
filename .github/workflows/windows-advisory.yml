@@ -4,7 +4,7 @@ on:
   schedule:
     - cron: "17 5 * * *"
   pull_request:
-    types: [labeled, opened, synchronize, reopened]
+    types: [labeled, opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
       repeat_nested_alias:
@@ -299,6 +299,9 @@ jobs:
   # audit responsibility (docs/CI.md, Advisory Windows Lane).
   windows-advisory-subset:
     name: windows-advisory-subset
+    # Draft pushes skip this advisory lane; the Draft -> Ready transition
+    # (`ready_for_review`) and every later push run it before merge.
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: windows-latest
     timeout-minutes: 45
     env:

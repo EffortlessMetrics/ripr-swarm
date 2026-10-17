@@ -5,7 +5,7 @@ name: ub-review
 # review plus a CI gate result. See docs/QUICKSTART.md and docs/ADOPTION_MODES.md.
 on:
   pull_request:
-    types: [opened, reopened, synchronize]
+    types: [opened, reopened, synchronize, ready_for_review]
 
 permissions:
   contents: read
@@ -18,7 +18,9 @@ concurrency:
 
 jobs:
   ub-review:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # Draft pushes skip the model review; Draft -> Ready (`ready_for_review`)
+    # and every later push run it before merge.
+    if: github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

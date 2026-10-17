@@ -356,9 +356,9 @@ and single-platform CI was the root cause enabling both.
   false-confidence condition it exists to prevent.
 - **Selection.** A daily schedule for standing signal, `workflow_dispatch`, and
   pull requests labeled `windows-ci` or `full-ci`.
-- **Always-on subset (#4938).** Every subscribed `pull_request` action
-  (`opened`, `synchronize`, `reopened`, `labeled`; `unlabeled` stays omitted
-  per #4380) also runs `windows-advisory-subset`, a fast advisory Windows job
+- **Always-on subset (#4938).** Every subscribed non-Draft `pull_request`
+  action (`opened`, `synchronize`, `reopened`, `ready_for_review`, `labeled`;
+  `unlabeled` stays omitted per #4380) also runs `windows-advisory-subset`, a fast advisory Windows job
   (`lsp::gap_artifacts` and Cargo-home identity lib tests, the #4918 cache-warning smoke, and
   `cargo clippy -p ripr --all-targets`) under the same advisory contract as
   the lane. It does not gate merges; #4337, #4918, and #4921 were each caught
@@ -745,10 +745,12 @@ feature set (#2400, #3128) on Linux:
 cargo test -p ripr --locked --no-default-features --features lang-rust --no-fail-fast
 ```
 
-It runs on every push to `main` or `master`, on manual dispatch, and on pull
-request `opened`, `synchronize`, and `reopened` events whose diff touches
+It runs on every push to `main` or `master`, on manual dispatch, and on
+non-Draft pull request `opened`, `synchronize`, `reopened`, and
+`ready_for_review` events whose diff touches
 `crates/`, `fixtures/`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain*`, or
-`.cargo/`. Label events and other pull requests skip the compile. It is not
+`.cargo/`. Label events, Draft pull requests and other pull requests skip the
+compile; the Draft -> Ready transition runs it before merge. It is not
 a required check. The Windows advisory lane runs the same command on Windows.
 The selector compares the immutable pull-request event base and head commits,
 not the synthetic merge checkout, so unrelated main-branch Rust changes do not

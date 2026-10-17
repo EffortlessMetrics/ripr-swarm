@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
   push:
     branches: [main, master]
   workflow_dispatch:
@@ -84,10 +84,12 @@ jobs:
     # #4252: the Rust-only feature lane (#2400, #3128) otherwise runs only in
     # the Windows advisory workflow, whose verdict hid this step's result
     # until #4229. It runs before merge on PRs that change the Rust crate,
-    # fixtures, or Cargo manifests, and on every push to main; label events
-    # and docs-only PRs skip the compile, matching the routed lane's posture.
+    # fixtures, or Cargo manifests, and on every push to main; label events,
+    # Draft PRs and docs-only PRs skip the compile. Draft pushes skip it because
+    # the Draft -> Ready transition (`ready_for_review`) runs it before merge,
+    # matching the routed lane's posture.
     name: Rust-only feature lane
-    if: github.event_name != 'pull_request' || contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action)
+    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && contains(fromJSON('["opened", "synchronize", "reopened", "ready_for_review"]'), github.event.action))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
