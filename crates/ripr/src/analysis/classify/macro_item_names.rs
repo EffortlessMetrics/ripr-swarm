@@ -443,6 +443,8 @@ mod tests {
             "outer!(inner!(name));\n",
             "outer!(a, inner![name, u8]);\n",
             "outer!(inner!(deeper!(name)));\n",
+            "outer!(inner!{ name });\n",
+            "outer!(path::inner!(name));\n",
         ] {
             assert!(macro_may_define_item_named(source, "name"), "{source}");
         }
