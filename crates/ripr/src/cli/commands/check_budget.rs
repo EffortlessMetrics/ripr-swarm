@@ -24,6 +24,9 @@ pub(super) const DEFAULT_CHECK_TIMEOUT_SECS: u64 = 600;
 /// progress run before the refusal is reported.
 const CANCEL_GRACE: Duration = Duration::from_secs(2);
 
+/// Stack for the analysis worker thread.
+const ANALYSIS_STACK_BYTES: usize = 16 * 1024 * 1024;
+
 pub(super) fn default_check_timeout() -> Option<Duration> {
     Some(Duration::from_secs(DEFAULT_CHECK_TIMEOUT_SECS))
 }
@@ -40,7 +43,15 @@ fn timeout_detail(budget: Duration) -> String {
 }
 
 /// Run `work` under `budget`. `None` runs it inline with no thread.
-pub(super) fn run_with_budget<T, F>(budget: Option<Duration>, work: F) -> Result<T, CoreError>
+///
+/// `on_timeout` runs once when the budget fires and the worker has not
+/// finished, before the refusal is returned, so the caller can close any
+/// progress output the abandoned worker still holds.
+pub(super) fn run_with_budget<T, F>(
+    budget: Option<Duration>,
+    on_timeout: impl FnOnce(),
+    work: F,
+) -> Result<T, CoreError>
 where
     T: Send + 'static,
     F: FnOnce() -> Result<T, CoreError> + Send + 'static,
@@ -51,15 +62,29 @@ where
     let token = AnalysisCancellationToken::new();
     let worker_token = token.clone();
     let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let result = with_token(&worker_token, work);
-        let _ignored = tx.send(result);
-    });
+    // The worker replaces the main thread's analysis stack, so it gets at
+    // least the main thread's usual 8 MiB; the 2 MiB default would let a
+    // deeply nested source abort the process instead of refusing.
+    let spawned = std::thread::Builder::new()
+        .name("ripr-check-analysis".to_string())
+        .stack_size(ANALYSIS_STACK_BYTES)
+        .spawn(move || {
+            let result = with_token(&worker_token, work);
+            let _ignored = tx.send(result);
+        });
+    if let Err(error) = spawned {
+        return Err(CoreError::message(format!(
+            "start check analysis thread failed: {error}"
+        )));
+    }
     match rx.recv_timeout(budget) {
         Ok(result) => result,
         Err(mpsc::RecvTimeoutError::Timeout) => {
             token.cancel(AnalysisAbortKind::DeadlineExceeded);
-            let _ignored = rx.recv_timeout(CANCEL_GRACE);
+            let finished = rx.recv_timeout(CANCEL_GRACE).is_ok();
+            if !finished {
+                on_timeout();
+            }
             Err(CoreError::analysis_timeout(timeout_detail(budget)))
         }
         Err(mpsc::RecvTimeoutError::Disconnected) => Err(CoreError::message(
@@ -75,15 +100,17 @@ mod tests {
 
     #[test]
     fn work_inside_the_budget_returns_its_result() {
-        let result = run_with_budget(Some(Duration::from_secs(30)), || Ok(7_u32));
+        let result = run_with_budget(Some(Duration::from_secs(30)), || {}, || Ok(7_u32));
         assert_eq!(result, Ok(7));
     }
 
     #[test]
     fn work_error_inside_the_budget_is_not_a_timeout() {
-        let result: Result<u32, _> = run_with_budget(Some(Duration::from_secs(30)), || {
-            Err(CoreError::message("boom"))
-        });
+        let result: Result<u32, _> = run_with_budget(
+            Some(Duration::from_secs(30)),
+            || {},
+            || Err(CoreError::message("boom")),
+        );
         let error = result.expect_err("worker failure must propagate");
         assert_eq!(error.check_failure_kind(), None);
         assert_eq!(error.to_string(), "boom");
@@ -92,17 +119,25 @@ mod tests {
     #[test]
     fn disabled_budget_runs_inline() {
         let caller = std::thread::current().id();
-        let result = run_with_budget(None, move || Ok(std::thread::current().id() == caller));
+        let result = run_with_budget(
+            None,
+            || {},
+            move || Ok(std::thread::current().id() == caller),
+        );
         assert_eq!(result, Ok(true));
     }
 
     #[test]
     fn exhausted_budget_refuses_with_the_typed_timeout_and_no_result() {
         let started = std::time::Instant::now();
-        let result: Result<u32, _> = run_with_budget(Some(Duration::from_millis(50)), || {
-            std::thread::sleep(Duration::from_secs(60));
-            Ok(1)
-        });
+        let result: Result<u32, _> = run_with_budget(
+            Some(Duration::from_millis(50)),
+            || {},
+            || {
+                std::thread::sleep(Duration::from_secs(60));
+                Ok(1)
+            },
+        );
         let error = result.expect_err("a stuck worker must hit the budget");
         assert_eq!(
             error.check_failure_kind(),
@@ -119,14 +154,18 @@ mod tests {
     #[test]
     fn exhausted_budget_cancels_the_worker_token() {
         let (seen_tx, seen_rx) = mpsc::channel();
-        let result: Result<u32, _> = run_with_budget(Some(Duration::from_millis(50)), move || {
-            let token = crate::analysis::cancellation::current_token();
-            while token.as_ref().is_some_and(|t| t.abort_kind().is_none()) {
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            let _ignored = seen_tx.send(token.and_then(|t| t.abort_kind()));
-            Err(CoreError::message("cancelled"))
-        });
+        let result: Result<u32, _> = run_with_budget(
+            Some(Duration::from_millis(50)),
+            || {},
+            move || {
+                let token = crate::analysis::cancellation::current_token();
+                while token.as_ref().is_some_and(|t| t.abort_kind().is_none()) {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                let _ignored = seen_tx.send(token.and_then(|t| t.abort_kind()));
+                Err(CoreError::message("cancelled"))
+            },
+        );
         assert!(result.is_err());
         assert_eq!(
             seen_rx.recv_timeout(Duration::from_secs(5)),

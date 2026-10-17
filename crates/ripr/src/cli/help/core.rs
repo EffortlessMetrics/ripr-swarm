@@ -307,7 +307,8 @@ Options:
                            the deadline. Default: 300 (5 minutes). Also
                            settable via RIPR_GIT_TIMEOUT env var.
   --timeout SECS           Wall-clock budget in seconds for the whole
-                           diff analysis. When it runs out, check stops
+                           diff or worktree analysis (not the repo-wide
+                           repo-exposure and seam formats). When it runs out, check stops
                            and refuses with analysis_timeout: no findings
                            are produced and the result is never a clean
                            pass. 0 disables the budget. Default: 600 (10

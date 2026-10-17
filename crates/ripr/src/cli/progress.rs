@@ -485,11 +485,44 @@ impl CliProgressSink {
 impl AnalysisProgressSink for CliProgressSink {
     fn emit(&self, event: AnalysisProgressEvent) {
         self.emit_event(event);
-        if stage_is_terminal(event.stage) {
+        if stage_is_terminal(event.stage) || Self::lock_state(&self.inner).terminal {
             self.stop_heartbeat();
         } else {
             self.start_heartbeat_thread();
         }
+    }
+}
+
+impl CliProgressSink {
+    /// Close the progress run of an analysis the caller has given up on
+    /// (the `check` wall-clock budget, #5369) while its worker may still be
+    /// running and holding this sink. Projects a `cancelled` terminal for the
+    /// stage in flight, ends the heartbeat and the in-place row, and ignores
+    /// later events, so the refusal text that follows does not interleave
+    /// with progress output.
+    pub(crate) fn abandon(&self) {
+        self.stop_heartbeat();
+        {
+            let mut projection = Self::lock_state(&self.inner);
+            if !projection.terminal
+                && let Some(scope) = projection.current_scope
+            {
+                Self::project_terminal(
+                    &mut projection,
+                    AnalysisProgressEvent {
+                        stage: AnalysisProgressStage::Cancelled,
+                        scope,
+                        completed_units: None,
+                        total_units: None,
+                        elapsed_ms: 0,
+                    },
+                );
+            }
+            projection.pending_success = None;
+            projection.terminal = true;
+            Self::finish_in_place(&mut projection);
+        }
+        self.uninstall_as_stderr_notice_owner();
     }
 }
 
@@ -927,6 +960,25 @@ mod tests {
             "Drop must fail-close a held success terminal: {text}"
         );
         assert!(!text.contains("completed"));
+    }
+
+    #[test]
+    fn abandon_projects_cancelled_and_ignores_later_worker_events() {
+        let buffer = Buffer::new();
+        let sink = CliProgressSink::with_writer(Box::new(buffer.clone()), false, non_tty_policy());
+        sink.hold_success_terminal();
+        sink.emit(event(AnalysisProgressStage::Analyzing));
+        sink.abandon();
+        // An abandoned worker that wakes later must not reopen the run.
+        sink.emit(event(AnalysisProgressStage::BuildingOutput));
+        sink.emit(event(AnalysisProgressStage::Completed));
+        let text = buffer.text();
+        assert!(
+            text.contains("ripr progress: cancelled [diff]"),
+            "abandon must close the run as cancelled: {text}"
+        );
+        assert!(!text.contains("building_output"), "{text}");
+        assert!(!text.contains("completed"), "{text}");
     }
 
     #[test]

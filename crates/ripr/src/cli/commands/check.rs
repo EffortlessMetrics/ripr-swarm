@@ -1420,16 +1420,25 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         // #5369: bound the diff/worktree analysis by the wall-clock budget.
         let worker_config = config.clone();
         let worker_sink = progress.clone();
-        super::check_budget::run_with_budget(check_timeout, move || {
-            app::check_with_progress_core(
-                input,
-                &worker_config,
-                progress_scope,
-                worker_sink
-                    .as_ref()
-                    .map(|sink| &**sink as &dyn crate::app::AnalysisProgressSink),
-            )
-        })
+        let abandon_sink = progress.clone();
+        super::check_budget::run_with_budget(
+            check_timeout,
+            move || {
+                if let Some(sink) = &abandon_sink {
+                    sink.abandon();
+                }
+            },
+            move || {
+                app::check_with_progress_core(
+                    input,
+                    &worker_config,
+                    progress_scope,
+                    worker_sink
+                        .as_ref()
+                        .map(|sink| &**sink as &dyn crate::app::AnalysisProgressSink),
+                )
+            },
+        )
     };
     let mut output = match output_result {
         Ok(output) => output,
