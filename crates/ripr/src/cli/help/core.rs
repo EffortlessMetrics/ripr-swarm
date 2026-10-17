@@ -12,9 +12,12 @@ Options:
   --ci github      Also write .github/workflows/ripr.yml with advisory reports and optional SARIF rendering/upload.
   --mcp            Also add the ripr MCP server to .mcp.json (Claude Code project config).
                    Other servers in an existing file are kept; an existing
-                   `ripr` entry is kept unless --force; a file that is not a
-                   JSON object is refused. Codex config is user-global and is
-                   never written: init prints the `codex mcp add` command.
+                   `ripr` entry is kept unless --force; a symlink or a file
+                   that is not a JSON object is refused. The file is rewritten
+                   with sorted keys. Like --ci, --mcp keeps an existing
+                   ripr.toml and --force does not reset it. Codex config is
+                   user-global and is never written: init prints the
+                   `codex mcp add` command.
   --dry-run        Show the plan and the file bodies without writing anything.
                    Resolves the same preconditions as the real run, so it
                    fails the same way (existing file without --force, root

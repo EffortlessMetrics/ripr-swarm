@@ -176,6 +176,9 @@ enum InitAction {
     Create,
     /// The path exists and `--force` was given; it would be replaced.
     Overwrite,
+    /// The path exists and is the user's own file; only ripr's entry is added
+    /// or replaced and the rest of its content is kept.
+    Update,
     /// The config exists and `--ci` has work to do, so the config is left as
     /// the user wrote it, with or without `--force`.
     LeaveUnchanged,
@@ -187,6 +190,7 @@ impl InitAction {
         match self {
             Self::Create => "create        ",
             Self::Overwrite => "overwrite     ",
+            Self::Update => "update        ",
             Self::LeaveUnchanged => "leave existing",
         }
     }
@@ -316,6 +320,18 @@ fn plan_mcp_target(path: PathBuf, force: bool) -> Result<InitTarget, String> {
             body: render(&document)?,
         });
     }
+    // The atomic write replaces the directory entry, so a symlinked file
+    // (a shared or dotfiles-managed config) would be swapped for a plain
+    // copy and the real target never updated.
+    if std::fs::symlink_metadata(&path)
+        .map_err(|err| format!("cannot inspect {shown}: {err}"))?
+        .file_type()
+        .is_symlink()
+    {
+        return Err(format!(
+            "existing {shown} is a symlink; add the `ripr` server to its target by hand, nothing was written"
+        ));
+    }
     let text = std::fs::read_to_string(&path)
         .map_err(|err| format!("cannot read existing {shown}: {err}"))?;
     let mut document: serde_json::Value = serde_json::from_str(&text).map_err(|err| {
@@ -344,7 +360,7 @@ fn plan_mcp_target(path: PathBuf, force: bool) -> Result<InitTarget, String> {
     servers.insert(MCP_SERVER_NAME.to_string(), ripr_mcp_server_entry());
     Ok(InitTarget {
         path,
-        action: InitAction::Overwrite,
+        action: InitAction::Update,
         body: render(&document)?,
     })
 }
@@ -471,6 +487,14 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
                 write_init_target(target)?;
                 wrote_any = true;
             }
+            InitAction::Update => {
+                write_init_target(target)?;
+                println!(
+                    "Updated existing {} (your other content is kept)",
+                    output::path::human_path(&target.path)
+                );
+                wrote_any = true;
+            }
             InitAction::Overwrite => {
                 write_init_target(target)?;
                 println!(
@@ -528,7 +552,7 @@ fn write_init_target(target: &InitTarget) -> Result<(), String> {
         std::fs::create_dir_all(parent)
             .map_err(|err| format!("create {} failed: {err}", parent.display()))?;
     }
-    if target.action == InitAction::Overwrite {
+    if matches!(target.action, InitAction::Overwrite | InitAction::Update) {
         // --force replaces the config atomically (#4883): the old file stays
         // until a complete, fsynced temporary file is renamed over it, so a
         // failed write (a full disk, a size limit) never leaves the user
@@ -1124,7 +1148,7 @@ mod tests {
         )?;
         let plan = init_plan(&mcp_options(&root, false))?;
         let target = mcp_target(&plan)?;
-        assert_eq!(target.action, InitAction::Overwrite);
+        assert_eq!(target.action, InitAction::Update);
         assert_eq!(
             parsed(&target.body)?,
             serde_json::json!({
@@ -1144,7 +1168,7 @@ mod tests {
         assert_eq!(mcp_target(&kept)?.action, InitAction::LeaveUnchanged);
         let forced = init_plan(&mcp_options(&root, true))?;
         let target = mcp_target(&forced)?;
-        assert_eq!(target.action, InitAction::Overwrite);
+        assert_eq!(target.action, InitAction::Update);
         assert_eq!(
             parsed(&target.body)?,
             serde_json::json!({ "mcpServers": { "ripr": parsed(RIPR_ENTRY)? } })
@@ -1171,6 +1195,49 @@ mod tests {
                 "planning must not touch the file"
             );
         }
+        std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))
+    }
+
+    #[test]
+    fn mcp_apply_merges_on_disk_and_is_idempotent() -> Result<(), String> {
+        let root = temp_root("mcp-apply")?;
+        let path = root.join(".mcp.json");
+        write(&path, r#"{"mcpServers":{"other":{"command":"x"}}}"#)?;
+        let plan = init_plan(&mcp_options(&root, false))?;
+        apply_init_plan(&plan, &root)?;
+        let merged = std::fs::read_to_string(&path).map_err(|err| err.to_string())?;
+        assert_eq!(
+            parsed(&merged)?,
+            serde_json::json!({
+                "mcpServers": { "other": { "command": "x" }, "ripr": parsed(RIPR_ENTRY)? }
+            })
+        );
+        let again = init_plan(&mcp_options(&root, false))?;
+        assert_eq!(mcp_target(&again)?.action, InitAction::LeaveUnchanged);
+        apply_init_plan(&again, &root)?;
+        assert_eq!(
+            std::fs::read_to_string(&path).map_err(|err| err.to_string())?,
+            merged,
+            "a rerun must not change the file"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mcp_plan_refuses_a_symlinked_config() -> Result<(), String> {
+        let root = temp_root("mcp-symlink")?;
+        let real = root.join("shared.json");
+        write(&real, "{}")?;
+        std::os::unix::fs::symlink(&real, root.join(".mcp.json")).map_err(|e| e.to_string())?;
+        let err = init_plan(&mcp_options(&root, true))
+            .err()
+            .ok_or("a symlinked .mcp.json must be refused")?;
+        assert!(err.contains("is a symlink"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(&real).map_err(|e| e.to_string())?,
+            "{}"
+        );
         std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))
     }
 
