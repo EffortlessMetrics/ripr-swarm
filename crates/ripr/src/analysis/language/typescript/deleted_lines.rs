@@ -264,19 +264,26 @@ fn owner_headers_from_code_runs<'a>(
     let mut headers = RemovedHeaders::default();
     for run in runs {
         let mut group: Vec<(usize, &'a str)> = Vec::new();
-        let mut depth: isize = 0;
+        let mut paren_depth: isize = 0;
+        let mut angle_depth: isize = 0;
         for (line, code) in run {
             let last_opened_callback = group
                 .last()
                 .is_some_and(|(_, last)| last.trim_end().ends_with("=> {"));
-            let continues =
-                !group.is_empty() && !last_opened_callback && (depth > 0 || code.trim() == "{");
+            let continues = !group.is_empty()
+                && !last_opened_callback
+                && (paren_depth > 0 || angle_depth > 0 || code.trim() == "{");
             if !continues {
                 close_header_group(&group, &mut headers);
                 group.clear();
-                depth = 0;
+                paren_depth = 0;
+                angle_depth = 0;
             }
-            depth += header_group_delta(code);
+            paren_depth += paren_delta(code);
+            angle_depth += type_angle_delta(code);
+            if angle_depth < 0 {
+                angle_depth = 0;
+            }
             group.push((line, code));
         }
         close_header_group(&group, &mut headers);
@@ -299,11 +306,6 @@ fn close_header_group(group: &[(usize, &str)], headers: &mut RemovedHeaders) {
         }
         headers.text.insert(*first, joined);
     }
-}
-
-/// Parentheses plus type-argument angles still open on this header.
-fn header_group_delta(code: &str) -> isize {
-    paren_delta(code) + type_angle_delta(code)
 }
 
 /// What enclosed a deleted line in the old file.
@@ -467,10 +469,13 @@ fn paren_delta(code: &str) -> isize {
     })
 }
 
-/// Opened minus closed type-argument angles. Comparisons (`a < b`) and
-/// arrows (`=>`, `>=`, `<=`) are not type lists: a type opener sits
-/// immediately after an identifier, `)`, `]` or `>`. A `>` only closes a
-/// still-open type list, so `a >= b` cannot cancel an open `(` (#7705).
+/// Opened minus closed type-argument angles on this line. Comparisons
+/// (`a < b`) and arrows (`=>`, `>=`, `<=`) are not type lists: a type
+/// opener sits immediately after an identifier, `)`, `]` or `>`. `>=`
+/// does not emit a close. A later `> {` may report -1 so it can close
+/// `Promise<` from the previous line; the grouping accumulator never
+/// lets angle depth go below zero, so `a > b` cannot cancel an open `(`
+/// (#7705).
 fn type_angle_delta(code: &str) -> isize {
     let bytes = code.as_bytes();
     let mut depth: isize = 0;
@@ -480,7 +485,7 @@ fn type_angle_delta(code: &str) -> isize {
                 depth += 1;
             }
             b'>' if bytes.get(at + 1) == Some(&b'=') || (at > 0 && bytes[at - 1] == b'=') => {}
-            b'>' if depth > 0 => depth -= 1,
+            b'>' => depth -= 1,
             _ => {}
         }
     }
