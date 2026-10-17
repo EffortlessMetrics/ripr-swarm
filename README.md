@@ -60,31 +60,32 @@ mutants, and it does not prove that a test would fail.
 
 ## The first useful run
 
-Install the published CLI (the prebuilt archive below is faster and needs no Rust), then run it in a Rust repository on a branch with
+Install the published CLI, then run it in a Rust repository on a branch with
 committed changes. The 0.10 release resolves its default base by trying
 `origin/HEAD`, then `origin/main`, `origin/master`, `main`, and `master`; use
-`--base REF` to choose another existing branch or commit:
+`--base REF` to choose another existing branch or commit.
 
-```bash
-cargo install ripr
-ripr check
-```
-
-Faster, with no Rust toolchain: download the prebuilt 0.10.0
-archive (about a second here, against about two minutes to compile). This
-example is Linux x86-64; the release also has macOS and Windows archives
+The fastest route needs no Rust toolchain: download the checksummed prebuilt
+0.10.0 archive (about a second here, against about two minutes to compile
+0.10.0 from source). This example is Linux x86-64; the release also has macOS
+and Windows archives
 ([asset list](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.10.0)):
 
 ```bash
 v=0.10.0; t=x86_64-unknown-linux-gnu; f=ripr-server-v$v-$t.tar.gz
 b=https://github.com/EffortlessMetrics/ripr/releases/download/v$v
 curl -fsSLO $b/$f && curl -fsSLO $b/$f.sha256
-echo "$(cat $f.sha256)  $f" | sha256sum -c - && tar xzf $f   # puts ./ripr here; move it onto your PATH
+echo "$(cat $f.sha256)  $f" | sha256sum -c - && tar xzf $f \
+  && export PATH="$PWD:$PATH"   # ./ripr is now first on PATH for this shell
+ripr check
 ```
 
-Once the matching 0.11.0 release asset is published, the same URLs work with the
-new version and `cargo binstall ripr` downloads the archive. If the asset is not
-available, `cargo binstall` compiles from source, like `cargo install`.
+`cargo xtask first-run --install-archive 0.10.0` replays this route end to end
+and times it. With Rust 1.95 or newer you can instead run `cargo install ripr`,
+which compiles from source. Once the matching 0.11.0 release asset is published,
+the same URLs work with the new version and `cargo binstall ripr` downloads the
+archive. If the asset is not available, `cargo binstall` compiles from source,
+like `cargo install`.
 
 Read the changed behavior, the related tests, and the recommended next test.
 No configuration file is required. `ripr check` is advisory: it exits 0 whether

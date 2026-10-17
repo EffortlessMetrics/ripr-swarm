@@ -590,7 +590,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "check-spec-numbering",
         "check-fixture-contracts",
         "perl-migration-refresh --producer-bin <path> [--case <id>]",
-        "first-run [--ripr <path>] [--out <dir>] [--install-published]",
+        "first-run [--ripr <path>] [--out <dir>] [--install-published | --install-archive <version>]",
         "public-proof [--check] [--refresh-receipts]",
         "check-evidence-promotion-honesty [--pinned-external] [--clone] [--case <id>] [--checkout-root <path>] [--timeout-secs <n>]",
         "check-traceability",
@@ -1946,7 +1946,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Re-runs the pinned perl_packet_contract_migration producer command (issue #3217) with a maintainer-supplied producer binary, writes candidate packets and typed drift reports under target/ripr/reports/perl-migration-candidates/, and never writes under fixtures/; advisory only — drift exits 0 and promotion of accepted evidence is a reviewed manual act.",
         ),
         command_entry(
-            "first-run [--ripr <path>] [--out <dir>] [--install-published]",
+            "first-run [--ripr <path>] [--out <dir>] [--install-published | --install-archive <version>]",
             "external_state_read",
             "target/ripr/first-run/first-run.{json,md} plus per-case clones under the same directory",
             false,
