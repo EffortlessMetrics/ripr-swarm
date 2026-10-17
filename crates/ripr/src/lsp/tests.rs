@@ -9398,6 +9398,12 @@ async fn did_open_matching_disk_bytes_with_stale_committed_snapshot_keeps_refres
             "a clean open over matching committed snapshot bytes reached the scheduler".into(),
         );
     }
+    if backend.document_quarantine(&uri).is_some() {
+        return Err(
+            "a clean open of bytes the committed snapshot analyzed must not be quarantined as never analyzed"
+                .into(),
+        );
+    }
 
     // The file changed on disk while it was closed and no watch event
     // arrived. The reopened buffer matches the new persisted bytes, so the
