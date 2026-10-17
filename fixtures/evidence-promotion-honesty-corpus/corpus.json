@@ -9666,6 +9666,26 @@
         { "type": "expected_class", "class": "exposed" },
         { "type": "maximum_class", "class": "exposed" }
       ]
+    },
+    {
+      "id": "rust_field_match_foreign_option_constant",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/field_match_foreign_option_constant",
+      "vector": "qualified_option_constant_is_not_prelude_arm_identity",
+      "probe_family": "match_arm",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
     }
   ]
 }

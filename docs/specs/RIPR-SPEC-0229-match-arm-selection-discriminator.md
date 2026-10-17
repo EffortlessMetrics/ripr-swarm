@@ -518,7 +518,8 @@ implies but does not spell out:
 ## Non-Goals
 
 - No guard evaluation.
-- No scrutinee that is not a direct owner parameter (fields, method results,
+- Except the bounded direct-record field input described below, no scrutinee
+  that is not a direct owner parameter (fields, method results,
   computed tuples), except decision 6's single integer `/` or `%` by a
   literal.
 - No exhaustiveness checking beyond source-order first match.
@@ -694,3 +695,51 @@ therefore refuse these rows as analyzer uncertainty. This is not exposure,
 resolved test debt, or evidence that a consumer's strict qualification passed.
 The supported direct-parameter genuine-gap case retains its canonical identity
 and missing discriminator.
+
+## Direct record field inputs (#5500 / #5502)
+
+The canonical match-arm selector also reads a bounded direct record input:
+
+```rust
+struct Lease { elapsed: Option<u128>, timeout: u64 }
+fn charge(lease: &Lease) -> u64 {
+    match lease.elapsed {
+        Some(ms) => ms.div_ceil(1000) as u64,
+        None => lease.timeout,
+    }
+}
+// A direct argument supplies the selected field on this exact call.
+assert_eq!(charge(&Lease { elapsed: Some(1001), timeout: 600 }), 2);
+```
+
+This is an extension of the existing parameter-to-arm and same-assertion
+owners, not a second alias resolver. The match must remain a statement-free,
+unguarded tail match on one named field of a plain immutable parameter. The
+record must be a unique nongeneric root struct in the same indexed source file
+as every related test; its selected field must have unambiguous prelude
+`Option<u64>` or `Option<u128>` type. Namespace ambiguity, unknown item macros,
+conditional fields, imported/aliased records and unread source refuse proof.
+The current root owner's exact body must match the indexed source. Current and
+original arm patterns must use unqualified prelude `Some`, `None` or `_` with
+irrefutable payload bindings. A qualified constant named `None` cannot borrow
+the standard variant's identity; unsupported patterns retain unresolved
+selection rather than borrowing constructor spelling.
+The direct shared-borrowed record literal must explicitly initialize its unique
+selected field with `None` or `Some` of a literal. Other fields must also be
+closed literals or constructors; spreads, shorthand, computations, mutable
+borrows and a different record type refuse proof.
+
+The existing selector consumes that initializer with its constructor intact.
+Every relevant readable call selecting a sibling can name the missing arm;
+an unresolved relevant call still prevents that claim. Existing assertion
+admission and exact same-call/result pairing retain authority over exposure.
+A selected call elsewhere in the test, or a selector-shaped value in another
+field, the expected operand or diagnostics, cannot replace that pairing.
+
+A local variable, helper-returned record and later field writes remain outside
+this slice, including the current ub-review #1503 lease fixture. They require
+constructor-preserving value/binding provenance from the existing authority;
+this extension makes no claim that their observations or the consumer's strict
+qualification have passed. The #8479 typed limitation continues to describe
+those unsupported cases. Public wire schemas and gap policy do not change;
+classified-cache generations must invalidate older semantic results.
