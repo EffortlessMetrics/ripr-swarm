@@ -2,7 +2,7 @@
   "schema_version": "issue_lifecycle_fresh_root_reconstruction.v1",
   "issue": 4932,
   "spec": "RIPR-SPEC-0278",
-  "reconstructed_by": "fresh-root delivery agent on worktree C:\\Code\\Kimi\\Rust\\ripr-swarm-l4932b with no prior chat context; every conclusion reached from committed artifacts plus read-only live verification only",
+  "reconstructed_by": "fresh-root delivery agent (Kimi Work subagent) on a Windows Git Bash worktree of branch test/4932-fresh-root-reconstruction, launched with no prior chat context; every conclusion reached from committed artifacts plus read-only live verification only",
   "reconstructed_at": "2026-10-17T12:45:46Z",
   "branch": "test/4932-fresh-root-reconstruction",
   "base_main": "c36a62a6901de4e715002b9bf3c35b81e5e37a15",
