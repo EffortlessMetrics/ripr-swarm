@@ -83,6 +83,10 @@ suite('Server resolver compatibility fallback', () => {
         return;
       }
       assert.strictEqual(result.kind, 'missing_binary', JSON.stringify(result));
+      assert.ok(
+        result.detail.includes('cargo install ripr'),
+        `missing-binary diagnostic still names cargo install: ${result.detail}`
+      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -280,6 +284,10 @@ suite('Server resolver compatibility fallback', () => {
         assert.ok(
           result.kind === 'download' || result.kind === 'http' || result.kind === 'manifest',
           `expected a download-family kind, got ${result.kind}`
+        );
+        assert.ok(
+          !result.detail.includes('cargo install ripr'),
+          `download-family diagnostic must not append cargo install: ${result.detail}`
         );
       }
       assert.deepStrictEqual(attempts, ['path']);

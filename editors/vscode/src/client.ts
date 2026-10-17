@@ -11,12 +11,12 @@ import {
 } from 'vscode-languageclient/node';
 import { explicitSetting, getConfig, RiprConfig } from './config';
 import {
-  missingServerRemedy,
   requestedServerVersion,
   resolveServer,
   ResolveFailure,
   ResolveFailureKind,
-  ResolvedServer
+  ResolvedServer,
+  resolutionFailureRecovery
 } from './serverResolver';
 import { setupFilePath, hasUnsafeShellMetacharacter, redirectTargetMatches, redirectStaysInWorkspace, serverShellArg, normalizePath, sameWorkspaceRoot, rootMatchesWorkspace, objectField, stringField, boundedStringField, arrayLength, numberFieldValue, TEST_RUNNER_VERIFY_COMMAND_PREFIXES, testRunnerCommandLeavesScope } from './packetJson';
 import { riprDocumentSelectorsForWorkspace, extensionVersion, traceFromConfig, currentWorkspaceRootState, workspaceRootStateNoWorkspace, workspaceRootStateLabel, workspaceRootStateDetail, workspaceRootPickItems } from './workspaceHelpers';
@@ -147,13 +147,7 @@ export function missingServerMessageActions(kind: ResolveFailureKind): string[] 
 }
 
 export function resolutionFailureGuidance(failure: ResolveFailure, autoDownload: boolean): string {
-  if (failure.remedy) {
-    return failure.remedy;
-  }
-  if (failure.kind === 'missing_binary') {
-    return missingServerRemedy(autoDownload);
-  }
-  return 'Inspect the diagnostic, then retry or set ripr.server.path (ripr.server.downloadBaseUrl for a mirror).';
+  return resolutionFailureRecovery(failure.kind, autoDownload, failure.remedy);
 }
 
 // Palette invocations of diagnostic-scoped commands arrive without the

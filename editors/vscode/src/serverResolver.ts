@@ -197,16 +197,17 @@ export async function resolveServer(
   const autoDownloadHint = config.autoDownload
     ? 'Automatic download was enabled but did not produce a usable server.'
     : 'Automatic download is disabled.';
+  const kind = downloadFailure ? classifyDownloadFailureKind(downloadFailure) : 'missing_binary';
   return {
     message: 'ripr server is not available.',
     detail: [
       downloadFailure,
       pathResult.detail,
-      `${autoDownloadHint} ${missingServerRemedy(config.autoDownload)}`
+      `${autoDownloadHint} ${resolutionFailureRecovery(kind, config.autoDownload)}`
     ]
       .filter((line): line is string => Boolean(line))
       .join('\n'),
-    kind: downloadFailure ? classifyDownloadFailureKind(downloadFailure) : 'missing_binary'
+    kind
   };
 }
 
@@ -231,6 +232,25 @@ export function missingServerRemedy(autoDownload: boolean): string {
   return autoDownload
     ? 'Install with cargo install ripr or set ripr.server.path (ripr.server.downloadBaseUrl for a mirror).'
     : 'Enable ripr.server.autoDownload, install with cargo install ripr, or set ripr.server.path.';
+}
+
+/**
+ * Recovery sentence for a resolution failure. Cargo install is only honest
+ * for `missing_binary`; other kinds point at the diagnostic and path/mirror
+ * settings (#8588).
+ */
+export function resolutionFailureRecovery(
+  kind: ResolveFailureKind,
+  autoDownload: boolean,
+  remedy?: string
+): string {
+  if (remedy) {
+    return remedy;
+  }
+  if (kind === 'missing_binary') {
+    return missingServerRemedy(autoDownload);
+  }
+  return 'Inspect the diagnostic, then retry or set ripr.server.path (ripr.server.downloadBaseUrl for a mirror).';
 }
 
 /**
