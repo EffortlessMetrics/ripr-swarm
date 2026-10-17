@@ -26,6 +26,9 @@ mod build_commit_record;
 mod check_artifact_stdin;
 #[path = "cli_smoke/closed_stderr.rs"]
 mod closed_stderr;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/verify_execute_root.rs"]
+mod verify_execute_root;
 #[path = "common/mod.rs"]
 mod common;
 #[cfg(feature = "lang-rust")]
