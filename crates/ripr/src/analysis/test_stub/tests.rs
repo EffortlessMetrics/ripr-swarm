@@ -1339,3 +1339,151 @@ fn unsized_mut_reference_parameters_bind_an_owned_stand_in() {
         ("Vec<u8>".to_string(), "&mut v".to_string())
     );
 }
+
+/// #6300: an owner that returns `()` or `Result<(), _>` hands the changed
+/// value out through a `&mut` input, so the stub asserts that input after the
+/// call. `Ok(())` alone cannot tell the old arm from the new one.
+#[test]
+fn unit_result_owner_asserts_the_mut_input_after_the_call() -> Result<(), String> {
+    let source = "pub fn add_unit(unit: u8, out: &mut u64) -> Result<(), String> {
+    match unit {
+        1 => *out += 1,
+        2 => *out += 14,
+        _ => return Err(String::new()),
+    }
+    Ok(())
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        source,
+        "2 => *out += 14",
+        SeamKind::MatchArm,
+        RequiredDiscriminator::MatchArmTaken {
+            arm: "2".to_string(),
+        },
+    )?;
+    let stub = rust_test_stub(&seam, None, source).map_err(|refusal| refusal.as_str())?;
+    for expected in [
+        "let mut out: u64 = todo!(",
+        "let actual = add_unit(unit, &mut out);",
+        "let expected_out: u64 = todo!(",
+        "assert_eq!(out, expected_out);",
+    ] {
+        assert!(stub.text.contains(expected), "{expected}\n{}", stub.text);
+    }
+    assert!(
+        stub.fill_ins
+            .iter()
+            .any(|fill_in| fill_in.contains("`out` should hold after `add_unit` runs")),
+        "{:?}",
+        stub.fill_ins
+    );
+    Ok(())
+}
+
+#[test]
+fn unit_owner_with_a_mut_input_is_stubbed_without_a_unit_binding() -> Result<(), String> {
+    let source = "pub fn bump(x: u8, total: &mut u32) { if x > 3 { *total += 1; } }\n";
+    let seam = seam_at(
+        "src/lib.rs",
+        source,
+        "x > 3",
+        SeamKind::PredicateBoundary,
+        boundary(""),
+    )?;
+    let stub = rust_test_stub(&seam, None, source).map_err(|refusal| refusal.as_str())?;
+    assert!(stub.text.contains("bump(x, &mut total);"), "{}", stub.text);
+    assert!(
+        !stub.text.contains("let actual"),
+        "a unit call has no value to bind:\n{}",
+        stub.text
+    );
+    assert!(
+        stub.text.contains("assert_eq!(total, expected_total);"),
+        "{}",
+        stub.text
+    );
+    Ok(())
+}
+
+#[test]
+fn mut_self_is_asserted_and_an_unknown_type_leaves_the_assertion_to_fill_in() -> Result<(), String>
+{
+    let source = "pub struct Counter(u32);
+impl Counter {
+    pub fn tick(&mut self, n: u8) { if n > 1 { self.0 += 1; } }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        source,
+        "n > 1",
+        SeamKind::PredicateBoundary,
+        boundary(""),
+    )?;
+    let stub = rust_test_stub(&seam, None, source).map_err(|refusal| refusal.as_str())?;
+    assert!(stub.text.contains("subject.tick("), "{}", stub.text);
+    assert!(stub.text.contains("let _ = &subject;"), "{}", stub.text);
+    assert!(
+        stub.fill_ins
+            .iter()
+            .any(|fill_in| fill_in.contains("`subject` should hold after `tick` runs")),
+        "{:?}",
+        stub.fill_ins
+    );
+    Ok(())
+}
+
+#[test]
+fn match_arm_on_a_unit_result_owner_without_a_mut_input_needs_an_observer() -> Result<(), String> {
+    let source = "pub fn check(unit: u8) -> Result<(), String> {
+    let _secs = match unit {
+        1 => 60,
+        2 => 120,
+        _ => return Err(String::new()),
+    };
+    Ok(())
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        source,
+        "2 => 120",
+        SeamKind::MatchArm,
+        RequiredDiscriminator::MatchArmTaken {
+            arm: "2".to_string(),
+        },
+    )?;
+    assert_eq!(
+        rust_test_stub(&seam, None, source),
+        Err(TestStubRefusal::ObserverRequired)
+    );
+    Ok(())
+}
+
+#[test]
+fn returns_unit_recognizes_unit_and_unit_results_only() {
+    for unit in [
+        "()",
+        " () ",
+        "Result<(), Error>",
+        "io::Result<()>",
+        "Result<(), Vec<u8>>",
+        "Result<(), HashMap<K, V>>",
+        "Result<(), (A, B)>",
+    ] {
+        assert!(returns_unit(unit), "{unit}");
+    }
+    for value in [
+        "u8",
+        "Option<()>",
+        "Result<u8, ()>",
+        "Result<(u8, u8), E>",
+        "Vec<()>",
+        "Result<HashMap<K, V>, E>",
+        "Result<Vec<()>, E>",
+    ] {
+        assert!(!returns_unit(value), "{value}");
+    }
+}

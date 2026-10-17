@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr pilot` no longer recommends a source file that no crate compiles as the top test gap: a `src/<name>.rs` that no `mod` declaration reaches now reads `opaque` (reach) and is withheld and counted, with the wiring problem named instead of a test nobody can write. The detection fails closed, so it applies only when the package's crate root is indexed and the workspace has no unresolved `#[path]`, include or lexical-fallback file (#7426).
