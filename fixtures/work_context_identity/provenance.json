@@ -1,0 +1,12 @@
+{
+ "schema_version": "work_context_identity_provenance.v1",
+ "repository": "EffortlessMetrics/ripr-swarm",
+ "captured_at": "2026-10-09T12:00:00Z",
+ "capture_method": "authored context-packet corpus for the RIPR-SPEC-0272 selected-work context-packet law checker against the committed RIPR-SPEC-0244 selection corpus",
+ "files": [
+  {
+   "path": "corpus.json",
+   "sha256": "7f8433d32f738bb223845898e2bb20a23560f1b8e25af3178b905c6ef4863625"
+  }
+ ]
+}
