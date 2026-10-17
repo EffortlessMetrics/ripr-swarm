@@ -42,13 +42,20 @@ pub(super) fn deleted_line_findings(
         .collect();
     // Removed headers an added header of the same name replaced: the owner
     // they open lives on. A header replaced by a differently named one is a
-    // different owner, and its deleted body is not the new owner's.
+    // different owner, and its deleted body is not the new owner's. Added
+    // headers use the same wrap grouping as removed ones, so a Prettier
+    // split (`save(` / `id: string,` / `) {`) still matches (#7705).
+    let added_headers = added_owner_headers(changed);
     let re_headed: BTreeSet<usize> = counterparts
         .iter()
         .filter_map(|(added_line, removed)| {
             let group = headers.group_of.get(&removed.line)?;
-            let added = code_only(added_text.get(added_line)?);
             let removed_header = headers.text.get(group).map(String::as_str)?;
+            let added = if let Some(added_group) = added_headers.group_of.get(added_line) {
+                added_headers.text.get(added_group)?.clone()
+            } else {
+                code_only(added_text.get(added_line)?)
+            };
             same_live_owner(&added, removed_header).then_some(*group)
         })
         .collect();
@@ -214,46 +221,84 @@ struct RemovedHeaders {
 
 /// Every removed line that is part of an owner header. A header can span
 /// lines: a parameter list Prettier wraps (`save(` / `id: string,` /
-/// `) {`) or an Allman brace on its own line. The lines of an open
-/// parenthesis join until it closes, unless a line opens a block first, as
-/// a callback passed to a call does.
+/// `) {`), a wrapped return type (`): Promise<` / `Result` / `> {`), a
+/// destructured first line (`save({` / `id,` / `}) {`), or an Allman brace
+/// on its own line. Open parentheses and type-argument lists join until
+/// they close; a `{` inside still-open parens is a parameter object, not
+/// the body (#7705).
 fn removed_owner_headers(runs: &[Vec<RemovedCode<'_>>]) -> RemovedHeaders {
+    owner_headers_from_code_runs(
+        runs.iter()
+            .map(|run| run.iter().map(|line| (line.line.line, line.code.as_str()))),
+    )
+}
+
+/// Added owner headers grouped the same way as removed ones, so a wrapped
+/// replacement still counts as the same live owner (#7705).
+fn added_owner_headers(changed: &ChangedFile) -> RemovedHeaders {
+    let mut by_line: Vec<&ChangedLine> = changed.added_lines.iter().collect();
+    by_line.sort_by_key(|line| line.line);
+    let mut runs: Vec<Vec<(usize, String)>> = Vec::new();
+    for line in by_line {
+        let continues = runs
+            .last()
+            .and_then(|run| run.last())
+            .is_some_and(|(last_line, _)| *last_line + 1 == line.line);
+        if !continues {
+            runs.push(Vec::new());
+        }
+        if let Some(run) = runs.last_mut() {
+            run.push((line.line, code_only(&line.text)));
+        }
+    }
+    owner_headers_from_code_runs(
+        runs.iter()
+            .map(|run| run.iter().map(|(line, code)| (*line, code.as_str()))),
+    )
+}
+
+fn owner_headers_from_code_runs<'a>(
+    runs: impl IntoIterator<Item = impl IntoIterator<Item = (usize, &'a str)>>,
+) -> RemovedHeaders {
     let mut headers = RemovedHeaders::default();
     for run in runs {
-        let mut group: Vec<&RemovedCode<'_>> = Vec::new();
+        let mut group: Vec<(usize, &'a str)> = Vec::new();
         let mut depth: isize = 0;
-        for line in run {
-            let continues = group.last().is_some_and(|last| {
-                (depth > 0 && !last.code.trim_end().ends_with('{')) || line.code.trim() == "{"
-            });
+        for (line, code) in run {
+            let continues = !group.is_empty() && (depth > 0 || code.trim() == "{");
             if !continues {
                 close_header_group(&group, &mut headers);
                 group.clear();
                 depth = 0;
             }
-            depth += paren_delta(&line.code);
-            group.push(line);
+            depth += header_group_delta(code);
+            group.push((line, code));
         }
         close_header_group(&group, &mut headers);
     }
     headers
 }
 
-fn close_header_group(group: &[&RemovedCode<'_>], headers: &mut RemovedHeaders) {
-    let Some(first) = group.first() else {
+fn close_header_group(group: &[(usize, &str)], headers: &mut RemovedHeaders) {
+    let Some((first, _)) = group.first() else {
         return;
     };
     let joined = group
         .iter()
-        .map(|line| line.code.trim())
+        .map(|(_, code)| code.trim())
         .collect::<Vec<_>>()
         .join(" ");
     if opens_an_owner(&joined) {
-        for line in group {
-            headers.group_of.insert(line.line.line, first.line.line);
+        for (line, _) in group {
+            headers.group_of.insert(*line, *first);
         }
-        headers.text.insert(first.line.line, joined);
+        headers.text.insert(*first, joined);
     }
+}
+
+/// Parentheses plus type-argument angles still open on this header.
+fn header_group_delta(code: &str) -> isize {
+    paren_delta(code) + type_angle_delta(code)
 }
 
 /// What enclosed a deleted line in the old file.
@@ -415,6 +460,32 @@ fn paren_delta(code: &str) -> isize {
         ')' => depth - 1,
         _ => depth,
     })
+}
+
+/// Opened minus closed type-argument angles. Comparisons (`a < b`) and
+/// arrows (`=>`, `>=`, `<=`) are not type lists: a type opener sits
+/// immediately after an identifier, `)`, `]` or `>` (#7705).
+fn type_angle_delta(code: &str) -> isize {
+    let bytes = code.as_bytes();
+    let mut depth: isize = 0;
+    for at in 0..bytes.len() {
+        match bytes[at] {
+            b'<' if bytes.get(at + 1) != Some(&b'=') && is_type_open_angle(bytes, at) => {
+                depth += 1;
+            }
+            b'>' if at > 0 && bytes[at - 1] == b'=' => {}
+            b'>' => depth -= 1,
+            _ => {}
+        }
+    }
+    depth
+}
+
+fn is_type_open_angle(bytes: &[u8], at: usize) -> bool {
+    let Some(prev) = at.checked_sub(1).and_then(|i| bytes.get(i).copied()) else {
+        return false;
+    };
+    prev.is_ascii_alphanumeric() || matches!(prev, b'_' | b'$' | b')' | b']' | b'>')
 }
 
 /// Keywords that open a block with a parenthesised head but no owner.

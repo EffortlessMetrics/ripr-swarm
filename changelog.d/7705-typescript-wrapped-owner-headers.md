@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- TypeScript and JavaScript: wrapped multi-line deleted-line owner headers are now recognised, so a type-only header edit keeps the deleted body line as base-side evidence on the live owner, and a deleted wrapped method is not given to an enclosing live function: a Prettier-wrapped replacement (`save(` / `id: string,` / `) {`), a wrapped return type (`): Promise<` / `Result` / `> {`), and a destructured first line (`save({` / `id,` / `}) {`). Base-side records stay out of counts, gates, cards and diagnostics (#7705).

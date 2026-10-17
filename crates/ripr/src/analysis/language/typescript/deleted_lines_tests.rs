@@ -752,6 +752,95 @@ fn deleted_class_field_named_get_is_not_given_to_the_enclosing_function() -> Res
     Ok(())
 }
 
+/// #7705 shape 1: a replacement header Prettier-wrapped so no single added
+/// line opens an owner (`save(` / `id: readonly string,` / `) {`). The
+/// method still lives on; the unpaired body line stays base-side on it.
+#[test]
+fn deleted_body_under_a_wrapped_replacement_header_keeps_its_owner() -> Result<(), String> {
+    let findings = analyze(
+        "wrapped-replacement-header",
+        &[
+            " export class Cart {",
+            "-  save(id: string) {",
+            "-    audit(id);",
+            "+  save(",
+            "+    id: string | number,",
+            "+  ) {",
+            "     persist(id);",
+            "   }",
+            " }",
+        ],
+    )?;
+    let base = base_side(&findings);
+    assert_eq!(base, vec![record(2, "save")], "{findings:?}");
+    assert!(
+        findings
+            .iter()
+            .filter(|finding| finding.source_currentness.is_base_side())
+            .all(|finding| !finding.is_candidate_actionable()),
+        "base-side records must stay non-actionable: {findings:?}"
+    );
+    Ok(())
+}
+
+/// #7705 shape 4: a wrapped return type (`): Promise<` / `string` / `> {`)
+/// still joins as one header, so a type-only header edit keeps the deleted
+/// body line on the live method.
+#[test]
+fn deleted_body_under_a_wrapped_return_type_header_keeps_its_owner() -> Result<(), String> {
+    let findings = analyze(
+        "wrapped-return-type",
+        &[
+            " export class Cart {",
+            "-  save(id: string): Promise<",
+            "-    string",
+            "-  > {",
+            "-    audit(id);",
+            "+  save(id: string | number): Promise<",
+            "+    string",
+            "+  > {",
+            "     return Promise.resolve(id);",
+            "   }",
+            " }",
+        ],
+    )?;
+    let base = base_side(&findings);
+    assert_eq!(base, vec![record(2, "save")], "{findings:?}");
+    assert!(
+        findings
+            .iter()
+            .filter(|finding| finding.source_currentness.is_base_side())
+            .all(|finding| !finding.is_candidate_actionable()),
+        "base-side records must stay non-actionable: {findings:?}"
+    );
+    Ok(())
+}
+
+/// #7705 shape 8: a wrapped header whose first line ends in `{` (`save({` /
+/// `id,` / `}) {`) is still a header. Deleting it does not give its body to
+/// the enclosing live function.
+#[test]
+fn deleted_wrapped_header_opening_with_a_brace_is_not_given_to_the_enclosing_function()
+-> Result<(), String> {
+    let findings = analyze(
+        "wrapped-header-opens-with-brace",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "   const api = {",
+            "-    save({",
+            "-      id,",
+            "-    }) {",
+            "-      audit(id);",
+            "-    },",
+            "   };",
+            "   return items.length;",
+            " }",
+        ],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
+    Ok(())
+}
+
 /// A line deleted from the body of a kept block comment is not code.
 #[test]
 fn deleted_comment_body_line_records_nothing() -> Result<(), String> {
