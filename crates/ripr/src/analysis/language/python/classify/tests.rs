@@ -1708,6 +1708,90 @@ fn guarded_arm_gate_stays_off_without_source() -> Result<(), String> {
     Ok(())
 }
 
+// RIPR-SPEC-0238 example 22 / #6585 rule 10: a changed dict value that equals an
+// unchanged sibling must not credit `exposed` just because the sibling assertion
+// contains that literal.
+#[test]
+fn equal_sibling_dict_value_stays_weakly_exposed() -> Result<(), String> {
+    let finding = classify_case(
+        "def build():\n    return {'port': 80, 'timeout': 80}\n",
+        "from src.subject import build\n\ndef test_timeout():\n    assert build()['timeout'] == 80\n",
+        2,
+        "    return {'port': 8080, 'timeout': 80}",
+        "    return {'port': 80, 'timeout': 80}",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.oracle_alignment.as_deref(), Some("orthogonal"));
+    Ok(())
+}
+
+#[test]
+fn equal_sibling_dict_changed_key_stays_exposed() -> Result<(), String> {
+    let finding = classify_case(
+        "def build():\n    return {'port': 80, 'timeout': 80}\n",
+        "from src.subject import build\n\ndef test_port():\n    assert build()['port'] == 80\n",
+        2,
+        "    return {'port': 8080, 'timeout': 80}",
+        "    return {'port': 80, 'timeout': 80}",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert_ne!(finding.oracle_alignment.as_deref(), Some("orthogonal"));
+    Ok(())
+}
+
+#[test]
+fn equal_sibling_dict_whole_collection_stays_exposed() -> Result<(), String> {
+    let finding = classify_case(
+        "def build():\n    return {'port': 80, 'timeout': 80}\n",
+        "from src.subject import build\n\ndef test_cfg():\n    assert build() == {'port': 80, 'timeout': 80}\n",
+        2,
+        "    return {'port': 8080, 'timeout': 80}",
+        "    return {'port': 80, 'timeout': 80}",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn equal_sibling_list_value_stays_weakly_exposed() -> Result<(), String> {
+    let finding = classify_case(
+        "def build():\n    return [80, 80]\n",
+        "from src.subject import build\n\ndef test_second():\n    assert build()[1] == 80\n",
+        2,
+        "    return [8080, 80]",
+        "    return [80, 80]",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.oracle_alignment.as_deref(), Some("orthogonal"));
+    Ok(())
+}
+
+#[test]
+fn equal_sibling_list_changed_index_stays_exposed() -> Result<(), String> {
+    let finding = classify_case(
+        "def build():\n    return [80, 80]\n",
+        "from src.subject import build\n\ndef test_first():\n    assert build()[0] == 80\n",
+        2,
+        "    return [8080, 80]",
+        "    return [80, 80]",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn equal_sibling_list_whole_collection_stays_exposed() -> Result<(), String> {
+    let finding = classify_case(
+        "def build():\n    return [80, 80]\n",
+        "from src.subject import build\n\ndef test_all():\n    assert build() == [80, 80]\n",
+        2,
+        "    return [8080, 80]",
+        "    return [80, 80]",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
 const LAST_SOURCE: &str = "def last(iterable, default=None):\n    try:\n        return next(iter(iterable))\n    except StopIteration:\n        return None\n";
 const LAST_OLD: &str = "        return default";
 const LAST_NEW: &str = "        return None";
