@@ -830,7 +830,8 @@ fn reject_symlinked_ancestor(cache_dir: &Path) -> Result<(), String> {
         match fs::symlink_metadata(ancestor) {
             Ok(metadata) if metadata.file_type().is_symlink() => {
                 return Err(format!(
-                    "refusing to scan {}: path component {} is a symlink; nothing was inspected or removed",
+                    "refusing to scan {}: path component {} is a symlink; nothing was inspected or removed. \
+                     Set {CACHE_DIR_ENV} to the real (non-aliased) cache directory",
                     cache_dir.display(),
                     ancestor.display()
                 ));
@@ -1774,6 +1775,47 @@ mod tests {
             }
             other => Err(format!("alias ancestor not refused by both: {other:?}")),
         }
+    }
+
+    #[test]
+    fn default_suffix_no_longer_skips_root_safety_checks() {
+        let root = PathBuf::from("/workspace/ripr");
+        for bad in [
+            "target/ripr/cache",
+            "/tmp/x/../target/ripr/cache",
+            "./target/ripr/cache",
+        ] {
+            assert!(
+                build_cache_report_from_env(&root, Ok(bad.into())).is_err(),
+                "{bad} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn cache_gc_includes_sharded_layers_but_not_their_root_siblings() -> Result<(), String> {
+        let workspace = temp_root("gc-sharded")?;
+        let sharded = cache_layer_names()
+            .iter()
+            .find(|name| name.ends_with(super::SHARDED_CACHE_FAMILY_SUFFIX))
+            .copied()
+            .ok_or("no sharded layer registered")?;
+        let cache = workspace.join("target/ripr/cache");
+        write_bytes(&cache.join(sharded).join("gen-1/shard-0.bin"), 4)?;
+        write_bytes(&cache.join("stray.bin"), 9)?;
+        let plan = build_gc_plan(
+            &workspace,
+            &GcOptions {
+                dry_run: true,
+                max_size_bytes: Some(0),
+                ttl_days: None,
+            },
+            SystemTime::now() + Duration::from_secs(1),
+        )?;
+        assert_eq!(plan.selected_files, 1);
+        assert_eq!(plan.selected_bytes, 4);
+        cleanup(workspace)?;
+        Ok(())
     }
 
     fn temp_root(label: &str) -> Result<PathBuf, String> {
