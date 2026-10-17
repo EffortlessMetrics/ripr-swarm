@@ -1192,6 +1192,12 @@ fn scoreboard(page: &mut Page, bars: &[Bar]) {
         bars,
     ));
     page.blank();
+    page.line("By board, so the weak areas show before the full table:");
+    page.blank();
+    page.table(
+        &["Board", "Meets", "Below", "Not measured", "Failed"],
+        &board_tally(bars),
+    );
     let rows: Vec<Vec<String>> = bars.iter().map(bar_row).collect();
     page.table(&["Board", "Bar", "Now", "Target", "Status", "Trend"], &rows);
     let unmeasured_rows: Vec<&Bar> = bars
@@ -1210,6 +1216,34 @@ fn scoreboard(page: &mut Page, bars: &[Bar]) {
         }
         page.blank();
     }
+}
+
+/// One row per board, in first-seen order, counting bars by status.
+fn board_tally(bars: &[Bar]) -> Vec<Vec<String>> {
+    let mut order: Vec<&str> = Vec::new();
+    for bar in bars {
+        if !order.contains(&bar.board.as_str()) {
+            order.push(bar.board.as_str());
+        }
+    }
+    order
+        .into_iter()
+        .map(|board| {
+            let count = |status: Status| {
+                bars.iter()
+                    .filter(|b| b.board == board && b.status == status)
+                    .count()
+                    .to_string()
+            };
+            vec![
+                board.to_string(),
+                count(Status::Meets),
+                count(Status::Below),
+                count(Status::NotMeasured),
+                count(Status::Failed),
+            ]
+        })
+        .collect()
 }
 
 /// A verdict-corpus rate for one case origin ("upstream" or "authored").

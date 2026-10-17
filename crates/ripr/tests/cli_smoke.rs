@@ -5291,8 +5291,15 @@ fn first_pr_check_missing_packet_recovers_without_a_resolvable_base()
             .join("target/ripr/reports/start-here.json")
             .is_file()
     );
+    // The packet is current (not "does not create one", not stale) and
+    // records the blocked missing-artifacts state, which fails the gate (#7373).
     let recheck = run_ripr(&["first-pr", "--root", &root, "--base", "HEAD", "--check"]);
-    assert_success(&recheck);
+    assert_failure(&recheck);
+    let recheck_stderr = String::from_utf8_lossy(&recheck.stderr);
+    assert!(
+        recheck_stderr.contains("blocked state `missing_artifacts`"),
+        "{recheck_stderr}"
+    );
     ignore_remove_dir_all(&workspace);
     Ok(())
 }
@@ -5321,11 +5328,49 @@ fn first_pr_check_recovery_write_resolves_the_default_base() -> Result<(), Strin
     )?;
     assert_eq!(base, "master");
 
+    // `--check` resolves the omitted base too, so the packet is current; the
+    // blocked missing-artifacts state it records fails the gate (#7373).
     let check = run_ripr(&["first-pr", "--root", &root_str, "--check"]);
-    assert_success(&check);
+    assert_failure(&check);
+    let check_stderr = String::from_utf8_lossy(&check.stderr);
     assert!(
-        String::from_utf8_lossy(&check.stdout).contains("First PR start-here packet ok"),
-        "{check:?}"
+        check_stderr.contains("blocked state `missing_artifacts`"),
+        "{check_stderr}"
+    );
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #7373: `--check` is the gate, so a current packet that records a blocked
+/// state fails it (exit 2) while write mode keeps exiting 0 after composing the
+/// packet. The unblocked packet stays the passing control.
+#[test]
+fn first_pr_check_exits_2_for_a_blocked_packet_but_write_mode_exits_0() -> Result<(), String> {
+    let root = unique_temp_workspace("first-pr-blocked-exit");
+    std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+    let run = |extra: &[&str]| -> Result<Output, String> {
+        let mut args = vec!["first-pr", "--root", "."];
+        args.extend_from_slice(extra);
+        run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &args).map_err(|err| err.to_string())
+    };
+
+    let write = run(&[])?;
+    assert_success(&write);
+    let packet = root.join("target/ripr/reports/start-here.json");
+    assert_eq!(json_string_at(&packet, "/status")?, "blocked");
+    assert_eq!(
+        json_string_at(&packet, "/selected/output_state")?,
+        "wrong_root"
+    );
+
+    let check = run(&["--check"])?;
+    assert_failure(&check);
+    assert_eq!(check.status.code(), Some(2), "{check:?}");
+    let stderr = String::from_utf8_lossy(&check.stderr);
+    assert!(stderr.contains("blocked state `wrong_root`"), "{stderr}");
+    assert!(
+        !String::from_utf8_lossy(&check.stdout).contains("start-here packet ok"),
+        "a blocked packet must not print the ok line"
     );
     ignore_remove_dir_all(&root);
     Ok(())
@@ -17585,6 +17630,8 @@ fn python_check_safe_action(
         .lines()
         .find(|line| line.starts_with("  Safe next action:"))
         .ok_or_else(|| format!("check printed no safe next action:\n{stdout}"))?;
+    // #8165 / #8275: the bounded State line is plain language only; the
+    // `preview_limited` schema token stays on machine surfaces.
     assert!(
         stdout.contains("State: preview language, advisory only"),
         "expected preview_limited triage:\n{stdout}"

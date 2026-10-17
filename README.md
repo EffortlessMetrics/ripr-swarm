@@ -69,13 +69,16 @@ The fastest route needs no Rust toolchain: download the checksummed prebuilt
 0.10.0 archive (about a second here, against about two minutes to compile
 0.10.0 from source). This example is Linux x86-64; the release also has macOS
 and Windows archives
-([asset list](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.10.0)):
+([asset list](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.10.0)).
+On macOS set `t=aarch64-apple-darwin` (Apple silicon) or
+`t=x86_64-apple-darwin` (Intel); macOS ships `shasum`, not `sha256sum`, so the
+verify step falls back to `shasum -a 256`:
 
 ```bash
 v=0.10.0; t=x86_64-unknown-linux-gnu; f=ripr-server-v$v-$t.tar.gz
 b=https://github.com/EffortlessMetrics/ripr/releases/download/v$v
 curl -fsSLO $b/$f && curl -fsSLO $b/$f.sha256
-echo "$(cat $f.sha256)  $f" | sha256sum -c - && tar xzf $f \
+echo "$(cat $f.sha256)  $f" | { sha256sum -c - || shasum -a 256 -c -; } && tar xzf $f \
   && export PATH="$PWD:$PATH"   # ./ripr is now first on PATH for this shell
 ripr check
 ```
@@ -216,7 +219,7 @@ a promise that every surface is available from the published package.
 | Rust | Static analysis and bounded test-only repair are `usable alpha`. Repairs require a valid route; ordinary real-repository route yield and success remain unestablished. |
 | Python | Analysis is `preview`. Selected pytest/unittest repair routes are `usable alpha`; a finding without a complete route has no repair card. |
 | TypeScript / JavaScript | Opt-in `preview` analysis. When a finding has a complete repair packet, `check` names the test file, the missing case, and the test command to run. |
-| Perl | `preview` / advisory development only. It needs a `lang-perl` build and the unpublished `perl-ripr-facts` exporter; no released build/exporter combination is usable yet. |
+| Perl | `preview` / advisory development only. It needs a `lang-perl` build and the unpublished `perl-ripr-facts` exporter (build it from `crates/perl-ripr-facts` in `EffortlessMetrics/perl-lsp` with `cargo build --release -p perl-ripr-facts`, put it on `PATH`, and set `[languages] enabled = ["perl"]` plus `[perl] producer = "perl-ripr-facts"`); no released build/exporter combination is usable yet. |
 
 With no `ripr.toml`, ripr analyzes Rust and also enables Python preview when
 it detects Python project markers or Python source under `src/` or `tests/`;
