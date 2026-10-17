@@ -66,7 +66,8 @@
 //! Focused modules: `cli` (entry and publication), `schema` (DTOs and closed
 //! key sets), `validate` (identity and currentness), `aggregate` (joins and
 //! verdict), `render` (JSON/Markdown). Tests remain
-//! `python_repair_verification_semantics`.
+//! `python_repair_verification_semantics`. The published JSON kind remains
+//! `python_repair_verification_check_report`.
 
 mod aggregate;
 mod cli;
