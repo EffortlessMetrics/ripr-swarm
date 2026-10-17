@@ -972,16 +972,18 @@ pub(in crate::analysis) fn is_direct_collection_state_write(
 /// subject must be exactly `receiver`, `receiver[..]` (or another index that
 /// ends there), or `receiver.<value-read>(..)`. A trailing operator after the
 /// first read, or `capacity`, does not observe the collection (#7135).
+#[cfg(test)]
 pub(in crate::analysis) fn assertion_observes_direct_collection(
     assertion_text: &str,
     receiver: &str,
 ) -> bool {
-    assertion_observes_direct_collection_with_start(assertion_text, receiver, false)
+    assertion_observes_direct_collection_with_start(assertion_text, receiver, false, true)
 }
 
 /// Like [`assertion_observes_direct_collection`], but the test `body` may
 /// prove the receiver started empty, in which case a first-element read
 /// does observe the pushed element and keeps its credit.
+#[cfg(test)]
 pub(in crate::analysis) fn assertion_observes_direct_collection_in_test(
     assertion_text: &str,
     receiver: &str,
@@ -991,13 +993,47 @@ pub(in crate::analysis) fn assertion_observes_direct_collection_in_test(
         assertion_text,
         receiver,
         receiver_starts_empty_in_body(body, receiver),
+        true,
     )
+}
+
+/// #6640: like [`assertion_observes_direct_collection_in_test`], but a
+/// pure count observation (`.len()`, `.is_empty()`) confirms the pushed
+/// payload only when `count_reads` holds. A changed argument leaves the
+/// count alone, so count credit belongs to a deleted write
+/// (`CallDeletion`), not to a value or side-effect payload change —
+/// the direct-collection mirror of the field-path `count_reads` split
+/// in [`assertion_field_collection_reads`].
+pub(in crate::analysis) fn assertion_observes_direct_collection_in_test_for_probe(
+    assertion_text: &str,
+    receiver: &str,
+    body: &str,
+    count_reads: bool,
+) -> bool {
+    assertion_observes_direct_collection_with_start(
+        assertion_text,
+        receiver,
+        receiver_starts_empty_in_body(body, receiver),
+        count_reads,
+    )
+}
+
+/// #6640: count-aware form of [`assertion_observes_direct_collection`]
+/// without a test body; see
+/// [`assertion_observes_direct_collection_in_test_for_probe`].
+pub(in crate::analysis) fn assertion_observes_direct_collection_for_probe(
+    assertion_text: &str,
+    receiver: &str,
+    count_reads: bool,
+) -> bool {
+    assertion_observes_direct_collection_with_start(assertion_text, receiver, false, count_reads)
 }
 
 fn assertion_observes_direct_collection_with_start(
     assertion_text: &str,
     receiver: &str,
     starts_empty: bool,
+    count_reads: bool,
 ) -> bool {
     if !is_bare_ident(receiver) {
         return false;
@@ -1006,6 +1042,7 @@ fn assertion_observes_direct_collection_with_start(
         return false;
     };
     subject_names_collection(&subject, receiver)
+        && (count_reads || !reads_only_count(&subject))
         && (starts_empty || !reads_only_first_element(&subject, receiver))
 }
 
@@ -4671,6 +4708,57 @@ mod tests {
             ),
             "a char-literal value-read argument must still observe the collection"
         );
+    }
+
+    /// #6640: a pure count read (`.len()`, `.is_empty()`) pins how many
+    /// elements were pushed, not which payload: it must not confirm a
+    /// value/side-effect payload change, while a deleted push
+    /// (`count_reads`, the CallDeletion credit) still changes the count.
+    /// Payload reads keep their credit on both sides of the split, and
+    /// wrong-receiver / expected-side count reads never confirm.
+    #[test]
+    fn direct_collection_count_read_confirms_only_a_deleted_push() {
+        for assertion in [
+            "assert_eq!(events.len(), 1);",
+            "assert!(events.is_empty());",
+            "assert_eq!(events.is_empty(), false);",
+        ] {
+            assert!(
+                !assertion_observes_direct_collection_for_probe(assertion, "events", false),
+                "count read must not confirm the pushed payload: {assertion}"
+            );
+            assert!(
+                assertion_observes_direct_collection_for_probe(assertion, "events", true),
+                "count read must still confirm a deleted push: {assertion}"
+            );
+        }
+        for assertion in [
+            "assert_eq!(events, vec![7]);",
+            "assert_eq!(events.contains(&7), true);",
+            "assert_eq!(events.last(), Some(&7));",
+        ] {
+            assert!(
+                assertion_observes_direct_collection_for_probe(assertion, "events", false),
+                "payload read must keep its credit without count credit: {assertion}"
+            );
+        }
+        // An empty start makes element zero the pushed element.
+        assert!(assertion_observes_direct_collection_in_test_for_probe(
+            "assert_eq!(events[0], 7);",
+            "events",
+            "let mut events = Vec::new(); send(&mut events, 7);",
+            false,
+        ));
+        assert!(!assertion_observes_direct_collection_for_probe(
+            "assert_eq!(other.len(), 1);",
+            "events",
+            true,
+        ));
+        assert!(!assertion_observes_direct_collection_for_probe(
+            "assert_eq!(1, events.len());",
+            "events",
+            true,
+        ));
     }
 
     #[test]

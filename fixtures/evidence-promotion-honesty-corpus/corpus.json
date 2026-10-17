@@ -9432,6 +9432,34 @@
       ]
     },
     {
+      "id": "rust_direct_collection_count_payload_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_direct_collection_count_payload",
+      "vector": "len_count_confirms_deleted_direct_push",
+      "probe_family": "call_deletion",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ],
+      "control": "must_stay_exposed"
+    },
+    {
+      "id": "rust_direct_collection_count_payload_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_direct_collection_count_payload",
+      "vector": "len_count_cannot_confirm_changed_direct_push_payload",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
       "id": "ts_mock_payload_wrapped_impl_not_a_fresh_mock",
       "language": "typescript",
       "tier": "pure",
