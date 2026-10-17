@@ -131,6 +131,15 @@ fn direct_owner_result_snapshots_keep_their_grade() -> Result<(), String> {
         strong(&format!("let actual = make_count(2);\n        {assertion}"))?;
     }
     strong("let actual = make_count(2); insta::assert_json_snapshot!(actual);")?;
+    strong(
+        "use insta::assert_snapshot;\n        let actual = make_count(2);\n        assert_snapshot!(actual, @\"2\");",
+    )?;
+    strong(
+        "use insta::assert_snapshot;\n        let actual = make_count(2);\n        assert_snapshot!(make_count(2), @\"2\");",
+    )?;
+    strong(
+        "use insta::{assert_snapshot};\n        let actual = make_count(2);\n        assert_snapshot!(make_count(2), @\"2\");",
+    )?;
     strong("let actual = crate::make_count(2);\n        insta::assert_json_snapshot!(actual);")
 }
 
@@ -226,7 +235,13 @@ fn inline_string_commas_keep_direct_snapshot_credit() -> Result<(), String> {
 #[test]
 fn local_snapshot_lookalikes_cannot_borrow_the_operand_exception() -> Result<(), String> {
     weak(
+        "macro_rules! define_snapshot { () => { macro_rules! assert_snapshot { ($ignored:expr, @$expected:literal) => {}; } }; }\n        define_snapshot!();\n        let actual = make_count(2);\n        assert_snapshot!(make_count(2), @\"2\");",
+    )?;
+    weak(
         "macro_rules! assert_snapshot { ($($tt:tt)*) => {} }\n        let actual = make_count(2);\n        assert_snapshot!(actual);",
+    )?;
+    weak(
+        "macro_rules! ignored { ($($tt:tt)*) => {} }\n        use ignored as assert_snapshot;\n        let actual = make_count(2);\n        assert_snapshot!(make_count(2), @\"2\");",
     )?;
     weak(
         "macro_rules! ignored { ($($tt:tt)*) => {} }\n        mod insta { pub(crate) use ignored as assert_snapshot; }\n        let actual = make_count(2);\n        insta::assert_snapshot!(make_count(2), @\"2\");",

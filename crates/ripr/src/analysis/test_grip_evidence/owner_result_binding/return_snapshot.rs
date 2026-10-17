@@ -95,6 +95,11 @@ pub(in crate::analysis::test_grip_evidence) fn snapshot_macro_is_unambiguous(
 ) -> bool {
     let leaf = text.rsplit("::").next().unwrap_or_default();
     let qualified = text.trim_start_matches("::").starts_with("insta::");
+    if crate::analysis::classify::targeted_name_is_alias(context.index, leaf)
+        || (qualified && crate::analysis::classify::targeted_name_is_alias(context.index, "insta"))
+    {
+        return false;
+    }
     context.index.files().iter().all(|(file, facts)| {
         if facts.used_lexical_fallback {
             return false;
@@ -105,17 +110,59 @@ pub(in crate::analysis::test_grip_evidence) fn snapshot_macro_is_unambiguous(
         let Some(parsed) = context.parsed_test_file(file) else {
             return false;
         };
-        !parsed.parse.tree().syntax().descendants().any(|node| {
-            ast::MacroRules::cast(node.clone())
-                .and_then(|item| item.name())
-                .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()))
-                .is_some_and(|name| name.text().trim_start_matches("r#") == leaf)
-                || (qualified
-                    && ast::Module::cast(node)
-                        .and_then(|item| item.name())
-                        .is_some_and(|name| name.text().trim_start_matches("r#") == "insta"))
+        let tree = parsed.parse.tree();
+        let allowed_imports: std::collections::BTreeSet<_> = tree
+            .syntax()
+            .descendants()
+            .filter_map(ast::Use::cast)
+            .filter(|item| {
+                item.syntax()
+                    .descendants()
+                    .filter_map(ast::UseTree::cast)
+                    .any(|item| {
+                        if item.rename().is_some()
+                            || item.use_tree_list().is_some()
+                            || item.star_token().is_some()
+                        {
+                            return false;
+                        }
+                        let mut paths: Vec<_> = item
+                            .syntax()
+                            .ancestors()
+                            .filter_map(ast::UseTree::cast)
+                            .filter_map(|item| item.path())
+                            .map(|path| {
+                                path.syntax()
+                                    .text()
+                                    .to_string()
+                                    .split_whitespace()
+                                    .collect::<String>()
+                            })
+                            .collect();
+                        paths.reverse();
+                        paths.join("::").trim_start_matches("::") == format!("insta::{leaf}")
+                    })
+            })
+            .map(|item| parsed.lines.line(item.syntax().text_range().start()))
+            .collect();
+        let sites = crate::analysis::syntax::trusted_macro_binding_sites(
+            &facts.source,
+            &context.index.package_names,
+            &[leaf],
+            &|_, _| false,
+            &|_| false,
+        );
+        sites.iter().all(|(_, site)| {
+            matches!(site.kind, crate::analysis::syntax::MacroBindingKind::Import)
+                && allowed_imports.contains(&site.line)
         }) && (!qualified
-            || !crate::analysis::syntax::source_declares_value_name(&facts.source, "insta"))
+            || (!tree
+                .syntax()
+                .descendants()
+                .filter_map(ast::Module::cast)
+                .filter_map(|item| item.name())
+                .any(|name| name.text().trim_start_matches("r#") == "insta")
+                && !crate::analysis::syntax::source_declares_value_name(&facts.source, "insta")))
     })
 }
 
