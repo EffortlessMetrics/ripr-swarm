@@ -2364,7 +2364,8 @@ assertions. This repair shares the existing callback without that larger migrati
   `owner_pin/helper_arguments.rs` (`reads_only_a_bare_call_statement`,
   `reads_a_template_around_one_placeholder`,
   `reads_parameter_types_without_spacing`,
-  `reads_only_literal_expected_values`); verdict-corpus case
+  `reads_only_literal_expected_values`, `compares_only_one_by_value_type`);
+  verdict-corpus case
   `spec0231-oracle-helper-assert-json-eq`.
 
 ## Implementation Mapping

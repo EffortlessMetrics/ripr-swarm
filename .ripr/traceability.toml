@@ -12760,6 +12760,7 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/helper_arguments.rs::tests::reads_a_template_around_one_placeholder",
   "crates/ripr/src/analysis/classify/owner_pin/helper_arguments.rs::tests::reads_only_literal_expected_values",
   "crates/ripr/src/analysis/classify/owner_pin/helper_arguments.rs::tests::reads_parameter_types_without_spacing",
+  "crates/ripr/src/analysis/classify/owner_pin/helper_arguments.rs::tests::compares_only_one_by_value_type",
   "crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs::boolean_helper_pins_require_the_existing_execution_and_identity_gates",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_early_err_variant_return_is_pinned_when_no_other_exit_builds_it",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_early_err_variant_pin_admits_only_its_variant_through_derived_equality",

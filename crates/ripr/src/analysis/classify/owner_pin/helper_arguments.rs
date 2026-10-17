@@ -49,12 +49,7 @@ pub(super) fn substituted_operands(
     let (Some(left_type), Some(right_type)) = (types.get(left), types.get(right)) else {
         return None;
     };
-    // `impl PartialEq<B> for A` may make `a == b` ignore its operands
-    // when the two types differ, or when either is a workspace type.
-    if left_type != right_type
-        || !BY_VALUE_TYPES.contains(&left_type.as_str())
-        || wrapper_may_be_rebound(left_type, index)
-    {
+    if !compares_by_value(left_type, right_type, index) {
         return None;
     }
     loan.call_lines.iter().find_map(|line| {
@@ -73,6 +68,15 @@ pub(super) fn substituted_operands(
         };
         Some([read(left)?, read(right)?])
     })
+}
+
+/// Whether `==` between parameters of these declared types compares their
+/// values: `impl PartialEq<B> for A` may make `a == b` ignore its operands
+/// when the two types differ, or when either is a workspace type.
+fn compares_by_value(left_type: &str, right_type: &str, index: &RustIndex) -> bool {
+    left_type == right_type
+        && BY_VALUE_TYPES.contains(&left_type)
+        && !wrapper_may_be_rebound(left_type, index)
 }
 
 /// The declared type text of each of `name`'s parameters, in order.
@@ -219,6 +223,9 @@ fn template_and_call(inner: &str) -> Option<(&str, &str)> {
     let ast::Expr::CallExpr(call) = statement.expr()? else {
         return None;
     };
+    if !matches!(call.expr()?, ast::Expr::PathExpr(callee) if callee.syntax().text() == "ripr") {
+        return None;
+    }
     let arguments: Vec<ast::Expr> = call.arg_list()?.args().collect();
     let [template, argument] = arguments.as_slice() else {
         return None;
@@ -337,6 +344,8 @@ mod tests {
             (r#"format!("{}", f(1)).len().to_string()"#, r#""1""#),
             (r#"format!("{}", f(12)).replace("6", "2")"#, r#""12""#),
             (r#"format!("w{}", f(1)).trim_start_matches('w')"#, r#""w1""#),
+            (r#"format!("{}", f(1)) + &g()"#, r#""1""#),
+            (r#"format!("{}", f(1))("{}", g(2))"#, r#""2""#),
         ] {
             assert_eq!(rendered_template_call(operand, expected), None, "{operand}");
         }
@@ -377,6 +386,23 @@ mod tests {
         shadowed.insert_file_only(path, facts);
         assert_eq!(expected_literal(r#"String::from("4")"#, &shadowed), None);
         assert_eq!(expected_literal("4", &shadowed).as_deref(), Some("4"));
+    }
+
+    #[test]
+    fn compares_only_one_by_value_type() {
+        let plain = RustIndex::default();
+        assert!(compares_by_value("u32", "u32", &plain));
+        assert!(compares_by_value("String", "String", &plain));
+        // `&str` takes Deref coercion from any `&W` with `Target = str`.
+        assert!(!compares_by_value("&str", "&str", &plain));
+        assert!(!compares_by_value("String", "&str", &plain));
+        assert!(!compares_by_value("u32", "u64", &plain));
+        assert!(!compares_by_value("Score", "Score", &plain));
+        let mut shadowed = RustIndex::default();
+        let path = std::path::PathBuf::from("src/lib.rs");
+        let facts = summarize_file(path.clone(), "pub struct u32(u8);\n".to_string());
+        shadowed.insert_file_only(path, facts);
+        assert!(!compares_by_value("u32", "u32", &shadowed));
     }
 
     #[test]
