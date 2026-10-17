@@ -276,24 +276,35 @@ fn materialize(case: &Case, dir: &Path) -> Result<bool, String> {
             dir.display()
         ));
     }
-    fs::create_dir_all(dir).map_err(|err| format!("create {}: {err}", dir.display()))?;
-    git(dir, &["init", "--quiet"])?;
-    git(dir, &["remote", "add", "origin", &case.url])?;
-    git(
-        dir,
-        &[
-            "fetch",
-            "--quiet",
-            "--depth",
-            "2",
-            "--no-tags",
-            "origin",
-            &case.revision,
-        ],
-    )?;
-    git(dir, &["checkout", "--quiet", "--detach", "FETCH_HEAD"])?;
-    if !at_revision(case, dir) {
-        return Err("the fetched checkout is not the pinned revision with a parent".to_string());
+    // The directory was missing or empty, so this call owns it and may remove it
+    // again if the checkout fails part-way, keeping retries possible.
+    let result = (|| -> Result<(), String> {
+        fs::create_dir_all(dir).map_err(|err| format!("create {}: {err}", dir.display()))?;
+        git(dir, &["init", "--quiet"])?;
+        git(dir, &["remote", "add", "origin", &case.url])?;
+        git(
+            dir,
+            &[
+                "fetch",
+                "--quiet",
+                "--depth",
+                "2",
+                "--no-tags",
+                "origin",
+                &case.revision,
+            ],
+        )?;
+        git(dir, &["checkout", "--quiet", "--detach", "FETCH_HEAD"])?;
+        if !at_revision(case, dir) {
+            return Err(
+                "the fetched checkout is not the pinned revision with a parent".to_string(),
+            );
+        }
+        Ok(())
+    })();
+    if let Err(err) = result {
+        let _ = fs::remove_dir_all(dir);
+        return Err(err);
     }
     Ok(false)
 }
