@@ -1527,7 +1527,13 @@ impl DocumentStore {
         let Some(state) = self.documents.get_mut(uri) else {
             return false;
         };
-        if state.buffer_authority_unknown
+        // Only `.rs` paths carry producer-captured consumed-input digests (see
+        // `pending_analyzed_digests`); other extensions keep their own basis.
+        if state
+            .path
+            .extension()
+            .is_none_or(|extension| extension != "rs")
+            || state.buffer_authority_unknown
             || state.saved_digest.as_deref() != Some(committed_digest)
             || state.buffer_digest() != committed_digest
         {
@@ -1959,7 +1965,18 @@ mod tests {
             return Err("a refused adoption must leave the quarantine".to_string());
         }
 
+        // A buffer that diverges from the saved bytes the snapshot analyzed
+        // stays quarantined even when the saved digest matches.
+        if let Some(state) = store.documents.get_mut(&uri) {
+            state.text = "fn edited() {}".to_string();
+        }
         let saved = digest_of("fn saved() {}");
+        if store.adopt_committed_identity(&uri, &saved, Some("input:42".to_string())) {
+            return Err("a diverging buffer must not adopt the committed digest".to_string());
+        }
+        if let Some(state) = store.documents.get_mut(&uri) {
+            state.text = "fn saved() {}".to_string();
+        }
         if !store.adopt_committed_identity(&uri, &saved, Some("input:42".to_string())) {
             return Err("matching saved bytes must adopt the committed digest".to_string());
         }

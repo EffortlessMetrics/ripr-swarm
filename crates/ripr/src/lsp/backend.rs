@@ -5462,9 +5462,12 @@ impl LanguageServer for Backend {
             && self.adopt_committed_snapshot_for_clean_open(&uri)
         {
             // The open created the document already quarantined as never
-            // analyzed; the adoption lifted that before anything was
-            // disclosed, so there is no edge to publish.
-            transition = QuarantineTransition::Unchanged;
+            // analyzed and the adoption lifted that. Report the lift so the
+            // committed diagnostics are re-served: a stale withdrawal marker
+            // from an earlier dirty episode may still be the last publish.
+            transition = QuarantineTransition::Exited {
+                was_disclosed: false,
+            };
         }
         let open_matches_saved = self.open_document_matches_saved_content(&uri);
         let session_has_analysis = self.refresh_scheduler_has_analysis_state();
