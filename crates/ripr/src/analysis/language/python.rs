@@ -78,6 +78,7 @@ mod related_tests;
 mod repo;
 mod sink_alignment;
 mod source_facts;
+mod table_rows;
 #[cfg(test)]
 use discriminators::{
     first_python_keyword_argument, is_literal_python_model_field_value,

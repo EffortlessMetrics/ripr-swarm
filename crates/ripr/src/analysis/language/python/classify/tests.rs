@@ -1707,3 +1707,95 @@ fn guarded_arm_gate_stays_off_without_source() -> Result<(), String> {
     assert_eq!(finding.class, ExposureClass::Exposed);
     Ok(())
 }
+
+const LAST_SOURCE: &str = "def last(iterable, default=None):\n    try:\n        return next(iter(iterable))\n    except StopIteration:\n        return None\n";
+const LAST_OLD: &str = "        return default";
+const LAST_NEW: &str = "        return None";
+
+fn last_finding(tests: &str) -> Result<Finding, String> {
+    classify_case(LAST_SOURCE, tests, 5, LAST_OLD, LAST_NEW)
+}
+
+fn last_does_not_vary_default(finding: &Finding) {
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|entry| entry.contains("table rows do not vary default")),
+        "{finding:?}"
+    );
+    assert!(
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .any(|fact| fact.reason == "table rows do not vary default"),
+        "{finding:?}"
+    );
+}
+
+/// #6651: a unittest subTest table whose every row passes the same default
+/// cannot catch `return default` -> `return None`. Before the gate the exact
+/// oracle credited `exposed`.
+#[test]
+fn subtest_table_that_never_varies_default_is_weakly_exposed() -> Result<(), String> {
+    let finding = last_finding(
+        "import unittest\nfrom src.subject import last\n\nclass LastTests(unittest.TestCase):\n    def test_default(self):\n        for iterable, default in [\n            ([], None),\n            (iter([]), None),\n        ]:\n            with self.subTest(iterable=iterable, default=default):\n                self.assertEqual(last(iterable, default=default), default)\n",
+    )?;
+    last_does_not_vary_default(&finding);
+    Ok(())
+}
+
+/// Positive control for #6651: one row that varies `default` keeps `exposed`.
+#[test]
+fn subtest_table_that_varies_default_stays_exposed() -> Result<(), String> {
+    let finding = last_finding(
+        "import unittest\nfrom src.subject import last\n\nclass LastTests(unittest.TestCase):\n    def test_default(self):\n        for iterable, default in [\n            ([], None),\n            (iter([]), 0),\n        ]:\n            with self.subTest(iterable=iterable, default=default):\n                self.assertEqual(last(iterable, default=default), default)\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(finding.activation.missing_discriminators.is_empty());
+    Ok(())
+}
+
+/// The same unvaried-default shape through pytest parametrize, which #4559
+/// did not cover: that fix was the predicate-boundary miss, not a returned
+/// default argument.
+#[test]
+fn parametrize_table_that_never_varies_default_is_weakly_exposed() -> Result<(), String> {
+    let finding = last_finding(
+        "import pytest\nfrom src.subject import last\n\n@pytest.mark.parametrize(\"iterable, default\", [([], None), (iter([]), None)])\ndef test_default(iterable, default):\n    assert last(iterable, default=default) == default\n",
+    )?;
+    last_does_not_vary_default(&finding);
+    Ok(())
+}
+
+#[test]
+fn parametrize_table_that_varies_default_stays_exposed() -> Result<(), String> {
+    let finding = last_finding(
+        "import pytest\nfrom src.subject import last\n\n@pytest.mark.parametrize(\"iterable, default\", [([], None), (iter([]), 0)])\ndef test_default(iterable, default):\n    assert last(iterable, default=default) == default\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+/// A loop table without `subTest` is still a table of expected values.
+#[test]
+fn loop_table_that_never_varies_default_is_weakly_exposed() -> Result<(), String> {
+    let finding = last_finding(
+        "from src.subject import last\n\ndef test_default():\n    for iterable, default in [([], None), (iter([]), None)]:\n        assert last(iterable, default=default) == default\n",
+    )?;
+    last_does_not_vary_default(&finding);
+    Ok(())
+}
+
+/// A second, non-table exact oracle may still discriminate; do not downgrade
+/// the finding merely because a sibling table is unvaried.
+#[test]
+fn unvaried_table_does_not_hide_a_varied_exact_oracle() -> Result<(), String> {
+    let finding = last_finding(
+        "import unittest\nfrom src.subject import last\n\nclass LastTests(unittest.TestCase):\n    def test_default(self):\n        for iterable, default in [([], None), (iter([]), None)]:\n            with self.subTest(iterable=iterable):\n                self.assertEqual(last(iterable, default=default), default)\n    def test_nonzero_default(self):\n        self.assertEqual(last([], default=0), 0)\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
