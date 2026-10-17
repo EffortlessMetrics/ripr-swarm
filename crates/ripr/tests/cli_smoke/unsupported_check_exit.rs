@@ -194,7 +194,7 @@ fn unsupported_check_keeps_rendered_formats_and_repo_scope() -> TestResult {
             ],
         )?;
         if format == "human" {
-            assert!(String::from_utf8_lossy(&output.stdout).contains("unsupported_input"));
+            assert!(String::from_utf8_lossy(&output.stdout).contains("the input is not supported"));
         } else {
             let document: Value = serde_json::from_slice(&output.stdout)?;
             if format == "sarif" {

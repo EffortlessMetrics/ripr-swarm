@@ -269,6 +269,15 @@ the shared diff parser. Neither an empty classification nor an empty absence
 array establishes that every changed seam was classified. Restoring a regular
 source file at the same HEAD replaces the absence list on the next run,
 without stale cache disclosures.
+The same loaded change selects the initial inventory and supplement's complete
+source/evidence corpus before indexing and seam-limit accounting. Restoring a
+vendored Rust file while its changed checksum marker remains sparse does not
+re-admit that file or its evidence. Ordinary repo exposure retains its disk-based
+corpus and selected-path/byte cache identity. Contextual skip guidance and whether
+the selected corpus differs from ordinary repo exposure are recomputed on every
+run, including cache hits. Pilot omits comparable artifact identity when these
+source/evidence input sets differ, even if the contextual cached bytes stayed
+identical across marker disappearance or restoration.
 If that classification fails or runs out of time, pilot says so on stderr,
 keeps the inventory caveat and still completes. When
 pilot added any such seam, its `repo-exposure.json` is written without the
@@ -562,6 +571,15 @@ opt-ins admit convention-only paths; explicit exclusion and the changed vendor
 marker still win. A missing file whose generated header is unavailable remains
 named. Same-HEAD restoration clears absence and retains a nonempty changed
 ranking without admitting excluded source or polluting the ordinary inventory.
+
+Given the vendor source is restored while only its changed checksum remains sparse,
+when pilot runs warm or cold under either cap,
+then the vendor source stays outside ranking, absent_changed_files remains empty,
+and no missing-source retry guidance appears. A changed handwritten predicate
+still ranks. Ordinary inventory remains unchanged by pilot. For uncapped pilot,
+comparable artifact identity is omitted only while the contextual source/evidence
+set differs from ordinary inventory, even when the classified cache hits across
+the sparse-marker transition.
 ```
 
 ### Pilot says whether its top recommendation is part of the current change
@@ -677,6 +695,8 @@ Current tests and reports that support the contract:
 - `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_sparse_missing_changed_file_and_recovers_same_head`
 - `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_mixed_missing_changed_file_even_with_changed_recommendation`
 - `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_capped_absence_matches_uncapped_generated_policy_and_recovers`
+- `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_partial_vendor_restoration_preserves_diff_policy_and_cache_identity`
+- `crates/ripr/src/analysis/generated_rust_corpus.rs::tests::changed_vendor_context_excludes_evidence_and_refreshes_skip_strength`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_current_change_preserves_absent_file_coverage_through_empty_and_mixed_supplements`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_renderers_disclose_absent_changed_files_independently_of_top_recommendation`
 
