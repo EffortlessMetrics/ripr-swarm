@@ -19,3 +19,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — match_arm_tuple_terminal_generated_constructor (3)
+
+Reason:
+RIPR-SPEC-0122: add the base-side evidence count to the Summary line (#8493); wording only, no class change
+
+Command:
+`cargo xtask goldens bless match_arm_tuple_terminal_generated_constructor --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
