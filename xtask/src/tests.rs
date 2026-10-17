@@ -30551,6 +30551,73 @@ fn xtask_run_helpers_report_success_failure_and_optional_output() -> Result<(), 
 
 #[test]
 fn policy_checker_facade_runs_current_repo_checks() -> Result<(), String> {
+    #[cfg(all(unix, not(target_os = "linux")))]
+    {
+        // Preserve the original owner on Unix platforms without the qualified
+        // session capture. Do not introduce a partial containment boundary.
+        policy_checker_facade_checks_in_repo_cwd()
+    }
+    #[cfg(not(all(unix, not(target_os = "linux"))))]
+    policy_checker_facade_in_subprocess()
+}
+
+#[cfg(not(all(unix, not(target_os = "linux"))))]
+fn policy_checker_facade_in_subprocess() -> Result<(), String> {
+    const CHILD_ENV: &str = "RIPR_XTASK_POLICY_FACADE_CHILD";
+    const COMPLETED: &str = "policy facade child checks completed";
+    const TEST: &str = "tests::policy_checker_facade_runs_current_repo_checks";
+    match std::env::var_os(CHILD_ENV) {
+        Some(value) if value == "1" => {
+            #[cfg(target_os = "linux")]
+            crate::run::enter_test_session()?;
+            policy_checker_facade_checks_in_repo_cwd()?;
+            eprintln!("{COMPLETED}");
+            return Ok(());
+        }
+        Some(value) => return Err(format!("invalid policy facade child marker: {value:?}")),
+        None => {}
+    }
+    // Keep the real checks in a fresh process: its CWD writer cannot convoy
+    // aggregate peers while file policy performs its real Cargo inventories.
+    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    #[cfg(target_os = "linux")]
+    let capture = crate::run::capture_isolated_test;
+    #[cfg(not(target_os = "linux"))]
+    let capture = crate::run::capture_output_measured;
+    let output = capture(
+        &exe.to_string_lossy(),
+        &[
+            TEST.to_string(),
+            "--exact".to_string(),
+            "--nocapture".to_string(),
+        ],
+        Some(&repo_root()?),
+        &[(CHILD_ENV, "1")],
+        crate::run::tool_build_timeout()?,
+        "isolated policy facade checks",
+    )?
+    .output;
+    let diagnostic = format!(
+        "policy facade child status={:?}, timed_out={}, stdout={}, stderr={}",
+        output.status, output.timed_out, output.stdout, output.stderr
+    );
+    if output.timed_out
+        || !output.status.is_some_and(|status| status.success())
+        || !output.stdout.lines().any(|line| line == "running 1 test")
+        || !output
+            .stdout
+            .lines()
+            .any(|line| line.starts_with("test result: ok. 1 passed; 0 failed; 0 ignored;"))
+        || !output.stdout.contains(&format!("test {TEST} ... "))
+        || !output.stderr.lines().any(|line| line == COMPLETED)
+    {
+        return Err(diagnostic);
+    }
+    eprintln!("{diagnostic}");
+    Ok(())
+}
+
+fn policy_checker_facade_checks_in_repo_cwd() -> Result<(), String> {
     with_repo_cwd(|| {
         check_static_language()?;
         check_no_panic_family()?;
@@ -50160,9 +50227,14 @@ fn preview_fixture_assertions_with_cwd_writer() -> Result<(), String> {
     });
     // Restore the cwd and release its writer before joining, including timeout
     // and panic paths: the old guarded implementation must fail without hanging.
-    worker
-        .join()
-        .map_err(|_| "preview fixture assertion thread panicked".to_string())?;
+    worker.join().map_err(|panic_payload| {
+        let message = panic_payload
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| panic_payload.downcast_ref::<String>().map(String::as_str))
+            .unwrap_or("non-string panic payload");
+        format!("preview fixture assertion thread panicked: {message}")
+    })?;
     started.map_err(|error| format!("preview fixture assertion thread did not start: {error}"))?;
     completed.map_err(|error| {
         format!("preview fixture assertions waited for the process-wide CWD guard: {error}")
