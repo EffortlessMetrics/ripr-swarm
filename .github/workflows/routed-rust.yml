@@ -90,15 +90,17 @@ env:
   FINAL_CURRENTNESS_JQ: |
     def oid: type == "string" and test("^[0-9a-f]{40}$");
     .data.repository as $r | $r.pullRequest as $p |
-    if (.errors == null and $r.id == $repo_id and $r.nameWithOwner == $repo and
-        $p.id == $pr_id and $p.number == $number and $p.headRepository.id == $repo_id and
-        $p.headRefOid == $head and $p.baseRepository.id == $repo_id and
-        $p.baseRefName == "main" and $p.baseRef.name == "main" and
-        $p.baseRef.prefix == "refs/heads/" and $p.baseRef.repository.id == $repo_id and
-        $p.baseRef.target.__typename == "Commit" and ($p.baseRef.target.oid | oid) and
-        $r.ref.name == "main" and $r.ref.prefix == "refs/heads/" and
-        $r.ref.target.__typename == "Commit" and $r.ref.target.oid == $p.baseRef.target.oid)
-    then $r.ref.target.oid else error("incoherent current repository observation") end
+    {graphql_ok:(.errors == null),
+     repository_identity:($r.id == $repo_id and $r.nameWithOwner == $repo),
+     pr_identity:($p.id == $pr_id and $p.number == $number),
+     head_identity:($p.headRepository.id == $repo_id and $p.headRefOid == $head),
+     destination_identity:($p.baseRepository.id == $repo_id and $p.baseRefName == "main" and
+       $p.baseRef.name == "main" and $p.baseRef.prefix == "refs/heads/" and $p.baseRef.repository.id == $repo_id),
+     live_base_shape:($p.baseRef.target.__typename == "Commit" and ($p.baseRef.target.oid | oid)),
+     independent_destination:($r.ref.name == "main" and $r.ref.prefix == "refs/heads/" and $r.ref.target.__typename == "Commit"),
+     live_base_agrees:($r.ref.target.oid == $p.baseRef.target.oid)} as $checks |
+    if all($checks[]; . == true) then $r.ref.target.oid
+    else error("incoherent current repository observation: " + ($checks | tojson)) end
   NATIVE_REVIEWS_JQ: |
     [ .[][] ] as $reviews |
     ($reviews | map(select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")) |

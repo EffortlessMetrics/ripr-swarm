@@ -149,7 +149,10 @@ attempt's successful admission and children as fresh qualification.
 The result still checks the current candidate head, open/non-Draft state,
 destination, request label, review disposition, resolved conversations and
 cancellation. It observes current main separately. Main movement does not erase
-completed Tq results or prove that they apply to the new integration. A passing
+completed Tq results or prove that they apply to the new integration. A refused
+current observation reports bounded boolean predicate reasons, not the raw API
+frame. The exact predicate behind an older run without that frame remains unknown.
+A passing
 required result describes qualification of Tq; it does not grant merge permission
 or assert current-main compatibility. The retained completion receipt explicitly
 sets `final_currentness_required=true` and `current_main_compatibility=not_asserted`.

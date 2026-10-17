@@ -630,6 +630,28 @@ fn qualification_completion_refuses_subject_and_attempt_substitution() -> Result
     );
     Ok(())
 }
+
+#[test]
+fn currentness_refusal_names_the_failed_predicate_without_dumping_the_frame() -> Result<(), String>
+{
+    let literal = native_subject::fixture()?;
+    let mut frame = literal["FRAME"].clone();
+    frame["data"]["repository"]["pullRequest"]["headRefOid"] = json!("e".repeat(40));
+    frame["sensitive_test_sentinel"] = json!("must-not-appear-in-diagnostic");
+    let actual = body("Recheck current head and base before result publication")?;
+    let script = format!(
+        "set +e\ndiagnostic=$( ( {actual}\n) 2>&1)\nstatus=$?\n[ \"$status\" != 0 ] || exit 1\n[[ \"$diagnostic\" == *'\"head_identity\":false'* ]] || exit 1\n[[ ${{#diagnostic}} -lt 2048 ]] || exit 1\n[[ \"$diagnostic\" != *must-not-appear-in-diagnostic* ]]"
+    );
+    let reviews = json!([{"id":1,"user":{"login":"reviewer"},"state":"APPROVED",
+        "commit_id":"a".repeat(40),"submitted_at":"2026-10-17T00:00:00Z","body":""}]);
+    assert!(execute(
+        &script,
+        &literal["PR"],
+        &reviews,
+        &json!({"MOCK_FRAME":frame})
+    )?);
+    Ok(())
+}
 #[test]
 fn final_result_replays_all_independent_terminal_vectors() -> Result<(), String> {
     let vectors: Value = serde_json::from_str(VECTORS).map_err(|e| e.to_string())?;
