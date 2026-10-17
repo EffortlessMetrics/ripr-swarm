@@ -4825,6 +4825,40 @@ mod tests {
                 return Err(format!("capture notice lost `{needle}`: {markdown}"));
             }
         }
+        let captured = load_work_captured_dir(&workspace_path(DEFAULT_WORK_CAPTURED_DIR))?;
+        let at_and_sha = format!(
+            "captured at: `{}` @ `{}`",
+            captured.manifest.captured_at, captured.manifest.default_branch_sha
+        );
+        if !markdown.contains(&at_and_sha) {
+            return Err(format!(
+                "notice must carry manifest date and sha: {markdown}"
+            ));
+        }
+        // Every human renderer places the notice directly under its title.
+        let portfolio = work_portfolio_markdown(&snapshot, Some(&notice));
+        let explain = work_explain_markdown(
+            &build_explain_view(&snapshot, "candidate:issue:9101")?,
+            Some(&notice),
+        );
+        for (name, rendered, title) in [
+            ("portfolio", &portfolio, "# Work portfolio"),
+            (
+                "explain",
+                &explain,
+                "# Work candidate `candidate:issue:9101`",
+            ),
+        ] {
+            let Some(title_at) = rendered.find(title) else {
+                return Err(format!("{name} lost its title: {rendered}"));
+            };
+            let Some(notice_at) = rendered.find("captured from") else {
+                return Err(format!("{name} lost the capture notice: {rendered}"));
+            };
+            if rendered.lines().next() != Some(title) || title_at > notice_at {
+                return Err(format!("{name} notice must follow the title: {rendered}"));
+            }
+        }
         // The notice is Markdown-only: JSON and the portable identity are
         // byte-identical with or without it.
         if work_portfolio_json(&snapshot)?.contains("Committed fixture") {
@@ -4859,6 +4893,25 @@ mod tests {
         }
         if is_committed_fixture_dir(Path::new("/tmp/live")) {
             return Err("an unrelated directory is not the committed fixture tree".to_string());
+        }
+        Ok(())
+    }
+
+    /// A real `load_and_compile` over a non-fixture directory reports a live
+    /// capture, not the committed fixture corpus.
+    #[test]
+    fn load_and_compile_marks_non_fixture_captured_dir_as_live() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "work_portfolio_live_capture_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        copy_dir(&workspace_path(DEFAULT_WORK_CAPTURED_DIR), &dir)?;
+        let result = load_and_compile(&dir.to_string_lossy(), None);
+        let _ = fs::remove_dir_all(&dir);
+        let (_, notice) = result?;
+        if notice.committed_fixture {
+            return Err("a temp capture must not be a committed fixture".to_string());
         }
         Ok(())
     }
