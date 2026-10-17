@@ -392,7 +392,9 @@ fn test_pairs_boundary_element(
         }
         whole_owner_call_operands(test, &assertion.text, owner)
             .iter()
-            .any(|arguments| arguments_feed_boundary_element(test, None, arguments, element))
+            .any(|arguments| {
+                arguments_feed_boundary_element(test, None, arguments, &assertion.text, element)
+            })
     })
 }
 
@@ -402,11 +404,12 @@ fn arguments_feed_boundary_element(
     test: &TestSummary,
     loan: Option<&HelperLoan>,
     arguments: &[String],
+    site: &str,
     (tail, boundary): &(AdaptorTail, String),
 ) -> bool {
     arguments
         .get(tail.position)
-        .and_then(|argument| argument_sequences(test, loan, argument))
+        .and_then(|argument| argument_sequences(test, loan, argument, site))
         .is_some_and(|runs| {
             runs.iter()
                 .any(|run| tail.run_reaches_boundary(run, boundary))
@@ -429,7 +432,9 @@ fn loan_pairs_boundary_element(
     }
     whole_owner_call_operands(test, assertion_text, owner)
         .iter()
-        .any(|arguments| arguments_feed_boundary_element(test, Some(loan), arguments, element))
+        .any(|arguments| {
+            arguments_feed_boundary_element(test, Some(loan), arguments, assertion_text, element)
+        })
 }
 
 /// The argument lists of the asserted operands that are exactly one whole

@@ -12,7 +12,7 @@
 use super::{evaluates_conditionally, has_unbounded_macro, whole_word_offsets};
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::rust_index::{FunctionSummary, TestSummary};
-use crate::analysis::syntax::{HelperLoan, constant_table_column, parse_clean_source_file};
+use crate::analysis::syntax::{HelperLoan, constant_table_column_around, parse_clean_source_file};
 use ra_ap_syntax::{
     AstNode,
     ast::{self, HasArgList, HasGenericArgs, HasName},
@@ -437,16 +437,21 @@ pub(in crate::analysis::classify) fn pinned_call_runs_closure(
 ) -> bool {
     call_argument_texts(call_text, name)
         .and_then(|arguments| arguments.get(position).cloned())
-        .and_then(|argument| argument_sequences(test, loan, &argument))
+        .and_then(|argument| argument_sequences(test, loan, &argument, call_text))
         .is_some_and(|runs| runs.iter().any(|elements| !elements.is_empty()))
 }
 
 /// The element sequences `argument` takes over every run of the call that
-/// passes it, or `None` when any run is unreadable.
+/// passes it, or `None` when any run is unreadable. `site` is the text of
+/// the call (or the assertion holding it); a constant-row table column is
+/// read only when that text occurs exactly once in the test and sits inside
+/// the table's loop body, so a same-named item outside the loop is not read
+/// as the table's rows (#8012).
 pub(in crate::analysis::classify) fn argument_sequences(
     test: &TestSummary,
     loan: Option<&HelperLoan>,
     argument: &str,
+    site: &str,
 ) -> Option<Vec<Vec<String>>> {
     if let Some(elements) = literal_sequence(argument) {
         return Some(vec![elements]);
@@ -476,10 +481,17 @@ pub(in crate::analysis::classify) fn argument_sequences(
                 })
                 .collect()
         }
-        None => constant_table_column(&test.body, name)?
-            .iter()
-            .map(|cell| literal_sequence(cell))
-            .collect(),
+        None => {
+            let mut found = test.body.match_indices(site);
+            let (at, _) = found.next().filter(|_| !site.is_empty())?;
+            if found.next().is_some() {
+                return None;
+            }
+            constant_table_column_around(&test.body, name, at)?
+        }
+        .iter()
+        .map(|cell| literal_sequence(cell))
+        .collect(),
     }
 }
 
@@ -988,6 +1000,22 @@ mod tests {
     /// Rule 2 reads a borrowed helper assertion's argument at each of the
     /// test's eager helper calls.
     #[test]
+    fn table_column_is_read_only_for_a_call_inside_its_loop() {
+        // #8012: the call after the loop names the module `const x`, not the
+        // loop's rows, so the closure is not credited as run.
+        let off_loop = test_body(
+            10,
+            "fn t() {\n    for (x, want) in [(Some(2), 6)] { let _ = (x, want); }\n    assert_eq!(f(x), 0);\n}",
+        );
+        assert!(!pinned_call_runs_closure(&off_loop, None, "f(x)", "f", 0));
+        let in_loop = test_body(
+            10,
+            "fn t() {\n    for (x, want) in [(&[1], 6)] {\n        assert_eq!(f(x), want);\n    }\n}",
+        );
+        assert!(pinned_call_runs_closure(&in_loop, None, "f(x)", "f", 0));
+    }
+
+    #[test]
     fn helper_parameter_runs_are_read_at_each_helper_call() {
         let test = test_body(
             10,
@@ -1001,7 +1029,12 @@ mod tests {
             call_lines,
         };
         let runs = |call_lines: Vec<usize>, argument: &str| {
-            argument_sequences(&test, Some(&loan(call_lines)), argument)
+            argument_sequences(
+                &test,
+                Some(&loan(call_lines)),
+                argument,
+                "any_overdue(days)",
+            )
         };
         assert_eq!(
             runs(vec![11, 12], "days"),
