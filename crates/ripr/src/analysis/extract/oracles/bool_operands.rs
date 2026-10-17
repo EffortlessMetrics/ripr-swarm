@@ -51,14 +51,30 @@ pub(super) fn bool_literal_comparison_reading(line: &str) -> Option<BoolOperandR
     if compares_test_with_non_literal(line) {
         return Some(BoolOperandReading::Capped);
     }
-    let (operand, mut positive, in_condition) = compared_with_bool_literal(line)?;
-    // A value wrapper around the operand holds it (`Some(matches!(..))`
-    // against `Some(true)`), so it is no call that may discard a pattern.
+    let (operand, mut positive, in_condition, literal_side) = compared_with_bool_literal(line)?;
+    // A value wrapper matched by one around the literal holds the operand
+    // (`Some(matches!(..))` against `Some(true)`), so it is no call that
+    // may discard a pattern. Against a bare literal the wrapper must
+    // compare with a `bool` itself, so it stays an unread call
+    // (`Wrapper(matches!(..))` against `true`; review of 5f6ffed).
     let mut operand = operand.trim();
-    while let Some(inner) =
-        value_wrapper_argument(operand).or_else(|| passthrough_receiver(operand))
-    {
-        operand = unwrap_parentheses(inner.trim());
+    let mut literal_side = literal_side.trim();
+    loop {
+        if let Some(inner) = unwrapped_wrapper_argument(operand) {
+            operand = unwrap_parentheses(inner.trim());
+        } else if let Some(inner) = passthrough_receiver(operand) {
+            operand = unwrap_parentheses(inner.trim());
+        } else if let Some(inner) = passthrough_receiver(literal_side) {
+            literal_side = unwrap_parentheses(inner.trim());
+        } else if let (Some(inner), Some(literal_inner)) = (
+            value_wrapper_argument(operand),
+            value_wrapper_argument(literal_side),
+        ) {
+            operand = unwrap_parentheses(inner.trim());
+            literal_side = unwrap_parentheses(literal_inner.trim());
+        } else {
+            break;
+        }
     }
     // An operand that feeds a `matches!` to an unread call or operator, in
     // any conjunct, may invert it (`assert_eq!(f(matches!(r, Ok(3))), true)`).
@@ -608,6 +624,18 @@ fn passthrough_receiver(text: &str) -> Option<&str> {
     is_single_operand(receiver).then_some(receiver)
 }
 
+/// The argument of a value wrapper opened by `.unwrap()` or `.expect(..)`
+/// (`Some(matches!(..)).unwrap()`), which returns what the wrapper holds.
+fn unwrapped_wrapper_argument(text: &str) -> Option<&str> {
+    let receiver = passthrough_receiver(text)?;
+    let method = mask_comments_and_strings(text.get(receiver.len()..)?);
+    let method = method.trim_start();
+    if !(method.starts_with(".unwrap") || method.starts_with(".expect")) {
+        return None;
+    }
+    value_wrapper_argument(receiver)
+}
+
 /// The one expression `element` holds: no top-level comma, and the
 /// repeated value of a repeat array (`x` in `[x; 3]`).
 fn single_element(element: &str) -> Option<&str> {
@@ -809,11 +837,11 @@ fn carries_test_through(head: &str) -> bool {
 /// the assertion states that operand is true, and whether the comparison is
 /// a boolean assertion's whole condition rather than an equality macro's
 /// operands.
-fn compared_with_bool_literal(line: &str) -> Option<(String, bool, bool)> {
+fn compared_with_bool_literal(line: &str) -> Option<(String, bool, bool, String)> {
     let literal = |side: &str| literal_spelling_value(&mask_comments_and_strings(side));
     let pick = |left: &str, right: &str, not_equal: bool| match (literal(left), literal(right)) {
-        (None, Some(value)) => Some((left.to_string(), value != not_equal)),
-        (Some(value), None) => Some((right.to_string(), value != not_equal)),
+        (None, Some(value)) => Some((left.to_string(), value != not_equal, right.to_string())),
+        (Some(value), None) => Some((right.to_string(), value != not_equal, left.to_string())),
         _ => None,
     };
     match assertion_comparison(line)? {
@@ -821,7 +849,8 @@ fn compared_with_bool_literal(line: &str) -> Option<(String, bool, bool)> {
             not_equal,
             left,
             right,
-        } => pick(&left, &right, not_equal).map(|(operand, positive)| (operand, positive, false)),
+        } => pick(&left, &right, not_equal)
+            .map(|(operand, positive, literal)| (operand, positive, false, literal)),
         AssertionComparison::Condition(condition) => {
             let condition = unwrap_parentheses(condition.trim());
             // `a && b == true` compares only `b`; the chain rules read it.
@@ -837,7 +866,7 @@ fn compared_with_bool_literal(line: &str) -> Option<(String, bool, bool)> {
                 condition.get(at + width..)?,
                 not_equal,
             )
-            .map(|(operand, positive)| (operand, positive, true))
+            .map(|(operand, positive, literal)| (operand, positive, true, literal))
         }
     }
 }

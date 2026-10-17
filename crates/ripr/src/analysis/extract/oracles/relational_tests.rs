@@ -1115,6 +1115,8 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "assert_eq!(Some(r == Err(E::Bad)).expect(\"set\"), false);",
         "assert_eq!((r == Err(E::Bad)).clone(), expected);",
         "assert!(Some(r == Err(E::Bad)) == Some(false));",
+        "assert_eq!(Wrapper::from(r == Err(E::Bad)), Wrapper::from(false));",
+        "assert_eq!((r == Err(E::Bad)).to_owned(), expected);",
     ] {
         if !is_inequality_assertion(text) {
             return Err(format!("{text}: must read as an inequality"));
@@ -1175,6 +1177,14 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         (
             "assert_eq!(Some(matches!(r, Ok(3))).unwrap(), true);",
             &exact,
+        ),
+        // Review of 5f6ffed: a wrapper compared with a bare literal stays an
+        // unread call over its pattern.
+        ("assert_eq!(Wrapper(matches!(r, Ok(3))), true);", &weak),
+        ("assert_eq!(Foo::new(matches!(r, Ok(3))), true);", &weak),
+        (
+            "assert_eq!(Wrapper(matches!(r, Ok(3))).clone(), true);",
+            &weak,
         ),
         ("assert_eq!([x == 3; 2], [true; 2]);", &exact),
         ("assert_eq!(Some(r), Some(Err(E::Bad)));", &err),
