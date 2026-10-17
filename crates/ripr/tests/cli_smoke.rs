@@ -17630,6 +17630,8 @@ fn python_check_safe_action(
         .lines()
         .find(|line| line.starts_with("  Safe next action:"))
         .ok_or_else(|| format!("check printed no safe next action:\n{stdout}"))?;
+    // #8165 / #8275: the bounded State line is plain language only; the
+    // `preview_limited` schema token stays on machine surfaces.
     assert!(
         stdout.contains("State: preview language, advisory only"),
         "expected preview_limited triage:\n{stdout}"
