@@ -1335,7 +1335,7 @@ fn missing_ref_repair(root: &Path, missing_ref: &str, git_timeout: Option<Durati
     }
     match remotes.as_deref() {
         Some([]) => format!(
-            "No git remote is configured: add the remote hosting `{missing_ref}` (for example `git remote add <name> <url>`), then fetch it"
+            "Check the spelling of `{missing_ref}` (`git branch --list` shows this repository's local branches). No git remote is configured: if it lives on a remote, add that remote (for example `git remote add <name> <url>`), then fetch it"
         ),
         Some([only]) if remote_name_is_plain(only) => {
             format!("Fetch the ref (for example `git fetch {only}`)")
@@ -3316,8 +3316,9 @@ mod tests {
         assert!(
             repair.contains("No git remote is configured")
                 && repair.contains("`no-such-ref-5252`")
-                && repair.contains("git remote add"),
-            "a remote-less repo must get the add-remote step naming the ref, got: {repair}"
+                && repair.contains("git remote add")
+                && repair.contains("Check the spelling of `no-such-ref-5252`"),
+            "a remote-less repo must get the spelling check and add-remote step naming the ref, got: {repair}"
         );
         assert!(
             !repair.contains("git fetch origin"),
