@@ -299,6 +299,11 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 
+## Pending — observation_unverified_call_deletion (14)
+
+Reason:
+RIPR-SPEC-0122: human check output prints the stub route or a No test stub here refusal for every probe family (#8412)
+
 ## Pending — observation_unverified_call_deletion (1)
 
 Reason:

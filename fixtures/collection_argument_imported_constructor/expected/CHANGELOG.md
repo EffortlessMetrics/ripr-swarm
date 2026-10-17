@@ -55,6 +55,8 @@ Updated:
 ## Pending — collection_argument_imported_constructor (5)
 
 Reason:
+RIPR-SPEC-0122: human check output prints the stub route or a No test stub here refusal for every probe family (#8412)
+
 RIPR-SPEC-0158 and #7805: additive source_file metadata on test-source values only; check.json lines otherwise byte-identical
 
 Command:

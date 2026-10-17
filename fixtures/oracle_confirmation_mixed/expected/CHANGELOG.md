@@ -63,7 +63,7 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
-## Pending — oracle_confirmation_mixed (5)
+## Pending — oracle_confirmation_mixed (6)
 
 Reason:
 RIPR-SPEC-0122: bounded human surfaces disclose their windows - related-test and observed-value caps, digest missing-discriminator and related-test totals, Hidden block names omitted findings by file:line (class) with the all-base-side distinction (#4320); RIPR-SPEC-0152: all-base-side runs name base-side evidence instead of a lower-priority framing
@@ -76,7 +76,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — oracle_confirmation_mixed (6)
+## Pending — oracle_confirmation_mixed (7)
 
 Reason:
 #4324 / RIPR-SPEC-0122: the bounded digest names all five stage states on one compact Evidence line (reach, infection, propagation, observation, discriminator) instead of letting the positional 2-line detail window hide the decisive stages behind a bare count; the detail window keeps its two lines and the remainder line now reads `N more detail line(s) in --format human-full`. JSON output is unchanged.
@@ -86,7 +86,7 @@ Command:
 
 Updated:
 - `expected/human.txt`
-## Pending — oracle_confirmation_mixed (5)
+## Pending — oracle_confirmation_mixed (8)
 
 Reason:
 RIPR-SPEC-0122: #4321 additive per-finding id lines in human-full (drill-in identifiers)
@@ -99,7 +99,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — oracle_confirmation_mixed (7)
+## Pending — oracle_confirmation_mixed (9)
 
 Reason:
 RIPR-SPEC-0122: #4322 summary header names all seven classes with canonical tokens and a shown/total denominator
@@ -111,7 +111,7 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
-## Pending — oracle_confirmation_mixed (8)
+## Pending — oracle_confirmation_mixed (10)
 
 Reason:
 RIPR-SPEC-0224: related tests ripr examined stay listed and each names why it misses the change (#5344); verdicts unchanged
@@ -124,7 +124,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — oracle_confirmation_mixed (9)
+## Pending — oracle_confirmation_mixed (11)
 
 Reason:
 RIPR-SPEC-0224: the strong unconfirmed assertion under oracle_confirmation_mixed now carries observation_unconfirmed; class and stages unchanged
@@ -137,7 +137,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — oracle_confirmation_mixed (10)
+## Pending — oracle_confirmation_mixed (12)
 
 Reason:
 RIPR-SPEC-0224: a matched related test keeps its oracle kind and strength in full output and adds why it still misses; verdicts unchanged
@@ -152,7 +152,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — oracle_confirmation_mixed (11)
+## Pending — oracle_confirmation_mixed (13)
 
 Reason:
 RIPR-SPEC-0224, #5508: observation_unconfirmed now reads 'ripr could not confirm that this assertion observes the changed behavior'; human-full re-blessed after rebase onto #5424. No verdict change.
@@ -165,7 +165,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — oracle_confirmation_mixed (12)
+## Pending — oracle_confirmation_mixed (14)
 
 Reason:
 RIPR-SPEC-0224, #5508: an observation_unconfirmed row is labelled 'unconfirmed:' instead of 'misses:' in human-full. No verdict change.
@@ -178,7 +178,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — oracle_confirmation_mixed (13)
+## Pending — oracle_confirmation_mixed (15)
 
 Reason:
 RIPR-SPEC-0002: issue #5996 routes finding locations through the shared workspace-relative owner (analysis::finding_location_text); the fixture-input root prefix (fixtures/<name>/input/...) no longer appears in check.json/human location fields, matching the root-relative form the LSP and MCP surfaces already emitted. The three inherited config_identity drifts in wrapper_seam_callee_call_attribution reproduce on the base and are not part of this blessing.
@@ -191,7 +191,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — oracle_confirmation_mixed (14)
+## Pending — oracle_confirmation_mixed (16)
 
 Reason:
 RIPR-SPEC-0002: issue #5996 routes finding locations through the shared workspace-relative owner (analysis::finding_location_text); the fixture-input root prefix (fixtures/<name>/input/...) no longer appears in check.json/human location fields, matching the root-relative form the LSP and MCP surfaces already emitted.
@@ -205,7 +205,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — oracle_confirmation_mixed (15)
+## Pending — oracle_confirmation_mixed (17)
 
 Reason:
 RIPR-SPEC-0002: merge of origin/main (#5268 canonical_gap for Rust and sibling updates) onto the #5996 workspace-relative location owner — expected files regenerate through the merged tree
@@ -218,7 +218,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — oracle_confirmation_mixed (16)
+## Pending — oracle_confirmation_mixed (18)
 
 Reason:
 RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
@@ -231,7 +231,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — oracle_confirmation_mixed (17)
+## Pending — oracle_confirmation_mixed (19)
 
 Reason:
 RIPR-SPEC-0002: re-bless human render copy/grammar fixes #7755 (double-colon labels), #7752 (a/an oracle articles), #7756 (trailing-period rule); formatting-only drift
@@ -244,7 +244,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — oracle_confirmation_mixed (18)
+## Pending — oracle_confirmation_mixed (20)
 
 Reason:
 RIPR-SPEC-0122: default human output speaks plain language (#8165)
@@ -257,9 +257,11 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — oracle_confirmation_mixed (19)
+## Pending — oracle_confirmation_mixed (21)
 
 Reason:
+RIPR-SPEC-0122: human check output prints the stub route or a No test stub here refusal for every probe family (#8412)
+
 RIPR-SPEC-0158 and #7805: independently audited additive source_file metadata only; all classification, oracle, evidence and human output preserved
 
 Command:

@@ -225,10 +225,11 @@ struct RemovedHeaders {
 /// destructured first line (`save({` / `id,` / `}) {`), or an Allman brace
 /// on its own line. Open parentheses and type-argument lists join until
 /// they close; a `{` inside still-open parens is a parameter object, not
-/// the body (#7705). A line that ends in `=> {` is a callback body: join
-/// stops so a nested deleted header is not swallowed. Unspaced `length<3`
-/// is a comparison, not a type list; unspaced `value<cap` vs `Promise<T`
-/// stays on the later lexer slice.
+/// the body (#7705). A group whose first line already ends a statement
+/// (`doThing();` then `{`) is not a header. A line that ends in `=> {` is a
+/// callback body: join stops so a nested deleted header is not swallowed.
+/// Unspaced `length<3` is a comparison, not a type list; unspaced
+/// `value<cap` vs `Promise<T` stays on the later lexer slice.
 fn removed_owner_headers(runs: &[Vec<RemovedCode<'_>>]) -> RemovedHeaders {
     owner_headers_from_code_runs(
         runs.iter()
@@ -291,9 +292,16 @@ fn owner_headers_from_code_runs<'a>(
 }
 
 fn close_header_group(group: &[(usize, &str)], headers: &mut RemovedHeaders) {
-    let Some((first, _)) = group.first() else {
+    let Some((first, first_code)) = group.first() else {
         return;
     };
+    // A completed statement (`doThing();`) followed by a bare `{` joins as
+    // `doThing(); {` and would otherwise look like a method header (#7705
+    // shape 5). Wrapped headers start with `save(`, `): Promise<`, `save({`
+    // or Allman `save()`, none of which end a statement.
+    if first_code.trim().ends_with(';') {
+        return;
+    }
     let joined = group
         .iter()
         .map(|(_, code)| code.trim())
@@ -550,6 +558,13 @@ fn identifier_len(text: &str) -> usize {
 pub(super) fn opens_an_owner(text: &str) -> bool {
     let code = code_only(text);
     let trimmed = code.trim();
+    // A completed statement joined with a following `{` (`doThing(); {`)
+    // is not a method header (#7705 shape 5).
+    if let Some(before_brace) = trimmed.strip_suffix('{')
+        && before_brace.trim_end().ends_with(';')
+    {
+        return false;
+    }
     // `export default (x) => {` has no binding name; after modifiers it is
     // only an arrow, which `binds_a_function` would refuse (#7705).
     let export_default = trimmed.starts_with("export default");
