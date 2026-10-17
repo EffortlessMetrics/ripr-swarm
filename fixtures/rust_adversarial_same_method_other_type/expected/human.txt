@@ -2,16 +2,16 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_adversarial_same_method_other_type/input
 
-Summary: 2 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 1 probe (0 exposed, 1 weak, 0 unrevealed, 0 no path); 1 of 1 finding unsuppressed
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s).
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
 
 Start here:
-  State: a test gap to inspect or repair (top_gap)
-  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
+  State: a test gap to inspect or repair
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:22
-  Static exposure: weak (weakly_exposed, warning, confidence 0.66)
+  Static exposure: weak (severity: warning, confidence 0.66)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:rust:src/lib.rs:impl Iterator for WhileSome::size_hint:return_value:return_value:0_some_self.remaining
   Changed behavior: (0, Some(self.remaining))
@@ -19,7 +19,7 @@ Start here:
   Related test (1 of 5 matched rows): tests/size_hints.rs:4 combinations_inexact_size_hints (ripr could not confirm that this assertion observes the changed behavior)
   Next step: The indexed related tests do not establish a call to the changed owner. Inspect
     existing tests, doctests and examples before changing assertions; they may already constrain the
-    changed behavior. Add or strengthen a test only if that inspection finds a gap.
+    changed behavior. Add or strengthen a test only if that inspection finds a gap
   Evidence: reach weak · infection yes · propagation yes · observation yes · discriminator weak
     - reach weak: No test is seen calling size_hint; tests share only its file or a name token: combinations_inexact_size_hints
     - infection yes: Reachable tests can plausibly activate this changed behavior
@@ -31,8 +31,6 @@ Next: drill into the top finding:
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_adversarial_same_method_other_type/input --at src/lib.rs:22 --kind return_value
 
-Hidden:
-  All 1 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - fixtures/rust_adversarial_same_method_other_type/input/src/lib.rs:22 (weakly_exposed)
+More:
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

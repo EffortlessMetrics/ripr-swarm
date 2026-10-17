@@ -230,7 +230,9 @@
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(average(&[]), 0);",
           "relation_reason": "same_test_file",
-          "relation_confidence": "medium"
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
         },
         {
           "name": "average_of_nothing_is_zero",
@@ -240,7 +242,9 @@
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(average(&[2, 4]), 3);",
           "relation_reason": "same_test_file",
-          "relation_confidence": "medium"
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
         },
         {
           "name": "initial_table",
@@ -250,7 +254,9 @@
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(initial(name), want, \"{name:?}\");",
           "relation_reason": "same_test_file",
-          "relation_confidence": "medium"
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
         },
         {
           "name": "ratio_smoke",
@@ -272,7 +278,9 @@
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(discount(total), want, \"total {total}\");",
           "relation_reason": "same_test_file",
-          "relation_confidence": "medium"
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
         }
       ],
       "stop_reasons": ["infection_evidence_unknown"],

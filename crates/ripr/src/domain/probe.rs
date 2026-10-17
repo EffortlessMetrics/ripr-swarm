@@ -321,10 +321,24 @@ pub struct MissingDiscriminatorFact {
 /// that writes it and the miss renderer that reads it agree.
 pub(crate) const ARM_UNSELECTED_REASON_PREFIX: &str = "No related test call selects arm";
 
+/// Opens the reason of a side-effect or call-deletion missing discriminator
+/// that names an enclosing `if` no related test's input enters
+/// (RIPR-SPEC-0263). Shared like [`ARM_UNSELECTED_REASON_PREFIX`].
+pub(crate) const GUARD_UNENTERED_REASON_PREFIX: &str = "No related test call enters guard";
+
+/// Whether a missing-discriminator reason names an input no related test
+/// supplies at all: an arm no input selects (RIPR-SPEC-0229) or a guard no
+/// input enters (RIPR-SPEC-0263). Such a probe never runs under the tests.
+pub(crate) fn is_unselected_input_reason(reason: &str) -> bool {
+    reason.starts_with(ARM_UNSELECTED_REASON_PREFIX)
+        || reason.starts_with(GUARD_UNENTERED_REASON_PREFIX)
+}
+
 /// The missing discriminator that names an input no test supplies: for a
 /// predicate probe the boundary `left == right` it never reaches
 /// (`classify::activation::missing_boundary_discriminator`), for a match-arm
-/// probe the arm no test input selects. Error-variant and field facts name
+/// probe the arm no test input selects, and for a side-effect or
+/// call-deletion probe the enclosing `if` no test input enters. Error-variant and field facts name
 /// an assertion that is missing instead.
 pub(crate) fn input_boundary_fact<'a>(
     facts: &'a [MissingDiscriminatorFact],
@@ -335,6 +349,9 @@ pub(crate) fn input_boundary_fact<'a>(
         ProbeFamily::MatchArm => facts
             .iter()
             .find(|fact| fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX)),
+        ProbeFamily::SideEffect | ProbeFamily::CallDeletion => facts
+            .iter()
+            .find(|fact| fact.reason.starts_with(GUARD_UNENTERED_REASON_PREFIX)),
         _ => None,
     }
 }

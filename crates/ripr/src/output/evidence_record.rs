@@ -753,11 +753,19 @@ fn canonical_item_for(
 /// word. The producer knows its inputs, so it rebuilds the display from them
 /// and grants the trusted spec only on a byte-for-byte match; any other or
 /// substituted display still recovers nothing.
+///
+/// The rebuild uses the same `root_display` builder the display itself
+/// came from, not a fresh bind (#7937): a rooted selected root such as
+/// `/tmp/repo` is absolute on POSIX but only rooted on Windows, where
+/// binding re-spelled it against the process drive and the producer's own
+/// display failed its own byte-match, losing every typed spec. `root_display`
+/// binds absolute roots, keeps the portable relative spellings verbatim, and
+/// agrees with the display on every host and input family.
 fn bound_snapshot_verify_spec(
     display: &str,
     verify_root: &std::path::Path,
 ) -> Option<crate::domain::CommandSpec> {
-    let root = crate::agent::loop_commands::bound_root(&verify_root.to_string_lossy());
+    let root = crate::agent::loop_commands::root_display(&verify_root.to_string_lossy());
     let spec = crate::agent::command_specs::agent_verify_command_spec(
         &root,
         WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,

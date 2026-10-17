@@ -1116,14 +1116,12 @@ fn evidence_path_values(finding: &Finding) -> Vec<String> {
         crate::output::discriminator_line::discriminator_evidence_line(finding),
     ];
 
-    values.extend(finding.flow_sinks.iter().map(|sink| {
-        format!(
-            "local flow reaches {}: {} (line {})",
-            sink.kind.label(),
-            sink.text,
-            sink.line
-        )
-    }));
+    values.extend(
+        finding
+            .flow_sinks
+            .iter()
+            .map(crate::output::flow_sink_line::flow_sink_evidence_line),
+    );
 
     values.extend(finding.related_tests.iter().take(5).map(|test| {
         let oracle_kind = display_label(test.oracle_kind.as_str());
@@ -2051,6 +2049,30 @@ mod evidence_path_separator_tests {
             != "related test tests/discount.test.ts:4 applies the discount uses strong exact value oracle"
         {
             return Err(format!("posix path must stay slash-separated: {posix}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_sink_text_restating_label_renders_once() -> Result<(), String> {
+        let mut finding = finding_with_related("src/lib.rs");
+        finding.flow_sinks = vec![crate::domain::FlowSinkFact {
+            kind: crate::domain::FlowSinkKind::Unknown,
+            text: "unknown sink".to_string(),
+            line: 3,
+            owner: None,
+        }];
+        let line = evidence_path_values(&finding)
+            .into_iter()
+            .find(|line| line.starts_with("local flow reaches "))
+            .ok_or_else(|| "missing flow-sink evidence line".to_string())?;
+        if line.contains("unknown sink: unknown sink") {
+            return Err(format!(
+                "evidence_path rendered the sink tautologically: {line}"
+            ));
+        }
+        if line != "local flow reaches unknown sink (line 3)" {
+            return Err(format!("unexpected flow-sink evidence line: {line}"));
         }
         Ok(())
     }

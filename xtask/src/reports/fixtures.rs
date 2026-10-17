@@ -10,7 +10,7 @@
 //! `evidence_promotion`, and `tests.rs`) compile unchanged.
 
 use crate::no_panic::contains_word;
-use crate::run::{run, run_output_optional, run_output_owned, run_output_owned_with_envs};
+use crate::run::{run_output_optional, run_output_owned_with_envs};
 use crate::{
     collect_pr_changes, forbidden_static_terms, has_markdown_heading, json_escape, markdown_cell,
     normalize_path, read_text_lossy, ripr_debug_binary, write_json_string_array, write_report,
@@ -20,6 +20,8 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+
+mod preparation;
 
 /// Result of a single fixture run: violation lines + optional run output.
 type FixtureResult = Result<(Vec<String>, Option<FixtureRun>), String>;
@@ -96,6 +98,7 @@ pub(crate) fn fixtures_impl(name: Option<&String>) -> Result<(), String> {
 
 pub(crate) fn goldens_impl(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
+        Some("prepare") => preparation::prepare(&args[1..]),
         Some("check") => goldens_check(),
         Some("bless") => {
             let Some(name) = args.get(1) else {
@@ -108,10 +111,10 @@ pub(crate) fn goldens_impl(args: &[String]) -> Result<(), String> {
             goldens_bless(name, &reason)
         }
         Some(other) => Err(format!(
-            "unknown goldens command `{other}`\nusage: cargo xtask goldens check\n       cargo xtask goldens bless <name> --reason <reason>"
+            "unknown goldens command `{other}`\nusage: cargo xtask goldens prepare [--offline]\n       cargo xtask goldens check\n       cargo xtask goldens bless <name> --reason <reason>"
         )),
         None => Err(
-            "missing goldens command\nusage: cargo xtask goldens check\n       cargo xtask goldens bless <name> --reason <reason>"
+            "missing goldens command\nusage: cargo xtask goldens prepare [--offline]\n       cargo xtask goldens check\n       cargo xtask goldens bless <name> --reason <reason>"
                 .to_string(),
         ),
     }
@@ -715,6 +718,9 @@ pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
             normalize_path(path)
         ));
     }
+    if name == preparation::FIXTURE {
+        preparation::ensure_ready()?;
+    }
 
     let actual_dir = Path::new("target")
         .join("ripr")
@@ -814,7 +820,7 @@ pub(crate) fn ripr_fixture_binary() -> Result<String, String> {
     // ripr_debug_binary() honors CARGO_TARGET_DIR (#2176 review): the
     // routed CI jobs set it, so `cargo build` writes there.
     ripr_fixture_binary_built_by(ripr_debug_binary(), &RIPR_BINARY_BUILD, &|| {
-        run("cargo", &["build", "-p", "ripr"]).map(|_status| ())
+        preparation::build(&["build", "-p", "ripr"])
     })
 }
 
@@ -836,7 +842,7 @@ pub(crate) fn ripr_perl_fixture_binary() -> Result<String, String> {
     let shared = ripr_debug_binary();
     let perl = shared.with_file_name(format!("ripr-lang-perl{}", std::env::consts::EXE_SUFFIX));
     ripr_fixture_binary_built_by(perl.clone(), &RIPR_PERL_BINARY_BUILD, &|| {
-        run("cargo", &["build", "-p", "ripr", "--features", "lang-perl"])?;
+        preparation::build(&["build", "-p", "ripr", "--features", "lang-perl"])?;
         fs::copy(&shared, &perl).map_err(|err| {
             format!(
                 "copy {} to {} failed: {err}",
@@ -846,7 +852,7 @@ pub(crate) fn ripr_perl_fixture_binary() -> Result<String, String> {
         })?;
         // Restore the default binary. Cargo keeps both feature sets'
         // artifacts, so this only relinks.
-        run("cargo", &["build", "-p", "ripr"]).map(|_status| ())
+        preparation::build(&["build", "-p", "ripr"])
     })
 }
 
@@ -877,6 +883,9 @@ fn ripr_fixture_binary_built_by(
 /// pass `None` — they analyze real repositories whose workspace cache is
 /// content-keyed on sources that change with the edit under test, so relocating
 /// it would buy nothing and cost every dogfood run a cold analysis.
+///
+/// Corpus children use one Rayon worker because the parent already runs cases
+/// in parallel. This bounds nested worker pools; helper/I/O threads remain.
 pub(crate) fn run_fixture_check(
     root: &str,
     diff_file: &str,
@@ -901,12 +910,19 @@ pub(crate) fn run_fixture_check(
             args.push("human-full".to_string());
         }
     }
+    let environment = preparation::environment()?;
+    let mut envs = environment
+        .iter()
+        .map(|(key, value)| (*key, value.as_str()))
+        .collect::<Vec<_>>();
     match cache_dir {
         Some(dir) => {
             let value = dir.to_string_lossy().into_owned();
-            run_output_owned_with_envs(&binary, &args, &[(FIXTURE_CACHE_DIR_ENV, &value)])
+            envs.push((FIXTURE_CACHE_DIR_ENV, &value));
+            envs.push(("RAYON_NUM_THREADS", "1"));
+            run_output_owned_with_envs(&binary, &args, &envs)
         }
-        None => run_output_owned(&binary, &args),
+        None => run_output_owned_with_envs(&binary, &args, &envs),
     }
 }
 
@@ -2144,6 +2160,25 @@ pub(crate) fn fixtures_with_args(args: &[String]) -> Result<(), String> {
     fixtures_impl(args.first())
 }
 
+/// Live spec id cited by the `fixtures new` step-4 bless command (#7398).
+/// `goldens bless` rejects reasons that do not cite an existing spec; this id
+/// exists in `docs/specs/` so the printed command is copy-pasteable. Replace it
+/// with the spec the new fixture proves (`cargo xtask specs next` allocates).
+const FIXTURES_NEW_BLESS_EXAMPLE_SPEC: &str = "RIPR-SPEC-0001";
+
+fn fixtures_new_bless_reason(spec_id: &str) -> String {
+    format!("{spec_id}: initial scaffold")
+}
+
+/// Step 4 of the `fixtures new` next-actions list. Kept as one production
+/// string so the printed command and the reason-validator test cannot drift.
+fn fixtures_new_step4(name: &str) -> String {
+    let reason = fixtures_new_bless_reason(FIXTURES_NEW_BLESS_EXAMPLE_SPEC);
+    format!(
+        "  4. Run: cargo xtask goldens bless {name} --reason \"{reason}\"\n     Replace {FIXTURES_NEW_BLESS_EXAMPLE_SPEC} with the spec this fixture proves (`cargo xtask specs next` to allocate). Bless rejects reasons that do not cite an existing spec id."
+    )
+}
+
 /// Scaffold a new fixture directory with a seeded golden (#2445).
 fn fixtures_new(name: &str) -> Result<(), String> {
     if name.is_empty() || name.contains('/') || name.contains('\\') {
@@ -2236,10 +2271,7 @@ fn fixtures_new(name: &str) -> Result<(), String> {
         "  3. Edit {}/SPEC.md to fill in the Given/When/Then/Must Not.",
         name
     );
-    println!(
-        "  4. Run: cargo xtask goldens bless {} --reason \"initial scaffold\"",
-        name
-    );
+    println!("{}", fixtures_new_step4(name));
     println!("  5. Run: cargo xtask fixtures {} to verify.", name);
 
     Ok(())
@@ -2664,5 +2696,52 @@ mod tests {
     #[test]
     fn fixture_cache_pin_names_the_variable_ripr_resolves() {
         assert_eq!(FIXTURE_CACHE_DIR_ENV, "RIPR_CACHE_DIR");
+    }
+
+    #[test]
+    fn fixtures_new_printed_bless_reason_passes_the_reason_validator() -> Result<(), String> {
+        // #7398: the scaffold used to print `--reason "initial scaffold"`, which
+        // `validate_bless_reason` / `parse_reason` reject because they require a
+        // live spec id. The printed step-4 reason must be the same string the
+        // validator accepts.
+        let step4 = fixtures_new_step4("example_fixture");
+        let reason = bless_reason_quoted_in_step4(&step4)?;
+        if reason == "initial scaffold" {
+            return Err("step 4 still suggests a reason with no spec id".to_string());
+        }
+        if validate_bless_reason("initial scaffold").is_ok() {
+            return Err(
+                "control: bare \"initial scaffold\" must still fail the validator".to_string(),
+            );
+        }
+        if !step4.contains("cargo xtask specs next") {
+            return Err(format!(
+                "step 4 must point at `cargo xtask specs next` so the example spec can be replaced:\n{step4}"
+            ));
+        }
+        if !step4.contains("cargo xtask goldens bless example_fixture --reason") {
+            return Err(format!(
+                "step 4 must cite the fixture name in the bless command:\n{step4}"
+            ));
+        }
+        validate_bless_reason(&reason).map_err(|error| {
+            format!("printed step-4 reason {reason:?} must pass validate_bless_reason: {error}")
+        })
+    }
+
+    fn bless_reason_quoted_in_step4(step4: &str) -> Result<String, String> {
+        const NEEDLE: &str = "--reason \"";
+        let Some(start) = step4.find(NEEDLE) else {
+            return Err(format!("step 4 does not quote a --reason: {step4}"));
+        };
+        let rest = step4
+            .get(start.saturating_add(NEEDLE.len())..)
+            .ok_or_else(|| format!("step 4 --reason needle split a character: {step4}"))?;
+        let Some(end) = rest.find('"') else {
+            return Err(format!("step 4 --reason is not closed: {step4}"));
+        };
+        rest.get(..end)
+            .map(str::to_string)
+            .ok_or_else(|| format!("step 4 --reason quote split a character: {step4}"))
     }
 }

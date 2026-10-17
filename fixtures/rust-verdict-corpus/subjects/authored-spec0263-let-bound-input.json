@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-spec0263-let-bound-input",
+  "origin": "authored",
+  "version_label": "authored 2026-10-14 for RIPR-SPEC-0263 acceptance example 4 (a guarded push the test reaches only with a let-bound small input)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "56600a041eae777d7949340c215cd35fbae638febd218f218bfd5ed3bae9ca54"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "e642c29adeb90b68d5b5aa8ae3884bd923bb63406c980648bd990ee8dec0f2e3"
+    }
+  ]
+}

@@ -2,22 +2,22 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/error_variant_boxed_wrapper_downcast_witness/input
 
-Summary: 16 probe(s), 4 exposed, 10 weakly_exposed, 2 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 16 of 16 finding(s) unsuppressed
+Summary: 16 probes (4 exposed, 10 weak, 2 unrevealed, 0 no path); 16 of 16 findings unsuppressed
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 16 changed line(s), 8 candidate line(s), 16 probe(s), 16 finding(s).
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 16 changed line(s), 8 candidate line(s), 16 probe(s), 16 finding(s)
 
 Start here:
-  State: a test gap to inspect or repair (top_gap)
-  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
+  State: a test gap to inspect or repair
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:123
-  Static exposure: unrevealed (reachable_unrevealed, warning, confidence 0.79)
+  Static exposure: unrevealed (severity: warning, confidence 0.79)
   Why unrevealed: a related test reaches this change, but no assertion observes the changed behavior
   Canonical gap: gap:rust:src/lib.rs:theme_summary:error_variant:error_path:try_theme_summary_raw_.map_err_into_into
   Changed behavior: try_theme_summary(raw).map_err(Into::into)
   Missing discriminator (1 of 3): No detected assertion observes the changed value, error, field, or effect
   Related test: tests/errors.rs:82 theme_summary_ignores_matches_result (has no assertion)
-  Next step: Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.
+  Next step: Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect
   Evidence: reach yes · infection yes · propagation yes · observation no · discriminator no
     - reach yes: Related tests appear to reach theme_summary: theme_summary_ignores_matches_result
     - infection yes: Reachable tests can plausibly activate this changed behavior
@@ -31,20 +31,20 @@ Write a test for it:
 
 Hidden:
   15 lower-priority finding(s) omitted from default human output.
-    - fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:45 (exposed)
-    - fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:45 (exposed)
-    - fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:48 (exposed)
-    - fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:48 (exposed)
-    - fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:56 (weakly_exposed)
-    - fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:56 (weakly_exposed)
-    - fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:67 (weakly_exposed)
-    - fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:67 (weakly_exposed)
-    - fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:81 (weakly_exposed)
-    - fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:81 (weakly_exposed)
-    - fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:95 (weakly_exposed)
-    - fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:95 (weakly_exposed)
-    - fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:109 (weakly_exposed)
-    - fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:109 (weakly_exposed)
-    - fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:123 (reachable_unrevealed)
+    - ./src/lib.rs:45 (exposed)
+    - ./src/lib.rs:45 (exposed)
+    - ./src/lib.rs:48 (exposed)
+    - ./src/lib.rs:48 (exposed)
+    - ./src/lib.rs:56 (weak)
+    - ./src/lib.rs:56 (weak)
+    - ./src/lib.rs:67 (weak)
+    - ./src/lib.rs:67 (weak)
+    - ./src/lib.rs:81 (weak)
+    - ./src/lib.rs:81 (weak)
+    - ./src/lib.rs:95 (weak)
+    - ./src/lib.rs:95 (weak)
+    - ./src/lib.rs:109 (weak)
+    - ./src/lib.rs:109 (weak)
+    - ./src/lib.rs:123 (unrevealed)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

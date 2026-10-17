@@ -6,11 +6,16 @@
 //! `exposed` (#4828): `>=` → `>` still passes both tests.
 
 use super::super::facts::CallFact;
-use super::super::rust_index::{FunctionSummary, OracleFact, TestSummary, extract_literals};
+use super::super::rust_index::{
+    FunctionSummary, OracleFact, RustIndex, TestSummary, extract_literals,
+};
 use super::activation::{
     call_arguments, comparison_operands, function_parameters, owner_argument_values,
 };
 use super::helper_transfer::{HelperChain, chain_forwards_owner_result};
+use super::owner_pin::closure_adaptor::{
+    AdaptorTail, admitted_owner_adaptor_tail, argument_sequences, owner_adaptor_tail,
+};
 use super::reveal::assertion_comparison_operands;
 use super::text::delimited_contents_at;
 use crate::analysis::syntax::HelperLoan;
@@ -76,6 +81,7 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
     owner_pinned: &dyn Fn(&TestSummary, &OracleFact) -> bool,
     helper_loan: &dyn Fn(&TestSummary, &OracleFact) -> Option<HelperLoan>,
     wrapper_entry: Option<WrapperEntryPairing<'_>>,
+    index: &RustIndex,
 ) -> bool {
     if !matches!(probe.family, ProbeFamily::Predicate) {
         return false;
@@ -83,6 +89,31 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
     let Some(owner) = owner_fn else {
         return false;
     };
+    // RIPR-SPEC-0265: a changed closure body of an adaptor tail pairs only
+    // through the element path, which requires the compared operand to be
+    // one whole owner call. Activation's element facts (`x == 0` on a call
+    // line) must never make a call, a bound local or a helper call a
+    // boundary one: `let r = pos(xs); assert_eq!(r[1], ..)` observes a
+    // projection that may not tell `>` from `>=`. A tail rules 1 and 2 may
+    // not read (a `collect` into a rebound `Vec`) pairs nothing. Computed
+    // once for every related test.
+    if owner_adaptor_tail(owner).is_some_and(|tail| tail.closure_body_is(&probe.expression)) {
+        let Some(element) = admitted_owner_adaptor_tail(owner, index)
+            .and_then(|tail| adaptor_element_boundary(probe, tail))
+        else {
+            return false;
+        };
+        return related_tests.iter().any(|test| {
+            test_pairs_boundary_element(
+                owner,
+                test,
+                &element,
+                assertion_admitted,
+                owner_pinned,
+                helper_loan,
+            )
+        });
+    }
     // #6694 / #6672: a private helper reached only through a wrapper pairs
     // on the wrapper call when every hop hands the helper's result to its
     // caller's return; any other chain shape keeps the pairing missing.
@@ -320,6 +351,146 @@ fn loan_pairs_boundary_call(
     })
 }
 
+/// RIPR-SPEC-0265 rule 1 pairing: the admitted adaptor tail whose closure
+/// body is the changed comparison, and the literal boundary the closure
+/// binding is compared with.
+fn adaptor_element_boundary(probe: &Probe, tail: AdaptorTail) -> Option<(AdaptorTail, String)> {
+    if !tail.closure_body_is(&probe.expression) {
+        return None;
+    }
+    let (left, right) = comparison_operands(&probe.expression)?;
+    let boundary = match (tail.reads_element(&left), tail.reads_element(&right)) {
+        (true, false) => right,
+        (false, true) => left,
+        _ => return None,
+    };
+    super::owner_pin::closure_adaptor::literal_boundary(&boundary).map(|value| (tail, value))
+}
+
+/// RIPR-SPEC-0265 rule 1 same-test pairing: an admitted discriminating or
+/// owner-pinned assertion of `test` compares one whole owner call whose
+/// argument for the iterated parameter has a run that reaches the
+/// boundary, directly or through a borrowed helper assertion's loan.
+fn test_pairs_boundary_element(
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    element: &(AdaptorTail, String),
+    assertion_admitted: &dyn Fn(&TestSummary, &OracleFact) -> bool,
+    owner_pinned: &dyn Fn(&TestSummary, &OracleFact) -> bool,
+    helper_loan: &dyn Fn(&TestSummary, &OracleFact) -> Option<HelperLoan>,
+) -> bool {
+    test.assertions.iter().any(|assertion| {
+        if !assertion_admitted(test, assertion)
+            || !(assertion_is_discriminating(assertion) || owner_pinned(test, assertion))
+        {
+            return false;
+        }
+        if !(test.start_line..=test.end_line).contains(&assertion.line) {
+            return helper_loan(test, assertion).is_some_and(|loan| {
+                loan_pairs_boundary_element(owner, test, &loan, &assertion.text, element)
+            });
+        }
+        whole_owner_call_operands(test, &assertion.text, owner)
+            .iter()
+            .any(|arguments| arguments_feed_boundary_element(test, None, arguments, element))
+    })
+}
+
+/// Whether one owner call's argument for the iterated parameter is, on some
+/// run, a literal sequence that reaches the boundary value.
+fn arguments_feed_boundary_element(
+    test: &TestSummary,
+    loan: Option<&HelperLoan>,
+    arguments: &[String],
+    (tail, boundary): &(AdaptorTail, String),
+) -> bool {
+    arguments
+        .get(tail.position)
+        .and_then(|argument| argument_sequences(test, loan, argument))
+        .is_some_and(|runs| {
+            runs.iter()
+                .any(|run| tail.run_reaches_boundary(run, boundary))
+        })
+}
+
+/// [`loan_pairs_boundary_call`] for an element boundary: the borrowed
+/// assertion compares one whole owner call whose iterated argument is a
+/// helper parameter, and some eager call of the helper in the test passes a
+/// literal sequence holding the boundary value.
+fn loan_pairs_boundary_element(
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    loan: &HelperLoan,
+    assertion_text: &str,
+    element: &(AdaptorTail, String),
+) -> bool {
+    if loan.parameters.is_empty() || owner_call_count(&loan.helper, &owner.name) != 1 {
+        return false;
+    }
+    whole_owner_call_operands(test, assertion_text, owner)
+        .iter()
+        .any(|arguments| arguments_feed_boundary_element(test, Some(loan), arguments, element))
+}
+
+/// The argument lists of the asserted operands that are exactly one whole
+/// owner call: an `assert_eq!` / `assert_ne!` side, or the `assert!`
+/// condition with at most one leading `!`. A call inside a larger operand
+/// (`pos(&[0, 5])[1]`, `pos(xs).len()`, `pos(xs).is_empty()`) observes only
+/// a projection of the owner's result, which may not tell the changed
+/// closure value apart, so it never pairs with an element boundary
+/// (RIPR-SPEC-0265 rule 1).
+fn whole_owner_call_operands(
+    test: &TestSummary,
+    assertion_text: &str,
+    owner: &FunctionSummary,
+) -> Vec<Vec<String>> {
+    let operands: Vec<String> = match assertion_comparison_operands(assertion_text) {
+        // An expected side that reaches the owner again compares the owner
+        // with itself (`assert_eq!(pos(&[0]), pos(&[0]))`): nothing pairs.
+        Some(compared) => {
+            if compared.iter().all(|operand| {
+                super::owner_pin::expected_reaches_owner(test, assertion_text, operand, &owner.name)
+            }) {
+                return Vec::new();
+            }
+            compared.iter().map(|operand| operand.to_string()).collect()
+        }
+        None => {
+            let Some(index) = find_marker(assertion_text, "assert!(") else {
+                return Vec::new();
+            };
+            let Some(inner) = delimited_contents_at(assertion_text, index + "assert!".len()) else {
+                return Vec::new();
+            };
+            let condition = super::owner_pin::closure_adaptor::top_level_arguments(&inner)
+                .into_iter()
+                .next()
+                .unwrap_or_default();
+            let condition = condition.trim();
+            vec![
+                condition
+                    .strip_prefix('!')
+                    .map_or(condition, str::trim_start)
+                    .to_string(),
+            ]
+        }
+    };
+    operands
+        .iter()
+        .filter_map(|operand| {
+            let operand = operand.trim();
+            let lists = owner_call_argument_lists(operand, &owner.name);
+            let [(_, arguments)] = lists.as_slice() else {
+                return None;
+            };
+            (operand.starts_with(&format!("{}(", owner.name))
+                && delimited_contents_at(operand, owner.name.len())
+                    .is_some_and(|contents| contents.len() + owner.name.len() + 2 == operand.len()))
+            .then(|| arguments.clone())
+        })
+        .collect()
+}
+
 /// Whether an activation value (`input == 10`, or a conjunction such as
 /// `y == 0 && x == 0`) consists only of `parameter == literal` terms, each
 /// naming an owner parameter and the very literal this call feeds it.
@@ -364,7 +535,7 @@ fn decimal_integer_value(text: &str) -> Option<String> {
 
 /// The helper call's arguments when each is a whole scalar literal and no
 /// comment or string precedes the call on its line; `None` otherwise.
-fn loan_call_literals(text: &str, helper: &str) -> Option<Vec<String>> {
+pub(in crate::analysis) fn loan_call_literals(text: &str, helper: &str) -> Option<Vec<String>> {
     let prefix = &text[..text.find(&format!("{helper}("))?];
     if text.contains("//") || text.contains("/*") || prefix.contains(['"', '\'']) {
         return None;
@@ -1093,6 +1264,28 @@ mod tests {
         tests: &[&TestSummary],
         activation: &ActivationEvidence,
     ) -> bool {
+        let source = owner
+            .map(|owner| owner.body.to_string())
+            .unwrap_or_default();
+        pairing_in_owner_file(probe, owner, tests, activation, &source)
+    }
+
+    /// [`pairing_with_admitted_oracles`] with the owner's file holding
+    /// `source`, which the RIPR-SPEC-0265 `Vec` gate reads.
+    fn pairing_in_owner_file(
+        probe: &Probe,
+        owner: Option<&FunctionSummary>,
+        tests: &[&TestSummary],
+        activation: &ActivationEvidence,
+        source: &str,
+    ) -> bool {
+        let mut index = RustIndex::default();
+        if let Some(owner) = owner {
+            index.insert_file_only(
+                owner.file.clone(),
+                crate::analysis::rust_index::summarize_file(owner.file.clone(), source.to_string()),
+            );
+        }
         has_same_test_boundary_oracle_pairing(
             probe,
             owner,
@@ -1102,6 +1295,7 @@ mod tests {
             &|_, _| false,
             &|_, _| None,
             None,
+            &index,
         )
     }
 
@@ -2520,6 +2714,7 @@ mod tests {
                 &|_, _| false,
                 &|_, _| None,
                 entry(chain, &|_| activation.clone()),
+                &RustIndex::default(),
             )
         };
         assert!(pairs(Some(&chain), &activation));
@@ -2561,6 +2756,7 @@ mod tests {
             &|_, _| None,
             entry(Some(&wrapper_chain(FORWARDING_WRAPPER)), &|_| activation
                 .clone()),
+            &RustIndex::default(),
         ));
     }
 
@@ -2585,6 +2781,7 @@ mod tests {
             &|_, _| false,
             &|_, _| None,
             entry(Some(&wrapper_chain(wrapper_body)), &|_| activation.clone()),
+            &RustIndex::default(),
         )
     }
 
@@ -2613,6 +2810,7 @@ mod tests {
             entry(Some(&wrapper_chain(FORWARDING_WRAPPER)), &|_| {
                 transferred_boundary_row(1, line)
             }),
+            &RustIndex::default(),
         ));
     }
 
@@ -2706,6 +2904,7 @@ mod tests {
             &|_, _| false,
             &|_, _| None,
             entry(Some(&chain), &own_rows),
+            &RustIndex::default(),
         ));
         // Control: the same far test pairs when its own rows hold the boundary.
         assert!(has_same_test_boundary_oracle_pairing(
@@ -2717,6 +2916,7 @@ mod tests {
             &|_, _| false,
             &|_, _| None,
             entry(Some(&chain), &|_| transferred_boundary_row(2, line)),
+            &RustIndex::default(),
         ));
     }
 
@@ -2999,6 +3199,7 @@ mod tests {
             &|_, _| false,
             &|_, candidate| (candidate == assertion).then(|| loan.clone()),
             None,
+            &RustIndex::default(),
         )
     }
 
@@ -3048,6 +3249,7 @@ mod tests {
                 &|_, _| false,
                 &|_, _| None,
                 None,
+                &RustIndex::default(),
             )
         };
         assert!(!pairs(&test));
@@ -3073,6 +3275,7 @@ mod tests {
             &|_, _| false,
             &|_, _| None,
             None,
+            &RustIndex::default(),
         ));
     }
 
@@ -3234,6 +3437,200 @@ mod tests {
         renamed.observed_values[0].value = "other == 10".to_string();
         assert!(!loan_pairs(&test, &assertion, &loan, &renamed));
         assert!(loan_pairs(&test, &assertion, &loan, &activation), "control");
+    }
+
+    /// RIPR-SPEC-0265 rule 1 pairing: an admitted assertion pairs with
+    /// the element boundary when its owner call's literal sequence reaches
+    /// the boundary; another run, an unread argument, a constant boundary
+    /// or a consumer outside the rule does not pair.
+    #[test]
+    fn adaptor_element_boundary_pairs_only_a_run_that_reaches_it() {
+        let pairs = |tail: &str, expression: &str, assertion: &str| {
+            let mut owner = gate_owner();
+            owner.body = format!("pub fn gate(xs: &[i32]) -> usize {{ {tail} }}").into();
+            owner.item.has_body = true;
+            let test = test_summary(
+                "element",
+                assertion,
+                vec![call("gate", assertion)],
+                vec![exact(assertion)],
+                &[],
+            );
+            pairing_with_admitted_oracles(
+                &predicate_probe(expression),
+                Some(&owner),
+                &[&test],
+                &ActivationEvidence::default(),
+            )
+        };
+        let filter = "xs.iter().filter(|&&x| x > 0).count()";
+        assert!(pairs(filter, "x > 0", "assert_eq!(gate(&[-1, 0, 3]), 1);"));
+        assert!(!pairs(filter, "x > 0", "assert_eq!(gate(&[3, 7]), 2);"));
+        assert!(!pairs(filter, "x > 0", "assert_eq!(gate(&v), 1);"));
+        assert!(!pairs(filter, "x > 0", "assert_eq!(gate(&[0; 2]), 0);"));
+        // An expected side that reaches the owner compares it with itself.
+        assert!(!pairs(
+            filter,
+            "x > 0",
+            "assert_eq!(gate(&[0, 3]), gate(&[0, 3]));"
+        ));
+        assert!(!pairs(
+            filter,
+            "x > 0",
+            "assert_ne!(gate(&[0, 3]), gate(&[5]) + 1);"
+        ));
+        // A bound expected side is read through the test's parsed `let`s,
+        // pinned end to end in `tests/iterator_adaptor_propagation.rs`.
+        // A boundary that is not one whole decimal literal is never read
+        // from its leading digits (`0x10` is not 0, `1e3` is not 1).
+        for (owner, expression, assertion) in [
+            (
+                "xs.iter().filter(|&&x| x > 0x10).count()",
+                "x > 0x10",
+                "assert_eq!(gate(&[0, 20]), 1);",
+            ),
+            (
+                "xs.iter().filter(|&&x| x > 0x7f).count()",
+                "x > 0x7f",
+                "assert_eq!(gate(&[0, 200]), 1);",
+            ),
+            (
+                "xs.iter().filter(|&&x| x > 1e3).count()",
+                "x > 1e3",
+                "assert_eq!(gate(&[1, 2000]), 1);",
+            ),
+        ] {
+            assert!(!pairs(owner, expression, assertion), "{expression}");
+        }
+        // A hex element never reads as a decimal one.
+        assert!(!pairs(filter, "x > 0", "assert_eq!(gate(&[0x0, 3]), 1);"));
+        // A same-file constant boundary is not read here (fail closed).
+        assert!(!pairs(
+            "xs.iter().filter(|&&x| x > LIMIT).count()",
+            "x > LIMIT",
+            "assert_eq!(gate(&[0]), 0);"
+        ));
+        // `map` + `count` ignores the closure value.
+        assert!(!pairs(
+            "xs.iter().map(|&x| x > 0).count()",
+            "x > 0",
+            "assert_eq!(gate(&[0]), 1);"
+        ));
+        // Only a whole owner call pairs: an index, `len` or `is_empty` of
+        // the result is a projection that may not tell `>` from `>=`.
+        let map = "xs.iter().map(|&x| x > 0).collect::<Vec<_>>()";
+        assert!(pairs(
+            map,
+            "x > 0",
+            "assert_eq!(gate(&[0, 5]), [false, true]);"
+        ));
+        assert!(pairs(
+            map,
+            "x > 0",
+            "assert_ne!([true, true], gate(&[0, 5]));"
+        ));
+        for projection in [
+            "assert_eq!(gate(&[0, 5])[1], true);",
+            "assert_eq!(gate(&[0, 5]).len(), 2);",
+            "assert!(!gate(&[0, 5]).is_empty());",
+            "assert_eq!(gate(&[0, 5]).first(), Some(&false));",
+        ] {
+            assert!(!pairs(map, "x > 0", projection), "{projection}");
+        }
+        // `any` stops at 5 before the boundary element decides.
+        let any = "xs.iter().any(|&x| x > 0)";
+        assert!(pairs(any, "x > 0", "assert_eq!(gate(&[-2, 0]), false);"));
+        assert!(!pairs(any, "x > 0", "assert_eq!(gate(&[5, 0]), true);"));
+        // The `assert!` condition, with at most one `!`, is the operand.
+        assert!(pairs(any, "x > 0", "assert!(!gate(&[-2, 0]));"));
+        assert!(!pairs(any, "x > 0", "assert!(gate(&[-2, 0]) == false);"));
+    }
+
+    /// RIPR-SPEC-0265: activation's element fact on a `let` line never
+    /// makes the bound local a boundary local; `r[1]` and `r.len()`
+    /// observe projections that cannot tell `x > 0` from `x >= 0`.
+    #[test]
+    fn adaptor_element_fact_never_pairs_a_bound_projection() {
+        let mut owner = gate_owner();
+        owner.body =
+            "pub fn gate(xs: &[i32]) -> Vec<bool> { xs.iter().map(|&x| x > 0).collect() }".into();
+        owner.item.has_body = true;
+        let pairs = |assertion: &str, bound: bool| {
+            let call_line = if bound {
+                "let r = gate(xs);"
+            } else {
+                assertion
+            };
+            let body = if bound {
+                format!(
+                    "fn element() {{\n    for xs in [&[0, 5]] {{\n        {call_line}\n        {assertion}\n    }}\n}}"
+                )
+            } else {
+                format!(
+                    "fn element() {{\n    for xs in [&[0, 5]] {{\n        {assertion}\n    }}\n}}"
+                )
+            };
+            let mut oracle = exact(assertion);
+            oracle.line = if bound { 4 } else { 3 };
+            let mut owner_call = call("gate", call_line);
+            owner_call.line = 3;
+            let test = test_summary(
+                "element",
+                &body,
+                vec![owner_call],
+                vec![oracle],
+                &["0", "5"],
+            );
+            let activation = ActivationEvidence {
+                observed_values: vec![ValueFact {
+                    line: 3,
+                    text: format!("{call_line} | element x = 0 of xs"),
+                    value: "x == 0".to_string(),
+                    context: ValueContext::FunctionArgument,
+                }],
+                missing_discriminators: Vec::new(),
+            };
+            pairing_with_admitted_oracles(
+                &predicate_probe("x > 0"),
+                Some(&owner),
+                &[&test],
+                &activation,
+            )
+        };
+        assert!(pairs("assert_eq!(gate(xs), [false, true]);", false));
+        assert!(!pairs("assert_eq!(r[1], true);", true));
+        assert!(!pairs("assert_eq!(r.len(), 2);", true));
+        assert!(!pairs("assert_eq!(gate(xs)[1], true);", false));
+    }
+
+    /// RIPR-SPEC-0265: a `collect` into a `Vec` the owner's file rebinds
+    /// pairs no element boundary, through the same gate as the pin.
+    #[test]
+    fn adaptor_element_boundary_refuses_a_rebound_vec() {
+        let mut owner = gate_owner();
+        owner.body =
+            "pub fn gate(xs: &[i32]) -> Vec<bool> { xs.iter().map(|&x| x > 0).collect() }".into();
+        owner.item.has_body = true;
+        let assertion = "assert_eq!(gate(&[0, 5]), [false, true]);";
+        let test = test_summary(
+            "element",
+            assertion,
+            vec![call("gate", assertion)],
+            vec![exact(assertion)],
+            &[],
+        );
+        let pairs = |items: &str| {
+            pairing_in_owner_file(
+                &predicate_probe("x > 0"),
+                Some(&owner),
+                &[&test],
+                &ActivationEvidence::default(),
+                &format!("{}\n{items}", owner.body),
+            )
+        };
+        assert!(pairs(""));
+        assert!(!pairs("type Vec<T> = std::collections::BTreeSet<T>;"));
+        assert!(!pairs("use std::collections::BTreeSet as Vec;"));
     }
 
     fn gate_owner() -> FunctionSummary {

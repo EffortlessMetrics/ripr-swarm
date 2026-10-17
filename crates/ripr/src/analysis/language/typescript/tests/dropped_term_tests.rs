@@ -197,6 +197,39 @@ fn dropped_term_keeps_credit_only_with_a_non_zero_tested_input() -> Result<(), S
         finding.missing
     );
 
+    // A body-local `ns` that looks up a non-zero fee is not an owner call.
+    // The real owner pin uses fee 0, so dropping `fee` must stay weak.
+    let shadowed = "import * as ns from \"../src/price\";\nimport { price } from \"../src/price\";\ntest(\"price\", () => {\n  const ns = fakePrice();\n  expect(price(6000, 0)).toBe(6499);\n  expect(ns.price(6000, 5)).toBe(6504);\n});\n";
+    let tests = extract_tests(Path::new("tests/price.test.ts"), shadowed);
+    assert_eq!(
+        tests
+            .iter()
+            .flat_map(|test| test.assertions.iter())
+            .map(|assertion| assertion.observed_expression.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            Some("price(6000, 0)".to_string()),
+            Some("ns.price(6000, 5)".to_string())
+        ]
+    );
+    if !local_identifier_declared_in_test_body(&tests[0].body_text, "ns") {
+        return Err("body-local `ns` must read as a shadow".to_string());
+    }
+    let finding = price_finding(
+        "dropped-term-shadowed-namespace",
+        shadowed,
+        "  return subtotal + shipping(subtotal) + FLAT;",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|line| line.contains("`fee`, which is 0 for every tested input")),
+        "{:?}",
+        finding.missing
+    );
+
     // One non-zero call among several is enough.
     let two = "import { price } from \"../src/price\";\ntest(\"price\", () => {\n  expect(price(6000, 0)).toBe(6499);\n  expect(price(6000, 7)).toBe(6506);\n});\n";
     let finding = price_finding(
@@ -372,7 +405,10 @@ fn dropped_term_does_not_bind_a_rebound_parameter() -> Result<(), String> {
 }
 
 /// Rule 1 reads value seams only: an error message the test pins with
-/// `toThrow` keeps its ladder reading.
+/// `toThrow` keeps its error-path reading. `toThrow("limit ")` is a
+/// substring match that both `"limit " + max` and `"limit "` satisfy, so
+/// RIPR-SPEC-0243 rule 4 leaves it weak (corpus case
+/// `jest-spec0248-throw-message-term`).
 #[test]
 fn dropped_term_leaves_an_error_seam_alone() -> Result<(), String> {
     let root = ts_unique_tempdir("dropped-term-error-seam")?;
@@ -417,7 +453,7 @@ fn dropped_term_leaves_an_error_seam_alone() -> Result<(), String> {
     );
     assert_eq!(
         finding.class,
-        ExposureClass::Exposed,
+        ExposureClass::WeaklyExposed,
         "{:?}",
         finding.missing
     );

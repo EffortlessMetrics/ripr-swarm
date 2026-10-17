@@ -132,6 +132,16 @@ Authority:
     the exit authority. The document does not prove a given invocation's
     status.
 
+The startup error reporter preserves that numeric mapping when stderr is
+unwritable: a previously rendered JSON refusal remains intact with exit `2`
+or `3`. Panic diagnostics are also best effort, retaining the internal-error
+exit `2` without recursive abort. This does not guarantee report production
+when an earlier analysis-stage diagnostic fails.
+The `agent card` and `agent stub` stderr JSON refusal writers likewise retain
+exit `3` after reaching their named decision, even when the stderr reader has
+closed. Their refusal stdout stays empty; readable stderr keeps the same JSON
+envelope, escaping, newline and following prose.
+
 `help --json` serializes existing catalog authority only. It never parses
 human help, executes commands, inspects a repository, or strengthens any
 command or workflow claim.
@@ -208,6 +218,9 @@ command or workflow claim.
 
 ## Test Mapping
 
+- `crates/ripr/tests/cli_smoke/closed_stderr.rs` pins unknown card, unknown
+  stub and resolved async-owner stub JSON refusals with a preclosed stderr
+  pipe, plus ready-stub, operational-failure and human-refusal controls.
 - `crates/ripr/src/cli/help_json.rs` unit tests cover production document
   validity, byte stability and explicit ordering, source-reorder
   normalization, duplicate-identity and zero-row fail-closed behavior,
@@ -234,6 +247,9 @@ command or workflow claim.
 
 | Surface | Responsibility |
 | --- | --- |
+| `crates/ripr/src/cli/commands_context.rs` | best-effort stderr JSON refusal writer shared by card and stub |
+| `crates/ripr/src/cli/commands/agent_card.rs` | typed card refusal reporting before returning its decision |
+| `crates/ripr/src/cli/commands/agent_stub.rs` | selector and resolved-stub refusal reporting before returning its decision |
 | `crates/ripr/src/cli/help_json.rs` | versioned DTO, catalog projection, digest, fail-closed document validation, render/print entry points, tests |
 | `crates/ripr/src/cli/command.rs` | `CliCommand::HelpJson` variant and the strict `help --json` parser route |
 | `crates/ripr/src/cli/execute.rs` | dispatch of `HelpJson` to the document printer |

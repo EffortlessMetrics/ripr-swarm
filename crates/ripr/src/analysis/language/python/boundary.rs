@@ -432,7 +432,7 @@ fn relational_operators(text: &str) -> Vec<(usize, usize)> {
 /// both are complete simple operands: a name, dotted attribute path, or
 /// scalar literal. Returns None for a computed operand (`len(items)`,
 /// `a + b`, `values[0]`), so the caller never binds a partial operand.
-fn simple_comparison_operands(
+pub(super) fn simple_comparison_operands(
     condition: &str,
     operator_start: usize,
     operator_len: usize,
@@ -604,23 +604,23 @@ type CaseArguments = Vec<(String, String)>;
 
 /// A literal binding for one owner parameter in one test call.
 #[derive(Clone, Debug)]
-struct Binding {
-    value: String,
-    from_default: bool,
+pub(super) struct Binding {
+    pub(super) value: String,
+    pub(super) from_default: bool,
 }
 
 /// One analyzable call to the owner from a strong related test.
 #[derive(Clone, Debug)]
-struct CallRow {
-    line: usize,
-    text: String,
-    bindings: BTreeMap<String, Binding>,
+pub(super) struct CallRow {
+    pub(super) line: usize,
+    pub(super) text: String,
+    pub(super) bindings: BTreeMap<String, Binding>,
 }
 
 /// Owner calls from related tests whose strongest assertion is strong: the
 /// same tests that could credit `exposed`. Each analyzable call binds owner
 /// parameters to literal arguments (or literal defaults when omitted).
-fn strong_owner_call_rows(
+pub(super) fn strong_owner_call_rows(
     owner: &PythonOwner,
     constants: &[PythonModuleConstant],
     related_candidates: &[PythonRelatedCandidate<'_>],
@@ -632,9 +632,9 @@ fn strong_owner_call_rows(
 /// The strong owner-call rows, and whether some strong related test has an
 /// owner call that binds no row (a `*args` unpack, a comment inside the
 /// argument list) or no owner call this reader recognizes at all. A rule
-/// that needs every strong input (`term_activation.rs`) treats that as
-/// unresolved; the boundary rule reads the rows it has.
-fn strong_owner_call_rows_with_gaps(
+/// that needs every strong input (`term_activation.rs`, `guard_activation.rs`)
+/// treats that as unresolved; the boundary rule reads the rows it has.
+pub(super) fn strong_owner_call_rows_with_gaps(
     owner: &PythonOwner,
     constants: &[PythonModuleConstant],
     related_candidates: &[PythonRelatedCandidate<'_>],
@@ -911,7 +911,7 @@ fn imported_constant_value(
 /// A comparison operand's value in one call row: its own literal, the literal
 /// of the module constant it names, or the literal bound to the owner parameter
 /// it names. Anything else is unresolved.
-fn resolve_operand(
+pub(super) fn resolve_operand(
     operand: &str,
     row: &CallRow,
     constants: &[PythonModuleConstant],
@@ -946,7 +946,7 @@ pub(super) fn literal_value(text: &str) -> Option<String> {
 /// (`100 == 100.0`), strings by content regardless of quote style, and
 /// `True`/`False`/`None` by identity. Mixed kinds never compare equal here
 /// (for example `True == 1`), which fails closed toward "not observed".
-fn literals_equal(left: &str, right: &str) -> bool {
+pub(super) fn literals_equal(left: &str, right: &str) -> bool {
     match (canonical_decimal(left), canonical_decimal(right)) {
         (Some(left), Some(right)) => return left == right,
         (Some(_), None) | (None, Some(_)) => return false,
@@ -965,7 +965,7 @@ fn literals_equal(left: &str, right: &str) -> bool {
 /// Canonical text of a plain decimal literal so values Python compares equal
 /// render identically: `100`, `100.0` and `0100.00` all become `100`, and
 /// `-0.0` becomes `0`. None for anything that is not a plain decimal.
-fn canonical_decimal(text: &str) -> Option<String> {
+pub(super) fn canonical_decimal(text: &str) -> Option<String> {
     let (negative, digits) = match text.strip_prefix('-') {
         Some(rest) => (true, rest),
         None => (false, text),

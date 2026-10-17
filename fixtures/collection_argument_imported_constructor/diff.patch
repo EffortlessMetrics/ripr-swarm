@@ -1,0 +1,11 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -18,7 +18,7 @@
+ pub struct Bag(pub Vec<u32>);
+ pub struct OtherBag(pub Numbers);
+ pub fn add(v: &mut Vec<u32>, x: u32) {
+-    v.push(x);
++    v.push(x * 1);
+ }
+ #[cfg(test)]
+ mod tests {

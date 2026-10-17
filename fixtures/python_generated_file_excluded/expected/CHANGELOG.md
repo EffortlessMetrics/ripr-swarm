@@ -215,3 +215,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_generated_file_excluded (13)
+
+Reason:
+RIPR-SPEC-0002: re-bless human render copy/grammar fixes #7755 (double-colon labels), #7752 (a/an oracle articles), #7756 (trailing-period rule); formatting-only drift
+
+Command:
+`cargo xtask goldens bless python_generated_file_excluded --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_generated_file_excluded (14)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless python_generated_file_excluded --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_generated_file_excluded (15)
+
+Reason:
+RIPR-SPEC-0122: bounded limitation lines drop schema tokens (#8165)
+
+Command:
+`cargo xtask goldens bless python_generated_file_excluded --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

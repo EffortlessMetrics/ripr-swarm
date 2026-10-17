@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "error_propagation_question_mark",
   "test_shape": "helper_wrapped_assert",
-  "hard_case": "The helper's assert_eq! is admitted (RIPR-SPEC-0197 rule 7, #6482), but no assertion pins an exact error variant for the changed `?`, as in grid-try-exact.",
+  "hard_case": "The helper's assert_eq! is admitted (RIPR-SPEC-0197 rule 7, #6482) and pins parse_year(text).ok(), which discards the error. The `?` is parse_year's only Err source, and check_year(\"MCMLXIX\", None) asserts that call's .ok() is None, so swallowing the `?` fails it (RIPR-SPEC-0227 decision 5, #7999); before #7999 only is_err()-style direct assertions read the side flip.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

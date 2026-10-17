@@ -1,0 +1,4 @@
+#[test]
+fn flat_fee_is_five() {
+    assert_eq!(bare_tier::flat_fee(), 5);
+}

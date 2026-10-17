@@ -468,8 +468,14 @@ async fn completed_saved_analysis_keeps_consumed_a_when_disk_and_buffer_become_b
     // line-local evidence from B. Quarantine bookkeeping alone is not proof
     // that the real pull route and committed push baseline honor it.
     let stale_report = pull_document_json(backend, &uri, None).await?;
-    if report_kind_and_items(&stale_report).1 != 0
-        || backend.last_diagnostics_for_uri_for_test(&uri) != Some(Vec::new())
+    let last = backend.last_diagnostics_for_uri_for_test(&uri);
+    if !report_is_quarantine_withdrawal(&stale_report) {
+        return Err(format!(
+            "BEHAVIORAL: completed A still serves stale diagnostics for B; {detail}"
+        ));
+    }
+    if !last.as_ref().is_some_and(Vec::is_empty)
+        && !last_diagnostics_are_quarantine_withdrawal(last)
     {
         return Err(format!(
             "BEHAVIORAL: completed A still serves stale diagnostics for B; {detail}"
@@ -790,7 +796,7 @@ async fn real_saved_refresh_admits_canonical_uri_under_symlinked_root() -> Resul
         .did_change(quarantine_change_params(&uri, 3, SOURCE_A))
         .await;
     let dirty = pull_document_json(backend, &uri, None).await?;
-    if report_kind_and_items(&dirty).1 != 0 {
+    if !report_is_quarantine_withdrawal(&dirty) {
         return Err("alias lookup bypassed per-document quarantine after a new edit".into());
     }
     Ok(())

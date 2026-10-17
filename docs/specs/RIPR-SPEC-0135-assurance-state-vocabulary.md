@@ -101,6 +101,14 @@ direct `ripr agent verify` route from a schema-validated packet. Shell-required,
 manual, inherited-environment, network-enabled, and write-producing routes are
 rejected by policy.
 
+Every successfully parsed `agent verify-execute` attempt emits the existing
+schema `1` terminal response. A missing root or file root rejected by shared CLI
+root admission keeps operational exit `2` and its recovery diagnostic, reports
+`verification_wrong_root`, `executed: false`, and `result_committed: false`, and
+does not execute a packet or write a result. Malformed argv keeps empty stdout;
+packet path-policy refusals retain exit `3`. Correcting the selected root permits
+the normal producer-owned execution route without changing the response schema.
+
 `VerificationExecutionResultV1` records the declared command identity, root and
 revision before/after the run, process disposition, exit status, bounded
 stdout/stderr commitments, an immutable command-spec digest, and currentness.

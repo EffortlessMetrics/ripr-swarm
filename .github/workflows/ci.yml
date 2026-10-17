@@ -53,8 +53,14 @@ jobs:
       - name: Unlocked install resolution (release surface)
         if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')
         run: |
-          cargo package -p ripr --no-verify && tar xzf "target/package/ripr-$(cargo pkgid -p ripr | sed 's/.*#//').crate" -C "$RUNNER_TEMP"
-          cd "$RUNNER_TEMP/ripr-$(cargo pkgid -p ripr | sed 's/.*#//')" && rm Cargo.lock && cargo generate-lockfile
+          cargo package -p ripr --no-verify
+          package_id="$(cargo pkgid -p ripr)"
+          package_version="${package_id##*#}"
+          test -n "$package_version"
+          tar xzf "target/package/ripr-$package_version.crate" -C "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP/ripr-$package_version"
+          rm Cargo.lock
+          cargo generate-lockfile
           cargo check --target-dir "$RUNNER_TEMP/unlocked-target"
       - name: Release readiness (release surface)
         if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')
@@ -190,3 +196,14 @@ jobs:
       - run: npm run package
       - run: sudo apt-get update && sudo apt-get install -y xvfb
       - run: xvfb-run -a npm run test:e2e
+      # Failure-only host logs. Size is capped by
+      # editors/vscode/test/hostDiagnostics.ts (5 MiB total, 256 KiB per file).
+      # Collection cannot change the original test exit status.
+      - name: Upload VS Code test host diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vscode-test-host-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/ripr/vscode-test-host-diagnostics/
+          if-no-files-found: ignore
+          retention-days: 5

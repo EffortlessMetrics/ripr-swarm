@@ -1,4 +1,4 @@
-<!-- section: Added -->
+<!-- section: Internal / CI -->
 - Verdict corpus: 23 authored false-credit cases in `authored-trap-kit`
   (corpus `2026-10-06.2`). Eighteen are traps whose tests cannot notice the
   change: a self-computed expected value via a test helper, `assert_eq!(x, x)`,

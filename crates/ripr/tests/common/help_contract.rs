@@ -130,6 +130,11 @@ fn command_help(
         if !cache.contains_key(&path) {
             let mut args: Vec<&str> = path.iter().map(String::as_str).collect();
             args.push("--help");
+            // `check --help` is a one-screen summary; the docs guard needs the
+            // exhaustive option reference behind `--all`.
+            if path == ["check"] {
+                args.push("--all");
+            }
             let output = run_ripr(&args)?;
             let help = output
                 .status

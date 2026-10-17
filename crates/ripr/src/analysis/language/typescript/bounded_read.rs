@@ -124,8 +124,8 @@ pub(crate) struct CappedWorkspaceSources {
     /// as the Phase-1 source cache: every consumer (parse check, owner/test
     /// extraction, re-export index) reads from here instead of re-reading.
     pub(crate) sources: HashMap<std::path::PathBuf, String>,
-    /// Named read-limit entries: one per over-limit file, plus at most one
-    /// workspace-budget entry (the first file that tripped it).
+    /// Named read-limit entries: one per file refused by either the per-file
+    /// cap or the remaining workspace budget, before bounded sampling.
     pub(crate) limits: Vec<(std::path::PathBuf, CappedReadError)>,
     /// Plain IO failures (missing file, permission, non-regular file,
     /// decode error), one per failed file. These are NOT read-limit
@@ -138,9 +138,9 @@ pub(crate) struct CappedWorkspaceSources {
 /// byte budget.
 ///
 /// - Files over the per-file cap each produce an `OverFileLimit` entry.
-/// - The first file that does not fit the remaining aggregate budget produces
-///   a single `OverWorkspaceBudget` entry; subsequent files are skipped
-///   silently because that one entry already discloses the bound.
+/// - Every file that does not fit the remaining aggregate budget produces
+///   an `OverWorkspaceBudget` entry, so the sampled disclosure retains the
+///   true refused count. Later files that fit can still be read.
 /// - The adapter's disclosure of these entries is sampled per run (#5022,
 ///   `read_limit_disclosure.rs`): a stable-sorted sample of refused paths
 ///   plus one summary entry carrying the true refused count, so a capped
@@ -157,7 +157,6 @@ pub(crate) fn read_workspace_sources_capped(
     let mut sources = HashMap::new();
     let mut limits = Vec::new();
     let mut io_failures = Vec::new();
-    let mut budget_reported = false;
     let mut consumed = 0u64;
     for relative in files {
         let mut remaining = workspace_budget.saturating_sub(consumed);
@@ -184,10 +183,7 @@ pub(crate) fn read_workspace_sources_capped(
                     limits.push((relative.clone(), err));
                 }
                 CappedReadError::OverWorkspaceBudget { .. } => {
-                    if !budget_reported {
-                        limits.push((relative.clone(), err));
-                        budget_reported = true;
-                    }
+                    limits.push((relative.clone(), err));
                 }
                 CappedReadError::Io(message) => {
                     io_failures.push((relative.clone(), message));
@@ -595,7 +591,7 @@ mod tests {
     }
 
     #[test]
-    fn capped_workspace_read_reports_budget_exhaustion_once() {
+    fn capped_workspace_read_reports_every_budget_refusal() {
         let dir = TempDir::new("workspace-budget");
         dir.write("a.ts", &[b'a'; 60]);
         dir.write("b.ts", &[b'b'; 60]);
@@ -607,7 +603,9 @@ mod tests {
         ];
         let outcome = read_workspace_sources_capped(&dir.0, &files, 1024, 100);
         assert_eq!(outcome.sources.len(), 1);
-        assert_eq!(outcome.limits.len(), 1, "budget exhaustion reported once");
+        assert_eq!(outcome.limits.len(), 2, "every refused file is retained");
+        assert_eq!(outcome.limits[0].0, PathBuf::from("b.ts"));
+        assert_eq!(outcome.limits[1].0, PathBuf::from("c.ts"));
         assert!(
             matches!(
                 outcome.limits[0].1,
@@ -616,6 +614,63 @@ mod tests {
             "expected budget error, got {:?}",
             outcome.limits[0].1
         );
+    }
+
+    #[test]
+    fn workspace_budget_refusals_preserve_later_fitting_sources() {
+        let dir = TempDir::new("workspace-late-fit");
+        dir.write("a.ts", &[b'a'; 60]);
+        dir.write("b.ts", &[b'b'; 60]);
+        dir.write("c.ts", &[b'c'; 40]);
+        dir.write("d.ts", b"d");
+        dir.write("empty.ts", b"");
+        dir.write("huge.ts", &[b'x'; 2048]);
+        let files = [
+            "a.ts",
+            "b.ts",
+            "c.ts",
+            "d.ts",
+            "empty.ts",
+            "huge.ts",
+            "missing.ts",
+        ]
+        .map(PathBuf::from);
+        let outcome = read_workspace_sources_capped(&dir.0, &files, 1024, 100);
+        assert_eq!(outcome.sources.len(), 3);
+        assert_eq!(
+            outcome.sources.get(&PathBuf::from("a.ts")).map(String::len),
+            Some(60)
+        );
+        assert_eq!(
+            outcome.sources.get(&PathBuf::from("c.ts")).map(String::len),
+            Some(40)
+        );
+        assert_eq!(
+            outcome
+                .sources
+                .get(&PathBuf::from("empty.ts"))
+                .map(String::as_str),
+            Some("")
+        );
+        assert_eq!(
+            outcome.limits,
+            vec![
+                (
+                    PathBuf::from("b.ts"),
+                    CappedReadError::OverWorkspaceBudget { remaining: 40 }
+                ),
+                (
+                    PathBuf::from("d.ts"),
+                    CappedReadError::OverWorkspaceBudget { remaining: 0 }
+                ),
+                (
+                    PathBuf::from("huge.ts"),
+                    CappedReadError::OverFileLimit { limit: 1024 }
+                ),
+            ]
+        );
+        assert_eq!(outcome.io_failures.len(), 1);
+        assert_eq!(outcome.io_failures[0].0, PathBuf::from("missing.ts"));
     }
 
     #[test]

@@ -2038,7 +2038,9 @@ mod tests {
             .find(|reference| reference.family == RepairCardDetailFamily::FixInstruction)
             .and_then(|reference| reference.route.as_deref())
             .ok_or_else(|| "fix instruction route missing".to_string())?;
-        let expected = r"ripr explain 'probe:src/it'\''s;x rm.rs:2:predicate'";
+        // Host-aware quoting (#7729): the route quotes the finding id in the
+        // running host's shell form.
+        let expected = format!("ripr explain {}", shell_arg(finding_id));
         if route != expected {
             return Err(format!("expected `{expected}`, got `{route}`"));
         }

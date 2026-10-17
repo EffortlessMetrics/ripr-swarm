@@ -110,10 +110,10 @@ mod tests {
         );
 
         let human = crate::output::human::render(&output);
-        assert!(human.contains(
-            "Analysis outcome: the input is not supported (analysis incomplete; unsupported_input)."
-        ));
-        assert!(!human.contains("Analysis outcome: \"unsupported_input\""));
+        assert!(
+            human.contains("Analysis outcome: the input is not supported (analysis incomplete)")
+        );
+        assert!(!human.contains("unsupported_input"));
         assert!(human.contains("analysis incomplete"));
         // The sample output carries findings, so the zero-findings hedge is
         // replaced by the analyzed-scope caveat.
@@ -122,7 +122,7 @@ mod tests {
             output.findings.is_empty()
         );
         assert!(output.findings.is_empty() || human.contains("finding(s) below cover only"));
-        assert!(human.contains("combined_hunk_unsupported"));
+        assert!(!human.contains("combined_hunk_unsupported"));
         assert!(human.contains("two-way diff"));
         Ok(())
     }

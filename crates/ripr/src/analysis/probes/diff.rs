@@ -15,7 +15,7 @@ use super::classify::{
 use super::expectations::{expected_sinks, required_oracles};
 use super::family::delta_for_family;
 use super::ids::{diff_probe_id, normalize_expression};
-use super::lexical::classify_changed_line;
+use super::lexical::{classify_changed_line, is_accumulator_rewrite_of};
 use crate::analysis::diagnostic_origin::ParserByteSpan;
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::cfg_predicates::{attributes_require_test, split_leading_attribute};
@@ -65,6 +65,10 @@ pub(crate) fn probes_for_file_with_relations(
         &changed.path,
         &changed.added_lines,
     );
+    // Old-side line numbers of this file's removed lines whose positional
+    // replacement is a guard-only arm edit, one entry per such edit: that
+    // edit's predicate already carries the old guard as `before`.
+    let mut guard_edit_counterparts = Vec::<usize>::new();
     let skip_added = structural_lines_covered_by_run(&changed.added_lines);
     let skip_removed = structural_lines_covered_by_run(&changed.removed_lines);
     // Rebuilt once per file and shared by every reader of the old file (#7637).
@@ -191,9 +195,42 @@ pub(crate) fn probes_for_file_with_relations(
                             })
                     })
             };
+            // A guard-only edit (`n if 0 > n =>` from `n if n < 0 =>`) is
+            // the guard's predicate finding: its boundary pairing is the
+            // discriminator the edit needs, and arm selection never
+            // evaluates guards. The arm head is dropped only when the
+            // predicate inside its guard holds the whole edit.
+            let guard_only_arm = |shape: &super::classify::ParserProbeShape| {
+                shape.family == ProbeFamily::MatchArm
+                    && removed_counterpart.as_deref().is_some_and(|removed| {
+                        let removed = removed.trim();
+                        let arm = canonical_probe_text(text, shape.text);
+                        let Some(guard) = arm.find(" if ").map(|at| &arm[at + 4..]) else {
+                            return false;
+                        };
+                        canonical_shapes.iter().any(|other| {
+                            let predicate = canonical_probe_text(text, other.text);
+                            // A deleted or added conjunct (`a && 100 <= p` to
+                            // `100 < p`) is more than one comparison's edit,
+                            // so the arm head stays; an edit inside one
+                            // operand of an unchanged `&&`/`||` chain is not.
+                            other.family == ProbeFamily::Predicate
+                                && guard.contains(predicate.as_str())
+                                && removed_span_of_shape(text, &predicate, removed)
+                                    .is_some_and(|span| same_connectives(&predicate, &span))
+                        })
+                    })
+            };
+            // The positional counterpart's old-side line, not its text: an
+            // identical arm deleted elsewhere in the file keeps its probe.
+            if let Some(removed) = changed.replaced_line_counterpart(added.new_side_line)
+                && canonical_shapes.iter().any(&guard_only_arm)
+            {
+                guard_edit_counterparts.push(removed.line);
+            }
             let canonical_shapes = canonical_shapes
                 .iter()
-                .filter(|shape| !unchanged_return(shape))
+                .filter(|shape| !unchanged_return(shape) && !guard_only_arm(shape))
                 .cloned()
                 .collect::<Vec<_>>();
             for shape in canonical_shapes {
@@ -312,6 +349,7 @@ pub(crate) fn probes_for_file_with_relations(
         }
     }
 
+    let represented_short_lines = represented_short_replacements(changed, &probes);
     for (removed_index, removed) in changed.removed_lines.iter().enumerate() {
         let text = removed.text.trim();
         if should_ignore_changed_line(text) || skip_removed[removed_index] {
@@ -342,6 +380,12 @@ pub(crate) fn probes_for_file_with_relations(
         if is_test_evidence {
             continue;
         }
+        // A guard-only arm edit replaced this line, and its predicate holds
+        // the old guard; probing the old line again would read the same
+        // guard as deleted behavior.
+        if guard_edit_counterparts.contains(&removed.line) {
+            continue;
+        }
         let families = if removed_bounds.lines[removed_index] {
             vec![ProbeFamily::StaticUnknown]
         } else {
@@ -351,7 +395,8 @@ pub(crate) fn probes_for_file_with_relations(
             // A bound replacement may collapse several old predicates into one.
             // Shared identifiers alone do not establish that the old subject
             // remained in the replacement's evidence.
-            if has_matching_added_line(removed, &family, changed, &added_bounds)
+            if (has_matching_added_line(removed, &family, changed, &added_bounds)
+                || represented_short_lines.contains(&(removed.line, family.as_str())))
                 && (!removed_bounds.lines[removed_index]
                     || probes
                         .iter()
@@ -965,7 +1010,15 @@ fn has_matching_added_line(
             } else {
                 classify_changed_line(line.text.trim())
             };
-            if !added_families.iter().any(|family| family == removed_family) {
+            // `total = compute(x);` rewritten as `total += compute(x);`: the
+            // added line consumes the same call into an accumulator, which
+            // reads `static_unknown` rather than `call_deletion` (#8027).
+            // A different callee is a real deletion and does not pair.
+            let accumulator_rewrite = *removed_family == ProbeFamily::CallDeletion
+                && !added_bounds[index]
+                && is_accumulator_rewrite_of(&removed_line.text, &line.text);
+            if !accumulator_rewrite && !added_families.iter().any(|family| family == removed_family)
+            {
                 return false;
             }
             let added_tokens = extract_identifier_tokens(&line.text);
@@ -973,6 +1026,48 @@ fn has_matching_added_line(
                 .iter()
                 .any(|token| removed_tokens.iter().any(|other| other == token))
         })
+}
+
+/// #7807: absence of long identifier tokens is not absence of a replacement.
+/// Admit an exact old line/family only when an emitted probe at its positional
+/// counterpart faithfully carries the edit. A whole old `before` beside a
+/// smaller `after` is insufficient: one selected constructor may not own all
+/// edits on that line. Uneven blocks and unrepresented families stay historical.
+fn represented_short_replacements(
+    changed: &ChangedFile,
+    probes: &[SeededProbe],
+) -> std::collections::BTreeSet<(usize, &'static str)> {
+    let counterparts = changed.replacement_counterparts();
+    let added_at = changed
+        .added_lines
+        .iter()
+        .map(|line| (line.new_side_line, line))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut represented = std::collections::BTreeSet::new();
+    for seeded in probes {
+        let probe = &seeded.probe;
+        let Some(removed) = counterparts.get(&probe.location.line) else {
+            continue;
+        };
+        if !extract_identifier_tokens(&removed.text).is_empty() {
+            continue;
+        }
+        let Some(added) = added_at.get(&probe.location.line) else {
+            continue;
+        };
+        let (Some(before), Some(after)) = (&probe.before, &probe.after) else {
+            continue;
+        };
+        let old_span = if after == added.text.trim() {
+            Some(removed.text.trim().to_string())
+        } else {
+            removed_span_of_shape(added.text.trim(), after, removed.text.trim())
+        };
+        if old_span.as_deref() == Some(before.as_str()) {
+            represented.insert((removed.line, probe.family.as_str()));
+        }
+    }
+    represented
 }
 
 /// #6675: a removed line whose adjacent added replacement holds exactly the
@@ -1060,6 +1155,61 @@ fn replaced_line_counterpart(added_new_side_line: usize, changed: &ChangedFile) 
     changed
         .replaced_line_counterpart(added_new_side_line)
         .map(|line| line.text.trim().to_string())
+}
+
+/// The two predicate texts join their operands with the same sequence of
+/// `&&` and `||`, so an edit between them stays inside one operand.
+pub(crate) fn same_connectives(after: &str, before: &str) -> bool {
+    // Masked, so `&&` or `||` inside a string or comment is not a connective.
+    // A `||` that opens an argument or a value (`unwrap_or_else(|| x)`,
+    // `= || x`) is an empty closure, not an operator.
+    // Masking blanks a literal too, so `s == "a" || x` would end in `=` and
+    // pass for `= || x`. The context text therefore keeps a quote where each
+    // live literal opens: a literal before `||` reads as an operand, while
+    // comments stay blank and cannot pose as an opener or an operand (#7943
+    // review). Masking keeps byte offsets, so `at` lines up with the source.
+    let connectives = |source: &str| {
+        let (mut text, char_literals) = crate::analysis::extract::mask_with_char_literals(source);
+        let opens = crate::analysis::extract::string_literal_spans(source)
+            .into_iter()
+            .map(|(open, _, _)| open)
+            .chain(char_literals.into_iter().map(|(start, _)| start))
+            .collect::<Vec<_>>();
+        for open in opens {
+            if text.get(open..=open) == Some(" ") {
+                text.replace_range(open..=open, "\"");
+            }
+        }
+        let opens_closure = |at: usize| {
+            let before = text[..at].trim_end();
+            // `move` and `return` count only as whole keywords: `should_remove
+            // || x` and the raw identifier `r#move || x` are operators
+            // (#7943 review).
+            let ends_with_word = |word: &str| {
+                before.strip_suffix(word).is_some_and(|head| {
+                    !head
+                        .chars()
+                        .next_back()
+                        .is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || ch == '#')
+                })
+            };
+            before.is_empty()
+                || before.ends_with(['(', ',', '=', '{', ';', '[', ':'])
+                || before.ends_with("=>")
+                || ends_with_word("move")
+                || ends_with_word("return")
+        };
+        text.match_indices("&&")
+            .chain(
+                text.match_indices("||")
+                    .filter(|&(at, _)| !opens_closure(at)),
+            )
+            .map(|(at, connective)| (at, connective.to_string()))
+            .collect::<std::collections::BTreeMap<_, _>>()
+            .into_values()
+            .collect::<Vec<_>>()
+    };
+    connectives(after) == connectives(before)
 }
 
 /// The span of `removed_line` that corresponds to `shape_text` within
@@ -1370,6 +1520,7 @@ mod tests {
                         kind: ProbeShapeKind::Predicate,
                         text: "if amount >= threshold {".into(),
                         value_consumed: false,
+                        source_lines: None,
                     }],
                     ..FileFacts::default()
                 },
@@ -1395,6 +1546,67 @@ mod tests {
                 .iter()
                 .any(|sink| sink == "branch result")
         );
+    }
+
+    #[test]
+    fn an_accumulator_rewrite_of_a_call_leaves_no_removed_call_deletion() {
+        // #8027: the removed `total = compute(x);` is paired away by its
+        // accumulator rewrite instead of minting a base-side call_deletion.
+        for (removed, added) in [
+            (
+                "        total = compute(*x);",
+                "        total += compute(*x);",
+            ),
+            (
+                "        count = count + line.split_whitespace().count();",
+                "        count += line.split_whitespace().count();",
+            ),
+        ] {
+            let probes = shapes_probes(added, removed, &[], "");
+            assert!(
+                probes
+                    .iter()
+                    .all(|probe| probe.family != ProbeFamily::CallDeletion),
+                "{removed} -> {added}: {probes:?}"
+            );
+        }
+        // A real call deletion on the removed side is still reported: the
+        // update calls nothing, another callee, only the deleted call's
+        // argument, the same method on another receiver, or appends to
+        // another accumulator.
+        for (removed, added) in [
+            ("        notify(total);", "        total += 1;"),
+            ("        notify(total);", "        total += compute(*x);"),
+            (
+                "        notify(total);",
+                "        total = total + compute(*x);",
+            ),
+            (
+                "        notify(compute(*x));",
+                "        total += compute(*x);",
+            ),
+            (
+                "        total = notify.compute(*x);",
+                "        total += other.compute(*x);",
+            ),
+            (
+                "        notify.push_str(&format!(\"{}\", x));",
+                "        total += &format!(\"{}\", x);",
+            ),
+        ] {
+            let probes = shapes_probes(added, removed, &[], "");
+            assert!(
+                probes
+                    .iter()
+                    .any(|probe| probe.family == ProbeFamily::CallDeletion
+                        && (probe.expression.contains("notify")
+                            || probe
+                                .before
+                                .as_deref()
+                                .is_some_and(|before| before.contains("notify")))),
+                "{removed} -> {added}: {probes:?}"
+            );
+        }
     }
 
     /// One changed line `removed` -> `added` with a single parser shape.
@@ -1444,6 +1656,7 @@ mod tests {
                     kind: *kind,
                     text: (*shape_text).into(),
                     value_consumed: false,
+                    source_lines: None,
                 }
             })
             .collect();
@@ -1882,6 +2095,75 @@ mod tests {
         assert!(families.contains(&ProbeFamily::ReturnValue), "{probes:?}");
     }
 
+    /// A guard-only edit is the guard's predicate finding: the arm head adds
+    /// a selection question arm selection cannot answer through a guard,
+    /// and the old line is not probed again as deleted behavior
+    /// (grid-match-guard).
+    #[test]
+    fn guard_only_edit_keeps_only_the_guard_predicate() {
+        let probes = shapes_probes(
+            "n if 0 > n => -1,",
+            "n if n < 0 => -1,",
+            &[
+                (ProbeShapeKind::MatchArm, "n if 0 > n =>"),
+                (ProbeShapeKind::Predicate, "0 > n"),
+            ],
+            "",
+        );
+
+        let families = probes
+            .iter()
+            .map(|probe| probe.family.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(families, vec![ProbeFamily::Predicate], "{probes:?}");
+        assert_eq!(probes[0].before.as_deref(), Some("n < 0"), "{probes:?}");
+    }
+
+    /// Control: an edit that also renames the arm's binding reaches past the
+    /// guard predicate, so the arm head keeps its probe.
+    #[test]
+    fn a_pattern_and_guard_edit_keeps_the_arm_head() {
+        let probes = shapes_probes(
+            "m if 0 > m => -1,",
+            "n if n < 0 => -1,",
+            &[
+                (ProbeShapeKind::MatchArm, "m if 0 > m =>"),
+                (ProbeShapeKind::Predicate, "0 > m"),
+            ],
+            "",
+        );
+
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.family == ProbeFamily::MatchArm),
+            "{probes:?}"
+        );
+    }
+
+    /// Control: a predicate edit in the arm body is not a guard edit, so the
+    /// arm head stays.
+    #[test]
+    fn a_body_predicate_edit_keeps_the_arm_head() {
+        let probes = shapes_probes(
+            "Some(v) => v >= 4,",
+            "Some(v) => v > 4,",
+            &[
+                (ProbeShapeKind::MatchArm, "Some(v) =>"),
+                (ProbeShapeKind::Predicate, "v >= 4"),
+            ],
+            "",
+        );
+
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.family == ProbeFamily::MatchArm
+                    && probe.after.as_deref() == Some("Some(v) =>")),
+            "{probes:?}"
+        );
+    }
+
     #[test]
     fn match_arm_head_edit_on_a_two_arrow_line_keeps_the_whole_old_line() {
         for (added, removed, shape) in [
@@ -1906,6 +2188,74 @@ mod tests {
                 "{probes:?}"
             );
         }
+    }
+
+    #[test]
+    fn same_connectives_reads_operators_not_empty_closures() {
+        // An edit inside one operand keeps the chain.
+        assert!(same_connectives("a > 0 && b < 1", "a > 0 && b <= 1"));
+        // A dropped or added operand changes it (#7898).
+        assert!(!same_connectives("b < 1", "a > 0 && b <= 1"));
+        assert!(!same_connectives("a > 0 || b < 1", "b <= 1"));
+        assert!(!same_connectives("a || b && c", "a && b || c"));
+        // `||` that opens an empty closure is not an operator.
+        assert!(same_connectives(
+            "x.unwrap_or_else(|| 0) > 1",
+            "x.unwrap_or_else(|| 0) >= 1"
+        ));
+        assert!(!same_connectives(
+            "n > 1",
+            "n.map_or_else(|| 0, f) >= 1 && ok"
+        ));
+        assert!(same_connectives("f(|| 1) && g", "f(|| 2) && g"));
+        assert!(same_connectives("move || 1", "return || 2"));
+        assert!(same_connectives("x => || 1", "x => || 2"));
+        assert!(same_connectives("Foo { f: || 1 }", "Foo { f: || 2 }"));
+        assert!(same_connectives("remove || a", "remove || b"));
+        // A name that merely ends in `move` or `return` is an operand.
+        assert!(!same_connectives("100 < p", "should_remove || 100 <= p"));
+        assert!(!same_connectives("100 < p", "early_return || 100 <= p"));
+        assert!(!same_connectives("100 < p", "café_move || 100 <= p"));
+        assert!(!same_connectives("100 < p", "r#move || 100 <= p"));
+        assert!(!same_connectives("100 < p", "r#return || 100 <= p"));
+        // A literal left of `||` is an operand, not a closure opener.
+        assert!(!same_connectives(
+            "100 < p",
+            "name == \"admin\" || 100 <= p"
+        ));
+        assert!(!same_connectives("100 < p", "c == 'x' || 100 <= p"));
+        assert!(!same_connectives("100 < p", "flag == '(' || 100 <= p"));
+        assert!(same_connectives("f(\"a\", || 1)", "f(\"b\", || 2)"));
+        // A comment before `||` changes neither reading.
+        assert!(!same_connectives("x || y", "f(/*c*/ || 1)"));
+        assert!(!same_connectives("100 < p", "a // note:\n || 100 <= p"));
+        // A line comment ending in a quote is not a literal.
+        assert!(same_connectives("f( // \"x\"\n || 1)", "f( // ok\n || 2)"));
+        assert!(same_connectives("f( // r#\n || 1)", "f( // ok\n || 2)"));
+        // A comment beside the literal does not hide it.
+        assert!(!same_connectives(
+            "a == \"x\" /* c */",
+            "a == \"x\" /* c */ || b"
+        ));
+        assert!(!same_connectives(
+            "a == 'x' /* c */",
+            "a == 'x' /* c */ || b"
+        ));
+        assert!(!same_connectives(
+            "a == /* c */ \"y\"",
+            "a == /* c */ \"y\" || b"
+        ));
+        assert!(!same_connectives(
+            "a == \"x\" // c\n",
+            "a == \"x\" // c\n || b"
+        ));
+        assert!(!same_connectives("a == r#\"x\"#", "a == r#\"x\"# || b"));
+        assert!(same_connectives(
+            "f(\"a\" /*c*/, || 1)",
+            "f(\"b\" /*c*/, || 2)"
+        ));
+        // Operators in strings or comments are masked.
+        assert!(same_connectives("s == \"a && b\"", "s != \"a && b\""));
     }
 
     #[test]
@@ -2069,6 +2419,7 @@ mod tests {
                         kind: ProbeShapeKind::Predicate,
                         text: PREDICATE.into(),
                         value_consumed: false,
+                        source_lines: None,
                     }],
                     ..FileFacts::default()
                 },
@@ -2175,6 +2526,7 @@ mod tests {
                         kind: ProbeShapeKind::CallDeletion,
                         text: expression.into(),
                         value_consumed: false,
+                        source_lines: None,
                     }],
                     ..FileFacts::default()
                 },
@@ -2222,6 +2574,7 @@ mod tests {
                         kind: ProbeShapeKind::ReturnValue,
                         text: "HirLet {\n    name,\n    storage,\n}".into(),
                         value_consumed: false,
+                        source_lines: None,
                     }],
                     ..FileFacts::default()
                 },
@@ -2328,6 +2681,7 @@ mod tests {
                         kind: ProbeShapeKind::CallDeletion,
                         text: "compute_fee(amount * 9)".into(),
                         value_consumed: false,
+                        source_lines: None,
                     }],
                     ..FileFacts::default()
                 },

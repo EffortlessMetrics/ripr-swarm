@@ -597,3 +597,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_parse_error_unsupported_syntax (17)
+
+Reason:
+RIPR-SPEC-0002: re-bless human render copy/grammar fixes #7755 (double-colon labels), #7752 (a/an oracle articles), #7756 (trailing-period rule); formatting-only drift
+
+Command:
+`cargo xtask goldens bless typescript_parse_error_unsupported_syntax --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_parse_error_unsupported_syntax (18)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless typescript_parse_error_unsupported_syntax --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_parse_error_unsupported_syntax (19)
+
+Reason:
+RIPR-SPEC-0122: bounded limitation lines drop schema tokens (#8165)
+
+Command:
+`cargo xtask goldens bless typescript_parse_error_unsupported_syntax --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

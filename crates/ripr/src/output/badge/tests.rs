@@ -845,6 +845,63 @@ fn badge_plus_parses_test_efficiency_metrics() -> Result<(), String> {
 }
 
 #[test]
+fn badge_plus_accepts_empty_not_run_report_with_optional_explanation() -> Result<(), String> {
+    // The report status describes evidence availability; the badge parser's
+    // contract is the ledger/count projection, not a report-status projection.
+    let legacy = r#"{"schema_version":"0.1","tests":[],"metrics":{"tests_scanned":0}}"#;
+    let explained = r#"{
+  "schema_version": "0.1",
+  "status": "not_run",
+  "advisory": true,
+  "explanation": "No tests were selected; test-efficiency evidence was not established for this report. Run the report from the workspace root containing the Rust test sources.",
+  "tests": [],
+  "metrics": {"tests_scanned": 0}
+}"#;
+    let summary = parse_test_efficiency_badge_summary(explained)?;
+    assert_eq!(summary, parse_test_efficiency_badge_summary(legacy)?);
+    assert_eq!(summary.analyzed_tests, 0);
+    assert!(summary.entries.is_empty());
+    assert_eq!(summary.unsuppressed_test_efficiency_findings, 0);
+    assert_eq!(summary.unknowns_test_efficiency, 0);
+    // A version bump is not an interchangeable way to add this optional field.
+    let unsupported = explained.replace("\"0.1\"", "\"0.2\"");
+    let error = parse_test_efficiency_badge_summary(&unsupported)
+        .err()
+        .ok_or("unsupported report schema was accepted")?;
+    assert!(error.contains("schema_version"));
+    Ok(())
+}
+
+#[test]
+fn badge_plus_optional_explanation_preserves_nonempty_ledger() -> Result<(), String> {
+    for (class, status, actionable) in [
+        ("strong_discriminator", "pass", 0),
+        ("smoke_only", "warn", 1),
+    ] {
+        let legacy = format!(
+            r#"{{"schema_version":"0.1","tests":[{{"class":"{class}"}}],"metrics":{{"tests_scanned":1}}}}"#
+        );
+        let mut explained: serde_json::Value =
+            serde_json::from_str(&legacy).map_err(|err| err.to_string())?;
+        explained["status"] = serde_json::json!(status);
+        explained["explanation"] = serde_json::json!("Additional advisory context.");
+        // Exercise both reordered/pretty and compact JSON at the real reader.
+        for text in [
+            explained.to_string(),
+            serde_json::to_string_pretty(&explained).map_err(|err| err.to_string())?,
+        ] {
+            let summary = parse_test_efficiency_badge_summary(&text)?;
+            assert_eq!(summary, parse_test_efficiency_badge_summary(&legacy)?);
+            assert_eq!(summary.analyzed_tests, 1);
+            assert_eq!(summary.entries.len(), 1);
+            assert_eq!(summary.entries[0].class, class);
+            assert_eq!(summary.unsuppressed_test_efficiency_findings, actionable);
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn badge_plus_counts_actionable_classes() -> Result<(), String> {
     for class in [
         "likely_vacuous",
@@ -1414,7 +1471,85 @@ fn ripr_plus_badge_with_test_efficiency_suppressions_moves_into_suppressed_bucke
     assert_eq!(summary.counts.unsuppressed_test_efficiency_findings, 1);
     assert_eq!(summary.counts.suppressed_test_efficiency_findings, 1);
     assert_eq!(summary.message, "1");
-    assert!(summary.warnings.is_empty());
+    // #7760: explicit check-policy warns that TE rows are not exposure-gap
+    // selectors. Implicit plus badges apply those rows through the TE
+    // matcher and must not copy the inapplicable-kind warning.
+    assert!(
+        summary.warnings.is_empty(),
+        "applied TE badge suppression must not warn as inapplicable: {:?}",
+        summary.warnings
+    );
+}
+
+#[test]
+fn ripr_plus_badge_with_expired_test_efficiency_suppression_keeps_count_and_expiry_warning() {
+    let te = TestEfficiencyBadgeSummary {
+        unsuppressed_test_efficiency_findings: 2,
+        actionable_entries: vec![
+            TestEfficiencyBadgeEntry {
+                test: "alpha".to_string(),
+                path: "tests/a.rs".to_string(),
+                has_intent: false,
+                class: "smoke_only".to_string(),
+                reached_owners: Vec::new(),
+            },
+            TestEfficiencyBadgeEntry {
+                test: "beta".to_string(),
+                path: "tests/b.rs".to_string(),
+                has_intent: false,
+                class: "smoke_only".to_string(),
+                reached_owners: Vec::new(),
+            },
+        ],
+        ..TestEfficiencyBadgeSummary::default()
+    };
+    let output = check_output(vec![]);
+    let suppressions = vec![te_suppression(
+        "alpha",
+        Some("tests/a.rs"),
+        Some("2025-01-01"),
+    )];
+
+    let summary = ripr_plus_badge_summary_with_suppressions(
+        &output,
+        te,
+        &suppressions,
+        "2026-05-03",
+        BadgePolicy::default(),
+        TestEfficiencyAggregationScope::Repo,
+    );
+
+    assert_eq!(summary.counts.unsuppressed_test_efficiency_findings, 2);
+    assert_eq!(summary.counts.suppressed_test_efficiency_findings, 0);
+    assert_eq!(summary.warnings.len(), 1, "{:?}", summary.warnings);
+    assert!(
+        summary.warnings[0].contains("expired")
+            && summary.warnings[0].contains("`alpha`")
+            && !summary.warnings[0].contains("does not apply to check findings"),
+        "{:?}",
+        summary.warnings
+    );
+}
+
+#[test]
+fn ripr_badge_ignores_test_efficiency_entries_without_inapplicable_kind_warning() {
+    let output = check_output(vec![finding_at_id("probe:a", ExposureClass::WeaklyExposed)]);
+    let suppressions = vec![te_suppression("alpha", Some("tests/a.rs"), None)];
+
+    let summary = ripr_badge_summary_with_suppressions(
+        &output,
+        &suppressions,
+        "2026-05-03",
+        BadgePolicy::default(),
+    );
+
+    assert_eq!(summary.counts.unsuppressed_exposure_gaps, 1);
+    assert_eq!(summary.counts.suppressed_exposure_gaps, 0);
+    assert!(
+        summary.warnings.is_empty(),
+        "RIPR 0 must not inherit explicit check-policy TE inapplicable warnings: {:?}",
+        summary.warnings
+    );
 }
 
 #[test]

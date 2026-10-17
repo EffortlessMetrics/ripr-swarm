@@ -63,7 +63,10 @@ fn bumps() {
 The parser emits no shape for assignments or compound assignments: a binary
 expression counts only for predicate operators (`analysis/syntax/ra.rs`). The
 lexical fallback needs a `:` without `::` to call a line a field
-(`analysis/probes/lexical.rs`, `has_field_shape`). So the line becomes a
+(`analysis/probes/lexical.rs`, `has_field_shape`). It masks strings and
+comments on the changed line's own text first; masking is per line, so a
+line inside a multi-line string or block comment, or one that starts
+inside a string, is still read as code (#8013). So the line becomes a
 `static_unknown` probe and the finding reads `static_unknown` with stop
 reason `static_probe_unknown` and no `static_limit_kind`
 (`analysis/classify/decision.rs`).
@@ -81,6 +84,34 @@ Neighbouring shapes are already typed: `self.label = compute(x)` reads as a
 receiver (`items.push`) and leaves field-path receivers on its Part C.
 RIPR-SPEC-0001 says labels "should be available for state writes" without
 defining them for assignments.
+
+A bare local accumulator update follows the call-free rule even when its
+right-hand side calls something. `count += line.split_whitespace().count();`
+and `count = count + f(x);` consume the call's value (#6677), so deleting the
+call is not a mutant of the line; the lexical fallback no longer reads them as
+`call_deletion` and the line reads `static_unknown`, like `sum += w;`
+(`analysis/probes/lexical.rs`, `is_local_accumulator_assignment`; corpus row
+`grid-loop-table`). Only a line holding one statement qualifies
+(`count += 1; notify(x);` keeps its `call_deletion`). Diff pairing treats a
+removed `call_deletion` line rewritten as such an update (`total =
+compute(x);` to `total += compute(x);`) as the same edit when the update
+consumes the removed line's outermost call, receiver included, or when the
+removed call appends to the same accumulator (`push_str`, `push`, `extend`,
+`extend_from_slice`, `append`) and the update adds the same argument calls
+(`out.push_str(&format!(..));` to `out += &format!(..);`). The removed line
+then mints no base-side `call_deletion` (`analysis/probes/diff.rs`,
+`has_matching_added_line`). A different outer callee (`notify(total);` or
+`notify(compute(x));` to `total += compute(x);`) or receiver (`a.f(x)` to
+`b.f(x)`) is a real deletion of the removed call and keeps its
+`call_deletion`. Closing braces after the one statement (`total += f(x); }`)
+do not count as a second statement. Field, deref and index targets
+(`self.total += f(x)`, `*out += f(x)`, `v[i] += f(x)`) and a
+non-self-referential `total = compute(x)` keep their current families; the
+latter also consumes the call's value, but this rule covers only updates that
+accumulate into their target and leaves plain assignments to the existing
+`call_deletion` handling. Crediting an accumulator observed
+through an exact owner-return assertion needs loop-count reasoning
+RIPR-SPEC-0197 leaves out, and stays future work.
 
 ## Behavior
 
@@ -144,6 +175,37 @@ in the owner. This is new behavior, not reuse. The getter rule under Limits appl
 these reads too (Decision 2): `c.history()` observes `self.log` only when
 `history` resolves to a body returning `self.log`, and a shared name alone
 never confirms a field-path collection write (examples 12 and 13).
+
+A count-only read of a written map (`c.stock.len()`,
+`c.stock.is_empty()`) does not confirm a deleted `insert` when the
+test may already hold the inserted key (#8204): overwriting a
+pre-existing key leaves the count unchanged, so
+`shelf.stock.insert("A", 1); shelf.restock("A", 2);
+assert_eq!(shelf.stock.len(), 1)` stays `weakly_exposed`, pinned by
+`fixtures/rust_map_overwrite_count` in the RIPR-SPEC-0108 honesty
+corpus. The same count from an empty start still confirms, as
+`fixtures/rust_map_insert_count_empty` pins. A `push` count is
+unaffected: appending changes the count whether or not the
+collection started empty.
+
+A read of only element zero of the written collection (`c.items.first()`,
+`c.items.get(0)`, `c.items[0]`, typed or underscore spellings such as
+`get(0usize)` and `[0_usize]`, first-element ranges such as `[..1]` and
+`get(0..=0)`, and the bare-receiver and through-getter forms) does not
+confirm a `push` (#8203): `push` appends, so element zero is the pushed
+element only when the collection started empty. Such a test stays
+`weakly_exposed`, pinned by `fixtures/rust_preseeded_first_element` in
+the RIPR-SPEC-0108 honesty corpus. A read of the pushed element
+(`last()`, a non-zero index, or the whole collection) still confirms,
+as `fixtures/rust_pushed_element_last` pins. The one exception is a
+bare receiver whose test body proves an empty start (a narrow empty
+construction such as `Vec::new()` as the whole right-hand side, with
+no test-side seeding of that receiver and at most one mutable escape,
+counting `&mut *receiver`): there element zero is the pushed element,
+and the read still confirms. Field-path first-element reads stay
+demoted, because this observer does not establish the field
+collection's start state. An `insert` write is not an append and keeps
+its prior first-element credit; the read is not position-aware.
 
 ### Limits
 
@@ -244,15 +306,48 @@ changes `self.count += 2` to `self.count += 1`.
     `label` initializer changed, test `o.tag("rush", 1);
     assert_eq!(o.tags().len(), 1)`: not `exposed`. A projection of the
     collection does not read the pushed field.
+16. `self.stock.insert(sku.to_string(), qty)` in `restock(&mut self, sku:
+    &str, qty: u32)` with the key spelling changed, test
+    `s.restock("BOLT", 5); assert_eq!(s.count("BOLT"), 5)` with
+    `fn count(&self, sku: &str) -> u32 { self.stock.get(sku).copied().unwrap_or(0) }`:
+    `exposed`. The getter looks its argument up in the written map, and the
+    test passes the same key to the owner and the getter.
+17. Same write in `deliver`, test `s.deliver("BOLT", 5);
+    assert_eq!(s.count("NUT"), 0)`: not `exposed`. A read of another key is
+    not a read of the inserted entry.
+18. Same write in `place`, which returns `Err` before the insert when
+    `qty == 0`, test `s.restock("BOLT", 2 + 3); s.place("BOLT", 0).unwrap_err();
+    assert_eq!(s.count("BOLT"), 5)`: not `exposed`. A refused owner call
+    never reaches the insert. Only an owner call whose result `.unwrap()`,
+    `.expect(..)` or `?` consumes (then optionally bound to one name), or a bare call to an owner that returns nothing,
+    runs the insert for certain; `.is_err()`, `.is_ok()`, `let _ = ..`, an
+    unconsumed `let r = ..` and a bare `s.place("BOLT", 0);` do not count.
+    The earlier `restock` also stores the expected value through a computed
+    argument, which fails closed on its own, so the refused-call rule is
+    isolated only by unit tests.
+19. `self.stock.insert(sku.to_string(), qty)` in `receive`, test
+    `l.receive("BOLT", 5); assert_eq!(l.held("BOLT"), 0)` with
+    `fn held(&self, sku: &str) -> u32 { self.held.get(sku).copied().unwrap_or(0) }`:
+    not `exposed`. The same key looked up in another field map is not a read
+    of the written entry.
+20. `self.stock.insert(sku.to_string(), qty)` in `fill`, test
+    `b.fill("BOLT", 3); b.set("BOLT", 5); assert_eq!(b.count("BOLT"), 5)`:
+    not `exposed`. `set` rewrites the entry between the owner call and the
+    read (rule 3), so the read never sees what `fill` stored. A write on
+    the read's own line before the assertion (`b.set("BOLT", 5);
+    assert_eq!(..)`), an earlier call that may already store the expected
+    value (`b.set("BOLT", 5); b.fill("BOLT", 5)`), a constructor that
+    seeds the map, and an owner that writes the map again after the insert
+    (`self.stock.insert(..)` twice, `self.bump(sku)`) count the same way.
 
 ## Test Mapping
 
 - Existing: `fixtures/python_field_assignment_shape` (parity reference),
   `fixtures/observation_verified_side_effect`,
   `fixtures/observation_unverified_side_effect`.
-- Verdict corpus: 14 cases `spec0228-*` in
+- Verdict corpus: 19 cases `spec0228-*` in
   `fixtures/rust-verdict-corpus/cases/` for acceptance examples 1-9 and
-  12-15,
+  12-20,
   each naming its example in its reasoning and labeled with runtime mutant
   truth. Examples 10 and 11 are dead writes: every mutant of the write is
   equivalent, so they have no runtime-labeled case.
@@ -261,7 +356,12 @@ changes `self.count += 2` to `self.count += 1`.
   `let_binding_type_annotations_are_not_field_construction` and
   `struct_literal_fields_keep_field_construction_beside_let_bindings` keep a
   `let` binding's `: Type` annotation out of `field_construction` while real
-  struct-literal fields keep it; `diff.rs`
+  struct-literal fields keep it;
+  `colons_in_strings_and_comments_are_not_field_construction` (#6578) keeps
+  a colon inside a string or comment (`format!("{:<8}{:>6}\n", ..)`,
+  `println!("total: {}", t)`) out of `field_construction`, so a spurious
+  field probe cannot turn a credited format-call line into a gap
+  (verdict corpus `lib-pretty-render-shadowed-assert-eq`); `diff.rs`
   `reordered_replacement_does_not_repeat_the_removed_static_unknown` drops the
   removed side's `static_unknown` for a pure operand reorder only when the
   added side's probe carries the removed text as its `before`.
@@ -295,9 +395,136 @@ changes `self.count += 2` to `self.count += 1`.
   (`call_deletion`), since a changed argument leaves the count alone. A getter confirms only when it is an inherent method whose body
   is `self.f`, `&self.f`, `&self.f[..]`, `self.f.clone()` or
   `self.f.as_slice()`.
-- Not yet implemented for these writes, all failing closed: rule 3 (no
-  intervening write between the owner call and the read), as before for
-  bare-receiver pushes; the `static_unknown` fallback with
+- An empty-collection expectation is implemented (#8051, #8141 review):
+  `assertion_expects_empty_collection` in `propagation_witness.rs` and the
+  `empty_after_skipped_push` cap in `reveal.rs` recognize
+  `assert_eq!(p.log, vec![])` (either operand, `vec![]`, `Vec::new()`,
+  `Vec::<T>::new()` or `[]`), `assert_eq!(p.log.len(), 0)` and
+  `assert!(p.log.is_empty())` (the receiver must be a plain path without
+  operators). When the owner may leave before the changed push
+  (`owner_may_exit_before_line`, sharing `may_exit_early`, including a
+  guard on the changed line before the expression), such an assertion
+  neither confirms observation nor counts as a strong oracle for
+  `side_effect` or `call_deletion` probes on a field collection write
+  (`field_collection_write_path`, `direct_collection_mutation_receiver`):
+  a test that passes with the collection empty took that exit, so it
+  cannot tell a deleted or changed push from the original. Without an
+  earlier exit the push ran, and a test that empties the collection again
+  (`add(1); remove(1)`) can still catch a changed argument, so the
+  assertion keeps its strength. Known limit: the early-exit flag is
+  owner-wide, so a test that provably bypasses the exit and then removes
+  the pushed value is capped with the tests that took the exit; the cap
+  cannot read which path one test took. The shared `may_exit_early` also
+  counts any `else`, since a `let .. else` block may exit through a
+  never-typed call no token catches, so an ordinary `if/else` completed
+  before the push widens the same conservative cap.
+- A seeded-collection expectation is implemented (#8205, extending
+  #8051): `assertion_restates_seeded_collection` in
+  `propagation_witness.rs` and the `seeded_after_skipped_push` cap in
+  `reveal.rs` recognize an `assert_eq!` whose expected side exactly
+  restates, with whitespace removed, the collection state the test
+  seeded in the binding's own construction (a struct-literal field
+  entry or a bare assignment read from the test body). When the owner
+  may leave before the push, such an assertion only restates what the
+  collection already held, for example a seeded `vec![9]` asserted
+  after a locked owner returns early, so it neither confirms
+  observation nor counts as a strong oracle for `side_effect` or
+  `call_deletion` probes on a field collection write. An expectation
+  that differs from the seeded state (including the seeded state plus
+  the pushed element, `vec![9, 1]` after `push(1)`) keeps its
+  strength, as does any expectation when the owner cannot exit before
+  the push or when no seeded construction is spelled out. The same
+  owner-wide limit as the empty-collection cap applies: the cap cannot
+  read which path one test took.
+- Keyed reads of a field-map insert are implemented (examples 16-20):
+  `field_collection_insert_key` and `assertion_keyed_getter_reads` in
+  `propagation_witness.rs`, `keyed_field_read_confirms` and
+  `owner_call_passes_key` in `reveal.rs`, `getter_plainly_reads_key` in
+  `builder_override.rs`. The insert key must be an owner parameter or an
+  owned copy of it (`sku`, `sku.to_string()`, `sku.to_owned()`,
+  `sku.clone()`, `sku.into()`, `String::from(sku)`). One `assert_eq!`
+  operand must be exactly `binding.getter(key)`, and `getter` must be an
+  inherent method of the owner type taking `&self` and one parameter `k`
+  whose body is `self.f.get(k)` or `self.f.get(&k)`, optionally followed by
+  `.copied()` or `.cloned()` and then `.unwrap_or_default()` or
+  `.unwrap_or(<literal>)`. The other operand must be a literal the getter
+  cannot return for a missing key (`Some(..)` against a bare `get`, a
+  literal other than the `unwrap_or` default, a non-zero, non-empty or
+  `true` literal against `unwrap_or_default`): otherwise the assertion
+  passes whether or not the insert ran. `assert!` and `assert_ne!` reads
+  do not count. The assertion must open its line. The test binding must
+  be declared in the test by a constructor of the owner type that builds
+  the map field empty (`constructor_starts_empty` in
+  `builder_override.rs`): `let s = Shelf::ctor(..)`, or
+  `let s: Shelf = Default::default()`, where the constructor body is one
+  struct literal setting the field to an empty std map or set
+  (`BTreeMap::new()`, `HashMap::default()`, `Default::default()`) or
+  leaving it to a `..Self::default()` or `..Default::default()` spread, or
+  a delegation such as `Self::default()` to a constructor that does; the
+  field must be declared as a std map or set (`BTreeMap`, `HashMap`,
+  `BTreeSet`, `HashSet`), since a custom map's `Default` may seed it.
+  `Shelf::default()` resolves to an inherent `default`, then a manual
+  `impl Default`, then a derived `Default`; `Default::default()` always
+  runs the trait implementation, so it skips the inherent method.
+  A struct literal in the test, a seeding
+  constructor (`Shelf::with("K", 5)`) or any other initializer fails
+  closed, and so does a type name declared by more than one `struct` in
+  the workspace, since methods resolve by bare type name. The binding must
+  be declared once, at the test's top level (no shadowing `let`, none in a
+  nested block). Methods resolve to the one inherent definition outside
+  tests; a test-only twin (`#[cfg(test)] impl Shelf { fn count .. }`)
+  fails closed. An accepted owner call before the read must pass the same key in the insert
+  key's argument position: a literal, or an identifier the test does not
+  name again between the call and the read. The call must run to
+  completion: a bare statement when the owner returns nothing, otherwise
+  ending in `.unwrap()`, `.expect(..)` or `?`, then optionally bound to one
+  name the test uses again before the read only as a whole first or last
+  operand of an assertion (`assert_eq!(receipt, ..)`): any other use of a
+  returned `&mut Self` could rewrite the entry. No `return` may come anywhere in the test
+  before the read (a platform skip passes without reading). Rule 3 holds for keyed reads: between that call and the read the
+  test may name the binding only as `binding.getter(..)` through the
+  verified getter. Between the declaration and the owner call, every
+  statement that names the binding must be a plain call
+  `binding.m(<literals>)`, optionally ending in `.unwrap()`, `.expect(..)`
+  or `?`, none of whose literal arguments equals the expected value under
+  any spelling (`7`, `7u32`, `7_u32`), to an inherent method whose body,
+  and every `self.m(..)` helper it calls, spells no literal equal to the
+  expected value, hands neither `self` nor `&mut self.f` to other code, and
+  otherwise only reads it (`.get`, `.contains_key`, `.len`, `.is_empty`) or
+  writes it as `self.<path>.insert(k, v)` or
+  `*self.<path>.entry(k).or_insert(0) += v` (or `.or_default()`) with `v` a
+  parameter that is neither `mut` nor rebound in the body, used as is or
+  through `.clone()` / `.to_owned()` (a conversion such as `.into()` turns
+  `true` into 1); a helper is
+  followed only when every argument it receives is a parameter or a literal;
+  the method and its helpers write the field at most once, and no body
+  holds a macro call, loop or closure (`method_cannot_store` in
+  `builder_override.rs`). An accumulating call (`+=`) must be the only
+  earlier call that writes the field, since it adds to whatever another
+  call stored (`s.add("K", 2); s.add("K", 3)` reaches 5). A constant, another
+  field or a function result in value position (`SEED`, `self.base`,
+  `five()`, `self.<path> = Self::defaults()`, `let qty = SEED;`,
+  `self.put(k, SEED)`) or a nonzero `or_insert` start fails closed: `s.set("K", 5)`,
+  `s.set("K", v)`, `seed(&mut s)` or `s.load_defaults()` storing `("K", 5)`
+  before `s.put("K", 5)` may already have stored the expected value. The insert must be a top-level statement of the owner
+  (`self.<path>.insert(..)` outside any branch, loop, block or closure),
+  and elsewhere the owner may touch `self.<path>` only through
+  `.get(..)`, `.contains_key(..)`, `.len()` or `.is_empty()`, directly or
+  through the `self.m(..)` helpers it calls (`owner_touches_field_only_at`
+  in `builder_override.rs`); a second insert, an `entry(..)` update, a
+  bare `self` or an unresolved helper fails closed. The key parameter must
+  not be rebound in the owner body, and a `#[should_panic]` test never
+  confirms. A field's collection type counts as std only when spelled
+  `std::collections::X`, or imported bare from `std::collections` without
+  `as` in the struct's own module while no other import, item, alias or
+  generic parameter in the file reuses the name (a local `BTreeMap` with a seeded `Default` fails closed). A
+  stored value computed from several parameters (`insert(k, a + b)`) is
+  not a parameter and fails closed (#7988).
+- Not yet implemented for argument-free field reads: rule 3 (no
+  intervening write between the owner call and the read). This one does not
+  fail closed: a later write through the binding can still read `exposed`
+  (#7976). Keyed reads enforce it. Also not yet implemented, all failing
+  closed: the `static_unknown` fallback with
   `rust_state_read_path_unresolved` for a strong oracle on an unresolved
   getter, which reads `weakly_exposed` instead (example 13); reads that are
   not a compared side (`let items = &c.items;` then an assertion on
@@ -337,8 +564,54 @@ changes `self.count += 2` to `self.count += 1`.
   fact. A custom `PartialEq` on the element that ignores the changed field
   is not detected: whole-value equality is taken to compare every field, as
   for RIPR-SPEC-0225 whole-value credit.
-- Field assignments (`self.f = ..`, `self.f op= ..`) are not implemented:
-  their corpus cases read `static_unknown`.
+- Field assignments (`self.f = ..`, `self.f op= ..`, every compound
+  operator) on a field path rooted at `self` are probed as
+  `field_construction` in diff scope (`field_assignment_path` in `ra.rs`)
+  when the whole assignment sits on one line, every field name is a plain
+  ASCII identifier (not `self.0`, `self.r#type` or a non-ASCII name), and
+  the right-hand side contains, at any depth, no call, method call, macro,
+  closure, `?` or `.await` (those keep `call_deletion` and their other
+  probes, per the Non-Goals) and no choice between values (`if`, `match`, a
+  comparison, `&&`, `||`; those keep their predicate probe). Other
+  assignments read as before. Repo-scope seam inventory skips these shapes
+  (`build_seam_from_shape` in `seam_inventory.rs`): its grading does not
+  apply the read rule below. So a `reachable_unrevealed` finding on one has
+  no repo seam, and `ripr agent stub --at` cannot target it yet.
+- One is credited through the same read rule as a pushed literal
+  (`assigned_field_of` and `pushed_collection_compared_whole` in
+  `activation.rs`): an `assert_eq!` whose one operand is the whole field,
+  read directly or through a getter whose body returns it, from the binding
+  the test called the owner on, after that call. The assignment must occur
+  once on its line and start a top-level statement of the owner body, and
+  nothing later in the body may write the field (`assigned_field_path` in
+  `propagation_witness.rs`). That later-write check is `may_write_field`
+  above, which is narrower than rule 1: it allows later reads of other
+  fields, macro calls and closures that do not name the field, and `self`
+  calls whose bodies do not write it. Nothing earlier in the body may leave
+  before the assignment (`return`, `?`, `let .. else`, `break`,
+  `continue`, any macro call including ones that cannot exit such as
+  `vec!` or `println!`, `assert`, `.unwrap(`, `.expect(`), the
+  right-hand side may not branch, and the asserted value may not be one a
+  field usually holds before any write (`0`, `0 as T`, `T::MIN`,
+  `T::ZERO`, `false`, `None`, `""`, an empty `String` or `Vec`, a
+  `default()`), since deleting the assignment would leave it in place.
+- When no related test holds any assertion, the finding reads
+  `reachable_unrevealed` (Decision 3). Every weaker reading (`assert!(c.f
+  == ..)`, `assert_ne!`, projections, helper assertions, whole-value or
+  `Debug` comparisons of the receiver, a sibling-field read, a later read
+  through another method) reads `static_unknown` with
+  `static_probe_unknown` instead of the `weakly_exposed` that Behavior
+  describes (`ClassifiedProbeEvidence::class` in `classifier/evidence.rs`),
+  failing closed until those reads are established. Writes through `*p`, a
+  local binding or a non-`self` receiver are not probed.
+- Known limits shared with other probe families (#8051, #7638): a test
+  whose only oracle is a manual `if .. { panic!(..) }`, a
+  `debug_assert_eq!` or an unrecognized assertion macro (`assert_that!`,
+  `check!`, `prop_assert_eq!`), or whose owner asserts on the field itself,
+  reads `reachable_unrevealed`; an assertion that only runs in a dead
+  branch, an empty loop or a `#[should_panic]` test still credits; and a
+  non-default pre-call value equal to the asserted one
+  (`self.count = self.count.max(1)` with `count` already 5) still credits.
 
 ## Metrics
 

@@ -45,6 +45,10 @@ paths = ["target/ripr/first-run/first-run.json", "target/ripr/first-run/first-ru
 id = "public-badge-endpoints"
 paths = ["badges/*.json", "target/ripr/reports/repo-ripr-badge*.json", "target/ripr/reports/repo-ripr-badges.md"]
 
+[[artifact_family]]
+id = "vscode-test-host-diagnostics"
+paths = ["target/ripr/vscode-test-host-diagnostics/"]
+
 [[lane]]
 id = "docs"
 posture = "required"
@@ -60,7 +64,7 @@ id = "rust"
 posture = "required"
 workflow = ".github/workflows/rust-gates.yml"
 jobs = ["rust-gates"]
-commands = ["cargo fmt --check", "cargo check --workspace --all-targets", "cargo check -p ripr --all-targets --all-features", "cargo clippy --workspace --all-targets -- -D warnings", "cargo nextest run --workspace --profile ci", "cargo test --workspace --doc"]
+commands = ["cargo fmt --check", "cargo xtask ci-policy", "cargo check --workspace --all-targets", "cargo check -p ripr --all-targets --all-features", "cargo clippy --workspace --all-targets -- -D warnings", "cargo nextest run --workspace --profile ci", "cargo test --workspace --doc"]
 estimated_lem = 12
 artifact_families = []
 description = "Reusable required Rust compile, lint, nextest, and doctest contract invoked by the routed lane."
@@ -70,7 +74,7 @@ id = "routed-rust-small"
 posture = "required"
 workflow = ".github/workflows/routed-rust.yml"
 jobs = ["Ripr Rust Small Result"]
-commands = ["cargo fmt --check", "cargo check --workspace --all-targets", "cargo check -p ripr --all-targets --all-features", "cargo clippy --workspace --all-targets -- -D warnings", "cargo nextest run --workspace --profile ci", "cargo test --workspace --doc", "cargo xtask precommit", "cargo xtask check-evidence-promotion-honesty", "cargo xtask check-agent-skills", "cargo xtask check-dependencies", "cargo xtask check-process-policy", "cargo xtask check-network-policy", "cargo xtask goldens check", "cargo xtask fixtures"]
+commands = ["cargo fmt --check", "cargo check --workspace --all-targets", "cargo check -p ripr --all-targets --all-features", "cargo clippy --workspace --all-targets -- -D warnings", "cargo nextest run --workspace --profile ci", "cargo test --workspace --doc", "cargo xtask precommit", "cargo xtask ci-policy", "cargo xtask check-evidence-promotion-honesty", "cargo xtask check-agent-skills", "cargo xtask check-dependencies", "cargo xtask check-process-policy", "cargo xtask check-network-policy", "cargo xtask goldens check", "cargo xtask fixtures"]
 estimated_lem = 12
 artifact_families = ["ripr-evidence"]
 description = "Swarm Rust Small result gate routed through CX53, CX43, or GitHub-hosted fallback."
@@ -212,7 +216,7 @@ workflow = ".github/workflows/ci.yml"
 jobs = ["vscode"]
 commands = ["npm run package", "cargo build -p ripr", "xvfb-run -a npm run test:e2e"]
 estimated_lem = 14
-artifact_families = ["editor-agent-loop"]
+artifact_families = ["editor-agent-loop", "vscode-test-host-diagnostics"]
 description = "Saved-workspace VS Code extension smoke proof."
 
 [[lane]]
@@ -264,16 +268,6 @@ commands = ["ripr check --format sarif", "ripr check --format repo-sarif"]
 estimated_lem = 6
 artifact_families = ["ripr-evidence"]
 description = "Advisory SARIF rendering and optional code-scanning upload."
-
-[[lane]]
-id = "droid-review"
-posture = "advisory"
-workflow = ".github/workflows/droid-review.yml"
-jobs = ["droid-review"]
-commands = []
-estimated_lem = 8
-artifact_families = []
-description = "Automated review and security scan signal."
 
 [[lane]]
 id = "droid-tag-response"

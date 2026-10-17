@@ -662,10 +662,13 @@ mod tests {
         finding.id = "probe:src_we ird_it's;x.rs:predicate:ec6d6f91".to_string();
         let witness = DiagnosticWitness::from_finding(&finding)
             .ok_or_else(|| "sample finding should produce a witness".to_string())?;
-        assert_eq!(
-            witness.explain_command,
-            "ripr explain --root . 'probe:src_we ird_it'\\''s;x.rs:predicate:ec6d6f91'"
+        // Host-aware quoting (#7729): bash single quotes off Windows, double
+        // quotes on it.
+        let expected = format!(
+            "ripr explain --root . {}",
+            crate::agent::loop_commands::shell_arg("probe:src_we ird_it's;x.rs:predicate:ec6d6f91")
         );
+        assert_eq!(witness.explain_command, expected);
         Ok(())
     }
 

@@ -138,6 +138,19 @@ pull parity and result identity. PR D provides stateless complete-evidence
 continuation and stale-continuation errors. Those layers must consume this
 result without deriving a second ordering or canonicalization rule.
 
+The delivered omission projection (#2596, #7770) appends the same typed
+`ripr-diagnostic-budget-omitted` limitation to push, document pull, and workspace
+pull payloads from the committed selection's document omission record. It does
+not consume another canonical evidence slot or become a source finding. Profile
+exclusions alone do not create this delivery limitation. The document result ID
+hashes the delivered payload including the marker, so changed omission counts,
+scope, budgets, identities, or recovery route cannot remain `unchanged` merely
+because the selected findings are identical. Equivalent payloads remain
+`unchanged`; under-budget snapshots retract the marker, and quarantine withdraws
+it with the saved-state diagnostics. Request URI aliases use the stored document
+key for both selection and omission lookup. Packaged editor acceptance remains
+separate from these server transport and identity contracts.
+
 ## Required Evidence
 
 The PR-A proof must show that the evaluator accounts for every canonical input,
@@ -177,6 +190,12 @@ and cross-surface listed-id resolution are covered by
 `crates/ripr/src/lsp/tests.rs::typescript_preview_finding_publishes_in_both_profiles_despite_incomplete_packet`
 and
 `crates/ripr/src/lsp/tests.rs::list_actionable_item_ids_resolve_through_collect_context_for_all_language_classes`.
+The focused omission payload, identity, alias, retraction, quarantine and
+previous-result controls live in
+`crates/ripr/src/lsp/backend/delivery_selection_parity_tests/omission_tests.rs`.
+Its parity test reads a framed push publication from the real committed-snapshot
+restoration path and compares the complete payload with both pull handlers for
+document, workspace and byte overflow. It does not qualify the editor package.
 
 ## Implementation Mapping
 

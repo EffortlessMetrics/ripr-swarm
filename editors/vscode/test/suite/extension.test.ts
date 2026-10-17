@@ -4356,6 +4356,82 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('copyContext keeps the CLI fallback after a failed server start', async () => {
+    // A rejected client.start() clears the live client but keeps the selected
+    // root and resolved binary; the context copy must still reach its
+    // root-validated CLI path instead of the session blocker (#7408 review).
+    const context = createControllerTestContext({
+      startupError: new Error('server exited during initialize'),
+      cliResult: '{"fallback":"after-failed-start"}'
+    });
+    try {
+      await assert.rejects(context.controller.start(), /server exited during initialize/);
+      await context.controller.copyContext({
+        uri: workspaceFileUri('src/lib.rs').toString(),
+        line: 9,
+        seam_id: 'abc123'
+      });
+
+      assert.strictEqual(context.client.requests.length, 0);
+      assert.strictEqual(context.runRiprCalls.length, 1);
+      assert.strictEqual(context.runRiprCalls[0].args[0], 'context');
+      assert.deepStrictEqual(JSON.parse(context.clipboardWrites[0]), {
+        fallback: 'after-failed-start'
+      });
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('copyContext still fails closed during root removal quarantine', async () => {
+    const context = createControllerTestContext({
+      cliResult: '{"fallback":"must-not-run"}'
+    });
+    try {
+      await context.controller.start();
+      context.controller.quarantineRemovedWorkspaceRoot();
+      await context.controller.copyContext({
+        uri: workspaceFileUri('src/lib.rs').toString(),
+        line: 9,
+        seam_id: 'abc123'
+      });
+
+      assert.strictEqual(context.client.requests.length, 0);
+      assert.strictEqual(context.runRiprCalls.length, 0);
+      assert.strictEqual(context.clipboardWrites.length, 0);
+      assert.strictEqual(
+        context.infoMessages[0],
+        'ripr action requires a running server with a selected workspace root.'
+      );
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('copyAgentLoopCommand keeps the clipboard path after a failed server start', async () => {
+    const relativePath = 'src/agent-loop-failed-start.rs';
+    const uri = workspaceFileUri(relativePath);
+    const context = createControllerTestContext({
+      startupError: new Error('server exited during initialize')
+    });
+    try {
+      await writeWorkspaceFile(relativePath, 'pub fn agent_loop_failed_start_target() {}\n');
+      await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(uri));
+      await assert.rejects(context.controller.start(), /server exited during initialize/);
+      const selectedRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      assert.ok(selectedRoot, 'test workspace root must be open');
+      const rootArg = serverShellArg(selectedRoot.replace(/\\/g, '/'));
+      const target = agentLoopCommandTarget('gap_verify', `ripr agent verify --root ${rootArg} --json`);
+      await context.controller.copyAgentLoopCommand(target);
+
+      assert.deepStrictEqual(context.clipboardWrites, [target.command]);
+    } finally {
+      await context.dispose();
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await removeWorkspacePath(relativePath);
+    }
+  });
+
   test('copySuggestedAssertion copies assertion text', async () => {
     const context = createControllerTestContext({});
     try {
@@ -5263,6 +5339,7 @@ interface ControllerTestOptions {
   baseRef?: string;
   lspResult?: unknown;
   lspError?: Error;
+  startupError?: Error;
   cliResult?: string;
   firstActionJson?: string | null;
   files?: Record<string, string | null>;
@@ -5617,6 +5694,9 @@ class FakeLanguageClient {
 
   async start(): Promise<void> {
     this.startCalls += 1;
+    if (this.options.startupError) {
+      throw this.options.startupError;
+    }
   }
 
   async stop(): Promise<void> {

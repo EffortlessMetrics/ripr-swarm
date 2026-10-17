@@ -78,14 +78,22 @@ const CATALOG: &[CatalogEntry] = &[
     entry("ripr-gap-MissingArtifact"),
     // Scope-limitation codes (workspace-scoped guard disclosures).
     entry("ripr-scope-diff-oversized"),
-    // Passive delivery limitation; never an analyzer finding or repair route.
+    // Passive delivery limitations; never analyzer findings or repair routes.
     entry("ripr-diagnostic-budget-omitted"),
+    entry("ripr-diagnostic-quarantine-withdrawn"),
+    entry("ripr-diagnostic-analysis-pending"),
 ];
 
 /// The workspace-scoped warning code emitted when the fail-closed
 /// diff-scope guard converts to a limited snapshot (#2299).
 pub(crate) const DIFF_SCOPE_OVERSIZED_CODE: &str = "ripr-scope-diff-oversized";
 pub(crate) const DIAGNOSTIC_BUDGET_OMITTED_CODE: &str = "ripr-diagnostic-budget-omitted";
+pub(crate) const DIAGNOSTIC_QUARANTINE_WITHDRAWN_CODE: &str =
+    "ripr-diagnostic-quarantine-withdrawn";
+/// The Information marker served on both pull paths while no analysis
+/// snapshot exists yet (#7774): an empty report would claim a clean
+/// workspace, which the server cannot support.
+pub(crate) const DIAGNOSTIC_ANALYSIS_PENDING_CODE: &str = "ripr-diagnostic-analysis-pending";
 
 /// The governed catalog of diagnostic codes.
 pub(crate) fn catalog() -> &'static [CatalogEntry] {

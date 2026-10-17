@@ -19,10 +19,12 @@ const HIDDEN_BASE: &str = "pub fn hidden(n: u32) -> bool {\n    n > 10\n}\n";
 const HIDDEN_CHANGE: &str = "pub fn hidden(n: u32) -> bool {\n    n >= 10\n}\n";
 const PRESENT_BASE: &str = "pub fn present(n: u32) -> bool {\n    n > 20\n}\n";
 const PRESENT_CHANGE: &str = "pub fn present(n: u32) -> bool {\n    n >= 20\n}\n";
+const ABSENT_RECOVERY: &str = "Check out the missing file, disable sparse checkout for it, or restore a regular source file under real directories below the selected root, then re-run the analysis.";
 
 struct Fixture {
     root: PathBuf,
     scratch: PathBuf,
+    seam_limit: Option<&'static str>,
 }
 
 impl Drop for Fixture {
@@ -44,6 +46,7 @@ fn fixture(label: &str, mixed: bool) -> Result<Fixture, String> {
     let fixture = Fixture {
         root: scratch.join("repo"),
         scratch,
+        seam_limit: Some("1"),
     };
     std::fs::create_dir_all(fixture.root.join("src")).map_err(|error| error.to_string())?;
     for (path, source) in [
@@ -147,12 +150,14 @@ fn run_subject(fixture: &Fixture, cache: &Path, args: &[&str]) -> Result<Run, St
     }
     command
         .env("RIPR_CACHE_DIR", cache)
-        .env("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1")
         .env("RIPR_REPO_EXPOSURE_LATENCY_TRACE", "1")
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
+    if let Some(limit) = fixture.seam_limit {
+        command.env("RIPR_REPO_EXPOSURE_SEAM_LIMIT", limit);
+    }
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut child = OwnedProcess::spawn(command).map_err(|error| error.to_string())?;
     let outcome = (|| {
@@ -207,7 +212,15 @@ fn read_json(path: &Path) -> Result<Value, String> {
     serde_json::from_str(&source).map_err(|error| error.to_string())
 }
 
-fn limited_repo(fixture: &Fixture, cache: &Path) -> Result<Value, String> {
+fn repo_inventory(fixture: &Fixture, cache: &Path) -> Result<Value, String> {
+    repo_inventory_with_first_file(fixture, cache, "src/lib.rs")
+}
+
+fn repo_inventory_with_first_file(
+    fixture: &Fixture,
+    cache: &Path,
+    first_file: &str,
+) -> Result<Value, String> {
     let root_arg = fixture.root.display().to_string();
     let output = run_subject(
         fixture,
@@ -221,22 +234,30 @@ fn limited_repo(fixture: &Fixture, cache: &Path) -> Result<Value, String> {
         ],
     )?;
     let report: Value = serde_json::from_str(&output.stdout).map_err(|error| error.to_string())?;
-    assert_eq!(report["run_status"], "seam_limit_applied", "{report:#}");
-    assert_eq!(report["limitations"][0]["seams_analyzed"], 1, "{report:#}");
-    assert!(
-        report["limitations"][0]["seams_total"]
-            .as_u64()
-            .is_some_and(|count| count > 1),
-        "{report:#}"
-    );
     let seams = report["seams"]
         .as_array()
         .ok_or("missing analyzed subjects")?;
-    assert_eq!(seams.len(), 1, "{report:#}");
-    assert_eq!(
-        seams[0]["file"], "src/lib.rs",
-        "fixture cap must cut the changed files: {report:#}"
-    );
+    if fixture.seam_limit.is_some() {
+        assert_eq!(report["run_status"], "seam_limit_applied", "{report:#}");
+        assert_eq!(report["limitations"][0]["seams_analyzed"], 1, "{report:#}");
+        assert!(
+            report["limitations"][0]["seams_total"]
+                .as_u64()
+                .is_some_and(|count| count > 1),
+            "{report:#}"
+        );
+        assert_eq!(seams.len(), 1, "{report:#}");
+        assert_eq!(
+            seams[0]["file"], first_file,
+            "fixture cap selected an unexpected first file: {report:#}"
+        );
+    } else {
+        assert_eq!(report["run_status"], "complete", "{report:#}");
+        assert!(
+            seams.len() >= 3,
+            "uncapped fixture has nonempty subjects: {report:#}"
+        );
+    }
     Ok(json!({
         "run_status": report["run_status"],
         "limitations": report["limitations"],
@@ -269,11 +290,12 @@ fn pilot(fixture: &Fixture, cache: &Path, files: usize) -> Result<Pilot, String>
             "5000",
         ],
     )?;
-    assert!(
+    assert_eq!(
         output.stderr.contains(&format!(
             "current change's {files} Rust file(s) on their own"
         )),
-        "supplement branch not observed: {}",
+        fixture.seam_limit.is_some(),
+        "unexpected supplement branch: {}",
         output.stderr
     );
     assert!(
@@ -290,9 +312,10 @@ fn pilot(fixture: &Fixture, cache: &Path, files: usize) -> Result<Pilot, String>
         "{summary:#}"
     );
     let md = read_bounded(&out_dir.join("pilot-summary.md"))?;
-    assert!(
+    assert_eq!(
         md.contains("- Seam limit reached: ranked "),
-        "outer limit not observed: {md}"
+        fixture.seam_limit.is_some(),
+        "unexpected outer limit: {md}"
     );
     Ok(Pilot {
         stdout: output.stdout,
@@ -336,6 +359,7 @@ fn assert_absent(pilot: &Pilot) {
             text.lines().any(|line| {
                 line.contains("changed_file_absent_from_worktree")
                     && line.contains("src/z_hidden.rs")
+                    && line.contains(ABSENT_RECOVERY)
             }),
             "a named missing-file disclosure is required on both user surfaces: {text}"
         );
@@ -368,6 +392,7 @@ fn assert_restored(pilot: &Pilot) -> Result<(), String> {
             !text.contains("changed_file_absent_from_worktree"),
             "stale absence disclosure after restore: {text}"
         );
+        assert!(!text.contains(ABSENT_RECOVERY), "stale recovery: {text}");
         assert!(
             !text.contains("may have seams pilot did not see"),
             "successful full change recovery must clear change uncertainty: {text}"
@@ -386,8 +411,13 @@ fn assert_cache_hit(pilot: &Pilot) {
     );
 }
 
-fn exercise_missing_coverage(label: &str, mixed: bool) -> Result<(), String> {
-    let fixture = fixture(label, mixed)?;
+fn exercise_missing_coverage(
+    label: &str,
+    mixed: bool,
+    seam_limit: Option<&'static str>,
+) -> Result<(), String> {
+    let mut fixture = fixture(label, mixed)?;
+    fixture.seam_limit = seam_limit;
     let expected_files = if mixed {
         "src/y_present.rs\nsrc/z_hidden.rs\n"
     } else {
@@ -424,7 +454,7 @@ fn exercise_missing_coverage(label: &str, mixed: bool) -> Result<(), String> {
     );
     let cache = fixture.scratch.join("cache");
     let files = if mixed { 2 } else { 1 };
-    let repo_before = limited_repo(&fixture, &cache)?;
+    let repo_before = repo_inventory(&fixture, &cache)?;
     let sparse = pilot(&fixture, &cache, files)?;
     assert_absent(&sparse);
     if mixed {
@@ -471,7 +501,7 @@ fn exercise_missing_coverage(label: &str, mixed: bool) -> Result<(), String> {
         "cold and same-cache absence results differ"
     );
     assert_eq!(
-        limited_repo(&fixture, &cache)?,
+        repo_inventory(&fixture, &cache)?,
         repo_before,
         "pilot's diff supplement polluted the diff-independent classified cache"
     );
@@ -486,7 +516,7 @@ fn exercise_missing_coverage(label: &str, mixed: bool) -> Result<(), String> {
         before_sparse,
         "restore changed HEAD or committed diff"
     );
-    let repo_restored_before = limited_repo(&fixture, &cache)?;
+    let repo_restored_before = repo_inventory(&fixture, &cache)?;
     let restored = pilot(&fixture, &cache, files)?;
     assert_restored(&restored)?;
     let restored_warm = pilot(&fixture, &cache, files)?;
@@ -507,7 +537,7 @@ fn exercise_missing_coverage(label: &str, mixed: bool) -> Result<(), String> {
         semantic_summary(&restored)
     );
     assert_eq!(
-        limited_repo(&fixture, &cache)?,
+        repo_inventory(&fixture, &cache)?,
         repo_restored_before,
         "restored supplement polluted classified cache"
     );
@@ -516,11 +546,565 @@ fn exercise_missing_coverage(label: &str, mixed: bool) -> Result<(), String> {
 
 #[test]
 fn pilot_discloses_sparse_missing_changed_file_and_recovers_same_head() -> Result<(), String> {
-    exercise_missing_coverage("pilot-sparse-changed-coverage", false)
+    exercise_missing_coverage("pilot-sparse-changed-coverage", false, Some("1"))
 }
 
 #[test]
 fn pilot_discloses_mixed_missing_changed_file_even_with_changed_recommendation()
 -> Result<(), String> {
-    exercise_missing_coverage("pilot-mixed-changed-coverage", true)
+    exercise_missing_coverage("pilot-mixed-changed-coverage", true, Some("1"))
+}
+
+#[test]
+fn pilot_discloses_sparse_missing_changed_file_without_inventory_limit() -> Result<(), String> {
+    exercise_missing_coverage("pilot-uncapped-sparse-coverage", false, None)
+}
+
+#[test]
+fn pilot_discloses_mixed_missing_changed_file_without_inventory_limit() -> Result<(), String> {
+    exercise_missing_coverage("pilot-uncapped-mixed-coverage", true, None)
+}
+
+#[test]
+fn pilot_uncapped_absence_honors_generated_policy_and_handwritten_opt_in() -> Result<(), String> {
+    let mut fixture = fixture("pilot-uncapped-generated-admission", true)?;
+    fixture.seam_limit = None;
+    std::fs::write(fixture.root.join("src/generated.rs"), HIDDEN_CHANGE)
+        .map_err(|error| error.to_string())?;
+    run_git(&fixture.root, &["add", "src/generated.rs"])?;
+    run_git(&fixture.root, &["commit", "-m", "generated source"])?;
+    let identity = committed_identity(&fixture.root)?;
+    assert_eq!(
+        identity.1.replace("\r\n", "\n"),
+        "src/generated.rs\nsrc/y_present.rs\nsrc/z_hidden.rs\n"
+    );
+    run_git(&fixture.root, &["sparse-checkout", "init", "--no-cone"])?;
+    run_git(
+        &fixture.root,
+        &[
+            "sparse-checkout",
+            "set",
+            "--no-cone",
+            "/*",
+            "!/src/generated.rs",
+            "!/src/z_hidden.rs",
+        ],
+    )?;
+    assert!(!fixture.root.join("src/generated.rs").exists());
+    assert!(!fixture.root.join("src/z_hidden.rs").exists());
+    assert_eq!(committed_identity(&fixture.root)?, identity);
+    let cache = fixture.scratch.join("cache");
+    let default = pilot(&fixture, &cache, 3)?;
+    assert_absent(&default);
+    for text in [&default.stdout, &default.md] {
+        assert!(
+            !text
+                .lines()
+                .any(|line| line.contains("changed_file_absent_from_worktree")
+                    && line.contains("src/generated.rs")),
+            "{text}"
+        );
+    }
+    std::fs::write(
+        fixture.root.join("ripr.toml"),
+        "[languages.rust]\nhandwritten_files = [\"src/generated.rs\"]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let opted_in = pilot(&fixture, &cache, 3)?;
+    assert_eq!(
+        opted_in.summary["current_change"]["absent_changed_files"],
+        json!(["src/generated.rs", "src/z_hidden.rs"])
+    );
+    std::fs::write(fixture.root.join("ripr.toml"), "[languages.rust]\nhandwritten_files = [\"src/generated.rs\", \"src/z_hidden.rs\"]\ngenerated_file_patterns = [\"src/z_hidden.rs\"]\n")
+        .map_err(|error| error.to_string())?;
+    let explicit = pilot(&fixture, &cache, 3)?;
+    assert_eq!(
+        explicit.summary["current_change"]["absent_changed_files"],
+        json!(["src/generated.rs"])
+    );
+    Ok(())
+}
+
+#[test]
+fn pilot_uncapped_absence_retains_changed_missing_vendor_marker_context() -> Result<(), String> {
+    let mut fixture = fixture("pilot-uncapped-absent-vendor-marker", true)?;
+    fixture.seam_limit = None;
+    std::fs::create_dir_all(fixture.root.join("src/vendor")).map_err(|error| error.to_string())?;
+    std::fs::write(fixture.root.join("src/vendor/ordinary.rs"), HIDDEN_CHANGE)
+        .map_err(|error| error.to_string())?;
+    std::fs::write(fixture.root.join("src/vendor/.cargo-checksum.json"), "{}\n")
+        .map_err(|error| error.to_string())?;
+    run_git(&fixture.root, &["add", "src/vendor"])?;
+    run_git(
+        &fixture.root,
+        &["commit", "-m", "vendored source and checksum"],
+    )?;
+    let identity = committed_identity(&fixture.root)?;
+    assert!(identity.1.contains("src/vendor/.cargo-checksum.json"));
+    run_git(&fixture.root, &["sparse-checkout", "init", "--no-cone"])?;
+    run_git(
+        &fixture.root,
+        &[
+            "sparse-checkout",
+            "set",
+            "--no-cone",
+            "/*",
+            "!/src/vendor/",
+            "!/src/z_hidden.rs",
+        ],
+    )?;
+    assert!(
+        !fixture
+            .root
+            .join("src/vendor/.cargo-checksum.json")
+            .exists()
+    );
+    assert!(!fixture.root.join("src/vendor/ordinary.rs").exists());
+    assert_eq!(committed_identity(&fixture.root)?, identity);
+    std::fs::write(
+        fixture.root.join("ripr.toml"),
+        "[languages.rust]\nhandwritten_files = [\"src/vendor/ordinary.rs\"]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let result = pilot(&fixture, &fixture.scratch.join("cache"), 3)?;
+    assert_absent(&result);
+    for text in [&result.stdout, &result.md] {
+        assert!(
+            !text
+                .lines()
+                .any(|line| line.contains("changed_file_absent_from_worktree")
+                    && line.contains("src/vendor/ordinary.rs")),
+            "{text}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn pilot_does_not_name_intentionally_deleted_file_as_absent() -> Result<(), String> {
+    let mut fixture = fixture("pilot-deleted-changed-source", true)?;
+    fixture.seam_limit = None;
+    run_git(&fixture.root, &["rm", "src/z_hidden.rs"])?;
+    run_git(&fixture.root, &["commit", "-m", "delete hidden source"])?;
+    let result = pilot(&fixture, &fixture.scratch.join("cache"), 1)?;
+    let empty = json!([]);
+    let absent = result.summary["current_change"].get("absent_changed_files");
+    assert!(
+        absent.is_none() || absent == Some(&empty),
+        "{:#}",
+        result.summary
+    );
+    assert_eq!(
+        result.summary["current_change"]["top_recommendation_in_change"],
+        true
+    );
+    for text in [&result.stdout, &result.md] {
+        assert!(
+            !text.contains("changed_file_absent_from_worktree"),
+            "{text}"
+        );
+    }
+    Ok(())
+}
+
+fn generated_policy_fixture() -> Result<Fixture, String> {
+    let fixture = fixture("pilot-capped-generated-policy", true)?;
+    // Reuse the bounded Git/process harness, then establish the exact nine-file
+    // baseline independently of the simpler missing-file fixtures above.
+    std::fs::remove_dir_all(fixture.root.join("src")).map_err(|error| error.to_string())?;
+    let paths = [
+        "present.rs",
+        "absent.rs",
+        "generated.rs",
+        "gen/ordinary.rs",
+        "explicit.rs",
+        "third_party/dependency.rs",
+        "vendorish.rs",
+        "percent%name.rs",
+        "header.rs",
+    ];
+    let mut lib = String::from(
+        "pub fn first(n: u32) -> bool { n > 100 }\npub fn second(n: u32) -> bool { n > 200 }\n",
+    );
+    for (index, relative) in paths.iter().enumerate() {
+        let path = fixture.root.join("src").join(relative);
+        let parent = path.parent().ok_or("source path has no parent")?;
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        let header = if *relative == "header.rs" {
+            "// @generated\n"
+        } else {
+            ""
+        };
+        std::fs::write(&path, format!("{header}{HIDDEN_BASE}"))
+            .map_err(|error| error.to_string())?;
+        lib.push_str(&format!("#[path = \"{relative}\"] pub mod item_{index};\n"));
+    }
+    std::fs::write(fixture.root.join("src/lib.rs"), lib).map_err(|error| error.to_string())?;
+    std::fs::write(
+        fixture.root.join("ripr.toml"),
+        "[languages.rust]\ngenerated_file_patterns = [\"src/explicit.rs\"]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    run_git(&fixture.root, &["add", "-A"])?;
+    run_git(
+        &fixture.root,
+        &["commit", "-m", "generated-policy baseline"],
+    )?;
+    run_git(
+        &fixture.root,
+        &["update-ref", "refs/remotes/origin/main", "HEAD"],
+    )?;
+    for relative in paths {
+        let header = if relative == "header.rs" {
+            "// @generated\n"
+        } else {
+            ""
+        };
+        std::fs::write(
+            fixture.root.join("src").join(relative),
+            format!("{header}{HIDDEN_CHANGE}"),
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    std::fs::write(
+        fixture.root.join("src/third_party/.cargo-checksum.json"),
+        "{}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    run_git(&fixture.root, &["add", "."])?;
+    run_git(
+        &fixture.root,
+        &["commit", "-m", "nine predicates and vendor marker"],
+    )?;
+    Ok(fixture)
+}
+
+fn assert_absent_paths(pilot: &Pilot, expected: &[&str]) {
+    assert_eq!(
+        pilot.summary["current_change"]["absent_changed_files"],
+        json!(expected),
+        "{:#}",
+        pilot.summary
+    );
+    for text in [&pilot.stdout, &pilot.md] {
+        let warnings: Vec<_> = text
+            .lines()
+            .filter(|line| line.contains("changed_file_absent_from_worktree"))
+            .collect();
+        let mut paths: Vec<_> = warnings
+            .iter()
+            .filter_map(|line| {
+                line.split_once("changed_file_absent_from_worktree: ")
+                    .and_then(|(_, tail)| tail.split_once(';'))
+                    .map(|(path, _)| path.trim_matches('`'))
+            })
+            .collect();
+        assert_eq!(paths.len(), warnings.len(), "unparsed warning: {text}");
+        paths.sort_unstable();
+        assert_eq!(paths, expected, "wrong human absence population: {text}");
+        for warning in warnings {
+            assert!(warning.contains(ABSENT_RECOVERY), "{warning}");
+        }
+        if expected.is_empty() {
+            assert!(!text.contains(ABSENT_RECOVERY), "stale recovery: {text}");
+        }
+    }
+}
+
+#[test]
+fn pilot_partial_vendor_restoration_preserves_diff_policy_and_cache_identity() -> Result<(), String>
+{
+    let vendor = "src/third_party/dependency.rs";
+    let marker = "src/third_party/.cargo-checksum.json";
+    for capped in [false, true] {
+        let mut fixture = fixture("pilot-partial-vendor-restoration", false)?;
+        fixture.seam_limit = capped.then_some("1");
+        std::fs::create_dir_all(fixture.root.join("src/third_party"))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(fixture.root.join(vendor), HIDDEN_BASE)
+            .map_err(|error| error.to_string())?;
+        let lib = fixture.root.join("src/lib.rs");
+        let mut source = std::fs::read_to_string(&lib).map_err(|error| error.to_string())?;
+        source.push_str("#[path = \"third_party/dependency.rs\"] pub mod dependency;\n");
+        std::fs::write(lib, source).map_err(|error| error.to_string())?;
+        run_git(&fixture.root, &["add", "."])?;
+        run_git(&fixture.root, &["commit", "-m", "vendor baseline"])?;
+        run_git(
+            &fixture.root,
+            &["update-ref", "refs/remotes/origin/main", "HEAD"],
+        )?;
+        std::fs::write(fixture.root.join(vendor), HIDDEN_CHANGE)
+            .map_err(|error| error.to_string())?;
+        std::fs::write(fixture.root.join(marker), "{}\n").map_err(|error| error.to_string())?;
+        // Keep a real changed handwritten predicate as the positive ranking control.
+        std::fs::write(fixture.root.join("src/z_hidden.rs"), HIDDEN_BASE)
+            .map_err(|error| error.to_string())?;
+        run_git(&fixture.root, &["add", "."])?;
+        run_git(
+            &fixture.root,
+            &["commit", "-m", "vendor and handwritten change"],
+        )?;
+        let identity = committed_identity(&fixture.root)?;
+        assert!(identity.1.contains(vendor) && identity.1.contains(marker));
+        let cache = fixture.scratch.join("cache");
+        for stage in [
+            "regular",
+            "both-missing",
+            "source-restored",
+            "both-restored",
+        ] {
+            if stage == "both-missing" {
+                run_git(&fixture.root, &["sparse-checkout", "init", "--no-cone"])?;
+                run_git(
+                    &fixture.root,
+                    &[
+                        "sparse-checkout",
+                        "set",
+                        "--no-cone",
+                        "/*",
+                        "!/src/third_party/dependency.rs",
+                        "!/src/third_party/.cargo-checksum.json",
+                    ],
+                )?;
+            } else if stage == "source-restored" {
+                run_git(
+                    &fixture.root,
+                    &[
+                        "sparse-checkout",
+                        "set",
+                        "--no-cone",
+                        "/*",
+                        "!/src/third_party/.cargo-checksum.json",
+                    ],
+                )?;
+            } else if stage == "both-restored" {
+                run_git(&fixture.root, &["sparse-checkout", "disable"])?;
+            }
+            assert_eq!(fixture.root.join(vendor).is_file(), stage != "both-missing");
+            assert_eq!(
+                fixture.root.join(marker).is_file(),
+                matches!(stage, "regular" | "both-restored")
+            );
+            assert_eq!(committed_identity(&fixture.root)?, identity);
+            let ordinary_before = repo_inventory(&fixture, &cache)?;
+            let result = pilot(&fixture, &cache, 2)?;
+            assert_absent_paths(&result, &[]);
+            assert_restored(&result)?;
+            let report = read_json(&fixture.scratch.join("out/repo-exposure.json"))?;
+            let seams = report["seams"].as_array().ok_or("missing pilot subjects")?;
+            assert!(!seams.is_empty(), "{report:#}");
+            assert!(
+                seams.iter().all(|seam| seam["file"] != vendor),
+                "excluded vendor source re-entered pilot on {stage}, capped={capped}: {report:#}"
+            );
+            if !capped {
+                assert_eq!(
+                    report.get("artifact").is_some(),
+                    stage != "source-restored",
+                    "contextual corpus comparability on {stage}: {report:#}"
+                );
+            }
+            // Contextual selected bytes stay identical even as canonical membership changes.
+            assert_cache_hit(&result);
+            let warm = pilot(&fixture, &cache, 2)?;
+            assert_absent_paths(&warm, &[]);
+            assert_cache_hit(&warm);
+            assert_eq!(semantic_summary(&warm), semantic_summary(&result));
+            let cold = pilot(&fixture, &fixture.scratch.join(format!("cold-{stage}")), 2)?;
+            assert_absent_paths(&cold, &[]);
+            assert_eq!(semantic_summary(&cold), semantic_summary(&result));
+            assert_eq!(
+                repo_inventory(&fixture, &cache)?,
+                ordinary_before,
+                "pilot changed the ordinary classified cache on {stage}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn pilot_capped_absence_matches_uncapped_generated_policy_and_recovers() -> Result<(), String> {
+    let mut fixture = generated_policy_fixture()?;
+    let identity = committed_identity(&fixture.root)?;
+    assert_eq!(
+        identity.1.replace("\r\n", "\n"),
+        "src/absent.rs\nsrc/explicit.rs\nsrc/gen/ordinary.rs\nsrc/generated.rs\nsrc/header.rs\nsrc/percent%name.rs\nsrc/present.rs\nsrc/third_party/.cargo-checksum.json\nsrc/third_party/dependency.rs\nsrc/vendorish.rs\n"
+    );
+    run_git(&fixture.root, &["sparse-checkout", "init", "--no-cone"])?;
+    run_git(
+        &fixture.root,
+        &[
+            "sparse-checkout",
+            "set",
+            "--no-cone",
+            "/*",
+            "!/src/absent.rs",
+            "!/src/explicit.rs",
+            "!/src/gen/ordinary.rs",
+            "!/src/generated.rs",
+            "!/src/header.rs",
+            "!/src/percent%name.rs",
+            "!/src/third_party/dependency.rs",
+            "!/src/third_party/.cargo-checksum.json",
+            "!/src/vendorish.rs",
+        ],
+    )?;
+    assert!(fixture.root.join("src/present.rs").is_file());
+    for path in identity.1.lines().filter(|path| *path != "src/present.rs") {
+        assert!(!fixture.root.join(path).exists(), "not sparse: {path}");
+    }
+    assert_eq!(committed_identity(&fixture.root)?, identity);
+    let four = [
+        "src/absent.rs",
+        "src/header.rs",
+        "src/percent%name.rs",
+        "src/vendorish.rs",
+    ];
+    fixture.seam_limit = None;
+    let uncapped = pilot(&fixture, &fixture.scratch.join("uncapped-cache"), 9)?;
+    assert_absent_paths(&uncapped, &four);
+    fixture.seam_limit = Some("1");
+    let cache = fixture.scratch.join("capped-cache");
+    let ordinary = repo_inventory(&fixture, &fixture.scratch.join("ordinary-cache"))?;
+    let capped = pilot(&fixture, &cache, 9)?;
+    assert_absent_paths(&capped, &four);
+    assert_eq!(
+        capped.summary["current_change"]["top_recommendation_in_change"],
+        true
+    );
+    let warm = pilot(&fixture, &cache, 9)?;
+    assert_absent_paths(&warm, &four);
+    assert_cache_hit(&warm);
+    assert_eq!(semantic_summary(&warm), semantic_summary(&capped));
+    let cold = pilot(&fixture, &fixture.scratch.join("cold-cache"), 9)?;
+    assert_absent_paths(&cold, &four);
+    assert_eq!(semantic_summary(&cold), semantic_summary(&capped));
+    assert_eq!(repo_inventory(&fixture, &cache)?, ordinary);
+    std::fs::write(fixture.root.join("ripr.toml"), "[languages.rust]\ngenerated_file_patterns = [\"src/explicit.rs\"]\nhandwritten_files = [\"src/generated.rs\", \"src/gen/ordinary.rs\", \"src/explicit.rs\", \"src/third_party/dependency.rs\"]\n")
+        .map_err(|error| error.to_string())?;
+    let opted_in = pilot(&fixture, &cache, 9)?;
+    let six = [
+        "src/absent.rs",
+        "src/gen/ordinary.rs",
+        "src/generated.rs",
+        "src/header.rs",
+        "src/percent%name.rs",
+        "src/vendorish.rs",
+    ];
+    assert_absent_paths(&opted_in, &six);
+    assert!(
+        opted_in.stderr.contains("phase=cache_load status=miss "),
+        "{}",
+        opted_in.stderr
+    );
+    let opted_warm = pilot(&fixture, &cache, 9)?;
+    assert_absent_paths(&opted_warm, &six);
+    assert_cache_hit(&opted_warm);
+    std::fs::write(
+        fixture.root.join("ripr.toml"),
+        "[languages.rust]\ngenerated_file_patterns = [\"src/explicit.rs\"]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    run_git(&fixture.root, &["sparse-checkout", "disable"])?;
+    assert_eq!(committed_identity(&fixture.root)?, identity);
+    let ordinary_restored = repo_inventory_with_first_file(
+        &fixture,
+        &fixture.scratch.join("restored-ordinary"),
+        "src/absent.rs",
+    )?;
+    let restored = pilot(&fixture, &cache, 9)?;
+    assert_absent_paths(&restored, &[]);
+    assert!(
+        restored.stderr.contains("phase=cache_load status=miss "),
+        "{}",
+        restored.stderr
+    );
+    assert_eq!(
+        restored.summary["current_change"]["top_recommendation_in_change"], true,
+        "{:#}",
+        restored.summary
+    );
+    let restored_top = restored.summary["top_actionable_seams"]
+        .as_array()
+        .ok_or("missing restored ranking")?;
+    assert!(!restored_top.is_empty(), "restored ranking is empty");
+    for seam in restored_top {
+        assert!(
+            ![
+                "src/generated.rs",
+                "src/gen/ordinary.rs",
+                "src/explicit.rs",
+                "src/third_party/dependency.rs",
+                "src/header.rs"
+            ]
+            .iter()
+            .any(|path| seam["file"] == *path),
+            "{seam:#}"
+        );
+    }
+    let restored_warm = pilot(&fixture, &cache, 9)?;
+    assert_absent_paths(&restored_warm, &[]);
+    assert_cache_hit(&restored_warm);
+    assert_eq!(
+        semantic_summary(&restored_warm),
+        semantic_summary(&restored)
+    );
+    let restored_cold = pilot(&fixture, &fixture.scratch.join("restored-cold"), 9)?;
+    assert_absent_paths(&restored_cold, &[]);
+    assert_eq!(
+        semantic_summary(&restored_cold),
+        semantic_summary(&restored)
+    );
+    assert_eq!(
+        repo_inventory_with_first_file(&fixture, &cache, "src/absent.rs")?,
+        ordinary_restored
+    );
+    Ok(())
+}
+
+#[cfg(feature = "lang-python")]
+#[test]
+fn pilot_does_not_probe_absent_rust_source_when_rust_is_disabled() -> Result<(), String> {
+    let mut fixture = fixture("pilot-absent-rust-disabled", false)?;
+    fixture.seam_limit = None;
+    run_git(&fixture.root, &["sparse-checkout", "init", "--no-cone"])?;
+    run_git(
+        &fixture.root,
+        &[
+            "sparse-checkout",
+            "set",
+            "--no-cone",
+            "/*",
+            "!/src/z_hidden.rs",
+        ],
+    )?;
+    assert!(!fixture.root.join("src/z_hidden.rs").exists());
+    std::fs::write(
+        fixture.root.join("ripr.toml"),
+        "[languages]\nenabled = [\"python\"]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let result = pilot(&fixture, &fixture.scratch.join("cache"), 1)?;
+    assert!(
+        result.summary["current_change"]
+            .get("absent_changed_files")
+            .is_none(),
+        "{:#}",
+        result.summary
+    );
+    assert!(
+        result
+            .stdout
+            .contains("Excluded from pilot's Rust seam scan:"),
+        "{}",
+        result.stdout
+    );
+    for text in [&result.stdout, &result.md] {
+        assert!(
+            !text.contains("changed_file_absent_from_worktree"),
+            "{text}"
+        );
+    }
+    Ok(())
 }

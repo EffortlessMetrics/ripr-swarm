@@ -1,0 +1,4 @@
+#[test]
+fn runs_large_order() {
+    assert_eq!(macro_reach::run(150), 20);
+}

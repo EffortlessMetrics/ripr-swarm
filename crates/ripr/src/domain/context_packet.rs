@@ -27,6 +27,14 @@ pub struct ContextPacketProbe {
     pub delta: String,
     pub file: String,
     pub line: usize,
+    /// Observed call shape of the function owning the changed line (the same
+    /// producer `ripr agent stub` reads), e.g. `greet(name: &str) -> String`.
+    /// `None` when the finding's recorded source does not own the analyzed
+    /// root's checkout (non-`candidate_current`), when the source is missing
+    /// or unparsed, when no function covers the changed line, or when the
+    /// shape is not honestly nameable (#7796). Observed data only — no
+    /// assertion value is synthesized.
+    pub owner_signature: Option<String>,
     pub changed_expression: String,
 }
 
@@ -59,6 +67,23 @@ impl ContextPacket {
                 delta: finding.probe.delta.as_str().to_string(),
                 file: crate::analysis::finding_location_text(root, &finding.probe.location.file),
                 line: finding.probe.location.line,
+                // #7796 review: the signature is read from the analyzed
+                // root's on-disk source, so it is projected only when the
+                // finding's recorded source still owns that checkout. A
+                // base-deleted/moved/unresolved finding, or a run whose
+                // analyzed tree is not the checkout, keeps `None` rather
+                // than naming a function that does not belong to the
+                // finding.
+                owner_signature: match finding.source_currentness {
+                    crate::domain::SourceCurrentness::CandidateCurrent => {
+                        crate::analysis::owner_call_shape_at_line(
+                            root,
+                            &finding.probe.location.file,
+                            finding.probe.location.line,
+                        )
+                    }
+                    _ => None,
+                },
                 changed_expression: finding.probe.expression.clone(),
             },
             source_currentness: finding.source_currentness.as_str(),
@@ -199,6 +224,69 @@ mod tests {
         let packet = ContextPacket::from_finding(&finding, 2, Vec::new(), &verbatim_root);
 
         assert_eq!(packet.probe.file, "./src/main.rs");
+    }
+
+    #[test]
+    fn context_packet_projects_owner_signature_when_source_names_the_call_shape()
+    -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-context-packet-signature-{}",
+            std::process::id()
+        ));
+        let src = root.join("src");
+        std::fs::create_dir_all(&src).map_err(|err| err.to_string())?;
+        std::fs::write(
+            src.join("lib.rs"),
+            "pub fn greet(name: &str) -> String {\n    format!(\"HELLO, {}!\", name.to_uppercase())\n}\n",
+        )
+        .map_err(|err| err.to_string())?;
+        let mut finding = sample_finding();
+        finding.probe.location = SourceLocation::new("src/lib.rs", 1, 1);
+
+        let packet = ContextPacket::from_finding(&finding, 2, Vec::new(), &root);
+
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(
+            packet.probe.owner_signature.as_deref(),
+            Some("greet(name: &str) -> String")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn context_packet_declines_owner_signature_when_source_is_missing() -> Result<(), String> {
+        let mut finding = sample_finding();
+        finding.probe.location = SourceLocation::new("src/does-not-exist.rs", 4, 1);
+
+        let packet = ContextPacket::from_finding(&finding, 2, Vec::new(), Path::new("."));
+
+        assert_eq!(packet.probe.owner_signature, None);
+        Ok(())
+    }
+
+    #[test]
+    fn context_packet_declines_owner_signature_when_source_is_not_candidate_current() {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-context-packet-currentness-{}",
+            std::process::id()
+        ));
+        let src = root.join("src");
+        let _ = std::fs::create_dir_all(&src);
+        let _ = std::fs::write(
+            src.join("lib.rs"),
+            "pub fn greet(name: &str) -> String {\n    format!(\"HELLO, {}!\", name.to_uppercase())\n}\n",
+        );
+        let mut finding = sample_finding();
+        finding.probe.location = SourceLocation::new("src/lib.rs", 1, 1);
+        finding.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+
+        let packet = ContextPacket::from_finding(&finding, 2, Vec::new(), &root);
+
+        let _ = std::fs::remove_dir_all(&root);
+        // The on-disk file does exist and would name a shape, but the
+        // finding's recorded source was deleted on the candidate side: the
+        // packet must not present a surviving function as the owner.
+        assert_eq!(packet.probe.owner_signature, None);
     }
 
     fn sample_finding() -> Finding {

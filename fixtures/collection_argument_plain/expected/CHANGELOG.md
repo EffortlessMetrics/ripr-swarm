@@ -1,0 +1,40 @@
+# Golden Output Changes
+
+## Pending — collection_argument_plain (1)
+
+Reason:
+RIPR-SPEC-0094 #7966 exact projected argument observer with independent public and runtime controls
+
+Command:
+`cargo xtask goldens bless collection_argument_plain --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — collection_argument_plain (2)
+
+Reason:
+RIPR-SPEC-0002: re-bless human render copy/grammar fixes #7755 (double-colon labels), #7752 (a/an oracle articles), #7756 (trailing-period rule); formatting-only drift
+
+Command:
+`cargo xtask goldens bless collection_argument_plain --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — collection_argument_plain (3)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless collection_argument_plain --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

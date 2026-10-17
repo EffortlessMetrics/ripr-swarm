@@ -1435,6 +1435,9 @@ pub struct ProbeShapeFact {
     /// (#6677). Omitted from the wire when false, so older payloads read
     /// as unconsumed.
     pub value_consumed: bool,
+    /// Inclusive parser-owned match-head lines, independent of the token
+    /// anchor and normalized display text. Other shapes retain their bounds.
+    pub source_lines: Option<(usize, usize)>,
 }
 
 /// Cache payload mirrors of the fact structs. The wire carries [`WireText`]
@@ -1493,6 +1496,8 @@ pub(crate) struct ProbeShapeFactWire {
     /// Omitted when false, so payloads without it read as unconsumed (#6677).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub value_consumed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_lines: Option<(usize, usize)>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -1615,6 +1620,7 @@ impl ProbeShapeFactWire {
             kind: fact.kind,
             text: WireText::attached(&fact.text, parent),
             value_consumed: fact.value_consumed,
+            source_lines: fact.source_lines,
         }
     }
 
@@ -1631,6 +1637,7 @@ impl ProbeShapeFactWire {
                 text: fact.text.as_str().to_string(),
             },
             value_consumed: fact.value_consumed,
+            source_lines: fact.source_lines,
         }
     }
 }
@@ -1717,6 +1724,7 @@ impl ProbeShapeFactWire {
             kind: self.kind,
             text: link_wire_text(self.text, source, "probe shape text")?,
             value_consumed: self.value_consumed,
+            source_lines: self.source_lines,
         })
     }
 }
@@ -1943,6 +1951,7 @@ mod tests {
             kind: ProbeShapeKind::Predicate,
             text: "x > 0".into(),
             value_consumed: false,
+            source_lines: None,
         };
         assert_eq!(shape.start_line, 10);
         assert_eq!(shape.end_line, 12);
@@ -2061,6 +2070,7 @@ mod tests {
                 kind: ProbeShapeKind::Predicate,
                 text: SourceText::shared_or_owned(&source, 27, "assert!(true)"),
                 value_consumed: false,
+                source_lines: None,
             }],
             used_lexical_fallback: false,
             module_declarations: Vec::new(),
@@ -2435,11 +2445,16 @@ fn checks_helper() {
     #[test]
     fn probe_shape_fact_retains_no_per_shape_kind_allocation() {
         // #5415 step 1 pin: kind is one discriminant byte, not a String
-        // plus heap. The struct must stay strictly smaller than the old
-        // String-kind layout (72 bytes on 64-bit), even with the #5336
-        // `end_byte` word added after that pin was written.
+        // plus heap. #5604 adds one optional line range (24 bytes on
+        // 64-bit) to preserve match coverage without moving token identity.
+        // Retain the old layout budget plus precisely that metadata allowance.
         assert_eq!(size_of::<ProbeShapeKind>(), 1);
-        assert!(size_of::<ProbeShapeFact>() < size_of::<usize>() * 3 + size_of::<String>() * 2);
+        assert!(
+            size_of::<ProbeShapeFact>()
+                < size_of::<usize>() * 3
+                    + size_of::<String>() * 2
+                    + size_of::<Option<(usize, usize)>>()
+        );
     }
 
     #[test]

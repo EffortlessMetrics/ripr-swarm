@@ -1,0 +1,58 @@
+{
+  "case_id": "spec0236-seam-public-tier-no-test",
+  "subject_id": "authored-spec0236-26",
+  "diff": "cases/spec0236-seam-public-tier-no-test.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "no_test_reaches_owner",
+  "hard_case": "Seam class matches example 26: `tier` ungripped, reach summary \"No static test path found for seam owner `src/lib.rs::tier`\". The crate adds an unrelated `flat_fee` integration test only so `relabel` has a test to run; it does not reach `tier`. The diff finding reads no_static_path, which the corpus scores as limited.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if total > 100 { 20 } else { 0 }",
+        "mutated_line": "if total > 100 { 20 } else { 0 }",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: total == 100 now gives 0 instead of 20"
+      },
+      {
+        "replacement": "if total >= 200 { 20 } else { 0 }",
+        "mutated_line": "if total >= 200 { 20 } else { 0 }",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: totals 100..=199 now give 0 instead of 20"
+      },
+      {
+        "replacement": "if total >= 100 { 30 } else { 0 }",
+        "mutated_line": "if total >= 100 { 30 } else { 0 }",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the discount for large totals becomes 30"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "No test reaches tier; the only test checks flat_fee, so no mutant can fail. Spec cells: RIPR-SPEC-0236 example 26.",
+  "labeling_observation": {
+    "ripr_commit": "b0428d112",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

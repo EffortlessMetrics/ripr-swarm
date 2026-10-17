@@ -21,6 +21,9 @@ use serde_json::Value;
 
 const PAGE: &str = "docs/PUBLIC_PROOF.md";
 const RECEIPTS: &str = "metrics/public-proof";
+
+#[cfg(test)]
+mod required_fields_tests;
 const CORPUS_MANIFEST: &str = "benchmarks/rust_corpus/manifest.json";
 const CORPUS_RECEIPT: &str = "metrics/public-proof/corpus-manifest.json";
 
@@ -602,12 +605,13 @@ fn friction_of(step: &Value) -> &[Value] {
 
 /// First-run bars computed from a raw `first_run.v1` receipt, so they stay
 /// comparable across the two receipts the page shows.
-fn first_run_value(id: &str, receipt: &Value) -> Option<f64> {
-    let steps = all_steps(receipt);
+fn first_run_value(id: &str, receipt: &Value, ctx: &str) -> Result<Option<f64>, String> {
+    let cases = req_arr(receipt, "cases", ctx)?;
+    let steps: Vec<&Value> = cases.iter().flat_map(steps_of).collect();
     let count = |n: usize| -> Option<f64> { u32::try_from(n).ok().map(f64::from) };
-    match id {
+    Ok(match id {
         "first_run.unknown_verdicts" => count(
-            items(receipt, "cases")
+            cases
                 .iter()
                 .filter(|case| is_unknown_verdict(&text(case, "verdict")))
                 .count(),
@@ -631,7 +635,7 @@ fn first_run_value(id: &str, receipt: &Value) -> Option<f64> {
         ),
         // A step with no numeric duration makes the walk's total unknowable, so the
         // metric is not measured rather than summed over the steps that were timed.
-        "first_run.walk_secs" => items(receipt, "cases")
+        "first_run.walk_secs" => cases
             .iter()
             .map(|case| {
                 let steps = steps_of(case);
@@ -643,11 +647,10 @@ fn first_run_value(id: &str, receipt: &Value) -> Option<f64> {
                     .map(|s| field(s, "secs").as_f64())
                     .sum::<Option<f64>>()
             })
-            .collect::<Option<Vec<f64>>>()?
-            .into_iter()
-            .reduce(f64::max),
+            .collect::<Option<Vec<f64>>>()
+            .and_then(|totals| totals.into_iter().reduce(f64::max)),
         _ => None,
-    }
+    })
 }
 
 struct Derived {
@@ -657,9 +660,9 @@ struct Derived {
 }
 
 fn derived(id: &str, r: &Receipts) -> Result<Option<Derived>, String> {
-    let first_run = |basis: &str| -> Derived {
-        let value = first_run_value(id, &r.first_current);
-        let previous = first_run_value(id, &r.first_previous);
+    let first_run = |basis: &str| -> Result<Derived, String> {
+        let value = first_run_value(id, &r.first_current, "first-run-current")?;
+        let previous = first_run_value(id, &r.first_previous, "first-run-previous")?;
         let before_label = short_version(&text(&r.first_previous, "ripr"));
         let trend = match (value, previous) {
             (Some(now), Some(before)) if (now - before).abs() < 1e-9 => {
@@ -670,11 +673,11 @@ fn derived(id: &str, r: &Receipts) -> Result<Option<Derived>, String> {
             }
             _ => "no earlier receipt".to_string(),
         };
-        Derived {
+        Ok(Derived {
             value,
             trend,
             basis: basis.to_string(),
-        }
+        })
     };
     let first_receipt = |value: f64, basis: &str| -> Option<Derived> {
         Some(Derived {
@@ -733,7 +736,7 @@ fn derived(id: &str, r: &Receipts) -> Result<Option<Derived>, String> {
         | "first_run.friction_events"
         | "first_run.failed_steps"
         | "first_run.over_budget_steps"
-        | "first_run.walk_secs" => Some(first_run("first-run receipts")),
+        | "first_run.walk_secs" => Some(first_run("first-run receipts")?),
         _ => None,
     })
 }
@@ -883,6 +886,25 @@ fn scoreboard_trend(metric: &Value, baseline_rev: &str) -> String {
     "no earlier measurement".to_string()
 }
 
+/// A sample refreshed from a later observation than the receipt header (#7325)
+/// carries `population_provenance.revision`; name it so the row does not read
+/// as part of the header's run.
+fn with_observation_revision(trend: String, metric: &Value) -> String {
+    let revision = metric
+        .get("samples")
+        .and_then(Value::as_array)
+        .and_then(|samples| samples.first())
+        .and_then(|sample| sample.get("population_provenance"))
+        .and_then(|provenance| provenance.get("revision"))
+        .and_then(Value::as_str);
+    match revision {
+        Some(revision) if !revision.is_empty() => {
+            format!("{trend} (observed at {})", short(revision, 7))
+        }
+        _ => trend,
+    }
+}
+
 fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
     let baseline_rev = short(
         &req_str(
@@ -895,11 +917,12 @@ fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
     let mut out = Vec::new();
     for metric in req_arr(&r.dx, "metrics", "dx-scoreboard")? {
         let id = req_str(metric, "id", "dx-scoreboard metric")?;
-        let mut unit = text(metric, "unit");
+        let mut unit = req_str(metric, "unit", &id)?;
+        let mut title = req_str(metric, "title", &id)?;
         let mut target = req_f64(metric, "target", &id)?;
-        let mut lower_is_better = text(metric, "direction") != "higher_is_better";
+        let mut lower_is_better = req_str(metric, "direction", &id)? != "higher_is_better";
         let mut value = field(metric, "value").as_f64();
-        let mut trend = scoreboard_trend(metric, &baseline_rev);
+        let mut trend = with_observation_revision(scoreboard_trend(metric, &baseline_rev), metric);
         let mut basis = text(metric, "source");
         let mut is_derived = false;
         let mut status_src = metric;
@@ -911,9 +934,10 @@ fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
         } else if metric_lacks_number(metric) {
             if let Some((lane_metric, lane)) = lane_measurement(&id, r) {
                 status_src = lane_metric;
-                unit = text(lane_metric, "unit");
+                unit = req_str(lane_metric, "unit", &id)?;
+                title = req_str(lane_metric, "title", &id)?;
                 target = req_f64(lane_metric, "target", &id)?;
-                lower_is_better = text(lane_metric, "direction") != "higher_is_better";
+                lower_is_better = req_str(lane_metric, "direction", &id)? != "higher_is_better";
                 value = field(lane_metric, "value").as_f64();
                 let lane_rev = short(&text(field(&lane.value, "gate"), "baseline_revision"), 7);
                 trend = scoreboard_trend(lane_metric, &lane_rev);
@@ -961,7 +985,7 @@ fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
         } else if id == "trust.false_verdict_rate" {
             "Wrong verdicts on hand-checked changes from real repositories".to_string()
         } else {
-            text(status_src, "title")
+            title
         };
         out.push(Bar {
             board: board_name(&text(status_src, "board")).to_string(),
@@ -1326,8 +1350,12 @@ fn shortfalls(page: &mut Page, r: &Receipts, bars: &[Bar]) -> Result<(), String>
         .and_then(|b| b.value);
     let cases_now = items(&r.first_current, "cases").len();
     if let Some(unknown) = unknown_now {
-        let unknown_before = first_run_value("first_run.unknown_verdicts", &r.first_previous)
-            .ok_or("first-run-previous: no unknown-verdict count")?;
+        let unknown_before = first_run_value(
+            "first_run.unknown_verdicts",
+            &r.first_previous,
+            "first-run-previous",
+        )?
+        .ok_or("first-run-previous: no unknown-verdict count")?;
         page.line(format!(
             "- **First-run verdicts are unresolved.** {} of {} first-run crates ended in an `*_unknown` verdict on {}; {} of {} did on {}.",
             num(unknown),
@@ -3065,6 +3093,22 @@ mod tests {
         assert!(
             !summary.contains("first measurement"),
             "unmeasured rows are gaps, not first measurements: {summary}"
+        );
+    }
+
+    #[test]
+    fn refreshed_sample_names_its_observation_revision() {
+        let refreshed = serde_json::json!({
+            "samples": [{"population_provenance": {"revision": "2af3f3822bc0b2e1"}}]
+        });
+        assert_eq!(
+            with_observation_revision("no earlier measurement".to_string(), &refreshed),
+            "no earlier measurement (observed at 2af3f38)"
+        );
+        let plain = serde_json::json!({"samples": [{"detail": "x"}]});
+        assert_eq!(
+            with_observation_revision("no earlier measurement".to_string(), &plain),
+            "no earlier measurement"
         );
     }
 
