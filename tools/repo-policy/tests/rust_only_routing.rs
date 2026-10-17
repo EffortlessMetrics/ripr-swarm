@@ -506,19 +506,19 @@ fn job_guard_violations(source: &str) -> Vec<String> {
 #[test]
 fn job_guard_scanner_rejects_unguarded_jobs_even_after_column_zero_comments() {
     const GUARD: &str = "    if: github.event_name != 'pull_request' || (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')";
-    let guarded = format!("jobs:\n  a:\n{GUARD}\n    runs-on: x\n");
+    let guarded = format!("jobs:\n  first:\n{GUARD}\n    runs-on: x\n");
     assert!(job_guard_violations(&guarded).is_empty());
 
-    let unguarded = "jobs:\n  a:\n    runs-on: x\n";
+    let unguarded = "jobs:\n  first:\n    runs-on: x\n";
     assert_eq!(job_guard_violations(unguarded).len(), 1);
 
     let after_comment =
-        format!("jobs:\n  a:\n{GUARD}\n# a column-zero comment\n  b:\n    runs-on: x\n");
+        format!("jobs:\n  first:\n{GUARD}\n# a column-zero comment\n  second:\n    runs-on: x\n");
     let violations = job_guard_violations(&after_comment);
     assert_eq!(violations.len(), 1, "{violations:?}");
-    assert!(violations[0].contains("`b`"), "{violations:?}");
+    assert!(violations[0].contains("`second`"), "{violations:?}");
 
-    let readmits = "jobs:\n  a:\n    if: github.event.action == 'opened' || (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')\n";
+    let readmits = "jobs:\n  first:\n    if: github.event.action == 'opened' || (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')\n";
     assert_eq!(job_guard_violations(readmits).len(), 1);
 }
 
