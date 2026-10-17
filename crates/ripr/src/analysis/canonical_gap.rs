@@ -6,6 +6,7 @@
 //! discriminate, while leaving line numbers as locators.
 
 use super::ClassifiedSeam;
+use super::language::producer_gap_names_seam_shape;
 use super::seams::{RequiredDiscriminator, SeamId, SeamKind};
 use std::collections::BTreeMap;
 
@@ -80,6 +81,21 @@ pub(crate) fn canonical_gap_identity(entry: &ClassifiedSeam) -> Option<Canonical
         missing_discriminator,
         assertion_shape,
     })
+}
+
+/// Whether a Rust producer gap id as `ripr check` prints it names this seam.
+/// That id is minted from the changed line, not from the seam, so it joins on
+/// the seam's stable file, owner, kind and source expression. A shared id
+/// still resolves to several seams; the caller decides that ambiguity.
+pub(crate) fn producer_gap_id_names_seam(item: &str, entry: &ClassifiedSeam) -> bool {
+    let file = crate::analysis::stable_path_text(entry.seam.file());
+    producer_gap_names_seam_shape(
+        item,
+        &file,
+        entry.seam.owner(),
+        entry.seam.kind(),
+        entry.seam.expression(),
+    )
 }
 
 fn missing_discriminator_key(entry: &ClassifiedSeam) -> String {

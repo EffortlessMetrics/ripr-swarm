@@ -823,12 +823,16 @@ fn normalize_unavailable_adapter_path(path: &Path) -> String {
         .to_string()
 }
 
-/// Named-path membership for #7205. Windows file identity is
+/// Named-path membership for #7205. Windows and macOS file identity is
 /// case-insensitive at the URI layer (`file_uris_match`, root
 /// containment); Git/producer samples keep the on-disk casing while the
 /// editor URI may differ. Linux stays case-sensitive.
 fn unavailable_adapter_paths_eq(left: &str, right: &str) -> bool {
-    unavailable_adapter_paths_eq_impl(left, right, cfg!(windows))
+    unavailable_adapter_paths_eq_impl(
+        left,
+        right,
+        crate::output::path::host_paths_case_insensitive(),
+    )
 }
 
 fn unavailable_adapter_paths_eq_impl(left: &str, right: &str, ignore_ascii_case: bool) -> bool {
@@ -844,7 +848,10 @@ fn unavailable_adapter_paths_eq_impl(left: &str, right: &str, ignore_ascii_case:
 /// so named-path equality would otherwise never run. Fold only here; do
 /// not change the shared router.
 fn route_unavailable_adapter_document(relative: &Path) -> Option<LanguageId> {
-    route_unavailable_adapter_document_impl(relative, cfg!(windows))
+    route_unavailable_adapter_document_impl(
+        relative,
+        crate::output::path::host_paths_case_insensitive(),
+    )
 }
 
 fn route_unavailable_adapter_document_impl(
@@ -1336,12 +1343,44 @@ impl DocumentState {
     }
 }
 
+/// Byte extent of one line, excluding its terminator.
+///
+/// The protocol ends a line at `\n`, `\r\n` or a bare `\r`; the client
+/// counts lines the same way, so a buffer using bare CR terminators (or
+/// ending in one) must be addressable. A line past the last terminator is
+/// the empty or partial final line.
+fn document_line_extent(text: &str, target_line: usize) -> Option<(usize, usize)> {
+    let bytes = text.as_bytes();
+    let mut line = 0usize;
+    let mut line_start = 0usize;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let terminator_len = match bytes[index] {
+            b'\n' => 1,
+            b'\r' if bytes.get(index + 1) == Some(&b'\n') => 2,
+            b'\r' => 1,
+            _ => 0,
+        };
+        if terminator_len == 0 {
+            index += 1;
+            continue;
+        }
+        if line == target_line {
+            return Some((line_start, index));
+        }
+        line += 1;
+        index += terminator_len;
+        line_start = index;
+    }
+    (line == target_line).then_some((line_start, bytes.len()))
+}
+
 /// Convert one LSP position to a UTF-8 byte offset in the retained buffer.
 ///
 /// LSP incremental ranges are expressed in the session's negotiated position
-/// encoding, while Rust string edits require UTF-8 byte boundaries. Lines are
-/// split on LF and a CR immediately before LF is excluded from the line's
-/// character span, matching the protocol's CRLF semantics.
+/// encoding, while Rust string edits require UTF-8 byte boundaries. Lines end
+/// at `\n`, `\r\n` or a bare `\r`, and the terminator is excluded from the
+/// line's character span, matching the protocol's line semantics.
 fn document_position_byte_offset(
     text: &str,
     position: Position,
@@ -1350,16 +1389,8 @@ fn document_position_byte_offset(
     let target_line = usize::try_from(position.line).ok()?;
     let target_units = usize::try_from(position.character).ok()?;
 
-    let mut line_start = 0usize;
-    for _ in 0..target_line {
-        let newline = text.get(line_start..)?.find('\n')?;
-        line_start = line_start.checked_add(newline)?.checked_add(1)?;
-    }
-
-    let remainder = text.get(line_start..)?;
-    let raw_line_end = remainder.find('\n').unwrap_or(remainder.len());
-    let raw_line = remainder.get(..raw_line_end)?;
-    let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
+    let (line_start, line_end) = document_line_extent(text, target_line)?;
+    let line = text.get(line_start..line_end)?;
 
     let relative = if *encoding == PositionEncodingKind::UTF8 {
         if target_units > line.len() || !line.is_char_boundary(target_units) {
@@ -1508,6 +1539,41 @@ impl DocumentStore {
                     .is_none()
             })
             .unwrap_or(false)
+    }
+
+    /// Adopt the committed snapshot's analyzed identity for a just-opened
+    /// document whose saved bytes the snapshot already analyzed (a close and
+    /// reopen of an unchanged file, or a second changed file the refresh
+    /// covered before it was opened). Without it the fresh state carries no
+    /// analyzed identity and is quarantined as `NoAnalyzedSavedContent` even
+    /// though nothing changed since the analysis. Returns `false`, leaving
+    /// the state untouched, unless the buffer matches the saved bytes and
+    /// those bytes carry exactly the committed digest.
+    pub(super) fn adopt_committed_identity(
+        &mut self,
+        uri: &Uri,
+        committed_digest: &str,
+        input_identity: Option<String>,
+    ) -> bool {
+        let Some(state) = self.documents.get_mut(uri) else {
+            return false;
+        };
+        // Only `.rs` paths carry producer-captured consumed-input digests (see
+        // `pending_analyzed_digests`); other extensions keep their own basis.
+        if state
+            .path
+            .extension()
+            .is_none_or(|extension| extension != "rs")
+            || state.buffer_authority_unknown
+            || state.saved_digest.as_deref() != Some(committed_digest)
+            || state.buffer_digest() != committed_digest
+        {
+            return false;
+        }
+        state.analyzed_saved_digest = Some(committed_digest.to_string());
+        state.analyzed_input_identity = input_identity;
+        state.refresh_quarantine();
+        state.quarantine.is_none()
     }
 
     pub(super) fn change(
@@ -1909,6 +1975,52 @@ mod tests {
     }
 
     #[test]
+    fn adopting_the_committed_digest_lifts_never_analyzed_quarantine_only_for_matching_bytes()
+    -> Result<(), String> {
+        let uri = test_uri("file:///workspace/src/lib.rs")?;
+        let mut store = DocumentStore::default();
+        let mut state = clean_document_state(&uri, "fn saved() {}");
+        state.analyzed_saved_digest = None;
+        state.analyzed_input_identity = None;
+        state.refresh_quarantine();
+        store.documents.insert(uri.clone(), state);
+
+        let other = digest_of("fn other() {}");
+        if store.adopt_committed_identity(&uri, &other, Some("input:42".to_string())) {
+            return Err("a digest the saved bytes do not carry must not be adopted".to_string());
+        }
+        let quarantined = store
+            .state_for_uri(&uri)
+            .is_some_and(DocumentState::is_quarantined);
+        if !quarantined {
+            return Err("a refused adoption must leave the quarantine".to_string());
+        }
+
+        // A buffer that diverges from the saved bytes the snapshot analyzed
+        // stays quarantined even when the saved digest matches.
+        if let Some(state) = store.documents.get_mut(&uri) {
+            state.text = "fn edited() {}".to_string();
+        }
+        let saved = digest_of("fn saved() {}");
+        if store.adopt_committed_identity(&uri, &saved, Some("input:42".to_string())) {
+            return Err("a diverging buffer must not adopt the committed digest".to_string());
+        }
+        if let Some(state) = store.documents.get_mut(&uri) {
+            state.text = "fn saved() {}".to_string();
+        }
+        if !store.adopt_committed_identity(&uri, &saved, Some("input:42".to_string())) {
+            return Err("matching saved bytes must adopt the committed digest".to_string());
+        }
+        let Some(state) = store.state_for_uri(&uri) else {
+            return Err("expected the document state".to_string());
+        };
+        if state.is_quarantined() || state.analyzed_input_identity.as_deref() != Some("input:42") {
+            return Err("adoption must clear quarantine and record the input identity".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn save_lifts_quarantine_when_buffer_matches_analyzed_saved_content() -> Result<(), String> {
         let uri = test_uri("file:///workspace/src/lib.rs")?;
         let mut store = DocumentStore::default();
@@ -2148,6 +2260,64 @@ mod tests {
                 return Err(format!("wrong result for encoding {encoding:?}: {text:?}"));
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn incremental_positions_follow_lf_crlf_and_bare_cr_line_terminators() -> Result<(), String> {
+        let edit = |text: &str, line: u32, character: u32| -> Result<String, String> {
+            let mut buffer = text.to_string();
+            let position = Position { line, character };
+            apply_document_content_changes(
+                &mut buffer,
+                vec![TextDocumentContentChangeEvent {
+                    range: Some(tower_lsp_server::ls_types::Range {
+                        start: position,
+                        end: position,
+                    }),
+                    range_length: None,
+                    text: "X".to_string(),
+                }],
+                &PositionEncodingKind::UTF16,
+            )
+            .map_err(|()| format!("edit at {line}:{character} of {text:?} was refused"))?;
+            Ok(buffer)
+        };
+        // CRLF control: the CR stays outside the span, line 1 starts after LF.
+        assert_eq!(edit("ab\r\ncd", 0, 2)?, "abX\r\ncd");
+        assert_eq!(edit("ab\r\ncd", 1, 0)?, "ab\r\nXcd");
+        // A bare CR ends a line, mid-buffer and at the end of the buffer.
+        assert_eq!(edit("ab\rcd", 1, 1)?, "ab\rcXd");
+        assert_eq!(edit("ab\r", 1, 0)?, "ab\rX");
+        assert_eq!(edit("ab\r", 0, 2)?, "abX\r");
+        // A CR is not addressable as a character of its line.
+        let mut buffer = "ab\r".to_string();
+        let beyond = Position {
+            line: 0,
+            character: 3,
+        };
+        let refused = apply_document_content_changes(
+            &mut buffer,
+            vec![TextDocumentContentChangeEvent {
+                range: Some(tower_lsp_server::ls_types::Range {
+                    start: beyond,
+                    end: beyond,
+                }),
+                range_length: None,
+                text: "X".to_string(),
+            }],
+            &PositionEncodingKind::UTF16,
+        );
+        assert!(refused.is_err());
+        // Lines past the final terminator do not exist.
+        assert_eq!(
+            edit("ab\r", 2, 0),
+            Err("edit at 2:0 of \"ab\\r\" was refused".to_string())
+        );
+        // An empty final line after CRLF, and mixed terminators in one buffer.
+        assert_eq!(edit("ab\r\n", 1, 0)?, "ab\r\nX");
+        assert_eq!(edit("a\nb\rc\r\nd", 3, 1)?, "a\nb\rc\r\ndX");
+        assert_eq!(edit("a\nb\rc\r\nd", 2, 0)?, "a\nb\rXc\r\nd");
         Ok(())
     }
 
@@ -3360,7 +3530,8 @@ mod tests {
         };
         let outcome = python_unavailable_outcome()?;
         let mixed = coverage.not_enabled_language(Path::new("ZPY/Pricing.py"), Some(&outcome));
-        let expected = cfg!(windows).then_some(LanguageId::Python);
+        let expected =
+            crate::output::path::host_paths_case_insensitive().then_some(LanguageId::Python);
         if mixed != expected {
             return Err(format!(
                 "named-path mixed-case identity must follow host file identity, got {mixed:?}"
@@ -3417,7 +3588,8 @@ mod tests {
         };
         let outcome = python_unavailable_outcome()?;
         let mixed = coverage.not_enabled_language(Path::new("ZPY/Pricing.PY"), Some(&outcome));
-        let expected = cfg!(windows).then_some(LanguageId::Python);
+        let expected =
+            crate::output::path::host_paths_case_insensitive().then_some(LanguageId::Python);
         if mixed != expected {
             return Err(format!(
                 "uppercase-extension identity must follow host file identity, got {mixed:?}"

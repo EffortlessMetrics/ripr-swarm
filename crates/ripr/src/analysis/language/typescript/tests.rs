@@ -1978,6 +1978,61 @@ test("cart total through dynamic method stays ambiguous", () => {
 }
 
 #[test]
+fn find_related_tests_relates_inline_and_one_line_constructed_receivers() {
+    let owner = TypeScriptOwner {
+        name: "total".to_string(),
+        file: PathBuf::from("src/owners.ts"),
+        start_line: 5,
+        end_line: 8,
+        owner_kind: OwnerKind::Method,
+        class_name: Some("Cart".to_string()),
+        decorated: false,
+        exported_as_default: false,
+        class_default_export: false,
+        module_entries: Vec::new(),
+        arity: None,
+        params: Vec::new(),
+        source_text: None,
+        imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
+    };
+    let cases = [
+        (
+            "import { Cart } from \"../src/owners\";\ntest(\"a\", () => {\n  expect(new Cart().total()).toBe(1);\n});\n",
+            true,
+        ),
+        (
+            "import { Cart } from \"../src/owners\";\ntest(\"a\", () => { const c = new Cart(); expect(c.total()).toBe(1); });\n",
+            true,
+        ),
+        // Same class name from an unrelated module.
+        (
+            "import { Cart } from \"../src/other\";\ntest(\"a\", () => {\n  expect(new Cart().total()).toBe(1);\n});\n",
+            false,
+        ),
+        // The owner's module is mocked.
+        (
+            "import { Cart } from \"../src/owners\";\nvi.mock(\"../src/owners\");\ntest(\"a\", () => {\n  expect(new Cart().total()).toBe(1);\n});\n",
+            false,
+        ),
+        // A different method, and a commented-out call.
+        (
+            "import { Cart } from \"../src/owners\";\ntest(\"a\", () => {\n  expect(new Cart().count()).toBe(1);\n});\n",
+            false,
+        ),
+        (
+            "import { Cart } from \"../src/owners\";\ntest(\"a\", () => {\n  setup(); // new Cart().total()\n});\n",
+            false,
+        ),
+    ];
+    for (source, expected) in cases {
+        let tests = extract_tests(Path::new("tests/owners.test.ts"), source);
+        let related = find_related_tests(&owner, &tests, None, &ReExportIndex::empty(), None);
+        assert_eq!(!related.is_empty(), expected, "{source}");
+    }
+}
+
+#[test]
 fn find_related_tests_keeps_mocked_method_receiver_calls_unrelated() {
     let owner = TypeScriptOwner {
         name: "total".to_string(),
@@ -5792,6 +5847,53 @@ fn classify_probe_shape_reads_a_returned_ternary_as_its_condition_boundary() {
             (ProbeFamily::ReturnValue, DeltaKind::Value),
             "{line}"
         );
+    }
+}
+
+#[test]
+fn classify_probe_shape_reads_a_declared_arrow_and_paren_ternary_as_its_condition_boundary() {
+    // A concise arrow body and a parenthesized ternary are the same
+    // conditional as `return cond ? a : b`: only `total == 100` flips them.
+    for line in [
+        "export const tax = (total: number): number => (total > 100 ? total * 2 : total * 3);",
+        "export const tax = (total: number): number => total > 100 ? total * 2 : total * 3;",
+        "const tax = async (total: number) => total > 100 ? total * 2 : total * 3;",
+        "    return (total > 100 ? total * 2 : total * 3);",
+    ] {
+        assert_eq!(
+            classify_probe_shape(line).0,
+            ProbeFamily::Predicate,
+            "{line}"
+        );
+        assert_eq!(
+            typescript_boundary_discriminator(line).as_deref(),
+            Some("total == 100"),
+            "{line}"
+        );
+    }
+    // A balanced parenthesized condition is not unwrapped: it stays
+    // unparsed (fail closed), as it did before arrow bodies were read.
+    assert_eq!(
+        typescript_boundary_discriminator("    return (total > 100) ? 1 : 2;"),
+        None
+    );
+    // Not a declared body: a callback arrow in a call, a block body, and an
+    // arm comparison read no condition boundary from the arrow form.
+    for line in [
+        "const totals = rows.map((row) => row.total > 100 ? 1 : 2);",
+        "export const tax = (total: number) => { return total > 100 ? 1 : 2; };",
+        "export const ready = (total: number) => total > 100;",
+        "const { fmt = (x) => x > 1 ? 'a' : 'b' } = opts;",
+        "export function f(cb = (x) => x > 1 ? 1 : 2) {",
+        "export function g(cb = x => x > 1 ? 1 : 2) {",
+        "const f = (a) => (b) => b > 1 ? a : b;",
+        "const x = (a) ? n => n > 1 ? 1 : 2 : d;",
+        "const s = (x) + \" => a > 1 ? b : c\";",
+        "const m = (kind) + ' => n > 1 ? a : b';",
+        "return (a) => a > 1 ? x : y;",
+        "return ((a) => a > 1 ? x : y);",
+    ] {
+        assert_eq!(typescript_boundary_discriminator(line), None, "{line}");
     }
 }
 
@@ -9902,7 +10004,7 @@ fn unresolved_alias_import_names_the_import_in_no_reach_text() -> Result<(), Str
     assert!(
         missing.starts_with(
             "Test `discounts` imports `applyDiscount` through non-relative specifier `@/owner`, which ripr did not resolve"
-        ) && missing.contains("`[typescript] resolve_tsconfig_paths` is unset or false"),
+        ) && missing.contains("`[typescript] resolve_tsconfig_paths` is false"),
         "missing must name the import and the typed cause, got: {missing}"
     );
     assert!(

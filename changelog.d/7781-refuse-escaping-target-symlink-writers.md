@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- The same escaping-`target` refusal now covers the other commands that write under `target/ripr`: everything behind the shared command-root gate (`agent` subcommands, `repair`, `continue`, `swarm queue`, `rerun`, `swarm ingest`; read-only agent commands included), plus `ci-packet`, `feedback record`/`export`, `pilot` and `receipt write --root`. The workspace's `target`, `target/ripr`, `target/ripr/cache` and `target/ripr/reports` are all checked; an unreadable path now fails closed. Set `RIPR_CACHE_DIR` for the cache location (#7781).

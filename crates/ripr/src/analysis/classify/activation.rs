@@ -1,3 +1,11 @@
+//! Activation evidence: what input values the related tests feed the owner.
+//!
+//! Builds the infection-side value facts for a probe, namely the parameter
+//! values each test passes ([`TestValueFacts`]) and the discriminator values
+//! it observes, and pairs them with boundary input through
+//! [`activation_and_boundary_input`]. Output feeds the infect stage; it never
+//! claims a runtime outcome.
+
 use super::super::rust_index::{FunctionSummary, OracleFact, TestSummary};
 use super::arm_selection::{may_declare_items_in_owner_scope, may_name_constant};
 use super::text::{

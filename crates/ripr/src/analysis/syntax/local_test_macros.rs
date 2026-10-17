@@ -64,6 +64,14 @@ pub(crate) fn expand_local_test_macros(source: &str) -> Vec<ExpandedLocalTestMac
     if !source.contains("macro_rules") || !source.contains("test") {
         return Vec::new();
     }
+    // Pure in the source text; every overlapping index of a diff run expands
+    // the same files again (#5363).
+    super::run_memo::memoize(super::run_memo::Product::LocalTestMacros, 0, source, || {
+        expand_local_test_macros_uncached(source)
+    })
+}
+
+fn expand_local_test_macros_uncached(source: &str) -> Vec<ExpandedLocalTestMacro> {
     let Some(parse) = parse_clean_source_file(source) else {
         return Vec::new();
     };
