@@ -22,6 +22,11 @@ fn ensure_default_output_contained_with(
     if cache_dir_env.is_some_and(|value| !value.trim().is_empty()) {
         return Ok(());
     }
+    // A missing or non-directory root writes nothing here; leave it to the
+    // caller's own root validation so its established error is preserved.
+    if !root.is_dir() {
+        return Ok(());
+    }
     let canonical_root = root.canonicalize().map_err(|error| {
         format!(
             "refusing to write ripr output: cannot resolve workspace root {}: {error}",
