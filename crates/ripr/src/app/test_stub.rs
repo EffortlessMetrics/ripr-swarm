@@ -367,7 +367,18 @@ fn const_consumer_route(
         .map(|module| source[..module.item_start].matches('\n').count() + 1)
         .min()
         .unwrap_or(lines.len() + 1);
+    // The same name declared twice (an associated const per impl, a const
+    // generic, a local `const`) cannot be told apart by spelling: no route.
+    if code
+        .iter()
+        .filter(|text| declares_constant(text, name))
+        .count()
+        > 1
+    {
+        return None;
+    }
     let mut seen_fns: Vec<(usize, usize)> = Vec::new();
+    let mut tried = 0;
     let mut first_refusal = None;
     for index in 0..lines.len() {
         let line = index + 1;
@@ -392,7 +403,8 @@ fn const_consumer_route(
         if is_test_fn(&lines, span.0) {
             continue;
         }
-        if seen_fns.len() > CONSUMER_FN_LIMIT {
+        tried += 1;
+        if tried > CONSUMER_FN_LIMIT {
             break;
         }
         for kind in CONSUMER_KINDS {
@@ -418,36 +430,40 @@ fn const_consumer_route(
     first_refusal
 }
 
-/// `source` with string literals and comments blanked, keeping every newline
-/// so line numbers hold. Block comments nest and strings and block comments
-/// may span lines; a leading `*` is code (a dereference) unless a block
-/// comment is open. Raw strings are not recognised.
+/// `source` with string, char and raw-string literals and comments blanked,
+/// keeping every newline so line numbers hold. Block comments nest and
+/// strings, raw strings and block comments may span lines; a leading `*` is
+/// code (a dereference) unless a block comment is open. A `'` that opens no
+/// char literal is a lifetime and stays.
 fn code_lines_of(source: &str) -> Vec<String> {
+    let chars: Vec<char> = source.chars().collect();
     let mut out = String::with_capacity(source.len());
-    let mut chars = source.chars().peekable();
     let (mut block_depth, mut in_string, mut in_line_comment) = (0usize, false, false);
-    while let Some(c) = chars.next() {
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let next = chars.get(i + 1).copied();
         if c == '\n' {
             in_line_comment = false;
             out.push('\n');
         } else if in_line_comment {
             out.push(' ');
         } else if block_depth > 0 {
-            if c == '*' && chars.peek() == Some(&'/') {
-                chars.next();
+            if c == '*' && next == Some('/') {
                 block_depth -= 1;
                 out.push_str("  ");
-            } else if c == '/' && chars.peek() == Some(&'*') {
-                chars.next();
+                i += 1;
+            } else if c == '/' && next == Some('*') {
                 block_depth += 1;
                 out.push_str("  ");
+                i += 1;
             } else {
                 out.push(' ');
             }
         } else if in_string {
-            if c == '\\' && chars.peek().is_some_and(|next| *next != '\n') {
-                chars.next();
+            if c == '\\' && next.is_some_and(|next| next != '\n') {
                 out.push_str("  ");
+                i += 1;
             } else {
                 in_string = c != '"';
                 out.push(' ');
@@ -455,34 +471,128 @@ fn code_lines_of(source: &str) -> Vec<String> {
         } else if c == '"' {
             in_string = true;
             out.push(' ');
-        } else if c == '/' && chars.peek() == Some(&'/') {
-            chars.next();
+        } else if c == '/' && next == Some('/') {
             in_line_comment = true;
             out.push_str("  ");
-        } else if c == '/' && chars.peek() == Some(&'*') {
-            chars.next();
+            i += 1;
+        } else if c == '/' && next == Some('*') {
             block_depth += 1;
             out.push_str("  ");
+            i += 1;
+        } else if let Some(end) = raw_string_end(&chars, i).or_else(|| char_literal_end(&chars, i))
+        {
+            for &blanked in &chars[i..end] {
+                out.push(if blanked == '\n' { '\n' } else { ' ' });
+            }
+            i = end - 1;
         } else {
             out.push(c);
         }
+        i += 1;
     }
     out.lines().map(str::to_string).collect()
 }
 
-/// Whether the function starting at `start` (1-based) carries `#[test]`.
-fn is_test_fn(lines: &[&str], start: usize) -> bool {
-    lines[start.saturating_sub(4)..start.min(lines.len())]
+/// The exclusive end of a raw string (`r"…"`, `r#"…"#`, `br"…"`) starting at
+/// `at`, running to the end of the source when it never closes.
+fn raw_string_end(chars: &[char], at: usize) -> Option<usize> {
+    let after_prefix = match (chars[at], chars.get(at + 1)) {
+        ('r', _) => at + 1,
+        ('b', Some('r')) => at + 2,
+        _ => return None,
+    };
+    if at > 0 && (chars[at - 1].is_alphanumeric() || chars[at - 1] == '_') {
+        return None;
+    }
+    let hashes = chars[after_prefix..]
         .iter()
-        .any(|text| text.trim().starts_with("#[test]"))
+        .take_while(|&&c| c == '#')
+        .count();
+    if chars.get(after_prefix + hashes) != Some(&'"') {
+        return None;
+    }
+    let body = after_prefix + hashes + 1;
+    let closer = (body..chars.len()).find(|&k| {
+        chars[k] == '"' && (1..=hashes).all(|offset| chars.get(k + offset) == Some(&'#'))
+    });
+    Some(closer.map_or(chars.len(), |k| k + 1 + hashes))
 }
 
-/// Whether `text` holds `name` as a whole identifier.
+/// The exclusive end of a char literal (`'x'`, `'\\''`, `'\\u{1F600}'`)
+/// starting at `at`; `None` for a lifetime.
+fn char_literal_end(chars: &[char], at: usize) -> Option<usize> {
+    if chars[at] != '\'' {
+        return None;
+    }
+    match (chars.get(at + 1)?, chars.get(at + 2)) {
+        ('\\', _) => (at + 3..chars.len().min(at + 12))
+            .find(|&k| chars[k] == '\'')
+            .map(|k| k + 1),
+        (c, Some('\'')) if *c != '\'' && *c != '\n' => Some(at + 3),
+        _ => None,
+    }
+}
+
+/// Whether the function starting at `start` (1-based) is a test: one of the
+/// attribute lines directly above it names `test`, `rstest` or `test_case`.
+fn is_test_fn(lines: &[&str], start: usize) -> bool {
+    let above = start.saturating_sub(1).min(lines.len());
+    lines[..above]
+        .iter()
+        .rev()
+        .take(8)
+        .map(|text| text.trim())
+        .take_while(|text| !text.is_empty() && !text.ends_with(['{', '}', ';']))
+        .filter(|text| text.starts_with("#["))
+        .any(|text| {
+            let path = text[2..].split(['(', ']', '=']).next().unwrap_or("").trim();
+            matches!(
+                path.rsplit("::").next(),
+                Some("test" | "rstest" | "test_case")
+            )
+        })
+}
+
+/// Whether `text` declares `name` as a `const` or `static`, as an item, a
+/// local or a const generic parameter.
+fn declares_constant(text: &str, name: &str) -> bool {
+    let words = text
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>();
+    words
+        .windows(2)
+        .any(|window| matches!(window, ["const" | "static", declared] if *declared == name))
+        || words
+            .windows(3)
+            .any(|window| matches!(window, ["static", "mut", declared] if *declared == name))
+}
+
+/// Whether `text` reads `name` as a whole identifier: not a field access, and
+/// not behind a path other than `Self::`, `self::`, `crate::` or `super::`
+/// (another module's or type's item of the same spelling).
 fn names_identifier(text: &str, name: &str) -> bool {
     let is_ident = |c: char| c.is_alphanumeric() || c == '_';
     text.match_indices(name).any(|(at, _)| {
-        !text[..at].chars().next_back().is_some_and(is_ident)
-            && !text[at + name.len()..].chars().next().is_some_and(is_ident)
+        let before = &text[..at];
+        if before.chars().next_back().is_some_and(is_ident)
+            || text[at + name.len()..].chars().next().is_some_and(is_ident)
+        {
+            return false;
+        }
+        if before.ends_with('.') {
+            return false;
+        }
+        match before.strip_suffix("::") {
+            Some(path) => {
+                let segment = path
+                    .rsplit(|c: char| !is_ident(c))
+                    .next()
+                    .unwrap_or_default();
+                matches!(segment, "Self" | "self" | "crate" | "super")
+            }
+            None => true,
+        }
     })
 }
 
@@ -859,6 +969,14 @@ mod tests {
         assert!(uses("*total += CAP;", 1));
         assert!(uses("let y = a\n    * CAP;", 2));
         assert!(uses("/* c */ CAP", 1));
+        // char literals, escapes and raw strings do not desync the scan
+        assert!(!uses("let q = '\"'; // CAP", 1));
+        assert!(uses("let q = '\"';\nx.min(CAP)", 2));
+        assert!(!uses("let q = '\\'';\nlet s = \"CAP\";", 2));
+        assert!(uses("let r = r\"a\\\";\nx.min(CAP)", 2));
+        assert!(!uses("let r = r#\"say \"CAP\"\"#;", 1));
+        assert!(!uses("let r = br\"CAP\";", 1));
+        assert!(uses("fn f<'a>(x: &'a u64) -> u64 { x.min(CAP) }", 1));
         assert_eq!(code_lines_of("a\n// b\nc").len(), 3);
     }
 
@@ -869,6 +987,39 @@ mod tests {
         assert!(!names_identifier("over.min(CAPS)", "CAP"));
         assert!(!names_identifier("MAX_CAP + 1", "CAP"));
         assert!(!names_identifier("cap", "CAP"));
+    }
+
+    #[test]
+    fn names_identifier_rejects_fields_and_foreign_paths() {
+        assert!(names_identifier("Self::CAP + 1", "CAP"));
+        assert!(names_identifier("crate::CAP", "CAP"));
+        assert!(names_identifier("super::CAP", "CAP"));
+        assert!(!names_identifier("other::CAP", "CAP"));
+        assert!(!names_identifier("a::b::CAP", "CAP"));
+        assert!(!names_identifier("self.CAP", "CAP"));
+    }
+
+    #[test]
+    fn declares_constant_sees_items_locals_and_const_generics() {
+        assert!(declares_constant("pub const CAP: u64 = 5;", "CAP"));
+        assert!(declares_constant("static mut CAP: u64 = 5;", "CAP"));
+        assert!(declares_constant("fn f<const CAP: usize>() {}", "CAP"));
+        assert!(!declares_constant("const CAPS: u64 = 5;", "CAP"));
+        assert!(!declares_constant("let x = CAP;", "CAP"));
+    }
+
+    #[test]
+    fn is_test_fn_reads_the_attributes_directly_above() {
+        let lines = |text: &'static str| text.lines().collect::<Vec<_>>();
+        let tokio = lines("#[tokio::test]\nasync fn t() {}");
+        assert!(is_test_fn(&tokio, 2));
+        let stacked = lines(
+            "#[test]\n#[should_panic(\n    expected = \"x\"\n)]\n/// doc\n#[ignore]\nfn t() {}",
+        );
+        assert!(is_test_fn(&stacked, 7));
+        let neighbour = lines("#[test]\nfn t() {}\nfn prod() {}");
+        assert!(!is_test_fn(&neighbour, 3));
+        assert!(!is_test_fn(&lines("#[inline]\nfn f() {}"), 2));
     }
 
     #[test]
