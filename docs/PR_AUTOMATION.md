@@ -90,14 +90,25 @@ admission or selected evidence cannot emit required success. Ordinary unrelated
 labels use a distinct non-required name and per-run metadata concurrency.
 
 The staged v2 subject binds repository and PR object IDs, destination repository
-and fully qualified ref, H, live B, actual GitHub merge G, tree, complete ordered
-parents `[B,H]`, and workflow generation. Stored PR/event base metadata S is
+and fully qualified ref, H, qualification base Bq, actual GitHub merge Gq, tree Tq,
+complete ordered parents `[Bq,H]`, and workflow generation. Stored PR/event base metadata S is
 provenance only. The PR's live base ref and the independently named destination
-must both resolve to the same Commit B. Bounded REST refresh must establish
-mergeable=true before candidate reliance; missing, partial, malformed or changed
-identities refuse. Fresh observations bracket review/thread checks and repeat
-before the final required result. These observations do not exclude ABA changes
-or establish a transaction with check publication or merge.
+must both resolve to the same Commit Bq during admission. Bounded REST refresh
+must establish mergeable=true before candidate reliance; missing, partial,
+malformed or changing admission identities refuse before allocation.
+
+Before the final required result, a separate step authenticates immutable Q
+against its digest and Git object, including the complete ordered parents and
+the admission's native run/attempt. A partial rerun cannot present old child
+successes as fresh proof. Current H, repository/destination, open/non-Draft/label
+state, reviews and conversations are checked separately; coherent current-main
+observations bracket the review/thread checks. A new Bm does not erase Tq proof
+and does not establish its applicability to Bm. The completion receipt requires
+the same attempt's terminal job success; artifact existence alone is insufficient.
+It explicitly requires a later final-currentness judgment. Before merge, inspect
+intervening inputs and refresh affected proof; unknown compatibility blocks or
+widens that proof. These observations do not exclude ABA changes or establish a
+transaction with check publication or merge.
 
 The docs selector, separate docs producer and Rust producer each pin and verify
 the admitted G/tree/parents before substantive execution. PR diff evidence and
