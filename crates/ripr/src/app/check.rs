@@ -241,6 +241,7 @@ fn check_with_progress_and_origins_with_open_rust_paths(
     // acquisition, so a subject input can never fall through to worktree
     // analysis or an empty diff.
     super::analysis_subject::validate_input_subject(&input).map_err(|error| error.to_string())?;
+    crate::atomic_file::ensure_default_output_contained(&input.root)?;
     // Managed producer mode (Campaign 31 Phase D, #1407; architecture
     // corrected post perl-lsp-swarm #3294): when a Perl facts exporter is
     // configured (`producer = "perl-ripr-facts"` or `producer = "perllsp"`

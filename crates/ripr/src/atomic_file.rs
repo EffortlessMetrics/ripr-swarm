@@ -5,6 +5,40 @@ use std::path::Path;
 
 static TEMP_FILE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// Refuse to analyze a workspace whose default output tree
+/// (`{root}/target`, `{root}/target/ripr`) is a link that resolves outside
+/// the workspace (#7781). A committed `target -> /elsewhere` symlink is
+/// repository-controlled content; following it would let an untrusted repo
+/// choose where cache and workflow artifacts are written. Links that stay
+/// inside the workspace, and an explicit `RIPR_CACHE_DIR`, are unaffected.
+pub(crate) fn ensure_default_output_contained(root: &Path) -> Result<(), String> {
+    let Ok(canonical_root) = root.canonicalize() else {
+        return Ok(());
+    };
+    for relative in ["target", "target/ripr"] {
+        let path = root.join(relative);
+        let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if !metadata.file_type().is_symlink() {
+            continue;
+        }
+        let escapes = match path.canonicalize() {
+            Ok(canonical) => !canonical.starts_with(&canonical_root),
+            Err(_) => true,
+        };
+        if escapes {
+            return Err(format!(
+                "refusing to write ripr output: {} is a symlink that resolves outside the workspace {}; \
+                 replace it with a real directory, or set RIPR_CACHE_DIR to an explicit cache location",
+                path.display(),
+                root.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// A temporary file this old cannot belong to a live writer: cache entries
 /// are small and rename within milliseconds, so only a writer that was terminated
 /// between creating and renaming leaves one behind.
@@ -341,8 +375,9 @@ fn publish_staged(
 #[cfg(test)]
 mod tests {
     use super::{
-        CreateNewError, STALE_TEMP_GRACE, TEMP_FILE_SEQUENCE, create_new, is_stranded_temp_name,
-        sweep_stale_temp_files, write, write_cache,
+        CreateNewError, STALE_TEMP_GRACE, TEMP_FILE_SEQUENCE, create_new,
+        ensure_default_output_contained, is_stranded_temp_name, sweep_stale_temp_files, write,
+        write_cache,
     };
     use std::path::{Path, PathBuf};
 
@@ -762,6 +797,64 @@ mod tests {
         let swept = !stranded.exists();
         let _ = std::fs::remove_dir_all(&root);
         assert!(swept, "a streamed cache write sweeps the directory too");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn default_output_guard_refuses_target_symlink_escaping_workspace() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!("ripr-guard-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let ws = base.join("ws");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&ws).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&outside).map_err(|e| e.to_string())?;
+        // Control: no target at all, and a real target directory, pass.
+        ensure_default_output_contained(&ws)?;
+        std::fs::create_dir_all(ws.join("target/ripr")).map_err(|e| e.to_string())?;
+        ensure_default_output_contained(&ws)?;
+        // In-workspace alias passes.
+        std::fs::remove_dir_all(ws.join("target")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(ws.join("real-target")).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(ws.join("real-target"), ws.join("target"))
+            .map_err(|e| e.to_string())?;
+        ensure_default_output_contained(&ws)?;
+        // Escaping `target` and escaping `target/ripr` both refuse.
+        std::fs::remove_file(ws.join("target")).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&outside, ws.join("target")).map_err(|e| e.to_string())?;
+        let escaped = ensure_default_output_contained(&ws);
+        std::fs::remove_file(ws.join("target")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(ws.join("target")).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&outside, ws.join("target/ripr")).map_err(|e| e.to_string())?;
+        let escaped_ripr = ensure_default_output_contained(&ws);
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(escaped.is_err_and(|e| e.contains("RIPR_CACHE_DIR")));
+        assert!(escaped_ripr.is_err());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_refuses_hostile_target_symlink_without_writing_outside() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!("ripr-hostile-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let ws = base.join("ws");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&ws).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&outside).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&outside, ws.join("target")).map_err(|e| e.to_string())?;
+        let input = crate::app::CheckInput {
+            root: ws.clone(),
+            ..crate::app::CheckInput::default()
+        };
+        let result = crate::app::check_workspace(input);
+        let outside_empty = std::fs::read_dir(&outside)
+            .map_err(|e| e.to_string())?
+            .next()
+            .is_none();
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(result.is_err_and(|e| e.contains("refusing to write ripr output")));
+        assert!(outside_empty, "check wrote through the hostile symlink");
         Ok(())
     }
 }
