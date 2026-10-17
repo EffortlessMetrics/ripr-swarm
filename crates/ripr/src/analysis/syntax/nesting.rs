@@ -282,6 +282,49 @@ pub(crate) fn non_code_token_end(text: &str, index: usize) -> Option<usize> {
     Some(end.min(text.len()))
 }
 
+/// 1-based lines of `text` that hold only block-comment content (`/* .. */`,
+/// `/*! .. */`, `/** .. */`, including interior lines). A line that also
+/// carries code before the opening or after the closing delimiter is not
+/// listed. Line comments are not listed; callers already skip them by prefix.
+pub(crate) fn block_comment_only_lines(text: &str) -> std::collections::BTreeSet<usize> {
+    let mut lines = std::collections::BTreeSet::new();
+    if !text.contains("/*") {
+        return lines;
+    }
+    let mut line_starts = vec![0usize];
+    line_starts.extend(text.match_indices('\n').map(|(offset, _)| offset + 1));
+    let line_of = |offset: usize| line_starts.partition_point(|start| *start <= offset);
+    let line_start = |line: usize| line_starts[line - 1];
+    let mut index = 0;
+    while index < text.len() {
+        match non_code_token_end(text, index) {
+            Some(end) if end > index => {
+                if text[index..].starts_with("/*") {
+                    let first = line_of(index);
+                    let last = line_of(end.saturating_sub(1).max(index));
+                    let before_blank = text[line_start(first)..index].trim().is_empty();
+                    let line_end = text[end..]
+                        .find('\n')
+                        .map_or(text.len(), |offset| end + offset);
+                    let after_blank = text[end..line_end].trim().is_empty();
+                    for line in first..=last {
+                        let opens_with_code = line == first && !before_blank;
+                        let closes_with_code = line == last && !after_blank;
+                        if !opens_with_code && !closes_with_code {
+                            lines.insert(line);
+                        }
+                    }
+                }
+                index = end;
+            }
+            _ => {
+                index += text[index..].chars().next().map_or(1, char::len_utf8);
+            }
+        }
+    }
+    lines
+}
+
 fn skip_line(bytes: &[u8], mut index: usize) -> usize {
     while bytes.get(index).is_some_and(|b| *b != b'\n') {
         index += 1;
@@ -374,6 +417,21 @@ fn skip_char_or_lifetime(text: &str, index: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn block_comment_only_lines_lists_interior_lines_and_not_code_lines() {
+        let source = "fn f() {}\n/* name: value\n   x < y\n*/\nlet a = 1; /* tail */\n/* head */ let b = 2;\nlet s = \"/* not a comment\";\nlet c = 3;\n";
+        let lines = block_comment_only_lines(source);
+        assert_eq!(lines.into_iter().collect::<Vec<_>>(), vec![2, 3, 4]);
+    }
+
+    #[test]
+    fn block_comment_only_lines_handles_doc_blocks_and_nesting() {
+        let source =
+            "/*! crate\n For example:\n*/\n/** doc /* nested */ still\ncomment */\nfn g() {}\n";
+        let lines = block_comment_only_lines(source);
+        assert_eq!(lines.into_iter().collect::<Vec<_>>(), vec![1, 2, 3, 4, 5]);
+    }
 
     #[test]
     fn a_rust_2021_gen_identifier_parses_clean_and_real_errors_do_not() {

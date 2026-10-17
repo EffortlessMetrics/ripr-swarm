@@ -483,6 +483,9 @@ fn reach_evidence(
     owner_fn: Option<&FunctionSummary>,
     context: &CompactGripContext<'_>,
 ) -> StageEvidence {
+    if let Some(summary) = reach_limit::outside_module_tree_summary(seam, context) {
+        return StageEvidence::new(StageState::Opaque, Confidence::Low, summary);
+    }
     if related.is_empty() {
         return reach_limit::reach_without_related_tests(seam.owner(), owner_fn, context);
     }
