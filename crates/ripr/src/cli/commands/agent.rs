@@ -552,7 +552,13 @@ fn agent_verify_error_is_typed_refusal(error: &str) -> bool {
 }
 
 fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), CommandError> {
-    ensure_command_root(&options.root, "agent verify-execute")?;
+    if let Err(error) = ensure_command_root(&options.root, "agent verify-execute") {
+        print!(
+            "{}",
+            app::verification_execution::render_unusable_root(&error)
+        );
+        return Err(CommandError::Failure(error));
+    }
     let outcome = app::verification_execution::execute_verify_packet(
         &options.root,
         &options.packet,

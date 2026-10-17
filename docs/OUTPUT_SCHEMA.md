@@ -8199,7 +8199,11 @@ the result.
 
 Every successfully parsed execution attempt — including authorization and
 execution refusals — emits one typed JSON terminal result on stdout with a
-`disposition` field. Usage errors (a missing `--packet`, `--result-json`, or
+`disposition` field. A root that is missing or is not a directory retains
+operational exit `2` and its root diagnostic, with a schema `1`
+`verification_wrong_root` response, `executed: false`, and
+`result_committed: false`; no packet runs and no result is written.
+Usage errors (a missing `--packet`, `--result-json`, or
 `--json`, or a malformed `--cancel-after-ms`) remain plain usage errors on
 stderr and produce no disposition. The exit status distinguishes only whether
 RIPR

@@ -125,6 +125,9 @@ mod unsupported_check_exit;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unsupported_diff_exit.rs"]
 mod unsupported_diff_exit;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/verify_execute_root.rs"]
+mod verify_execute_root;
 #[cfg(unix)]
 #[path = "cli_smoke/workflow_directory.rs"]
 mod workflow_directory;
