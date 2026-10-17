@@ -16,9 +16,13 @@ on:
 permissions:
   contents: read
 
+# Only a `merge-ready` labeled request shares this group, so a re-applied label
+# supersedes the older run for the same PR. Every other pull_request event
+# (opened, synchronize, reopened, other labels) gets a unique group: its jobs
+# are skipped and it can neither cancel nor replace a pending merge-ready run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ (github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run' }}
+  cancel-in-progress: ${{ (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') }}
 
 # Advisory Windows test lane (#2393).
 #
@@ -55,10 +59,10 @@ concurrency:
 #     touching path handling, fixtures, or process/IO code.
 #   - workflow_dispatch: manual run; `repeat_nested_alias` adds three isolated
 #     native repetitions for #4377 only when requested.
-#   - every subscribed `pull_request` action (`opened`, `synchronize`,
-#     `reopened`, `labeled`; `unlabeled` stays omitted per #4380) and the
-#     schedule/dispatch triggers above also run the small always-on advisory
-#     subset job below (`windows-advisory-subset`, #4938); the full suite
+#   - an explicit `merge-ready` `labeled` event on a `pull_request` (the
+#     other subscribed actions are skipped by the job-level guard; `unlabeled`
+#     stays omitted per #4380) and the schedule/dispatch triggers above also
+#     run the small advisory subset job below (`windows-advisory-subset`, #4938); the full suite
 #     keeps its label/schedule/dispatch selection unchanged.
 #
 # The suite runs **twice** on purpose, because one sample cannot separate a
@@ -81,11 +85,7 @@ concurrency:
 jobs:
   windows-advisory:
     name: windows-advisory
-    if: |
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch' ||
-      contains(github.event.pull_request.labels.*.name, 'windows-ci') ||
-      contains(github.event.pull_request.labels.*.name, 'full-ci')
+    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'windows-ci') || contains(github.event.pull_request.labels.*.name, 'full-ci'))
     runs-on: windows-latest
     timeout-minutes: 90
 
@@ -271,10 +271,10 @@ jobs:
   # #4337 (Windows-host-only clippy in cfg(windows) test code), #4918
   # (cache-unusable warning silent on native Windows), and #4921 (gap_artifacts
   # tests failing on a POSIX-only test root) were each caught only because
-  # someone ran the suite or clippy natively on Windows. This job runs on every
-  # subscribed `pull_request` action (`opened`, `synchronize`, `reopened`,
-  # `labeled` -- no labels required; `unlabeled` stays omitted per #4380) and
-  # covers exactly that family:
+  # someone ran the suite or clippy natively on Windows. This wrapper runs
+  # the subset only on schedule/manual diagnosis; on pull requests the same
+  # producer runs from routed-rust after explicit merge-ready admission
+  # (`unlabeled` stays omitted per #4380). It covers exactly that family:
   #
   #   - lsp::gap_artifacts: the #4921 class;
   #   - Cargo-home configuration identity: the #7748 Windows spelling class;

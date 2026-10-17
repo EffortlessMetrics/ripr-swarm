@@ -158,10 +158,18 @@ readonly_write_lock = "deny"
 allow_attributes_without_reason = "deny"
 blanket_clippy_restriction_lints = "deny"
 
+# Release: thin LTO with parallel codegen. The single `ripr` crate is ~700 of
+# ~900 CPU-seconds of a release build, so one codegen unit under fat LTO
+# serialized the whole build onto one core (751 s on 4 cores; far longer on
+# slow runners). Thin LTO with 16 units builds the same crate in a fraction of
+# that, which is what `cargo build --release`, `cargo install --git` and agent
+# sessions use. Shipped release archives keep the fully optimized profile:
+# the release-archive producer overrides it through
+# `CARGO_PROFILE_RELEASE_LTO` / `CARGO_PROFILE_RELEASE_CODEGEN_UNITS`.
 [profile.release]
-lto = true
+lto = "thin"
 strip = true
-codegen-units = 1
+codegen-units = 16
 
 # Dev profile: line-tables-only gives backtraces with file:line resolution
 # without the full variable-debuginfo cost of the default `debug = "full"`.

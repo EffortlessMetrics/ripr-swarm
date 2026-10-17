@@ -27,7 +27,7 @@ on:
   schedule:
     - cron: "43 5 * * *"
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, labeled]
     paths:
       - "crates/ripr/src/**"
       - "crates/ripr/tests/printed_command_paste.rs"
@@ -40,9 +40,13 @@ on:
 permissions:
   contents: read
 
+# Only a `merge-ready` labeled request shares this group, so a re-applied label
+# supersedes the older run for the same PR. Every other pull_request event
+# (opened, synchronize, reopened, other labels) gets a unique group: its jobs
+# are skipped and it can neither cancel nor replace a pending merge-ready run.
 concurrency:
-  group: printed-command-paste-${{ inputs.request_id || github.event.pull_request.number || github.ref }}-${{ inputs.subject_sha }}
-  cancel-in-progress: ${{ !contains(toJSON(inputs), '"subject_sha"') && github.event_name == 'pull_request' }}
+  group: printed-command-paste-${{ inputs.request_id || github.event.pull_request.number || github.ref }}-${{ inputs.subject_sha || ((github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run') }}
+  cancel-in-progress: ${{ !contains(toJSON(inputs), '"subject_sha"') && (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') }}
 
 # Every command ripr prints, pasted into every shell a user has (#5188, #5232,
 # #5247, #5269 each fixed one surface by hand).
@@ -77,6 +81,7 @@ concurrency:
 jobs:
   paste:
     name: paste-${{ matrix.os }}
+    if: github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:

@@ -470,6 +470,22 @@ field keeps its meaning, and every field this version adds is additive for a
 consumer that ignores unknown keys. Reverting the change restores `0.3`
 exactly, so a revert is the migration path for a consumer that cannot yet adapt.
 
+### Doctor canonical next action (additive, no `schema_version` bump, #6986)
+
+`ripr doctor --json` carries an optional `canonical_next_action` object: the
+same `canonical_next_action.v1` DTO that `ripr check --format json` embeds
+(#7258), produced by the decision the human `- Safe next action:` line follows
+rather than re-inferred for the machine document. It is present only when the
+first-command state is a precise recovery: `stop.kind` is `doctor_recovery`,
+`stop.check_name` names the failing check (`root_directory`, `config`, or
+`cargo_toml` for the generic failed-prerequisite case), `stop.recovery_route`
+is the recovery prose, `action_class` is `satisfy_prerequisite`, and `command`
+is absent because a recovery is not a runnable command. The key is omitted when
+the state names a runnable command, and for the `source-build` profile. The
+document root is `canonical_next_action.subject.root`; doctor reads no diff, so
+`diff_source` is the fixed no-base committed mode, never a live-tree claim. The
+human line and this object agree by construction (Control 9).
+
 ### What `--json` now probes, and where that shows up
 
 Both surfaces read one probe per run, so `ripr doctor --json` performs the
@@ -13017,6 +13033,27 @@ pass/fail authority. See
 [PR review front panel workflow](PR_REVIEW_FRONT_PANEL_WORKFLOW.md) for the
 reviewer, developer, maintainer, and coding-agent workflow over the generated
 panel.
+
+## GitHub PR Status Review Subjects
+
+The advisory `cargo xtask gh-pr-status --pr <number>` JSON report keeps
+`schema_version: "0.1"` and adds `head_commit`, the observed full PR head SHA.
+Each entry in `reviews` retains `author` and `state` and adds `commit`, the
+original review commit SHA, plus `currentness`: `current_head`, `stale_for_head`,
+or `subject_unavailable`. Missing identities are empty strings in JSON and
+`unknown` in Markdown. Malformed or ambiguous identities remain unavailable.
+
+The live collector requests `headRefOid`, `latestReviews`, and `reviews` from
+GitHub CLI. It joins the latest summaries to full review subjects by exact
+author, submission time, and state; an absent or ambiguous join supplies no
+commit identity. For an `APPROVED` aggregate, no latest approval of the exact
+head means `safe_next_action: "wait"`, with an explanatory warning. Original
+stale reviews stay visible; they are not silently attributed to the new head.
+
+This attribution is advisory. It does not establish substantive or independent
+review, required approval counts, protection satisfaction, integration proof,
+or permission to merge. The retained current-head control preserves the
+existing advisory action; the command performs no PR mutation.
 
 ## Report Packet Index
 

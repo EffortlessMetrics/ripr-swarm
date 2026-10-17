@@ -291,6 +291,9 @@ fn predicate(
 ) -> TestResult<bool> {
     let flag = |v| if v { "true" } else { "false" };
     let mut expr=expression.replace("contains(toJSON(inputs), '\"subject_sha\"')",flag(called))
+        .replace("contains(github.event.pull_request.labels.*.name, 'merge-ready')",flag(label=="merge-ready"))
+        .replace("github.event.action == 'labeled'",flag(action=="labeled"))
+        .replace("github.event.label.name == 'merge-ready'",flag(label=="merge-ready"))
         .replace("contains(github.event.pull_request.labels.*.name, 'full-ci')",flag(label=="full-ci"))
         .replace("contains(github.event.pull_request.labels.*.name, 'release-check')",flag(label=="release-check"))
         .replace("contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action)",flag(["opened","synchronize","reopened"].contains(&action)))
@@ -325,7 +328,7 @@ fn predicate(
 fn actual_predicates_preserve_legacy_events_and_use_only_frozen_callable_selection() -> TestResult {
     for (name, _) in JOBS {
         let expression = condition(job(WORKFLOW, name));
-        // Draft is deliberately not a legacy filter; open/push/Ready remain staged, not activated.
+        // Callable selection is frozen; direct legacy events follow main's merge-ready gate.
         for (event, action, label) in [
             ("pull_request", "opened", ""),
             ("pull_request", "synchronize", ""),
@@ -333,21 +336,29 @@ fn actual_predicates_preserve_legacy_events_and_use_only_frozen_callable_selecti
             ("pull_request", "labeled", "unrelated"),
             ("pull_request", "labeled", "full-ci"),
             ("pull_request", "labeled", "release-check"),
+            ("pull_request", "labeled", "merge-ready"),
             ("push", "", ""),
             ("workflow_dispatch", "", ""),
         ] {
+            // Current main gates direct pull_request runs on the explicit
+            // merge-ready labeled event; callable runs use frozen selection.
+            let merge_ready = action == "labeled" && label == "merge-ready";
             let expected = match *name {
                 "release-proof" => {
-                    event != "pull_request" || ["full-ci", "release-check"].contains(&label)
+                    (event != "pull_request" || merge_ready)
+                        && (event != "pull_request"
+                            || ["full-ci", "release-check"].contains(&label))
                 }
-                "rust-only-features" => {
-                    event != "pull_request"
-                        || ["opened", "synchronize", "reopened"].contains(&action)
-                }
+                "rust-only-features" => event != "pull_request" || merge_ready,
                 "msrv" => {
-                    event == "workflow_dispatch" || (event == "pull_request" && label == "full-ci")
+                    (event != "pull_request" || merge_ready)
+                        && (event == "workflow_dispatch"
+                            || (event == "pull_request" && label == "full-ci"))
                 }
-                "vscode" => event != "pull_request" || label == "full-ci",
+                "vscode" => {
+                    (event != "pull_request" || merge_ready)
+                        && (event != "pull_request" || label == "full-ci")
+                }
                 _ => return Err(format!("Unknown test job {name}").into()),
             };
             assert_eq!(
@@ -395,7 +406,7 @@ fn run_blocks(source: &str) -> Vec<String> {
 fn feature_command_action_and_manual_denominators_are_unchanged() -> TestResult {
     for (name, _) in JOBS {
         assert_eq!(
-            run_blocks(job(WORKFLOW, name)).iter().map(|script| script.replace("  [ \"${CALLED:-false}\" != true ] || return 0\n", "")).collect::<Vec<_>>(),
+            run_blocks(job(WORKFLOW, name)).iter().map(|script| script.replace("  [ \"${CALLED:-false}\" != true ] || return 0\n", "").replace("cargo package -p ripr --no-verify\npackage_id=\"$(cargo pkgid -p ripr)\"\npackage_version=\"${package_id##*#}\"\ntest -n \"$package_version\"\n", "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\n")).collect::<Vec<_>>(),
             run_blocks(job(ORIGINAL, name)).iter().map(|script| script.replace(
                 "cargo package -p ripr --no-verify && tar xzf \"target/package/ripr-$(cargo pkgid -p ripr | sed 's/.*#//').crate\" -C \"$RUNNER_TEMP\"\ncd \"$RUNNER_TEMP/ripr-$(cargo pkgid -p ripr | sed 's/.*#//')\" && rm Cargo.lock && cargo generate-lockfile",
                 "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\ntar xzf \"target/package/ripr-$package_version.crate\" -C \"$RUNNER_TEMP\"\ncd \"$RUNNER_TEMP/ripr-$package_version\"\nrm Cargo.lock\ncargo generate-lockfile"
@@ -418,7 +429,7 @@ fn feature_command_action_and_manual_denominators_are_unchanged() -> TestResult 
     }
     assert!(WORKFLOW.contains("permissions:\n  contents: read\n"));
     assert!(!WORKFLOW.contains("continue-on-error:") && !WORKFLOW.contains("secrets:"));
-    assert!(WORKFLOW.contains("types: [opened, synchronize, reopened, labeled, unlabeled]"));
+    assert!(WORKFLOW.contains("types: [opened, synchronize, reopened, labeled]"));
     assert!(WORKFLOW.contains("branches: [main, master]"));
     assert!(WORKFLOW.contains("  workflow_dispatch:"));
     assert!(!WORKFLOW.contains("  schedule:") && !WORKFLOW.contains("merge_group:"));
@@ -485,8 +496,8 @@ fn binding_contract(source: &str) -> bool {
         && !identity.contains("continue-on-error:")
         && !identity.contains("        if:")
         && identity.contains("if: contains(toJSON(inputs), '\"subject_sha\"')")
-        && source.contains("group: ${{ github.workflow }}-${{ inputs.request_id || github.event.pull_request.number || github.ref }}-${{ inputs.subject_sha }}")
-        && source.contains("cancel-in-progress: ${{ !contains(toJSON(inputs), '\"subject_sha\"') && github.event_name == 'pull_request' && github.event.action == 'synchronize' }}")
+        && source.contains("group: ${{ github.workflow }}-${{ inputs.request_id || github.event.pull_request.number || github.ref }}-${{ inputs.subject_sha || ((github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run') }}")
+        && source.contains("cancel-in-progress: ${{ !contains(toJSON(inputs), '\"subject_sha\"') && (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') }}")
         && result.contains("if: always() && contains(toJSON(inputs), '\"subject_sha\"')")
         && result.contains("needs: [source-identity, rust-only-features, release-proof, msrv, vscode]")
         && result.contains("IDENTITY_RESULT: ${{ needs.source-identity.result }}")
@@ -711,19 +722,27 @@ fn removing_the_declared_shell_reproduces_masked_pkgid_failures() -> TestResult 
         cd() { return 0; }
         rm() { return 0; }
     "#;
-    for (name, downstream) in [
-        ("Unlocked install resolution", "reached:check"),
-        ("Release readiness", "reached:xtask"),
+    // Main's unlocked-install form assigns `cargo pkgid` directly, so even
+    // the implicit shell fails closed there; the readiness pipeline through
+    // `sed` still masks a pkgid failure without pipefail.
+    for (name, downstream, masked) in [
+        ("Unlocked install resolution", "reached:check", false),
+        ("Release readiness", "reached:xtask", true),
     ] {
         let step = named_step(&implicit, "release-proof", name);
         let shell = effective_shell(&implicit, "release-proof", step)?;
         assert_eq!(shell, WorkflowShell::ImplicitBash);
         let output = run_with_shell(shell, &format!("{stub}\n{}", body(step)), &[])?;
-        assert!(
+        assert_eq!(
             output.status.success(),
-            "missing-shell control must expose false success"
+            masked,
+            "missing-shell control for {name}"
         );
-        assert!(String::from_utf8(output.stderr)?.contains(downstream));
+        assert_eq!(
+            String::from_utf8(output.stderr)?.contains(downstream),
+            masked,
+            "downstream for {name}"
+        );
     }
     Ok(())
 }
@@ -759,7 +778,7 @@ fn release_steps_preserve_manual_semantics_and_ignore_labels_on_calls() -> TestR
 
 #[test]
 fn staged_and_explicit_activation_event_matrix() -> TestResult {
-    const LEGACY: &str = "  pull_request:\n    types: [opened, synchronize, reopened, labeled, unlabeled]\n  push:\n    branches: [main, master]\n";
+    const LEGACY: &str = "  pull_request:\n    types: [opened, synchronize, reopened, labeled]\n  push:\n    branches: [main, master]\n";
     assert!(WORKFLOW.contains(LEGACY));
     let active = WORKFLOW.replace(LEGACY, "");
     let subscribed = |source: &str, event: &str| {

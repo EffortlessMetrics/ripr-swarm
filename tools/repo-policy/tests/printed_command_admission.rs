@@ -18,9 +18,9 @@ fn input_bindings(source: &str) -> bool {
     let Some((step, _)) = tail.split_once("      - uses: dtolnay") else {
         return false;
     };
-    source.contains("group: printed-command-paste-${{ inputs.request_id || github.event.pull_request.number || github.ref }}-${{ inputs.subject_sha }}")
+    source.contains("group: printed-command-paste-${{ inputs.request_id || github.event.pull_request.number || github.ref }}-${{ inputs.subject_sha || ((github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run') }}")
         && !step.lines().any(|line| line.starts_with("        if:") || line.starts_with("        continue-on-error:"))
-        && source.contains("cancel-in-progress: ${{ !contains(toJSON(inputs), '\"subject_sha\"') && github.event_name == 'pull_request' }}")
+        && source.contains("cancel-in-progress: ${{ !contains(toJSON(inputs), '\"subject_sha\"') && (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') }}")
         && [
             "CALLED: ${{ contains(toJSON(inputs), '\"subject_sha\"') }}",
             "PROFILE: ${{ inputs.proof_profile }}", "REQUEST: ${{ inputs.request_id }}",
@@ -35,7 +35,7 @@ fn input_binding_and_guard_removal_mutants_are_rejected() {
     assert!(input_bindings(WORKFLOW));
     for (old, new) in [
         (
-            "group: printed-command-paste-${{ inputs.request_id || github.event.pull_request.number || github.ref }}-${{ inputs.subject_sha }}",
+            "group: printed-command-paste-${{ inputs.request_id || github.event.pull_request.number || github.ref }}-${{ inputs.subject_sha || ((github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run') }}",
             "group: printed-command-paste-${{ github.sha }}",
         ),
         (
@@ -53,7 +53,7 @@ fn input_binding_and_guard_removal_mutants_are_rejected() {
         ("${{ inputs.subject_tree }}", "main"),
         ("${{ inputs.workflow_generation }}", "main"),
         (
-            "cancel-in-progress: ${{ !contains(toJSON(inputs), '\"subject_sha\"') && github.event_name == 'pull_request' }}",
+            "cancel-in-progress: ${{ !contains(toJSON(inputs), '\"subject_sha\"') && (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') }}",
             "cancel-in-progress: true",
         ),
         (
@@ -97,7 +97,9 @@ fn contract(source: &str) -> bool {
 fn exact_checkout_and_full_platform_shell_payload_are_preserved() {
     assert!(contract(WORKFLOW));
     assert!(WORKFLOW.contains("schedule:\n    - cron: \"43 5 * * *\""));
-    assert!(WORKFLOW.contains("  pull_request:\n    types: [opened, synchronize, reopened]"));
+    assert!(
+        WORKFLOW.contains("  pull_request:\n    types: [opened, synchronize, reopened, labeled]")
+    );
     assert!(WORKFLOW.contains("  workflow_dispatch:"));
     assert!(!WORKFLOW.contains("  push:"));
     assert!(!WORKFLOW.contains("pull_request_target:"));

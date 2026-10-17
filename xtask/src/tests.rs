@@ -29661,6 +29661,7 @@ fn gh_pr_status_pr(checks: Vec<PrTriageCheck>) -> GhPrStatusPullRequest {
         title: "devex: merge readiness".to_string(),
         is_draft: false,
         merge_state_status: "CLEAN".to_string(),
+        head_ref_oid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
         head_ref_name: "devex-gh-pr-status".to_string(),
         base_ref_name: "main".to_string(),
         review_decision: "APPROVED".to_string(),
@@ -29668,6 +29669,7 @@ fn gh_pr_status_pr(checks: Vec<PrTriageCheck>) -> GhPrStatusPullRequest {
         reviews: vec![GhPrStatusReview {
             author: "droid".to_string(),
             state: "APPROVED".to_string(),
+            commit_oid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
         }],
         provider_review_observations: Default::default(),
     }
@@ -29864,7 +29866,9 @@ fn gh_pr_status_behind_packet_reports_integration_judgment() -> Result<(), Strin
             "headRefName": "candidate",
             "baseRefName": "main",
             "reviewDecision": "APPROVED",
-            "latestReviews": [],
+            "headRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "latestReviews": [{"author": {"login": "reviewer"}, "state": "APPROVED", "submittedAt": "2026-10-14T01:00:00Z"}],
+            "reviews": [{"author": {"login": "reviewer"}, "state": "APPROVED", "submittedAt": "2026-10-14T01:00:00Z", "commit": {"oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}],
             "statusCheckRollup": [
                 {"__typename": "CheckRun", "name": "rust", "status": "COMPLETED", "conclusion": "SUCCESS"}
             ]
@@ -54839,6 +54843,130 @@ fn pr_change_inventory_bytes_accept_empty() -> Result<(), String> {
     Ok(())
 }
 
+/// Use the real gh JSON shape: latestReviews does not contain commit identity.
+fn gh_pr_status_subject_fixture(commit: &str) -> Value {
+    serde_json::json!({
+        "number": 42, "title": "exact review subject fixture", "isDraft": false,
+        "mergeStateStatus": "CLEAN", "headRefName": "candidate", "baseRefName": "main",
+        "headRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "reviewDecision": "APPROVED",
+        "latestReviews": [{"author": {"login": "reviewer"}, "state": "APPROVED", "submittedAt": "2026-10-14T01:00:00Z"}],
+        "reviews": [{"author": {"login": "reviewer"}, "state": "APPROVED", "submittedAt": "2026-10-14T01:00:00Z", "commit": {"oid": commit}}],
+        "statusCheckRollup": [{"__typename": "CheckRun", "name": "rust", "status": "COMPLETED", "conclusion": "SUCCESS"}]
+    })
+}
+
+#[test]
+fn gh_pr_status_stale_review_head_must_wait() -> Result<(), String> {
+    let fixture = gh_pr_status_subject_fixture("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    let pr = parse_gh_pr_status_pull_request(&fixture.to_string())?;
+    assert_eq!(
+        pr.reviews.len(),
+        1,
+        "fixture must retain its review subject"
+    );
+    assert_eq!(
+        pr.checks.len(),
+        1,
+        "fixture must contain its successful check"
+    );
+    assert_eq!(pr.head_ref_oid, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    assert_eq!(
+        pr.reviews[0].commit_oid,
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+    let readiness = gh_pr_status_readiness(&pr, &["rust".to_string()], true, Vec::new());
+    assert_eq!(
+        readiness.safe_next_action, "wait",
+        "approval of aaaa must not qualify head bbbb"
+    );
+    let report: Value = serde_json::from_str(&gh_pr_status_json(&pr, &[], &readiness))
+        .map_err(|e| e.to_string())?;
+    assert_eq!(
+        report["head_commit"],
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    );
+    assert_eq!(
+        report["reviews"][0]["commit"],
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+    assert_eq!(report["reviews"][0]["currentness"], "stale_for_head");
+    assert_eq!(report["safe_next_action"], "wait");
+    let markdown = gh_pr_status_markdown(&pr, &[], &readiness);
+    assert!(markdown.contains("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"));
+    assert!(markdown.contains("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+    assert!(markdown.contains("stale_for_head"));
+    assert!(!readiness.warnings.is_empty());
+    Ok(())
+}
+
+#[test]
+fn gh_pr_status_current_review_subject_control() -> Result<(), String> {
+    let fixture = gh_pr_status_subject_fixture("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    let pr = parse_gh_pr_status_pull_request(&fixture.to_string())?;
+    assert_eq!(
+        crate::gh_pr_review_currentness(&pr, &pr.reviews[0]),
+        "current_head"
+    );
+    let readiness = gh_pr_status_readiness(&pr, &["rust".to_string()], true, Vec::new());
+    assert_eq!(readiness.safe_next_action, "merge");
+    assert!(readiness.warnings.is_empty());
+    Ok(())
+}
+
+#[test]
+fn gh_pr_status_review_subject_refusals() -> Result<(), String> {
+    for case in [
+        "missing head",
+        "short head",
+        "missing subject",
+        "short subject",
+        "nonhex subject",
+        "missing author",
+        "missing time",
+        "wrong author",
+        "wrong time",
+        "wrong state",
+        "ambiguous subject",
+        "missing latest",
+    ] {
+        let mut fixture = gh_pr_status_subject_fixture("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        match case {
+            "missing head" => fixture["headRefOid"] = Value::Null,
+            "short head" => fixture["headRefOid"] = Value::String("bbbb".to_string()),
+            "missing subject" => fixture["reviews"] = Value::Null,
+            "short subject" => {
+                fixture["reviews"][0]["commit"]["oid"] = Value::String("bbbb".to_string())
+            }
+            "nonhex subject" => {
+                fixture["reviews"][0]["commit"]["oid"] = Value::String("z".repeat(40))
+            }
+            "missing author" => fixture["latestReviews"][0]["author"] = Value::Null,
+            "missing time" => fixture["latestReviews"][0]["submittedAt"] = Value::Null,
+            "wrong author" => {
+                fixture["reviews"][0]["author"]["login"] = Value::String("other".to_string())
+            }
+            "wrong time" => {
+                fixture["reviews"][0]["submittedAt"] =
+                    Value::String("2026-10-13T01:00:00Z".to_string())
+            }
+            "wrong state" => {
+                fixture["reviews"][0]["state"] = Value::String("COMMENTED".to_string())
+            }
+            "ambiguous subject" => {
+                let second = fixture["reviews"][0].clone();
+                fixture["reviews"] = serde_json::json!([second.clone(), second]);
+            }
+            _ => fixture["latestReviews"] = Value::Null,
+        }
+        let pr = parse_gh_pr_status_pull_request(&fixture.to_string())?;
+        let readiness = gh_pr_status_readiness(&pr, &["rust".to_string()], true, Vec::new());
+        assert_eq!(readiness.safe_next_action, "wait", "{case}");
+        assert!(!readiness.warnings.is_empty(), "{case}");
+    }
+    Ok(())
+}
+
 #[test]
 fn ci_policy_dispatch_and_catalog_expand_the_existing_policy_owner() -> Result<(), String> {
     assert_eq!(
@@ -54870,6 +54998,27 @@ fn ci_policy_dispatch_and_catalog_expand_the_existing_policy_owner() -> Result<(
         super::expand_precommit_ci_invocations(&mut enforced);
         assert!(enforced.is_empty(), "advisory expansion: {enforced:?}");
     }
+    Ok(())
+}
+
+#[test]
+fn gh_pr_status_review_join_preserves_latest_author_subject() -> Result<(), String> {
+    let mut fixture = gh_pr_status_subject_fixture("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    let mut old_current_approval = fixture["reviews"][0].clone();
+    old_current_approval["submittedAt"] = Value::String("2026-10-13T01:00:00Z".to_string());
+    old_current_approval["commit"]["oid"] =
+        Value::String("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string());
+    fixture["reviews"] = serde_json::json!([old_current_approval, fixture["reviews"][0].clone()]);
+    let pr = parse_gh_pr_status_pull_request(&fixture.to_string())?;
+    assert_eq!(
+        pr.reviews[0].commit_oid,
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+    let readiness = gh_pr_status_readiness(&pr, &["rust".to_string()], true, Vec::new());
+    assert_eq!(
+        readiness.safe_next_action, "wait",
+        "an older matching approval must not replace the latest subject"
+    );
     Ok(())
 }
 
