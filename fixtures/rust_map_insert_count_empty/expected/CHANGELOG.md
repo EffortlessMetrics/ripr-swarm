@@ -28,7 +28,7 @@ Updated:
 ## Pending — rust_map_insert_count_empty (3)
 
 Reason:
-RIPR-SPEC-0002: re-bless the plain-language Summary line (#8165) that landed without refreshing this fixture; formatting-only, ported from #8351
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
 
 Command:
 `cargo xtask goldens bless rust_map_insert_count_empty --reason "..."`

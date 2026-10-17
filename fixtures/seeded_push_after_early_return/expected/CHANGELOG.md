@@ -41,7 +41,7 @@ Updated:
 ## Pending — seeded_push_after_early_return (4)
 
 Reason:
-RIPR-SPEC-0002: re-bless the plain-language Summary line (#8165) that landed without refreshing this fixture; formatting-only, ported from #8351
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
 
 Command:
 `cargo xtask goldens bless seeded_push_after_early_return --reason "..."`

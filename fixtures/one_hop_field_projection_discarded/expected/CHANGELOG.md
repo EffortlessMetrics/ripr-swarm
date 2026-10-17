@@ -16,7 +16,7 @@ Updated:
 ## Pending — one_hop_field_projection_discarded (2)
 
 Reason:
-RIPR-SPEC-0002: re-bless the plain-language Summary line (#8165) that landed without refreshing this fixture; formatting-only, ported from #8351
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
 
 Command:
 `cargo xtask goldens bless one_hop_field_projection_discarded --reason "..."`
