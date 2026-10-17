@@ -50,8 +50,8 @@ pub(crate) const DOCTOR_FAILED_LINE: &str =
 
 /// First command doctor prints after the checks. Git-backed routes are only
 /// recommended when the `tool_git` check actually passed (#4735). A root Git
-/// refuses gets the repository-free scan instead of a command that cannot run
-/// there (#4531); an unusable root (missing, or present but not a directory)
+/// refuses gets whole-repository pilot exploration instead of a command that
+/// cannot run there (#4531); an unusable root (missing, or present but not a directory)
 /// recommends its recovery action, which names the actual filesystem state
 /// (#4606 review, #5101), because no check command can run there (#5252 item
 /// 3). The lossless root spelling (#5010) still serves the routes that can
@@ -65,12 +65,12 @@ pub(crate) enum DoctorFirstCommand {
     /// the git state, because `check` validates an explicit `--root`
     /// through `ensure_command_root` before reading any `--diff` input.
     MissingRoot,
-    /// `git_repository` failed while git itself runs: the repository-free scan
-    /// is the only route that can run here.
+    /// `git_repository` failed while git itself runs: whole-repository
+    /// pilot exploration is the route that can run here.
     OutsideGit,
     /// `git_repository` passed but `HEAD` is unborn (#5259): the repository
     /// has no commit to diff against, so every diff-scoped first command
-    /// fails; name the commit-first path and keep the repository-free scan.
+    /// fails; name the commit-first path and keep pilot exploration.
     UnbornHead,
     /// The `config` check failed: `ripr check` loads the same `ripr.toml`
     /// and would hit the same error. Name the config correction, not a
@@ -146,7 +146,7 @@ impl DoctorFirstCommand {
             // `--diff PATH` still loads the same crate and required
             // runtimes. A named cargo_toml / runtime failure outranks the
             // git-recovery command (#8168). OutsideGit stays later so an
-            // empty or non-git root still gets the repository-free scan.
+            // empty or non-git root still gets pilot exploration.
             if failed_prerequisites {
                 Self::FailedPrerequisites
             } else {
@@ -239,35 +239,33 @@ impl DoctorFirstCommand {
             ],
             Self::OutsideGit => {
                 use crate::agent::loop_commands::shell_arg;
-                // The repository-free scan is a runnable command, so its root
-                // follows the same physical-root rule as the git-backed
-                // recommendations (#5010): a spaced, quoted, or aliased root
-                // must still analyze the diagnosed directory after the paste.
-                // The translator reads bare commands only, so the prose
-                // wrapper wraps each shell form, never enters it.
+                // Whole-repository pilot exploration is a runnable command
+                // without Git, so its root follows the same physical-root
+                // rule as the git-backed recommendations (#5010): a spaced,
+                // quoted, or aliased root must still analyze the diagnosed
+                // directory after the paste. The translator reads bare
+                // commands only, so the prose wrapper wraps each shell form,
+                // never enters it.
                 let bound = match root.canonicalize() {
                     Ok(resolved) => doctor_command_root_display(root, &resolved),
                     Err(_) => absolute_doctor_root_display(root),
                 };
                 let bash = bound.and_then(|bound| {
-                    let bash = format!(
-                        "ripr check --root {} --format repo-exposure-md",
-                        shell_arg(&bound)
-                    );
+                    let bash = crate::domain::whole_repo_pilot_command(&shell_arg(&bound));
                     require_single_line_command(&bash).map(|()| bash)
                 });
                 match bash {
                     Ok(bash) => {
                         let mut lines = vec![format!(
-                            "- Recommended first command: fix the Git check above, or scan \
-                             without Git history: `{bash}`"
+                            "- Recommended first command: fix the Git check above, or explore \
+                             the repository without Git history: `{bash}`"
                         )];
                         if let crate::output::markdown::PowershellForm::Translated(powershell) =
                             crate::output::markdown::powershell_form(&bash)
                         {
                             lines.push(format!(
                                 "- Recommended first command (PowerShell): fix the Git check \
-                                 above, or scan without Git history: `{powershell}`"
+                                 above, or explore the repository without Git history: `{powershell}`"
                             ));
                         }
                         lines
@@ -279,18 +277,16 @@ impl DoctorFirstCommand {
                 use crate::agent::loop_commands::shell_arg;
                 // #5259: the diff has no base until the first commit exists,
                 // so the line names the commit-first path (the same repair
-                // the check-time default-base error states) and keeps the
-                // repository-free scan runnable now. The scan's root follows
-                // the same physical-root rule as the other recommendations.
+                // the check-time default-base error states) and keeps
+                // whole-repository pilot exploration runnable now. Its root
+                // follows the same physical-root rule as the other
+                // recommendations.
                 let bound = match root.canonicalize() {
                     Ok(resolved) => doctor_command_root_display(root, &resolved),
                     Err(_) => absolute_doctor_root_display(root),
                 };
                 let bash = bound.and_then(|bound| {
-                    let bash = format!(
-                        "ripr check --root {} --format repo-exposure-md",
-                        shell_arg(&bound)
-                    );
+                    let bash = crate::domain::whole_repo_pilot_command(&shell_arg(&bound));
                     require_single_line_command(&bash).map(|()| bash)
                 });
                 match bash {
@@ -299,7 +295,7 @@ impl DoctorFirstCommand {
                             "- Recommended first command: this repository has no commits yet, \
                              so `ripr check` has no base to diff; commit once first (then \
                              `ripr check --base HEAD --worktree` analyzes uncommitted edits), \
-                             or scan without Git history: `{bash}`"
+                             or explore the repository without Git history: `{bash}`"
                         )];
                         if let crate::output::markdown::PowershellForm::Translated(powershell) =
                             crate::output::markdown::powershell_form(&bash)
@@ -308,7 +304,7 @@ impl DoctorFirstCommand {
                                 "- Recommended first command (PowerShell): this repository has \
                                  no commits yet, so `ripr check` has no base to diff; commit \
                                  once first (then `ripr check --base HEAD --worktree` analyzes \
-                                 uncommitted edits), or scan without Git history: `{powershell}`"
+                                 uncommitted edits), or explore the repository without Git history: `{powershell}`"
                             ));
                         }
                         lines
@@ -1818,8 +1814,8 @@ fn evaluate_doctor_core_with_probe_for_profile(
                 DoctorStatus::Fail,
                 Some(format!(
                     "not inside a Git work tree at {}; the diff-scoped commands read committed \
-                     history and cannot run here. For a repository-free scan, run `ripr check --root \
-                     {} --format repo-exposure-md`",
+                     history and cannot run here. For whole-repository exploration without Git \
+                     history, run `ripr pilot --root {}`",
                     human_path(root),
                     root.display()
                 )),
@@ -2485,7 +2481,9 @@ mod tests {
                     for expected in [
                         "not inside a Git work tree",
                         "cannot run here",
-                        "--format repo-exposure-md",
+                        // Canonical whole-repo route (domain::next_action):
+                        // pilot, not the repo-exposure check format.
+                        "ripr pilot --root",
                     ] {
                         if !evidence.contains(expected) {
                             failures.push(format!("`{evidence}` does not say `{expected}`"));
@@ -5041,10 +5039,10 @@ mod tests {
                 DoctorFirstCommand::OutsideGit
                     .recommendation_lines_for(Path::new("/work/it's app")),
                 [
-                    r"- Recommended first command: fix the Git check above, or scan without Git history: `ripr check --root '/work/it'\''s app' --format repo-exposure-md`",
-                    "- Recommended first command (PowerShell): fix the Git check above, or scan without Git history: `ripr check --root '/work/it''s app' --format repo-exposure-md`",
+                    r"- Recommended first command: fix the Git check above, or explore the repository without Git history: `ripr pilot --root '/work/it'\''s app'`",
+                    "- Recommended first command (PowerShell): fix the Git check above, or explore the repository without Git history: `ripr pilot --root '/work/it''s app'`",
                 ],
-                "the repository-free route quotes and translates like the runnable ones"
+                "the whole-repository pilot route quotes and translates like the runnable ones"
             );
             // #5252 item 3: no check command can run against a root that is
             // not there, so the recovery action is the recommendation. The old
@@ -5234,7 +5232,7 @@ mod tests {
         assert_eq!(
             DoctorFirstCommand::resolve_for_report(&refused, || false),
             DoctorFirstCommand::OutsideGit,
-            "a non-repository root gets the repository-free scan, not a check that cannot run"
+            "a non-repository root gets pilot exploration, not a check that cannot run"
         );
 
         // A git binary that cannot run outranks the repository state (#4735):
@@ -5367,14 +5365,14 @@ mod tests {
         assert_eq!(
             DoctorFirstCommand::resolve_for_report(&non_git_missing_manifest, || false),
             DoctorFirstCommand::OutsideGit,
-            "empty/non-git roots keep the repository-free scan even when cargo_toml failed"
+            "empty/non-git roots keep pilot exploration even when cargo_toml failed"
         );
     }
 
     /// #5259: a repository with no commits passes `git_repository` (it is a
     /// real work tree) but cannot resolve a diff base, so the evaluation
     /// records the advisory `git_head` check and the first command names the
-    /// commit-first repair with the repository-free scan, never a
+    /// commit-first repair with pilot exploration, never a
     /// diff-scoped `ripr check` that would exit 2 there.
     #[test]
     fn unborn_head_repository_is_advised_and_not_sent_to_ripr_check() -> Result<(), String> {
@@ -5458,11 +5456,10 @@ mod tests {
     }
 
     /// #5259: the UnbornHead recommendation names the commit-first repair
-    /// and keeps the repository-free scan runnable now, with the root bound
-    /// exactly as the other recommendations bind it.
+    /// and keeps whole-repository pilot exploration runnable now, with the
+    /// root bound exactly as the other recommendations bind it.
     #[test]
-    fn unborn_head_recommendation_names_commit_first_and_the_repo_free_scan() -> Result<(), String>
-    {
+    fn unborn_head_recommendation_names_commit_first_and_pilot() -> Result<(), String> {
         let root = doctor_scope_root("unborn-head-rec", &[])?;
         let lines = DoctorFirstCommand::UnbornHead.recommendation_lines_for(&root);
         let _ = std::fs::remove_dir_all(&root);
@@ -5474,7 +5471,8 @@ mod tests {
             "has no base to diff",
             "commit once first",
             "--base HEAD --worktree",
-            "--format repo-exposure-md",
+            // Canonical whole-repo route (domain::next_action): pilot.
+            "ripr pilot --root",
         ] {
             if !first.contains(needle) {
                 return Err(format!("recommendation {first:?} misses {needle:?}"));
