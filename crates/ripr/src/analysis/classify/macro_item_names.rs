@@ -190,7 +190,10 @@ fn forwards_arguments_verbatim(masked_definition: &str) -> bool {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join("");
-    squeezed.contains(":tt") || squeezed.contains(":item")
+    let Some((matcher, transcriber)) = squeezed.split_once("=>") else {
+        return false;
+    };
+    (matcher.contains(":tt") || matcher.contains(":item")) && transcriber.contains('$')
 }
 
 /// Standard-library macros that expand to expressions or statements and
@@ -378,6 +381,8 @@ mod tests {
             "emit!(other.name());\n",
             "emit!(fn other() { name() });\n",
             "emit!(x::name());\n",
+            "emit!(inner::name);\n",
+            "emit!((name, x));\n",
         ] {
             assert!(!macro_may_define_item_named(source, "name"), "{source}");
         }
@@ -395,14 +400,23 @@ mod tests {
             &format!("{item}emit!(fn name() {{}});\n"),
             "name"
         ));
-        // Controls: the caller spells another item, or only calls the name, or
-        // the macro does not forward its arguments.
+    }
+
+    #[test]
+    fn a_passthrough_macro_needs_a_spelled_item_and_a_forwarding_transcriber() {
+        let tt = "macro_rules! emit {\n    ($($t:tt)*) => { $($t)* };\n}\n";
         assert!(!macro_may_define_item_named(
             &format!("{tt}emit!(fn other() {{}});\n"),
             "name"
         ));
         assert!(!macro_may_define_item_named(
             &format!("{tt}emit!(fn other() {{ name() }});\n"),
+            "name"
+        ));
+        // A `:tt` matcher whose transcriber drops the tokens forwards nothing.
+        let dropped = "macro_rules! emit {\n    ($($t:tt)*) => { const _: () = (); };\n}\n";
+        assert!(!macro_may_define_item_named(
+            &format!("{dropped}emit!(fn name() {{}});\n"),
             "name"
         ));
         let fixed = "macro_rules! emit {\n    ($e:expr) => { let _ = $e; };\n}\n";
