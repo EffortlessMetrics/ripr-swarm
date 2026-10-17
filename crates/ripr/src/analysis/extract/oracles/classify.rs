@@ -1871,6 +1871,19 @@ fn ok_literal() {
                 "mock.expect_err();",
                 vec![(MockExpectation, Medium)],
             ),
+            // `expect_err` at byte 0 is not `.expect_err` / `Result::expect_err`;
+            // the matcher must not subtract before that check (debug overflow
+            // on GitHub Hosted ripr-pr).
+            (
+                "mock_expectation_for_err_method_at_line_start",
+                "expect_err();",
+                vec![(MockExpectation, Medium)],
+            ),
+            (
+                "mock_expectation_message_at_line_start",
+                "expect_err(\"too long\");",
+                vec![(MockExpectation, Medium)],
+            ),
             (
                 "mock_expectation_for_err_method_configured",
                 "mock.expect_err().returning(|| ());",

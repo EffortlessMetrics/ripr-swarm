@@ -1273,7 +1273,13 @@ pub(super) fn next_expect_err_open(masked: &str, search: usize) -> Option<Expect
 }
 
 fn method_expect_err_start(bytes: &[u8], name_at: usize) -> Option<usize> {
-    (name_at > 0 && bytes[name_at - 1] == b'.').then_some(name_at - 1)
+    // Guard first: `then_some(name_at - 1)` evaluates the subtraction even
+    // when the condition is false (debug overflow if the line starts with
+    // `expect_err(`).
+    if name_at == 0 {
+        return None;
+    }
+    (bytes[name_at - 1] == b'.').then_some(name_at - 1)
 }
 
 fn result_ufcs_expect_err_start(masked: &str, name_at: usize) -> Option<usize> {
@@ -2234,6 +2240,25 @@ mod spec_0106_tests {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod expect_err_open_tests {
+    use super::{ExpectErrForm, ExpectErrOpen, next_expect_err_open};
+
+    #[test]
+    fn line_start_expect_err_is_not_a_result_read() {
+        assert_eq!(next_expect_err_open("expect_err();", 0), None);
+        assert_eq!(next_expect_err_open("expect_err(\"too long\");", 0), None);
+        assert_eq!(
+            next_expect_err_open(".expect_err(\"too long\");", 0),
+            Some(ExpectErrOpen {
+                start: 0,
+                open: 11,
+                form: ExpectErrForm::Method,
+            })
+        );
     }
 }
 
