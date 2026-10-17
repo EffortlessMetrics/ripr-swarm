@@ -76,8 +76,10 @@ syntax limitation and static-unknown finding (#8424). If the portable DTO cannot
 represent the source path, omit that path field and name the source in bounded
 detail, matching the Rust/Python parse-failure fallback. This does not disable
 the adapter, change its syntax-limit taxonomy, or promote its evidence.
-The fallback detail keeps the parser cause before the bounded source sample so
-a long path cannot consume the entire disclosure.
+The fallback detail keeps a SHA-256 identity of the native source-path bytes and
+the parser cause before the bounded source sample. A long path cannot consume
+the entire cause or make distinct file failures deduplicate solely because their
+displayed samples share a prefix.
 
 Human output must name incomplete or unsupported analysis before any empty
 finding message and must state that zero findings is not a clean result when a

@@ -267,10 +267,76 @@ fn long_nonportable_source_path_keeps_bounded_parser_cause() -> TestResult {
     assert!(limitation["path"].is_null());
     let detail = limitation["bounded_detail"].as_str().ok_or("no detail")?;
     assert_eq!(detail.chars().count(), 512);
-    assert!(detail.starts_with("1 parser error(s):"), "{detail}");
+    assert!(detail.starts_with("source_path_sha256:"), "{detail}");
+    assert!(detail.contains("; 1 parser error(s):"), "{detail}");
     assert!(detail.contains("; source: C:"), "{detail}");
     assert_eq!(json["findings"][0]["classification"], "static_unknown");
     assert_eq!(json["findings"][0]["probe"]["file"], relative);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
+#[test]
+fn distinct_long_nonportable_paths_keep_distinct_parse_failures() -> TestResult {
+    let prefix = format!(
+        "C:{}/{}/{}/",
+        "a".repeat(200),
+        "b".repeat(200),
+        "c".repeat(200)
+    );
+    let first = format!("{prefix}one.ts");
+    let second = format!("{prefix}two.ts");
+    let language = &LANGUAGES[2];
+    let fixture = Fixture::create(language, &first, true)?;
+    fs::copy(fixture.0.join(&first), fixture.0.join(&second))?;
+    let patch = fs::read_to_string(fixture.0.join("change.diff"))?;
+    fs::write(
+        fixture.0.join("change.diff"),
+        format!("{patch}{}", patch.replace(&first, &second)),
+    )?;
+    let (output, json) = fixture.check()?;
+    let outcome = &json["analysis_outcome"]["outcome"];
+    assert_eq!(outcome["kind"], "partial_with_limitations");
+    assert_eq!(outcome["counts"]["changed_file_count"], 2);
+    let limitations = outcome["limitations"].as_array().ok_or("no limitations")?;
+    assert_eq!(limitations.len(), 2, "{outcome}");
+    // Literal SHA-256 pins were computed independently from the native path
+    // bytes. The paths differ beyond the retained display sample, so merely
+    // truncating the path/reason collapses two failures into one.
+    for digest in [
+        "b048cf4c9c00ff6017c7da7d1df0736ad889a5edb66a3e25b18ba228a88fa4ef",
+        "65c3b0a6489d66dc8f315337b672dbe7cee9521549e73fb1b54e5a3309d84735",
+    ] {
+        let expected = format!("source_path_sha256:{digest}; 1 parser error(s):");
+        assert!(
+            limitations
+                .iter()
+                .any(|limitation| limitation["path"].is_null()
+                    && limitation["kind"] == "language_scope_unsupported"
+                    && limitation["affected_items"] == 1
+                    && limitation["bounded_detail"]
+                        .as_str()
+                        .is_some_and(
+                            |detail| detail.starts_with(&expected) && detail.chars().count() == 512
+                        )),
+            "{outcome}"
+        );
+    }
+    let findings = json["findings"].as_array().ok_or("no findings")?;
+    assert_eq!(findings.len(), 2);
+    for relative in [first, second] {
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding["classification"] == "static_unknown"
+                    && finding["probe"]["file"] == relative)
+        );
+    }
     assert_eq!(
         output.status.code(),
         Some(0),

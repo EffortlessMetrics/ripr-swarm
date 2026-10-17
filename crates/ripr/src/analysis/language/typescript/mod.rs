@@ -698,16 +698,25 @@ impl TypeScriptAdapter {
                 .with_detail(limit.reason.clone())?;
                 // Legal Unix names such as `C:calc.ts` are not portable DTO
                 // paths. Retain the syntax limitation and source identity,
-                // matching the Rust/Python fallback. Put the reason first so
-                // a long path cannot consume the entire bounded detail.
+                // matching the Rust/Python fallback. Preserve path identity
+                // before truncation so distinct failures cannot deduplicate
+                // merely because their displayed source samples are equal.
                 match limitation.clone().with_path(limit.file.to_string_lossy()) {
                     Ok(with_path) => Ok(with_path),
-                    Err(_) => limitation.with_detail(
-                        format!("{}; source: {}", limit.reason, limit.file.display())
+                    Err(_) => {
+                        use sha2::{Digest, Sha256};
+                        let identity = Sha256::digest(limit.file.as_os_str().as_encoded_bytes());
+                        limitation.with_detail(
+                            format!(
+                                "source_path_sha256:{identity:x}; {}; source: {}",
+                                limit.reason,
+                                limit.file.display()
+                            )
                             .chars()
                             .take(crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS)
                             .collect::<String>(),
-                    ),
+                        )
+                    }
                 }
             })
             .collect::<Result<Vec<_>, String>>()?;
