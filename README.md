@@ -52,7 +52,7 @@ Selected lines from the development [boundary example's checked output](fixtures
   Changed behavior: amount >= discount_threshold
   Missing discriminator: amount == discount_threshold
   Related test (1 of 2 matched rows): tests/pricing.rs:4 below_threshold_has_no_discount (no test input reaches `amount == discount_threshold`)
-  Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions.
+  Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
 ```
 
 ripr finds this statically, from source. It does not run your tests or
