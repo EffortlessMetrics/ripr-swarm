@@ -7086,11 +7086,13 @@ fn expected_reads_written_file(
             }
             None => {
                 let at = statement.match_indices(ident).find_map(|(at, _)| {
+                    // A field assignment (`holder.want = ..`) does not
+                    // bind the plain local `want`.
                     let before_ok = at == 0
                         || !statement[..at]
                             .chars()
                             .next_back()
-                            .is_some_and(|c| c.is_alphanumeric() || c == '_');
+                            .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '.');
                     before_ok.then_some(at)
                 })?;
                 statement[at..].to_string()
