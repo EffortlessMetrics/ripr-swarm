@@ -84,6 +84,12 @@ impl Fixture {
         Ok(fixture)
     }
 
+    pub(super) fn suppression_policy(&self, text: &str) -> Result<PathBuf, std::io::Error> {
+        let path = self.scratch.join("suppression-policy.toml");
+        std::fs::write(&path, text)?;
+        Ok(path)
+    }
+
     pub(super) fn run(&self, extra: &[&str]) -> Result<Output, Box<dyn std::error::Error>> {
         let started = Instant::now();
         let mut command = probe_command(env!("CARGO_BIN_EXE_ripr"));
@@ -128,9 +134,16 @@ pub(super) fn human(output: Output) -> Result<(), String> {
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Summary: 4 probe(s)"));
+    assert!(stdout.contains("Summary: 4 probes ("));
     assert!(stdout.contains("Start here:"));
-    assert!(stdout.contains("Static exposure: weak (weakly_exposed, "));
+    assert!(stdout.contains("Static exposure: weak (severity: "));
+    // #8165: the default render must not leak schema tokens.
+    for leaked in ["(top_gap)", "(weakly_exposed", "weakly_exposed,"] {
+        assert!(
+            !stdout.contains(leaked),
+            "default output leaked schema token {leaked}:\n{stdout}"
+        );
+    }
     assert!(stdout.contains("Evidence:"));
     // #4320: the digest missing-discriminator line discloses its one-of-N
     // window, so the pin carries the parenthesized window opening.

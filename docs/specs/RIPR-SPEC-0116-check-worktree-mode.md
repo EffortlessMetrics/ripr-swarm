@@ -61,6 +61,12 @@ head it analyzed.
   diff starts, not where it ends, so `ripr check --base origin/main` on a
   dirty tree reads the working tree. CI checkouts are clean, so CI runs keep
   the committed-history read unchanged.
+- **Submodule inclusion.** Both existing tracked-change status probes and
+  the shared diff byte owner pin `--ignore-submodules=none` (#8209). Git's
+  submodule ignore preferences cannot hide an unstaged pointer from default
+  source selection or doctor guidance, nor suppress the existing skipped-pointer
+  notice after a worktree or committed diff is loaded. Child contents remain
+  outside analysis.
 - **`--committed`** forces the committed-history read on a dirty tree. It is
   rejected with `--worktree`, `--diff`, `--candidate-tree`, `--gap-ledger`,
   and repo-scope formats, none of which has a live diff source to choose.
@@ -278,6 +284,7 @@ that untracked source was analyzed.
 
 ## Test Mapping
 
+- `crates/ripr/tests/hostile_repos.rs::submodule_ignore_settings_cannot_hide_pointer_changes`
 - `crates/ripr/tests/cli_smoke.rs::check_worktree_base_head_analyzes_uncommitted_tracked_edit`
 - `crates/ripr/tests/cli_smoke.rs::check_worktree_drill_in_commands_reach_the_uncommitted_finding`
 - `crates/ripr/src/app/navigation.rs::tests::finding_navigation_carries_worktree_scope_after_the_base`

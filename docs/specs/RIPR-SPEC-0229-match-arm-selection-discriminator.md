@@ -84,8 +84,9 @@ Three wrong outcomes follow:
 ### Selection facts
 
 For a changed `match_arm` probe, activation collects every related test's
-owner calls whose scrutinee is a parameter of the owner, not shadowed or
-reassigned before the `match`. Each call is either resolved (its argument is
+owner calls whose scrutinee is a parameter of the owner (or, by decision 6,
+one integer `/` or `%` of it by a literal), not shadowed or reassigned
+before the `match`. Each call is either resolved (its argument is
 statically resolved, below) or unresolved; an unresolved call is kept as a
 blocker, never dropped. A resolved call **provably selects** an arm when, in
 source order,
@@ -114,7 +115,9 @@ grammar above written in the test call itself, or an immutable `let` binding
 in the same test whose initializer is one and which is not shadowed before
 the call. A `let mut` binding, or one passed as `&mut` before the call, is
 unresolved. Arguments from helpers, fixtures, loops,
-parameters or other calls are unresolved.
+parameters or other calls are unresolved, except the helper-lent literals
+of decision 5 and the constant-row table cells of decision 7, which only
+credit the selected arm.
 
 ### Naming the unselected arm
 
@@ -215,8 +218,12 @@ loses its only finding.
 
 ### A guard-only edit is the guard's predicate
 
-When an edit lies wholly inside an arm's guard (`n if 0 > n =>` from
-`n if n < 0 =>`), the line carries the guard's `predicate` finding alone.
+When an edit lies wholly inside one comparison of an arm's guard
+(`n if 0 > n =>` from `n if n < 0 =>`), the line carries the guard's
+`predicate` finding alone. A deleted or added conjunct (`n if a && 0 > n`
+to `n if 0 > n`) is more than that comparison's edit, so the arm head
+stays; an edit inside one operand of an unchanged `&&`/`||` chain is
+still the guard predicate's.
 Arm selection never evaluates guards, so an arm finding there can only
 read unconfirmed, while the predicate's boundary pairing is the
 discriminator the edit needs. The arm head is kept when the edit reaches
@@ -228,11 +235,13 @@ value, so when the owner body's only `match` is on a parameter
 (`match points {`), the guard's boundary reads that parameter's test
 inputs and can name `p == 100` as missing. The operand stays unread when:
 
-- the body has a second `match` (the arm could belong to either);
+- the body has a second `match` keyword, however spelled (`match(other)`,
+  or `match` ending its line), since the arm could belong to either;
 - the binding's name appears anywhere but inside a one-line guard,
   between `if` and `=>`: on another line or in the arm body after `=>`
-  (a `let`, a loop variable, a closure parameter), or in a guard that holds
-  a closure parameter list;
+  (a `let`, a loop variable, a closure parameter), or in a guard that is
+  not a plain expression (a block, a statement, a closure, a `let`, `for`
+  or `match`);
 - the parameter appears anywhere but the signature (which ends at its
   first `{`) and its `match` line, read with comments and string contents
   masked so neither hides code after it (`let points = points - 50;`, a closure
@@ -241,7 +250,10 @@ inputs and can name `p == 100` as missing. The operand stays unread when:
 - the binding's name may resolve to a constant (a `const` or `static` of
   that name in the owner file, or an import of it), since the pattern then
   compares the constant instead of binding the scrutinee, or the owner
-  file is unavailable;
+  file is unavailable, does not parse cleanly, or may declare items through
+  a macro (`macro_rules!`, `include!`, a macro call at the item level of
+  any module, or a statement macro inside the owner; a statement macro in
+  another function scopes its items there and does not count);
 - the binding is not a bare identifier.
 
 The old line such an edit replaced (its positional counterpart, not any
@@ -271,6 +283,54 @@ rejected alternative. Any can be reversed later without touching the rest.
    exact oracle on that call's result, is the discriminator the change
    needs. Rejected: name the selection in the discriminate summary but keep the
    existing token rule for credit.
+5. **Helper-lent literal inputs (#7981).** Adopted: a test-local check
+   helper admitted under RIPR-SPEC-0197 rule 7 (#6482), whose assertion
+   is `assert_eq!` with one operand exactly an owner call on a helper
+   parameter, lends that parameter's literal argument to the owner call.
+   When the literal at that position of a call to the helper provably
+   selects the changed arm, the helper's exact assertion credits it
+   (`check_color('S', "black")` with `assert_eq!(suit_color(suit), want)`).
+   Only the scalar literals `loan_call_literals` reads are lent, and only
+   when every argument of that helper call is one, so
+   `check_color('S', want)` lends nothing; a variable, an expression or a
+   call argument lends nothing. This credits
+   only: a helper call still blocks naming an arm as unselected
+   (decision 3). A lending test that also names the owner must pass the
+   direct path's identity gates (every mention a readable call, no owner
+   result bound with `let`, no local shadow of the owner), as in
+   decision 7. Rejected: keep helper arguments unresolved, which reads
+   a helper-wrapped table of literal checks as unproven.
+6. **Integer scrutinee arithmetic and value-equal respelling (#7989).**
+   Adopted: a scrutinee written `param / N` or `param % N`, with `param` a
+   primitive integer parameter (`u8`..`u128`, `usize`, `i8`..`i128`,
+   `isize`) and `N` a positive integer literal, binds `param`. An integer
+   literal input is evaluated as Rust does (truncating division, remainder
+   with the dividend's sign), so `http_class(301)` reaches the `3` arm of
+   `match status / 100`; any other input is not provable. A longer
+   expression, another operator, a non-literal or zero divisor, or a
+   non-integer parameter establishes nothing. Separately, a changed arm
+   whose alternatives are all literals or literal-bounded integer ranges,
+   each matching an alternative of the original by value and vice versa
+   (`3` to `0x3`; `1..=3` to `1 | 2 | 3` still reads as changed), reads as an
+   unchanged pattern, like reordered alternatives. Rejected: keep every
+   computed scrutinee a non-goal, which leaves the common
+   status-class and weekday matches unproven.
+7. **Constant-row table inputs (#7989).** Adopted: an `assert_eq!` whose
+   compared operand is exactly a direct owner call fed by a column of a
+   constant-row `for` table (#5328, read by `constant_table_column`) is a
+   selecting call when some row's cell selects the arm, since the loop
+   runs the assertion once per row. Like decision 5 this credits only;
+   table rows never name an arm as unselected. The assertion must be the
+   test's own `assert_eq!` statement standing directly in the body of the
+   `for` that binds the column, with no `continue`, `break`, `return` or
+   `?` before it in that body and no block, closure or call around it; an
+   assertion borrowed from a check helper never reads the test's table.
+   As on the direct path, an assertion whose every compared operand names
+   the owner never selects.
+   The test must still pass
+   the direct path's owner-identity gates: every owner mention a readable
+   call, no owner result bound with `let`, and no local shadow of the
+   owner. Rejected: keep loop bindings unresolved.
 
 ### Implementation Status
 
@@ -280,7 +340,16 @@ credits one.
 
 Implemented:
 
-- integer, char, bool, and cooked or raw string literals, compared by value;
+- integer, char, bool, and cooked or raw string literals, compared by value.
+  A char-literal pattern (`'C' | 'S' =>`) reads since #7981; before it the
+  arm-head reader masked char literals as comments and no char arm ever
+  established;
+- literal arguments a check helper lends to an owner call (decision 5,
+  #7981), for credit only;
+- `param / N` and `param % N` integer scrutinees and value-equal literal
+  respellings (decision 6, #7989), which both select and name arms;
+- constant-row table cells lent to the owner call, for credit only
+  (decision 7, #7989);
 - integer ranges with literal bounds (`a..=b`, `a..b`, `..=b`, `a..`),
   matched by value against an integer input (#5992);
 - enum variant paths, qualified or bare imported, including `Some`, `None`,
@@ -450,7 +519,8 @@ implies but does not spell out:
 
 - No guard evaluation.
 - No scrutinee that is not a direct owner parameter (fields, method results,
-  computed tuples).
+  computed tuples), except decision 6's single integer `/` or `%` by a
+  literal.
 - No exhaustiveness checking beyond source-order first match.
 - No change to RIPR-SPEC-0164 helper transfer, which keeps its own refusals.
 - No new probe family, class, `static_limit_kind` or schema field.
@@ -533,6 +603,23 @@ the diff changes `None => 1` to `None => 0`.
 - `crates/ripr/tests/match_arm_unselected_identity.rs`: owner identity
   (foreign imports, a foreign call path, a shadowing closure, a two-level
   helper).
+- `crates/ripr/tests/match_arm_helper_selection.rs` (decision 5): a
+  helper-lent char literal that selects the changed arm credits it; a
+  literal for another arm and a variable argument do not. Verdict corpus
+  case `grid-match-helper`.
+  A same-file `macro_rules!` that may define an item of the owner's name
+  (#7985) makes the owner call ambiguous, so it credits nothing; a macro
+  defining an unrelated name does not. Unit tests: `macro_item_names.rs`
+  `tests` and the `helper_transfer.rs` unit test
+  `test_call_is_shadowed_by_a_macro_defined_same_named_fn`, plus the shared-gate
+  test `macro_defined_same_name_is_a_foreign_rebind_for_every_gate_caller` in
+  `reveal.rs` (covering the owner-pin callers).
+- `crates/ripr/tests/match_arm_table_selection.rs` and the
+  `arm_selection.rs` unit tests
+  `integer_scrutinee_arithmetic_evaluates_the_input`,
+  `a_value_equal_literal_respelling_reads_as_unchanged` and
+  `a_constant_row_table_lends_its_cells_to_the_owner_call` (decisions 6
+  and 7). Verdict corpus case `grid-match-table`.
 - `crates/ripr/src/analysis/probes/diff.rs` unit tests: an arm-head edit
   drops the unchanged return value; a body edit, or a line with no other
   shape holding the edit, keeps it. Verdict corpus case
@@ -556,7 +643,11 @@ the diff changes `None => 1` to `None => 0`.
   verified local `assert_matches!`, parsed once per file per run.
 
 - `crates/ripr/src/analysis/classify/arm_selection.rs`: pattern and input
-  reading, scrutinee binding and first-match selection.
+  reading, scrutinee binding and first-match selection; integer scrutinee
+  arithmetic and value-equal respelling (decision 6); helper loans and
+  table rows (`with_helper_loans`, `with_table_rows`, decisions 5 and 7),
+  fed from `crates/ripr/src/analysis/classifier/evidence.rs` and reading
+  table columns through `analysis/syntax` `constant_table_column`.
 - `crates/ripr/src/analysis/classify/activation.rs`: selection facts and the
   `match_arm` missing discriminator; keep constructors on observed values.
 - `crates/ripr/src/analysis/classify/infection.rs`: an unselected arm reads
@@ -581,3 +672,25 @@ the diff changes `None => 1` to `None => 0`.
   exact oracle confirms the arm.
 - Verdict-corpus false-actionable and false-silent counts on `match_arm`
   cases do not rise.
+
+## Named field-selector boundary (#8479)
+
+A plain parameter field in a statement-free tail match is outside the credited
+whole-parameter selector rules. A candidate-current weak finding with reach
+`yes`, discrimination `weak`, and a strong oracle in a directly calling test
+may name `rust_field_match_selector_unresolved`. The whole match header and
+unique direct-arm start lines qualify. Guarded, nested, computed, local or
+ambiguous same-line shapes do not. This metadata preserves every class, proof
+leg and missing discriminator; it proves neither Option identity nor that a
+particular invocation feeds the assertion. Guidance first asks to inspect that
+alignment and only then repair a demonstrated observation gap. Existing typed
+limitations, including FFI/binding exposure, take precedence. Cached classified findings must be invalidated;
+file facts and output wire versions do not change.
+
+The preserved identities are finding/probe IDs; preserved counts are raw class
+counts. Existing #5268 rules withhold the canonical repair-gap projection when a
+typed limitation is present. MCP repair readiness and derived gate routes may
+therefore refuse these rows as analyzer uncertainty. This is not exposure,
+resolved test debt, or evidence that a consumer's strict qualification passed.
+The supported direct-parameter genuine-gap case retains its canonical identity
+and missing discriminator.

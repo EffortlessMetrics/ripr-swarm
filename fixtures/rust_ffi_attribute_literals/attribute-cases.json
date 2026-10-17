@@ -1,0 +1,200 @@
+[
+  {
+    "name": "plain-unsafe",
+    "attribute": "#[unsafe(no_mangle)]",
+    "ffi": true,
+    "compile": true
+  },
+  {
+    "name": "plain-cfg-attr",
+    "attribute": "#[cfg_attr(all(), unsafe(no_mangle))]",
+    "ffi": true,
+    "compile": true
+  },
+  {
+    "name": "plain-doc",
+    "attribute": "#[doc = \"no_mangle, pyo3\"]",
+    "ffi": false,
+    "compile": true
+  },
+  {
+    "name": "plain-cfg-doc",
+    "attribute": "#[cfg_attr(all(), doc = \"no_mangle\")]",
+    "ffi": false,
+    "compile": true
+  },
+  {
+    "name": "plain-feature-name",
+    "attribute": "#[cfg_attr(feature = \"pyo3\", inline)]",
+    "ffi": false,
+    "compile": true
+  },
+  {
+    "name": "nested-cfg-control",
+    "attribute": "#[cfg_attr(all(), cfg_attr(all(), unsafe(no_mangle)))]",
+    "ffi": true,
+    "compile": true
+  },
+  {
+    "name": "qualified-binding-control",
+    "attribute": "#[pyo3::pyfunction]",
+    "ffi": true,
+    "compile": false
+  },
+  {
+    "name": "similar-name-control",
+    "attribute": "#[my_pyfunction_like]",
+    "ffi": false,
+    "compile": false
+  },
+  {
+    "name": "raw-doc-fake-marker",
+    "attribute": "#[cfg_attr(all(), doc = r#\"Example: \", no_mangle, \" tail\"#)]",
+    "ffi": false,
+    "compile": true
+  },
+  {
+    "name": "raw-doc-before-binding",
+    "attribute": "#[cfg_attr(all(), doc = r#\"Quote: \" (\"#, unsafe(no_mangle))]",
+    "ffi": true,
+    "compile": true
+  },
+  {
+    "name": "raw-predicate-fake-marker",
+    "attribute": "#[cfg_attr(feature = r#\"x\", no_mangle, \"x\"#, inline)]",
+    "ffi": false,
+    "compile": true
+  },
+  {
+    "name": "raw-predicate-before-binding",
+    "attribute": "#[cfg_attr(feature = r#\"x\", (\"x\"#, unsafe(no_mangle))]",
+    "ffi": true,
+    "compile": false
+  },
+  {
+    "name": "comment-comma-control",
+    "attribute": "#[cfg_attr(all(), /* , no_mangle, */ inline)]",
+    "ffi": false,
+    "compile": true
+  },
+  {
+    "name": "comment-path-fake-marker",
+    "attribute": "#[cfg_attr(all(), /* :: no_mangle :: */ inline)]",
+    "ffi": false,
+    "compile": true
+  },
+  {
+    "name": "nested-comment-fake-marker",
+    "attribute": "#[cfg_attr(all(), /* outer /* nested */ :: no_mangle :: */ inline)]",
+    "ffi": false,
+    "compile": true
+  },
+  {
+    "name": "line-comment-fake-marker",
+    "attribute": "#[cfg_attr(all(), // :: no_mangle ::\n inline)]",
+    "ffi": false,
+    "compile": true
+  },
+  {
+    "name": "comment-before-binding",
+    "attribute": "#[cfg_attr(all(), /* binding */ unsafe(no_mangle))]",
+    "ffi": true,
+    "compile": true
+  },
+  {
+    "name": "line-comment-before-binding",
+    "attribute": "#[cfg_attr(all(), // binding\n unsafe(no_mangle))]",
+    "ffi": true,
+    "compile": true
+  },
+  {
+    "name": "cfg-wrapper-trivia",
+    "attribute": "#[cfg_attr /* comment */ (all(), unsafe(no_mangle))]",
+    "ffi": true,
+    "compile": true
+  },
+  {
+    "name": "unsafe-wrapper-trivia",
+    "attribute": "#[unsafe /* comment */ (no_mangle)]",
+    "ffi": true,
+    "compile": true
+  },
+  {
+    "name": "outer-wrapper-trivia",
+    "attribute": "# /* comment */ [unsafe(no_mangle)]",
+    "ffi": true,
+    "compile": true
+  },
+  {
+    "name": "raw-marker-under-unsafe",
+    "attribute": "#[cfg_attr(all(), unsafe(r#no_mangle))]",
+    "ffi": true,
+    "compile": true
+  },
+  {
+    "name": "raw-cfg-wrapper",
+    "attribute": "#[r#cfg_attr(all(), unsafe(no_mangle))]",
+    "ffi": true,
+    "compile": true
+  },
+  {
+    "name": "raw-qualified-binding",
+    "attribute": "#[r#pyo3::r#pyfunction]",
+    "ffi": true,
+    "compile": false
+  },
+  {
+    "name": "comment-namespace-fake-marker",
+    "attribute": "#[cfg_attr(all(), /* fake :: pyo3 :: */ doc = \"none\")]",
+    "ffi": false,
+    "compile": true
+  },
+  {
+    "name": "qualified-path-trivia",
+    "attribute": "#[r#uniffi /* comment */ :: export]",
+    "ffi": true,
+    "compile": false
+  },
+  {
+    "name": "unicode-raw-doc-control",
+    "attribute": "#[cfg_attr(all(), doc = r###\"Unicode λ 🦀 \", no_mangle, \" text\"###)]",
+    "ffi": false,
+    "compile": true
+  },
+  {
+    "name": "escaped-doc-control",
+    "attribute": "#[cfg_attr(all(), doc = \"quote: \\\" , no_mangle,\", inline)]",
+    "ffi": false,
+    "compile": true
+  },
+  {
+    "name": "nested-binding-trivia",
+    "attribute": "#[cfg_attr(all(), /* λ */ unsafe(/* comment */ no_mangle /* comment */))]",
+    "ffi": true,
+    "compile": true
+  },
+  {
+    "name": "nested-wrapper-trivia",
+    "attribute": "#[cfg_attr(all(), /* λ */ cfg_attr /* wrapper */ (all(), unsafe(no_mangle)))]",
+    "ffi": true,
+    "compile": true
+  },
+  {
+    "name": "other-feature-name-control",
+    "attribute": "#[cfg_attr(feature = \"uniffi\", inline)]",
+    "ffi": false,
+    "compile": true
+  },
+  {
+    "name": "case-sensitive-marker-control",
+    "attribute": "#[No_Mangle]",
+    "ffi": false,
+    "compile": false
+  },
+  {
+    "name": "raw-unsafe-is-not-keyword-wrapper",
+    "attribute": "#[cfg_attr(all(), r#unsafe(r#no_mangle))]",
+    "ffi": false,
+    "compile": false
+  }
+]

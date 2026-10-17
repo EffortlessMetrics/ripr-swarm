@@ -52,8 +52,9 @@ DEFAULT_CHECK_ARGV = ["check", "--root", "{subject_root}", "--format", "json"]
 DEFAULT_PILOT_ARGV = ["pilot", "--root", "{subject_root}", "--out", "{out_dir}"]
 PRODUCT_SCHEMA_VERSION = "0.2"
 # `pilot-summary.json` versions separately from check JSON; 0.3 added
-# `withheld_static_limitations_total` (#5497).
-PILOT_SUMMARY_SCHEMA_VERSION = "0.3"
+# `withheld_static_limitations_total` (#5497); 0.4 added
+# `actionable_seams_total_is_lower_bound` and `seam_limit` (#6739).
+PILOT_SUMMARY_SCHEMA_VERSION = "0.4"
 PILOT_SUMMARY_NAME = "pilot-summary.json"
 
 CLASS_COMPLETE = "complete"
@@ -588,7 +589,8 @@ def product_json_bytes(operation: str, stdout: bytes, out_dir: Path) -> bytes:
 
 
 def write_bytes_unfollowed(path: Path, data: bytes) -> None:
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    # Keep persisted bytes identical to the receipt digests on Windows too.
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0)
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     try:

@@ -3,11 +3,11 @@ mode: fast
 root: fixtures/python_disabled/input
 config: <cwd>/fixtures/python_disabled/input/ripr.toml
 
-Summary: 0 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 0 of 0 finding(s) unsuppressed
+Summary: 0 probes analyzed; 0 findings unsuppressed
 
-Analysis outcome: limitations below (analysis incomplete; partial_with_limitations).
+Analysis outcome: limitations below (analysis incomplete)
   Zero findings is not a clean result because the analyzed scope is incomplete.
-  Limitation: no analyzer is available for a changed language during language analysis (language_adapter_unavailable at language_adapter); affected items: 1; recovery: enable the language (enable_language) — Enable the python preview adapter and re-run the analysis.
+  Limitation: no analyzer is available for a changed language during language analysis; affected items: 1; recovery: enable the language — Enable the python preview adapter and re-run the analysis.
 
 No diff-derived static exposure probes found.
 

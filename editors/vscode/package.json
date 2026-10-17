@@ -80,7 +80,7 @@
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
-    "@types/node": "^24.19.1",
+    "@types/node": "^24.19.2",
     "@types/vscode": "~1.90.0",
     "@vscode/test-electron": "^2.4.1",
     "@vscode/vsce": "^3.9.2",
@@ -141,7 +141,7 @@
         "ripr.server.autoDownload": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically download the matching ripr server binary when no configured, bundled, or cached server is available. Downloads over HTTPS — by default from github.com/EffortlessMetrics/ripr releases, configurable via ripr.server.downloadBaseUrl — and archives are SHA-256 verified against the release manifest before extraction.",
+          "description": "Automatically download the matching ripr server binary when no configured, bundled, cached, or (while ripr.server.version is empty) compatible PATH server is available. Downloads over HTTPS — by default from github.com/EffortlessMetrics/ripr releases, configurable via ripr.server.downloadBaseUrl — and archives are SHA-256 verified against the release manifest before extraction.",
           "scope": "resource"
         },
         "ripr.server.version": {
@@ -374,7 +374,7 @@
       },
       {
         "command": "ripr.copyReceiptCommand",
-        "title": "ripr: Copy Receipt Command"
+        "title": "ripr: Copy Receipt Command (Receipt Status)"
       },
       {
         "command": "ripr.openAttemptLedger",
@@ -385,6 +385,12 @@
         "title": "ripr: Show Route Quality"
       }
     ],
+    "submenus": [
+      {
+        "id": "ripr.editorContext",
+        "label": "ripr"
+      }
+    ],
     "menus": {
       "editor/context": [
         {
@@ -393,39 +399,46 @@
           "group": "ripr@1"
         },
         {
-          "command": "ripr.copyTopRepairPacket",
+          "submenu": "ripr.editorContext",
           "when": "editorTextFocus && resourceLangId =~ /^(rust|typescript|typescriptreact|javascript|javascriptreact|python)$/",
           "group": "ripr@2"
+        }
+      ],
+      "ripr.editorContext": [
+        {
+          "command": "ripr.copyTopRepairPacket",
+          "when": "editorTextFocus && resourceLangId =~ /^(rust|typescript|typescriptreact|javascript|javascriptreact|python)$/",
+          "group": "ripr@1"
         },
         {
           "command": "ripr.copyTopVerifyCommand",
           "when": "editorTextFocus && resourceLangId =~ /^(rust|typescript|typescriptreact|javascript|javascriptreact|python)$/",
-          "group": "ripr@3"
+          "group": "ripr@2"
         },
         {
           "command": "ripr.copyTopReceiptCommand",
           "when": "editorTextFocus && resourceLangId =~ /^(rust|typescript|typescriptreact|javascript|javascriptreact|python)$/",
-          "group": "ripr@4"
+          "group": "ripr@3"
         },
         {
           "command": "ripr.showTopLimitation",
           "when": "editorTextFocus && resourceLangId =~ /^(rust|typescript|typescriptreact|javascript|javascriptreact|python)$/",
-          "group": "ripr@5"
+          "group": "ripr@4"
         },
         {
           "command": "ripr.showStatus",
           "when": "editorTextFocus && resourceLangId =~ /^(rust|typescript|typescriptreact|javascript|javascriptreact|python)$/",
-          "group": "ripr@6"
+          "group": "ripr@5"
         },
         {
           "command": "ripr.showReceiptStatus",
           "when": "editorTextFocus && resourceLangId =~ /^(rust|typescript|typescriptreact|javascript|javascriptreact|python)$/",
-          "group": "ripr@7"
+          "group": "ripr@6"
         },
         {
           "command": "ripr.showRouteQuality",
           "when": "editorTextFocus && resourceLangId =~ /^(rust|typescript|typescriptreact|javascript|javascriptreact|python)$/",
-          "group": "ripr@8"
+          "group": "ripr@7"
         }
       ]
     },

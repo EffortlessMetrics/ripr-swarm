@@ -192,9 +192,9 @@ fn only_a_plain_helper_that_runs_to_its_end_lends_its_assertion() -> Result<(), 
         format!(
             "    fn check_tip(b: u64, t: u64, want: u64) {{ if b == 40 {{ return; }} {assertion} }}\n"
         ),
-        // A return type, so a `?` or value may stand in for the assertion.
+        // A real early exit in a returned helper, rather than its return type.
         format!(
-            "    fn check_tip(b: u64, t: u64, want: u64) -> Option<()> {{ {assertion} Some(()) }}\n"
+            "    fn check_tip(b: u64, t: u64, want: u64) -> Option<()> {{ None?; {assertion} Some(()) }}\n"
         ),
         // An early exit from one match arm.
         format!(
@@ -273,6 +273,46 @@ fn the_indexed_helper_assertion_is_the_admitted_one() -> Result<(), Box<dyn Erro
     let syntax = OwnerPinSyntax::default();
     assert!(syntax.admits_equality_assertion(&probe, test, assertion, &index));
     assert!(pin.admits(test, assertion, &index, &|_, _| false, &syntax));
+    Ok(())
+}
+
+#[test]
+fn returned_helpers_lend_the_indexed_panic_assertion_and_exact_loan() -> Result<(), String> {
+    for (return_type, tail) in [
+        ("Result<(), ()>", "Ok(())"),
+        ("Result<(), ()>", "Err(())"),
+        ("Option<()>", "Some(())"),
+        ("u64", "46"),
+    ] {
+        let helper = format!(
+            "    fn check_tip(b: u64, t: u64, want: u64) -> {return_type} {{\n        assert_eq!(with_tip(b, t), want);\n        {tail}\n    }}\n"
+        );
+        let index = indexed(&module(&helper, "let _ = check_tip(40, 6, 46);"))?;
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "tip_is_added")
+            .ok_or("premise: caller indexed")?;
+        let assertion = test
+            .assertions
+            .iter()
+            .find(|assertion| assertion.text == "assert_eq!(with_tip(b, t), want);")
+            .ok_or("premise: producer copied exact helper assertion")?;
+        assert!(!(test.start_line..=test.end_line).contains(&assertion.line));
+        let syntax = OwnerPinSyntax::default();
+        let loan = syntax
+            .helper_loan(test, assertion, &index)
+            .ok_or("returned helper loan refused")?;
+        assert_eq!(loan.name, "check_tip");
+        assert_eq!(loan.parameters, ["b", "t", "want"]);
+        assert_eq!(loan.call_lines, [test.start_line + 1]);
+        assert!(loan.helper.contains(&format!("-> {return_type}")));
+        let owner = owner(&index, "with_tip");
+        let probe = return_probe(owner, "tip + bill");
+        let pin = OwnerReturnPin::establish(&probe, owner, &index).ok_or("premise: owner pin")?;
+        assert!(syntax.admits_equality_assertion(&probe, test, assertion, &index));
+        assert!(pin.admits(test, assertion, &index, &|_, _| false, &syntax));
+    }
     Ok(())
 }
 
@@ -532,5 +572,66 @@ fn a_helper_that_names_the_owner_twice_lends_nothing() -> Result<(), String> {
         whole_word_count("with_tip(b) + with_tips(c) + my_with_tip", "with_tip"),
         1
     );
+    Ok(())
+}
+
+/// #7969: a short-circuit tail reads a helper's calls as runs, mapping
+/// each owner argument through the helper's own parameter order.
+fn short_circuit_helper_admitted(helper: &str, body: &str) -> Result<bool, String> {
+    let source = format!(
+        "pub fn both_zero(x: i32, y: i32) -> bool {{\n    x == 0 && 0 == y\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{helper}\n    #[test]\n    fn tip_is_added() {{\n        {body}\n    }}\n}}\n"
+    );
+    let index = index(&[(LIB, source.as_str())]);
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.name == "tip_is_added")
+        .ok_or("premise: the test is indexed")?;
+    let helper = index
+        .functions()
+        .iter()
+        .find(|function| function.name == "check")
+        .ok_or("premise: `check` is indexed")?;
+    let assertion = parser_oracles_for_function(&helper.body, helper.start_line)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|oracle| oracle.text.starts_with("assert_eq!(both_zero("))
+        .ok_or("premise: the helper's assert_eq! parses")?;
+    let owner = owner(&index, "both_zero");
+    let probe = return_probe(owner, "x == 0 && 0 == y");
+    let pin = OwnerReturnPin::establish(&probe, owner, &index)
+        .ok_or("premise: the chain establishes a pin")?;
+    Ok(pin.admits(
+        test,
+        &assertion,
+        &index,
+        &|_, _| false,
+        &OwnerPinSyntax::default(),
+    ))
+}
+
+#[test]
+fn a_short_circuit_tail_reads_helper_calls_by_parameter() -> Result<(), String> {
+    const IN_ORDER: &str = "    fn check(x: i32, y: i32, want: bool) {\n        assert_eq!(both_zero(x, y), want);\n    }\n";
+    const SWAPPED: &str = "    fn check(y: i32, x: i32, want: bool) {\n        assert_eq!(both_zero(x, y), want);\n    }\n";
+    for (helper, body, admitted) in [
+        // `(1, 0)` stops at `x == 0`; `(0, 0)` runs the changed `0 == y`.
+        (IN_ORDER, "check(1, 0, false);", false),
+        (
+            IN_ORDER,
+            "check(1, 0, false);\n        check(0, 0, true);",
+            true,
+        ),
+        // The helper's first parameter is `y`: `check(0, 1, ..)` passes
+        // `x = 1`, and `check(1, 0, ..)` passes `x = 0`.
+        (SWAPPED, "check(0, 1, false);", false),
+        (SWAPPED, "check(1, 0, false);", true),
+    ] {
+        assert_eq!(
+            short_circuit_helper_admitted(helper, body)?,
+            admitted,
+            "{helper}{body}"
+        );
+    }
     Ok(())
 }

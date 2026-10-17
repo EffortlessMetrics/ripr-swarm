@@ -24,11 +24,7 @@ fn unique_temp_workspace(label: &str) -> PathBuf {
 }
 
 fn run_ripr(current_dir: &Path, args: &[&str]) -> Result<Output, String> {
-    std::process::Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .current_dir(current_dir)
-        .args(args)
-        .output()
-        .map_err(|error| format!("spawn ripr {args:?}: {error}"))
+    run_ripr_env(current_dir, args, &[])
 }
 
 fn run_git(root: &Path, args: &[&str]) -> Result<String, String> {
@@ -79,6 +75,7 @@ const FIXTURE_CARGO_TOML: &str = "[package]\nname = \"boundary_gap_fixture\"\nve
 const FIXTURE_LIB: &str = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
 const FIXTURE_WEAK_TEST: &str = "use boundary_gap_fixture::discounted_total;\n\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n\n#[test]\nfn far_above_threshold_discounts() {\n    assert_eq!(discounted_total(10_000, 100), 9_990);\n}\n";
 const FIXTURE_SEAM: &str = "67fc764ba37d77bd";
+const FIXTURE_GAP: &str = "gap:4b5fdc1a2a157b0d";
 const SECOND_SEAM: &str = "59fe960b7be4b8d6";
 const FIXTURE_BOUNDARY_TEST: &str = "\n#[test]\nfn at_threshold_discounts() {\n    assert_eq!(discounted_total(100, 100), 90);\n}\n";
 
@@ -117,6 +114,29 @@ fn populate_two_seam_fixture(root: &Path) -> Result<(), String> {
     init_repo(root)?;
     run_git(root, &["add", "Cargo.toml", "src", "tests"])?;
     git_commit(root, "two-seam fixture source")?;
+    Ok(())
+}
+
+/// Populate a committed workspace whose one function holds two boundary
+/// seams with the same file, owner, kind and expression, so the producer gap
+/// ID cannot tell them apart.
+fn populate_duplicate_expression_fixture(root: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn tiered(amount: i32, threshold: i32) -> i32 {\n    let base = if amount >= threshold {\n        10\n    } else {\n        0\n    };\n    let bonus = if amount >= threshold {\n        5\n    } else {\n        0\n    };\n    base + bonus\n}\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        "use boundary_gap_fixture::tiered;\n\n#[test]\nfn below_threshold_pays_nothing() {\n    assert_eq!(tiered(50, 100), 0);\n}\n\n#[test]\nfn far_above_threshold_pays() {\n    assert_eq!(tiered(10_000, 100), 15);\n}\n",
+    )
+    .map_err(|e| e.to_string())?;
+    init_repo(root)?;
+    run_git(root, &["add", "Cargo.toml", "src", "tests"])?;
+    git_commit(root, "duplicate-expression fixture source")?;
     Ok(())
 }
 
@@ -295,6 +315,27 @@ fn repair_single_item_matches_advanced_card() -> Result<(), String> {
     let manifest = read_manifest(root, &ids[0])?;
     assert_eq!(manifest["seam_id"], FIXTURE_SEAM);
     assert_eq!(manifest["state"], "awaiting_edit");
+    let persisted = manifest["next_command"]
+        .as_str()
+        .ok_or("manifest next_command missing")?;
+    assert!(
+        persisted.contains("ripr agent repair") && persisted.contains("--phase after"),
+        "persisted next_command stays the advanced after spelling:\n{persisted}"
+    );
+    let stderr = stderr_text(&repair);
+    let printed = stderr
+        .lines()
+        .find_map(|line| line.strip_prefix("ripr: attempt next command: "))
+        .ok_or_else(|| format!("before phase printed no attempt command:\n{stderr}"))?;
+    assert!(
+        printed.starts_with("ripr continue --root ")
+            && printed.contains(&format!("--attempt {}", ids[0])),
+        "human next command must name `ripr continue`:\n{printed}"
+    );
+    assert!(
+        !printed.contains("--phase after"),
+        "human next command must not teach `--phase after`:\n{printed}"
+    );
     // The compact RepairCard renders on stdout after the start, and every
     // line of the canonical `agent card` rendering appears in order.
     let card = run_ripr(
@@ -310,6 +351,10 @@ fn repair_single_item_matches_advanced_card() -> Result<(), String> {
     )?;
     assert_exit(&card, 0, "agent card for the started seam");
     let facade_stdout = stdout_text(&repair);
+    assert!(
+        facade_stdout.contains(&format!("Next, after the test edit: {printed}")),
+        "stdout trailer must name the same ordinary continue route:\n{facade_stdout}"
+    );
     let facade_lines: Vec<&str> = facade_stdout.lines().collect();
     let card_stdout = stdout_text(&card);
     let mut cursor = 0usize;
@@ -339,6 +384,563 @@ fn repair_single_item_matches_advanced_card() -> Result<(), String> {
         serde_json::from_slice(&status.stdout).map_err(|error| format!("status JSON: {error}"))?;
     assert_eq!(report["attempt"]["attempt_id"], ids[0].as_str());
     assert_eq!(report["attempt"]["status_class"], "awaiting_edit");
+    let status_command = report
+        .pointer("/next_action/command")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("status JSON missing next_action.command:\n{report:#}"))?;
+    assert_eq!(
+        status_command, printed,
+        "status must name the same ordinary continue route the before phase printed"
+    );
+    Ok(())
+}
+
+fn assert_no_repair_attempt_side_effects(root: &Path) {
+    assert!(
+        attempt_ids(root).is_empty(),
+        "an ineligible explicit subject must create no repair attempt"
+    );
+    assert!(
+        !root
+            .join("target/ripr/repair-attempts/.before.lock")
+            .exists(),
+        "an ineligible explicit subject must not create the before-phase lock"
+    );
+    assert!(
+        !root.join("target/ripr/repair-attempts").exists(),
+        "an ineligible explicit subject must not create the repair-attempt store"
+    );
+}
+
+/// #8166 Slice A (positive control): an explicit eligible seam still
+/// starts exactly one before-phase attempt through the façade.
+#[test]
+fn repair_explicit_eligible_seam_starts_one_attempt() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-eligible-explicit")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let repair = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&repair, 0, "repair with an explicit eligible seam");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1, "exactly one attempt must be created");
+    assert_eq!(read_manifest(root, &ids[0])?["seam_id"], FIXTURE_SEAM);
+    Ok(())
+}
+
+/// #8166 Slice A: an explicit seam that is no longer repair-eligible
+/// (its boundary is already gripped, so it is not a headline repair
+/// target) must refuse as a Decision (exit 3) naming the ineligibility
+/// reason, before any attempt or before-phase lock side effect.
+#[test]
+fn repair_explicit_ineligible_seam_refuses_without_attempt_or_lock() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-ineligible-seam")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{FIXTURE_WEAK_TEST}{FIXTURE_BOUNDARY_TEST}"),
+    )
+    .map_err(|e| e.to_string())?;
+    run_git(root, &["add", "tests/pricing.rs"])?;
+    git_commit(root, "grip the boundary")?;
+    let repair = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&repair, 3, "repair with an explicit ineligible seam");
+    assert!(
+        stdout_text(&repair).is_empty(),
+        "ineligibility refusal must leave stdout empty:\n{}",
+        stdout_text(&repair)
+    );
+    let stderr = stderr_text(&repair);
+    assert!(
+        stderr.contains(FIXTURE_SEAM),
+        "refusal must name the seam:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("not a headline repair target"),
+        "refusal must name the ineligibility reason:\n{stderr}"
+    );
+    assert_no_repair_attempt_side_effects(root);
+    Ok(())
+}
+
+/// #8166 Slice A: a canonical gap ID (and its seam ID) whose class is
+/// configured off must refuse as a Decision (exit 3) naming the policy
+/// reason, before any attempt or before-phase lock side effect.
+#[test]
+fn repair_explicit_policy_omitted_gap_and_seam_refuse_without_attempt_or_lock() -> Result<(), String>
+{
+    let fixture = Fixture::boundary("facade-ineligible-gap")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[severity.seams]\nweakly_gripped = \"off\"\n",
+    )
+    .map_err(|e| e.to_string())?;
+    run_git(root, &["add", "ripr.toml"])?;
+    git_commit(root, "configure weakly_gripped off")?;
+    for item in [FIXTURE_GAP, FIXTURE_SEAM] {
+        let repair = run_ripr(root, &["repair", item, "--root", &root_arg])?;
+        assert_exit(&repair, 3, "repair with a policy-omitted explicit item");
+        assert!(
+            stdout_text(&repair).is_empty(),
+            "policy refusal must leave stdout empty:\n{}",
+            stdout_text(&repair)
+        );
+        let stderr = stderr_text(&repair);
+        assert!(
+            stderr.contains(item),
+            "refusal must name the item {item}:\n{stderr}"
+        );
+        assert!(
+            stderr.contains("configured off"),
+            "refusal must name the policy ineligibility reason:\n{stderr}"
+        );
+        assert_no_repair_attempt_side_effects(root);
+    }
+    Ok(())
+}
+
+fn run_ripr_env(
+    current_dir: &Path,
+    args: &[&str],
+    envs: &[(&str, &str)],
+) -> Result<Output, String> {
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command.current_dir(current_dir).args(args);
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    command
+        .output()
+        .map_err(|error| format!("spawn ripr {args:?}: {error}"))
+}
+
+/// Weaken the boundary predicate (`>=` becomes `>`) as an uncommitted
+/// worktree edit, so `ripr check --worktree` reports the seam's gap.
+fn weaken_boundary_predicate(root: &Path) -> Result<(), String> {
+    let lib = root.join("src/lib.rs");
+    let source = std::fs::read_to_string(&lib).map_err(|e| e.to_string())?;
+    assert!(
+        source.contains("amount >= discount_threshold"),
+        "fixture predicate must be present before weakening:\n{source}"
+    );
+    std::fs::write(
+        &lib,
+        source.replace(
+            "amount >= discount_threshold",
+            "amount > discount_threshold",
+        ),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// The seam identity a printed `ripr repair <identity>` drill-down line
+/// names, when the bounded check output offers one.
+fn printed_repair_identity(check_stdout: &str) -> Option<String> {
+    check_stdout.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("ripr repair ")
+            .and_then(|tail| tail.split_whitespace().next())
+            .map(str::to_string)
+    })
+}
+
+fn run_worktree_check(root: &Path, root_arg: &str) -> Result<Output, String> {
+    run_ripr(
+        root,
+        &["check", "--root", root_arg, "--base", "HEAD", "--worktree"],
+    )
+}
+
+/// #8166 Slice C (positive control): the bounded human check drill-down for
+/// a repair-eligible top finding prints a `ripr repair` line naming the seam
+/// identity the repair resolver accepts, and running that exact identity
+/// starts the before phase for the same seam. The printed identity is never
+/// the `probe:` finding ID the resolver refuses.
+#[test]
+fn check_drill_down_prints_repair_identity_that_starts_the_same_seam() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-check-drilldown-eligible")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    weaken_boundary_predicate(root)?;
+    let check = run_worktree_check(root, &root_arg)?;
+    let stdout = stdout_text(&check);
+    assert!(
+        stdout.contains("Next: drill into the top finding:"),
+        "check must print the drill-down block:\n{stdout}\nstderr:\n{}",
+        stderr_text(&check)
+    );
+    assert!(
+        stdout.contains("ripr explain"),
+        "check must keep the explain next step:\n{stdout}"
+    );
+    let identity = printed_repair_identity(&stdout).ok_or_else(|| {
+        format!("eligible top finding must print a `ripr repair` next step:\n{stdout}")
+    })?;
+    assert!(
+        !identity.starts_with("probe:"),
+        "the repair line must not name the refused finding ID: {identity}"
+    );
+    assert!(
+        !stdout.contains("ripr repair probe:"),
+        "no repair line may name a `probe:` identity:\n{stdout}"
+    );
+    // The other formats carry no new repair next step: human-full keeps its
+    // per-finding explain/context drill-in only, and JSON is unchanged.
+    let full = run_ripr(
+        root,
+        &[
+            "check",
+            "--root",
+            &root_arg,
+            "--base",
+            "HEAD",
+            "--worktree",
+            "--format",
+            "human-full",
+        ],
+    )?;
+    assert!(
+        !stdout_text(&full).contains("ripr repair"),
+        "human-full must not gain the bounded repair line:\n{}",
+        stdout_text(&full)
+    );
+    let json = run_ripr(
+        root,
+        &[
+            "check",
+            "--root",
+            &root_arg,
+            "--base",
+            "HEAD",
+            "--worktree",
+            "--format",
+            "json",
+        ],
+    )?;
+    assert!(
+        !stdout_text(&json).contains("ripr repair"),
+        "JSON must not gain a repair next step:\n{}",
+        stdout_text(&json)
+    );
+    // Round-trip: the printed identity resolves through `ripr repair` to
+    // the same seam and starts exactly one before-phase attempt for it.
+    // The before phase pins the repository at HEAD, so the worktree edit
+    // is committed first (the recovery `ripr repair` itself names for a
+    // dirty production file); committing identical bytes keeps the seam
+    // identity the check printed.
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "weaken the boundary predicate")?;
+    let repair = run_ripr(root, &["repair", &identity, "--root", &root_arg])?;
+    assert_exit(&repair, 0, "repair with the check-printed identity");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1, "exactly one attempt must be created");
+    assert_eq!(read_manifest(root, &ids[0])?["seam_id"], identity);
+    Ok(())
+}
+
+/// #8166 Slice C (negative control): when the top finding's seam is no
+/// longer repair-eligible (its boundary is already gripped, so it is not a
+/// headline repair target), the drill-down prints no `ripr repair` line.
+#[test]
+fn check_drill_down_omits_repair_when_top_seam_is_not_eligible() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-check-drilldown-ineligible")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{FIXTURE_WEAK_TEST}{FIXTURE_BOUNDARY_TEST}"),
+    )
+    .map_err(|e| e.to_string())?;
+    run_git(root, &["add", "tests/pricing.rs"])?;
+    git_commit(root, "grip the boundary")?;
+    // A semantics-preserving predicate edit keeps the seam gripped (the
+    // Slice A ineligible state) while still producing its check finding:
+    // parenthesizing the comparison changes the changed line, not the
+    // behavior the boundary test discriminates.
+    let lib = root.join("src/lib.rs");
+    let source = std::fs::read_to_string(&lib).map_err(|e| e.to_string())?;
+    std::fs::write(
+        &lib,
+        source.replace(
+            "amount >= discount_threshold",
+            "(amount) >= discount_threshold",
+        ),
+    )
+    .map_err(|e| e.to_string())?;
+    let check = run_worktree_check(root, &root_arg)?;
+    let stdout = stdout_text(&check);
+    assert!(
+        stdout.contains("Next: drill into the top finding:"),
+        "the gripped finding must still drill down to explain/context:\n{stdout}"
+    );
+    assert!(
+        printed_repair_identity(&stdout).is_none() && !stdout.contains("ripr repair"),
+        "an ineligible seam must print no repair line:\n{stdout}"
+    );
+    assert!(
+        attempt_ids(root).is_empty(),
+        "check must never start a repair attempt"
+    );
+    Ok(())
+}
+
+/// #8166 Slice C (negative control): a truncated seam inventory cannot
+/// establish eligibility, so the drill-down prints no `ripr repair` line
+/// even though the seam itself is eligible in a complete inventory.
+#[test]
+fn check_drill_down_omits_repair_when_seam_inventory_is_truncated() -> Result<(), String> {
+    let fixture = Fixture::two_seam("facade-check-drilldown-truncated")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    weaken_boundary_predicate(root)?;
+    let check = run_ripr_env(
+        root,
+        &["check", "--root", &root_arg, "--base", "HEAD", "--worktree"],
+        &[("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1")],
+    )?;
+    let stdout = stdout_text(&check);
+    assert!(
+        stdout.contains("Next: drill into the top finding:"),
+        "check must print the drill-down block:\n{stdout}\nstderr:\n{}",
+        stderr_text(&check)
+    );
+    assert!(
+        printed_repair_identity(&stdout).is_none() && !stdout.contains("ripr repair"),
+        "a truncated inventory must print no repair line:\n{stdout}"
+    );
+    Ok(())
+}
+
+/// #7882: display narration must never feed stable text back into identity.
+/// #8166: the `Canonical gap:` line `ripr check` prints for a Rust finding is
+/// the producer gap ID, not the seam-derived `gap:<hash>`. It must start the
+/// same attempt as the seam ID, and only for the seam it names.
+#[test]
+fn repair_accepts_the_producer_gap_id_check_prints() -> Result<(), String> {
+    let fixture = Fixture::two_seam("facade-producer-gap")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    // Wrong discriminator: names no seam, starts nothing.
+    let wrong = run_ripr(
+        root,
+        &[
+            "repair",
+            "gap:rust:src/lib.rs:shipping_fee:predicate_boundary:predicate:items==other",
+            "--root",
+            &root_arg,
+        ],
+    )?;
+    assert_exit(&wrong, 3, "repair with a producer gap naming no seam");
+    assert!(
+        attempt_ids(root).is_empty(),
+        "an unmatched producer gap must create no attempt"
+    );
+    // The second function's producer gap selects the second seam, not the
+    // first match.
+    let repair = run_ripr(
+        root,
+        &[
+            "repair",
+            "gap:rust:src/lib.rs:shipping_fee:predicate_boundary:predicate:items==free_threshold",
+            "--root",
+            &root_arg,
+        ],
+    )?;
+    assert_exit(&repair, 0, "repair with a producer gap ID");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1, "exactly one attempt must be created");
+    assert_eq!(read_manifest(root, &ids[0])?["seam_id"], SECOND_SEAM);
+    Ok(())
+}
+
+/// #8166: two seams that share file, owner, kind and expression make the
+/// producer gap ID ambiguous. It must refuse with the bounded list and start
+/// nothing, never pick the first match.
+#[test]
+fn repair_refuses_a_producer_gap_id_that_names_several_seams() -> Result<(), String> {
+    let fixture = Fixture::dir("facade-producer-gap-ambiguous")?;
+    let root = &fixture.root;
+    populate_duplicate_expression_fixture(root)?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let repair = run_ripr(
+        root,
+        &[
+            "repair",
+            "gap:rust:src/lib.rs:tiered:predicate_boundary:predicate:amount==threshold",
+            "--root",
+            &root_arg,
+        ],
+    )?;
+    assert_exit(&repair, 3, "repair with an ambiguous producer gap ID");
+    let stderr = String::from_utf8_lossy(&repair.stderr);
+    assert!(
+        stderr.contains("names 2 seams; select one explicitly"),
+        "expected the ambiguous refusal, got: {stderr}"
+    );
+    assert!(
+        attempt_ids(root).is_empty(),
+        "an ambiguous producer gap must create no attempt"
+    );
+    Ok(())
+}
+
+/// Both percent spellings exist, so an accidental codec substitution selects
+/// a real, wrong repository instead of merely producing a missing-path error.
+#[test]
+fn repair_human_paths_preserve_percent_root_identity() -> Result<(), String> {
+    repair_human_path_identity_journey("repo 100%", "repo 100%25")
+}
+
+#[cfg(unix)]
+#[test]
+fn repair_human_paths_preserve_literal_backslash_root_identity() -> Result<(), String> {
+    repair_human_path_identity_journey(r"repo\literal", "repo/literal")
+}
+
+fn repair_human_path_identity_journey(name: &str, sibling: &str) -> Result<(), String> {
+    let parent = Fixture::dir("facade-human-path")?;
+    let root = parent.root.join(name);
+    let other = parent.root.join(sibling);
+    populate_boundary_fixture(&root)?;
+    populate_boundary_fixture(&other)?;
+    let canonical = root.canonicalize().map_err(|error| error.to_string())?;
+    let other_canonical = other.canonicalize().map_err(|error| error.to_string())?;
+    assert_ne!(canonical, other_canonical);
+    let root_arg = root.to_string_lossy().into_owned();
+    let expected_display = if cfg!(windows) {
+        root_arg.replace('\\', "/")
+    } else {
+        root_arg.clone()
+    };
+    let before = run_ripr(&parent.root, &["repair", "--root", &root_arg])?;
+    assert_exit(&before, 0, "prepare attempt under literal root");
+    let ids = attempt_ids(&root);
+    assert_eq!(ids.len(), 1);
+    assert!(
+        attempt_ids(&other).is_empty(),
+        "the sibling must stay untouched"
+    );
+    let id = &ids[0];
+    let manifest = read_manifest(&root, id)?;
+    let persisted_root = manifest["root"].as_str().ok_or("missing root")?;
+    assert_eq!(
+        Path::new(persisted_root)
+            .canonicalize()
+            .map_err(|e| e.to_string())?,
+        canonical
+    );
+    let expected_persisted = if cfg!(windows) {
+        canonical.to_string_lossy().replace('\\', "/")
+    } else {
+        canonical.to_string_lossy().into_owned()
+    };
+    assert_eq!(
+        persisted_root, expected_persisted,
+        "canonical identity spelling must stay unchanged"
+    );
+    let command = manifest["next_command"].clone();
+    let command_text = command.as_str().ok_or("missing command")?;
+    let root_token = command_text
+        .strip_prefix("ripr agent repair --root ")
+        .and_then(|tail| tail.split_once(" --attempt ").map(|(root, _)| root))
+        .ok_or_else(|| format!("missing command root: {command_text}"))?;
+    // These fixture names contain neither quotes nor expansions. Accept either
+    // host's enclosing quote without duplicating the product's shell parser.
+    let command_root = root_token
+        .strip_prefix('\'')
+        .and_then(|s| s.strip_suffix('\''))
+        .or_else(|| {
+            root_token
+                .strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"'))
+        })
+        .unwrap_or(root_token);
+    assert_eq!(
+        command_root, expected_display,
+        "command must select the lexical root, not a display-codec sibling"
+    );
+    let stderr = stderr_text(&before);
+    for file in [
+        "workflow.json",
+        "commands.md",
+        "agent-brief.json",
+        "agent-packet.json",
+    ] {
+        assert!(
+            stderr.lines().any(|line| line
+                == format!("ripr: wrote {expected_display}/target/ripr/workflow/{file}")),
+            "missing literal artifact path for {file}: {stderr}"
+        );
+    }
+    let attempt_relative = format!("target/ripr/repair-attempts/{id}/attempt.json");
+    assert!(
+        stderr.contains(&format!(
+            "ripr: attempt manifest: {expected_display}/{attempt_relative}"
+        )),
+        "{stderr}"
+    );
+    let attempt_dir = root.join("target/ripr/repair-attempts").join(id);
+    let commitment =
+        std::fs::read(attempt_dir.join("before-commitment.sha256")).map_err(|e| e.to_string())?;
+    let manifest_before = manifest_bytes(&root, id)?;
+    let missing_id = "repair-attempt-000000000000000000000000";
+    let missing = run_ripr(
+        &parent.root,
+        &["continue", "--root", &root_arg, "--attempt", missing_id],
+    )?;
+    assert_exit(&missing, 2, "unknown attempt");
+    let missing_stderr = stderr_text(&missing);
+    assert!(missing_stderr.contains(&format!("repair attempt manifest not found for {missing_id} at {expected_display}/target/ripr/repair-attempts/{missing_id}/attempt.json")), "{missing_stderr}");
+    assert_eq!(manifest_bytes(&root, id)?, manifest_before);
+    let wrong_root = run_ripr(
+        &parent.root,
+        &[
+            "continue",
+            "--root",
+            &other.to_string_lossy(),
+            "--attempt",
+            id,
+        ],
+    )?;
+    assert_exit(
+        &wrong_root,
+        2,
+        "the same attempt cannot select a sibling repository",
+    );
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{FIXTURE_WEAK_TEST}{FIXTURE_BOUNDARY_TEST}"),
+    )
+    .map_err(|e| e.to_string())?;
+    let after = run_ripr(
+        &parent.root,
+        &["continue", "--root", &root_arg, "--attempt", id],
+    )?;
+    assert_exit(&after, 0, "consume the exact attempt after a focused edit");
+    let after_stderr = stderr_text(&after);
+    assert!(
+        after_stderr.contains(&format!(
+            "ripr: consuming attempt manifest {expected_display}/{attempt_relative}"
+        )),
+        "{after_stderr}"
+    );
+    let finished = read_manifest(&root, id)?;
+    assert_eq!(finished["state"], "ready_to_finish");
+    assert_eq!(finished["root"], manifest["root"]);
+    assert_eq!(finished["next_command"], command);
+    assert_eq!(finished["repair_attempt_id"], manifest["repair_attempt_id"]);
+    assert_eq!(
+        std::fs::read(attempt_dir.join("before-commitment.sha256")).map_err(|e| e.to_string())?,
+        commitment
+    );
+    assert!(
+        root.join("target/ripr/reports/agent-receipt.json")
+            .is_file()
+    );
+    assert!(attempt_ids(&other).is_empty());
     Ok(())
 }
 
@@ -451,6 +1053,185 @@ fn continue_single_attempt_advances_it() -> Result<(), String> {
         report["attempt"]["receipt"].is_object(),
         "a finished attempt must carry its receipt:\n{report:#}"
     );
+    Ok(())
+}
+
+fn compatibility_packet_target(root: &Path) -> Result<String, String> {
+    let bytes = std::fs::read(root.join("target/ripr/workflow/agent-packet.json"))
+        .map_err(|error| format!("read prepared packet: {error}"))?;
+    let packet: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("decode prepared packet: {error}"))?;
+    packet["packets"]
+        .as_array()
+        .and_then(|packets| {
+            packets
+                .iter()
+                .find(|packet| packet["seam_id"] == FIXTURE_SEAM)
+        })
+        .and_then(|packet| packet["allowed_edit_surface"][0].as_str())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            format!("prepared packet has no focused target for {FIXTURE_SEAM}: {packet}")
+        })
+}
+
+/// #7881: recovery belongs to the selected retained attempt, even when a
+/// genuine later packet replaces the repository-global compatibility file.
+#[test]
+fn continue_no_movement_uses_retained_target_and_recovers_after_edit() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-no-movement")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let before = run_ripr(root, &["repair", "--root", &root_arg])?;
+    assert_exit(&before, 0, "prepare pricing attempt");
+    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    assert_eq!(compatibility_packet_target(root)?, "tests/pricing.rs");
+
+    // Independently prepare a valid packet with the same production seam
+    // but a different test target. Only the compatibility projection in the
+    // original root is replaced; its source and retained artifacts stay put.
+    let decoy = Fixture::boundary("facade-decoy")?;
+    std::fs::rename(
+        decoy.root.join("tests/pricing.rs"),
+        decoy.root.join("tests/decoy.rs"),
+    )
+    .map_err(|error| format!("rename decoy test: {error}"))?;
+    run_git(&decoy.root, &["add", "tests"])?;
+    git_commit(&decoy.root, "decoy test target")?;
+    let decoy_before = run_ripr(&decoy.root, &["repair"])?;
+    assert_exit(&decoy_before, 0, "prepare genuine decoy packet");
+    assert_eq!(compatibility_packet_target(&decoy.root)?, "tests/decoy.rs");
+    std::fs::copy(
+        decoy.root.join("target/ripr/workflow/agent-packet.json"),
+        root.join("target/ripr/workflow/agent-packet.json"),
+    )
+    .map_err(|error| format!("replace compatibility packet: {error}"))?;
+    assert_eq!(compatibility_packet_target(root)?, "tests/decoy.rs");
+    assert!(run_git(root, &["status", "--porcelain"])?.is_empty());
+
+    let refused = run_ripr(
+        root,
+        &["continue", "--root", &root_arg, "--attempt", &attempt_id],
+    )?;
+    assert_exit(&refused, 3, "continue before focused edit");
+    assert!(
+        refused.stdout.is_empty(),
+        "facade refusal stdout must stay empty"
+    );
+    let stderr = stderr_text(&refused);
+    assert!(stderr.contains("no repository movement"), "{stderr}");
+    assert!(stderr.contains("awaiting_edit"), "{stderr}");
+    assert!(stderr.contains("tests/pricing.rs"), "{stderr}");
+    assert!(!stderr.contains("tests/decoy.rs"), "{stderr}");
+    assert!(stderr.contains("then rerun"), "{stderr}");
+    let inspection = stderr
+        .lines()
+        .find(|line| line.contains("ripr agent status --root"))
+        .ok_or_else(|| format!("missing bound status command: {stderr}"))?;
+    let expected_root = if cfg!(windows) {
+        root_arg.replace('\\', "/")
+    } else {
+        root_arg.clone()
+    };
+    assert!(inspection.contains(&expected_root), "{inspection}");
+    assert!(
+        inspection.contains(&format!("--attempt {attempt_id}")),
+        "{inspection}"
+    );
+    assert!(
+        stderr.contains(&format!("--attempt {attempt_id}")),
+        "{stderr}"
+    );
+    let manifest = read_manifest(root, &attempt_id)?;
+    assert_eq!(manifest["state"], "awaiting_edit");
+    let reason = manifest["last_after_refusal"]["reason"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        reason.starts_with("agent verify no repository movement"),
+        "{reason}"
+    );
+    assert!(reason.contains("tests/pricing.rs"), "{reason}");
+    assert!(!reason.contains("tests/decoy.rs"), "{reason}");
+    assert!(!root.join("target/ripr/reports/agent-receipt.json").exists());
+
+    // Copy the named inspection route's arguments independently; it must
+    // select the same awaiting attempt and expose no receipt.
+    let status = run_ripr(
+        root,
+        &[
+            "agent",
+            "status",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &attempt_id,
+            "--json",
+        ],
+    )?;
+    assert_exit(&status, 0, "inspect refused attempt");
+    let report: serde_json::Value = serde_json::from_slice(&status.stdout)
+        .map_err(|error| format!("refused status JSON: {error}"))?;
+    assert_eq!(report["attempt"]["attempt_id"], attempt_id);
+    assert_eq!(report["attempt"]["status_class"], "awaiting_edit");
+    assert!(report["attempt"]["receipt"].is_null(), "{report}");
+
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{FIXTURE_WEAK_TEST}{FIXTURE_BOUNDARY_TEST}"),
+    )
+    .map_err(|error| format!("write focused edit: {error}"))?;
+    let continued = run_ripr(
+        root,
+        &["continue", "--root", &root_arg, "--attempt", &attempt_id],
+    )?;
+    assert_exit(
+        &continued,
+        0,
+        "retry after focused edit with decoy projection still present",
+    );
+    let manifest = read_manifest(root, &attempt_id)?;
+    assert_eq!(manifest["state"], "ready_to_finish");
+    assert!(manifest.get("last_after_refusal").is_none(), "{manifest}");
+    assert!(
+        root.join("target/ripr/reports/agent-receipt.json")
+            .is_file()
+    );
+    Ok(())
+}
+
+#[test]
+fn continue_no_movement_keeps_inline_test_module_restrictions() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-inline-no-movement")?;
+    let root = &fixture.root;
+    std::fs::remove_file(root.join("tests/pricing.rs")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        format!("{FIXTURE_LIB}\n#[cfg(test)]\nmod tests {{\n    use super::discounted_total;\n    #[test]\n    fn below() {{ assert_eq!(discounted_total(50, 100), 50); }}\n}}\n"),
+    ).map_err(|error| error.to_string())?;
+    run_git(root, &["add", "src", "tests"])?;
+    git_commit(root, "inline test target")?;
+    let before = run_ripr(root, &["repair"])?;
+    assert_exit(&before, 0, "prepare inline attempt");
+    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    assert_eq!(compatibility_packet_target(root)?, "src/lib.rs");
+    let refused = run_ripr(root, &["continue", "--attempt", &attempt_id])?;
+    assert_exit(&refused, 3, "continue before inline edit");
+    assert!(refused.stdout.is_empty());
+    let stderr = stderr_text(&refused);
+    for expected in [
+        "awaiting_edit",
+        "src/lib.rs",
+        "existing `#[cfg(test)]` module",
+        "new test functions",
+        "production code",
+        "module declaration",
+        "existing tests",
+    ] {
+        assert!(stderr.contains(expected), "missing {expected}: {stderr}");
+    }
+    assert_eq!(read_manifest(root, &attempt_id)?["state"], "awaiting_edit");
+    assert!(!root.join("target/ripr/reports/agent-receipt.json").exists());
     Ok(())
 }
 
@@ -1412,6 +2193,14 @@ fn repair_skips_severity_off_seams_with_named_omission() -> Result<(), String> {
     assert!(
         stderr.contains("configured off"),
         "must name the policy omission:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("ripr check --root") && stderr.contains("ripr pilot --root"),
+        "an ineligible repair must keep both the check and pilot routes:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("when this branch has changed code"),
+        "the check route must stay conditional on a diff, since repair lists saved seams:\n{stderr}"
     );
     assert!(
         attempt_ids(root).is_empty(),

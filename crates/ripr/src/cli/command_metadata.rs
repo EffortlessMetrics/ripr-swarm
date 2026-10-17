@@ -362,10 +362,13 @@ const METADATA: &[CommandMetadata] = &[
         primary_inputs: &["the selected repository root"],
         outputs: CommandOutputs {
             default: Some("ripr.toml"),
-            optional: &[".github/workflows/ripr.yml with --ci github"],
+            optional: &[
+                ".github/workflows/ripr.yml with --ci github",
+                ".mcp.json with --mcp",
+            ],
         },
         state_target: Some(
-            "ripr.toml, plus the repository's GitHub Actions workflow set with --ci",
+            "ripr.toml, plus the repository's GitHub Actions workflow set with --ci and .mcp.json with --mcp",
         ),
         json_support: false,
         example: "ripr init",
@@ -436,7 +439,7 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        json_support: true,
         example: "ripr pilot --root .",
         next_routes: &["check", "repair", "doctor"],
         stop_states: &[
@@ -918,7 +921,7 @@ const METADATA: &[CommandMetadata] = &[
         effects: READS_ONLY,
         primary_inputs: &[
             "--pr-number, --base, and --head identities",
-            "optional gate, baseline-delta, zero-status, and guidance artifacts",
+            "at least one of --gate, --baseline-delta, --zero-status, --pr-guidance, or --gap-ledger (each individually optional)",
         ],
         outputs: CommandOutputs {
             default: Some("target/ripr/reports/pr-evidence-ledger.json"),
@@ -931,7 +934,7 @@ const METADATA: &[CommandMetadata] = &[
             "the append-only JSONL history (--out-jsonl), consumed by policy waiver-aging and policy history",
         ),
         json_support: true,
-        example: "ripr pr-ledger record --pr-number 123 --base SHA --head SHA",
+        example: "ripr pr-ledger record --pr-number 123 --base SHA --head SHA --gate target/ripr/reports/gate-decision.json",
         next_routes: &[
             "policy waiver-aging",
             "policy history",
@@ -2906,6 +2909,23 @@ mod tests {
                 "cmd:help summary {:?} still omits the machine catalog route",
                 row.summary
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn pilot_row_reports_stdout_json_support() -> Result<(), String> {
+        // #7428: `ripr pilot --format json` emits the packet summary on stdout.
+        let row = metadata()
+            .iter()
+            .find(|row| row.id == "cmd:pilot")
+            .ok_or("cmd:pilot has no metadata row")?;
+        if !row.json_support {
+            return Err(
+                "cmd:pilot reports json_support: false while `ripr pilot --format json` \
+                 emits the summary document"
+                    .to_string(),
+            );
         }
         Ok(())
     }

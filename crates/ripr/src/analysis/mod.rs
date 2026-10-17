@@ -9,7 +9,9 @@ mod diff;
 mod extract;
 mod facts;
 mod generated_rust_corpus;
-pub(crate) use generated_rust_corpus::generated_rust_recovery;
+pub(crate) use generated_rust_corpus::{
+    absent_changed_rust_file_limitations, generated_rust_recovery,
+};
 pub(crate) mod harness_projection;
 mod language;
 pub(crate) mod new_test_target;
@@ -49,8 +51,8 @@ pub use diff::records::{
     PathRecordError, StatusRecord, parse_git_path_records, parse_git_status_records,
 };
 pub(crate) use diff::{
-    AnalyzedRevisions, load_diff, load_diff_core, load_diff_range_with_deadline_core,
-    load_diff_with_effective_base_core, load_worktree_diff,
+    AnalyzedRevisions, another_base_candidate, load_diff, load_diff_core,
+    load_diff_range_with_deadline_core, load_diff_with_effective_base_core, load_worktree_diff,
     load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis, parse_unified_diff,
     probe_working_tree_tracked_changes_within, resolve_base_commit, resolve_effective_base,
     resolve_effective_base_core, working_tree_has_tracked_changes,
@@ -82,6 +84,8 @@ pub use language::{
 pub(crate) use probes::{
     fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
 };
+#[cfg(test)]
+pub(crate) use rust_index::{FileFacts, RaRustSyntaxAdapter, RustIndex, RustSyntaxAdapter};
 pub use seam_cache::cache_layer_names;
 pub(crate) use seam_classification::ClassifiedSeam;
 #[cfg(test)]
@@ -90,20 +94,26 @@ pub(crate) use seam_classification::SeamGripClassCounts;
 pub(crate) use seam_classification::classify_seam;
 #[cfg(test)]
 pub(crate) use seam_inventory::apply_pilot_seam_budget_inner;
+#[cfg(test)]
+pub(crate) use seam_inventory::inventory_seams_from_index;
 pub(crate) use seam_inventory::{
     ClassifiedChangeReport, ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT,
     ScopedClassifiedSeamInventory, ScopedEvidenceConsumer, SeamLimitInfo, SeamLimitSource,
-    TargetedTestInventoryError, apply_pilot_seam_budget, classify_seams_in_files_at_with_config,
+    TargetedTestInventoryError, apply_pilot_seam_budget,
+    classify_seams_in_file_with_related_at_with_config, classify_seams_in_files_at_with_config,
     diff_only_rust_files, file_seams_without_evidence_at_with_config,
     inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
     inventory_compact_classified_seams_at_with_config,
     inventory_diff_scoped_classified_seams_at_with_config,
-    inventory_diff_scoped_streamed_seams_at_with_config, inventory_seams_at_with_config,
-    pilot_seam_budget, seam_kind_for_probe_family, workspace_cache_key_at_with_config,
+    inventory_diff_scoped_streamed_seams_at_with_config,
+    inventory_pilot_seams_report_at_with_config, inventory_seams_at_with_config, pilot_seam_budget,
+    repo_exposure_seam_limit, seam_kind_for_probe_family, workspace_cache_key_at_with_config,
 };
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
-pub(crate) use syntax::fn_signature::{owner_fn_line_span, rust_source_parses_cleanly};
+pub(crate) use syntax::fn_signature::{
+    owner_call_shape_at_line, owner_fn_line_span, rust_source_parses_cleanly,
+};
 pub(crate) use syntax::governed_cfg_test_modules;
 pub(crate) use syntax::parse_clean_source_file;
 pub(crate) use workspace::DiffOnlySource;
@@ -287,12 +297,14 @@ pub(crate) fn detect_typescript_test_framework(root: &Path) -> Option<&'static s
     language::detect_framework_for_root(root).map(|framework| framework.as_str())
 }
 
-/// Detect the Python test framework for a workspace root (#2106): one
+/// Detect Python test frameworks for a workspace root (#2106 / #7664): one
 /// detector shared by doctor and any adapter-side repo-level check.
-/// Fail-closed: `None` when no evidence marker matches.
+/// Fail-closed: empty when no evidence marker matches. Pytest is listed
+/// before unittest when both are present. Primary-of-set consumers use
+/// `language::detect_python_test_framework`.
 #[cfg(feature = "lang-python")]
-pub(crate) fn detect_python_test_framework(root: &Path) -> Option<&'static str> {
-    language::detect_python_test_framework(root)
+pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
+    language::detect_python_test_frameworks(root)
 }
 
 #[cfg(feature = "lang-typescript")]
@@ -609,7 +621,7 @@ pub(crate) fn finding_location_text_with_platform(
 /// spelling and the plain drive spelling name the same file, and every other
 /// surface renders the plain one. Other verbatim forms (`\\?\UNC\..`,
 /// `\\?\Volume{..}`) have no plain spelling, so they stay.
-fn plain_drive_verbatim_path(path: &Path, windows: bool) -> PathBuf {
+pub(crate) fn plain_drive_verbatim_path(path: &Path, windows: bool) -> PathBuf {
     if !windows {
         return path.to_path_buf();
     }
@@ -665,7 +677,8 @@ pub struct AnalysisOptions {
     /// `tsconfig.json` / `jsconfig.json` and uses alias maps to resolve
     /// non-relative import specifiers during owner↔test discovery.
     ///
-    /// Default: `false` (opt-in, fail-closed per RIPR-SPEC-0099).
+    /// Default: `true` (opt-out via `[typescript] resolve_tsconfig_paths = false`;
+    /// fail-closed per RIPR-SPEC-0099).
     pub resolve_tsconfig_paths: bool,
     /// Path to a `ripr-perl-facts-v1` packet file for the Perl adapter
     /// (Campaign 31, #1429). When `None`, the Perl adapter returns a named
@@ -750,7 +763,41 @@ pub struct PreviewLanguageAdvisory {
     pub enabled: bool,
 }
 
+/// Prose names `(adapter, files)` for a preview language (#4908). The
+/// TypeScript adapter analyzes the whole TS/JS family, so a JavaScript-only
+/// set of files is "JavaScript files" under the "TypeScript/JavaScript"
+/// adapter and a mixed one is "TypeScript/JavaScript files". Any other set,
+/// including TypeScript-only, keeps the plain display name for both.
+pub(crate) fn preview_family_names(
+    wire: &str,
+    file_count: usize,
+    javascript_file_count: usize,
+) -> (String, String) {
+    let language = crate::domain::LanguageId::display_name_for_wire(wire)
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            let mut chars = wire.chars();
+            chars.next().map_or_else(String::new, |first| {
+                first.to_uppercase().collect::<String>() + chars.as_str()
+            })
+        });
+    if wire != "typescript" || javascript_file_count == 0 {
+        return (language.clone(), language);
+    }
+    let family = "TypeScript/JavaScript".to_string();
+    if javascript_file_count >= file_count {
+        (family, "JavaScript".to_string())
+    } else {
+        (family.clone(), family)
+    }
+}
+
 impl PreviewLanguageAdvisory {
+    /// `(adapter, files)` prose names; see [`preview_family_names`].
+    pub(crate) fn prose_names(&self) -> (String, String) {
+        preview_family_names(&self.language, self.file_count, self.javascript_file_count)
+    }
+
     /// Returns the producer-owned non-success record for this advisory, when
     /// the adapter did not complete successfully.
     pub(crate) fn non_success_run<'a>(
@@ -1904,3 +1951,9 @@ mod git_candidate_entry_tests {
         Ok(())
     }
 }
+
+pub(crate) mod input_boundary;
+#[cfg(test)]
+pub(crate) use pipeline::diff_pipeline_entry_count;
+
+pub(crate) use workspace::cargo_input_identity;

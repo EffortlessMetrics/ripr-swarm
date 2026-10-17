@@ -288,6 +288,17 @@ fn reject_symlinked_ancestor(cache_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Symlink-alias refusal detail (#7487). The real directory comes from
+/// `canonicalize`, which spells a Windows drive path with the verbatim `\\?\`
+/// prefix; the printed token uses the shared human renderer like `Cache dir:`.
+fn symlink_refusal_detail(real: &Path, windows: bool) -> String {
+    format!(
+        "it is a symlink to {}; ripr check reads and writes the cache through \
+         this alias, but clear requires the real directory path",
+        output::path::human_path_text(&real.to_string_lossy(), windows)
+    )
+}
+
 /// Reject any path `clear` must not delete before touching cache contents.
 ///
 /// Empty, relative, traversing, near-root, non-directory, leaf-symlink, and
@@ -324,13 +335,7 @@ fn classify_cache_root(cache_dir: &Path) -> Result<CacheRoot, String> {
             // behind it, so the refusal must name the real directory it
             // protects instead of a bare "it is a symlink".
             let resolved = std::fs::canonicalize(cache_dir)
-                .map(|real| {
-                    format!(
-                        "it is a symlink to {}; ripr check reads and writes the cache through \
-                         this alias, but clear requires the real directory path",
-                        real.display()
-                    )
-                })
+                .map(|real| symlink_refusal_detail(&real, cfg!(windows)))
                 .unwrap_or_else(|_| "it is a symlink, not a cache directory".to_string());
             Err(format!(
                 "refusing to clear {display}: {resolved}; no files were removed"
@@ -427,7 +432,11 @@ fn root_has_entries(cache_dir: &Path) -> Result<bool, String> {
 }
 
 fn describe_entries(entry_count: usize, total_size_bytes: u64) -> String {
-    format!("{entry_count} entries ({total_size_bytes} bytes)")
+    // #7753: count-aware noun — "1 entry", never "1 entries".
+    format!(
+        "{} ({total_size_bytes} bytes)",
+        crate::output::count_noun::count_noun(entry_count, "entry", "entries")
+    )
 }
 
 fn describe_layers(plan: &ClearPlan) -> String {
@@ -612,7 +621,8 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     }
 
     let Some((subcommand, rest)) = args.split_first() else {
-        return Err("cache requires subcommand `status`, `export` or `clear`".to_string());
+        println!("{CACHE_USAGE}");
+        return Ok(());
     };
 
     match subcommand.as_str() {
@@ -680,6 +690,24 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
+    // #7487: the clear refusal for a symlink alias names the real directory
+    // through the shared human renderer, not the verbatim `\\?\` spelling.
+    #[test]
+    fn symlink_refusal_detail_strips_windows_verbatim_prefix() {
+        let verbatim = PathBuf::from(format!(r"\\?\{}\work\target\ripr\cache", "F:"));
+        let windows = symlink_refusal_detail(&verbatim, true);
+        assert!(
+            windows.contains(&format!("symlink to {}/work/target/ripr/cache;", "F:")),
+            "{windows}"
+        );
+        assert!(!windows.contains(r"\\?\"), "{windows}");
+        let unix = symlink_refusal_detail(&verbatim, false);
+        assert!(
+            unix.contains(&verbatim.to_string_lossy().to_string()),
+            "{unix}"
+        );
+    }
 
     fn cache_contents(root: &Path) -> Result<std::collections::BTreeMap<PathBuf, Vec<u8>>, String> {
         fn walk(
@@ -1214,7 +1242,9 @@ mod tests {
         let still_present = cache_dir.join("repo-seam-facts").is_dir();
         remove_base(&base)?;
         if !still_present
-            || !dry_run.contains("1 entries")
+            // #7753: regression pin — the count-aware form must read "1 entry".
+            || !dry_run.contains("1 entry")
+            || dry_run.contains("1 entries")
             || !dry_run.contains("repo-seam-facts")
             || !dry_run.contains("unrelated siblings would remain")
         {
@@ -1734,7 +1764,8 @@ mod tests {
                 force: true,
             },
         );
-        let real_display = resolved_real.display().to_string();
+        let real_display =
+            output::path::human_path_text(&resolved_real.to_string_lossy(), cfg!(windows));
         match &refused {
             Ok(message) => {
                 remove_base(&base)?;
@@ -1901,12 +1932,7 @@ mod tests {
         run(&["--help".to_string()])?;
         run(&["-h".to_string()])?;
         run(&["clear".to_string(), "--help".to_string()])?;
-        if run(&[])
-            .err()
-            .is_none_or(|error| !error.contains("`status`, `export` or `clear`"))
-        {
-            return Err("missing cache subcommand did not fail closed".to_string());
-        }
+        run(&[])?;
         if run(&["show".to_string()]).is_ok() {
             return Err("unknown cache subcommand unexpectedly passed".to_string());
         }

@@ -10,13 +10,55 @@ ripr uses static analysis; it does not run mutants or write the test for you.
 
 ## Installation
 
-Install the published CLI with Cargo:
+Fastest, with no Rust toolchain: download the checksummed prebuilt 0.10.0
+archive (about a second on Linux). Pick your platform; the
+[release](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.10.0) has
+archives for Linux and macOS on x86-64 and ARM64 and for Windows on x86-64.
+`.github/workflows/first-run-archive.yml` runs exactly these two snippets on
+hosted runners and records the timings (#5311).
+
+Linux and macOS (Bash or zsh):
+
+<!-- prebuilt-snippet:unix -->
+```bash
+v=0.10.0; case "$(uname -s)-$(uname -m)" in
+  Linux-x86_64) t=x86_64-unknown-linux-gnu;; Linux-aarch64) t=aarch64-unknown-linux-gnu;;
+  Darwin-x86_64) t=x86_64-apple-darwin;; Darwin-arm64) t=aarch64-apple-darwin;; esac
+f=ripr-server-v$v-$t.tar.gz
+b=https://github.com/EffortlessMetrics/ripr/releases/download/v$v
+curl -fsSLO $b/$f && curl -fsSLO $b/$f.sha256
+echo "$(cat $f.sha256)  $f" | { sha256sum -c - || shasum -a 256 -c -; } \
+  && tar xzf $f && export PATH="$PWD:$PATH"   # ./ripr is now first on PATH for this shell
+```
+
+Windows (PowerShell):
+
+<!-- prebuilt-snippet:powershell -->
+```powershell
+$v='0.10.0'; $t='x86_64-pc-windows-msvc'; $f="ripr-server-v$v-$t.zip"
+$b="https://github.com/EffortlessMetrics/ripr/releases/download/v$v"
+Invoke-WebRequest "$b/$f" -OutFile $f; Invoke-WebRequest "$b/$f.sha256" -OutFile "$f.sha256"
+if ((Get-FileHash $f -Algorithm SHA256).Hash -ne ((Get-Content "$f.sha256") -split '\s+')[0].ToUpper()) { throw 'checksum mismatch' }
+Expand-Archive $f -DestinationPath ripr-bin; $env:PATH="$PWD\ripr-bin;$env:PATH"   # ripr.exe is now first on PATH for this session
+```
+
+The macOS archives are not signed or notarized. A `curl` and `tar` download like
+the one above normally carries no quarantine attribute, so `./ripr` runs
+without a prompt. A browser, AirDrop or mail download of the archive is
+quarantined, and Gatekeeper then blocks the extracted `ripr` with a dialog such
+as "Apple could not verify "ripr" is free of malware" or ""ripr" cannot be
+opened because the developer cannot be verified". Verify the checksum first,
+then clear the attribute with `xattr -d com.apple.quarantine ./ripr` (or
+`xattr -dr com.apple.quarantine <extracted-dir>`). Do that only for an archive
+whose `.sha256` matched.
+
+Or install the published CLI with Cargo, which compiles from source:
 
 ```bash
 cargo install ripr
 ```
 
-This requires Rust 1.95 or newer. Git must be available for the diff workflow.
+Cargo requires Rust 1.95 or newer. Git must be available for the diff workflow.
 The editor installation below normally does not require Cargo.
 
 If Cargo refuses because ripr requires rustc 1.95, run `rustup update stable`.
@@ -48,11 +90,12 @@ cargo install --locked --git https://github.com/EffortlessMetrics/ripr-swarm rip
 ```
 
 From a `ripr-swarm` checkout, `cargo install --path crates/ripr` does the same.
-Either route compiles from source. A `cargo build --release` in the workspace took
-about 12 minutes on a cold 4-core Linux container in October 2026. A local build
-of the packaged crate, which is what `cargo install ripr --locked` should compile
-once 0.11.0 is published, took about 4.6 minutes on the same container because it
-drops the workspace's LTO profile (an estimate, not a crates.io install). A
+Either route compiles from source. A `cargo build --release` in the workspace (thin LTO,
+16 codegen units) took about 6 minutes on a cold 4-core Linux container in
+October 2026. A local build of the packaged crate, which is what `cargo install
+ripr --locked` should compile once 0.11.0 is published, took about 4.6 minutes on
+the same container because it carries no profile section (an estimate, not a
+crates.io install). A
 prebuilt 0.11 archive exists only after 0.11.0 is published.
 
 With [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) installed,
@@ -66,11 +109,22 @@ For another installation method or a pinned server, see
 
 ## CLI First Hour
 
-From a Rust repository on a branch with committed changes:
+From a Rust repository with a change to inspect:
 
 ```bash
 ripr check
 ```
+
+In this development build, `check` uses uncommitted tracked edits when present,
+otherwise committed history against the default base. On a clean checkout of
+the base branch, edit a tracked source file and run `ripr check` again. For a new
+file, first use `git add -N PATH` so it enters the tracked diff. See
+[Choose the change](#choose-the-change) for explicit diff selection.
+
+Use `ripr doctor` to diagnose setup if analysis cannot complete; it is not a
+required first step. To explore a clean repository without making a change,
+use the separate [repository exploration](#explore-the-repository) path,
+`ripr pilot --root .`.
 
 No `ripr.toml` is required. The development CLI prints a summary and a bounded
 `Start here:` section with a finding, a no-action result, or the limitation
@@ -126,8 +180,9 @@ ripr check --base REF
 ```
 
 On an unchanged base branch, an empty diff is expected. To analyze a saved patch,
-use `ripr check --diff PATH`, replacing `PATH` with your patch file. Details and
-options are available in `ripr help check`.
+use `ripr check --diff PATH`, replacing `PATH` with your patch file. The common
+options are in `ripr help check`; `ripr help check --all` lists every option,
+output format, and environment variable.
 
 ### Explore the repository
 

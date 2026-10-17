@@ -1,6 +1,6 @@
 use super::*;
 use crate::analysis::classify::{
-    CallTarget, OwnerCallIdentity, call_text_may_call_free_function, impl_self_type_name,
+    CallTarget, call_text_may_call_free_function, impl_self_type_name,
     method_call_resolves_to_impl, module_stem, owner_dispatch_trait, test_calls_free_function,
 };
 use crate::analysis::facts::FunctionImplContext;
@@ -79,7 +79,7 @@ pub(super) struct OwnerContext {
     free_function: bool,
     impl_trait: Option<String>,
     same_name_count: usize,
-    identity: Option<OwnerCallIdentity>,
+    identity: Option<std::sync::Arc<crate::analysis::classify::OwnerCallIdentity>>,
 }
 
 impl OwnerContext {
@@ -106,16 +106,11 @@ impl OwnerContext {
             owner_fn.is_some_and(|owner| owner.impl_context == FunctionImplContext::Free);
         let impl_trait = owner_fn.and_then(owner_dispatch_trait);
         let same_name_count = context.function_name_count(&name);
+        // Shared per analysis run with the finding-level relation (#7716):
+        // the same (owner, index) answer, so the per-test parses serve every
+        // seam instead of dying with each construction.
         let identity = owner_fn.filter(|_| same_name_count > 1).and_then(|owner| {
-            OwnerCallIdentity::new(
-                owner,
-                context
-                    .index
-                    .functions()
-                    .iter()
-                    .filter(|function| function.name == name),
-                context.index,
-            )
+            crate::analysis::classify::shared_owner_call_identity(context.index, owner)
         });
         Self {
             name,
@@ -671,7 +666,16 @@ pub(super) fn related_test_rank_key(
     owner: Option<&SeamOwnerActivation<'_>>,
     owner_fn: Option<&FunctionSummary>,
 ) -> RelatedTestRankKey {
-    let (_oracle_kind, oracle_strength, _contradiction) = best_oracle(indexed.test, seam, owner_fn);
+    let (_oracle_kind, oracle_strength, _contradiction) = best_oracle(
+        indexed.test,
+        seam,
+        owner_fn,
+        context.index,
+        // #8282: the run's shared instance, like every other walk stage; a
+        // per-key fresh instance re-paid the whole-index lazily computed
+        // facts once per (seam, related test) rank.
+        context.pin_syntax_mutex(),
+    );
     RelatedTestRankKey {
         relation_confidence: reason.confidence().rank(),
         relation_reason: reason.priority(),

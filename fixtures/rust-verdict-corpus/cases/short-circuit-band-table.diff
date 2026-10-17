@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 36529b4..c7127d6 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -5,7 +5,7 @@ pub fn both_zero(x: i32, y: i32) -> bool {
+ }
+ 
+ pub fn in_band(level: u8, open: bool) -> bool {
+-    open && level >= 3
++    open && 3 <= level
+ }
+ 
+ #[cfg(test)]

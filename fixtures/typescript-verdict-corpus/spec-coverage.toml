@@ -507,6 +507,12 @@ scope = "in"
 id = "RIPR-SPEC-0258"
 scope = "in"
 
+# Rust closures in iterator adaptors
+[[spec]]
+id = "RIPR-SPEC-0265"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
 # TypeScript strict custom matcher
 [[spec]]
 id = "RIPR-SPEC-0262"
@@ -537,3 +543,15 @@ reason = "acceptance examples are prose, not numbered; ts-vitest-add-line-messag
 [[unmeasured]]
 id = "RIPR-SPEC-0098"
 reason = "acceptance examples are prose, not numbered; ts-nodetest-audit-log cites the spec in its reasoning"
+
+# Owner call shape projection for drill-in surfaces
+[[spec]]
+id = "RIPR-SPEC-0267"
+scope = "out"
+reason = "explain/context packet drill-in projection of an observed Rust signature; a TypeScript case cannot label it"
+
+# Flow-sink evidence row collapses restated labels
+[[spec]]
+id = "RIPR-SPEC-0268"
+scope = "out"
+reason = "render-only collapse of a duplicated evidence row; a TypeScript case cannot label it"

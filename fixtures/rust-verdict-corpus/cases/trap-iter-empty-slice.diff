@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index dac7401..5c38ba4 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -6,7 +6,7 @@ pub fn count_positive(xs: &[i32]) -> usize {
+ }
+ 
+ pub fn count_large(xs: &[i32]) -> usize {
+-    xs.iter().filter(|x| **x > 100).count()
++    xs.iter().filter(|&&x| x > 100).count()
+ }
+ 
+ #[cfg(test)]

@@ -333,6 +333,18 @@ savings is claimed. Ordinary local `precommit` keeps selected Clippy.
 format and numbering, and the policy surfaces that should fail quickly before
 review.
 
+Local `precommit` also runs `goldens check` when the diff against
+`origin/main` touches output-surface code (`crates/ripr/src/output/`,
+`crates/ripr/src/domain/`, `lsp.rs`, `docs/OUTPUT_SCHEMA.md`,
+`policy/output_contracts.txt`) or a fixture `expected/` file, because renderer
+wording changes make stale goldens the usual way main goes red (#8421). Other
+diffs print a skip line and do not pay for the fixture run. Real drift fails
+`precommit`. If fixtures only fail because their locked dependencies cannot be
+prepared in the environment, `precommit` prints `goldens check: INCOMPLETE
+(environment gap, not a pass)` and continues; run `cargo xtask goldens prepare`
+to close the gap, and hosted CI still owns those fixtures. The step is not part
+of the hosted collect-all policy run, which has its own goldens job.
+
 `cargo xtask check-fast` also runs `check-support-tiers` for committed spec
 Markdown, the support map, root README, Rust repair trust corpus, xtask source,
 and referenced workflow/script path changes. It runs before compilation-bearing
@@ -349,6 +361,11 @@ covered-by warmup/list children, and `check-fast.md` records fmt and workspace
 Clippy children. Other commands are outside this bounded capture scope. Reused
 selectors and skipped warmups create no execution rows. Precommit diagnostics
 remain bound by its report digest; they add no acceptance or waiver authority.
+The nullable numeric `exit_code` comes directly from the observed native status;
+missing status, capture/status-call errors and Unix signals keep it null. It is
+independent of `outcome`: a timed-out call stays `timed_out` even if its observed
+exit code is zero. Human diagnostics render a missing code as `unavailable`.
+No environment values or new artifact locations are captured.
 Structured argv preserves argument boundaries (`$REPO` substitutes the repository
 root in precommit). Captured elapsed time runs from runner start through observed
 exit, with polling. Enforced timeout duration includes termination and reaping,
@@ -485,7 +502,26 @@ bound to the rechecked SHA (`--force-with-lease=<ref>:<sha>`, never plain
 (`branch-inventory-cleanup.{md,json}`) recording every deleted, skipped,
 changed, and failed branch. No CI or scheduled job runs the apply path.
 
-`gh-pr-status --pr <number>` is the per-PR merge-readiness packet. It reads
+`gh-pr-status --pr <number>` is the per-PR merge-readiness packet.
+Each full response uses the `gh 2.46` compatible `pr view` fields, bracketed by
+`gh api graphql` reads of PR/head/base/target identity. The bracket identities
+must agree and the full response must match their PR/head/target before its
+base OID is attached. An independently moving branch-tip lookup cannot supply
+that identity. GraphQL errors/partial or missing identity refuse collection.
+Set `RIPR_TEST_GH` to a real supported CLI binary and run
+`cargo test -p xtask --bin xtask gh_pr_status_real_cli_schema -- --ignored`
+to check the production view fields against its actual offline field registry;
+this opt-in capability test needs the tool but no credentials or network.
+It reads the full PR snapshot again after required-context lookup. Both reads
+must identify the requested PR and the same full head/base commits and target
+branch. Movement or unavailable identity returns an error before publishing a
+new readiness packet; existing report files remain historical and must not be
+used as a successful result of that invocation. Head movement requires affected
+head-bound proof/review and integration judgment; base-only movement preserves
+unchanged-head proof/review and requires integration judgment, not blanket
+reruns. When identities match, the final response supplies checks and review
+facts. The warning list records the exact observed commits. This separate read
+is not atomic with a later merge and supplies no merge authority. It reads
 GitHub CLI PR status, branch-protection required contexts when available,
 latest reviews, and Droid-related checks, then writes
 `target/ripr/reports/gh-pr-status.md` and
@@ -493,8 +529,23 @@ latest reviews, and Droid-related checks, then writes
 checks, failed checks, behind-main state, review status, Droid status, and a
 safe next action: `wait`, `inspect integration`, `inspect failure`, or `merge`.
 `BEHIND` requests integration judgment after Draft, review-required and pending
-waits; it does not establish that a branch update is needed. It is advisory and
+waits; it does not establish that a branch update is needed. The packet retains the current head commit and each latest review's original
+commit, with `current_head`, `stale_for_head`, or `subject_unavailable` attribution.
+An `APPROVED` aggregate without an exact-head latest approval recommends `wait`.
+The CLI's `latestReviews` summaries are joined by author, submission time, and
+state to the full `reviews` subjects; missing or ambiguous identity stays unknown.
+This attribution does not establish review substance, independence, approval
+quotas, integration qualification, or protection satisfaction. It is advisory and
 never updates the branch, comments, approves, or merges.
+The provider-response section retains known quota notices and unknown substance
+from returned reviews/comments without treating either as review completion.
+Historical response subjects remain unattributed; the packet head is collection
+context only. This does not add a provider gate or change the advisory action.
+See [provider observation fields](OUTPUT_SCHEMA.md#github-pr-status-provider-observations).
+For unresolved inline conversations and their next actions, use the read-only
+[finish-pr conversation inventory](../.agents/skills/finish-pr/references/review-conversations.md).
+It paginates threads and keeps outdated unresolved findings visible; it does not
+replace substantive review or change merge protections.
 Use [Merge freshness and watcher policy](MERGE_WATCH_POLICY.md) for polling
 cadence, branch-refresh decisions, REST status fallback, Droid/advisory-check
 handling, and local worktree merge limitations.

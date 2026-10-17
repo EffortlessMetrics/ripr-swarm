@@ -29,15 +29,31 @@ fn linux_llvm_proof_routes_prepare_the_pinned_component_before_tests() -> Result
             "coverage.yml",
             "cargo test -p repo-policy --lib coverage_diagnostics",
         ),
+        ("ub-review.yml", "uses: EffortlessMetrics/ub-review@"),
     ];
-    let prepared = |text: &str, command: &str| {
-        let setup = "      - uses: dtolnay/rust-toolchain@v1\n        with:\n          toolchain: 1.95.0\n          components: llvm-tools-preview";
-        match (text.find(setup), text.find(command)) {
-            (Some(setup), Some(test)) => setup < test,
-            _ => false,
-        }
-    };
     for (route, command) in routes {
+        let action = if route == "ub-review.yml" {
+            "e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1"
+        } else {
+            "v1"
+        };
+        let prepared = |text: &str, command: &str| {
+            let setup = format!(
+                "      - uses: dtolnay/rust-toolchain@{action}\n        with:\n          toolchain: 1.95.0\n          components: llvm-tools-preview"
+            );
+            match (text.find(setup.as_str()), text.find(command)) {
+                (Some(setup), Some(test)) => {
+                    setup < test
+                        && text[setup..]
+                            .split("\n      - ")
+                            .next()
+                            .is_some_and(|step| {
+                                !step.lines().any(|line| line.starts_with("        if:"))
+                            })
+                }
+                _ => false,
+            }
+        };
         let text = fs::read_to_string(root.join(".github/workflows").join(route))
             .map_err(|error| error.to_string())?;
         assert!(
@@ -49,11 +65,25 @@ fn linux_llvm_proof_routes_prepare_the_pinned_component_before_tests() -> Result
             command
         ));
         assert!(!prepared(
+            &text.replace("components: llvm-tools-preview", ""),
+            command
+        ));
+        assert!(!prepared(
             &text.replace("toolchain: 1.95.0", "toolchain: stable"),
             command
         ));
         let test_first = format!("{command}\n{text}");
         assert!(!prepared(&test_first, command));
+        if route == "ub-review.yml" {
+            assert!(!prepared(&text.replace(action, "v1"), command));
+        }
+        assert!(!prepared(
+            &text.replace(
+                "components: llvm-tools-preview",
+                "components: llvm-tools-preview\n        if: false",
+            ),
+            command
+        ));
     }
     Ok(())
 }
@@ -946,6 +976,12 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         ),
         (
             "pull_request",
+            Some("labeled"),
+            Some("macos-ci"),
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
+        (
+            "pull_request",
             Some("unlabeled"),
             Some("full-ci"),
             RoutedRustEventRoute::WorkflowNotTriggered,
@@ -1172,4 +1208,76 @@ jobs:
             .any(|violation| violation.contains("job `route` must set an explicit")),
         "a job that kept its deadline must not be flagged: {violations:?}"
     );
+}
+
+#[test]
+fn advisory_review_prepares_locked_fixture_before_sensors() -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let text = fs::read_to_string(root.join(".github/workflows/ub-review.yml"))
+        .map_err(|error| error.to_string())?;
+    let header = "name: Prepare locked owner-return fixture dependencies";
+    let fetch = "        run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml";
+    let preparation = format!("      - {header}\n{fetch}\n");
+    let prepared = |source: &str| {
+        let steps = source.split("\n      - ").collect::<Vec<_>>();
+        let preparations = steps
+            .iter()
+            .enumerate()
+            .filter(|(_, step)| step.lines().next() == Some(header))
+            .collect::<Vec<_>>();
+        let [(index, step)] = preparations.as_slice() else {
+            return false;
+        };
+        // The action sanitizes sensor environments. Both commands must use
+        // the runner default Cargo home, with no workflow override.
+        let lines = step
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .collect::<Vec<_>>();
+        !source.lines().any(|line| {
+            let line = line.trim();
+            line.starts_with("CARGO_HOME:") || line.starts_with("HOME:")
+        }) && lines == [header, fetch]
+            && steps[..*index]
+                .iter()
+                .any(|step| step.starts_with("uses: dtolnay/rust-toolchain@"))
+            && steps[*index + 1..].iter().any(|step| {
+                step.lines().any(|line| {
+                    line.trim()
+                        .starts_with("uses: EffortlessMetrics/ub-review@")
+                })
+            })
+    };
+    assert!(
+        prepared(&text),
+        "advisory sensors require locked fixture preparation"
+    );
+    for wrong in [
+        text.replace(&preparation, ""),
+        text.replace(
+            "cargo fetch --locked --manifest-path",
+            "cargo fetch --manifest-path",
+        ),
+        text.replace(fetch, &format!("        if: false\n{fetch}")),
+        text.replace(fetch, &format!("        continue-on-error: true\n{fetch}")),
+        text.replace(fetch, &format!("{fetch} || true")),
+        text.replace(
+            "--manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml",
+            "--manifest-path Cargo.toml",
+        ),
+        format!("env:\n  CARGO_HOME: other\n{text}"),
+        format!("env:\n  HOME: other\n{text}"),
+        text.replace(
+            fetch,
+            &format!("{fetch}\n        env:\n          CARGO_HOME: other"),
+        ),
+        format!("{}\n{preparation}", text.replace(&preparation, "")),
+        text.replace(&preparation, &format!("{preparation}\n{preparation}")),
+    ] {
+        assert!(
+            !prepared(&wrong),
+            "invalid fixture preparation must be rejected"
+        );
+    }
+    Ok(())
 }

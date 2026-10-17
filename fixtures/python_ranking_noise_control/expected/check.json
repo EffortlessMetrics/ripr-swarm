@@ -164,14 +164,14 @@
         "infect": {"state":"yes","confidence":"low","summary":"Changed Python return expression can alter the owner return value: `return amount + 5`"},
         "propagate": {"state":"yes","confidence":"low","summary":"Changed Python return value is already at the owner output boundary."},
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
-        "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
+        "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
        },
-      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `calculate_fee`", "infection yes: Changed Python return expression can alter the owner return value: `return amount + 5`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches returned value: return amount + 5 (line 2)", "related test tests/test_observed.py:4 test_calculate_fee_exact uses strong exact value oracle: assert calculate_fee(100) == 105"],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `calculate_fee`", "infection yes: Changed Python return expression can alter the owner return value: `return amount + 5`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches returned value: return amount + 5 (line 2)", "related test tests/test_observed.py:4 test_calculate_fee_exact uses strong exact value oracle: assert calculate_fee(100) == 105"],
       "flow_sinks": [
         {"kind":"return_value","text":"return amount + 5","line":2}
       ],
       "evidence": ["owner: calculate_fee", "owner_kind: function", "test_framework: pytest (test_calculate_fee_exact)", "test_verify_command: python -m pytest tests/test_observed.py::test_calculate_fee_exact (test_calculate_fee_exact)", "related_test_relation: syntactic_call (test_calculate_fee_exact)", "test_oracle: exact_value strong (test_calculate_fee_exact)"],
-      "missing": ["Related Python test reaches `calculate_fee` with a `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
+      "missing": ["Related Python test reaches `calculate_fee` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
       "assertion_texts": {
       },
       "activation": {

@@ -59,6 +59,7 @@ use std::{
 mod boundary;
 mod classify;
 mod deleted_lines;
+mod guard_activation;
 use classify::{PythonNoBehaviorContext, classify_change_with_context};
 #[cfg(test)]
 use classify::{classify_change, classify_change_with_old};
@@ -118,9 +119,9 @@ use related_tests::{
     verify_command_for_test,
 };
 use related_tests::{
-    first_parenthesized_string_argument, import_module_may_be_owners,
-    import_source_module_matches_owner, strong_test_calls_owner_method_on_bound_receiver,
-    strong_test_imports_owner_from_module, strong_tests_import_only_rival_modules,
+    first_parenthesized_string_argument, import_source_module_matches_owner,
+    strong_test_calls_owner_method_on_bound_receiver, strong_test_imports_owner_from_module,
+    strong_tests_import_only_rival_modules,
 };
 #[cfg(test)]
 use sink_alignment::strong_oracle_observes_owner;
@@ -130,9 +131,9 @@ use sink_alignment::{
     fstring_template, oracle_is_pure_len_aggregate, oracle_text_observes_token,
     parse_dict_literal_fields,
 };
-pub(crate) use source_facts::detect_python_test_framework;
 #[cfg(test)]
 use source_facts::parse_module;
+pub(crate) use source_facts::{detect_python_test_framework, detect_python_test_frameworks};
 use source_facts::{extract_source_facts, source_fact_snapshot_observation};
 mod source_utils;
 use source_utils::{is_test_file, normalized_path};
@@ -946,6 +947,10 @@ impl PythonAdapter {
                     &all_owners,
                     &all_tests,
                     no_behavior,
+                    workspace_read
+                        .sources
+                        .get(&changed.path)
+                        .map(String::as_str),
                 ) {
                     findings.push(finding);
                 }

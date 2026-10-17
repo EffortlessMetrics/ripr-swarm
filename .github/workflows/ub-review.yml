@@ -27,6 +27,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # The cargo-test sensor exercises real LLVM profile diagnostics. Prepare
+      # rustc's matching tools; the pinned action only installs a minimal Rust
+      # profile and its core sensor bundle does not include llvm-tools-preview.
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+        with:
+          toolchain: 1.95.0
+          components: llvm-tools-preview
+
       # Cache the ub-review source build so subsequent runs skip the ~12 min
       # cargo recompile. Keyed on the action SHA so a new pin invalidates.
       # Cuts repeat runs from ~14 min to ~2-3 min (ub-review #728).
@@ -34,6 +42,11 @@ jobs:
         with:
           workspaces: ". -> target/ub-review-build"
           key: ub-review-55e4fbab879b3a83c31f35cdc9f7e5cd99f0a6c8
+
+      # Sensors resolve the locked anyhow fixture offline. Prepare the runner's
+      # default Cargo home, also used by the action's sanitized sensor process.
+      - name: Prepare locked owner-return fixture dependencies
+        run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
 
       - name: ub-review
         env:
@@ -67,6 +80,21 @@ jobs:
           # Bun-only verifier not applicable. It is not a pass, and the
           # other planned sensors stay in the review.
           except-tools: artifact-verifier
+
+      - name: Verify advisory receipt reporter
+        if: always()
+        continue-on-error: true
+        run: cargo test --locked -p xtask --example ub_review_evidence_report
+
+      - name: Report advisory evidence dimensions
+        if: always()
+        continue-on-error: true
+        run: |
+          cargo run --locked -p xtask --example ub_review_evidence_report -- target/ub-review || {
+            status=$?
+            printf '%s\n' '## UB Review advisory evidence' '' 'MISSING EVIDENCE: consumer reporter did not complete; inspect this step log. No report pass is established.' >> "$GITHUB_STEP_SUMMARY"
+            exit "$status"
+          }
 
       - name: Upload ub-review artifacts
         if: always()

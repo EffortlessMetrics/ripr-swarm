@@ -504,6 +504,13 @@ pub(crate) fn resolve_effective_base_core_with_commit(
              did not run). Pass `--base <ref>` for a ref this repository has."
         )));
     }
+    if explicit.trim().is_empty() {
+        return Err(CoreError::base_unresolvable(
+            "the base is empty (the analysis did not run). Pass `--base <ref>` with a branch, \
+             tag or commit hash, or omit `--base` to use the default base."
+                .to_string(),
+        ));
+    }
     let commit = format!("{explicit}^{{commit}}");
     match git_ref_output(root, &commit, git_timeout) {
         Some(output) if !output.status.success() => {
@@ -606,9 +613,10 @@ fn not_a_work_tree_message(root: &Path) -> String {
     format!(
         "`{}` is not inside a Git work tree (the analysis did not run). ripr diffs \
          committed history, so run it from inside your repository, or pass `--root <path>` \
-         pointing at one. For a repository-free scan of the current sources, use \
-         `ripr check --root . --format repo-exposure-md`.",
-        root.display()
+         pointing at one. For whole-repository exploration of the current sources \
+         without Git history, use `{}`.",
+        root.display(),
+        crate::domain::WHOLE_REPO_PILOT_COMMAND,
     )
 }
 
@@ -913,8 +921,9 @@ fn resolve_default_base(root: &Path, git_timeout: Option<Duration>) -> Result<St
     Err(format!(
         "could not resolve a default base (no origin/main, origin/master, or local main/master \
          found).{} Pass `--base <ref>` to diff against a specific ref, or run \
-         `ripr check --root . --format repo-exposure-md` for a full-repo scan.",
-        default_base_failure_context(root, git_timeout)
+         `{}` for whole-repository exploration.",
+        default_base_failure_context(root, git_timeout),
+        crate::domain::WHOLE_REPO_PILOT_COMMAND,
     ))
 }
 
@@ -1117,6 +1126,85 @@ pub fn resolve_base_commit(
     (!commit.is_empty()).then_some(commit)
 }
 
+/// Whether some branch other than the current one could serve as a
+/// `--base`: a local or remote-tracking branch (never a remote's `HEAD`
+/// pointer) for which `<branch>...HEAD` actually contains changed files.
+/// An alias at `HEAD`'s own commit (a fresh clone's `origin/<branch>` next
+/// to `<branch>`, or a `git branch` copy) is not a candidate, and neither
+/// is a branch whose resulting tree matches `HEAD`'s despite distinct
+/// commits: advising either would reproduce the empty result. Bounded like
+/// the default-base failure context; any Git failure answers `None`, so
+/// callers never advise a `--base` repair that this probe could not
+/// support (#7644).
+/// The first branch (in `for-each-ref` order) that
+/// could serve as one, named as a usable
+/// `--base` value (`main`, `origin/main`). Callers that advise a
+/// `--base` repair must name this probed ref, never a hardcoded
+/// example, and must not name the base already in use.
+pub fn another_base_candidate(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
+    let git_lines = |args: &[&str]| -> Vec<String> {
+        crate::git::run_git_output_with_deadline(root, args, git_timeout)
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| {
+                String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let current = git_lines(&["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    let others = git_lines(&[
+        "for-each-ref",
+        "--format=%(refname)",
+        "refs/heads",
+        "refs/remotes",
+    ])
+    .into_iter()
+    .filter(|name| !name.ends_with("/HEAD"))
+    .filter_map(|name| {
+        name.strip_prefix("refs/heads/")
+            .or_else(|| name.strip_prefix("refs/remotes/"))
+            .map(str::to_string)
+    })
+    .filter(|name| !current.contains(name));
+    let head_commit = resolve_base_commit(root, Some("HEAD"), git_timeout)?;
+    const MERGE_BASE_PROBE_CAP: usize = 64;
+    others.take(MERGE_BASE_PROBE_CAP).find(|name| {
+        let merge_base_differs = crate::git::run_git_output_with_deadline(
+            root,
+            &["merge-base", name.as_str(), "HEAD"],
+            git_timeout,
+        )
+        .ok()
+        .filter(|output| output.status.success())
+        .is_some_and(|output| {
+            String::from_utf8_lossy(&output.stdout).trim() != head_commit.as_str()
+        });
+        // A distinct historical range can still restore the merge-base
+        // tree; only a non-empty three-dot diff makes the advice useful.
+        // `--relative` scopes that diff to `root` like the analysis
+        // loader, so a branch differing only outside the analyzed root
+        // does not count.
+        merge_base_differs
+            && crate::git::run_git_output_with_deadline(
+                root,
+                &[
+                    "diff",
+                    "--relative",
+                    "--quiet",
+                    &format!("{name}...HEAD"),
+                    "--",
+                ],
+                git_timeout,
+            )
+            .is_ok_and(|output| output.status.code() == Some(1))
+    })
+}
+
 /// Load `<base>...<head>` for the commands that name both revisions (`diff`,
 /// `review-comments`). Callers verify `base` through
 /// [`resolve_effective_base`] first; this verifies `head` the same way, so an
@@ -1231,6 +1319,16 @@ fn missing_ref_repair(root: &Path, missing_ref: &str, git_timeout: Option<Durati
          --unshallow` (in GitHub Actions, set `fetch-depth: 0` on actions/checkout)"
             .to_string();
     }
+    if ancestor_anchor(missing_ref).is_some_and(|anchor| {
+        git_ref_output(root, &format!("{anchor}^{{commit}}"), git_timeout)
+            .is_some_and(|output| output.status.success())
+    }) {
+        return format!(
+            "`{missing_ref}` is relative to a commit, so fetching cannot supply it: this \
+             repository's history is shorter than that. Run `git log --oneline` to see how \
+             many commits it has and use a smaller offset"
+        );
+    }
     let remotes = configured_remotes(root, git_timeout);
     if let Some(advice) = qualified_remote_advice(missing_ref, remotes.as_deref()) {
         return advice;
@@ -1250,6 +1348,16 @@ fn missing_ref_repair(root: &Path, missing_ref: &str, git_timeout: Option<Durati
             "Fetch the ref (for example `git fetch`)".to_string()
         }
     }
+}
+
+/// The anchor of a revision spelled relative to another commit (`HEAD` in
+/// `HEAD~5`, `origin/main` in `origin/main^`). The caller must still confirm
+/// the anchor resolves: when it does, the offset overshoots a short history,
+/// which a fetch cannot fix; when it does not, the anchor itself is the
+/// missing ref. Reflog and upstream forms (`@{...}`) are not offsets.
+fn ancestor_anchor(missing_ref: &str) -> Option<&str> {
+    let anchor = &missing_ref[..missing_ref.find(['~', '^'])?];
+    (!anchor.is_empty() && !anchor.contains("@{")).then_some(anchor)
 }
 
 /// Advice for a remote-qualified missing ref (`origin/main`). The qualifier
@@ -1391,6 +1499,7 @@ fn uncommitted_changes_probe(
             "--porcelain",
             "-z",
             "--untracked-files=no",
+            "--ignore-submodules=none",
             "--",
             ".",
         ],
@@ -1565,7 +1674,13 @@ fn working_tree_probe(root: &Path) -> WorkingTreeProbe {
 fn working_tree_probe_within(root: &Path, deadline: Option<Duration>) -> WorkingTreeProbe {
     let result = crate::git::run_git_output_with_deadline(
         root,
-        &["status", "--porcelain", "--", "."],
+        &[
+            "status",
+            "--porcelain",
+            "--ignore-submodules=none",
+            "--",
+            ".",
+        ],
         deadline,
     );
     match result {
@@ -1767,11 +1882,15 @@ fn run_git_diff_bytes(
     // The context-line count is the one caller-selected presentation knob
     // (the appended pin wins over any same-named extra): analysis takes zero,
     // the PR-evidence packet takes three.
+    // Ambient submodule ignore settings can hide a changed gitlink before
+    // the parser's skipped-content disclosure sees it (#8209). Keep those
+    // sections visible without analyzing the child repository's contents.
     let unified_arg = format!("--unified={unified}");
     args.extend_from_slice(&[
         "--no-ext-diff",
         "--no-textconv",
         "--no-color",
+        "--ignore-submodules=none",
         "--src-prefix=a/",
         "--dst-prefix=b/",
         unified_arg.as_str(),
@@ -2388,6 +2507,108 @@ mod tests {
     }
 
     #[test]
+    fn another_base_candidate_needs_a_history_sharing_other_branch() -> std::io::Result<()> {
+        // #7644: the `--base` hedge may only fire when its advice is
+        // actionable. A single-branch repository has no candidate; an
+        // ancestor branch sharing history is one.
+        let dir = unique_fixture_root("another-base-candidate")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "master")?;
+        assert!(
+            another_base_candidate(&dir, None).is_none(),
+            "a lone branch must not count as its own --base candidate"
+        );
+        assert_eq!(another_base_candidate(&dir, None), None);
+        run_git_checked(&dir, &["branch", "base-candidate"])?;
+        assert!(
+            another_base_candidate(&dir, None).is_none(),
+            "an alias at HEAD's own commit must not count as a --base candidate"
+        );
+        fs::write(dir.join("README"), "second")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "second"])?;
+        assert!(
+            another_base_candidate(&dir, None).is_some(),
+            "an ancestor branch sharing history must count as a --base candidate"
+        );
+        assert_eq!(
+            another_base_candidate(&dir, None).as_deref(),
+            Some("base-candidate"),
+            "the probe must name the actual candidate a --base repair would use"
+        );
+        // A descendant branch has HEAD as its merge base: not a candidate.
+        run_git_checked(&dir, &["checkout", "-b", "descendant"])?;
+        fs::write(dir.join("README"), "third")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "third"])?;
+        run_git_checked(&dir, &["checkout", "master"])?;
+        run_git_checked(&dir, &["branch", "-D", "base-candidate"])?;
+        assert!(
+            another_base_candidate(&dir, None).is_none(),
+            "a descendant of HEAD must not count as a --base candidate"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn another_base_candidate_rejects_a_range_that_restores_the_tree() -> std::io::Result<()> {
+        // Distinct commits whose net tree change is empty still reproduce
+        // the empty result the hedge advises against (#7644).
+        let dir = unique_fixture_root("another-base-restored-tree")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "master")?;
+        run_git_checked(&dir, &["branch", "base-candidate"])?;
+        fs::write(dir.join("README"), "second")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "second"])?;
+        fs::write(dir.join("README"), "init")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "restore"])?;
+        assert!(
+            another_base_candidate(&dir, None).is_none(),
+            "a range restoring the merge-base tree must not count as a --base candidate"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn another_base_candidate_ignores_changes_outside_the_analysis_root() -> std::io::Result<()> {
+        // The analysis loader scopes its diff to `root` (`--relative`);
+        // the probe must agree, or a branch differing only in a sibling
+        // package advises a `--base` that reproduces the empty result
+        // for a subdirectory root (#7644).
+        let dir = unique_fixture_root("another-base-candidate-subdir")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "master")?;
+        let sub = dir.join("sub");
+        fs::create_dir_all(&sub)?;
+        fs::write(sub.join("lib.txt"), "init")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "seed sub"])?;
+        run_git_checked(&dir, &["branch", "base-candidate"])?;
+        // The ancestor branch now differs from HEAD only outside `sub`.
+        fs::write(dir.join("README"), "outside")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "outside sub"])?;
+        assert!(
+            another_base_candidate(&sub, None).is_none(),
+            "a branch differing only outside the analysis root must not count"
+        );
+        // A later change inside `sub` makes the same branch a candidate.
+        fs::write(sub.join("lib.txt"), "inside")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "inside sub"])?;
+        assert!(
+            another_base_candidate(&sub, None).is_some(),
+            "a branch differing inside the analysis root must count"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
     fn worktree_loader_carries_the_revisions_it_already_resolved() -> std::io::Result<()> {
         let dir = unique_fixture_root("worktree-loaded-revisions")?;
         ignore_remove_dir_all(&dir);
@@ -2772,8 +2993,8 @@ mod tests {
             "expected --base guidance in message, got: {err}"
         );
         assert!(
-            err.contains("--format repo-exposure-md"),
-            "expected --format repo-exposure-md guidance in message, got: {err}"
+            err.contains("ripr pilot --root ."),
+            "expected pilot guidance in message, got: {err}"
         );
         assert!(
             err.contains("no commits yet"),
@@ -3031,6 +3252,32 @@ mod tests {
 
         ignore_remove_dir_all(&dir);
         Ok(())
+    }
+
+    #[test]
+    fn ancestor_anchor_extracts_the_revision_a_suffix_is_relative_to() {
+        for (relative, anchor) in [
+            ("HEAD~1", "HEAD"),
+            ("main^", "main"),
+            ("main~2", "main"),
+            ("origin/main~3", "origin/main"),
+            ("feature/x^2", "feature/x"),
+        ] {
+            assert_eq!(ancestor_anchor(relative), Some(anchor), "{relative}");
+        }
+        // Plain refs, hashes, reflog/upstream forms and anchorless suffixes
+        // keep the existing advice.
+        for other in [
+            "main",
+            "origin/main",
+            "abc1234",
+            "HEAD@{1}",
+            "@{u}",
+            "~2",
+            "^HEAD",
+        ] {
+            assert_eq!(ancestor_anchor(other), None, "{other}");
+        }
     }
 
     #[test]

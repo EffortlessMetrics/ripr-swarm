@@ -359,9 +359,10 @@ pub enum StaticLimitKind {
     /// A test appears to call public API that may transitively reach the
     /// changed owner through a `pub -> pub(crate)` helper chain or similar
     /// internal call graph, but ripr's lexical call facts cannot fully resolve
-    /// the path (macro invocations, generics, trait dispatch, or depth > 5
-    /// stop the walk). The classification stays `no_static_path` -- this label
-    /// is a named limitation, not a coverage claim. See RIPR-SPEC-0114.
+    /// the path (macro invocations, generics, trait dispatch, or a helper
+    /// chain longer than the five-hop witness walk). The classification
+    /// stays `no_static_path` -- this label is a named limitation, not a
+    /// coverage claim. See RIPR-SPEC-0114.
     RustTransitiveReachUnresolved,
     /// An integration test appears to call a crate public API, or a test helper
     /// that calls that public API, and a bounded same-repo lexical path may lead
@@ -390,6 +391,10 @@ pub enum StaticLimitKind {
     /// same-owner equality predicate. Classification remains `static_unknown`;
     /// this is a named limitation, not a coverage or repair claim.
     RustValuePropagationUnresolved,
+    /// A plain owner-parameter field selects a changed tail match, but the
+    /// analyzer cannot establish its invocation value or whether an assertion
+    /// observes that invocation's return. Metadata only: classification and all proof legs remain.
+    RustFieldMatchSelectorUnresolved,
     /// An integration test invokes a Cargo-built binary, but ripr does not
     /// yet map that binary target back to the changed owner. The
     /// classification stays `no_static_path`; this is a named limitation,
@@ -423,6 +428,12 @@ pub enum StaticLimitKind {
     /// against the asserted value. The gap is withheld and the class is
     /// `static_unknown`. See RIPR-SPEC-0231 / #7133.
     RustLogCaptureUnresolved,
+    /// A related `#[should_panic]` test with no assertion calls the owner,
+    /// and the owner can panic at or after the changed line, but ripr does
+    /// not resolve whether the changed code decides the panic the test
+    /// expects. The gap is withheld and the class is `static_unknown`. See
+    /// RIPR-SPEC-0240.
+    RustPanicOutcomeUnresolved,
 }
 
 impl StaticLimitKind {
@@ -454,6 +465,9 @@ impl StaticLimitKind {
                 "rust_macro_wrapped_assertion_unresolved"
             }
             StaticLimitKind::RustValuePropagationUnresolved => "rust_value_propagation_unresolved",
+            StaticLimitKind::RustFieldMatchSelectorUnresolved => {
+                "rust_field_match_selector_unresolved"
+            }
             StaticLimitKind::RustSubprocessBinaryReachUnresolved => {
                 "rust_subprocess_binary_reach_unresolved"
             }
@@ -463,6 +477,7 @@ impl StaticLimitKind {
             }
             StaticLimitKind::RustAssertionContextUnresolved => "rust_assertion_context_unresolved",
             StaticLimitKind::RustLogCaptureUnresolved => "rust_log_capture_unresolved",
+            StaticLimitKind::RustPanicOutcomeUnresolved => "rust_panic_outcome_unresolved",
         }
     }
 
@@ -543,6 +558,11 @@ impl StaticLimitKind {
                  ripr cannot carry that value into the same-owner equality predicate. This is a \
                  named analyzer limitation, not a coverage or repair claim."
             }
+            StaticLimitKind::RustFieldMatchSelectorUnresolved => {
+                "A plain owner-parameter field selects this match, but ripr cannot align its value \
+                 at the owner invocation or establish whether an assertion observes that invocation's return. This names an analyzer \
+                 limitation without changing classification or claiming coverage."
+            }
             StaticLimitKind::RustSubprocessBinaryReachUnresolved => {
                 "An integration test invokes a Cargo-built binary, but ripr cannot yet map that \
                  executable back to the changed owner. This is a named subprocess boundary \
@@ -571,6 +591,13 @@ impl StaticLimitKind {
                  the captured records, but ripr does not resolve the logger or match the log \
                  format against the asserted text. ripr does not claim a gap; this is a named \
                  limitation, not a coverage claim."
+            }
+            StaticLimitKind::RustPanicOutcomeUnresolved => {
+                "A related Rust `#[should_panic]` test contains a call to this code and passes \
+                 only if something panics, and this code can panic at or after the change, but \
+                 ripr does not resolve whether the panic comes from the changed code or from an \
+                 earlier call. ripr does not claim a gap; this is a named limitation, not a \
+                 coverage claim."
             }
         }
     }
@@ -879,6 +906,10 @@ mod tests {
             StaticLimitKind::RustLogCaptureUnresolved.as_str(),
             "rust_log_capture_unresolved"
         );
+        assert_eq!(
+            StaticLimitKind::RustPanicOutcomeUnresolved.as_str(),
+            "rust_panic_outcome_unresolved"
+        );
     }
 
     #[test]
@@ -900,11 +931,13 @@ mod tests {
             StaticLimitKind::RustMacroWrappedTestCallUnresolved,
             StaticLimitKind::RustMacroWrappedAssertionUnresolved,
             StaticLimitKind::RustValuePropagationUnresolved,
+            StaticLimitKind::RustFieldMatchSelectorUnresolved,
             StaticLimitKind::RustSubprocessBinaryReachUnresolved,
             StaticLimitKind::WrapperErrorBindingUnresolved,
             StaticLimitKind::PythonTransitiveReachUnresolved,
             StaticLimitKind::RustAssertionContextUnresolved,
             StaticLimitKind::RustLogCaptureUnresolved,
+            StaticLimitKind::RustPanicOutcomeUnresolved,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by

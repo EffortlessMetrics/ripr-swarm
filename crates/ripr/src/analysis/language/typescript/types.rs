@@ -123,6 +123,22 @@ pub(crate) struct TypeScriptTest {
     /// outside the test body and to detect shadowed constructor names; owner
     /// calls and assertions must still sit in `body_text`.
     pub(crate) scope_bindings: Vec<TypeScriptScopeBinding>,
+    /// Test-local identity helpers of the containing test file
+    /// (RIPR-SPEC-0249 / RIPR-SPEC-0250, amended 2026-10-15): top-level
+    /// `function f(p) { return p; }` or `const f = (p) => p;` declarations
+    /// whose name appears nowhere else in the file except as a direct call
+    /// `f(`. Populated once per file by `extract_tests`; empty when anything
+    /// could rebind or replace the name.
+    pub(crate) identity_helpers_in_file: Vec<String>,
+    /// Test-local mock factories of the containing test file
+    /// (RIPR-SPEC-0247 rule 1, amended 2026-10-15): top-level
+    /// `function f() { return { ... }; }` or `const f = () => ({ ... });`
+    /// declarations without parameters whose name appears nowhere else in
+    /// the file except as a direct call `f(`, each paired with the source of
+    /// the object literal it returns. Every call builds a fresh object, so a
+    /// test-body `const p = f();` is read as that literal. Empty when
+    /// anything could rebind or replace the name.
+    pub(crate) mock_factories_in_file: Vec<(String, String)>,
     /// Whether the test's assertion state is established: a recognized
     /// assertion, an established absence of anything assertion-like, or
     /// something assertion-like RIPR cannot resolve (#5524). An empty
@@ -475,6 +491,41 @@ pub(crate) struct TypeScriptAssertion {
     /// credits it against an owner declared to return `number`
     /// (`ts_typed_loose_number_facts`).
     pub(crate) loose_number_expected: bool,
+    /// Whether this matcher compares objects by reference identity
+    /// (`===` / `Object.is`), so RIPR-SPEC-0246 rule 1 can pin a
+    /// copy-for-identity change. Built-in `toBe`, `strictEqual`, and AVA
+    /// `is` are true. A RIPR-SPEC-0262 credited custom matcher is true
+    /// because its `pass` requires `received === expected`. `toEqual` and
+    /// other `exact_value` matchers stay false: sharing a kind is not
+    /// identity. A refused or non-strict custom matcher stays false.
+    pub(crate) compares_reference_identity: bool,
+    /// RIPR-SPEC-0250 rule 1 (amended 2026-10-15): the flat literal object a
+    /// `toMatchObject(<name>)` argument stands for, when `<name>` is a
+    /// test-body `const` the body names only in its binding and that
+    /// argument ([`match_object_consts`]). Read only by
+    /// `ts_match_object_facts`; `expected_value_or_variant` stays `None`.
+    pub(crate) expected_object_const: Option<String>,
+}
+
+impl TypeScriptAssertion {
+    /// Jest/Vitest `expect(...).<name>` identity matcher. AVA `is` and
+    /// `node:assert` `strictEqual` are not included: `expect.extend` can
+    /// register those names with a non-identity body.
+    pub(crate) fn jest_expect_compares_reference_identity(matcher: &str) -> bool {
+        matcher == "toBe"
+    }
+
+    /// Receiver assertions that compare objects by identity: AVA `t.is`
+    /// (`Object.is`) and tape / node-style `t.strictEqual` (`===`).
+    /// `t.equal` and `t.deepEqual` stay false.
+    pub(crate) fn ava_compares_reference_identity(matcher: &str) -> bool {
+        matches!(matcher, "is" | "strictEqual")
+    }
+
+    /// `node:assert` `strictEqual` compares with `===`.
+    pub(crate) fn node_assert_compares_reference_identity(matcher: &str) -> bool {
+        matcher == "strictEqual"
+    }
 }
 
 /// Oracle confidence level derived from `oracle_strength` plus whether the

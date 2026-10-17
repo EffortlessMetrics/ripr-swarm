@@ -45,8 +45,11 @@ async fn delayed_durable_read_leaves_the_async_executor_and_status_available() -
             .await
     });
     let started = tokio::time::timeout(std::time::Duration::from_secs(1), started_rx).await;
-    let live =
-        tokio::time::timeout(std::time::Duration::from_millis(250), server.status_tool()).await;
+    let live = tokio::time::timeout(
+        std::time::Duration::from_millis(250),
+        server.status_tool(super::super::MAX_RESPONSE_BYTES),
+    )
+    .await;
     let completed_early = worker.is_finished();
     let _ = release_tx.send(());
     let observed = worker.await.map_err(|error| error.to_string())?;
@@ -82,6 +85,7 @@ fn oversized_status_envelope_gets_typed_too_large_like_every_tool() -> Result<()
             workspace::SESSION_SCHEMA_VERSION,
             "serialize workspace status",
             workspace::RECOVERY_STATUS_TOO_LARGE,
+            super::super::MAX_RESPONSE_BYTES,
         )
         .map_err(|error| error.to_string())?;
     let rendered = format!("{response:?}");
@@ -96,12 +100,176 @@ fn oversized_status_envelope_gets_typed_too_large_like_every_tool() -> Result<()
     Ok(())
 }
 
+/// #7768: the budget charges the request ID's actual JSON serialization.
+/// Every escaping class is exact, and a saturated (oversized) legal id
+/// leaves nothing: the semantic layers then refuse every response typed
+/// instead of shipping one the wire must replace.
+#[test]
+fn outer_envelope_budget_reserves_the_escaped_request_id() -> Result<(), String> {
+    let budget_for = |id: &str| {
+        super::super::outer_envelope_budget(&rmcp::model::RequestId::String(id.to_owned().into()))
+    };
+    let bound = super::super::MAX_RESPONSE_BYTES;
+    let reserve = super::super::OUTER_RESPONSE_OVERHEAD_BYTES;
+    let cases = [
+        ("plain", "req-1".to_owned(), "\"req-1\"".len()),
+        ("quotes", "\"".repeat(32), 66),
+        ("backslashes", "\\".repeat(32), 66),
+        ("control", "\u{1}".repeat(32), 194),
+        ("non-ascii", "é".repeat(32), 66),
+        ("emoji", "\u{1F600}".repeat(32), 130),
+    ];
+    for (class, id, escaped) in cases {
+        let budget = budget_for(&id);
+        if budget != bound - escaped - reserve {
+            return Err(format!(
+                "{class} id budget drifted: {budget} != {bound} - {escaped} - {reserve}"
+            ));
+        }
+    }
+    let giant = "\u{1}".repeat(bound / 2);
+    if budget_for(&giant) != 0 {
+        return Err("a wire-overflowing id must saturate the budget to zero".into());
+    }
+    Ok(())
+}
+
+/// #7768: a long legal request id narrows the shared bound end to end.
+/// An envelope exactly at the id-aware budget ships structured; one step
+/// past it — including the window where the compact text would still fit —
+/// returns the typed `result_too_large` refusal with structured failure
+/// content, and the refusal detail names the narrowed budget so a host can
+/// see the request id, not an instrument error, caused it. (The
+/// double-carry envelope moves in 2-byte steps, so the exact one-byte flip
+/// is pinned in
+/// `protocol.rs::tests::tool_result_fits_and_refuses_at_the_id_aware_envelope_budget`.)
+#[tokio::test(flavor = "current_thread")]
+async fn long_request_id_refuses_typed_at_the_id_aware_boundary() -> Result<(), String> {
+    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
+        .map_err(|error| error.to_string())?;
+    let id = rmcp::model::RequestId::String("\"".repeat(60_000).into());
+    let budget = super::super::outer_envelope_budget(&id);
+    if budget == 0 || budget >= super::super::MAX_RESPONSE_BYTES {
+        return Err(format!("long-id budget drifted out of range: {budget}"));
+    }
+    // The envelope grows exactly 2 bytes per `x` (raw plus escaped text
+    // copy), so sizes sit on even steps from the measured base.
+    let document = |pad: usize| {
+        serde_json::json!({
+            "schema_version": "ripr-mcp-workspace-status-v1",
+            "note": "x".repeat(pad),
+        })
+    };
+    let envelope_of = |pad: usize| -> Result<usize, String> {
+        crate::mcp::protocol::structured_envelope_bytes(&document(pad))
+            .map_err(|error| error.to_string())
+    };
+    let base = envelope_of(0)?;
+    let delta = budget - base;
+    if !delta.is_multiple_of(2) {
+        return Err(format!(
+            "boundary fixture parity drifted: base={base}, budget={budget}"
+        ));
+    }
+    let at = delta / 2;
+    if envelope_of(at)? != budget {
+        return Err("boundary fixture missed its exact bytes".into());
+    }
+    // The refusal fixture sits far past the budget in both shapes: its
+    // compact-text copy alone renders more than the budget, so the
+    // envelope builder fails closed instead of shipping text-only.
+    let shipping = server
+        .bounded_tool_result(
+            document(at),
+            workspace::SESSION_SCHEMA_VERSION,
+            "serialize boundary fixture",
+            workspace::RECOVERY_STATUS_TOO_LARGE,
+            budget,
+        )
+        .map_err(|error| error.to_string())?;
+    // Assert on the wire shape, not the Debug rendering: the Debug output
+    // names the `structured_content` field even when it is None, so only
+    // the serialized value distinguishes a structured result from the
+    // text-only fallback.
+    let rmcp::model::CallToolResponse::Complete(shipped_result) = shipping else {
+        return Err("boundary fixture did not complete".into());
+    };
+    let shipped = serde_json::to_value(&shipped_result).map_err(|error| error.to_string())?;
+    if shipped.get("structuredContent").is_none() || shipped["isError"] == serde_json::json!(true) {
+        return Err(format!(
+            "an envelope exactly at the id-aware budget must ship structured: {shipped}"
+        ));
+    }
+    // The window fixture sits one step past the budget: the structured
+    // envelope overflows while the compact text still fits — the exact
+    // interval where the removed text-only fallback shipped a success
+    // without `structuredContent` (#7768). It must refuse typed with
+    // structured failure content, asserted on the serialized wire shape.
+    let window = at + 32;
+    if envelope_of(window)? <= budget {
+        return Err("window fixture must overflow the structured envelope".into());
+    }
+    let text_only = serde_json::json!({
+        "content": [{ "type": "text", "text": serde_json::to_string(&document(window)).map_err(|error| error.to_string())? }],
+        "isError": false,
+    });
+    let text_only_bytes = serde_json::to_vec(&text_only)
+        .map_err(|error| error.to_string())?
+        .len();
+    if text_only_bytes > budget {
+        return Err(format!(
+            "window fixture must fit as compact text: {text_only_bytes} against {budget}"
+        ));
+    }
+    let windowed = server
+        .bounded_tool_result(
+            document(window),
+            workspace::SESSION_SCHEMA_VERSION,
+            "serialize boundary fixture",
+            workspace::RECOVERY_STATUS_TOO_LARGE,
+            budget,
+        )
+        .map_err(|error| error.to_string())?;
+    let rmcp::model::CallToolResponse::Complete(window_result) = windowed else {
+        return Err("window fixture did not complete".into());
+    };
+    let window_wire = serde_json::to_value(&window_result).map_err(|error| error.to_string())?;
+    if window_wire.pointer("/structuredContent/failure/code")
+        != Some(&serde_json::json!("result_too_large"))
+        || window_wire.get("isError") != Some(&serde_json::json!(true))
+    {
+        return Err(format!(
+            "a window document must refuse typed with structured failure content, not drop structuredContent silently: {window_wire}"
+        ));
+    }
+    // The refusal fixture sits far past the budget in both shapes: its
+    // compact-text copy alone renders more than the budget, so the
+    // envelope builder fails closed there too.
+    let refused = server
+        .bounded_tool_result(
+            document(budget),
+            workspace::SESSION_SCHEMA_VERSION,
+            "serialize boundary fixture",
+            workspace::RECOVERY_STATUS_TOO_LARGE,
+            budget,
+        )
+        .map_err(|error| error.to_string())?;
+    let refused = format!("{refused:?}");
+    if !refused.contains(workspace::CODE_RESULT_TOO_LARGE) || !refused.contains(&budget.to_string())
+    {
+        return Err(format!(
+            "a document past the id-aware budget in both shapes must refuse typed with the narrowed budget named: {refused}"
+        ));
+    }
+    Ok(())
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn status_tool_still_serves_through_the_shared_bound() -> Result<(), String> {
     let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
         .map_err(|error| error.to_string())?;
     server
-        .status_tool()
+        .status_tool(super::super::MAX_RESPONSE_BYTES)
         .await
         .map_err(|error| error.to_string())?;
     Ok(())
@@ -168,7 +336,7 @@ async fn oversized_gap_item_leaves_mcp_through_the_real_routes() -> Result<(), S
     let mut arguments = serde_json::Map::new();
     arguments.insert("canonical_id".to_string(), Value::from("gap:test:1"));
     let response = server
-        .get_gap_tool(Some(arguments))
+        .get_gap_tool(Some(arguments), super::super::MAX_RESPONSE_BYTES)
         .await
         .map_err(|error| format!("an oversized item must fail typed, not error: {error}"))?;
     let rendered = format!("{response:?}");
@@ -215,6 +383,114 @@ async fn oversized_gap_item_leaves_mcp_through_the_real_routes() -> Result<(), S
     Ok(())
 }
 
+/// #7768: the original silent drop at the real `ripr_get_gap` dispatch.
+/// One canonical item whose serialized document the document guard approves
+/// (under the raw response bound) but whose complete double-carry envelope
+/// cannot fit the bound used to ship as a success envelope missing
+/// `structuredContent` — no error, no explanation — although the tool
+/// advertises an `outputSchema`. It must refuse typed with structured
+/// failure content, asserted on the serialized wire shape, and its
+/// recovery must send the caller to the committed CLI read rather than
+/// back through `ripr_get_gap`.
+#[tokio::test(flavor = "current_thread")]
+async fn window_sized_gap_item_refuses_typed_instead_of_dropping_structured_content()
+-> Result<(), String> {
+    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
+        .map_err(|error| error.to_string())?;
+    let outcome = crate::analysis_outcome::AnalysisOutcome::new(
+        crate::analysis_outcome::AnalysisOutcomeKind::CompleteWithFindings,
+        Default::default(),
+        crate::analysis_outcome::AnalysisOutcomeCounts {
+            changed_file_count: 1,
+            changed_line_count: 2,
+            candidate_line_count: 2,
+            probe_count: 2,
+            finding_count: 1,
+        },
+        Vec::new(),
+    )
+    .map_err(|error| format!("fixture outcome refused: {error}"))?;
+    let mut finding = gaps::test_finding()?;
+    finding.evidence = vec!["x".repeat(70_000)];
+    let output = crate::app::CheckOutput {
+        schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
+        harness_projections: Vec::new(),
+        tool: "ripr".to_string(),
+        mode: crate::app::Mode::Draft,
+        root: PathBuf::from("."),
+        base: None,
+        analysis_outcome: Some(outcome),
+        summary: crate::domain::Summary::default(),
+        findings: vec![finding],
+        preview_language_advisories: Vec::new(),
+        language_runs: Vec::new(),
+        no_scope_provided: false,
+        unanalyzed_working_tree: false,
+        untracked_working_tree_source_paths: Vec::new(),
+        unlinked_python_tests: None,
+        suppression: None,
+        partial_scope: None,
+        analyzed_revisions: None,
+    };
+    let snapshot = workspace::Snapshot::from_output(&output, Some("root:sha256:test"))
+        .map_err(|failure| failure.detail)?;
+    *server.session.lock().await = workspace::WorkspaceSession {
+        in_flight: false,
+        last_good: Some(Arc::new(snapshot)),
+        ..Default::default()
+    };
+
+    // Fixture guard: the window document passes the raw-cap document guard
+    // while its complete double-carry envelope overflows the bound.
+    let document = server
+        .session
+        .lock()
+        .await
+        .get_gap("gap:test:1", None)
+        .map_err(|failure| failure.detail)?;
+    let document_bytes = serde_json::to_vec(&document)
+        .map_err(|error| error.to_string())?
+        .len();
+    let envelope_bytes = crate::mcp::protocol::structured_envelope_bytes(&document)
+        .map_err(|error| error.to_string())?;
+    if document_bytes >= super::super::MAX_RESPONSE_BYTES
+        || envelope_bytes <= super::super::MAX_RESPONSE_BYTES
+    {
+        return Err(format!(
+            "window fixture missed its interval: document={document_bytes}, envelope={envelope_bytes}, bound={}",
+            super::super::MAX_RESPONSE_BYTES
+        ));
+    }
+
+    // The real `ripr_get_gap` dispatch.
+    let mut arguments = serde_json::Map::new();
+    arguments.insert("canonical_id".to_string(), Value::from("gap:test:1"));
+    let response = server
+        .get_gap_tool(Some(arguments), super::super::MAX_RESPONSE_BYTES)
+        .await
+        .map_err(|error| format!("a window item must fail typed, not error: {error}"))?;
+    let rmcp::model::CallToolResponse::Complete(result) = response else {
+        return Err("window gap item did not complete".into());
+    };
+    let wire = serde_json::to_value(&result).map_err(|error| error.to_string())?;
+    if wire.get("isError") != Some(&serde_json::json!(true))
+        || wire.pointer("/structuredContent/failure/code")
+            != Some(&serde_json::json!("result_too_large"))
+    {
+        return Err(format!(
+            "a window gap item must refuse typed with structured failure content, not ship a success without structuredContent: {wire}"
+        ));
+    }
+    let recovery = wire
+        .pointer("/structuredContent/failure/recovery")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "window gap refusal omitted recovery".to_string())?;
+    if recovery != workspace::RECOVERY_GAP_ITEM_TOO_LARGE {
+        return Err(format!("window gap refusal recovery drifted: {recovery}"));
+    }
+    Ok(())
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn oversized_status_tool_response_returns_typed_too_large() -> Result<(), String> {
     // The envelope-level test pins the shared bound; this one pins that
@@ -229,7 +505,7 @@ async fn oversized_status_tool_response_returns_typed_too_large() -> Result<(), 
             })),
     );
     let response = server
-        .status_tool()
+        .status_tool(super::super::MAX_RESPONSE_BYTES)
         .await
         .map_err(|error| error.to_string())?;
     let rendered = format!("{response:?}");
@@ -356,7 +632,7 @@ fn sdk_server_declares_snapshot_and_gap_resource_templates() -> Result<(), Strin
 async fn list_gaps_before_any_refresh_is_a_typed_no_snapshot_failure() -> Result<(), String> {
     let server = healthy_server()?;
     let response = server
-        .list_gaps_tool(None)
+        .list_gaps_tool(None, super::super::MAX_RESPONSE_BYTES)
         .await
         .map_err(|error| error.to_string())?;
     let result = match response {
@@ -401,7 +677,7 @@ async fn list_gaps_accepts_offset_and_limit_at_the_dispatch_edge() -> Result<(),
     ] {
         let arguments = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
         let response = server
-            .list_gaps_tool(arguments)
+            .list_gaps_tool(arguments, super::super::MAX_RESPONSE_BYTES)
             .await
             .map_err(|error| format!("dispatch must accept paging arguments: {error:?}"))?;
         let result = match response {
@@ -430,7 +706,10 @@ async fn list_gaps_accepts_offset_and_limit_at_the_dispatch_edge() -> Result<(),
         serde_json::json!({"verbose": true}),
     ] {
         let arguments = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
-        match server.list_gaps_tool(arguments).await {
+        match server
+            .list_gaps_tool(arguments, super::super::MAX_RESPONSE_BYTES)
+            .await
+        {
             Err(error) if error.code == rmcp::model::ErrorCode::INVALID_PARAMS => {}
             Ok(response) => {
                 return Err(format!(
@@ -470,7 +749,7 @@ async fn list_gaps_accepts_filters_at_the_dispatch_edge() -> Result<(), String> 
     ] {
         let arguments = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
         let response = server
-            .list_gaps_tool(arguments)
+            .list_gaps_tool(arguments, super::super::MAX_RESPONSE_BYTES)
             .await
             .map_err(|error| format!("dispatch must accept filter arguments: {error:?}"))?;
         let result = match response {
@@ -503,7 +782,10 @@ async fn list_gaps_accepts_filters_at_the_dispatch_edge() -> Result<(), String> 
         serde_json::json!({"repairReady": true}),
     ] {
         let arguments = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
-        match server.list_gaps_tool(arguments).await {
+        match server
+            .list_gaps_tool(arguments, super::super::MAX_RESPONSE_BYTES)
+            .await
+        {
             Err(error) if error.code == rmcp::model::ErrorCode::INVALID_PARAMS => {}
             Ok(response) => {
                 return Err(format!(
@@ -531,7 +813,10 @@ async fn get_gap_rejects_bad_arguments_at_the_dispatch_edge() -> Result<(), Stri
         serde_json::json!({"canonical_id": "gap:x", "verbose": true}),
     ] {
         let arguments = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
-        match server.get_gap_tool(arguments).await {
+        match server
+            .get_gap_tool(arguments, super::super::MAX_RESPONSE_BYTES)
+            .await
+        {
             Err(error) if error.code == rmcp::model::ErrorCode::INVALID_PARAMS => {}
             Ok(response) => {
                 return Err(format!(
@@ -558,7 +843,7 @@ async fn get_gap_accepts_canonical_id_at_the_dispatch_edge() -> Result<(), Strin
     let arguments = serde_json::from_value(serde_json::json!({"canonical_id": "gap:x"}))
         .map_err(|error| error.to_string())?;
     let response = server
-        .get_gap_tool(arguments)
+        .get_gap_tool(arguments, super::super::MAX_RESPONSE_BYTES)
         .await
         .map_err(|error| format!("dispatch must accept canonical_id: {error}"))?;
     let result = match response {
@@ -589,7 +874,9 @@ async fn get_gap_rejects_the_retired_gap_id_name() -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     let arguments = serde_json::from_value(serde_json::json!({"gap_id": "gap:x"}))
         .map_err(|error| error.to_string())?;
-    let result = server.get_gap_tool(arguments).await;
+    let result = server
+        .get_gap_tool(arguments, super::super::MAX_RESPONSE_BYTES)
+        .await;
     if !matches!(
         result,
         Err(error) if error.code == rmcp::model::ErrorCode::INVALID_PARAMS
@@ -643,7 +930,7 @@ async fn prepare_repair_fails_closed_before_refresh() -> Result<(), String> {
     let arguments = serde_json::from_value(serde_json::json!({"canonical_id": "gap:any"}))
         .map_err(|error| error.to_string())?;
     let response = server
-        .prepare_repair_tool(arguments)
+        .prepare_repair_tool(arguments, super::super::MAX_RESPONSE_BYTES)
         .await
         .map_err(|error| error.to_string())?;
     let result = match response {
@@ -684,7 +971,7 @@ async fn repair_attempt_lookup_fails_closed_before_refresh() -> Result<(), Strin
         serde_json::from_value(serde_json::json!({"attempt_id": "repair-attempt:absent"}))
             .map_err(|error| error.to_string())?;
     let response = server
-        .get_repair_attempt_tool(arguments)
+        .get_repair_attempt_tool(arguments, super::super::MAX_RESPONSE_BYTES)
         .await
         .map_err(|error| error.to_string())?;
     let result = match response {
@@ -724,7 +1011,7 @@ async fn receipt_status_fails_closed_before_refresh() -> Result<(), String> {
     let arguments = serde_json::from_value(serde_json::json!({"receipt_id": "receipt:absent"}))
         .map_err(|error| error.to_string())?;
     let response = server
-        .get_receipt_status_tool(arguments)
+        .get_receipt_status_tool(arguments, super::super::MAX_RESPONSE_BYTES)
         .await
         .map_err(|error| error.to_string())?;
     let result = match response {
@@ -763,7 +1050,7 @@ async fn repair_card_fails_closed_before_refresh() -> Result<(), String> {
     let arguments = serde_json::from_value(serde_json::json!({"canonical_id": "gap:test:1"}))
         .map_err(|error| error.to_string())?;
     let response = server
-        .get_repair_card_tool(arguments)
+        .get_repair_card_tool(arguments, super::super::MAX_RESPONSE_BYTES)
         .await
         .map_err(|error| error.to_string())?;
     let result = match response {
@@ -897,10 +1184,26 @@ async fn repair_tools_reject_bad_arguments_at_the_dispatch_edge() -> Result<(), 
         // Each case binds to the handler it names: rejection by a sibling
         // handler must not satisfy the assertion.
         let result = match tool {
-            "prepare" => server.prepare_repair_tool(arguments).await,
-            "attempt" => server.get_repair_attempt_tool(arguments).await,
-            "card" => server.get_repair_card_tool(arguments).await,
-            _ => server.get_receipt_status_tool(arguments).await,
+            "prepare" => {
+                server
+                    .prepare_repair_tool(arguments, super::super::MAX_RESPONSE_BYTES)
+                    .await
+            }
+            "attempt" => {
+                server
+                    .get_repair_attempt_tool(arguments, super::super::MAX_RESPONSE_BYTES)
+                    .await
+            }
+            "card" => {
+                server
+                    .get_repair_card_tool(arguments, super::super::MAX_RESPONSE_BYTES)
+                    .await
+            }
+            _ => {
+                server
+                    .get_receipt_status_tool(arguments, super::super::MAX_RESPONSE_BYTES)
+                    .await
+            }
         };
         let rejected = matches!(
             result,

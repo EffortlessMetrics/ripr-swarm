@@ -146,6 +146,153 @@ fn proximity_only_reach_through_a_macro_names_the_macro_limit() -> Result<(), St
 }
 
 #[test]
+fn a_chain_past_five_hops_does_not_displace_the_macro_witness() -> Result<(), String> {
+    // RIPR-SPEC-0114 step 5 (#8047): the walk past the bound runs after
+    // every other reach witness, so a second test entering a seven-hop chain
+    // to the same owner leaves the one-macro-hop witness named.
+    let chain = "pub fn d7(x: i64) -> i64 { d6(x) }
+fn d6(x: i64) -> i64 { d5(x) }
+fn d5(x: i64) -> i64 { d4(x) }
+fn d4(x: i64) -> i64 { d3(x) }
+fn d3(x: i64) -> i64 { d2(x) }
+fn d2(x: i64) -> i64 { d1(x) }
+fn d1(x: i64) -> i64 { inner_rate(x) }
+";
+    let fixture = Fixture::new(
+        "macro-and-deep",
+        &format!(
+            "{MACRO_ROUTED}    #[test]\n    fn deep_triples() {{\n        assert_eq!(d7(4), 12);\n    }}\n}}\n{chain}"
+        ),
+    )?;
+    let finding = fixture.rate_finding()?;
+    assert!(
+        all_relations(&finding, crate::analysis::classify::is_proximity_only),
+        "{:?}",
+        finding.related_tests
+    );
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::RustMacroReachUnresolved),
+        "{:?}",
+        finding.evidence
+    );
+    assert!(
+        !finding
+            .stop_reasons
+            .contains(&StopReason::TransitiveReachUnresolved),
+        "{:?}",
+        finding.stop_reasons
+    );
+
+    // Discriminating half: without the macro route, the same chain names
+    // the transitive limit through the walk past the bound.
+    let no_macro = MACRO_ROUTED.replace("call_inner!(x)", "x");
+    let fixture = Fixture::new(
+        "deep-only",
+        &format!(
+            "{no_macro}    #[test]\n    fn deep_triples() {{\n        assert_eq!(d7(4), 12);\n    }}\n}}\n{chain}"
+        ),
+    )?;
+    let finding = fixture.rate_finding()?;
+    assert!(
+        finding
+            .stop_reasons
+            .contains(&StopReason::TransitiveReachUnresolved),
+        "{:?}",
+        finding.evidence
+    );
+    // Pin the full inspect pointer, not a substring of the test name: a
+    // wording or location regression must fail (#8106).
+    assert_eq!(
+        finding
+            .evidence
+            .iter()
+            .find(|line| line.starts_with("For example, the test "))
+            .map(String::as_str),
+        Some(
+            "For example, the test `deep_triples` (src/lib.rs:20) calls `d7`, an entry point that may lead here. Inspect it to judge whether this change is observed."
+        ),
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+#[test]
+fn a_no_static_path_chain_past_five_hops_does_not_displace_the_macro_witness() -> Result<(), String>
+{
+    // The `no_static_path` consumer (#8047): with no related test at all, a
+    // seven-hop chain is still tried only after the macro witness.
+    let lib = "fn inner_rate(x: i64) -> i64 {
+    3 * x
+}
+macro_rules! call_inner {
+    ($x:expr) => {
+        inner_rate($x)
+    };
+}
+pub fn outer(x: i64) -> i64 {
+    call_inner!(x)
+}
+pub fn d7(x: i64) -> i64 { d6(x) }
+fn d6(x: i64) -> i64 { d5(x) }
+fn d5(x: i64) -> i64 { d4(x) }
+fn d4(x: i64) -> i64 { d3(x) }
+fn d3(x: i64) -> i64 { d2(x) }
+fn d2(x: i64) -> i64 { d1(x) }
+fn d1(x: i64) -> i64 { inner_rate(x) }
+";
+    let tests = "#[test]\nfn macro_path() {\n    assert_eq!(reach::outer(4), 12);\n}\n#[test]\nfn deep_path() {\n    assert_eq!(reach::d7(4), 12);\n}\n";
+    let fixture = Fixture::new("nsp-macro-and-deep", lib)?;
+    fs::create_dir_all(fixture.0.join("tests")).map_err(|e| e.to_string())?;
+    fs::write(fixture.0.join("tests/paths.rs"), tests).map_err(|e| e.to_string())?;
+    let finding = fixture.rate_finding()?;
+    // Fixture construction: no test relates to the owner.
+    assert_eq!(finding.class, ExposureClass::NoStaticPath, "{finding:?}");
+    assert!(
+        finding.related_tests.is_empty(),
+        "{:?}",
+        finding.related_tests
+    );
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::RustMacroReachUnresolved),
+        "{:?}",
+        finding.evidence
+    );
+
+    // Discriminating half: without the macro route, the chain past the
+    // bound names the transitive limit and its test.
+    let fixture = Fixture::new("nsp-deep-only", &lib.replace("call_inner!(x)", "x"))?;
+    fs::create_dir_all(fixture.0.join("tests")).map_err(|e| e.to_string())?;
+    fs::write(fixture.0.join("tests/paths.rs"), tests).map_err(|e| e.to_string())?;
+    let finding = fixture.rate_finding()?;
+    assert_eq!(finding.class, ExposureClass::NoStaticPath, "{finding:?}");
+    assert!(
+        finding
+            .stop_reasons
+            .contains(&StopReason::TransitiveReachUnresolved),
+        "{:?}",
+        finding.evidence
+    );
+    // Pin the full inspect pointer, not a substring of the test name: a
+    // wording or location regression must fail (#8106).
+    assert_eq!(
+        finding
+            .evidence
+            .iter()
+            .find(|line| line.starts_with("For example, the test "))
+            .map(String::as_str),
+        Some(
+            "For example, the test `deep_path` (tests/paths.rs:6) calls `d7`, an entry point that may lead here. Inspect it to judge whether this change is observed."
+        ),
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+#[test]
 fn a_forwarding_helper_chain_relates_and_establishes_reach_without_credit() -> Result<(), String> {
     // A same-file test that reaches a private helper through its forwarding
     // caller relates by the chain, not file proximity.
@@ -642,5 +789,160 @@ fn a_trait_default_method_owner_keeps_the_gap() -> Result<(), String> {
     assert_custom_assert_construction(&finding, false);
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
     assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    Ok(())
+}
+
+// #6778: one two-line diff asks the proximity gate about two arms. Count
+// actual lazy graph builds through the retained Rust adapter, not calls to
+// its cheap constructor, and pin output separately from the resource oracle.
+const TWO_ARM_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -20,6 +20,6 @@ impl FromStr for Unit {\n pub fn seconds(u: Unit) -> u64 {\n     match u {\n-        Unit::Week => 600_000,\n-        Unit::Fortnight => 1_296_000,\n+        Unit::Week => 604_800,\n+        Unit::Fortnight => 1_209_600,\n     }\n }\n";
+
+fn shared_reach_source() -> String {
+    // Keep the retained fixture bytes local so packaged crate tests do not
+    // acquire a compile-time dependency on the repository fixture directory.
+    let source = r#"use std::str::FromStr;
+
+#[derive(Debug, PartialEq)]
+pub enum Unit {
+    Week,
+    Fortnight,
+}
+
+impl FromStr for Unit {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, ()> {
+        match s {
+            "week" => Ok(Unit::Week),
+            "fortnight" => Ok(Unit::Fortnight),
+            _ => Err(()),
+        }
+    }
+}
+
+pub fn seconds(u: Unit) -> u64 {
+    match u {
+        Unit::Week => 604_800,
+        Unit::Fortnight => 1_209_600,
+    }
+}
+
+pub fn seconds_bridge(u: Unit) -> u64 {
+    seconds(u)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn seconds_total() {
+        let total: u64 = ["week", "fortnight"]
+            .iter()
+            .map(|s| seconds(Unit::from_str(s).unwrap()))
+            .sum();
+        assert_eq!(total, 1_814_400);
+    }
+
+    #[test]
+    fn bridge_fortnight() {
+        assert_eq!(seconds_bridge(Unit::Fortnight), 1_209_600);
+    }
+
+    #[test]
+    fn from_str_fortnight() {
+        assert!(matches!(Unit::from_str("fortnight"), Ok(Unit::Fortnight)));
+    }
+}
+"#;
+    format!(
+        "{source}\npub fn fixture(u: Unit) -> u64 {{\n    match u {{ Unit::Week => 604_800, Unit::Fortnight => 1_209_600 }}\n}}\n"
+    )
+}
+
+impl Fixture {
+    fn arm_findings(&self) -> Result<Vec<Finding>, String> {
+        let result = RustAdapter.analyze_diff(
+            &AnalysisOptions {
+                root: self.0.clone(),
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                perl_producer_failure: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &diff::parse_unified_diff(TWO_ARM_DIFF),
+        )?;
+        let arms: Vec<_> = result
+            .findings
+            .into_iter()
+            .filter(|finding| finding.probe.family == crate::domain::ProbeFamily::MatchArm)
+            .collect();
+        assert_eq!(arms.len(), 2, "both changed arms must reach classification");
+        Ok(arms)
+    }
+}
+
+fn fortnight_class(findings: &[Finding]) -> Result<ExposureClass, String> {
+    findings
+        .iter()
+        .find(|finding| finding.probe.expression == "Unit::Fortnight =>")
+        .map(|finding| finding.class.clone())
+        .ok_or_else(|| "missing changed Fortnight arm".to_string())
+}
+
+#[test]
+fn proximity_graph_is_shared_across_changed_arms_cold_and_warm() -> Result<(), String> {
+    use crate::analysis::classify::TransitiveReachIndex;
+
+    let fixture = Fixture::new("shared-graph", &shared_reach_source())?;
+    let start = TransitiveReachIndex::graph_build_count();
+    let cold = fixture.arm_findings()?;
+    assert_eq!(fortnight_class(&cold)?, ExposureClass::Exposed);
+    assert_eq!(TransitiveReachIndex::graph_build_count() - start, 1);
+
+    let start = TransitiveReachIndex::graph_build_count();
+    let warm = fixture.arm_findings()?;
+    assert_eq!(
+        serde_json::to_string(&cold).map_err(|e| e.to_string())?,
+        serde_json::to_string(&warm).map_err(|e| e.to_string())?
+    );
+    assert_eq!(TransitiveReachIndex::graph_build_count() - start, 1);
+    Ok(())
+}
+
+#[test]
+fn proximity_graph_rebuilds_after_a_same_path_helper_edit() -> Result<(), String> {
+    use crate::analysis::classify::TransitiveReachIndex;
+
+    let source = shared_reach_source();
+    let fixture = Fixture::new("edited-graph", &source)?;
+    let before = fixture.arm_findings()?;
+    assert_eq!(fortnight_class(&before)?, ExposureClass::Exposed);
+
+    // Both versions return the same literal to the test, but the edited
+    // helper calls the independent implementation and cannot run `seconds`.
+    let edited = source.replacen("    seconds(u)\n", "    fixture(u)\n", 1);
+    assert_ne!(source, edited, "the helper edit must change its call edge");
+    fs::write(fixture.0.join("src/lib.rs"), edited).map_err(|e| e.to_string())?;
+    let start = TransitiveReachIndex::graph_build_count();
+    let after = fixture.arm_findings()?;
+    assert_eq!(fortnight_class(&after)?, ExposureClass::WeaklyExposed);
+    assert_eq!(TransitiveReachIndex::graph_build_count() - start, 1);
+
+    fs::write(fixture.0.join("src/lib.rs"), source).map_err(|e| e.to_string())?;
+    let restored = fixture.arm_findings()?;
+    assert_eq!(
+        serde_json::to_string(&before).map_err(|e| e.to_string())?,
+        serde_json::to_string(&restored).map_err(|e| e.to_string())?
+    );
     Ok(())
 }

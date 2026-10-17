@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index a6025c0..da33e45 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,5 +1,5 @@
+ pub fn tier(total: u64) -> u64 {
+-    if total >= 100 { 20 } else { 0 }
++    if 100 <= total { 20 } else { 0 }
+ }
+ 
+ pub fn flat_fee() -> u64 {

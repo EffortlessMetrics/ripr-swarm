@@ -30,6 +30,7 @@ mod python;
 mod read_limit_disclosure;
 mod router;
 mod rust;
+pub(crate) use rust::producer_gap_names_seam_shape;
 #[cfg(feature = "lang-typescript")]
 mod typescript;
 
@@ -43,7 +44,9 @@ pub(crate) use perl::{
 #[cfg(feature = "lang-perl")]
 pub(crate) use perl::{PERL_PRODUCER_FAILURE_REASON_PREFIX, PerlAdapter};
 #[cfg(feature = "lang-python")]
-pub(crate) use python::{PythonAdapter, detect_python_test_framework};
+pub(crate) use python::{
+    PythonAdapter, detect_python_test_framework, detect_python_test_frameworks,
+};
 #[cfg(test)]
 pub(crate) use router::UNANALYZED_SOURCE_LANGUAGES_FOR_TESTS;
 pub(crate) use router::{

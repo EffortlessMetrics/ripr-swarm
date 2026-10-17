@@ -121,6 +121,7 @@ static_limit_kind|property_based_test|Typed static limitation value.
 static_limit_kind|python_transitive_reach_unresolved|Typed static limitation value.
 static_limit_kind|rust_assertion_context_unresolved|Typed static limitation value.
 static_limit_kind|rust_log_capture_unresolved|Typed static limitation value.
+static_limit_kind|rust_panic_outcome_unresolved|Typed static limitation value.
 static_limit_kind|rust_integration_public_api_path_unresolved|Typed static limitation value.
 static_limit_kind|rust_macro_reach_unresolved|Typed static limitation value.
 static_limit_kind|rust_macro_wrapped_assertion_unresolved|Typed static limitation value.
@@ -128,6 +129,7 @@ static_limit_kind|rust_macro_wrapped_test_call_unresolved|Typed static limitatio
 static_limit_kind|rust_subprocess_binary_reach_unresolved|Typed static limitation value.
 static_limit_kind|rust_transitive_reach_unresolved|Typed static limitation value.
 static_limit_kind|rust_value_propagation_unresolved|Typed static limitation value.
+static_limit_kind|rust_field_match_selector_unresolved|Typed metadata-only static limitation; proof and class unchanged.
 static_limit_kind|unresolved_pytest_fixture|Typed static limitation value.
 static_limit_kind|unsupported_syntax|Typed static limitation value.
 static_limit_kind|wrapper_error_binding_unresolved|Typed static limitation value.

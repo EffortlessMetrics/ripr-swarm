@@ -5,10 +5,10 @@ config: <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/inp
 
 Summary: 2 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 2 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
 
-Changed file(s) by language: typescript: 1.
+Changed file(s) by language: typescript = 1
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 9 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s).
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 9 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s)
 
 WARNING src/pricing.ts:6
   id: probe:src_pricing.ts:typescript_preview:fff3ea84
@@ -42,10 +42,10 @@ Static exposure
 
 Evidence
   - reach no: 0 related test(s) found for owner `DEFAULT_FEE_RULE`
-  - infection unknown: TypeScript preview adapter does not yet model infection.
-  - propagation unknown: TypeScript preview adapter does not yet model propagation.
+  - infection unknown: TypeScript preview adapter does not yet model infection
+  - propagation unknown: TypeScript preview adapter does not yet model propagation
   - observation no: Strongest extracted oracle kind: `unknown` (rank 0)
-  - discriminator no: TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.
+  - discriminator no: TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands
   - owner: DEFAULT_FEE_RULE
   - probe_fact: ambiguous_fallback
   - typescript_package_confidence: none
@@ -53,7 +53,7 @@ Evidence
   - typescript_package_limitation: typescript_test_runner_unresolved
 
 Weakness
-  - No trusted TypeScript module-initializer observer for `DEFAULT_FEE_RULE`. Direct `expect(IMPORTED_CONST)...` and `expect(namespace.EXPORT)...` observers are supported, but helper-derived values, shadowed aliases, dynamic initialization, and non-expect references stay advisory in preview.
+  - No trusted TypeScript module-initializer observer for `DEFAULT_FEE_RULE`. Direct `expect(IMPORTED_CONST)...` and `expect(namespace.EXPORT)...` observers are supported, but helper-derived values, shadowed aliases, dynamic initialization, and non-expect references stay advisory in preview
 
 TypeScript preview card (advisory)
   card version: typescript_preview_card.v1
@@ -77,7 +77,7 @@ TypeScript repair packet (advisory)
   next capability needed: trusted related test or observer, target shape, verify command, receipt command, and edit boundaries
 
 Next step
-  TypeScript preview advisory: module initializer observer is missing context; add a direct `expect(IMPORTED_CONST).toBe(...)` or `expect(namespace.EXPORT).toEqual(...)` observer when safe, and keep helper-derived or dynamic initialization evidence advisory.
+  TypeScript preview advisory: module initializer observer is missing context; add a direct `expect(IMPORTED_CONST).toBe(...)` or `expect(namespace.EXPORT).toEqual(...)` observer when safe, and keep helper-derived or dynamic initialization evidence advisory
 Drill in:
   ripr explain --root <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:fff3ea84
   ripr context --root <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:fff3ea84
@@ -114,17 +114,17 @@ Static exposure
 
 Evidence
   - reach no: 0 related test(s) found for owner `applyDiscount`
-  - infection unknown: TypeScript preview adapter does not yet model infection.
-  - propagation unknown: TypeScript preview adapter does not yet model propagation.
+  - infection unknown: TypeScript preview adapter does not yet model infection
+  - propagation unknown: TypeScript preview adapter does not yet model propagation
   - observation no: Strongest extracted oracle kind: `unknown` (rank 0)
-  - discriminator no: TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.
+  - discriminator no: TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands
   - owner: applyDiscount
   - typescript_package_confidence: none
   - typescript_package_limitation: typescript_package_root_unresolved
   - typescript_package_limitation: typescript_test_runner_unresolved
 
 Weakness
-  - No test references `applyDiscount(` — add a test that calls the changed owner.
+  - No test references `applyDiscount(` — add a test that calls the changed owner
 
 TypeScript preview card (advisory)
   card version: typescript_preview_card.v1
@@ -148,7 +148,7 @@ TypeScript repair packet (advisory)
   next capability needed: trusted related test or observer, target shape, verify command, receipt command, and edit boundaries
 
 Next step
-  TypeScript preview advisory: no test references the changed owner; add a test that calls the owner and asserts the changed behavior with `toBe` / `toEqual` before any repair packet is emitted.
+  TypeScript preview advisory: no test references the changed owner; add a test that calls the owner and asserts the changed behavior with `toBe` / `toEqual` before any repair packet is emitted
 Drill in:
   ripr explain --root <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:bd772dc8
   ripr context --root <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:bd772dc8

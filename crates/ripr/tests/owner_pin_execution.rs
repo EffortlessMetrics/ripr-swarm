@@ -9,6 +9,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[path = "owner_pin_execution/field_projected_collection.rs"]
+mod field_projected_collection;
+
+#[path = "owner_pin_execution/literal_json_output.rs"]
+mod literal_json_output;
+
 struct Scratch(PathBuf);
 
 impl Scratch {
@@ -1465,7 +1471,8 @@ fn macro_use_module_admission_matches_runtime() -> Result<(), String> {
 /// macro's arguments keeps the name ambiguous, and `no_implicit_prelude` or
 /// `macro_use` hidden in macro arguments counts as written. Each row records
 /// whether the compiled test catches the wrong library; the pass-through row
-/// stays refused although it would, which is the conservative direction.
+/// stays refused although it would, which is the conservative direction
+/// (its `tt` fragment could splice a `!` onto another name, #6648).
 #[test]
 fn wrapper_argument_admission_matches_runtime() -> Result<(), String> {
     let fixture =
@@ -3360,6 +3367,126 @@ fn fallible_literal_cli_preserves_unrelated_os_bytes_and_refuses_relevant_inputs
             exposed,
             "{name}"
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn literal_json_constructor_matches_real_callback_and_runtime_controls() -> Result<(), String> {
+    let scratch = Scratch::create()?;
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    let target = scratch.0.join("runtime-target");
+    for (case, admitted) in [
+        ("real_literal", true),
+        ("nested_literal", true),
+        ("shadowed_constructor", false),
+        ("uncalled_closure", false),
+        ("effectful_operand", false),
+        ("ignored_result", false),
+        ("unrelated_equality", false),
+        ("shadowed_owner", false),
+        ("shadowed_assertion", false),
+        ("alternate_return", false),
+    ] {
+        let fixture = fixtures.join(format!("owner_return_pin_json_{case}"));
+        let report = check_workspace(CheckInput {
+            root: fixture.join("input"),
+            diff_file: Some(fixture.join("diff.patch")),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        let findings: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|finding| {
+                finding.probe.family == ProbeFamily::ReturnValue
+                    && finding.probe.expression.trim() == "Ok(())"
+            })
+            .collect();
+        assert_eq!(findings.len(), 1, "{case}: nonempty current subject");
+        // Construction establishes execution context only. The nested owner
+        // call still lacks the existing pin's argument witness (#4478).
+        assert_eq!(
+            findings[0].class == ExposureClass::Exposed,
+            case == "real_literal",
+            "{case}: {:#?}",
+            findings[0]
+        );
+        if case == "nested_literal" {
+            assert_eq!(findings[0].class, ExposureClass::WeaklyExposed);
+        }
+        let json: serde_json::Value =
+            serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+                .map_err(|e| e.to_string())?;
+        assert_eq!(
+            json["analysis_outcome"]["analysis_complete"], true,
+            "{case}"
+        );
+        if admitted {
+            let current = json["findings"]
+                .as_array()
+                .ok_or("finding array")?
+                .iter()
+                .find(|finding| finding["probe"]["expression"] == "Ok(())")
+                .ok_or("current return")?;
+            assert_eq!(
+                current["ripr"]["observe"]["state"], "yes",
+                "{case}: admission"
+            );
+            assert!(
+                !current["evidence"]
+                    .as_array()
+                    .ok_or("evidence")?
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .any(|text| text.contains("assertion not credited")),
+                "{case}"
+            );
+        }
+        let root = scratch.0.join(case);
+        std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
+        for file in ["Cargo.toml", "Cargo.lock", "src/lib.rs", "tests/save.rs"] {
+            std::fs::copy(fixture.join("input").join(file), root.join(file))
+                .map_err(|e| e.to_string())?;
+        }
+        let correct =
+            std::fs::read_to_string(root.join("src/lib.rs")).map_err(|e| e.to_string())?;
+        for broken in [false, true] {
+            if broken {
+                let (prefix, suffix) = correct.rsplit_once("Ok(())").ok_or("current return")?;
+                std::fs::write(root.join("src/lib.rs"), format!("{prefix}Err(SchemaError {{ method: None, path: String::new(), expected: String::new(), observed: String::new() }}){suffix}"))
+                    .map_err(|e| e.to_string())?;
+            }
+            let manifest = root.join("Cargo.toml");
+            let output = run_with_env(
+                Path::new("cargo"),
+                &[
+                    "test".as_ref(),
+                    "--offline".as_ref(),
+                    "--locked".as_ref(),
+                    "--manifest-path".as_ref(),
+                    manifest.as_os_str(),
+                    "--test".as_ref(),
+                    "save".as_ref(),
+                    "--".as_ref(),
+                    "--nocapture".as_ref(),
+                ],
+                &[
+                    ("CARGO_TARGET_DIR".into(), target.clone().into_os_string()),
+                    ("CARGO_BUILD_JOBS".into(), "1".into()),
+                ],
+            )?;
+            literal_json_output::assert_runtime_output(case, broken, admitted, &output);
+            if broken && admitted {
+                assert!(
+                    String::from_utf8_lossy(&output.stderr)
+                        .contains("assertion `left == right` failed")
+                );
+            }
+        }
     }
     Ok(())
 }

@@ -189,20 +189,14 @@ impl EvidenceHealthCalibration {
         Ok(Self {
             status: "loaded".to_string(),
             source: Some(source),
-            matched_total: usize_field(&value, &["summary", "matched_total"]),
-            static_without_runtime_total: usize_field(
-                &value,
-                &["summary", "static_without_runtime_total"],
-            ),
+            matched_total: calibration_total(&value, "matched_total"),
+            static_without_runtime_total: calibration_total(&value, "static_without_runtime_total"),
             runtime_without_static_total: value
                 .get("missed_runtime_signals")
                 .and_then(Value::as_array)
                 .map_or(0, Vec::len),
-            ambiguous_file_line_total: usize_field(
-                &value,
-                &["summary", "ambiguous_file_line_total"],
-            ),
-            unmatched_runtime_total: usize_field(&value, &["summary", "unmatched_mutants_total"]),
+            ambiguous_file_line_total: calibration_total(&value, "ambiguous_file_line_total"),
+            unmatched_runtime_total: calibration_total(&value, "unmatched_mutants_total"),
         })
     }
 }
@@ -678,6 +672,15 @@ fn push_risk(risks: &mut Vec<EvidenceHealthRisk>, kind: &str, count: usize, summ
     });
 }
 
+/// Calibration producers write totals under `metrics`; `summary` is the
+/// older shape and is read only when `metrics` does not carry the total.
+fn calibration_total(value: &Value, name: &str) -> usize {
+    ["metrics", "summary"]
+        .iter()
+        .find(|section| value.get(**section).and_then(|s| s.get(name)).is_some())
+        .map_or(0, |section| usize_field(value, &[section, name]))
+}
+
 fn usize_field(value: &Value, path: &[&str]) -> usize {
     let mut current = value;
     for segment in path {
@@ -830,6 +833,62 @@ mod tests {
         assert!(markdown.contains("Categories"));
         assert!(markdown.contains("activation_static_unknown"));
         assert!(markdown.contains("Runtime rows without static seam"));
+
+        // Pin the fixture's risk rows independently of the report's risk vector:
+        // four unknown stages, two uncalibrated records, one opaque relation,
+        // and one missing discriminator. Zero duplicate groups stay omitted.
+        let risks = markdown
+            .split_once("## Top Evidence Quality Risks\n\n")
+            .ok_or("missing risk section")?
+            .1
+            .split_once("## Calibration Availability\n\n")
+            .ok_or("missing calibration section")?
+            .0;
+        assert_eq!(
+            risks,
+            concat!(
+                "| Risk | Count | Summary |\n",
+                "| --- | ---: | --- |\n",
+                "| static_limitations | 4 | Evidence records still contain static limitations. |\n",
+                "| uncalibrated_records | 2 | Evidence records do not have imported runtime calibration data. |\n",
+                "| low_or_opaque_related_tests | 1 | Related-test evidence includes low-confidence or opaque rankings. |\n",
+                "| missing_discriminators | 1 | Headline evidence still lacks concrete discriminator coverage. |\n",
+                "\n",
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn calibration_totals_come_from_the_producer_metrics_section() -> Result<(), String> {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
+            "../../fixtures/boundary_gap/calibration/runtime-fixtures-v1/mutation-calibration.json",
+        );
+        let contents = std::fs::read_to_string(&path)
+            .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+        let producer: Value = serde_json::from_str(&contents).map_err(|err| err.to_string())?;
+        assert_eq!(producer["metrics"]["matched_total"], 6);
+
+        let calibration = EvidenceHealthCalibration::from_json("fixture".to_string(), &contents)?;
+
+        assert_eq!(calibration.status, "loaded");
+        assert_eq!(calibration.matched_total, 6);
+        assert_eq!(calibration.static_without_runtime_total, 1);
+        assert_eq!(calibration.ambiguous_file_line_total, 1);
+        assert_eq!(calibration.unmatched_runtime_total, 1);
+        assert_eq!(calibration.runtime_without_static_total, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn calibration_totals_prefer_metrics_over_legacy_summary() -> Result<(), String> {
+        let calibration = EvidenceHealthCalibration::from_json(
+            "inline".to_string(),
+            r#"{"metrics": {"matched_total": 4}, "summary": {"matched_total": 9, "unmatched_mutants_total": 2}}"#,
+        )?;
+
+        assert_eq!(calibration.matched_total, 4);
+        assert_eq!(calibration.unmatched_runtime_total, 2);
         Ok(())
     }
 

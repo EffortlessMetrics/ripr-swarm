@@ -1,0 +1,52 @@
+{
+  "case_id": "push-seeded-unguarded-assert",
+  "subject_id": "authored-seeded-push-unguarded",
+  "diff": "cases/push-seeded-unguarded-assert.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 7
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect_push",
+  "test_shape": "unguarded_push_asserts_seeded_plus_pushed_collection",
+  "hard_case": "Positive control for #8205: the owner has no early exit, the test seeds log = vec![9] and asserts vec![9, 1], so the push always runs and the assertion must keep exposed credit.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.log.push(2);",
+        "mutated_line": "self.log.push(2);",
+        "outcome": "tests_failed",
+        "failing_test": "seeded_beat_appends",
+        "equivalence_review": "not equivalent: the log becomes [9, 2] instead of [9, 1]"
+      },
+      {
+        "replacement": "",
+        "mutated_line": "",
+        "outcome": "tests_failed",
+        "failing_test": "seeded_beat_appends",
+        "equivalence_review": "not equivalent: the log stays [9] instead of gaining 1"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "seeded_beat_appends seeds log = vec![9], beat() has no guard so the push always runs, and the assertion expects the seed plus the pushed 1: it catches a deleted or changed push and stays exposed (#8205 positive control).",
+  "labeling_observation": {
+    "ripr_commit": "9142188",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

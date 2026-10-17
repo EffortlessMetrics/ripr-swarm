@@ -9,7 +9,7 @@ Created: 2026-09-29
 Renumbered: from RIPR-SPEC-0181 after main landed the inline test-module
 region cage spec under RIPR-SPEC-0181 first.
 
-Linked issues: #4491, #4710, #7630
+Linked issues: #4491, #4710, #7630, #8423
 
 Linked PRs: #4716
 
@@ -47,6 +47,14 @@ The package `@effortlessmetrics/ripr`:
   executable to that package's real root;
 - never downloads, compiles, invokes a shell, or falls back to an ambient
   `ripr` executable;
+- retains the typed missing-native-executable reason, package, version and path,
+  and advises matching-tarball restoration or exact-version launcher reinstall
+  in the owning npm environment with optional dependencies enabled;
+- retains the POSIX non-executable-file refusal with the native package, exact
+  version and executable path, advising matching-tarball restoration with
+  executable permissions preserved or the same exact-version reinstall;
+- rejects unsupported platforms and Linux libc without suggesting that reinstall
+  supplies an unsupported payload;
 - reports direct packaged-library `MODULE_NOT_FOUND` resolution failure on
   stderr with the authentic reason and same-version restoration/reinstall advice;
   unavailable display metadata in that recovery branch never causes a guessed
@@ -69,6 +77,11 @@ The package `@effortlessmetrics/ripr`:
   range or target-set drift;
 - native resolution controls reject missing, mismatched, escaping, symlinked,
   directory, and non-executable payloads;
+- the four registered POSIX target rows retain the non-executable-file typed
+  refusal and exact recovery advice; a host public-bin control before/after a
+  space/Unicode directory move checks foreign-CWD/decoy isolation, blank stdout,
+  exit 1 and restored launch (synthetic Node transport bytes, not native RIPR
+  platform qualification); these controls are mandatory on POSIX;
 - a real POSIX subprocess control sends `SIGTERM` only to the launcher and
   observes exactly one child delivery with no surviving child;
 - a real POSIX escalation control sends `SIGINT` then `SIGTERM` only to the
@@ -84,6 +97,11 @@ The package `@effortlessmetrics/ripr`:
   is absent; resolved non-object manifests fail with a contextual typed error;
 - the packed launcher inventory contains only the declared runtime files and
   notices;
+- all five registered target rows retain missing-executable identity and cause;
+  a public-bin control from a foreign cwd before/after a space/Unicode directory
+  move checks exact-version recovery, PATH refusal and restoration with synthetic
+  Node bytes; simulated unsupported targets keep blank stdout and exit 1 without
+  reinstall advice (these controls do not qualify native platform execution);
 - deleting the installed launcher library fails with controlled stderr, blank
   stdout, exit 1, exact-version recovery and PATH refusal from a foreign cwd
   before and after a directory move; restoring its original bytes reaches native
@@ -143,6 +161,11 @@ The package `@effortlessmetrics/ripr`:
 - `packaging/npm/launcher/test/launcher.test.cjs::public bin identifies corrupt package metadata and recovers after restoration`
 - `packaging/npm/launcher/test/launcher.test.cjs::public bin retains missing-manifest and missing-exports reasons without claiming package absence`
 - `packaging/npm/launcher/test/launcher.test.cjs::rejects missing, wrong-version, wrong-target, traversal, symlink, directory, and non-executable payloads`
+- `packaging/npm/launcher/test/launcher.test.cjs::non-executable native payload gives exact recovery for each POSIX target`
+- `packaging/npm/launcher/test/launcher.test.cjs::public bin non-executable recovery survives a directory move and restores launch`
+- `packaging/npm/launcher/test/launcher.test.cjs::missing native executable gives exact recovery for every registered target`
+- `packaging/npm/launcher/test/launcher.test.cjs::public bin missing-native failure gives exact recovery after a directory move`
+- `packaging/npm/launcher/test/launcher.test.cjs::public bin simulated unsupported platforms fail without reinstall advice or stdout`
 - `packaging/npm/launcher/test/launcher.test.cjs::forwards direct SIGTERM to native child exactly once and re-emits signal`
 - `packaging/npm/launcher/test/launcher.test.cjs::retains the first observed signal when a supervisor escalates SIGINT to SIGTERM`
 - `packaging/npm/launcher/test/launcher.test.cjs::observes terminal SIGINT and SIGHUP without forwarding duplicates to the native child`

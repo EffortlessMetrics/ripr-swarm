@@ -2,6 +2,16 @@ use crate::app::CheckInput;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
 use std::path::Path;
 
+/// A named refusal has already reached its decision. Reporting its optional
+/// stderr JSON must not replace that decision with an I/O panic. Preserve the
+/// renderers' newline conventions and JSON escaping; stdout stays separate.
+pub(super) fn write_stderr_refusal_json(document: String) {
+    use std::io::Write as _;
+    let document = crate::terminal_text::json_terminal_safe(document);
+    let newline = if document.ends_with('\n') { "" } else { "\n" };
+    let _ = write!(std::io::stderr().lock(), "{document}{newline}");
+}
+
 /// Map a producer outcome after its original report has reached stdout.
 /// Only the typed unsupported-input result fails; usable partial evidence
 /// stays advisory. The caller must not append a refusal to the report.
@@ -32,6 +42,10 @@ pub(super) fn ensure_command_root(root: &Path, command_name: &str) -> Result<(),
             if let Some(note) = windows_root_rebind_note(root, command_name) {
                 eprintln!("{note}");
             }
+            // #7781: every command that writes under `target/ripr` shares this
+            // gate, so a checked-in `target` link cannot redirect its output.
+            crate::atomic_file::ensure_default_output_contained(root)
+                .map_err(|error| format!("{command_name}: {error}"))?;
             Ok(())
         }
         // Metadata resolved, so the typed name addresses an existing entry.
@@ -285,6 +299,32 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
         Ok(root)
+    }
+
+    // #7781: the shared command-root gate refuses a checked-in `target` link
+    // that resolves outside the workspace, for every command that uses it.
+    #[cfg(unix)]
+    #[test]
+    fn command_root_refuses_target_symlink_escaping_the_workspace() -> Result<(), String> {
+        let base = test_root("hostile-target")?;
+        let _guard = Guard(base.clone());
+        let ws = base.join("ws");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&ws).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&outside).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&outside, ws.join("target")).map_err(|e| e.to_string())?;
+        if std::env::var("RIPR_CACHE_DIR").is_ok_and(|value| !value.trim().is_empty()) {
+            return Ok(());
+        }
+        let error = ensure_command_root(&ws, "agent brief")
+            .err()
+            .ok_or("hostile target link must be refused")?;
+        assert!(
+            error.starts_with("agent brief: refusing to write ripr output")
+                && error.contains("RIPR_CACHE_DIR"),
+            "{error}"
+        );
+        Ok(())
     }
 
     // Portable controls: names without trailing dots or spaces keep the

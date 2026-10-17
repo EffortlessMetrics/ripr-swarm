@@ -157,6 +157,53 @@ After fix:     exposed / confidence 1.0   (unchanged — Idle token_match fires)
 
 ## Test Mapping
 
+### Real terminal tuple projection (#1728)
+
+The bounded derived-local witness also admits the retained
+[`terminalize_proof` consumer correction](https://github.com/EffortlessMetrics/ripr/issues/1728#issuecomment-5747473563).
+Its five ordered parameters, outer proof-request lookup, request sort/dedup,
+borrowed request set, receipt iteration, matching sort, status validation,
+`join={relation}` formatter and returned `Ok((status, reason, request_ids,
+receipt_ids))` must match the frozen parsed grammar. Only the exact parser-owned
+tuple-match node is a hole; the existing derived witness independently binds
+its ordered immutable locals, exhaustive Boolean arms and candidate-current
+changed literal. Lexer trivia is ignored; literal whitespace is preserved.
+
+The supported oracle is one direct five-argument owner call followed by
+`.unwrap()`, with a single immutable receipt literal and immutable
+`BTreeMap::from` request maps. Duplicate keys, aliases, mutation and unknown
+inputs refuse. The actual input maps determine request intersection and task
+identity. Four executed top-level `assert_eq!` observations must pin the
+returned status, exact reason containing the current relation, sorted/deduped
+request IDs and receipt IDs. Sibling-only, diagnostic-only, no-op, uninvoked,
+shadowed and post-return observations cannot refine the changed arm.
+
+This extends static discrimination only for that grammar. Indirect serialized
+caller projections, multiple-receipt oracle evaluation and arbitrary result
+flow remain unsupported. The stage combiner retains ownership of the final
+classification. Local or imported replacement macros, extern crates and
+unknown wildcard imports refuse this terminal extension. The actual
+`use crate::*` boundary reuses the existing indexed macro candidates and
+parser-backed binding scan for `format`; every indexed file must remain
+parser-owned, and a possible formatter replacement anywhere in the index
+withholds the witness. A native public-API regression puts the retained owner
+in an out-of-line module and rejects a formatter inherited from its crate root.
+The same indexed value-name authority refuses declarations or named imports
+that shadow `Some`, `Ok` or `None`; a compiling counterfeit `Some` can
+otherwise erase the relation while preserving all four asserted fields.
+The indirect serialized oracle remains separate retained acceptance under #1728.
+No consumer rewrite, pin, suppression, threshold, release or
+adoption follows. Roll back the terminal grammar while retaining its public
+positive/negative regressions; the previously admitted precursor stays intact.
+
+Test mapping:
+`match_arm_tuple_derived_local::{real_terminal_request_derivation_and_reason_projection,
+real_terminal_sibling_projections_remain_unverified,
+real_terminal_owner_flow_controls_remain_unverified,
+real_terminal_oracle_controls_remain_unverified}`, plus literal-token and
+map-input controls in `tuple_match/derived_admission/terminal_flow.rs`.
+
+
 - `crates/ripr/src/analysis/classify/reveal.rs` — unit tests for
   `assertion_matches_probe_detail` and `analyze_related_assertions`.
 - `fixtures/match_arm_blind/` — golden fixture for the arm-blind case.
@@ -198,3 +245,10 @@ within the existing `usable alpha` Rust exposure loop.
   and `Status::Y` share `Status`) may have spurious token_match from the shared
   prefix. This is a known limitation; the net direction is still fail-closed
   (fewer false-actables, not fewer true-positives).
+
+Opaque item/statement expansions anywhere in the indexed namespace also refuse
+terminal admission: a macro can emit an inherited `Some` without spelling that
+name at its invocation. Expression expansions stay confined to their expression
+scope; indexed standard macro authority and ordinary Option constructors retain
+the existing paths. The generated-constructor honesty fixture and public API
+regression retain the compiling wrong-arm counterexample from #7836 review.

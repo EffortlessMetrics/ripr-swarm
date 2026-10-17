@@ -12,7 +12,7 @@ use std::path::Path;
 use crate::agent::artifact::current_git_head;
 use crate::agent::command_specs::repair_start_command_spec;
 use crate::agent::loop_commands::{bound_root, shell_arg};
-use crate::analysis::canonical_gap::canonical_gap_identity;
+use crate::analysis::canonical_gap::{canonical_gap_identity, producer_gap_id_names_seam};
 use crate::analysis::repair_route::{RepairPacketIneligibility, repair_packet_eligibility};
 use crate::app::agent_brief::AgentBriefPolicy;
 use crate::app::agent_status::{AgentAttemptStatusReport, build_agent_attempt_status};
@@ -142,6 +142,25 @@ pub(crate) fn decide_repair_start(
     Ok(RepairStartDecision::Action(Box::new(action)))
 }
 
+/// The one repair-admission gate, shared by the auto selector and the
+/// explicit-subject resolver: a seam may start only when the producer-owned
+/// packet flip is eligible and the brief policy does not omit its class.
+/// Returns the refusal reason naming why the seam may not start (the
+/// eligibility label, or the policy omission when the flip is eligible),
+/// with the eligibility reason taking precedence over the omission.
+fn repair_refusal_reason(
+    entry: &crate::analysis::ClassifiedSeam,
+    policy: AgentBriefPolicy<'_>,
+) -> Option<String> {
+    let eligibility = repair_packet_eligibility(entry);
+    if !eligibility.eligible() {
+        return eligibility
+            .ineligibility
+            .map(|reason| ineligibility_label(reason).to_string());
+    }
+    policy.omission_reason_for_class(entry.class)
+}
+
 fn ineligibility_label(reason: RepairPacketIneligibility) -> &'static str {
     match reason {
         RepairPacketIneligibility::ClassNotHeadlineEligible => "not a headline repair target",
@@ -180,21 +199,14 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
     // classes, so no eligible seam is lost.
     let policy = AgentBriefPolicy::from_config(&config);
     for entry in &classified {
-        let eligibility = repair_packet_eligibility(entry);
-        let omitted = policy.omission_reason_for_class(entry.class);
-        if eligibility.eligible() && omitted.is_none() {
-            eligible_ids.push(entry.seam.id().as_str().to_string());
-        } else if let Some(reason) = eligibility.ineligibility {
-            let label = ineligibility_label(reason).to_string();
-            if reasons.len() < 3 && !reasons.contains(&label) {
-                reasons.push(label);
-            }
-        } else if let Some(omission) = omitted {
-            // Eligible by the packet flip but omitted by policy: name
-            // the shared policy's own reason among the no-eligible
-            // reasons so the limitation is diagnosable.
-            if reasons.len() < 3 && !reasons.contains(&omission) {
-                reasons.push(omission);
+        match repair_refusal_reason(entry, policy) {
+            None => eligible_ids.push(entry.seam.id().as_str().to_string()),
+            Some(reason) => {
+                // Name the shared gate's own reason among the no-eligible
+                // reasons so the limitation is diagnosable.
+                if reasons.len() < 3 && !reasons.contains(&reason) {
+                    reasons.push(reason);
+                }
             }
         }
     }
@@ -223,8 +235,13 @@ pub(crate) enum RepairSubject {
 }
 
 /// Resolve an explicit `ripr repair` item to its seam: an exact seam ID, or
-/// a canonical gap ID naming exactly one seam. Anything else is a
-/// deliberate no-selection message, never an implicit pick.
+/// a canonical gap ID naming exactly one seam. The gap ID may be the
+/// seam-derived `gap:<hash>` or the Rust producer gap ID `ripr check` prints
+/// as `Canonical gap:` (joined on file, owner, kind and discriminator). The resolved seam must pass
+/// the same repair-admission gate as the auto selector
+/// ([`repair_refusal_reason`]); an ineligible subject is a deliberate
+/// no-selection decision naming the reason, never a start. Anything else
+/// is a deliberate no-selection message, never an implicit pick.
 pub(crate) fn resolve_repair_subject(root: &Path, item: &str) -> Result<RepairSubject, String> {
     let config = load_for_root(root)?;
     let (classified, limit_info) =
@@ -237,24 +254,140 @@ pub(crate) fn resolve_repair_subject(root: &Path, item: &str) -> Result<RepairSu
             info.analyzed, info.total
         ));
     }
-    if classified
+    let policy = AgentBriefPolicy::from_config(&config);
+    if let Some(entry) = classified
         .iter()
-        .any(|entry| entry.seam.id().as_str() == item)
+        .find(|entry| entry.seam.id().as_str() == item)
     {
-        return Ok(RepairSubject::Seam(item.to_string()));
+        return Ok(match repair_refusal_reason(entry, policy) {
+            None => RepairSubject::Seam(item.to_string()),
+            Some(reason) => {
+                RepairSubject::Decision(ineligible_repair_item(root, item, item, &reason))
+            }
+        });
     }
-    let matches: Vec<&str> = classified
+    let matches: Vec<&crate::analysis::ClassifiedSeam> = classified
         .iter()
-        .filter(|entry| canonical_gap_identity(entry).is_some_and(|identity| identity.id == item))
-        .map(|entry| entry.seam.id().as_str())
+        .filter(|entry| {
+            canonical_gap_identity(entry).is_some_and(|identity| identity.id == item)
+                || producer_gap_id_names_seam(item, entry)
+        })
         .collect();
     match matches.len() {
-        1 => Ok(RepairSubject::Seam(matches[0].to_string())),
+        1 => {
+            let seam_id = matches[0].seam.id().as_str().to_string();
+            Ok(match repair_refusal_reason(matches[0], policy) {
+                None => RepairSubject::Seam(seam_id.clone()),
+                Some(reason) => {
+                    RepairSubject::Decision(ineligible_repair_item(root, item, &seam_id, &reason))
+                }
+            })
+        }
         0 => Ok(RepairSubject::Decision(unknown_repair_item(root, item))),
-        _ => Ok(RepairSubject::Decision(ambiguous_gap_item(
-            root, item, &matches,
-        ))),
+        _ => {
+            let seam_ids: Vec<&str> = matches
+                .iter()
+                .map(|entry| entry.seam.id().as_str())
+                .collect();
+            Ok(RepairSubject::Decision(ambiguous_gap_item(
+                root, item, &seam_ids,
+            )))
+        }
     }
+}
+
+/// The repair route for the one finding the default human `ripr check`
+/// selects (#8166 Slice C), or `None` when that finding may not be offered
+/// a repair start. The seam↔finding binding is the shared
+/// [`finding_for_seam`](super::repair_card_handoff::finding_for_seam)
+/// authority, and admission is the same [`repair_refusal_reason`] gate
+/// the explicit resolver applies, so the printed seam ID round-trips
+/// through [`resolve_repair_subject`] to the same seam.
+///
+/// The classified seams are derived only from the evidence this check
+/// run already computed: the selected finding's canonical gap names its
+/// file, and its related tests name the files that carry their evidence.
+/// Only that file's seams are classified, with test-grip evidence from
+/// the finding's own related-test files
+/// ([`classify_seams_in_file_with_related_at_with_config`](crate::analysis::classify_seams_in_file_with_related_at_with_config)).
+/// A fresh workspace inventory — full or diff-scoped — is never built
+/// here: on a large workspace either one builds a workspace-wide index
+/// and evidence context, and the full inventory additionally classified
+/// every seam in the repo, spinning human `ripr check` indefinitely
+/// (#8320). Scoping to the finding's file is sound for the binding
+/// because both binding branches require the seam's file to equal the
+/// finding's gap file, so no seam outside that file could claim this
+/// finding. Fail-closed throughout: a seam-limit-truncated candidate
+/// set, zero or several binding seams, an ineligible or policy-omitted
+/// seam, and any unreadable authority yield no route rather than a
+/// guessed one. When bounded evidence cannot decide eligibility the
+/// seam simply gets no route; `ripr repair` itself re-checks admission
+/// against the full inventory before starting any attempt.
+pub(crate) fn check_repair_route(
+    root: &Path,
+    check_config: &crate::config::RiprConfig,
+    output: &super::CheckOutput,
+) -> Option<crate::app::RepairRoute> {
+    let finding = crate::output::human::selected_triage_finding(output, check_config)?;
+    let gap = finding.canonical_gap.as_ref()?;
+    let config = load_for_root(root).ok()?;
+    let evidence_files: Vec<std::path::PathBuf> = finding
+        .related_tests
+        .iter()
+        .filter_map(|test| {
+            let relative = if test.file.is_absolute() {
+                test.file.strip_prefix(root).ok()?.to_path_buf()
+            } else {
+                test.file.clone()
+            };
+            (relative.extension().is_some_and(|ext| ext == "rs") && root.join(&relative).is_file())
+                .then_some(relative)
+        })
+        .collect();
+    let classified = crate::analysis::classify_seams_in_file_with_related_at_with_config(
+        root,
+        &config,
+        Path::new(&gap.file),
+        &evidence_files,
+    )
+    .ok()?;
+    match crate::analysis::repo_exposure_seam_limit() {
+        Ok(Some((limit, _))) if classified.len() > limit => return None,
+        Ok(_) => {}
+        Err(_) => return None,
+    }
+    let policy = AgentBriefPolicy::from_config(&config);
+    let mut bound = classified.iter().filter(|entry| {
+        let canonical_gap_id = repair_packet_eligibility(entry).readiness.canonical_gap_id;
+        super::repair_card_handoff::finding_for_seam(
+            &output.findings,
+            entry,
+            canonical_gap_id.as_deref(),
+            &classified,
+        )
+        .is_some_and(|bound_finding| bound_finding.id == finding.id)
+    });
+    let entry = bound.next()?;
+    if bound.next().is_some() {
+        return None;
+    }
+    if repair_refusal_reason(entry, policy).is_some() {
+        return None;
+    }
+    Some(crate::app::RepairRoute {
+        finding_id: finding.id.clone(),
+        seam_id: entry.seam.id().as_str().to_string(),
+    })
+}
+
+fn ineligible_repair_item(root: &Path, item: &str, seam_id: &str, reason: &str) -> String {
+    let list = format!(
+        "`ripr pilot --root {}`",
+        shell_arg(&bound_root(&root.to_string_lossy()))
+    );
+    format!(
+        "repair item `{item}` names seam `{seam_id}`, which is not repair-eligible: {reason}; no repair attempt was started. Run {list} to list current seam IDs"
+    )
 }
 
 fn unknown_repair_item(root: &Path, item: &str) -> String {

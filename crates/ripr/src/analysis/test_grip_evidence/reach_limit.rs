@@ -6,7 +6,8 @@
 //! `no_static_path` findings:
 //!
 //! - a bounded transitive or macro path from a test toward the owner exists
-//!   but is unresolved (RIPR-SPEC-0114, RIPR-SPEC-0118);
+//!   but is unresolved (RIPR-SPEC-0114, RIPR-SPEC-0118), or, checked after
+//!   every other witness, a transitive chain past five hops (#8047);
 //! - the owner is a trait-impl method, which operators, formatting macros
 //!   and generic calls run without naming it, test-reached code names the
 //!   impl's self type, and, for a std trait with its own call syntax
@@ -25,6 +26,7 @@ use crate::analysis::classify::{
     impl_self_type_name, is_trait_impl_method, macro_reach_limit_kind, transitive_reach_limit_kind,
 };
 use crate::analysis::rust_index::{FunctionSummary, TestSummary, is_test_file};
+use crate::analysis::seams::RepoSeam;
 use crate::domain::{Confidence, StageEvidence, StageState};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
@@ -518,6 +520,27 @@ fn identifiers(body: &str) -> Vec<(String, bool)> {
     out.into_iter().collect()
 }
 
+/// The named limit when the seam's file is positively outside every crate's
+/// module tree (#7426): no `mod` declaration reaches it, so Cargo never
+/// compiles it and no test can import what it defines. That is a wiring
+/// problem, not a missing test, so the seam reads `opaque` (withheld from the
+/// actionable ranking) instead of the `no` that would invite a test that
+/// cannot compile.
+pub(in crate::analysis::test_grip_evidence) fn outside_module_tree_summary(
+    seam: &RepoSeam,
+    context: &CompactGripContext<'_>,
+) -> Option<String> {
+    let file = seam.file();
+    let facts = context.index.files().get(file)?;
+    facts.role_provenance.outside_module_tree.then(|| {
+        format!(
+            "`{}` is not part of any crate's module tree (no `mod` declaration reaches it), so no test can reach `{}`: declare the module or remove the file",
+            file.display(),
+            seam.owner()
+        )
+    })
+}
+
 /// The reach stage for a seam with no related test: `opaque` with the named
 /// limit when a candidate path is unresolved, else the established `no`.
 pub(in crate::analysis::test_grip_evidence) fn reach_without_related_tests(
@@ -552,8 +575,18 @@ fn unresolved_reach_summary(
     }) {
         return Some(summary);
     }
-    cached(context, format!("id:{}", owner_fn.id.0), || {
+    if let Some(summary) = cached(context, format!("id:{}", owner_fn.id.0), || {
         trait_dispatch_reach_summary(owner_fn, context)
+    }) {
+        return Some(summary);
+    }
+    // Last: a chain past five hops never displaces a shallower or more
+    // specific witness (#8047).
+    cached(context, format!("deep:{owner_name}"), || {
+        let witness = context
+            .transitive_reach
+            .deep_transitive_witness(owner_name)?;
+        Some(transitive_summary(owner_name, &witness))
     })
 }
 

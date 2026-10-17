@@ -2285,6 +2285,7 @@ fn is_delivery_limitation(diagnostic: &Diagnostic) -> bool {
         diagnostic.code.as_ref(),
         Some(tower_lsp_server::ls_types::NumberOrString::String(code))
             if code == super::diagnostic_catalog::DIAGNOSTIC_BUDGET_OMITTED_CODE
+                || code == super::diagnostic_catalog::DIAGNOSTIC_QUARANTINE_WITHDRAWN_CODE
     )
 }
 

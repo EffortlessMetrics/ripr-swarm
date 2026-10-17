@@ -25,7 +25,7 @@ use crate::domain::{
     select_canonical_next_action,
 };
 use crate::output::agent_receipt::AgentReceiptReading;
-use crate::output::markdown::{COMMAND_SHELL_DISCLOSURE, PowershellForm, powershell_form};
+use crate::output::markdown::{PowershellForm, command_shell_disclosure, powershell_form};
 use serde_json::Value;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -598,7 +598,9 @@ fn status_repair_attempt(
                     (
                         "awaiting_edit",
                         "resumable",
-                        Some(manifest.next_command.clone()),
+                        Some(crate::agent::human_after_phase_follow_up(
+                            &manifest.next_command,
+                        )),
                     ),
                 ),
                 Some(AfterPhaseHeadAdmission::FinishesStale { .. }) => (
@@ -811,12 +813,93 @@ struct StoreFollowUp<'a> {
     flag: &'a str,
 }
 
-/// Inventory-level command selection across attempts. The multi-attempt
-/// ambiguity branch already refuses to choose (see the
-/// `ambiguous_repair_attempts` warning); projecting its decision through the
-/// canonical selector (`choose_attempt` over the inventory) is follow-up
-/// owner work — the single-attempt path behind
-/// [`selected_attempt_status_reading`] already routes through
+/// Project the inventory-level decision through the canonical selector
+/// (#6986, inventory slice). `resumable` are the attempts awaiting an edit at
+/// the current HEAD; `open_seams` are the seams whose attempts all ended
+/// without a receipt. The inventory owns the lifecycle reading; the selector
+/// owns whether the state needs a choice (`choose_attempt`/`choose_item`) or
+/// binds one attempt. Per-surface warning and command prose stays here.
+fn canonical_next_action_for_inventory(
+    root_display: &str,
+    store: &StoreFollowUp<'_>,
+    resumable: &[&AgentStatusRepairAttempt],
+    open_seams: &[&str],
+) -> Result<CanonicalNextActionV1, String> {
+    let attempts = resumable
+        .iter()
+        .map(|attempt| NextActionAttemptView {
+            id: attempt.attempt_id.clone(),
+            terminal: false,
+            awaits_edit: true,
+            restart_recommended: false,
+            restart_route: new_repair_attempt_command(root_display, &attempt.seam_id, store.flag),
+            receipt_ref: Some(attempt.manifest.clone()),
+        })
+        .collect::<Vec<_>>();
+    let item_id = match resumable {
+        [attempt] => attempt.seam_id.clone(),
+        _ => String::new(),
+    };
+    select_canonical_next_action(&NextActionInput {
+        producer: NextActionProducer::RepairAttemptStatus,
+        root: root_display.to_string(),
+        diff_source: NextActionDiffSource::Committed {
+            base: None,
+            head: resumable
+                .first()
+                .map(|attempt| attempt.evidence_head.clone()),
+        },
+        item_id,
+        check_item: None,
+        card_item: None,
+        item_candidates: open_seams.iter().map(|seam| (*seam).to_string()).collect(),
+        attempts,
+        currentness: NextActionCurrentness {
+            head_expected: None,
+            head_observed: None,
+            config_expected: None,
+            config_observed: None,
+        },
+        offered_command: None,
+        route_admitted: true,
+        route_refusal: None,
+        missing_input: None,
+        platform: current_command_platform(),
+        limitation: None,
+        limitation_route: None,
+        detail_route: store.locator.to_string(),
+        transition_from: "inventory".to_string(),
+        transition_to: None,
+        restart_route: store.locator.to_string(),
+        check_case: None,
+        doctor_recovery: None,
+        pilot_delegation: None,
+        alternatives: Vec::new(),
+        limitations: Vec::new(),
+    })
+}
+
+/// Whether the inventory requires choosing among several attempts or seams.
+/// The canonical decision decides; when the projection cannot be built (for
+/// example an unbound root) the shared count fallback applies, which is the
+/// exact reading this surface used before the selector owned it.
+fn inventory_requires_choice(
+    decision: &Result<CanonicalNextActionV1, String>,
+    choose: NextActionClass,
+    candidate_count: usize,
+) -> bool {
+    match decision {
+        Ok(action) => action.action_class() == choose,
+        Err(_) => candidate_count > 1,
+    }
+}
+
+/// Inventory-level command selection across attempts. The multi-attempt and
+/// multi-seam ambiguity branches refuse to choose (see the
+/// `ambiguous_repair_attempts` / `multiple_open_repair_seams` warnings); that
+/// refusal follows the canonical decision (`choose_attempt` / `choose_item`),
+/// with the candidate count as the shared fallback. The single-attempt path
+/// behind [`selected_attempt_status_reading`] routes through
 /// [`canonical_next_action_for_attempt`].
 fn select_next_command(
     root: &Path,
@@ -835,8 +918,18 @@ fn select_next_command(
         .iter()
         .filter(|attempt| attempt.disposition == "resumable")
         .collect::<Vec<_>>();
-    match resumable.as_slice() {
-        [attempt] => {
+    let resumable_decision = if resumable.is_empty() {
+        Err("no resumable attempt".to_string())
+    } else {
+        canonical_next_action_for_inventory(root_display, &store, &resumable, &[])
+    };
+    let choose_attempt = inventory_requires_choice(
+        &resumable_decision,
+        NextActionClass::ChooseAttempt,
+        resumable.len(),
+    );
+    match (choose_attempt, resumable.as_slice()) {
+        (false, [attempt]) => {
             let reason = match &attempt.last_after_refusal {
                 // The same command is still the only way forward for this
                 // attempt, but status must not present it as if it had never
@@ -859,8 +952,8 @@ fn select_next_command(
                 command: attempt.command.clone().unwrap_or_default(),
             });
         }
-        [] => {}
-        several => {
+        (_, []) => {}
+        (_, several) => {
             warnings.push(AgentStatusWarning {
                 kind: "ambiguous_repair_attempts".to_string(),
                 artifact: store.locator.to_string(),
@@ -909,9 +1002,20 @@ fn select_next_command(
                 .push(attempt);
         }
     }
+    let open_seam_ids = open.keys().copied().collect::<Vec<_>>();
+    let open_decision = if open_seam_ids.is_empty() {
+        Err("no open seam".to_string())
+    } else {
+        canonical_next_action_for_inventory(root_display, &store, &[], &open_seam_ids)
+    };
+    let choose_seam = inventory_requires_choice(
+        &open_decision,
+        NextActionClass::ChooseItem,
+        open_seam_ids.len(),
+    );
     let mut open_seams = open.into_iter();
     match (open_seams.next(), open_seams.next()) {
-        (Some((seam_id, ended)), None) => {
+        (Some((seam_id, ended)), None) if !choose_seam => {
             let restart = if ended
                 .iter()
                 .any(|attempt| attempt.disposition == "gap_open")
@@ -966,8 +1070,9 @@ fn select_next_command(
                 command: new_repair_attempt_command(root_display, seam_id, store.flag),
             });
         }
-        (Some((first, _)), Some((second, _))) => {
-            let mut seams = vec![first, second];
+        (Some((first, _)), second) => {
+            let mut seams = vec![first];
+            seams.extend(second.map(|(seam_id, _)| seam_id));
             seams.extend(open_seams.map(|(seam_id, _)| seam_id));
             warnings.push(AgentStatusWarning {
                 kind: "multiple_open_repair_seams".to_string(),
@@ -1667,7 +1772,7 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
         if next.runs_after_test_edit() {
             rendered.push_str(&format!("{AFTER_TEST_EDIT_NOTE}\n\n"));
         }
-        rendered.push_str(COMMAND_SHELL_DISCLOSURE);
+        rendered.push_str(command_shell_disclosure());
         rendered.push_str("```bash\n");
         rendered.push_str(&next.command);
         rendered.push_str("\n```\n");
@@ -2586,7 +2691,7 @@ pub(crate) fn render_agent_attempt_status_markdown(report: &AgentAttemptStatusRe
         if next.runs_after_test_edit() {
             rendered.push_str(&format!("{AFTER_TEST_EDIT_NOTE}\n\n"));
         }
-        rendered.push_str(COMMAND_SHELL_DISCLOSURE);
+        rendered.push_str(command_shell_disclosure());
         rendered.push_str("```bash\n");
         rendered.push_str(&next.command);
         rendered.push_str("\n```\n");
@@ -3170,11 +3275,13 @@ mod tests {
                 "an awaiting attempt must name its retained after command".to_string()
             })?;
             if next.step != "repair_attempt_after"
+                || !next.command.starts_with("ripr continue --root ")
                 || !next.command.contains("--attempt")
                 || !next.command.contains(attempt_id.as_str())
+                || next.command.contains("--phase after")
             {
                 return Err(format!(
-                    "next action was not the retained after command: {next:?}"
+                    "next action must name ordinary `ripr continue`, not `--phase after`: {next:?}"
                 ));
             }
 
@@ -4042,9 +4149,18 @@ mod tests {
             bash_fence < powershell_fence,
             "bash form must be presented before the PowerShell variant"
         );
+        // Host-aware shell boundary (#7729): off Windows the disclosure
+        // states cmd.exe is unsupported; on Windows the commands are
+        // double-quoted for the Windows console, so the disclosure names
+        // the consoles they paste into instead.
+        let boundary_disclosed = if cfg!(windows) {
+            rendered.contains("Windows console")
+        } else {
+            rendered.contains("cmd.exe is not supported.")
+        };
         assert!(
-            rendered.contains("cmd.exe is not supported."),
-            "next command presentation must state the cmd.exe boundary:\n{rendered}"
+            boundary_disclosed,
+            "next command presentation must state the host shell boundary:\n{rendered}"
         );
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
@@ -4232,6 +4348,163 @@ mod tests {
         assert!(warnings[0].message.contains("--seam-id seam-a"));
         assert!(warnings[0].message.contains("--seam-id seam-b"));
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    fn inventory_store() -> StoreFollowUp<'static> {
+        StoreFollowUp {
+            locator: REPAIR_ATTEMPT_DIRECTORY,
+            flag: "",
+        }
+    }
+
+    /// #6986 inventory slice: the inventory's choose-vs-continue refusal
+    /// follows the canonical decision for each state, and the render keeps
+    /// its per-surface prose.
+    #[test]
+    fn inventory_render_follows_the_canonical_decision() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("inventory-canonical");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let one = synthetic_attempt("a", "seam-a", "resumable", Some("after a"));
+        let two = synthetic_attempt("b", "seam-b", "resumable", Some("after b"));
+
+        // Several resumable attempts: the decision is a choice, the render
+        // refuses to pick one and names every after command.
+        let decision =
+            canonical_next_action_for_inventory(".", &inventory_store(), &[&one, &two], &[])?;
+        assert_eq!(decision.action_class(), NextActionClass::ChooseAttempt);
+        let mut warnings = Vec::new();
+        let next = select_next_command(
+            &root,
+            ".",
+            None,
+            Some(&vec![one.clone(), two.clone()]),
+            &[],
+            &mut warnings,
+            inventory_store(),
+        );
+        assert_eq!(next, None);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].kind, "ambiguous_repair_attempts");
+        assert!(warnings[0].message.contains("`after a`"));
+        assert!(warnings[0].message.contains("`after b`"));
+
+        // One resumable attempt: the decision binds it and awaits its edit,
+        // and the render offers that attempt's recorded after command.
+        let decision = canonical_next_action_for_inventory(".", &inventory_store(), &[&one], &[])?;
+        assert_eq!(
+            decision.action_class(),
+            NextActionClass::SatisfyPrerequisite
+        );
+        assert_eq!(decision.subject().item.as_deref(), Some("seam-a"));
+        let mut warnings = Vec::new();
+        let next = select_next_command(
+            &root,
+            ".",
+            None,
+            Some(&vec![one.clone()]),
+            &[],
+            &mut warnings,
+            inventory_store(),
+        )
+        .ok_or_else(|| "one resumable attempt must name its after command".to_string())?;
+        assert_eq!(next.step, "repair_attempt_after");
+        assert_eq!(next.command, "after a");
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        // Several open seams: the decision is an item choice.
+        let decision = canonical_next_action_for_inventory(
+            ".",
+            &inventory_store(),
+            &[],
+            &["seam-a", "seam-b"],
+        )?;
+        assert_eq!(decision.action_class(), NextActionClass::ChooseItem);
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// When the projection cannot be built (an unbound root), the shared
+    /// count fallback keeps the same refusal and the same continue.
+    #[test]
+    fn inventory_render_falls_back_when_the_projection_cannot_be_built() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("inventory-fallback");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let one = synthetic_attempt("a", "seam-a", "resumable", Some("after a"));
+        let two = synthetic_attempt("b", "seam-b", "resumable", Some("after b"));
+        assert!(
+            canonical_next_action_for_inventory("", &inventory_store(), &[&one], &[]).is_err(),
+            "an unbound root must not produce a decision"
+        );
+        let mut warnings = Vec::new();
+        let next = select_next_command(
+            &root,
+            "",
+            None,
+            Some(&vec![one.clone(), two.clone()]),
+            &[],
+            &mut warnings,
+            inventory_store(),
+        );
+        assert_eq!(next, None);
+        assert_eq!(warnings[0].kind, "ambiguous_repair_attempts");
+        let mut warnings = Vec::new();
+        let next = select_next_command(
+            &root,
+            "",
+            None,
+            Some(&vec![one]),
+            &[],
+            &mut warnings,
+            inventory_store(),
+        )
+        .ok_or_else(|| "fallback must still continue one resumable attempt".to_string())?;
+        assert_eq!(next.command, "after a");
+        let open = vec![
+            synthetic_attempt("c", "seam-c", "ended", Some("restart c")),
+            synthetic_attempt("d", "seam-d", "ended", Some("restart d")),
+        ];
+        let mut warnings = Vec::new();
+        let next = select_next_command(
+            &root,
+            "",
+            None,
+            Some(&open),
+            &[],
+            &mut warnings,
+            inventory_store(),
+        );
+        assert_eq!(next, None);
+        assert_eq!(warnings[0].kind, "multiple_open_repair_seams");
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// Control 9 for the inventory surface: the inventory report has no
+    /// canonical JSON field, so the human and JSON projections of the one
+    /// inventory DTO are pinned directly and must name the same class and
+    /// candidates.
+    #[test]
+    fn inventory_decision_human_and_json_agree_from_one_dto() -> Result<(), String> {
+        let one = synthetic_attempt("a", "seam-a", "resumable", Some("after a"));
+        let two = synthetic_attempt("b", "seam-b", "resumable", Some("after b"));
+        let decision =
+            canonical_next_action_for_inventory(".", &inventory_store(), &[&one, &two], &[])?;
+        let json = crate::output::next_action::render_next_action_json_value(&decision);
+        let human = crate::output::next_action::render_next_action_human(&decision);
+        assert_eq!(json["action_class"], "choose_attempt");
+        assert!(human.contains("next action: choose_attempt"), "{human}");
+        assert_eq!(json["stop"]["total"], 2);
+        let candidates = json["stop"]["candidates"]
+            .as_array()
+            .ok_or_else(|| format!("candidates missing: {json}"))?;
+        assert_eq!(candidates.len(), 2);
+        for candidate in candidates {
+            let id = candidate
+                .as_str()
+                .ok_or_else(|| format!("candidate not a string: {candidate}"))?;
+            assert!(human.contains(id), "human lost candidate {id}: {human}");
+        }
         Ok(())
     }
 
@@ -4974,15 +5247,23 @@ mod tests {
     #[test]
     fn agent_status_quotes_paths_with_spaces() {
         // Issue #3872: the redirect anchors at the resolved root, so the
-        // quoted expectation names the anchored absolute target: the quoting
-        // under test is the single-quote shell encoding around both values.
+        // quoted expectation names the anchored absolute target. The quoting
+        // form is host-dependent (#7729): single quotes off Windows, double
+        // quotes on it.
+        let quote = |value: &str| shell_arg(value);
         let command = agent_packet_command("repo root", "seam-a", WORKFLOW_AGENT_PACKET_ARTIFACT);
         assert!(
-            command.starts_with("ripr agent packet --root 'repo root' --seam-id seam-a --json > '"),
-            "root and target must stay single-quoted: {command}"
+            command.starts_with(&format!(
+                "ripr agent packet --root {} --seam-id seam-a --json > ",
+                quote("repo root")
+            )),
+            "root must stay host-quoted: {command}"
         );
         assert!(
-            command.ends_with("/repo root/target/ripr/workflow/agent-packet.json'"),
+            command.ends_with(&format!(
+                "/repo root/target/ripr/workflow/agent-packet.json{}",
+                if cfg!(windows) { "\"" } else { "'" }
+            )),
             "redirect must anchor under the resolved root: {command}"
         );
     }

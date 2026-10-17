@@ -894,7 +894,8 @@ pub(crate) fn ts_instance_class_facts(
         if local_identifier_declared_in_test_body(&candidate.test.body_text, &owner.name) {
             continue;
         }
-        let receivers = owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
+        let receivers =
+            unshadowed_owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
         for assertion in candidate.test.assertions.iter().filter(|a| pins(a)) {
             let Some(class) = assertion.expected_value_or_variant.as_deref() else {
                 continue;
@@ -920,7 +921,12 @@ pub(crate) fn ts_instance_class_facts(
                     alias_map,
                     workspace_root,
                 )
-                && ts_observes_whole_owner_result(candidate.test, assertion, owner, &receivers)
+                && ts_observes_whole_owner_result_through_identity(
+                    candidate.test,
+                    assertion,
+                    owner,
+                    &receivers,
+                )
             {
                 facts.credit(&candidate.test.file, assertion);
             }

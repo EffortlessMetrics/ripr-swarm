@@ -118,6 +118,21 @@ pub(crate) fn render_pilot_summary_json(
         "  \"actionable_seams_total\": {},\n",
         actionable_total
     ));
+    // #6739: a seam limit cut the classified seams before ranking, so the
+    // total above covers only the kept seams and is a lower bound.
+    out.push_str(&format!(
+        "  \"actionable_seams_total_is_lower_bound\": {},\n",
+        context.seam_limit.is_some()
+    ));
+    match context.seam_limit {
+        Some(limit) => out.push_str(&format!(
+            "  \"seam_limit\": {{\"analyzed\": {}, \"total\": {}, \"source\": \"{}\"}},\n",
+            limit.analyzed,
+            limit.total,
+            limit.source.as_str()
+        )),
+        None => out.push_str("  \"seam_limit\": null,\n"),
+    }
     out.push_str(&format!(
         "  \"withheld_static_limitations_total\": {},\n",
         withheld_static_limitations(classified)
@@ -252,6 +267,11 @@ pub(crate) fn render_pilot_summary_md(
             out.push_str(&format!(
                 "Pilot ranks Rust seams, but Rust is not enabled in `ripr.toml [languages]` ({} not analyzed). This is not a clean result; see Excluded From Pilot's Rust Seam Scan.\n\n",
                 file_count_label(excluded)
+            ));
+        } else if let Some((route, command)) = supported_headline_route(context) {
+            out.push_str(&format!(
+                "Analyze the {} diff: `{command}`\n\nPilot ranks Rust seams and found none in this repository. This is not a clean result for the languages listed under Languages Outside The Rust Seam Scan.\n\n",
+                route.language.display_name(),
             ));
         } else if required_routes(context).is_some() {
             out.push_str(
@@ -478,7 +498,7 @@ pub(crate) fn render_pilot_summary_md(
             vec![&commands.after_snapshot, &commands.outcome]
         }
     };
-    out.push_str(super::COMMAND_SHELL_DISCLOSURE);
+    out.push_str(super::command_shell_disclosure());
     out.push_str("```bash\n");
     for command in &next_commands {
         out.push_str(command);
@@ -630,6 +650,13 @@ pub(crate) fn render_pilot_terminal(
         out.push_str(&format!(
             "  none: pilot ranks Rust seams, but Rust is not enabled in ripr.toml [languages] ({} not analyzed); see the excluded scope below\n\n",
             file_count_label(excluded)
+        ));
+        false
+    } else if let Some((route, command)) = supported_headline_route(context) {
+        out.push_str("Top recommendation:\n");
+        out.push_str(&format!(
+            "  analyze the {} diff: {command}\n  (pilot ranks Rust seams and found none here; see the languages below)\n\n",
+            route.language.display_name(),
         ));
         false
     } else if required_routes(context).is_some() {
@@ -1230,6 +1257,17 @@ fn required_routes<'a>(context: PilotSummaryContext<'a>) -> Option<&'a [PilotLan
     context
         .language_routes
         .and_then(PilotLanguageRoutes::required)
+}
+
+/// Enabled supported-language check route the top recommendation should name
+/// when there is no Rust seam to rank (#7665). Disabled preview languages
+/// keep the none headline.
+fn supported_headline_route(
+    context: PilotSummaryContext<'_>,
+) -> Option<(&PilotLanguageRoute, &str)> {
+    context
+        .language_routes
+        .and_then(PilotLanguageRoutes::supported_headline_route)
 }
 
 /// Rust files excluded by `[languages] enabled`, when the exclusion emptied

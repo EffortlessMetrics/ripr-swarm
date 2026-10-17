@@ -19,7 +19,7 @@
 //!
 //! The alias map is built once per analysis run and reused for every
 //! `normalized_relative_import_module` call that encounters a non-relative
-//! specifier.  Building it is opt-in: `AnalysisOptions::resolve_tsconfig_paths`
+//! specifier.  Building it is on by default and opt-out: `AnalysisOptions::resolve_tsconfig_paths`
 //! must be `true`; otherwise `TsAliasMap::empty()` (no-op) is returned.
 
 use std::collections::HashMap;
@@ -98,7 +98,7 @@ struct GlobEntry {
 /// out-of-root/unresolved candidate) instead of a generic message.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TsAliasUnresolveCause {
-    /// No alias map was even attempted: the opt-in flag is off. Every
+    /// No alias map was even attempted: the flag was explicitly set false (default is on). Every
     /// flag-ON unavailability carries a typed `TsAliasMapLoadGap` instead,
     /// so this cause never masks a parse failure behind "enable the flag"
     /// advice (#4106-B).
@@ -123,7 +123,7 @@ impl TsAliasUnresolveCause {
     pub(crate) fn parts(self) -> (&'static str, &'static str) {
         match self {
             Self::MapUnavailable => (
-                "alias resolution is not enabled (`[typescript] resolve_tsconfig_paths` is unset or false in ripr.toml)",
+                "alias resolution is not enabled (`[typescript] resolve_tsconfig_paths` is false in ripr.toml)",
                 "set `[typescript] resolve_tsconfig_paths = true` for credit",
             ),
             Self::BaseUrlAbsolute => (
@@ -146,7 +146,7 @@ impl TsAliasUnresolveCause {
     }
 }
 
-/// Why no alias map exists even though the opt-in flag is ON (#4106-B).
+/// Why no alias map exists even though the flag is ON (#4106-B).
 ///
 /// The flag-ON fail-closed paths used to collapse into the generic
 /// "no alias map was available — enable the flag" advice, which told the
@@ -229,7 +229,7 @@ impl TsAliasMapLoadGap {
 
 impl TsAliasMap {
     /// A map that resolves only in-workspace package names: the tsconfig
-    /// alias flag is off or its config did not load (#4554).
+    /// alias flag is explicitly false or its config did not load (#4554).
     pub(crate) fn workspace_packages_only(
         root: &Path,
         packages: super::workspace_packages::WorkspacePackages,
@@ -583,7 +583,7 @@ fn parse_alias_map(root: &Path, text: &str) -> Result<TsAliasMap, TsAliasMapBloc
 /// from the workspace walk, so without this mapping the import names an
 /// unindexed module and a change to `lib/x.ts` reads as `no_static_path`.
 ///
-/// Independent of `[typescript] resolve_tsconfig_paths`: that opt-in governs
+/// Independent of `[typescript] resolve_tsconfig_paths`: that default-on, opt-out flag governs
 /// non-relative `paths` aliases, whose templates can redirect arbitrary
 /// specifiers. This mapping only rewrites a RELATIVE import whose target
 /// does not exist, and only onto a source file that does exist, following
@@ -747,10 +747,10 @@ fn strip_jsonc(text: &str) -> Result<String, &'static str> {
                 }
             }
             '/' if chars.peek() == Some(&'/') => {
-                // Line comment: skip to (but keep) the newline.
+                // Line comment: skip to (but keep) either line terminator.
                 for inner in chars.by_ref() {
-                    if inner == '\n' {
-                        out.push('\n');
+                    if matches!(inner, '\n' | '\r') {
+                        out.push(inner);
                         break;
                     }
                 }
@@ -1231,6 +1231,29 @@ mod tests {
     }
 
     // ── JSONC (#4549) ─────────────────────────────────────────────────────
+
+    #[test]
+    fn jsonc_line_comment_endings_preserve_alias_resolution() -> Result<(), String> {
+        for filename in ["tsconfig.json", "jsconfig.json"] {
+            for (label, ending) in [("lf", "\n"), ("crlf", "\r\n"), ("cr", "\r")] {
+                let root = temp_dir(&format!("jsonc-{filename}-{label}"));
+                fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
+                let config = "{ // config\n\"compilerOptions\": {\"baseUrl\": \".\",\"paths\": {\"@owner\": [\"src/owner\"]}, // paths\n}, // options\n} // eof".replace('\n', ending);
+                fs::write(root.join(filename), config).map_err(|err| err.to_string())?;
+                fs::write(root.join("src/owner.ts"), "export const owner = 1;")
+                    .map_err(|err| err.to_string())?;
+
+                let (map, error, gap) = load_alias_map_with_read_error(&root);
+                assert!(error.is_none(), "{filename}/{label}: {error:?}");
+                assert!(gap.is_none(), "{filename}/{label}: {gap:?}");
+                let map = map.ok_or_else(|| format!("{filename}/{label} must parse"))?;
+                assert_eq!(map.resolve("@owner"), Some(PathBuf::from("src/owner.ts")));
+                assert!(map.resolve("@other").is_none());
+                fs::remove_dir_all(&root).map_err(|err| err.to_string())?;
+            }
+        }
+        Ok(())
+    }
 
     /// `tsc --init`-shaped config: line comments, a block comment, and
     /// trailing commas. The alias must resolve exactly as the strict

@@ -68,8 +68,9 @@ pub(in crate::analysis::language::python) struct PythonRepoInput {
     /// Operator recovery routes retained for capped runs (#2109); stable
     /// typed values any surface can render.
     pub(in crate::analysis::language::python) recovery_routes: &'static [CapRecoveryRoute],
-    /// Test framework detected by the shared producer
-    /// (`detect_python_test_framework`) at the workspace root.
+    /// Primary test framework from the shared producer
+    /// (`detect_python_test_framework`, pytest-first) at the workspace root.
+    /// Doctor prints the full set via `detect_python_test_frameworks` (#7664).
     pub(in crate::analysis::language::python) test_framework: Option<&'static str>,
 }
 
@@ -255,8 +256,8 @@ mod tests {
         assert_eq!(path_strings(&input.test_files), vec!["tests/test_api.py"]);
         assert_eq!(path_strings(&input.helper_files), vec!["conftest.py"]);
         // The framework comes from the shared producer, not a repo-mode
-        // re-derivation. The root `conftest.py` is pytest evidence, and the
-        // producer's precedence reports pytest before the unittest scan.
+        // re-derivation. The root `conftest.py` is pytest evidence; the
+        // primary-of-set Option stays pytest. Doctor prints the full set (#7664).
         assert_eq!(input.test_framework, Some("pytest"));
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())

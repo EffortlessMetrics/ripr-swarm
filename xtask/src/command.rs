@@ -61,6 +61,7 @@ pub(crate) enum XtaskCommand {
     SeamInventoryScalingBenchmark(Vec<String>),
     MutationSpotCheck(Vec<String>),
     PilotRanking(Vec<String>),
+    RealCrateDogfood(Vec<String>),
     DxScoreboard(Vec<String>),
     ScaleCliffBenchmark(Vec<String>),
     RustCorpus(Vec<String>),
@@ -159,6 +160,7 @@ pub(crate) enum XtaskCommand {
     CheckCiLaneWhitelist,
     CheckProofPacks,
     CheckProductCopy,
+    CheckPackagedReadme,
     CheckPositioningLanguage,
     CheckDocRoles,
     CheckReleaseTargets,
@@ -166,6 +168,7 @@ pub(crate) enum XtaskCommand {
     QualifyPythonWheelhouse(Vec<String>),
     VscodeCompile,
     VscodePackage,
+    VscodeVerifyVsix(Vec<String>),
     VscodeTest,
     VscodeTestE2e,
     Package,
@@ -176,6 +179,15 @@ pub(crate) enum XtaskCommand {
     WorkCandidates(Vec<String>),
     WorkExplain(Vec<String>),
     WorkSelectionCheck(Vec<String>),
+    WorkResultCheck(Vec<String>),
+    WorkClaimCheck(Vec<String>),
+    WorkWaveCheck(Vec<String>),
+    WorkContextCheck(Vec<String>),
+    WorkSynthesisCheck(Vec<String>),
+    WorkBurndownCheck(Vec<String>),
+    WorkIntakeCheck(Vec<String>),
+    WorkPlanCheck(Vec<String>),
+    WorkAdapterCheck(Vec<String>),
     Unknown(String),
 }
 
@@ -250,6 +262,7 @@ impl XtaskCommand {
             "seam-inventory-scaling-benchmark" => Self::SeamInventoryScalingBenchmark(rest),
             "mutation-spot-check" => Self::MutationSpotCheck(rest),
             "pilot-ranking" => Self::PilotRanking(rest),
+            "real-crate-dogfood" => Self::RealCrateDogfood(rest),
             "dx-scoreboard" => Self::DxScoreboard(rest),
             "scale-cliff-benchmark" => Self::ScaleCliffBenchmark(rest),
             "rust-corpus" => Self::RustCorpus(rest),
@@ -352,6 +365,7 @@ impl XtaskCommand {
             "check-ci-lane-whitelist" => Self::CheckCiLaneWhitelist,
             "check-proof-packs" => Self::CheckProofPacks,
             "check-product-copy" => Self::CheckProductCopy,
+            "check-packaged-readme" => Self::CheckPackagedReadme,
             "check-positioning-language" => Self::CheckPositioningLanguage,
             "check-doc-roles" => Self::CheckDocRoles,
             "check-release-targets" => Self::CheckReleaseTargets,
@@ -359,6 +373,7 @@ impl XtaskCommand {
             "qualify-python-wheelhouse" => Self::QualifyPythonWheelhouse(rest),
             "vscode-compile" => Self::VscodeCompile,
             "vscode-package" => Self::VscodePackage,
+            "vscode-verify-vsix" => Self::VscodeVerifyVsix(rest),
             "vscode-test" => Self::VscodeTest,
             "vscode-test-e2e" => Self::VscodeTestE2e,
             "package" => Self::Package,
@@ -372,6 +387,69 @@ impl XtaskCommand {
                     Some("check") => Self::WorkSelectionCheck(rest[2..].to_vec()),
                     _ => Self::Unknown(format!(
                         "work selection {}",
+                        rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
+                    )),
+                },
+                Some("result") => match rest.get(1).map(|arg| arg.as_str()) {
+                    Some("check") => Self::WorkResultCheck(rest[2..].to_vec()),
+                    _ => Self::Unknown(format!(
+                        "work result {}",
+                        rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
+                    )),
+                },
+                Some("claim") => match rest.get(1).map(|arg| arg.as_str()) {
+                    Some("check") => Self::WorkClaimCheck(rest[2..].to_vec()),
+                    _ => Self::Unknown(format!(
+                        "work claim {}",
+                        rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
+                    )),
+                },
+                Some("wave") => match rest.get(1).map(|arg| arg.as_str()) {
+                    Some("check") => Self::WorkWaveCheck(rest[2..].to_vec()),
+                    _ => Self::Unknown(format!(
+                        "work wave {}",
+                        rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
+                    )),
+                },
+                Some("context") => match rest.get(1).map(|arg| arg.as_str()) {
+                    Some("check") => Self::WorkContextCheck(rest[2..].to_vec()),
+                    _ => Self::Unknown(format!(
+                        "work context {}",
+                        rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
+                    )),
+                },
+                Some("synthesis") => match rest.get(1).map(|arg| arg.as_str()) {
+                    Some("check") => Self::WorkSynthesisCheck(rest[2..].to_vec()),
+                    _ => Self::Unknown(format!(
+                        "work synthesis {}",
+                        rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
+                    )),
+                },
+                Some("burndown") => match rest.get(1).map(|arg| arg.as_str()) {
+                    Some("check") => Self::WorkBurndownCheck(rest[2..].to_vec()),
+                    _ => Self::Unknown(format!(
+                        "work burndown {}",
+                        rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
+                    )),
+                },
+                Some("intake") => match rest.get(1).map(|arg| arg.as_str()) {
+                    Some("check") => Self::WorkIntakeCheck(rest[2..].to_vec()),
+                    _ => Self::Unknown(format!(
+                        "work intake {}",
+                        rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
+                    )),
+                },
+                Some("plan") => match rest.get(1).map(|arg| arg.as_str()) {
+                    Some("check") => Self::WorkPlanCheck(rest[2..].to_vec()),
+                    _ => Self::Unknown(format!(
+                        "work plan {}",
+                        rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
+                    )),
+                },
+                Some("adapter") => match rest.get(1).map(|arg| arg.as_str()) {
+                    Some("check") => Self::WorkAdapterCheck(rest[2..].to_vec()),
+                    _ => Self::Unknown(format!(
+                        "work adapter {}",
                         rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
                     )),
                 },
@@ -449,6 +527,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "check-pr",
         "fixtures [name]",
         "fixtures new <name>",
+        "goldens prepare [--offline]",
         "goldens check",
         "goldens bless <name> --reason <reason>",
         "golden-drift",
@@ -502,6 +581,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "seam-inventory-scaling-benchmark [--sizes <n,n,n>] [--samples <n>] [--timeout-ms <n>] [--keep-workspaces]",
         "mutation-spot-check --repo <name>=<checkout> [--mutants-out <name>=<dir>] [--run-mutants] [--mutants-arg <name>=<arg>] [--jobs <n>] [--mutant-timeout-secs <n>] [--examples <n>] [--ripr <binary>]",
         "pilot-ranking check|fetch|label|score [--manifest <path>] [--root <dir>] [--repo <id>]... [--allow-network] [--mutants-out <id>=<dir>] [--ripr <binary>]",
+        "real-crate-dogfood check|fetch|run [--manifest <path>] [--root <dir>] [--case <id>]... [--allow-network] [--ripr <binary>]",
         "dx-scoreboard [--boards <list>] [--repo <id>] [--include-heavy] [--corpus-dir <dir>] [--clone] [--ripr-bin <path>] [--ingest <file>] [--baseline <report.json>] [--gate] [--timeout-ms <n>]",
         "scale-cliff-benchmark [--sizes <n,n,n>] [--repo <path> --base <rev>] [--mode <draft|deep|instant>] [--commands <check,pilot>] [--index-cap <n|product>] [--timeout-ms <n>] [--keep-workspaces]",
         "rust-corpus check|list|fetch|smoke [--manifest <path>] [--tier fast|full|targets] [--repo <id>] [--root <dir>] [--allow-network] [--ripr <bin>] [--timeout-secs <n>]",
@@ -585,7 +665,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "check-spec-numbering",
         "check-fixture-contracts",
         "perl-migration-refresh --producer-bin <path> [--case <id>]",
-        "first-run [--ripr <path>] [--out <dir>] [--install-published]",
+        "first-run [--ripr <path>] [--out <dir>] [--install-published | --install-archive <version>]",
         "public-proof [--check] [--refresh-receipts]",
         "check-evidence-promotion-honesty [--pinned-external] [--clone] [--case <id>] [--checkout-root <path>] [--timeout-secs <n>]",
         "check-traceability",
@@ -619,6 +699,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "check-ci-lane-whitelist",
         "check-proof-packs",
         "check-product-copy",
+        "check-packaged-readme",
         "check-positioning-language",
         "check-doc-roles",
         "check-release-targets",
@@ -626,6 +707,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "qualify-python-wheelhouse --receipts <file-or-dir>",
         "vscode-compile",
         "vscode-package",
+        "vscode-verify-vsix -- <vsix>",
         "vscode-test",
         "vscode-test-e2e",
         "package",
@@ -833,6 +915,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             true,
             "Runs fixture checks and writes local evidence.",
+        ),
+        command_entry(
+            "goldens prepare [--offline]",
+            "mutating",
+            "effective Cargo registry cache",
+            false,
+            false,
+            "Fetches the canonical fixture locked dependencies into the effective Cargo home; no build or blessing.",
         ),
         command_entry(
             "goldens check",
@@ -1257,6 +1347,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Writes depending on the subcommand: validates the pinned pilot-ranking answer key offline (check), shallow-fetches the pinned crates with --allow-network (fetch), rebuilds one crate's mutation labels from a cargo-mutants run checked against the pinned checkout (label), or runs ripr pilot on each checkout and reports top-5 and top-10 precision, scored share and distinct functions against the labels (score).",
+        ),
+        command_entry(
+            "real-crate-dogfood check|fetch|run [--manifest <path>] [--root <dir>] [--case <id>]... [--allow-network] [--ripr <binary>]",
+            "argument_dependent",
+            "none (check); target/ripr/real-crate-dogfood/checkouts/ (fetch, network); target/ripr/reports/real-crate-dogfood.{json,md} (run)",
+            false,
+            false,
+            "Writes depending on the subcommand: validates the pinned real-crate commit list offline (check), shallow-fetches each pinned commit and its parent with --allow-network (fetch), or runs ripr check on each checkout and reports counts and timings for related-test naming, duplicate test rows, base-side findings and wall time; counts are not verdicts (run).",
         ),
         command_entry(
             "dx-scoreboard [--boards <list>] [--repo <id>] [--include-heavy] [--corpus-dir <dir>] [--clone] [--ripr-bin <path>] [--ingest <file>] [--baseline <report.json>] [--gate] [--timeout-ms <n>]",
@@ -1931,7 +2029,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Re-runs the pinned perl_packet_contract_migration producer command (issue #3217) with a maintainer-supplied producer binary, writes candidate packets and typed drift reports under target/ripr/reports/perl-migration-candidates/, and never writes under fixtures/; advisory only — drift exits 0 and promotion of accepted evidence is a reviewed manual act.",
         ),
         command_entry(
-            "first-run [--ripr <path>] [--out <dir>] [--install-published]",
+            "first-run [--ripr <path>] [--out <dir>] [--install-published | --install-archive <version>]",
             "external_state_read",
             "target/ripr/first-run/first-run.{json,md} plus per-case clones under the same directory",
             false,
@@ -2203,6 +2301,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Checks public product-copy policy.",
         ),
         command_entry(
+            "check-packaged-readme",
+            "non_mutating_check",
+            "target/ripr/reports/packaged-readme.md",
+            false,
+            false,
+            "Cut-step: binds the crate README cargo would ship (`cargo package -p ripr --list`) to the current-release sentence and default-base cascade.",
+        ),
+        command_entry(
             "check-positioning-language",
             "non_mutating_check",
             "target/ripr/reports/positioning-language.md",
@@ -2257,6 +2363,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Builds VS Code extension package artifacts.",
+        ),
+        command_entry(
+            "vscode-verify-vsix -- <vsix>",
+            "non_mutating_check",
+            "none",
+            false,
+            false,
+            "Reads one sealed VSIX and reuses vscode-package inventory plus license-notice checks. Local inspector only; not a publisher or release-admission gate.",
         ),
         command_entry(
             "vscode-test",
@@ -2329,6 +2443,78 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Validates committed SelectedWorkIdentityV1 packets against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR A, RIPR-SPEC-0244); wrong repository/issue/action/basis/worktree/head identities fail with exact recompile/reconcile routes, legacy active-goal/current-work-item refs stay read-only with no authority, and no GitHub, branch, worktree, claim, spec, campaign or source state is touched.",
+        ),
+        command_entry(
+            "work result check [--corpus <dir>] [--json]",
+            "report_only",
+            "target/ripr/reports/work-result-check.{json,md}",
+            false,
+            false,
+            "Validates committed WorkTaskResultV1 rows against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR B, RIPR-SPEC-0269, consuming #1633); every result must bind repository, portfolio-snapshot identity, basis head and the selected-work identity it extends, a result for another repository/snapshot/issue/action/basis/worktree/head fails stale or wrong-input with exact recompile/reconcile routes, legacy active-goal/current-work-item refs stay read-only with no authority, and no GitHub, branch, worktree, claim, spec, campaign or source state is touched.",
+        ),
+        command_entry(
+            "work claim check [--corpus <dir>] [--json]",
+            "report_only",
+            "target/ripr/reports/work-claim-check.{json,md}",
+            false,
+            false,
+            "Validates committed WorkClaimV1 rows against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR B, RIPR-SPEC-0270, consuming #1635/#1647); every claim binds one selected issue/action and the exact portfolio basis, a stale basis requires reconcile (never release or takeover), one worktree cannot serve two selections and one selection cannot be double-claimed, legacy active-goal/current-work-item refs stay read-only with no authority, and no GitHub, branch, worktree, claim, spec, campaign or source state is touched.",
+        ),
+        command_entry(
+            "work wave check [--corpus <dir>] [--json]",
+            "report_only",
+            "target/ripr/reports/work-wave-check.{json,md}",
+            false,
+            false,
+            "Validates committed WorkWavePlanV1 rows against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR B, RIPR-SPEC-0271, consuming #1634); every plan consumes the complete selected candidate set and partitions it into waves over explicit resources (campaign-record:<id>, portfolio-schema, spec-ledger, output-contract:<id>, issue:<n>, pr:<n>, worktree:<path>), the retired generic active-goal resource fails closed, exclusive resources shared across waves and waves above declared writer capacity fail with exact reconcile routes, disjoint cross-campaign waves are admitted, and no GitHub, branch, worktree, claim, spec, campaign or source state is touched.",
+        ),
+        command_entry(
+            "work context check [--corpus <dir>] [--json]",
+            "report_only",
+            "target/ripr/reports/work-context-check.{json,md}",
+            false,
+            false,
+            "Validates committed WorkContextPacketV1 rows against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR B, RIPR-SPEC-0272, consuming #1632); every packet binds the repository, portfolio-snapshot identity, basis head and the selected-work identity it compiles context for, every carried context/overflow reference must stay relevant to the bound selection (campaign references are context, never permission), a selected-work-only packet with overflow, an evidence-free packet, an unresolvable legacy active-goal ref, a wrong repository or a stale basis fails with exact recompile/reconcile routes, and no GitHub, branch, worktree, claim, spec, campaign or source state is touched.",
+        ),
+        command_entry(
+            "work synthesis check [--corpus <dir>] [--json]",
+            "report_only",
+            "target/ripr/reports/work-synthesis-check.{json,md}",
+            false,
+            false,
+            "Validates committed WorkSynthesisV1 rows against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR B, RIPR-SPEC-0273, consuming #1636); every synthesis binds the repository, portfolio-snapshot identity, basis head and the selected-work identity it reports on, the reported transition must match the selected action, every uncovered or contradicted acceptance row must be named in the contradictions list, a reported campaign ref outside the bound selection's campaign refs is a silent switch that fails, the schema has no field that could create another selected issue, and no GitHub, branch, worktree, claim, spec, campaign or source state is touched.",
+        ),
+        command_entry(
+            "work burndown check [--corpus <dir>] [--json]",
+            "report_only",
+            "target/ripr/reports/work-burndown-check.{json,md}",
+            false,
+            false,
+            "Validates committed WorkBurnDownV1 rows against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR B, RIPR-SPEC-0274, consuming #1648); every burn-down binds the repository, portfolio-snapshot identity, basis head and the selected-work identity it tracks, completion derives from issue/spec acceptance, implementation slices, PRs and exact-head review/proof rows, a complete burn-down over an open or stale evidence row fails because campaign and work-item records are context only and cannot override current evidence, a wrong current main, an unknown campaign record or an empty evidence set fails with exact recompile/reconcile routes, and no GitHub, branch, worktree, claim, spec, campaign or source state is touched.",
+        ),
+        command_entry(
+            "work intake check [--corpus <dir>] [--json]",
+            "report_only",
+            "target/ripr/reports/work-intake-check.{json,md}",
+            false,
+            false,
+            "Validates committed WorkIntakeV1 rows against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR B, RIPR-SPEC-0275, consuming #1644); every intake binds the repository, portfolio-snapshot identity, basis head, current main and one issue the captured portfolio records, campaign placement and relevant campaigns must be recorded campaigns but an out-of-campaign issue may still qualify because placement stays a later root/planning decision, open overlapping PRs and claims stay visible before any mutation, and an empty contract set, an unknown issue, a wrong repository or a legacy authority attempt fails with exact recompile/reconcile routes.",
+        ),
+        command_entry(
+            "work plan check [--corpus <dir>] [--json]",
+            "report_only",
+            "target/ripr/reports/work-plan-check.{json,md}",
+            false,
+            false,
+            "Validates committed WorkPlanV1 rows against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR B, RIPR-SPEC-0276, consuming #1646); every plan binds the repository, portfolio-snapshot identity, basis head and the full selected-work identity it plans for, planning emits one closed RIPR-SPEC-0244 disposition and is read-only so a row that would replace or reorder the whole portfolio fails visibly, campaign-targeting dispositions must name a recorded campaign, a blocked disposition must name its blocker, a plan derived from nothing is a claim, and a wrong repository, snapshot, basis or legacy authority attempt fails with exact recompile/reconcile routes.",
+        ),
+        command_entry(
+            "work adapter check [--corpus <dir>] [--json]",
+            "report_only",
+            "target/ripr/reports/work-adapter-check.{json,md}",
+            false,
+            false,
+            "Validates committed WorkAdapterV1 Codex delegation rows against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR B, RIPR-SPEC-0277, consuming #1637/#1649); every delegation binds the repository, portfolio-snapshot identity, basis head and the full selected-work identity it delegates, one closed project role and one closed flow stage, the subagent consumes the selected-work context packet plus relevant overflow and never re-reads the portfolio, write-capable builder delegations require a prepared claim or isolated worktree on the bound selection, subagents never claim (claims stay in the root thread), a delegation derived from nothing is a claim, and a wrong repository, snapshot, basis or legacy authority attempt fails with exact recompile/reconcile routes.",
         ),
     ]
 }

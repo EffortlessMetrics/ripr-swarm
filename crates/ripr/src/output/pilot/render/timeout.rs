@@ -2,8 +2,35 @@ use super::render_helpers::push_path_field;
 use crate::output::json::escape as json_escape;
 use crate::output::markdown::{PowershellForm, powershell_form};
 use crate::output::path::display_path;
-use crate::output::pilot::commands::PilotCommands;
+use crate::output::pilot::commands::{PilotCommands, suggested_retry_timeout_ms};
 use crate::output::pilot::{PILOT_SUMMARY_SCHEMA_VERSION, PilotSummaryContext};
+
+/// Human timeout reason. JSON keeps `timeout_ms` as the spent budget
+/// (schema `0.3`); the prose names the default and the automatic
+/// extension separately so a user who typed nothing is not told they
+/// asked for 270s (#7427).
+fn analysis_timeout_reason(context: PilotSummaryContext<'_>) -> String {
+    let spent_ms = context.timeout_ms;
+    let extension_ms = context.timeout_extension_ms;
+    if extension_ms > 0 {
+        let requested_ms = spent_ms.saturating_sub(extension_ms);
+        format!(
+            "analysis timed out after {spent_ms} ms total: {requested_ms} default + {extension_ms} automatic extension; pass --timeout-ms to set a hard budget"
+        )
+    } else {
+        format!("analysis timed out after {spent_ms} ms")
+    }
+}
+
+/// Extra next-step copy when the printed retry is not a plain doubling
+/// of the spent budget: the interactive cap bound it, or the spent
+/// budget already sat at or above that cap (#5443, #7427).
+fn retry_bound_note(spent_ms: u64) -> Option<&'static str> {
+    let retry_ms = suggested_retry_timeout_ms(spent_ms);
+    (retry_ms < spent_ms.saturating_mul(2)).then_some(
+        "The printed retry is an interactive next step and is never smaller than the time already spent. If that is still not enough, warm the fact cache with a prior `ripr check` or pass a larger --timeout-ms.",
+    )
+}
 
 pub(crate) fn render_pilot_timeout_summary_json(context: PilotSummaryContext<'_>) -> String {
     let commands = PilotCommands::new(context);
@@ -84,7 +111,7 @@ pub(crate) fn render_pilot_timeout_summary_json(context: PilotSummaryContext<'_>
     out.push_str("  \"next\": {\n");
     out.push_str(&format!(
         "    \"retry_command\": \"{}\"\n",
-        json_escape(&commands.retry)
+        json_escape(&format!("{} --format json", commands.retry))
     ));
     out.push_str("  }\n");
     out.push_str("}\n");
@@ -98,10 +125,7 @@ pub(crate) fn render_pilot_timeout_summary_md(context: PilotSummaryContext<'_>) 
     out.push_str("# RIPR Pilot Summary\n\n");
     out.push_str("## Scope\n\n");
     out.push_str("- Status: `partial`\n");
-    out.push_str(&format!(
-        "- Reason: analysis timed out after {} ms\n",
-        context.timeout_ms
-    ));
+    out.push_str(&format!("- Reason: {}\n", analysis_timeout_reason(context)));
     out.push_str(&format!("- Root: `{}`\n", display_path(context.root)));
     out.push_str(&format!("- Mode: `{}`\n", context.mode.as_str()));
     match context.config_path {
@@ -122,8 +146,14 @@ pub(crate) fn render_pilot_timeout_summary_md(context: PilotSummaryContext<'_>) 
     ));
 
     out.push_str("## Next Command\n\n");
-    out.push_str("Rerun with a larger explicit budget:\n\n");
-    out.push_str(super::COMMAND_SHELL_DISCLOSURE);
+    if suggested_retry_timeout_ms(context.timeout_ms) > context.timeout_ms {
+        out.push_str("Rerun with a larger explicit budget:\n\n");
+    } else {
+        out.push_str(
+            "Rerun with an explicit --timeout-ms at least as large as the time already spent:\n\n",
+        );
+    }
+    out.push_str(super::command_shell_disclosure());
     out.push_str("```bash\n");
     out.push_str(&commands.retry);
     out.push_str("\n```\n");
@@ -140,6 +170,11 @@ pub(crate) fn render_pilot_timeout_summary_md(context: PilotSummaryContext<'_>) 
             commands.retry
         )),
     }
+    if let Some(note) = retry_bound_note(context.timeout_ms) {
+        out.push('\n');
+        out.push_str(note);
+        out.push('\n');
+    }
     out
 }
 
@@ -149,10 +184,7 @@ pub(crate) fn render_pilot_timeout_terminal(context: PilotSummaryContext<'_>) ->
     let mut out = String::new();
     out.push_str("RIPR pilot partial.\n\n");
     out.push_str("Reason:\n");
-    out.push_str(&format!(
-        "  analysis timed out after {} ms\n\n",
-        context.timeout_ms
-    ));
+    out.push_str(&format!("  {}\n\n", analysis_timeout_reason(context)));
     out.push_str("Config:\n");
     match context.config_path {
         Some(path) => out.push_str(&format!("  loaded: {}\n", display_path(path))),
@@ -171,5 +203,10 @@ pub(crate) fn render_pilot_timeout_terminal(context: PilotSummaryContext<'_>) ->
     out.push_str("This packet directory does not keep leftover repo-exposure or seam-packet files from an earlier run.\n\n");
     out.push_str("Next:\n");
     out.push_str(&format!("  {}\n", commands.retry));
+    if let Some(note) = retry_bound_note(context.timeout_ms) {
+        out.push('\n');
+        out.push_str(note);
+        out.push('\n');
+    }
     out
 }

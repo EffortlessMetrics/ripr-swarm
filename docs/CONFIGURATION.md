@@ -123,6 +123,14 @@ If neither spelling represents the selected root losslessly in a portable comman
 and names the UTF-8-parent/alias remedy. A lossless absolute UTF-8 alias to a physical root
 with non-UTF-8 bytes still provides a usable command spelling.
 
+Existing-file refusals also print complete retry commands bound to the selected
+root. The config overwrite resets customizations; its dry-run preview writes
+nothing, and the `--ci github --force` alternative keeps the config while
+refreshing the workflow. These commands can be pasted from another directory.
+If the root cannot be represented losslessly, the refusal omits executable
+retries and names the UTF-8-parent/alias remedy; existing files remain intact.
+Where quoting differs, a labeled PowerShell form accompanies the command.
+
 | Flag | Default | Notes |
 | --- | --- | --- |
 | `--root PATH` | current directory | Workspace root where `ripr.toml` should be written. |
@@ -189,7 +197,7 @@ Runs the static exposure analysis and renders findings.
 
 | Flag | Default | Notes |
 | --- | --- | --- |
-| `--root PATH` | current directory | Workspace root used for diff and source discovery. Without `--root`, walks up to a `Cargo.toml` containing `[workspace]`; when there is none, to the nearest `Cargo.toml`, `pnpm-workspace.yaml`, `package.json` with a `workspaces` field, or `pyproject.toml` with `[tool.uv.workspace]`, else a verified git top level. An unverified `.git` entry bounds the walk without selecting that directory; absent a local manifest, the current directory stays selected. A moved root and its reason are printed on stderr. When that move skips a closer `ripr.toml` from the invocation directory (the file `ripr doctor` and `ripr pilot` would load from that cwd), stderr names the skipped directory entry and which file governed. Pass `--root .` (cwd is still that directory) to analyze with the closer file. |
+| `--root PATH` | current directory | Workspace root used for diff and source discovery. Without `--root`, walks up to a `Cargo.toml` containing `[workspace]`; when there is none, to the nearest `Cargo.toml`, `pnpm-workspace.yaml`, `package.json` with an array or object `workspaces` field, or `pyproject.toml` with `[tool.uv.workspace]`, else a verified git top level. Scalar `workspaces` values (string, number, Boolean, or `null`) do not mark a workspace. Arrays and objects, including Yarn object forms, are structural markers without member/glob/schema validation or package-manager execution. An unverified `.git` entry bounds the walk without selecting that directory; absent a local manifest, the current directory stays selected. A moved root and its reason are printed on stderr. When that move skips a closer `ripr.toml` from the invocation directory (the file `ripr doctor` and `ripr pilot` would load from that cwd), stderr names the skipped directory entry and which file governed. Pass `--root .` (cwd is still that directory) to analyze with the closer file. |
 | `--base REV` | resolved per repository | Git revision used as the diff base when `--diff` is not given. With no `--base`, ripr resolves the first of `origin/HEAD`, `origin/main`, `origin/master`, `main`, `master` that exists; when none does, it says so rather than analyzing nothing. An explicit `--base` is used as given and is never substituted. |
 | `--diff PATH` | _(unset)_ | Path to a unified diff file. Overrides `--base`. `--diff -` reads from stdin. |
 | `--candidate-tree TREE` | _(unset)_ | Analyze exactly this immutable Git tree object, deriving the diff from Git objects alone. Mutually exclusive with `--diff` and `--base`. |
@@ -200,7 +208,7 @@ Runs the static exposure analysis and renders findings.
 | `--gap-ledger PATH` | _(unset)_ | For `repo-badge-*` formats only: render badge counts from explicit gap-decision-ledger projection targets. |
 | `--json` | _(off)_ | Shortcut for `--format json`. |
 | `--no-unchanged-tests` | `ripr.toml` `analysis.include_unchanged_tests`, otherwise tests included | Limits the source index to changed Rust files. By default unchanged tests are part of the index so `Reach` evidence can find them. |
-| `--suppression-policy PATH` | _(unset)_ | Apply a suppressions TOML (same schema as `.ripr/suppressions.toml`) to the findings-based formats. Relative paths resolve against `--root`; a missing or malformed policy fails the run. |
+| `--suppression-policy PATH` | _(unset)_ | Apply a suppressions TOML (same schema as `.ripr/suppressions.toml`) to the findings-based formats. Relative paths resolve against `--root`; a missing or malformed policy fails the run. Without this flag, findings-based human, human-full, JSON and GitHub formats leave the default file unapplied and disclose a detected `.ripr/suppressions.toml` on stderr. An unused malformed file stays nonfatal; stdout and exit semantics are unchanged. |
 | `--write-artifact PATH` | _(unset)_ | Write a full-fidelity check artifact (`ripr-check-artifact-v1`) for later `ripr explain --from PATH` / `ripr context --from PATH` reuse. Diff-scoped findings runs only. A local, disposable derivative: never a gate, badge, or proof input. |
 | `--perl-facts PATH` | _(unset)_ | Use this explicit Perl facts packet as the analysis input for Perl files. |
 | `--git-timeout SECS` | `300` | Cooperative deadline in seconds for each git invocation in the diff-load path. `0` disables it. Also settable via `RIPR_GIT_TIMEOUT`. |
@@ -215,7 +223,7 @@ that needs the tuning.
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `RIPR_CACHE_DIR` | (none) | Relocate the entire cache base directory (the cache is disposable; see below). When set to a non-empty path, all cache reads and writes use that path instead of `{workspace_root}/target/ripr/cache`. Useful for read-only or immutable source checkouts and for redirecting the cache to a faster or larger volume. When unset or empty, default behaviour is unchanged. `ripr doctor` reports whether `RIPR_CACHE_DIR` is active and shows the resolved location and total size. |
+| `RIPR_CACHE_DIR` | (none) | Relocate the entire cache base directory (the cache is disposable; see below). When set to a non-empty path, all cache reads and writes use that path instead of `{workspace_root}/target/ripr/cache`. Useful for read-only or immutable source checkouts and for redirecting the cache to a faster or larger volume. When unset or empty, default behaviour is unchanged, except that `ripr check` refuses to run when `target`, `target/ripr`, `target/ripr/cache` or `target/ripr/reports` under the workspace is a symlink resolving outside it (a checked-in link could otherwise redirect where ripr writes); set `RIPR_CACHE_DIR` to choose the location explicitly (#7781). `ripr doctor` reports whether `RIPR_CACHE_DIR` is active and shows the resolved location and total size. |
 | `RIPR_MAX_DIFF_CHANGED_RUST_LINES` | `2000` | Maximum added plus removed Rust diff lines that `ripr check` will expand into probes before failing closed with `diff_scope_oversized`. With `--json`, the command still exits non-zero but emits a limited artifact with `analysis_scope.run_status = "diff_scope_oversized"` and `downstream_consumable = false`. This protects constrained runners from large code-motion diffs that touch few files but produce thousands of probes. Raise only for a single command on a machine with enough memory, or split the extraction PR. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
 | `RIPR_MAX_DIFF_INDEX_FILES` | `10000` | Maximum Rust files that diff-scoped analysis will load into the Rust index before failing closed with `diff_scope_oversized`. This is a memory guard: measured runs cost about 0.1 to 0.35 MB per indexed file, so the default stays within a 7 GB runner. Speed is bounded separately by `RIPR_DIFF_NARROW_INDEX_FILES`; a selection that stays above that threshold after narrowing (for example a changed package that alone holds more files) still runs up to this limit. With `--json`, the command still exits non-zero but emits a limited artifact with `analysis_scope.run_status = "diff_scope_oversized"` and `downstream_consumable = false`. Lower it on a constrained runner; raise it only for a single command on a machine with enough memory, or reduce the diff scope. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. The same value bounds the number of changed files a parsed diff may name. |
 | `RIPR_DIFF_NARROW_INDEX_FILES` | `1200` | Index size above which a Draft/Fast selection narrows the packages that depend on the changed ones under `RIPR_DIFF_DEPENDENT_SCOPE=auto`, and at which the on-demand reach widening stops and names `rust_transitive_reach_unresolved` instead. It bounds time, not memory, and never refuses a run. Values above the effective `RIPR_MAX_DIFF_INDEX_FILES` are clamped to it, so lowering the hard limit keeps narrowing at or below it. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
@@ -521,12 +529,13 @@ into LSP `initializationOptions` and server-launch arguments.
 | `ripr.enabled` | boolean | `true` | Enables the VS Code saved-workspace server, diagnostics, hovers, status, and code actions. Set to `false` for an explicit disabled editor state without starting the language server. |
 | `ripr.server.path` | string | `""` | Absolute path to a `ripr` executable. Wins over bundled, downloaded, and `PATH` resolution. |
 | `ripr.server.args` | string array | `["lsp", "--stdio"]` | Arguments used to start the language server. |
-| `ripr.server.autoDownload` | boolean | `true` | Auto-download a matching server binary when no configured, bundled, or cached one is available. |
+| `ripr.server.autoDownload` | boolean | `true` | Auto-download a matching server binary when no configured, bundled, cached, or (while `ripr.server.version` is empty) compatible `PATH` one is available. |
 | `ripr.server.version` | string | `""` | Pin a specific server version. Empty means match the extension version. |
 | `ripr.server.downloadBaseUrl` | string | `""` | Override the server manifest base URL (e.g. internal mirror). Empty uses GitHub Releases. |
 
 For the full resolution order (configured → bundled → cached → first-run
-download → `PATH`), see
+download → `PATH`; an unpinned install checks a compatible `PATH` `ripr` before the
+download), see
 [Server provisioning](SERVER_PROVISIONING.md).
 
 ### Analysis
@@ -589,7 +598,7 @@ The extension contributes these command IDs and palette titles:
 | `ripr.openReport` | ripr: Open Report |
 | `ripr.showTopLimitation` | ripr: Show Top Limitation |
 | `ripr.showReceiptStatus` | ripr: Show Receipt Status |
-| `ripr.copyReceiptCommand` | ripr: Copy Receipt Command |
+| `ripr.copyReceiptCommand` | ripr: Copy Receipt Command (Receipt Status) |
 | `ripr.openAttemptLedger` | ripr: Open Attempt Ledger |
 | `ripr.showRouteQuality` | ripr: Show Route Quality |
 
@@ -767,6 +776,7 @@ Supported `kind` values (closed set): `exposure_gap`, `test_efficiency`.
 | `expires` ISO `YYYY-MM-DD` if present | Other formats fail at parse time. |
 | `created_at`, `last_seen`, `review_by` ISO `YYYY-MM-DD` if present | Other formats fail at parse time. |
 | Unknown fields rejected | Catches typos. |
+| Duplicate fields rejected | Repeated `schema_version` headers or fields within one entry fail with the original and repeated declaration lines, including empty first values. Fields reused in separate entries remain valid. |
 | Duplicate exact selectors rejected | Same `finding_id` (or `(test, path)`) twice fails. This check does not reject duplicate path-glob selectors. |
 | Unmatched selectors surface as warnings | Selector that matches no current finding is reported but does not fail the badge. |
 | Expired suppressions do **not** apply | They surface as warnings on the badge so silent green-forever debt is impossible. |
@@ -1077,7 +1087,7 @@ instead of publishing phantom preview diagnostics.
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `resolve_tsconfig_paths` | boolean | `false` | Resolve TypeScript path aliases from `tsconfig.json` or `jsconfig.json` during owner-to-test discovery. Imports of an in-workspace package by its own name (`@scope/pkg/sub`) resolve through that package's `package.json` without this setting. |
+| `resolve_tsconfig_paths` | boolean | `true` | Resolve TypeScript path aliases from `tsconfig.json` or `jsconfig.json` during owner-to-test discovery; set `false` to leave aliased imports unresolved (they then stay `no_static_path` with the `typescript_path_alias_unresolved` disclosure). Imports of an in-workspace package by its own name (`@scope/pkg/sub`) resolve through that package's `package.json` without this setting. |
 
 ### `[perl]`
 

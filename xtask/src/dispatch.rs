@@ -105,6 +105,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         }
         XtaskCommand::MutationSpotCheck(args) => super::reports::mutation_spot_check(&args),
         XtaskCommand::PilotRanking(args) => super::reports::pilot_ranking(&args),
+        XtaskCommand::RealCrateDogfood(args) => super::reports::real_crate_dogfood(&args),
         XtaskCommand::DxScoreboard(args) => super::reports::dx_scoreboard(&args),
         XtaskCommand::ScaleCliffBenchmark(args) => super::reports::scale_cliff_benchmark(&args),
         XtaskCommand::RustCorpus(args) => super::reports::rust_corpus(&args),
@@ -237,6 +238,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckCiLaneWhitelist => super::check_ci_lane_whitelist(),
         XtaskCommand::CheckProofPacks => super::check_proof_packs(),
         XtaskCommand::CheckProductCopy => super::check_product_copy(),
+        XtaskCommand::CheckPackagedReadme => super::check_packaged_readme(),
         XtaskCommand::CheckPositioningLanguage => super::check_positioning_language(),
         XtaskCommand::CheckDocRoles => super::check_doc_roles(),
         XtaskCommand::CheckReleaseTargets => super::check_release_targets(),
@@ -244,6 +246,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::QualifyPythonWheelhouse(args) => super::qualify_python_wheelhouse(&args),
         XtaskCommand::VscodeCompile => super::vscode_compile(),
         XtaskCommand::VscodePackage => super::vscode_package(),
+        XtaskCommand::VscodeVerifyVsix(args) => super::vscode_verify_vsix(&args),
         XtaskCommand::VscodeTest => super::vscode_test(),
         XtaskCommand::VscodeTestE2e => super::vscode_test_e2e(),
         XtaskCommand::Package => {
@@ -258,6 +261,33 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::WorkExplain(args) => super::work_portfolio::work_explain_command(&args),
         XtaskCommand::WorkSelectionCheck(args) => {
             super::work_selection_identity::work_selection_check_command(&args)
+        }
+        XtaskCommand::WorkResultCheck(args) => {
+            super::work_result_identity::work_result_check_command(&args)
+        }
+        XtaskCommand::WorkClaimCheck(args) => {
+            super::work_claim_identity::work_claim_check_command(&args)
+        }
+        XtaskCommand::WorkWaveCheck(args) => {
+            super::work_wave_identity::work_wave_check_command(&args)
+        }
+        XtaskCommand::WorkContextCheck(args) => {
+            super::work_context_identity::work_context_check_command(&args)
+        }
+        XtaskCommand::WorkSynthesisCheck(args) => {
+            super::work_synthesis_identity::work_synthesis_check_command(&args)
+        }
+        XtaskCommand::WorkBurndownCheck(args) => {
+            super::work_burndown_identity::work_burndown_check_command(&args)
+        }
+        XtaskCommand::WorkIntakeCheck(args) => {
+            super::work_intake_identity::work_intake_check_command(&args)
+        }
+        XtaskCommand::WorkPlanCheck(args) => {
+            super::work_plan_identity::work_plan_check_command(&args)
+        }
+        XtaskCommand::WorkAdapterCheck(args) => {
+            super::work_adapter_identity::work_adapter_check_command(&args)
         }
         XtaskCommand::Help(args) => print_help_route(&args),
         XtaskCommand::Unknown(command) if matches!(command.as_str(), "--help" | "-h") => {

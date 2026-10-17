@@ -60,6 +60,36 @@ use rayon::prelude::*;
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
+/// Widened reach indexes retained at once. Owners alternate among a few
+/// closures, so two slots remove the rebuilds while bounding the memory
+/// the retained indexes hold (#5363; the 512 MB peak-RSS target stays).
+const REACH_INDEX_CAPACITY: usize = 2;
+
+/// The cached value for `key`, built by `build` on a miss. `cache` holds at
+/// most `capacity` entries, most recently used last, so a miss evicts the
+/// stalest. A failed build leaves the cache unchanged.
+fn most_recent_or_build<K: PartialEq, V>(
+    cache: &mut Vec<(K, V)>,
+    capacity: usize,
+    key: K,
+    build: impl FnOnce(&K) -> Result<V, String>,
+) -> Result<&V, String> {
+    if let Some(position) = cache.iter().position(|(cached, _)| *cached == key) {
+        let entry = cache.remove(position);
+        cache.push(entry);
+    } else {
+        let value = build(&key)?;
+        if cache.len() >= capacity {
+            cache.remove(0);
+        }
+        cache.push((key, value));
+    }
+    match cache.last() {
+        Some((_, value)) => Ok(value),
+        None => Err("reach index cache holds no entry after insertion".to_string()),
+    }
+}
+
 /// Dependent files read and scanned per parallel admission batch, bounding
 /// how many withheld files' bytes are held at once.
 const ADMISSION_BATCH_FILES: usize = 64;
@@ -241,6 +271,11 @@ impl AdmissionQuery {
             package_names: index.package_names.clone(),
             ..Self::default()
         };
+        // One workspace scan: `owner_may_be_reached_unseen` parses every
+        // file that mentions `doc` and `!` (external doctest includes).
+        // Calling it per changed-span owner re-parsed crates/ripr on every
+        // doctor.rs / cli_smoke.rs function and hung PR evidence at 3600s.
+        let unseen = classify::UnseenReachNames::build(index);
         for facts in index.files().values() {
             if facts.source.contains("macro_rules") {
                 query
@@ -261,7 +296,7 @@ impl AdmissionQuery {
                         .iter()
                         .any(|line| function.start_line <= *line && *line <= function.end_line)
             }) {
-                query.insert_owner(owner, index);
+                query.insert_owner(owner, index, &unseen);
             }
         }
         for facts in index.files().values() {
@@ -288,15 +323,18 @@ impl AdmissionQuery {
         })
     }
 
-    fn insert_owner(&mut self, owner: &FunctionSummary, index: &RustIndex) {
+    fn insert_owner(
+        &mut self,
+        owner: &FunctionSummary,
+        index: &RustIndex,
+        unseen: &classify::UnseenReachNames,
+    ) {
         // Probes name their owner by the id's last segment.
         let names = std::iter::once(owner.name.clone())
             .chain(owner.id.0.rsplit("::").next().map(str::to_string))
             .filter(|name| !name.is_empty())
             .collect::<BTreeSet<_>>();
-        if !classify::owner_may_be_reached_unseen(owner, index)
-            || classify::is_assertion_shaped_owner(owner, index)
-        {
+        if !unseen.may_reach_unseen(owner) || classify::is_assertion_shaped_owner(owner, index) {
             self.mentioned.extend(names.iter().cloned());
         }
         let same_named = index
@@ -467,9 +505,12 @@ pub(super) struct NarrowedScope {
     /// or where it passed the limit. The limit is fixed for the scope's
     /// run, so a cached `Over` stays valid.
     closures: std::collections::BTreeMap<String, Closure>,
-    /// The last widened index and the files it holds; owners whose closure
-    /// selects the same files reuse it.
-    reach_index: Option<(Vec<PathBuf>, RustIndex)>,
+    /// The most recently used widened indexes (at most
+    /// [`REACH_INDEX_CAPACITY`], least recent first) and the files each
+    /// holds; owners whose closure selects the same files reuse one.
+    /// Owners alternate between a few closures, so a single slot rebuilt
+    /// the same index repeatedly (#5363).
+    reach_index: Vec<(Vec<PathBuf>, RustIndex)>,
     test_harnesses: Vec<crate::config::TestHarnessRegistration>,
     /// Bytes the reach widening read, for the run's consumed sources.
     consumed: ConsumedRustSources,
@@ -739,7 +780,7 @@ pub(super) fn admit_dependents(
             withheld,
             tokens,
             closures: std::collections::BTreeMap::new(),
-            reach_index: None,
+            reach_index: Vec::new(),
             test_harnesses: test_harnesses.to_vec(),
             consumed: ConsumedRustSources::default(),
             widen: !core_only,
@@ -844,18 +885,15 @@ impl NarrowedScope {
                 limit,
             });
         }
-        if self
-            .reach_index
-            .as_ref()
-            .is_none_or(|(indexed, _)| *indexed != files)
-        {
-            let index = build_index(&self.root, &files, &self.test_harnesses, &mut self.consumed)?;
-            self.reach_index = Some((files, index));
-        }
-        Ok(self
-            .reach_index
-            .as_ref()
-            .map_or(ReachIndex::Main, |(_, index)| ReachIndex::Widened(index)))
+        let consumed = &mut self.consumed;
+        let (root, harnesses) = (&self.root, &self.test_harnesses);
+        let index = most_recent_or_build(
+            &mut self.reach_index,
+            REACH_INDEX_CAPACITY,
+            files,
+            |files| build_index(root, files, harnesses, consumed),
+        )?;
+        Ok(ReachIndex::Widened(index))
     }
 
     /// The bytes the reach widening read.
@@ -1245,6 +1283,71 @@ mod tests {
     }
 
     #[test]
+    fn from_core_index_scans_external_docs_once_not_per_owner() {
+        use crate::analysis::facts::{FileFacts, FunctionSourceRole, OwnedRustIndex};
+        use crate::domain::SymbolId;
+        use std::collections::BTreeMap;
+
+        let mut files = BTreeMap::new();
+        let mut functions = Vec::new();
+        let mut changed_lines = Vec::new();
+        for file_i in 0..4 {
+            let path = PathBuf::from(format!("src/mod{file_i}.rs"));
+            let mut source = if file_i == 3 {
+                String::from("#![doc = include_str!(\"README.md\")]\n")
+            } else {
+                String::from("#[doc = \"include_str! is described here\"]\n")
+            };
+            let mut lines = BTreeSet::new();
+            for fn_i in 0..10 {
+                let name = format!("owner_{file_i}_{fn_i}");
+                let start = 2 + fn_i;
+                source.push_str(&format!("pub fn {name}() {{}}\n"));
+                functions.push(FunctionSummary {
+                    id: SymbolId(format!("{}::{name}", path.display())),
+                    name: name.clone(),
+                    file: path.clone(),
+                    start_line: start,
+                    end_line: start,
+                    body: String::new().into(),
+                    calls: Vec::new(),
+                    returns: Vec::new(),
+                    literals: Vec::new(),
+                    source_role: FunctionSourceRole::Production,
+                    attrs: Vec::new(),
+                    impl_attrs: Vec::new(),
+                    nested_fn_names: Vec::new(),
+                    let_bindings: Vec::new(),
+                    item: Default::default(),
+                    impl_context: Default::default(),
+                });
+                lines.insert(start);
+            }
+            files.insert(
+                path.clone(),
+                FileFacts {
+                    path: path.clone(),
+                    source: source.into(),
+                    ..FileFacts::default()
+                },
+            );
+            changed_lines.push((path, lines));
+        }
+        let index = RustIndex::from_owned(OwnedRustIndex {
+            files,
+            functions,
+            ..Default::default()
+        });
+        let _ = classify::take_external_docs_parse_count();
+        let _query = AdmissionQuery::from_core_index(&index, &changed_lines);
+        assert_eq!(
+            classify::take_external_docs_parse_count(),
+            4,
+            "dependent-scope admission must parse each external-doc file once, not once per changed owner"
+        );
+    }
+
+    #[test]
     fn spelling_matches_whole_identifiers_only() {
         let set = names(&["parse"]);
         assert!(spells_any(b"let x = s.parse::<u8>();", &set));
@@ -1456,5 +1559,47 @@ mod tests {
                 "{DEPENDENT_SCOPE_ENV} must be `auto`, `named` or `full`, got `all`"
             ))
         );
+    }
+}
+
+#[cfg(test)]
+mod reach_index_cache_tests {
+    use super::most_recent_or_build;
+    use std::cell::Cell;
+
+    #[test]
+    fn alternating_keys_build_once_each_within_capacity() {
+        let builds = Cell::new(0);
+        let mut cache = Vec::new();
+        for key in [1, 2, 1, 2, 1] {
+            let value = most_recent_or_build(&mut cache, 2, key, |key| {
+                builds.set(builds.get() + 1);
+                Ok(*key * 10)
+            });
+            assert_eq!(value, Ok(&(key * 10)));
+        }
+        assert_eq!(builds.get(), 2, "A,B,A,B,A must not rebuild");
+    }
+
+    #[test]
+    fn a_third_key_evicts_the_stalest_entry() {
+        let builds = Cell::new(0);
+        let mut cache = Vec::new();
+        for key in [1, 2, 1, 3, 2, 1] {
+            let _ = most_recent_or_build(&mut cache, 2, key, |key| {
+                builds.set(builds.get() + 1);
+                Ok(*key)
+            });
+        }
+        // 1,2 build; 1 hit; 3 evicts 2; 2 rebuilds (evicting 1); 1 rebuilds.
+        assert_eq!(builds.get(), 5);
+    }
+
+    #[test]
+    fn a_failed_build_keeps_the_cache() {
+        let mut cache = vec![(1, 10), (2, 20)];
+        let failed = most_recent_or_build(&mut cache, 2, 3, |_| Err("boom".to_string()));
+        assert_eq!(failed, Err("boom".to_string()));
+        assert_eq!(cache, vec![(1, 10), (2, 20)]);
     }
 }

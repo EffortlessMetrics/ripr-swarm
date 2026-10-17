@@ -6,8 +6,9 @@ JSON-RPC on stdin and stdout. It tells an MCP client which repository root
 RIPR would use, what RIPR is and is not allowed to do there, and — after an
 explicit `ripr_refresh` — the committed analysis snapshot: a deterministically
 bounded working set of canonical items and one complete evidence document per
-item. It never edits source, runs tests or mutation, executes verification
-commands, or prepares a repair.
+item. It never edits source, runs tests or mutation, or executes verification
+commands; `ripr_prepare_repair` only creates an in-memory transaction that
+authorizes nothing (see [What it does not do](#what-it-does-not-do)).
 
 The design boundary is [ADR 0022](../adr/0022-mcp-is-a-bounded-projection.md).
 
@@ -38,6 +39,42 @@ A generic MCP client entry:
   }
 }
 ```
+
+### Register with a coding agent
+
+`ripr` must be on `PATH` (or use its absolute path as `command`). Agents start
+stdio servers from the project directory, so omitting `--root` resolves the
+repository the agent is working in; pass an absolute `--root` if your client
+starts servers elsewhere.
+
+```bash
+# Claude Code: writes a shareable .mcp.json in the project
+claude mcp add --scope project ripr -- ripr mcp --stdio
+# or let ripr write it (keeps your other servers): ripr init --mcp
+
+# Codex: adds an entry to its user config
+codex mcp add ripr -- ripr mcp --stdio
+```
+
+Equivalent Codex `config.toml` entry:
+
+```toml
+[mcp_servers.ripr]
+command = "ripr"
+args = ["mcp", "--stdio"]
+```
+
+A registered server still needs the client's own approval step before its
+tools reach a session. These snippets use each client's documented MCP
+registration; the repository has not yet retained cold-session proof that
+either client completes the flow (tracked in #3092), so treat them as
+configuration, not a support claim.
+
+An agent edits the worktree, but `ripr_refresh` analyzes only the committed
+default-branch diff. Commit your edits on a branch that is ahead of the
+default branch before `ripr_refresh` (a commit on the default branch itself
+leaves an empty diff), or use `ripr check --worktree --format json` outside
+MCP.
 
 ## Progressive flow
 
@@ -216,13 +253,20 @@ identity and the caller filters, so a refresh between pages fails closed with `s
 instead of silently mixing snapshots; walking `next_offset` covers the
 selection exactly once. Pages are sized so the complete structured result
 (`structuredContent`, per the tool's advertised `outputSchema`) measures
-under the 128-KiB response bound. Only a listing that cannot fit even one
+under the 128-KiB response bound, including empty pages whose echoed filters
+can overflow the structured envelope while the raw document still fits.
+Those pages return the existing typed `result_too_large` refusal with the
+current snapshot identity. Only a listing that cannot fit even one
 page — an omission disclosure alone over the ceiling — fails closed with
 `result_too_large` naming `ripr://snapshot/{snapshot_id}` as the identity
 route. Other tool responses carry the document once at full fidelity:
 `content[0].text` is the compact JSON serialization, and
-`structuredContent` repeats it only while the complete envelope stays under
-the response bound.
+`structuredContent` repeats it in every successful response. Each tool
+advertises an `outputSchema`, so a success never ships without its
+structured copy: when the complete double-carry envelope does not fit the
+id-aware response budget, the call fails closed with the typed
+`result_too_large` refusal and that tool's recovery route (#7768) instead
+of silently dropping `structuredContent`.
 
 `ripr_get_gap` (and the equivalent resource `ripr://gap/{canonical_id}`)
 returns one canonical item's complete bounded evidence bound to its snapshot
@@ -387,15 +431,17 @@ transaction unless a new refresh commits one.
 An invalid root does not stop the server. Status reports
 `workspace_state: "unavailable"` with a `root.error_code`, and the tool result
 adds a second text content item that names the cause and the recovery
-(restart with `--root <repository>`). An unknown static resource name is
-rejected with the one valid static URI in the message and in
-`error.data.available`; the snapshot and gap templates reject unknown or
-stale identities with their typed codes in `error.data`. A client that
-negotiated an older protocol version gets resource-not-found (`-32002`) for a
-resource miss; current clients get Invalid Params (`-32602`). The SDK maps
-the code, while the adapter's bounded message
-`unknown resource; available: ripr://workspace/status` and
-`error.data.available` name the same valid URI in both lifecycles.
+(restart with `--root <repository>`). An unknown resource URI is
+rejected with the valid static URI and all five resource templates in the
+human-readable message. The same routes remain available separately in
+`error.data.available` and `error.data.resource_templates`. Templates require
+valid resource identities; listing a template does not promise its resource
+currently exists. Recognized snapshot, gap and repair resource routes retain
+their typed missing/stale-identity errors without the generic route list.
+A client that negotiated an older protocol version gets resource-not-found
+(`-32002`) for a resource miss; current clients get Invalid Params (`-32602`).
+The SDK maps the code, while the adapter preserves the same bounded message
+and structured recovery routes in both lifecycles.
 The instructions (returned by both `initialize` and `server/discover`) and the
 tool descriptions state positively what each tool returns, its bounds, and
 what it does not do. Protocol errors keep standard JSON-RPC codes. The pinned
@@ -409,12 +455,19 @@ correlated. Messages are capped at 256 KiB and response envelopes at
 128 KiB; the 1-byte newline delimiter is appended after the cap check, so a
 wire frame is at most 128 KiB+1 (pinned by
 `exactly_max_response_bytes_passes_and_one_more_falls_back`). The bound is
-enforced on the final serialized envelope — the document is measured again
-after the tool or resource wrapper adds its text and structured-content
-representations — so an over-bound response fails closed with
-`result_too_large` before the wire cap is reached. If even a
-correlated fallback cannot fit its readable ID, the service terminates with
-the bounded stderr reason `MCP output limit`, without substituting an ID.
+enforced against the complete serialized response: the tool or resource
+envelope is measured in its final form — after the wrapper adds its text
+and structured-content representations — and compared against the
+response bound minus the JSON-serialized request id of the call being
+answered and a fixed reserve for the JSON-RPC frame fields and the
+`resultType` field a `2026-07-28` peer keeps, so an over-bound response
+fails closed with `result_too_large` before the wire cap is reached for
+any legal request id, however much client-controlled id escaping adds
+(#7768). A request id so large that even the typed `result_too_large`
+refusal cannot fit its ID falls back to the correlated generic error; if
+even a correlated fallback cannot fit its readable ID, the service
+terminates with the bounded stderr reason `MCP output limit`, without
+substituting an ID.
 Partial reads and writes retain their state across cancellation. EOF closes
 the SDK service, so scripted clients must await replies before closing stdin.
 Stdout carries only protocol messages; operational errors go to stderr, and

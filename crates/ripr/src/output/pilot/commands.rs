@@ -1,6 +1,11 @@
 use crate::agent::loop_commands::{self, display_path};
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::repair_route::repair_packet_eligibility;
+use crate::domain::{
+    CanonicalNextActionV1, NextActionCurrentness, NextActionDiffSource, NextActionInput,
+    NextActionPilotDelegation, NextActionProducer, NextActionStop, current_command_platform,
+    select_canonical_next_action,
+};
 use crate::output::agent_seam_packets::{
     recommended_inline_test_module, recommended_test_for, recommended_test_is_repair_edit_target,
 };
@@ -20,7 +25,7 @@ use std::path::Path;
 ///
 /// Built here rather than in `agent::loop_commands`, whose file xtask includes
 /// into its own tree: a template only pilot calls reads as dead code there.
-pub(super) fn repair_start_command(root: &Path, entry: &ClassifiedSeam) -> Option<String> {
+fn offered_repair_start_route(root: &Path, entry: &ClassifiedSeam) -> Option<String> {
     if !repair_packet_eligibility(entry).eligible() {
         return None;
     }
@@ -32,6 +37,76 @@ pub(super) fn repair_start_command(root: &Path, entry: &ClassifiedSeam) -> Optio
         loop_commands::shell_arg(&loop_commands::bound_root(&display_path(root))),
         loop_commands::shell_arg(entry.seam.id().as_str()),
     ))
+}
+
+/// Project pilot's canonical action for one top seam. The delegated
+/// check/repair transaction is bound only when the fail-closed flip offers a
+/// repair route; otherwise pilot declares no delegation and the selector
+/// answers with a typed limitation, never an invented route. Pilot reads no
+/// pinned head, so the bound source is the fixed no-base committed mode and
+/// the render consumes only the decision's stop.
+pub(super) fn canonical_next_action_for_pilot(
+    root: &Path,
+    entry: &ClassifiedSeam,
+) -> Result<CanonicalNextActionV1, String> {
+    let root_display = display_path(root);
+    let seam_id = entry.seam.id().as_str().to_string();
+    let delegation =
+        offered_repair_start_route(root, entry).map(|route| NextActionPilotDelegation {
+            transaction_ref: seam_id.clone(),
+            route,
+        });
+    let input = NextActionInput {
+        producer: NextActionProducer::PilotDelegation,
+        root: root_display,
+        diff_source: NextActionDiffSource::Committed {
+            base: None,
+            head: None,
+        },
+        item_id: seam_id,
+        check_item: None,
+        card_item: None,
+        item_candidates: Vec::new(),
+        attempts: Vec::new(),
+        currentness: NextActionCurrentness {
+            head_expected: None,
+            head_observed: None,
+            config_expected: None,
+            config_observed: None,
+        },
+        offered_command: None,
+        route_admitted: true,
+        route_refusal: None,
+        missing_input: None,
+        platform: current_command_platform(),
+        limitation: None,
+        limitation_route: None,
+        detail_route: "ripr pilot".to_string(),
+        transition_from: "pilot_top_seam".to_string(),
+        transition_to: None,
+        restart_route: "ripr pilot".to_string(),
+        check_case: None,
+        doctor_recovery: None,
+        pilot_delegation: delegation,
+        alternatives: Vec::new(),
+        limitations: Vec::new(),
+    };
+    select_canonical_next_action(&input)
+}
+
+/// The repair-start line family pilot renders for `entry`. The canonical
+/// decision selects it: a pilot-delegated stop renders its route, any other
+/// outcome renders no repair line. A projection that cannot be built falls
+/// back to the shared offered-route mapping the projection itself consumes,
+/// so the render stays total and the two cannot disagree.
+pub(super) fn repair_start_command(root: &Path, entry: &ClassifiedSeam) -> Option<String> {
+    match canonical_next_action_for_pilot(root, entry) {
+        Ok(action) => match action.stop() {
+            Some(NextActionStop::PilotDelegated { route, .. }) => Some(route.clone()),
+            _ => None,
+        },
+        Err(_) => offered_repair_start_route(root, entry),
+    }
 }
 
 /// Where the focused test may go for `entry`'s repair, stated after the
@@ -57,6 +132,28 @@ pub(super) fn python_card_first_pr_command(root: &Path) -> String {
         "ripr first-pr --root {}",
         loop_commands::shell_arg(&loop_commands::bound_root(&display_path(root)))
     )
+}
+
+/// Floor for a printed timeout retry: a 30s default that never
+/// auto-extended still suggests two minutes, not 60s.
+const PILOT_RETRY_MIN_MS: u64 = 120_000;
+
+/// Interactive cap for a printed timeout retry. Doubling stays under
+/// this bound; a spent budget already at or above it is kept (#5443).
+const PILOT_RETRY_INTERACTIVE_CAP_MS: u64 = 300_000;
+
+/// Suggested `--timeout-ms` after a timeout.
+///
+/// Doubles the spent budget, keeps the 120s floor for short runs, and
+/// caps at five minutes. The suggestion is never smaller than the time
+/// already spent (#5443), so a 270s default-plus-extension run suggests
+/// 300s instead of 1080s (#7427).
+pub(super) fn suggested_retry_timeout_ms(spent_ms: u64) -> u64 {
+    spent_ms
+        .saturating_mul(2)
+        .min(PILOT_RETRY_INTERACTIVE_CAP_MS)
+        .max(spent_ms)
+        .max(PILOT_RETRY_MIN_MS)
 }
 
 pub(super) struct PilotCommands {
@@ -93,7 +190,7 @@ impl PilotCommands {
             &display_path(&after_path),
             None,
         );
-        let retry_timeout_ms = context.timeout_ms.saturating_mul(4).max(120_000);
+        let retry_timeout_ms = suggested_retry_timeout_ms(context.timeout_ms);
         let retry = format!(
             "ripr pilot --root {} --out {} --mode {} --max-seams {} --timeout-ms {}",
             loop_commands::shell_arg(&command_root),

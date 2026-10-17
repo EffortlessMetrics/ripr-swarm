@@ -15,6 +15,7 @@ mod owner_result_binding;
 mod reach_limit;
 mod related_tests;
 pub(crate) mod shared_grips;
+mod snapshot_owner_binding;
 mod value_contradiction;
 
 pub(crate) use value_contradiction::CONTRADICTION_DISCLOSURE;
@@ -30,9 +31,9 @@ use related_tests::{
 };
 
 use super::classify::{
-    assertion_observes_direct_collection, call_text_may_call_free_function,
-    direct_collection_mutation_receiver, owner_call_text,
-    reach_evidence as classify_reach_evidence, relation_establishes_reach,
+    assertion_observes_direct_collection_for_probe, call_text_may_call_free_function,
+    direct_collection_mutation_receiver, mutexed_assertion_observes_collection_argument,
+    owner_call_text, reach_evidence as classify_reach_evidence, relation_establishes_reach,
     test_calls_free_function,
 };
 use super::facts::{CallFact, FunctionImplContext};
@@ -56,6 +57,7 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
@@ -352,9 +354,10 @@ fn evidence_for_seam_with_context(
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
     let (activate, observed_values, missing_discriminators) =
         activate_evidence(seam, &related_indexed, context, owner_fn);
-    let propagate = propagate_evidence(seam, &related, owner_fn);
+    let pin_syntax = context.pin_syntax_mutex();
+    let propagate = propagate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
     let observe = observe_evidence(&related);
-    let discriminate = discriminate_evidence(seam, &related, owner_fn);
+    let discriminate = discriminate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
 
     let related_tests: Vec<Arc<RelatedTestGrip>> = related_with_reason
         .iter()
@@ -365,6 +368,7 @@ fn evidence_for_seam_with_context(
                 *reason,
                 context,
                 owner_fn,
+                pin_syntax,
             ))
         })
         .collect();
@@ -434,9 +438,10 @@ pub(crate) fn compact_evidence_for_seam(
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
     let (activate, missing_discriminators) =
         compact_activate_evidence(seam, &related_indexed, context, owner_fn);
-    let propagate = propagate_evidence(seam, &related, owner_fn);
+    let pin_syntax = context.pin_syntax_mutex();
+    let propagate = propagate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
     let observe = observe_evidence(&related);
-    let discriminate = discriminate_evidence(seam, &related, owner_fn);
+    let discriminate = discriminate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
     let statically_contradicted_related_tests = related
         .iter()
         .filter(|test| test_has_contradicted_assertion(test, owner_fn))
@@ -468,8 +473,9 @@ pub(crate) fn compact_evidence_for_seam(
 /// exact-value oracle and read `reach: yes` (#5335). When every related
 /// test is such a relation, the shared diff-mode reach decides: `weak` when
 /// something could still run the owner unseen (a doctest or caller names
-/// it, a trait impl, a test macro), otherwise `no`. A bounded transitive,
-/// macro or trait-dispatch witness from repo reach keeps it `weak` too.
+/// it, a trait impl, a test macro), otherwise `no`. A transitive (bounded
+/// or past five hops), macro or trait-dispatch witness from repo reach keeps
+/// it `weak` too.
 /// Either way the seam can no longer read `strongly_gripped`; the related
 /// tests stay listed as suggestions.
 fn reach_evidence(
@@ -478,6 +484,9 @@ fn reach_evidence(
     owner_fn: Option<&FunctionSummary>,
     context: &CompactGripContext<'_>,
 ) -> StageEvidence {
+    if let Some(summary) = reach_limit::outside_module_tree_summary(seam, context) {
+        return StageEvidence::new(StageState::Opaque, Confidence::Low, summary);
+    }
     if related.is_empty() {
         return reach_limit::reach_without_related_tests(seam.owner(), owner_fn, context);
     }
@@ -1884,6 +1893,8 @@ fn propagate_evidence(
     seam: &RepoSeam,
     related: &[&TestSummary],
     owner_fn: Option<&FunctionSummary>,
+    index: &RustIndex,
+    pin_syntax: &Mutex<crate::analysis::classify::OwnerPinSyntax>,
 ) -> StageEvidence {
     if related.is_empty() {
         return StageEvidence::new(
@@ -1898,7 +1909,7 @@ fn propagate_evidence(
     let any_oracle = related.iter().any(|t| !t.assertions.is_empty());
     let any_matching_sink = related
         .iter()
-        .any(|t| oracles_match_sink(seam, t, owner_fn));
+        .any(|t| oracles_match_sink(seam, t, owner_fn, index, pin_syntax));
     let state = match (any_oracle, any_matching_sink) {
         (true, true) => StageState::Yes,
         (true, false) => StageState::Unknown,
@@ -1916,6 +1927,8 @@ fn oracles_match_sink(
     seam: &RepoSeam,
     test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,
+    index: &RustIndex,
+    pin_syntax: &Mutex<crate::analysis::classify::OwnerPinSyntax>,
 ) -> bool {
     test.assertions
         .iter()
@@ -1941,7 +1954,9 @@ fn oracles_match_sink(
             ),
             ExpectedSink::SideEffect => {
                 if direct_collection_mutation_receiver(seam.expression()).is_some() {
-                    oracle_discriminates_seam(seam, oracle)
+                    oracle_discriminates_seam_in_test(
+                        seam, oracle, test, owner_fn, index, pin_syntax,
+                    )
                 } else {
                     matches!(oracle.kind, OracleKind::MockExpectation)
                 }
@@ -1976,6 +1991,8 @@ fn discriminate_evidence(
     seam: &RepoSeam,
     related: &[&TestSummary],
     owner_fn: Option<&FunctionSummary>,
+    index: &RustIndex,
+    pin_syntax: &Mutex<crate::analysis::classify::OwnerPinSyntax>,
 ) -> StageEvidence {
     if related.is_empty() {
         return StageEvidence::new(
@@ -2002,7 +2019,9 @@ fn discriminate_evidence(
             // RIPR-SPEC-0106 (Part B): for ErrorVariant seams, oracle_kind_matches_seam
             // is necessary but not sufficient — the oracle must also structurally pin
             // the seam's specific variant. oracle_discriminates_seam checks both.
-            if oracle_discriminates_seam(seam, oracle) && strength.rank() > best_matching.rank() {
+            if oracle_discriminates_seam_in_test(seam, oracle, test, owner_fn, index, pin_syntax)
+                && strength.rank() > best_matching.rank()
+            {
                 best_matching = strength;
             }
         }
@@ -2094,15 +2113,60 @@ fn test_has_contradicted_assertion(test: &TestSummary, owner_fn: Option<&Functio
 ///
 /// This is the over-credit guard: a test that pins `MyError::Negative` does
 /// NOT discriminate a `MyError::TooLarge` seam.
+fn oracle_discriminates_seam_in_test(
+    seam: &RepoSeam,
+    oracle: &OracleFact,
+    test: &TestSummary,
+    owner: Option<&FunctionSummary>,
+    index: &RustIndex,
+    pin_syntax: &Mutex<crate::analysis::classify::OwnerPinSyntax>,
+) -> bool {
+    // #8121: a snapshot admitted by kind for a return-value seam must also
+    // observe the owner's own result, not an unrelated value in the test.
+    if seam.kind() == SeamKind::ReturnValue
+        && matches!(oracle.kind, OracleKind::Snapshot)
+        && let Some(owner) = owner
+        && !snapshot_owner_binding::snapshot_observes_owner_result(&owner.name, oracle, test)
+    {
+        return false;
+    }
+    oracle_discriminates_seam(seam, oracle)
+        || direct_collection_mutation_receiver(seam.expression())
+            .zip(owner)
+            .is_some_and(|(receiver, owner)| {
+                collection_state_write_oracle_kind(&oracle.kind)
+                    && mutexed_assertion_observes_collection_argument(
+                        receiver, owner, index, test, oracle, pin_syntax,
+                    )
+            })
+}
+
 fn oracle_discriminates_seam(seam: &RepoSeam, oracle: &super::facts::OracleFact) -> bool {
     if let Some(receiver) = direct_collection_mutation_receiver(seam.expression()) {
+        // #6640: a pure count read (`.len()`, `.is_empty()`) notices a
+        // deleted push, not a changed pushed value, so it discriminates
+        // only the call-presence seam.
         return collection_state_write_oracle_kind(&oracle.kind)
-            && assertion_observes_direct_collection(&oracle.text, receiver);
+            && assertion_observes_direct_collection_for_probe(
+                &oracle.text,
+                receiver,
+                seam.kind() == SeamKind::CallPresence,
+            );
     }
     if !oracle_kind_matches_seam(seam, &oracle.kind) {
         return false;
     }
     if seam.kind() == SeamKind::FieldConstruction {
+        // #8120/#8121: snapshot syntax and a matching field spelling do not
+        // bind expected bytes or that field's receiver to the owner's result.
+        // Preserve the existing expect-test equality operand admission; other
+        // snapshot field observations remain unconfirmed until a producer
+        // establishes that binding, even when configured strength is higher.
+        if matches!(oracle.kind, OracleKind::Snapshot)
+            && !crate::analysis::classify::is_inline_expect_snapshot(oracle)
+        {
+            return false;
+        }
         return field_construction_oracle_matches_seam_field(seam, &oracle.text);
     }
     if matches!(oracle.kind, OracleKind::GuardedResultMatch) {
@@ -2748,8 +2812,10 @@ fn related_test_grip(
     reason: RelationReason,
     context: &CompactGripContext<'_>,
     owner_fn: Option<&FunctionSummary>,
+    pin_syntax: &Mutex<crate::analysis::classify::OwnerPinSyntax>,
 ) -> RelatedTestGrip {
-    let (kind, strength, contradiction) = best_oracle(test, seam, owner_fn);
+    let (kind, strength, contradiction) =
+        best_oracle(test, seam, owner_fn, context.index, pin_syntax);
     let summary = if let Some(contradiction) = contradiction {
         contradiction
     } else if matches!(strength, OracleStrength::None) {
@@ -2818,6 +2884,8 @@ fn best_oracle(
     test: &TestSummary,
     seam: &RepoSeam,
     owner_fn: Option<&FunctionSummary>,
+    index: &RustIndex,
+    pin_syntax: &Mutex<crate::analysis::classify::OwnerPinSyntax>,
 ) -> (OracleKind, OracleStrength, Option<String>) {
     let mut best_kind = OracleKind::Unknown;
     let mut best_strength = OracleStrength::None;
@@ -2837,7 +2905,7 @@ fn best_oracle(
             best_kind = oracle.kind.clone();
             best_contradiction = contradiction.clone();
         }
-        if oracle_discriminates_seam(seam, oracle)
+        if oracle_discriminates_seam_in_test(seam, oracle, test, owner_fn, index, pin_syntax)
             && strength.rank() > best_matching_strength.rank()
         {
             best_matching_strength = strength;

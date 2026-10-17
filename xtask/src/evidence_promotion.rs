@@ -287,6 +287,10 @@ pub(crate) enum EvidencePromotionSemanticAssertion {
         kind: String,
         strength: String,
         relation_reason: Option<String>,
+        /// Miss-row pin (#7642): `Exact` requires the row to carry exactly
+        /// this miss; `Absent` requires the row to carry no miss at all;
+        /// `None` leaves the miss unconstrained (legacy cases).
+        miss: Option<ExpectedRelatedTestMissConstraint>,
     },
     ExpectedClass {
         class: String,
@@ -329,6 +333,15 @@ pub(crate) enum EvidencePromotionSemanticAssertion {
     MustSeeChangedFile {
         path: String,
     },
+}
+
+/// Miss constraint for an `expected_related_test` row (#7642).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ExpectedRelatedTestMissConstraint {
+    /// The row must carry exactly this miss reason.
+    Exact(String),
+    /// The row must carry no miss at all.
+    Absent,
 }
 
 fn run_evidence_promotion_pinned_external_cases(
@@ -700,6 +713,7 @@ fn evidence_promotion_parse_assertion(
                     assertion,
                     "relation_reason",
                 )?,
+                miss: evidence_promotion_optional_related_test_miss(case_id, index, assertion)?,
             })
         }
         "expected_class" => {
@@ -875,6 +889,46 @@ fn evidence_promotion_optional_assertion_string(
         Some(Value::String(value)) if !value.trim().is_empty() => Ok(Some(value.clone())),
         Some(_) => Err(format!(
             "evidence promotion case `{case_id}` assertion {index}: `{field}` must be a non-empty string when present"
+        )),
+    }
+}
+
+/// The `miss` pin of an `expected_related_test` assertion (#7642): a string
+/// requires exactly that miss on the row; an explicit `null` requires the
+/// row to carry no miss; a missing key leaves the miss unconstrained.
+fn evidence_promotion_optional_related_test_miss(
+    case_id: &str,
+    index: usize,
+    assertion: &Value,
+) -> Result<Option<ExpectedRelatedTestMissConstraint>, String> {
+    match assertion.get("miss") {
+        None => Ok(None),
+        Some(Value::Null) => Ok(Some(ExpectedRelatedTestMissConstraint::Absent)),
+        Some(Value::String(value)) => {
+            const KNOWN_MISSES: [&str; 8] = [
+                "no_call_path",
+                "no_assertion",
+                "assertion_not_observing",
+                "assertion_not_credited",
+                "weak_assertion",
+                "missing_input",
+                "missing_exact_assertion",
+                "observation_unconfirmed",
+            ];
+            if !KNOWN_MISSES.contains(&value.as_str()) {
+                return Err(format!(
+                    "evidence promotion case `{case_id}` assertion {index}: \
+                     expected_related_test.miss must be one of {}, got `{value}`",
+                    KNOWN_MISSES.join(", ")
+                ));
+            }
+            Ok(Some(ExpectedRelatedTestMissConstraint::Exact(
+                value.clone(),
+            )))
+        }
+        Some(_) => Err(format!(
+            "evidence promotion case `{case_id}` assertion {index}: \
+             expected_related_test.miss must be a known miss string or explicit null"
         )),
     }
 }
@@ -1328,9 +1382,15 @@ pub(crate) fn evidence_promotion_external_semantic_violations(
     case: &EvidencePromotionExternalCase,
     check_json: &Value,
 ) -> Vec<String> {
+    // Validated `--diff {external_patch}` launches are diff-sourced (#3952,
+    // #7880). Pass the patch path so the shared scope owner can excuse `base`
+    // without fabricating a fixture `diff.patch` or a revision.
+    let source_fixture = evidence_promotion_pinned_external_is_diff_sourced(case)
+        .then(|| case.external_patch.to_str())
+        .flatten();
     evidence_promotion_semantic_violations(
         &case.id,
-        None,
+        source_fixture,
         &case.assertions,
         check_json,
         None,
@@ -1942,6 +2002,7 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
                 kind,
                 strength,
                 relation_reason,
+                miss,
             } => {
                 if findings.is_empty() {
                     violations.push(format!(
@@ -1966,6 +2027,15 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
                                         test.get("relation_reason").and_then(Value::as_str)
                                             == Some(expected)
                                     })
+                                    && miss.as_ref().is_none_or(|constraint| match constraint {
+                                        ExpectedRelatedTestMissConstraint::Exact(expected) => {
+                                            test.get("miss").and_then(Value::as_str)
+                                                == Some(expected.as_str())
+                                        }
+                                        ExpectedRelatedTestMissConstraint::Absent => {
+                                            test.get("miss").is_none()
+                                        }
+                                    })
                             })
                         });
                     if !matched {
@@ -1978,8 +2048,17 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
                             .map_or_else(String::new, |expected| {
                                 format!(" with relation `{expected}`")
                             });
+                        let miss_suffix = match miss {
+                            None => String::new(),
+                            Some(ExpectedRelatedTestMissConstraint::Exact(expected)) => {
+                                format!(" with miss `{expected}`")
+                            }
+                            Some(ExpectedRelatedTestMissConstraint::Absent) => {
+                                " with no miss".to_string()
+                            }
+                        };
                         violations.push(format!(
-                            "{case_label}: `expected_related_test` requires `{file}:{line} {name}` with oracle `{kind}/{strength}`{relation_suffix} on finding `{finding_id}`"
+                            "{case_label}: `expected_related_test` requires `{file}:{line} {name}` with oracle `{kind}/{strength}`{relation_suffix}{miss_suffix} on finding `{finding_id}`"
                         ));
                     }
                 }
@@ -3179,11 +3258,11 @@ fn evidence_promotion_missing_scope_fields(
     check_json: &Value,
     diff_sourced: bool,
 ) -> Vec<&'static str> {
-    // #3952: a diff-sourced report has no base by construction
+    // #3952 / #7880: a diff-sourced report has no base by construction
     // (`CheckOutput.base` is documented as "when applicable", and the diff
     // file — not a revision — is the scope). Its machine-readable scope
-    // statement is tool/mode/root plus the harness-pinned `diff.patch`,
-    // so `base` is excused only there; every other report must carry it.
+    // statement is tool/mode/root plus the pinned `--diff` input, so `base`
+    // is excused only there; every other report must carry it.
     ["schema_version", "tool", "mode", "root", "base"]
         .iter()
         .filter_map(|field| {
@@ -3203,7 +3282,25 @@ fn evidence_promotion_missing_scope_fields(
 /// pinned `diff.patch` (the fixture runner always passes `--diff`, so the
 /// envelope's scope is the diff file rather than a base revision).
 fn evidence_promotion_case_is_diff_sourced(source_fixture: Option<&str>) -> bool {
-    source_fixture.is_some_and(|fixture| Path::new(fixture).join("diff.patch").exists())
+    source_fixture.is_some_and(|fixture| {
+        let path = Path::new(fixture);
+        path.join("diff.patch").exists()
+            || path
+                .extension()
+                .is_some_and(|ext| ext == "diff" || ext == "patch")
+    })
+}
+
+/// Pinned-external launches are command-template-bound to
+/// `ripr check --root {checkout} --diff {external_patch} --mode fast --json`.
+/// A `--diff` envelope has no revision `base` by construction (#3952, #7880).
+fn evidence_promotion_pinned_external_is_diff_sourced(
+    case: &EvidencePromotionExternalCase,
+) -> bool {
+    case.external_command
+        .split_whitespace()
+        .any(|part| part == "--diff")
+        && !case.external_patch.as_os_str().is_empty()
 }
 
 fn evidence_promotion_report_reads_clean(check_json: &Value, findings: &[Value]) -> bool {
@@ -4998,5 +5095,16 @@ mod harness_limitation_assertion_tests {
             vec!["base"]
         );
         assert!(evidence_promotion_missing_scope_fields(&diff_sourced, true).is_empty());
+    }
+
+    #[test]
+    fn pinned_external_patch_paths_are_diff_sourced() {
+        assert!(evidence_promotion_case_is_diff_sourced(Some(
+            "fixtures/evidence-promotion-honesty-corpus/patches/semver-matches-greater.diff"
+        )));
+        assert!(!evidence_promotion_case_is_diff_sourced(None));
+        assert!(!evidence_promotion_case_is_diff_sourced(Some(
+            "fixtures/split_test_boundary_oracle"
+        )));
     }
 }

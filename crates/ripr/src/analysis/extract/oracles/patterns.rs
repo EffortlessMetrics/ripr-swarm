@@ -5,7 +5,10 @@ use super::arguments::{
 };
 use super::pattern_admission::{is_unpinned_pattern, some_matches_pins_a_value};
 use crate::analysis::classify::{error_constructor_call_paths, rust_string_literals};
-use crate::analysis::extract::mask_comments_and_strings;
+use crate::analysis::extract::{
+    group_end, mask_comments_and_strings, mask_with_char_literals,
+    mask_with_string_delimiter_quotes,
+};
 
 /// Structural assertion-text shapes that supplement the parsed
 /// [`OracleKind`](crate::domain::OracleKind)
@@ -285,9 +288,11 @@ pub(super) fn is_smoke_check(text: &str) -> bool {
 
 /// RIPR-SPEC-0231 rule 4: `r.is_ok()` with `r.is_err()`, or `r.is_some()`
 /// with `r.is_none()`, as sibling alternatives of one `||` on the same
-/// receiver, accepts every value. `left.is_ok() || right.is_err()` checks two
-/// values, and `r.is_ok() && r.is_err() || fallback` joins the calls with
-/// `&&`, so neither does.
+/// receiver, accepts every value. So does `x.m() || !x.m()` for any method
+/// on that receiver (#7900). `left.is_ok() || right.is_err()` checks two
+/// values, `a.m() || !b.m()` and `x.m() || !x.n()` mix receivers or
+/// methods, and `r.is_ok() && r.is_err() || fallback` joins the calls with
+/// `&&`, so none of those do.
 pub(super) fn tests_both_sides(text: &str) -> bool {
     let masked = mask_comments_and_strings(text);
     if !masked.contains("||") {
@@ -298,16 +303,25 @@ pub(super) fn tests_both_sides(text: &str) -> bool {
             .into_iter()
             .filter_map(side_call)
             .collect::<Vec<_>>();
-        let has = |receiver: &str, name: &str| {
+        let unnegated = |receiver: &str, name: &str| {
             calls
                 .iter()
-                .any(|(other, method)| other == receiver && *method == name)
+                .any(|(other, method, negated)| !*negated && other == receiver && method == name)
         };
-        calls.iter().any(|(receiver, method)| match *method {
-            "is_ok" => has(receiver, "is_err"),
-            "is_some" => has(receiver, "is_none"),
-            _ => false,
-        })
+        let complementary = calls.iter().any(|(receiver, method, negated)| {
+            !*negated
+                && match method.as_str() {
+                    "is_ok" => unnegated(receiver, "is_err"),
+                    "is_some" => unnegated(receiver, "is_none"),
+                    _ => false,
+                }
+        });
+        let tautology = calls.iter().any(|(receiver, method, negated)| {
+            calls.iter().any(|(other, other_method, other_negated)| {
+                other == receiver && other_method == method && negated != other_negated
+            })
+        });
+        complementary || tautology
     })
 }
 
@@ -363,17 +377,14 @@ fn split_top_level_operator<'a>(text: &'a str, operator: &str) -> Vec<&'a str> {
     parts
 }
 
-/// A disjunct that is exactly `receiver.is_ok()` (or `is_err`, `is_some`,
-/// `is_none`), optionally parenthesized: the receiver with whitespace
-/// removed, and the method.
-fn side_call(disjunct: &str) -> Option<(String, &'static str)> {
-    let mut text = disjunct.trim();
-    while let Some(inner) = text
-        .strip_prefix('(')
-        .and_then(|rest| rest.strip_suffix(')'))
-        .filter(|inner| balanced(inner))
-    {
-        text = inner.trim();
+/// A disjunct that is exactly `receiver.method()` or `!receiver.method()`,
+/// optionally parenthesized: the receiver with whitespace removed, the
+/// method, and whether the call is negated.
+fn side_call(disjunct: &str) -> Option<(String, String, bool)> {
+    let mut text = unwrap_parens(disjunct.trim());
+    let negated = text.starts_with('!');
+    if negated {
+        text = unwrap_parens(text.get(1..)?.trim_start());
     }
     let call = text
         .strip_suffix(')')?
@@ -381,14 +392,38 @@ fn side_call(disjunct: &str) -> Option<(String, &'static str)> {
         .strip_suffix('(')?
         .trim_end();
     let (receiver, method) = call.rsplit_once('.')?;
-    let method = ["is_ok", "is_err", "is_some", "is_none"]
-        .into_iter()
-        .find(|name| method.trim() == *name)?;
+    let method = method.trim();
+    if !is_method_ident(method) {
+        return None;
+    }
     let receiver = receiver.trim_end();
     if receiver.is_empty() || receiver_start(receiver, receiver.len()) != 0 {
         return None;
     }
-    Some((receiver.split_whitespace().collect(), method))
+    Some((
+        receiver.split_whitespace().collect(),
+        method.to_string(),
+        negated,
+    ))
+}
+
+fn unwrap_parens(mut text: &str) -> &str {
+    while let Some(inner) = text
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'))
+        .filter(|inner| balanced(inner))
+    {
+        text = inner.trim();
+    }
+    text
+}
+
+fn is_method_ident(name: &str) -> bool {
+    let mut bytes = name.bytes();
+    bytes
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == b'_')
+        && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
 }
 
 fn balanced(text: &str) -> bool {
@@ -523,7 +558,7 @@ fn is_negated_pattern_condition(condition: &str) -> bool {
         || is_complete_macro_invocation(inner, "assert_matches!")
 }
 
-fn unwrap_parentheses(mut text: &str) -> &str {
+pub(super) fn unwrap_parentheses(mut text: &str) -> &str {
     while let Some(inner) = super::arguments::parenthesized_contents(text) {
         text = inner.trim();
     }
@@ -633,7 +668,7 @@ pub(super) fn deciding_disjunction_conjunct_rest(line: &str) -> Option<String> {
 }
 
 /// Splits on `&&` outside any delimiter, string or comment.
-fn split_top_level_conjuncts(condition: &str) -> Vec<&str> {
+pub(super) fn split_top_level_conjuncts(condition: &str) -> Vec<&str> {
     let masked = mask_comments_and_strings(condition);
     let bytes = masked.as_bytes();
     let mut depth = 0usize;
@@ -751,7 +786,7 @@ fn resolve_pattern_comparison(left: &str, right: &str, not_equal: bool) -> Patte
 /// How many negations (`!` prefixes and `.not()` calls) wrap one complete
 /// `matches!` or `assert_matches!` operand, or `None` when the operand is not
 /// such a pattern.
-fn pattern_operand_negations(operand: &str) -> Option<usize> {
+pub(super) fn pattern_operand_negations(operand: &str) -> Option<usize> {
     let mut text = unwrap_parentheses(operand.trim());
     let mut negations = 0;
     loop {
@@ -767,7 +802,7 @@ fn pattern_operand_negations(operand: &str) -> Option<usize> {
 }
 
 /// The receiver of a trailing `.not()` call (`std::ops::Not`).
-fn strip_not_call(text: &str) -> Option<&str> {
+pub(super) fn strip_not_call(text: &str) -> Option<&str> {
     text.trim_end()
         .strip_suffix(')')?
         .trim_end()
@@ -780,7 +815,7 @@ fn strip_not_call(text: &str) -> Option<&str> {
 
 /// The value of a boolean literal operand, through parentheses and any
 /// number of `!` negations (`!true` is `false`).
-fn boolean_literal_value(operand: &str) -> Option<bool> {
+pub(super) fn boolean_literal_value(operand: &str) -> Option<bool> {
     let mut text = unwrap_parentheses(operand.trim());
     let mut negated = false;
     loop {
@@ -796,7 +831,7 @@ fn boolean_literal_value(operand: &str) -> Option<bool> {
 
 /// One `matches!` invocation in a masked condition: where its (possibly
 /// path-qualified) name starts and where its closing delimiter ends.
-fn pattern_invocation_spans(text: &str) -> Vec<(usize, usize)> {
+pub(super) fn pattern_invocation_spans(text: &str) -> Vec<(usize, usize)> {
     let masked = mask_comments_and_strings(text);
     let bytes = masked.as_bytes();
     let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
@@ -1071,9 +1106,22 @@ pub(super) fn is_exact_value_assertion(line: &str) -> bool {
             && (some_matches_pins_a_value(line)
                 // A pinning `==` conjunct keeps the chain exact (RIPR-SPEC-0231
                 // rule 3's decision), including the runtime controls'
-                // `matches!(value, _) && value == 2`.
-                || boolean_assertion_macro_condition(line)
-                    .is_some_and(|(_, condition)| has_top_level_exact_equality(&condition))))
+                // `matches!(value, _) && value == 2`. An `==` that pins the
+                // closure parameter of a whole-condition iterator `.all` /
+                // `.any` is the same conjunct once the wrapper is read
+                // through (#7726).
+                || pinning_equality_condition(line)))
+}
+
+/// Whether `line` (a full assertion, or an already-stripped `ensure!`
+/// condition) holds a pinning `==` at the condition's top level, or inside
+/// a whole-condition iterator `.all` / `.any` closure that names that
+/// closure's matched item.
+fn pinning_equality_condition(line: &str) -> bool {
+    let extracted = boolean_assertion_macro_condition(line).map(|(_, condition)| condition);
+    let condition = extracted.as_deref().unwrap_or(line);
+    has_top_level_exact_equality(condition)
+        || (condition.contains("matches!") && iterator_all_or_any_pins_matched_item(condition))
 }
 
 /// RIPR-SPEC-0231 rule 1 (#7558): whether an `||` decides the condition:
@@ -1165,7 +1213,7 @@ fn comparison_operators(condition: &str) -> (bool, bool) {
     (equal, not_equal)
 }
 
-fn top_level_comparison_operator(condition: &str) -> Option<(usize, usize)> {
+pub(super) fn top_level_comparison_operator(condition: &str) -> Option<(usize, usize)> {
     // Comments and literals are not delimiters. Mask them before counting
     // brackets so an unmatched `}` inside a nested comment cannot hide a
     // real `==` (`matches!(r, /* } */ Ok(3)) == true`, #7822). Offsets stay
@@ -1197,9 +1245,152 @@ fn top_level_comparison_operator(condition: &str) -> Option<(usize, usize)> {
     None
 }
 
+/// Whether a call's argument text holds any token: a comment is not an
+/// argument, so `expect_err(/* setup */)` is still mockall's zero-argument
+/// expectation, while a string or character literal is one even though
+/// masking blanks it.
+pub(super) fn has_argument_tokens(arguments: &str) -> bool {
+    let (masked, string_quotes) = mask_with_string_delimiter_quotes(arguments);
+    string_quotes > 0
+        || !masked.trim().is_empty()
+        || !mask_with_char_literals(arguments).1.is_empty()
+}
+
+/// Method `.expect_err` or UFCS `Result::expect_err` on a masked line.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ExpectErrForm {
+    Method,
+    ResultUfcs,
+}
+
+/// Next `expect_err` call on a masked slice: optional whitespace is allowed
+/// only between `expect_err` and `(`. `start` is the `.` of a method call
+/// or the `Result` path segment of UFCS; `open` is the argument `(`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct ExpectErrOpen {
+    pub start: usize,
+    pub open: usize,
+    pub form: ExpectErrForm,
+}
+
+pub(super) fn next_expect_err_open(masked: &str, search: usize) -> Option<ExpectErrOpen> {
+    const NAME: &str = "expect_err";
+    let bytes = masked.as_bytes();
+    let mut from = search;
+    while let Some(rest) = masked.get(from..) {
+        let rel = rest.find(NAME)?;
+        let name_at = from + rel;
+        let after_name = name_at + NAME.len();
+        if bytes
+            .get(after_name)
+            .is_some_and(|byte| is_expect_err_ident_byte(*byte))
+            || (name_at > 0 && is_expect_err_ident_byte(bytes[name_at - 1]))
+        {
+            from = after_name;
+            continue;
+        }
+        let whitespace = masked
+            .get(after_name..)
+            .map(|tail| tail.bytes().take_while(u8::is_ascii_whitespace).count())
+            .unwrap_or(0);
+        let open = after_name + whitespace;
+        if bytes.get(open) != Some(&b'(') {
+            from = after_name;
+            continue;
+        }
+        if let Some(start) = method_expect_err_start(bytes, name_at) {
+            return Some(ExpectErrOpen {
+                start,
+                open,
+                form: ExpectErrForm::Method,
+            });
+        }
+        if let Some(start) = result_ufcs_expect_err_start(masked, name_at) {
+            return Some(ExpectErrOpen {
+                start,
+                open,
+                form: ExpectErrForm::ResultUfcs,
+            });
+        }
+        from = after_name;
+    }
+    None
+}
+
+fn method_expect_err_start(bytes: &[u8], name_at: usize) -> Option<usize> {
+    // Guard first: `then_some(name_at - 1)` evaluates the subtraction even
+    // when the condition is false (debug overflow if the line starts with
+    // `expect_err(`).
+    if name_at == 0 {
+        return None;
+    }
+    (bytes[name_at - 1] == b'.').then_some(name_at - 1)
+}
+
+fn result_ufcs_expect_err_start(masked: &str, name_at: usize) -> Option<usize> {
+    let bytes = masked.as_bytes();
+    if name_at < 2 || &bytes[name_at - 2..name_at] != b"::" {
+        return None;
+    }
+    let ident_end = name_at - 2;
+    let ident_start = bytes[..ident_end]
+        .iter()
+        .rposition(|byte| !is_expect_err_ident_byte(*byte))
+        .map_or(0, |index| index + 1);
+    masked[ident_start..ident_end]
+        .eq_ignore_ascii_case("Result")
+        .then_some(ident_start)
+}
+
+fn is_expect_err_ident_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+/// `line` with every `Result::expect_err(<message>)` call reduced to `.()`,
+/// so no later sniff sees the call name or anything in its message (a
+/// message such as `"mock.verify() state"` names nothing). A zero-argument
+/// `expect_err()` is a mock's expectation for a method named `err`
+/// (mockall's `expect_<method>`), so it stays. Optional whitespace between
+/// `expect_err` and `(` is still the Result read (#7979). A message left
+/// open at the end of the line is dropped with the rest of the line.
+pub(super) fn without_expect_err(line: &str) -> String {
+    // Masking keeps byte length, so offsets found on it index `line`.
+    let masked = mask_comments_and_strings(line);
+    let mut out = String::with_capacity(line.len());
+    let mut copied = 0;
+    let mut search = 0;
+    while let Some(found) = next_expect_err_open(&masked, search) {
+        match group_end(&masked, found.open) {
+            Some(close) if !has_argument_tokens(&line[found.open + 1..close]) => {
+                search = found.open + 1;
+            }
+            Some(close) => {
+                out.push_str(&line[copied..found.start]);
+                out.push_str(".()");
+                // Resume after the dropped message, so a nested
+                // `expect_err` inside it is never visited.
+                copied = close + 1;
+                search = close + 1;
+            }
+            None => {
+                out.push_str(&line[copied..found.start]);
+                out.push_str(".()");
+                copied = line.len();
+                break;
+            }
+        }
+    }
+    out.push_str(&line[copied..]);
+    out
+}
+
 pub(super) fn is_mock_expectation_line(line: &str) -> bool {
-    let lower = line.to_ascii_lowercase();
-    let has_expectation_call = lower.contains("expect_") && lower.contains('(');
+    // `r.expect_err(..)` is a `Result` read, not a mock expectation
+    // (RIPR-SPEC-0227 decision 2, #7604), and `expect_` or mock text in its
+    // message or a comment names nothing.
+    let lower = without_expect_err(&line.to_ascii_lowercase());
+    let code = mask_comments_and_strings(&lower);
+    let has_expectation_call = code.contains("expect_") && lower.contains('(');
     let has_mock_verification_call = lower.contains("mock")
         && [
             ".assert_",
@@ -1214,7 +1405,8 @@ pub(super) fn is_mock_expectation_line(line: &str) -> bool {
 }
 
 pub(super) fn is_side_effect_observer_assertion(line: &str) -> bool {
-    let lower = line.to_ascii_lowercase();
+    // `r.expect_err("state")` reads the `Result`, not an effect (#7604).
+    let lower = without_expect_err(&line.to_ascii_lowercase());
     let has_observer_token = [
         "event",
         "emitted",
@@ -1252,7 +1444,7 @@ pub(super) fn is_effect_observer_subject_assertion(line: &str) -> bool {
         "counter",
         "recorded",
     ];
-    let lower = line.to_ascii_lowercase();
+    let lower = without_expect_err(&line.to_ascii_lowercase());
     if !(lower.contains("assert") || lower.contains("expect")) {
         return false;
     }
@@ -1260,7 +1452,7 @@ pub(super) fn is_effect_observer_subject_assertion(line: &str) -> bool {
     // and a word inside their comments or strings is not one. Other text
     // keeps the line-level reading.
     let masked = assertion_oracle_text(line).map_or_else(
-        || line.to_string(),
+        || without_expect_err(line),
         |operands| mask_comments_and_strings(&operands),
     );
     identifiers_with_position(&masked).any(|(start, identifier)| {
@@ -1433,6 +1625,130 @@ fn exact_membership_any_condition(line: &str) -> Option<()> {
         .checked_sub(masked.as_ptr().addr())?;
     let body_original = line.get(body_offset..body_offset.checked_add(body_masked.len())?)?;
     exact_membership_operands(body_masked, body_original, param)
+}
+
+/// #7726: a whole-condition iterator `.all` / `.any` whose closure body has
+/// a pinning `==` that names the bound element (`*r == Ok(3)`). This is the
+/// same conjunct `has_top_level_exact_equality` already admits when the
+/// body is the whole `assert!` condition; the wrapper is what hid it.
+/// Unknown callees, `.position`, and SPEC-0231 example 29 (`.all` without
+/// `matches!`) never match.
+fn iterator_all_or_any_pins_matched_item(condition: &str) -> bool {
+    let Some((param, body)) = iterator_all_or_any_closure(condition) else {
+        return false;
+    };
+    closure_body_pins_matched_item(body, &param)
+}
+
+fn iterator_all_or_any_closure(condition: &str) -> Option<(String, &str)> {
+    let masked = mask_comments_and_strings(condition);
+    let mut inner = masked.as_str();
+    loop {
+        let trimmed = inner.trim();
+        if !trimmed.starts_with('(') {
+            inner = trimmed;
+            break;
+        }
+        let (_, close) = balanced_paren_span(trimmed, 0)?;
+        if close + 1 != trimmed.len() {
+            return None;
+        }
+        inner = trimmed[1..close].trim();
+    }
+    let pred_dot = single_all_or_any_call(inner)?;
+    let receiver = inner.get(..pred_dot)?.trim();
+    let (closure_start, closure_end, after) = any_closure_span(inner, pred_dot)?;
+    if !inner.get(after..)?.trim().is_empty() {
+        return None;
+    }
+    collection_iteration_head(receiver)?;
+    let closure = inner.get(closure_start..closure_end)?;
+    let (param, body_masked) = exact_equality_closure(closure)?;
+    let body_offset = body_masked
+        .as_ptr()
+        .addr()
+        .checked_sub(masked.as_ptr().addr())?;
+    let body_original = condition.get(body_offset..body_offset.checked_add(body_masked.len())?)?;
+    Some((param.to_string(), body_original))
+}
+
+/// Offset of `.any` or `.all` when the condition holds exactly one such
+/// call. Two predicate calls, or a longer name (`.always(`), never match.
+fn single_all_or_any_call(condition: &str) -> Option<usize> {
+    let mut found = None;
+    let bytes = condition.as_bytes();
+    let mut index = 0;
+    while index + 4 <= bytes.len() {
+        let is_any = bytes.get(index + 1) == Some(&b'a')
+            && bytes.get(index + 2) == Some(&b'n')
+            && bytes.get(index + 3) == Some(&b'y');
+        let is_all = bytes.get(index + 1) == Some(&b'a')
+            && bytes.get(index + 2) == Some(&b'l')
+            && bytes.get(index + 3) == Some(&b'l');
+        if bytes[index] == b'.'
+            && (is_any || is_all)
+            && bytes.get(index + 4..).is_some_and(opens_call_paren)
+        {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(index);
+            index += 4;
+        } else {
+            index += 1;
+        }
+    }
+    found
+}
+
+fn closure_body_pins_matched_item(body: &str, param: &str) -> bool {
+    !has_top_level_disjunction(body)
+        && split_top_level_conjuncts(body).into_iter().any(|conjunct| {
+            let masked = mask_comments_and_strings(conjunct.trim());
+            let masked = masked.trim();
+            if let Some(inner) = super::arguments::parenthesized_contents(masked) {
+                return closure_body_pins_matched_item(inner, param);
+            }
+            is_pinning_equality(conjunct, masked) && equality_xor_names_param(conjunct, param)
+        })
+}
+
+/// Exactly one side of a top-level `==` is a bare / deref / field / tuple
+/// projection of `param`. Method calls, indexes, and two projections of the
+/// same parameter (`r.a == r.b`) pin nothing.
+fn equality_xor_names_param(conjunct: &str, param: &str) -> bool {
+    let conjunct = conjunct.trim();
+    let masked = mask_comments_and_strings(conjunct);
+    let offset = masked.len() - masked.trim_start().len();
+    let Some((at, width)) = top_level_comparison_operator(masked.trim()) else {
+        return false;
+    };
+    let at = offset + at;
+    let Some(left) = conjunct.get(..at) else {
+        return false;
+    };
+    let Some(right) = conjunct.get(at + width..) else {
+        return false;
+    };
+    let names = |side: &str| side_names_closure_param(&mask_comments_and_strings(side), param);
+    names(left) != names(right)
+}
+
+fn side_names_closure_param(side: &str, param: &str) -> bool {
+    let compact: String = side.chars().filter(|ch| !ch.is_whitespace()).collect();
+    let rewritten = compact
+        .replace(&format!("(*{param})"), &format!("*{param}"))
+        .replace(&format!("(&{param})"), param);
+    let mut s = rewritten.as_str();
+    loop {
+        if element_accesses_param(s, param) {
+            return true;
+        }
+        let Some(inner) = super::arguments::parenthesized_contents(s) else {
+            return false;
+        };
+        s = inner;
+    }
 }
 
 /// The condition of a leading `assert!(`/`debug_assert!(` invocation: the
@@ -2093,6 +2409,25 @@ mod spec_0106_tests {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod expect_err_open_tests {
+    use super::{ExpectErrForm, ExpectErrOpen, next_expect_err_open};
+
+    #[test]
+    fn line_start_expect_err_is_not_a_result_read() {
+        assert_eq!(next_expect_err_open("expect_err();", 0), None);
+        assert_eq!(next_expect_err_open("expect_err(\"too long\");", 0), None);
+        assert_eq!(
+            next_expect_err_open(".expect_err(\"too long\");", 0),
+            Some(ExpectErrOpen {
+                start: 0,
+                open: 11,
+                form: ExpectErrForm::Method,
+            })
+        );
     }
 }
 

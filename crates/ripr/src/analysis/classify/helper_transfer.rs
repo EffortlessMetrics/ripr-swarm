@@ -31,7 +31,9 @@
 mod macro_argument;
 mod returned_ledger;
 pub(crate) use returned_ledger::{ReturnedLedger, returned_ledger};
+mod field_projection;
 mod selected_inherent_call;
+pub(in crate::analysis) use field_projection::{FieldProjectionReceipt, field_projection_receipt};
 pub(in crate::analysis) use selected_inherent_call::{
     SelectedInherentCall, selected_inherent_calls,
 };
@@ -2809,6 +2811,29 @@ mod tests {
         twin.file = PathBuf::from("src/tests.rs");
         let twins = index(vec![function("src/lib.rs", "order_discount", &[]), twin]);
         assert!(test_call_is_shadowed(&twins, &test, "order_discount", 11));
+    }
+
+    // #7985: the shared import gate also treats a macro that may define the
+    // callee's name as a shadow, on the helper-hop path too.
+    #[test]
+    fn test_call_is_shadowed_by_a_macro_defined_same_named_fn() {
+        let wrapper = function("src/lib.rs", "order_discount", &[]);
+        let idx = index(vec![wrapper]);
+        let mut test = test_summary_calling("order_discount", "order_discount(10)");
+        test.start_line = 10;
+        test.end_line = 14;
+        let shadow = "macro_rules! fake {\n    () => { fn order_discount(_: u32) -> u32 { 5 } };\n}\nfake!();\n";
+        test.body = format!("{shadow}fn t() {{\n    assert_eq!(order_discount(10), 5);\n}}").into();
+        assert!(idx.files().get(&test.file).is_none(), "fallback path only");
+        assert!(test_call_is_shadowed(&idx, &test, "order_discount", 11));
+        // Control: a macro defining another name leaves the shared gate
+        // closed (the lexical body scan is a separate authority).
+        let unrelated = test.body.replace("fn order_discount", "fn other_name");
+        assert!(!super::super::reveal::file_imports_foreign_callee_name(
+            &unrelated,
+            "order_discount",
+            &idx.package_names
+        ));
     }
 
     // #6780 review round 3: the abstention applies only when every

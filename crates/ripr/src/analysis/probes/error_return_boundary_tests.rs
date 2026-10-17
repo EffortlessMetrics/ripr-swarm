@@ -232,6 +232,7 @@ fn twin_check_stays_linearithmic_on_a_generated_file() {
                     kind: ProbeShapeKind::ErrorPath,
                     text: "return Err(E)".into(),
                     value_consumed: false,
+                    source_lines: None,
                 },
                 ProbeShapeFact {
                     start_line: index + 1,
@@ -241,6 +242,7 @@ fn twin_check_stays_linearithmic_on_a_generated_file() {
                     kind: ProbeShapeKind::ErrorPath,
                     text: "Err(E)".into(),
                     value_consumed: false,
+                    source_lines: None,
                 },
             ]
         })
@@ -261,6 +263,7 @@ fn error_shape(start: usize, end: usize) -> ProbeShapeFact {
         kind: ProbeShapeKind::ErrorPath,
         text: String::new().into(),
         value_consumed: false,
+        source_lines: None,
     }
 }
 

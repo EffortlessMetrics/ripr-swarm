@@ -174,6 +174,14 @@ assertion-only callback with no nested test call. This does not expand aliases.
   `if`/`else`, loops, labels, `switch`, `try`/`catch`/`finally` and
   `with`. An assertion is read from an expression statement or a
   `return` argument, after removing one `await`.
+- (Amended 2026-10-16, #8242.) A `try` body with a catch handler supplies
+  no assertions: the handler can swallow a synchronous assertion failure or
+  an awaited rejection. This is conservative even when the handler rethrows
+  or the protected body returns a promise without awaiting it. Catch-handler
+  and finally assertions, and a try body with no catch, retain collection;
+  an enclosing caught try still withholds those nested assertions. This is
+  not general analysis of abrupt completion in finally blocks. Withheld
+  assertion-like syntax remains unresolved admission, not established absence.
 - An assertion inside a nested callback (`forEach`, `waitFor`, `act`, a
   subtest) or inside a declaration initializer is not collected, except
   the three forms RIPR-SPEC-0246 rule 2 names.
@@ -259,6 +267,13 @@ falling through to the Jest table. A renamed import (`expect as e`) and
 `.rejects.toStrictEqual` with exactly one concrete literal argument instead
 read `exact_error_variant` / strong: they compare the rejected reason, so
 they match an error path and cannot credit a normal return value (#7315).
+The pinned reason credits a changed throw only when that line throws or
+rejects a primitive (`throw "bad"`, `Promise.reject("bad")`) and the reason
+equals its thrown message; on a message-only change (rule 4) both sides must
+be primitive and the reason must equal exactly one of the old and new
+messages. A substring of a message passes on neither version, and a rejected
+`Error` never equals a string whatever its message, so neither is credit
+(2026-10-14, #7944).
 The existing literal admission also accepts safe all-literal objects.
 Their rendered oracle retains `.rejects`. Dynamic arguments, unknown
 bindings and implicit globals retain the existing table and limitations;
@@ -299,10 +314,39 @@ because no class check matches a primitive;
 `globalThis.Error` already reads `broad_error` under the uppercase-first
 gate. A second exception covers a message-only change: the changed line
 is a `throw` line or a `Promise.reject(...)` line, and every token that
-differs between its old and new text lies inside a string literal in the
-message argument of the thrown or rejected error (a literal in a condition on the same line does not count). The
-literal text of a template literal counts; a `${...}` interpolation does
-not, so a changed interpolation is not message-only. On such a change a
+differs between its old and new text lies inside the message argument of
+the thrown or rejected error (a literal in a condition on the same line
+does not count). The message argument is the first argument of
+`new X(...)` or `X(...)`, where `X` is a name or a dotted path with
+optional type arguments (`new errors.ParseError(...)`, `errors.make(...)`,
+`make<T>(...)`). Otherwise it is the whole thrown or rejected operand: a
+literal, a name, a ternary, a sequence (`throw (log(e), e)`) or an
+unclosed line. No message is read from a sequence, since it throws its
+last operand, nor from an operand that continues past the message's
+closing parenthesis (`throw ("a") + "b"`, `new Error("a").stack`). A
+shape the reader cannot split falls back to the whole
+operand rather than refusing, because a refused split leaves the
+ladder's credit in place, and a shape it cannot read may only remove
+credit. A changed string literal, a changed `${...}`
+interpolation and an added or dropped operand inside a present argument
+(`"limit " + max` against `"limit "`) all count; adding the argument
+itself (`new Error()` against `new Error("x")`) does not. A factory's
+first argument is read as its message even when it is another value
+(`make(code, "a")`). A change to the class, factory or type arguments of `new X(...)` or
+`X(...)`, to a later argument, or after the call does not count. A class inside an
+operand that does not open with a call (a ternary choosing between two
+`new` expressions) is part of the operand, so such a change counts, which
+only removes credit. A respelling whose literals join to the same
+message on both sides (`"unsupported currency"` against
+`"unsupported " + "currency"`) does not count either. That exception
+applies only when the changed tokens lie inside the message argument. A
+change whose differing tokens are all literals anywhere in the thrown
+expression (a later argument such as `cause: "x"` against `cause: "y"`)
+is conservatively treated as message-only, so a payload on an unchanged
+message gains no credit. A respelling that
+needs runtime values to compare (two interpolations) is not recognised
+and counts, which only removes credit; it keeps the ladder's reading (amended 2026-10-14;
+before that, only changed string literals counted). On such a change a
 payload credits only if it separates the two versions: it matches
 exactly one of the old and new messages. A test that passes on the new
 side and one that pins the old message and fails on the new side both
@@ -447,8 +491,8 @@ Relation rank, `uses_oracle` and reason:
 
 Specifier resolution: a relative specifier joins lexically, with the
 directory `main`, `index` and `outDir` rules of RIPR-SPEC-0099. A
-non-relative specifier resolves only through tsconfig `paths` (when
-`[typescript] resolve_tsconfig_paths = true`) or through a workspace
+non-relative specifier resolves only through tsconfig `paths` (unless
+`[typescript] resolve_tsconfig_paths = false`) or through a workspace
 package name, which is always on. Anything else is unresolved, and an
 owner import through an unresolved alias reports
 `typescript_path_alias_unresolved`.
@@ -803,15 +847,18 @@ to `amount - 20`, and `tests/lib.test.ts` has
 28. `packages/a/package.json` is `{ "name": "a", "main": "src/lib.ts" }`
     with the base `src/lib.ts`; `packages/b/tests/x.test.ts` imports
     `{ price }` from `"a"` and asserts `toBe(130)`: `exposed` with no
-    tsconfig flag (unchanged).
-29. `import { price } from "@/lib"` with `resolve_tsconfig_paths` off:
+    tsconfig flag, via the workspace package name (unchanged).
+29. `import { price } from "@/lib"` with `resolve_tsconfig_paths = false` set explicitly (the default is on):
     `no_static_path`, `typescript_path_alias_unresolved` (unchanged).
 30. `src/lib.ts` is `export function save(db: Db, v: number) {
     db.write(v + 1); }`, changed to `v + 2`; test
     `save(db, 1); expect(db.write).toHaveBeenCalledWith(3)`:
     `mock_expectation` / medium, `weakly_exposed` (unchanged). With
     `const db = { write: jest.fn() }` in the test, RIPR-SPEC-0247 rule 1
-    reads `mock_expectation` / strong, `exposed`.
+    reads `mock_expectation` / strong, `exposed`; amended 2026-10-15, so
+    does `const db = makeDb();` through a test-file
+    `function makeDb() { return { write: jest.fn() }; }` (RIPR-SPEC-0247
+    decision 8).
 31. `src/lib.ts` is `import { fee } from "./other";` plus the base
     `price`, whose line reads `return fee(amount - 10);`, changed to
     `return fee(amount - 20);`; the test

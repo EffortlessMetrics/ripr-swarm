@@ -433,12 +433,41 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.67`: `#[rstest]` fixture parameters admit owner-return pins, with a
 /// fixture receiver typed by its annotation (#6578). Old entries would keep
 /// those tests refused.
+/// `1.68`: identity-bound literal JSON construction admission (#7776).
 /// `1.69`: inline expect-test comparisons pin owner returns, a `format!`
 /// owner tail has a direct propagation witness, and an owner-body `expect!`
 /// keeps its return paths open (#6578). Old entries keep those verdicts.
 /// `1.68` is allocated to #7828's JSON admission, so neither change can
 /// read a cache the other produced.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.69";
+/// `1.70`: compose #7776 literal JSON with #6578 expect-test/format evidence.
+/// `1.71`: a changed operand beside an unchanged closure in a returned tail
+/// is neither conditional for the owner-return pin nor opaque for the
+/// propagation witness (#6578). Old entries keep those seams unrevealed.
+/// `1.72`: a colon inside a string or comment no longer mints a
+/// `field_construction` probe (#6578). Old entries keep the spurious probe.
+/// `1.73`: parser-owned match-head coverage lines (#5604), composing with
+/// the already-landed string-colon boundary at `1.72`.
+/// `1.74`: the guarded-match scan reads the RIPR-SPEC-0175 accepted-Err
+/// form (one quiet `Err(Type::Variant) => {}` arm, every other arm loud).
+/// Old entries keep those error-path seams unconfirmed.
+/// `1.75`: a literal variant-field pattern on the owner's result pins the
+/// changed field (#6578). Old entries keep the unconfirmed discriminator.
+/// `1.76`: compose the variant-field pattern evidence with explicit-return
+/// panic-assertion helper loans (#7818); neither standalone `1.75` is reusable.
+/// `1.77`: a whole same-line comparison tail reaches its owner's return
+/// (#8042). Old entries can keep a predicate's propagation unknown.
+/// `1.78`: a verified `expect_file![..].assert_eq(..)` golden comparison
+/// pins the owner's return (#6578). Old entries keep it a medium snapshot.
+/// `1.79`: a changed early `return Err(Type::Variant { .. });` gets a
+/// complete error-variant witness and an owner-return pin beside sibling
+/// variant exits, and a payload-only change needs that whole-value pin
+/// (#7063). Old entries keep those seams weakly exposed or variant-credited.
+/// `1.80`: compose the golden-file pin, the early error-variant pins and
+/// RIPR-SPEC-0225 decision 9's returned-array-element field credit (#7858);
+/// no standalone `1.79` is reusable. Old entries keep that field's gap.
+/// `1.81`: direct test-required helpers no longer seed production seams (#3213).
+/// `1.82`: name unsupported parameter-field match selectors without changing proof (#8479).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.82";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -549,9 +578,24 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.69";
 /// `0.71`: same `#[tokio::test]` admission as full `1.65` (#5040).
 /// `0.72`: same `#[rstest]` case-table admission as full `1.66`.
 /// `0.73`: same `#[rstest]` fixture admission as full `1.67`.
+/// `0.74`: same literal JSON admission as full `1.68`.
 /// `0.75`: same expect-test and `format!` tail evidence as full `1.69`
 /// (`0.74` is #7828's).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.75";
+/// `0.76`: same composed evidence as full `1.70`.
+/// `0.77`: same unchanged-closure tail evidence as full `1.71`.
+/// `0.78`: same string-colon probe boundary as full `1.72`.
+/// `0.79`: same composed match-head coverage as full `1.73` (#5604).
+/// `0.80`: same accepted-Err guarded-match pins as full `1.74`.
+/// `0.81`: same variant-field pattern evidence as full `1.75`.
+/// `0.82`: same composed helper/pattern evidence as full `1.76`.
+/// `0.83`: same returned-comparison transition as full `1.77` (#8042).
+/// `0.84`: same golden-file pin evidence as full `1.78`.
+/// `0.85`: same early error-variant pins as full `1.79` (#7063).
+/// `0.86`: same composed golden-file, early error-variant and
+/// returned-element field pins as full `1.80`.
+/// `0.87`: direct test-required helper source roles (#3213).
+/// `0.88`: same field-selector limitation metadata as full `1.82` (#8479).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.88";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -664,9 +708,24 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.75";
 /// `0.71`: same `#[tokio::test]` admission as full `1.65` (#5040).
 /// `0.72`: same `#[rstest]` case-table admission as full `1.66`.
 /// `0.73`: same `#[rstest]` fixture admission as full `1.67`.
+/// `0.74`: same literal JSON admission as full `1.68`.
 /// `0.75`: same expect-test and `format!` tail evidence as full `1.69`
 /// (`0.74` is #7828's).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.75";
+/// `0.76`: same composed evidence as full `1.70`.
+/// `0.77`: same unchanged-closure tail evidence as full `1.71`.
+/// `0.78`: same string-colon probe boundary as full `1.72`.
+/// `0.79`: same composed match-head coverage as full `1.73` (#5604).
+/// `0.80`: same accepted-Err guarded-match pins as full `1.74`.
+/// `0.81`: same variant-field pattern evidence as full `1.75`.
+/// `0.82`: same composed helper/pattern evidence as full `1.76`.
+/// `0.83`: same returned-comparison transition as full `1.77` (#8042).
+/// `0.84`: same golden-file pin evidence as full `1.78`.
+/// `0.85`: same early error-variant pins as full `1.79` (#7063).
+/// `0.86`: same composed golden-file, early error-variant and
+/// returned-element field pins as full `1.80`.
+/// `0.87`: direct test-required helper source roles (#3213).
+/// `0.88`: same field-selector limitation metadata as full `1.82` (#8479).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.88";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -831,11 +890,23 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// cannot report a requested name (#5363). `1.32` facts lack them.
 /// `1.34`: `call_deletion` shapes record whether the call's value is
 /// consumed (#6677). Older facts would read every call as unconsumed.
+/// `1.35`: binding candidates retain constructor name `json` (#7776).
 /// `1.36`: parser-backed oracles include inline expect-test comparisons
 /// (`expect![..].assert_eq(..)`, graded from the parsed shape), and
 /// `expect` joins the trusted macro names a binding site may report
 /// (#6578). `1.34` facts lack both; `1.35` is #7828's allocation.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.36";
+/// `1.37`: compose JSON binding candidates with expect-test parser facts.
+/// `1.38`: retain separate parser-owned match-head coverage (#5604).
+/// `1.39`: the guarded-match scan emits the RIPR-SPEC-0175 accepted-Err
+/// form; `1.38` facts lack it.
+/// `1.40`: single-line `self.<field>` assignments mint a parser-owned
+/// `field_construction` shape (RIPR-SPEC-0228, #6485). `1.39` facts lack it.
+/// `1.41`: `expect_file` joins the trusted macro names a binding site may
+/// report (#6578); `1.40` candidates never record it.
+/// `1.42`: binding candidates include the names a macro definition's body
+/// defines or imports (#5991). `1.41` candidates omit them.
+/// `1.43`: direct test-required functions retain evidence-only roles (#3213).
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.43";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -1372,6 +1443,19 @@ impl WorkspaceKeyContext<'_> {
         } else {
             workspace_manifests_hash
         };
+        let workspace_manifests_hash = if super::workspace::eligible_json_root(self.workspace_root)
+        {
+            let identity = super::workspace::verified_json_identity(self.workspace_root)
+                .map_or_else(
+                    || "unverified".to_string(),
+                    |receipt| receipt.validation_digest,
+                );
+            hash_str(&format!(
+                "{workspace_manifests_hash}:literal-json:{identity}"
+            ))
+        } else {
+            workspace_manifests_hash
+        };
         // The registered-harness premise is producer-owned Cargo metadata.
         // Raw configuration, including malformed bytes and absence, changes
         // that premise independently of Rust sources, HEAD and ripr.toml.
@@ -1496,6 +1580,54 @@ pub(crate) fn corpus_fingerprint(root: &Path, files: &[PathBuf]) -> Option<Strin
     }
 }
 
+/// One Unix stat observation. Keeping extraction and encoding separate lets
+/// recorded tuples exercise replacement identity without racing live ctimes.
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+struct StatWitness {
+    modified: std::time::Duration,
+    len: u64,
+    ctime: i64,
+    ctime_nsec: i64,
+    device: u64,
+    inode: u64,
+}
+
+#[cfg(unix)]
+impl StatWitness {
+    fn from_metadata(metadata: &std::fs::Metadata) -> Option<Self> {
+        use std::os::unix::fs::MetadataExt;
+        Some(Self {
+            modified: metadata
+                .modified()
+                .ok()?
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()?,
+            len: metadata.len(),
+            ctime: metadata.ctime(),
+            ctime_nsec: metadata.ctime_nsec(),
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        })
+    }
+
+    fn entry(self, path: &Path) -> String {
+        // Preserve the schema 0.4 tuple bytes. ctime witnesses writes to one
+        // inode; device and inode also bind replacement-file identity.
+        format!(
+            "{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}",
+            path.to_string_lossy().replace('\\', "/"),
+            self.modified.as_secs(),
+            self.modified.subsec_nanos(),
+            self.len,
+            self.ctime,
+            self.ctime_nsec,
+            self.device,
+            self.inode
+        )
+    }
+}
+
 /// The stat-only signature itself. Compiled only where the ctime witness
 /// that makes it sound exists (issue #3848).
 #[cfg(unix)]
@@ -1503,44 +1635,20 @@ fn stat_signature(root: &Path, files: &[PathBuf]) -> Option<String> {
     let mut entries: Vec<String> = Vec::with_capacity(files.len());
     for path in files {
         let metadata = std::fs::metadata(root.join(path)).ok()?;
-        let modified = metadata.modified().ok()?;
-        let since_epoch = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
-        let entry = format!(
-            "{}\0{}\0{}\0{}",
-            path.to_string_lossy().replace('\\', "/"),
-            since_epoch.as_secs(),
-            since_epoch.subsec_nanos(),
-            metadata.len()
-        );
-        // Unix hardening: ctime (inode change time) cannot be preserved by
-        // mtime-restoring tools, so mixing it in closes the
-        // preserved-mtime rewrite residual (see the doc comment). This is
-        // the witness the whole signature rests on, not an extra field.
-        let entry = {
-            use std::os::unix::fs::MetadataExt;
-            let mut entry = entry;
-            entry.push('\0');
-            entry.push_str(&metadata.ctime().to_string());
-            entry.push('\0');
-            entry.push_str(&metadata.ctime_nsec().to_string());
-            // A replacement directory can bring a different file with the
-            // same timestamps and size. ctime describes changes to one inode,
-            // so bind its filesystem identity too; inode numbers are device-local.
-            entry.push('\0');
-            entry.push_str(&metadata.dev().to_string());
-            entry.push('\0');
-            entry.push_str(&metadata.ino().to_string());
-            entry
-        };
-        entries.push(entry);
+        entries.push(StatWitness::from_metadata(&metadata)?.entry(path));
     }
+    Some(hash_stat_entries(entries))
+}
+
+#[cfg(unix)]
+fn hash_stat_entries(mut entries: Vec<String>) -> String {
     entries.sort();
     let mut buf = String::new();
     for entry in &entries {
         buf.push_str(entry);
         buf.push('\n');
     }
-    Some(hash_str(&buf))
+    hash_str(&buf)
 }
 
 /// On-disk shape for the corpus fingerprint mapping. One file per
@@ -2255,6 +2363,12 @@ impl RepoFileFactCache {
         self.unusable_base_reason
             .get_or_init(|| cache_dir_not_a_directory_reason(&self.base))
             .as_deref()
+    }
+
+    /// Normal analysis opts into maintenance even when every lookup hits.
+    /// Keep plain cache reads and current-snapshot export free of cleanup.
+    pub(crate) fn sweep_stale_temp_files(&self) {
+        crate::atomic_file::sweep_stale_temp_files_once(&self.dir);
     }
 
     pub(crate) fn load_file_facts(&self, key: &RepoFileFactCacheKey) -> CacheLoad<FileFacts> {
@@ -4284,7 +4398,12 @@ mod tests {
         // 1.33 -> 1.34: consumed-call shape flag (#6677).
         // 1.34 -> 1.36: inline expect-test oracles and trusted `expect`
         // (#6578); 1.35 is allocated to #7828.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.36");
+        // 1.36 -> 1.37: combine expect-test facts and JSON binding candidates.
+        // 1.38 -> 1.39: accepted-Err guarded-match form (RIPR-SPEC-0175).
+        // 1.39 -> 1.40: field-assignment probe shapes (RIPR-SPEC-0228).
+        // 1.40 -> 1.41: trusted `expect_file` binding candidates (#6578).
+        // 1.41 -> 1.42: macro-body binding candidates (#5991).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.43");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -4378,7 +4497,21 @@ mod tests {
         // 1.66 -> 1.67: #[rstest] fixture owner-return pins (#6578).
         // 1.67 -> 1.69: expect-test inline pins and format! tails (#6578);
         // 1.68 is allocated to #7828.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.69");
+        // 1.69 -> 1.70: combine JSON and expect-test/format evidence.
+        // 1.70 -> 1.71: unchanged closures in returned tails (#6578).
+        // 1.71 -> 1.72: string colons mint no field probe (#6578).
+        // 1.72 -> 1.73: retain match-head coverage after the colon repair.
+        // 1.73 -> 1.74: accepted-Err guarded-match pins (RIPR-SPEC-0175).
+        // 1.74 -> 1.75: literal variant-field patterns pin the field (#6578).
+        // 1.75 -> 1.76: compose both independently allocated 1.75 semantics (#7818).
+        // 1.76 -> 1.77: same-line returned comparisons gain a real sink (#8042).
+        // 1.77 -> 1.78: verified expect_file golden comparisons pin (#6578).
+        // 1.78 -> 1.79: early error-variant pins and payload witness (#7063).
+        // 1.79 -> 1.80: compose golden-file pins, early error-variant pins
+        // and returned-element field pins (RIPR-SPEC-0225 decision 9); no
+        // standalone 1.79 is reusable.
+        // 1.81 -> 1.82: field-selector limitation metadata (#8479).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.82");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4440,8 +4573,20 @@ mod tests {
         // 0.71 -> 0.72: same #[rstest] case-table admission as full 1.66.
         // 0.72 -> 0.73: same #[rstest] fixture admission as full 1.67.
         // 0.73 -> 0.75: same evidence as full 1.69 (0.74 is #7828's).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.75");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.75");
+        // 0.75 -> 0.76: composed evidence as full 1.70.
+        // 0.76 -> 0.77: same evidence as full 1.71.
+        // 0.77 -> 0.78: same evidence as full 1.72.
+        // 0.78 -> 0.79: same composed evidence as full 1.73.
+        // 0.79 -> 0.80: same evidence as full 1.74.
+        // 0.80 -> 0.81: same evidence as full 1.75.
+        // 0.81 -> 0.82: same composed evidence as full 1.76 (#7818).
+        // 0.82 -> 0.83: same returned-comparison evidence as full 1.77.
+        // 0.83 -> 0.84: same golden-file pin evidence as full 1.78.
+        // 0.84 -> 0.85: same early error-variant pins as full 1.79 (#7063).
+        // 0.85 -> 0.86: same composed golden-file, early error-variant and
+        // returned-element field pins as full 1.80.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.88");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.88");
     }
 
     #[test]
@@ -4737,6 +4882,9 @@ mod tests {
             ("1.36", "0.42"),
             ("1.37", "0.43"),
             ("1.38", "0.44"),
+            ("1.71", "0.77"),
+            ("1.72", "0.78"),
+            ("1.73", "0.79"),
         ] {
             for compact in [false, true] {
                 for sharded in [false, true] {
@@ -5611,9 +5759,15 @@ mod tests {
                         vec![
                             ("schema_version", previous_outer),
                             ("sharded_cache_schema_version", "0.21"),
+                            // #8479: even copied old field-selector entries must miss.
+                            ("schema_version", if compact { "0.87" } else { "1.81" }),
+                            ("sharded_cache_schema_version", "0.87"),
                         ]
                     } else {
-                        vec![("schema_version", previous_outer)]
+                        vec![
+                            ("schema_version", previous_outer),
+                            ("schema_version", if compact { "0.87" } else { "1.81" }),
+                        ]
                     };
                     for (field, previous) in previous_generations {
                         let mut value: serde_json::Value = serde_json::from_slice(&invalid_bytes)
@@ -5632,7 +5786,7 @@ mod tests {
                             CacheLoad::Miss
                         ) {
                             return Err(format!(
-                                "unsigned nesting generation must miss: compact={compact} sharded={sharded} field={field}"
+                                "previous classified generation must miss: compact={compact} sharded={sharded} field={field}"
                             ));
                         }
                     }
@@ -8115,6 +8269,146 @@ mod tests {
         Ok(PathBuf::from(relative))
     }
 
+    #[cfg(unix)]
+    fn recorded_stat_witness() -> StatWitness {
+        StatWitness {
+            modified: std::time::Duration::new(1_700_000_000, 123),
+            len: 38,
+            ctime: 1_700_000_001,
+            ctime_nsec: 456,
+            device: 7,
+            inode: 11,
+        }
+    }
+
+    #[cfg(unix)]
+    fn assert_recorded_stat_identity_misses_cache(
+        label: &str,
+        replacement: StatWitness,
+    ) -> Result<(), String> {
+        let before = recorded_stat_witness();
+        let path = Path::new("src/lib.rs");
+        assert_eq!(
+            before.entry(path),
+            concat!(
+                "src/lib.rs\0",
+                "1700000000\0",
+                "123\0",
+                "38\0",
+                "1700000001\0",
+                "456\0",
+                "7\0",
+                "11"
+            ),
+            "the schema 0.4 tuple encoding must remain byte-identical"
+        );
+        assert_eq!(
+            (before.modified, before.len, before.ctime, before.ctime_nsec),
+            (
+                replacement.modified,
+                replacement.len,
+                replacement.ctime,
+                replacement.ctime_nsec
+            ),
+            "recorded replacement must preserve every legacy stat field"
+        );
+        let original = hash_stat_entries(vec![before.entry(path)]);
+        let replaced = hash_stat_entries(vec![replacement.entry(path)]);
+        let dir = isolated_dir(label);
+        ignore_remove_dir_all(&dir);
+        let cache = RepoCorpusFingerprintCache::at_dir(dir.join("cache"));
+        cache.store(&dir, &original, "original-content-hash")?;
+        assert_eq!(
+            cache.lookup(&dir, &original).as_deref(),
+            Some("original-content-hash"),
+            "the real cache producer must first admit the original mapping"
+        );
+        assert_eq!(
+            cache.lookup(&dir, &replaced),
+            None,
+            "replacement identity must not select the prior content hash"
+        );
+        assert_ne!(original, replaced);
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stat_identity_recorded_device_change_misses_prior_cache() -> Result<(), String> {
+        assert_recorded_stat_identity_misses_cache(
+            "fingerprint-recorded-device",
+            StatWitness {
+                device: 8,
+                ..recorded_stat_witness()
+            },
+        )
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stat_identity_recorded_inode_change_misses_prior_cache() -> Result<(), String> {
+        assert_recorded_stat_identity_misses_cache(
+            "fingerprint-recorded-inode",
+            StatWitness {
+                inode: 12,
+                ..recorded_stat_witness()
+            },
+        )
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stat_identity_live_extraction_and_corpus_route_match_raw_metadata() -> Result<(), String> {
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = isolated_dir("fingerprint-raw-stat-route");
+        ignore_remove_dir_all(&dir);
+        let files = [
+            write_corpus_file(&dir, "src/b.rs", "pub fn b() {}\n")?,
+            write_corpus_file(&dir, "src/a.rs", "pub fn a() {}\n")?,
+        ];
+        let mut raw_entries = Vec::new();
+        let mut identities = Vec::new();
+        for path in &files {
+            let metadata = std::fs::metadata(dir.join(path)).map_err(|err| err.to_string())?;
+            let extracted = StatWitness::from_metadata(&metadata).ok_or("extract stat witness")?;
+            let identity = (metadata.dev(), metadata.ino());
+            assert_eq!((extracted.device, extracted.inode), identity);
+            identities.push(identity);
+            // Independent expectation: do not use StatWitness extraction,
+            // entry encoding or hash_stat_entries to construct these bytes.
+            let modified = metadata
+                .modified()
+                .map_err(|err| err.to_string())?
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|err| err.to_string())?;
+            raw_entries.push(format!(
+                "{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\n",
+                path.to_string_lossy().replace('\\', "/"),
+                modified.as_secs(),
+                modified.subsec_nanos(),
+                metadata.len(),
+                metadata.ctime(),
+                metadata.ctime_nsec(),
+                metadata.dev(),
+                metadata.ino()
+            ));
+        }
+        assert_ne!(
+            identities[0], identities[1],
+            "two real files must have distinct identities"
+        );
+        raw_entries.sort();
+        assert_eq!(
+            corpus_fingerprint(&dir, &files),
+            Some(hash_str(&raw_entries.concat())),
+            "the production corpus route must consume the raw stat tuple"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
     /// Rewrite `path` with identical content until the inode change time
     /// advances, so subsequent ctime assertions hold on filesystems with
     /// coarse timestamp granularity (~1ms is common; some fuse/overlay or
@@ -8696,7 +8990,9 @@ mod generation_transition_tests {
         let cache = RepoFileFactCache::at_dir(dir.clone());
         let file = Path::new("src/labels.rs");
         let content = cfg_test_helper_source().as_bytes().to_vec();
-        for predecessor in ["1.21", "1.22", "1.23", "1.24", "1.25", "1.26", "1.27"] {
+        for predecessor in [
+            "1.21", "1.22", "1.23", "1.24", "1.25", "1.26", "1.27", "1.37",
+        ] {
             let previous_key = RepoFileFactCacheKey {
                 schema_version: predecessor.to_string(),
                 analyzer_version: crate::build_identity::cache_identity().to_string(),

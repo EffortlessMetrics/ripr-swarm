@@ -79,16 +79,16 @@ pub(crate) fn apply_repair_card_budget(
         ));
     }
 
-    let mut ordered = sources.to_vec_sorted_by_family()?;
+    let ordered = sources.to_vec_sorted_by_family()?;
     let mut references = Vec::with_capacity(ordered.len());
     let mut omitted_bytes = 0usize;
     let mut omission_classes = Vec::new();
     let mut identity_pairs = Vec::with_capacity(ordered.len());
     let mut unavailable_items = 0usize;
 
-    for (ordinal, source) in ordered.drain(..).enumerate() {
-        let class = omission_class(&source);
-        let (digest, bytes) = normalize_source(&source)?;
+    for (ordinal, source) in ordered.into_iter().enumerate() {
+        let class = omission_class(source);
+        let (digest, bytes) = normalize_source(source)?;
         if source.state == RepairCardDetailState::Unavailable {
             unavailable_items += 1;
         } else {
@@ -358,12 +358,12 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 trait SortByFamily {
-    fn to_vec_sorted_by_family(&self) -> Result<Vec<RepairCardDetailSource>, String>;
+    fn to_vec_sorted_by_family(&self) -> Result<Vec<&RepairCardDetailSource>, String>;
 }
 
 impl SortByFamily for [RepairCardDetailSource] {
-    fn to_vec_sorted_by_family(&self) -> Result<Vec<RepairCardDetailSource>, String> {
-        let mut ordered = self.to_vec();
+    fn to_vec_sorted_by_family(&self) -> Result<Vec<&RepairCardDetailSource>, String> {
+        let mut ordered = self.iter().collect::<Vec<_>>();
         ordered.sort_by_key(|source| family_key(source.family));
         for window in ordered.windows(2) {
             if window[0].family == window[1].family {
@@ -501,6 +501,38 @@ mod tests {
                 json("movement"),
             ),
         ]
+    }
+
+    #[test]
+    fn detail_family_ordering_borrows_original_sources() -> Result<(), String> {
+        let mut sources = all_family_sources();
+        sources.reverse();
+        let ordered = sources.to_vec_sorted_by_family()?;
+        let expected = [
+            RepairCardDetailFamily::CanonicalPacket,
+            RepairCardDetailFamily::FixInstruction,
+            RepairCardDetailFamily::FocusedProofReceipt,
+            RepairCardDetailFamily::LimitationDetail,
+            RepairCardDetailFamily::MutationCalibration,
+            RepairCardDetailFamily::RelatedTestCandidates,
+            RepairCardDetailFamily::RepairAttemptStatus,
+            RepairCardDetailFamily::StaticMovement,
+            RepairCardDetailFamily::WitnessStageEvidence,
+        ];
+        assert_eq!(ordered.len(), expected.len());
+        for (source, family) in ordered.iter().zip(expected) {
+            let source: &RepairCardDetailSource = source;
+            assert_eq!(source.family, family);
+            let original = sources
+                .iter()
+                .find(|original| original.family == family)
+                .ok_or_else(|| format!("fixture is missing detail family {family:?}"))?;
+            assert!(
+                std::ptr::eq(source, original),
+                "sorting must borrow {family:?} rather than clone its evidence"
+            );
+        }
+        Ok(())
     }
 
     #[test]

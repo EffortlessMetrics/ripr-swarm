@@ -15,6 +15,7 @@ Linked issues:
 - #7063
 - #7794
 - #7820
+- #7966
 
 Linked PRs:
 
@@ -248,6 +249,57 @@ and other effect families keep the existing Part C path. This does not absorb
 oracle-pooling (#4404) or rewrite the shared witness type (#3160). The first
 admitted method is `push` only; `insert` is a later sibling because it collides
 with delivered CallDeletion goldens.
+
+### Exact mutable field arguments (#7966)
+
+The same observer binds a bare push receiver parameter to an exact field
+projection passed by `&mut` in a direct owner call, for example
+`add(&mut b.0, 11)` followed by `assert_eq!(b.0, vec![11])`. Named fields
+(`b.items`) use the same rule. This credit requires:
+
+- the owner body contains only the unconditional parameter `push`;
+- the asserted single tuple/named field and receiver referent are the same
+  standard prelude `Vec` or `std::vec::Vec` of unshadowed integer types admitted by the shared
+  value-equality authority. Raw type bindings retain the same name identity.
+  The same-file root is a uniquely bound direct struct construction, without
+  competing constructor calls/values, generic declarations or field attributes.
+  Its declaration shares the owner's lexical module, enclosing the test's
+  module; a same-named sibling declaration does not establish this binding.
+  Constructor imports through another module refuse even when that module's
+  source is absent from the index; only direct local namespace imports qualify.
+  Constructor definitions in macro token trees and arbitrary macro expansion
+  also refuse this bounded binding; the observation's assertion/vector macros
+  retain their separate canonical admission.
+  Attribute and derive expansion is likewise unestablished: captured source
+  must use only ordinary `#[test]` and `#[cfg(test)]` harness attributes,
+  without imports binding those names. The carried source-routing authority
+  must establish this same-file declaration as its own Cargo target root;
+  out-of-line parent bindings remain unestablished.
+  Standard-library root bindings and closed `std`/`core` manifest authority must also
+  admit standard identity; qualified spelling alone is insufficient;
+- the shared free-call binding authority admits that exact called owner;
+- the test constructs the root value, then calls the owner and compares the
+  same projection in an admitted top-level `assert_eq!`;
+- the expected vector contains independent unsuffixed decimal integer literals and `vec!` has
+  no competing macro binding;
+- no other statement between construction and assertion uses that root, and
+  no other owner-call argument uses it. Raw identifiers (`r#b` and `b`) name
+  the same root for this refusal;
+- assertion and vector macro admission retains the run's syntax authority,
+  including binding evidence from withheld files in a narrowed diff index.
+
+A different field or receiver, an unrelated or self-computed assertion,
+aliases, rebinding, intervening mutation, indexed/dynamic projections,
+custom equality, receiver coercion from a custom field, constructor shadowing,
+conditional/attributed pushes and deferred owners grant no new credit. This
+bounded rule does not extend guarded-input inference (#7964) or iterator
+closure projection (#7858). Plain-local observation keeps its existing rule.
+
+Proof: the public check and compiling behavioral controls in
+`owner_pin_execution::field_projected_collection`, the collection argument
+fixtures, and their independent evidence-promotion-honesty assertions. The
+wrong-value and deleted-push controls are runtime evidence, separate from
+static verdicts.
 
 Proof: `mutating_collection_a_while_asserting_b_stays_unverified`,
 `asserting_affected_collection_retains_confirmation_in_either_order`,

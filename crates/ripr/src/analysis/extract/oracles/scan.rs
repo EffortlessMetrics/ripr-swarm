@@ -7,13 +7,14 @@ use super::arguments::{
 };
 use super::classify::classify_assertion;
 use super::patterns::{
-    contains_macro_invocation, contains_named_enum_variant, is_custom_assertion_helper,
-    is_mock_expectation_line, is_side_effect_observer_assertion, is_snapshot_assertion,
-    is_unwrap_err_bound_error_assertion,
+    ExpectErrForm, contains_macro_invocation, contains_named_enum_variant, has_argument_tokens,
+    is_custom_assertion_helper, is_mock_expectation_line, is_side_effect_observer_assertion,
+    is_snapshot_assertion, is_unwrap_err_bound_error_assertion, next_expect_err_open,
+    without_expect_err,
 };
 use crate::analysis::extract::ShadowAuthority;
-use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::extract::text::extract_identifier_tokens;
+use crate::analysis::extract::{delimiters_balance, group_end, mask_comments_and_strings};
 
 pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFact> {
     let bound_error_vars = unwrap_err_bound_variables(body);
@@ -57,25 +58,28 @@ pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFac
             };
             guard_condition_tail = Some((condition_end_line, tail));
         }
-        // RIPR-SPEC-0227 decision 2: `r.unwrap_err()` whose value is never
-        // compared panics only when `r` is `Ok`, so it observes the `Err`
-        // side. `expect_err` lines keep their `expect_` admission below
-        // (#7604 tracks that reading).
-        if trimmed.ends_with("unwrap_err();")
-            && !is_assertion_line(&trimmed)
-            && starts_statement(body, offset)
+        // RIPR-SPEC-0227 decision 2: `r.unwrap_err()` or `r.expect_err(..)`
+        // whose value is never compared panics only when `r` is `Ok`, so it
+        // observes the `Err` side. Join rustfmt-wrapped tails through the
+        // first depth-0 `;` so the existing statement-start and receiver
+        // gates see the whole statement (#7955).
+        let mut fact_offset = offset;
+        if starts_statement(body, offset)
+            && let Some((err_facts, extra_lines, leftover)) =
+                uncompared_unwrap_err_facts_opening_on_line(body, offset, start_line)
         {
-            let rest = body.lines().skip(offset + 1).collect::<Vec<_>>().join("\n");
-            if let Some(text) = uncompared_unwrap_err(&trimmed, &rest) {
-                out.push(OracleFact {
-                    line: start_line + offset,
-                    observed_tokens: extract_identifier_tokens(&text),
-                    text,
-                    kind: OracleKind::BroadError,
-                    strength: OracleStrength::Weak,
-                    ok_value_observed: None,
-                });
-                continue;
+            out.extend(err_facts);
+            for _ in 0..extra_lines {
+                let _ = lines.next();
+            }
+            match leftover {
+                Some(rest)
+                    if is_assertion_line(&rest) || starts_discarded_matcher_computation(&rest) =>
+                {
+                    trimmed = rest;
+                    fact_offset = offset + extra_lines;
+                }
+                _ => continue,
             }
         }
         if is_assertion_line(&trimmed) || starts_discarded_matcher_computation(&trimmed) {
@@ -111,7 +115,7 @@ pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFac
             }
             let observed_tokens = extract_identifier_tokens(&trimmed);
             out.push(OracleFact {
-                line: start_line + offset + preceding_lines,
+                line: start_line + fact_offset + preceding_lines,
                 text: trimmed,
                 kind: classification.kind,
                 strength: classification.strength,
@@ -527,6 +531,14 @@ fn guarded_match_oracle_fact(shape: &GuardedMatchShape, line: usize) -> Option<O
             OracleStrength::Strong,
         ));
     }
+    if let Some(pin) = accepted_err_arm_pin(shape) {
+        return Some(guarded_match_fact(
+            shape,
+            line,
+            truncate_chars(&pin, PIN_TEXT_MAX_CHARS),
+            OracleStrength::Strong,
+        ));
+    }
     // Every Err arm must fail loudly on its own text. A guarded accept arm
     // (`Err(e) if <pin> => {}`) is terminal only when it can route: it has
     // a guard, its body is trivial, and every catch-all arm fails loudly.
@@ -772,6 +784,63 @@ fn asserted_err_arm_pin(shape: &GuardedMatchShape) -> Option<String> {
         .collect();
     let alternation_or_guard = pattern.contains('|') || split_pattern_guard(&pattern).1.is_some();
     (is_variant_path(&head) && !alternation_or_guard).then_some(pattern)
+}
+
+/// The exact error pin of the RIPR-SPEC-0175 accepted-Err form:
+///
+/// ```text
+/// match owner(..) {
+///     Ok(<pattern>) => <diverges>,
+///     Err(Type::Variant) => {}
+///     Err(other) => <diverges>,
+/// }
+/// ```
+///
+/// The test passes exactly when the owner returns `Err(Type::Variant)`,
+/// because every other arm fails loudly and the compiler's exhaustiveness
+/// check routes every other result to one of them. Every condition is
+/// required:
+/// - exactly one arm stays quiet: an unguarded `Err(<unit variant path>)`
+///   whose body is trivial (`{}`), so the pin is the arm's selection
+///   itself;
+/// - every other arm (Ok, Err and catch-all alike) fails on every value it
+///   matches ([`arm_fails_unconditionally`]: the [`arm_terminates`] grammar
+///   without the body-predicate `if` form, whose pin-hit path is quiet),
+///   so no second result can end the test quietly;
+/// - at least one Ok or catch-all arm exists, as for every guarded match.
+///
+/// A second quiet arm, a guard on the accept arm, a binding or wildcard
+/// (`Err(e) => {}`, `Err(_) => {}`), a payload pattern
+/// (`Err(Type::Wrap(_))`), or an accept body that does anything returns
+/// `None`, and the shape keeps its existing meaning.
+fn accepted_err_arm_pin(shape: &GuardedMatchShape) -> Option<String> {
+    let mut quiet_err = shape
+        .err_patterns
+        .iter()
+        .zip(shape.err_bodies.iter())
+        .filter(|(_, body)| !arm_fails_unconditionally(body));
+    let (pattern, body) = quiet_err.next()?;
+    if quiet_err.next().is_some() || !arm_body_is_trivial(body) {
+        return None;
+    }
+    let (pattern_proper, guard) = split_pattern_guard(pattern);
+    if guard.is_some() {
+        return None;
+    }
+    let pin = pattern_proper
+        .trim()
+        .strip_prefix("Err(")?
+        .strip_suffix(')')?
+        .trim();
+    if !is_variant_path(pin) {
+        return None;
+    }
+    let others_terminate = shape
+        .ok_bodies
+        .iter()
+        .chain(shape.catch_all_bodies.iter())
+        .all(|body| arm_fails_unconditionally(body));
+    others_terminate.then(|| pin.to_string())
 }
 
 /// The single statement of an arm body: an expression body, or a
@@ -1045,6 +1114,19 @@ fn arm_terminates(body: &str) -> bool {
     first_control_transfer_diverges(body) == Some(true)
 }
 
+/// Whether an arm fails on every value it matches. The accepted-Err form
+/// needs this of every other arm, because only the accept arm's own
+/// pattern may let the test pass. So the arm's whole body is ONE statement
+/// that diverges under [`statement_diverges`] without the body-predicate
+/// `if` form (whose pin-hit path ends the arm quietly). A body with any
+/// other statement is refused, even when a later statement diverges: an
+/// earlier conditional (`if skip { return Ok(()); }`) can end the arm
+/// before the failure runs, and [`first_control_transfer_statement`]
+/// skips such conditionals.
+fn arm_fails_unconditionally(body: &str) -> bool {
+    single_arm_statement(body).is_some_and(|statement| statement_diverges_with(statement, false))
+}
+
 /// The in-order walk behind [`arm_terminates`]: `Some(diverges)` is the
 /// disposition of the body's FIRST control transfer; `None` when control
 /// can reach the arm's end (no transfer at all — non-terminal).
@@ -1136,6 +1218,13 @@ fn top_level_statements(body: &str) -> Vec<&str> {
 /// Whether one (masked) top-level statement is UNCONDITIONALLY diverging
 /// under the bounded grammar documented on [`arm_terminates`].
 fn statement_diverges(statement: &str) -> bool {
+    statement_diverges_with(statement, true)
+}
+
+/// [`statement_diverges`] with the body-predicate `if` form admitted only
+/// when `admit_pinned_if` holds. That form fails only when its pin misses,
+/// so it is loud for the arm its pin describes and quiet otherwise.
+fn statement_diverges_with(statement: &str, admit_pinned_if: bool) -> bool {
     let statement = statement.trim();
     // A segment wrapped in one balanced brace pair — the brace-wrapped arm
     // body block, or a bare nested block statement — diverges exactly when
@@ -1147,9 +1236,17 @@ fn statement_diverges(statement: &str) -> bool {
         && let Some(inner) = balanced_block(statement)
         && statement.len() == inner.len() + 2
     {
+        // The strict reading (no pinned `if`) backs the accepted-Err form,
+        // where every path must fail. A nested block qualifies there only
+        // as one diverging statement, so `{ if skip { return Ok(()); }
+        // panic!() }` cannot borrow the later panic (CodeRabbit on #8036).
+        if !admit_pinned_if {
+            return single_arm_statement(statement)
+                .is_some_and(|nested| statement_diverges_with(nested, false));
+        }
         return top_level_statements(inner)
             .iter()
-            .any(|nested| statement_diverges(nested));
+            .any(|nested| statement_diverges_with(nested, admit_pinned_if));
     }
     let statement = statement.strip_suffix(';').unwrap_or(statement).trim_end();
     if statement.is_empty() {
@@ -1190,7 +1287,7 @@ fn statement_diverges(statement: &str) -> bool {
     }
     // The body-predicate failure form: the if statement IS the
     // discriminator (diverge exactly when the error misses the pin).
-    if_statement_diverges(statement)
+    admit_pinned_if && if_statement_diverges(statement)
 }
 
 /// Whether `statement` is exactly `<name>(<nonzero integer literal>)` —
@@ -2394,14 +2491,250 @@ fn extract_unwrap_err_binding(line: &str) -> Option<String> {
     }
 }
 
-/// RIPR-SPEC-0227 decision 2: a one-line statement whose value is
-/// `<call>.unwrap_err()` and is never compared,
-/// returned as the oracle text (the extraction without `let` or `;`). The
-/// value is uncompared when the statement discards it (`f().unwrap_err();`,
-/// `let _ = ..`, `let _e = ..`) or binds a name that `rest` (the body after
-/// the statement) never mentions. A binding that a later assertion reads is
-/// that assertion's oracle (RIPR-SPEC-0106), not a side check, and an
-/// assignment or any other statement shape is not admitted.
+/// Maximum extra lines a rustfmt-wrapped `unwrap_err` / `expect_err`
+/// statement may span. Unclosed delimiters stop instead of swallowing a
+/// later observer.
+const UNWRAP_ERR_JOIN_LIMIT: usize = 16;
+
+/// Uncompared `unwrap_err` / `expect_err` statements that begin on body
+/// line `offset`, including rustfmt-wrapped tails and same-row siblings.
+/// Extra lines are continuations of those statements, not later rows.
+/// `leftover` is same-row text that is not itself an uncompared error-side
+/// observer, so the generic assertion path can still read it.
+fn uncompared_unwrap_err_facts_opening_on_line(
+    body: &str,
+    offset: usize,
+    start_line: usize,
+) -> Option<(Vec<OracleFact>, usize, Option<String>)> {
+    // Cheap textual gate: only rows whose bounded wrapped window mentions
+    // an error-side unwrap can yield a fact, so skip the join and delimiter
+    // scans for every other statement start.
+    let window_mentions_err_unwrap = body
+        .lines()
+        .skip(offset)
+        .take(UNWRAP_ERR_JOIN_LIMIT)
+        .any(|row| row.contains("unwrap_err") || row.contains("expect_err"));
+    if !window_mentions_err_unwrap {
+        return None;
+    }
+    let (first, extra_lines, first_suffix) = take_semicolon_terminated_statement(body, offset)?;
+    let suffix_line = offset.saturating_add(extra_lines);
+    let mut statements = vec![(first, offset)];
+    let mut suffix = first_suffix;
+    while let Some((next, rest)) = first_statement_in_text(&suffix) {
+        statements.push((next, suffix_line));
+        suffix = rest;
+    }
+    let later = body
+        .lines()
+        .skip(offset.saturating_add(extra_lines).saturating_add(1))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut facts = Vec::new();
+    let mut leftover_parts = Vec::new();
+    for (index, (statement, line)) in statements.iter().enumerate() {
+        let rest = {
+            let following = statements[(index + 1)..]
+                .iter()
+                .map(|(text, _)| text.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let mut parts = Vec::new();
+            if !following.is_empty() {
+                parts.push(following);
+            }
+            let trailing = suffix.trim();
+            if !trailing.is_empty() {
+                parts.push(trailing.to_string());
+            }
+            if !later.is_empty() {
+                parts.push(later.clone());
+            }
+            parts.join("\n")
+        };
+        if let Some(text) = uncompared_unwrap_err(statement, &rest) {
+            facts.push(OracleFact {
+                line: start_line + *line,
+                observed_tokens: extract_identifier_tokens(&text),
+                text,
+                kind: OracleKind::BroadError,
+                strength: OracleStrength::Weak,
+                ok_value_observed: None,
+            });
+        } else {
+            leftover_parts.push(statement.trim().to_string());
+        }
+    }
+    let trailing = suffix.trim();
+    if !trailing.is_empty() {
+        leftover_parts.push(trailing.to_string());
+    }
+    if facts.is_empty() {
+        None
+    } else {
+        let leftover = if leftover_parts.is_empty() {
+            None
+        } else {
+            Some(leftover_parts.join(" "))
+        };
+        Some((facts, extra_lines, leftover))
+    }
+}
+
+fn first_statement_in_text(text: &str) -> Option<(String, String)> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let masked = mask_comments_and_strings(trimmed);
+    let semi = depth0_semicolon_index(&masked)?;
+    Some((
+        trimmed[..=semi].to_string(),
+        trimmed[semi + 1..].to_string(),
+    ))
+}
+
+/// First semicolon-terminated statement starting at `offset`. Continues
+/// onto later lines only while they are rustfmt tails of that statement,
+/// and never past a new observer. Indices into the joined text match the
+/// masked layout because masking preserves byte length.
+fn take_semicolon_terminated_statement(
+    body: &str,
+    offset: usize,
+) -> Option<(String, usize, String)> {
+    let lines: Vec<&str> = body.lines().collect();
+    let first = lines.get(offset)?.trim();
+    if first.is_empty()
+        || is_control_or_block_start(first)
+        || !inherited_delimiter_context_allows_statement(body, offset)
+    {
+        return None;
+    }
+    let mut joined = String::new();
+    for (step, raw) in lines[offset..].iter().enumerate() {
+        if step >= UNWRAP_ERR_JOIN_LIMIT {
+            return None;
+        }
+        let line = raw.trim();
+        if step > 0 {
+            if !is_unwrap_err_statement_continuation(&joined, line) {
+                return None;
+            }
+            joined.push('\n');
+        }
+        joined.push_str(line);
+        let masked = mask_comments_and_strings(&joined);
+        if let Some(semi) = depth0_semicolon_index(&masked) {
+            return Some((
+                joined[..=semi].to_string(),
+                step,
+                joined[semi + 1..].to_string(),
+            ));
+        }
+    }
+    None
+}
+
+fn depth0_semicolon_index(masked: &str) -> Option<usize> {
+    let mut depth = 0i32;
+    for (index, byte) in masked.bytes().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b';' if depth == 0 => return Some(index),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn masked_group_depth(masked: &str) -> i32 {
+    let mut depth = 0i32;
+    for byte in masked.bytes() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    depth
+}
+
+fn is_control_or_block_start(line: &str) -> bool {
+    line.starts_with("if ")
+        || line.starts_with("if(")
+        || line.starts_with("match ")
+        || line.starts_with("for ")
+        || line.starts_with("while ")
+        || line.starts_with("loop ")
+        || line.starts_with("unsafe ")
+        || line.starts_with('{')
+}
+
+/// Whether a new semicolon-terminated statement may start at `offset`.
+/// Innermost unclosed `{` is a block body and may hold an error-side
+/// extraction; unclosed `(` / `[` or a mismatched closer must not mint a
+/// fact from a later `unwrap_err` tail (#7955).
+fn inherited_delimiter_context_allows_statement(body: &str, offset: usize) -> bool {
+    let mut stack = Vec::new();
+    // Mask the whole prefix in one pass so a `)` inside a multiline
+    // comment or string cannot close an earlier `(`.
+    for (index, line) in mask_comments_and_strings(body).lines().enumerate() {
+        if index >= offset {
+            break;
+        }
+        if !push_masked_delimiters(line, &mut stack) {
+            return false;
+        }
+    }
+    matches!(stack.last(), None | Some(b'{'))
+}
+
+fn push_masked_delimiters(masked: &str, stack: &mut Vec<u8>) -> bool {
+    for byte in masked.bytes() {
+        match byte {
+            b'(' | b'[' | b'{' => stack.push(byte),
+            b')' | b']' | b'}' => {
+                let open = match byte {
+                    b')' => b'(',
+                    b']' => b'[',
+                    _ => b'{',
+                };
+                match stack.pop() {
+                    Some(top) if top == open => {}
+                    _ => return false,
+                }
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
+/// Whether `next` may attach to an unfinished statement. Tails start with
+/// a rustfmt wrap token, or continue an incomplete `let` binding. An
+/// unclosed delimiter does not admit a later assertion, `let`, or control
+/// statement, so a missing `)` cannot swallow the next observer.
+fn is_unwrap_err_statement_continuation(joined_so_far: &str, next: &str) -> bool {
+    if next.is_empty() {
+        return true;
+    }
+    if next.starts_with(['.', ')', ']', '}', ',', '"', '\''])
+        || next.starts_with("r#")
+        || next.starts_with("r\"")
+        || next.starts_with('&')
+    {
+        return true;
+    }
+    let masked = mask_comments_and_strings(joined_so_far);
+    let depth = masked_group_depth(&masked);
+    if depth == 0 {
+        let incomplete_let = masked.trim_start().starts_with("let ") && masked.contains('=');
+        return incomplete_let && !is_assertion_line(next) && !next.starts_with("let ");
+    }
+    !is_assertion_line(next) && !is_control_or_block_start(next) && !next.starts_with("let ")
+}
+
 /// Whether body line `offset` starts a statement: the previous non-empty
 /// line ends one. After `let e =` the next line is the value, not a
 /// discarded expression.
@@ -2414,6 +2747,15 @@ fn starts_statement(body: &str, offset: usize) -> bool {
         .is_none_or(|previous| previous.ends_with([';', '{', '}']))
 }
 
+/// RIPR-SPEC-0227 decision 2: a semicolon-terminated statement whose value
+/// is `<call>.unwrap_err()` or `<call>.expect_err(..)` and is never
+/// compared, returned as the oracle text (the extraction without `let` or
+/// `;`). The value is uncompared when the statement discards it
+/// (`f().unwrap_err();`, `let _ = ..`, `let _e = ..`) or binds a name that
+/// `rest` (the body after the statement) never mentions. A binding that a
+/// later assertion reads is that assertion's oracle (RIPR-SPEC-0106), not
+/// a side check, and an assignment or any other statement shape is not
+/// admitted.
 pub(crate) fn uncompared_unwrap_err(statement: &str, rest: &str) -> Option<String> {
     let statement = statement.trim();
     let expression = statement.strip_suffix(';')?.trim_end();
@@ -2439,7 +2781,9 @@ pub(crate) fn uncompared_unwrap_err(statement: &str, rest: &str) -> Option<Strin
     if masked.starts_with(['.', ')', ']', '}']) || !delimiters_balance(&masked) {
         return None;
     }
-    if !ends_with_unwrap_err(value) || !receiver_keeps_call_error(&masked) {
+    if !(ends_with_unwrap_err(value) || ends_with_expect_err(value))
+        || !receiver_keeps_call_error(&masked)
+    {
         return None;
     }
     let discarded =
@@ -2451,21 +2795,131 @@ pub(crate) fn uncompared_unwrap_err(statement: &str, rest: &str) -> Option<Strin
 /// `api::check` or `check::<u8>`, not an operator, reference or grouping.
 fn is_call_path(callee: &str) -> bool {
     let callee = callee.trim();
-    callee.bytes().next().is_some_and(is_ident_byte)
-        && callee
-            .bytes()
+    let bytes = callee.as_bytes();
+    // `#` only as the raw-identifier prefix `r#` at the start of a segment.
+    let raw_prefix_only = bytes.iter().enumerate().all(|(index, byte)| {
+        *byte != b'#'
+            || (index >= 1
+                && bytes[index - 1] == b'r'
+                && (index == 1 || !is_ident_byte(bytes[index - 2]))
+                && bytes
+                    .get(index + 1)
+                    .is_some_and(|next| next.is_ascii_alphabetic() || *next == b'_'))
+    });
+    // Outside a `::<..>` turbofish, a path has no spaces, commas, angle
+    // brackets or `..`: `(a < check(x))`, `(return check(x))`,
+    // `(a..check(x))` and `(x::<A> < y, check(x))` group a comparison, a
+    // jump, a range or a tuple, not a call.
+    let mut generic_depth = 0_usize;
+    let mut plain_path = !callee.contains("..");
+    let mut index = 0;
+    while plain_path && index < bytes.len() {
+        let byte = bytes[index];
+        if generic_depth == 0 {
+            if bytes[index..].starts_with(b"::<") {
+                generic_depth = 1;
+                index += 3;
+                continue;
+            }
+            plain_path = is_ident_byte(byte) || matches!(byte, b'.' | b':' | b'#');
+        } else {
+            match byte {
+                b'<' => generic_depth += 1,
+                b'>' => generic_depth -= 1,
+                _ => {
+                    plain_path =
+                        is_ident_byte(byte) || matches!(byte, b':' | b',' | b' ' | b'&' | b'\'');
+                }
+            }
+        }
+        index += 1;
+    }
+    let plain_path = plain_path && generic_depth == 0;
+    raw_prefix_only
+        && plain_path
+        && bytes.first().is_some_and(|b| is_ident_byte(*b))
+        && bytes
             .last()
-            .is_some_and(|b| is_ident_byte(b) || b == b'>')
-        && callee
-            .bytes()
-            .all(|b| is_ident_byte(b) || matches!(b, b'.' | b':' | b'<' | b'>' | b',' | b' '))
+            .is_some_and(|b| is_ident_byte(*b) || *b == b'>')
 }
 
 /// Whether `.unwrap_err()` reads the error side of the statement's first
 /// call. Only adapters that keep an `Ok` an `Ok` may sit between them:
 /// `check(x).and(Err(E::Other)).unwrap_err()` passes whatever `check`
-/// returns, and `x.ok_or(E).unwrap_err()` reads an `Option`.
+/// returns, and `find(x).ok_or(E).unwrap_err()` reads an `Option`.
 fn receiver_keeps_call_error(masked: &str) -> bool {
+    let masked = masked.trim_end();
+    let receiver = masked
+        .strip_suffix(".unwrap_err()")
+        .or_else(|| trailing_expect_err_receiver(masked));
+    receiver.is_some_and(|receiver| keeps_call_result(receiver, 0))
+}
+
+/// Receiver of a trailing `expect_err` whose argument group closes `masked`.
+/// Method form uses the expression before `.expect_err`; UFCS uses the first
+/// argument of `Result::expect_err(<call>, <msg>)`.
+fn trailing_expect_err_receiver(masked: &str) -> Option<&str> {
+    let close = masked.len().saturating_sub(1);
+    let mut search = 0;
+    while let Some(found) = next_expect_err_open(masked, search) {
+        if group_end(masked, found.open) == Some(close) {
+            return match found.form {
+                ExpectErrForm::Method => Some(&masked[..found.start]),
+                // The UFCS call must be the whole statement: text before
+                // `Result::` (`return `, `!`, `&`) means the value is used.
+                ExpectErrForm::ResultUfcs => masked[..found.start]
+                    .trim()
+                    .is_empty()
+                    .then(|| ufcs_expect_err_result_arg(masked, found.open, close))
+                    .flatten(),
+            };
+        }
+        search = found.open + 1;
+    }
+    None
+}
+
+fn ufcs_expect_err_result_arg(masked: &str, open: usize, close: usize) -> Option<&str> {
+    let args = masked.get(open + 1..close)?;
+    let comma = top_level_comma(args, 0)?;
+    let first = args[..comma].trim();
+    (!first.is_empty()).then_some(first)
+}
+
+/// Whether `expr` is a call followed only by Ok-preserving adapters. A
+/// grouping `( .. )` is looked through, never skipped: its contents must
+/// pass the same test, so `(check(x)).unwrap_err()` reads the call while
+/// `(check(x).and(Err(..))).unwrap_err()` still reads nothing.
+fn keeps_call_result(expr: &str, depth: usize) -> bool {
+    const MAX_GROUPING_DEPTH: usize = 8;
+    let expr = expr.trim();
+    let close = if expr.starts_with('(') {
+        let Some(close) = group_end(expr, 0) else {
+            return false;
+        };
+        if depth >= MAX_GROUPING_DEPTH || !keeps_call_result(&expr[1..close], depth + 1) {
+            return false;
+        }
+        close
+    } else {
+        // The first group must be a call on a plain path, not an operand
+        // of `!`, `&` or an operator.
+        let Some(open) = expr.find('(') else {
+            return false;
+        };
+        if !is_call_path(&expr[..open]) {
+            return false;
+        }
+        let Some(close) = group_end(expr, open) else {
+            return false;
+        };
+        close
+    };
+    adapters_keep_ok(&expr[close + 1..])
+}
+
+/// Whether `rest` is only `.await` and Ok-preserving adapter calls.
+fn adapters_keep_ok(mut rest: &str) -> bool {
     const KEEPS_OK: &[&str] = &[
         "as_deref",
         "as_mut",
@@ -2477,22 +2931,6 @@ fn receiver_keeps_call_error(masked: &str) -> bool {
         "map",
         "map_err",
     ];
-    let Some(receiver) = masked.trim_end().strip_suffix(".unwrap_err()") else {
-        return false;
-    };
-    let Some(open) = receiver.find('(') else {
-        return false;
-    };
-    // The first group must be a call: a leading `(..)` is a grouping
-    // expression that would hide `(check(x).and(Err(..))).unwrap_err()`'s
-    // adapter from the whitelist below.
-    if !is_call_path(&receiver[..open]) {
-        return false;
-    }
-    let Some(mut rest) = balanced_group_end(receiver, open).map(|close| &receiver[close + 1..])
-    else {
-        return false;
-    };
     loop {
         let rest_trimmed = rest.trim_start();
         if rest_trimmed.is_empty() {
@@ -2512,44 +2950,11 @@ fn receiver_keeps_call_error(masked: &str) -> bool {
         if !KEEPS_OK.contains(&name) || !after.starts_with('(') {
             return false;
         }
-        let Some(close) = balanced_group_end(after, 0) else {
+        let Some(close) = group_end(after, 0) else {
             return false;
         };
         rest = &after[close + 1..];
     }
-}
-
-/// The byte index of the `)` closing the `(` at `open`.
-fn balanced_group_end(text: &str, open: usize) -> Option<usize> {
-    let mut depth = 0_i64;
-    for (index, byte) in text.bytes().enumerate().skip(open) {
-        match byte {
-            b'(' | b'[' => depth += 1,
-            b')' | b']' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(index);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-fn delimiters_balance(masked: &str) -> bool {
-    let mut depth = 0_i64;
-    for byte in masked.bytes() {
-        match byte {
-            b'(' | b'[' => depth += 1,
-            b')' | b']' => depth -= 1,
-            _ => {}
-        }
-        if depth < 0 {
-            return false;
-        }
-    }
-    depth == 0
 }
 
 fn ends_with_unwrap_err(expr: &str) -> bool {
@@ -2557,13 +2962,27 @@ fn ends_with_unwrap_err(expr: &str) -> bool {
 }
 
 fn ends_with_expect_err(expr: &str) -> bool {
-    // .expect_err("...") — ends with `)` after some `.expect_err(`
+    // `.expect_err(<message>)` or `Result::expect_err(<call>, <msg>)` whose
+    // argument group closes `expr`. An empty group (`expect_err()`,
+    // `expect_err( )`, `expect_err ()`) is a mock's expectation for a
+    // method named `err`, not `Result::expect_err`; `without_expect_err`
+    // applies the same rule, so both adapters agree on it.
+    // Masking keeps byte offsets, and blanks a message's quotes, so the
+    // arguments are read back from `expr` itself, by the same rule
+    // `without_expect_err` applies. Optional whitespace between
+    // `expect_err` and `(` is still the Result read (#7979).
     let expr = expr.trim_end();
-    if !expr.ends_with(')') {
-        return false;
+    let masked = mask_comments_and_strings(expr);
+    let masked = masked.trim_end();
+    let close = masked.len().saturating_sub(1);
+    let mut search = 0;
+    while let Some(found) = next_expect_err_open(masked, search) {
+        if group_end(masked, found.open) == Some(close) {
+            return has_argument_tokens(&expr[found.open + 1..close]);
+        }
+        search = found.open + 1;
     }
-    // Find last `.expect_err(`
-    expr.contains(".expect_err(")
+    false
 }
 
 pub(crate) fn extract_line_scanned_oracles(body: &str, start_line: usize) -> Vec<OracleFact> {
@@ -2705,7 +3124,7 @@ fn is_assertion_line(line: &str) -> bool {
         || is_snapshot_assertion(line)
         || is_custom_assertion_helper(line)
         || is_side_effect_observer_assertion(line)
-        || line.contains("expect_")
+        || mask_comments_and_strings(&without_expect_err(line)).contains("expect_")
         || line.contains(".expect(")
         || line.contains(".unwrap(")
         || line.contains("should_panic")
@@ -4887,5 +5306,157 @@ mod asserted_err_arm_tests {
         ] {
             assert!(scan_one(arms).is_empty(), "must not pin: {arms}");
         }
+    }
+}
+
+/// RIPR-SPEC-0175 accepted-Err form: one quiet `Err(Type::Variant) => {}`
+/// arm with every other arm failing loudly.
+#[cfg(test)]
+mod accepted_err_arm_tests {
+    use super::guarded_result_match_scan;
+    use crate::analysis::facts::OracleFact;
+    use crate::domain::{OracleKind, OracleStrength};
+
+    fn scan_one(arms: &str) -> Vec<OracleFact> {
+        let body = format!(
+            "#[test]\nfn overdraws() {{\n    match withdraw(&mut wallet, 20) {{\n{arms}\n    }}\n}}\n"
+        );
+        guarded_result_match_scan(&body, 1).oracles
+    }
+
+    #[test]
+    fn quiet_variant_arm_beside_loud_arms_pins_the_variant() {
+        let oracles = scan_one(
+            "        Ok(_) => panic!(\"overdraw succeeded\"),\n        Err(PayError::Insufficient) => {}\n        Err(other) => panic!(\"wrong error {other:?}\"),",
+        );
+        assert_eq!(oracles.len(), 1, "{oracles:?}");
+        assert_eq!(oracles[0].kind, OracleKind::GuardedResultMatch);
+        assert_eq!(oracles[0].strength, OracleStrength::Strong);
+        assert_eq!(
+            oracles[0].text,
+            "match withdraw(..) { Ok(..) => .., Err(..) => PayError::Insufficient }"
+        );
+        assert_eq!(oracles[0].ok_value_observed, Some(false));
+    }
+
+    #[test]
+    fn arm_order_catch_all_and_braced_bodies_also_pin() {
+        for arms in [
+            // The accept arm first, a loud catch-all in place of `Err(other)`.
+            "        Err(PayError::Insufficient) => {}\n        Ok(left) => { panic!(\"left {left}\"); }\n        _ => unreachable!(),",
+            // No Ok arm: a loud catch-all routes success and other errors.
+            "        Err(PayError::Insufficient) => {}\n        other => panic!(\"{other:?}\"),",
+        ] {
+            let oracles = scan_one(arms);
+            assert_eq!(oracles.len(), 1, "must pin: {arms}");
+            assert!(
+                oracles[0].text.contains("=> PayError::Insufficient"),
+                "{}",
+                oracles[0].text
+            );
+        }
+    }
+
+    #[test]
+    fn a_second_quiet_arm_or_a_loose_accept_arm_never_pins() {
+        for arms in [
+            // A quiet Ok arm lets success pass.
+            "        Ok(_) => {}\n        Err(PayError::Insufficient) => {}\n        Err(other) => panic!(\"{other:?}\"),",
+            // A quiet second error lets the sibling variant pass.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        Err(PayError::Limit) => {}\n        Err(other) => panic!(\"{other:?}\"),",
+            // A quiet catch-all swallows whatever reaches it.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        _ => {}",
+            // A binding or wildcard accept arm names no variant.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(e) => {}",
+            "        Ok(_) => panic!(\"ok\"),\n        Err(_) => {}",
+            // A guarded accept arm belongs to the routing form, not this one.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) if strict => {}\n        Err(other) => panic!(\"{other:?}\"),",
+            // A payload pattern is not a unit-variant pin.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Wrap(_)) => {}\n        Err(other) => panic!(\"{other:?}\"),",
+            // An accept arm that acts is not trivial.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => log(\"fine\"),\n        Err(other) => panic!(\"{other:?}\"),",
+            // A catch-all whose failure is conditional can return quietly.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        Err(other) => { if strict { panic!(\"{other:?}\"); } }",
+            // A pinned-predicate arm is quiet when its own pin hits: a
+            // `Limit` error or an `Ok(Balance::Empty)` would pass the test.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        Err(other) => if !matches!(other, PayError::Limit) { panic!(\"{other:?}\") },",
+            "        Ok(state) => { if state != Balance::Empty { panic!(\"ok\"); } }\n        Err(PayError::Insufficient) => {}\n        Err(other) => panic!(\"{other:?}\"),",
+            "        Err(PayError::Insufficient) => {}\n        other => { if !matches!(other, Err(PayError::Limit)) { panic!(\"{other:?}\"); } }",
+            // An earlier conditional exit ends the arm before its failure.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        Err(other) => { if skip { return Ok(()); } panic!(\"{other:?}\") }",
+            "        Ok(_) => { if skip { return Ok(()); } panic!(\"ok\"); }\n        Err(PayError::Insufficient) => {}\n        Err(other) => panic!(\"{other:?}\"),",
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        Err(_) => { if skip { return Ok(()); }; panic!(\"wrong\") }",
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        Err(_) => { let _ = skip.then(|| ()); panic!(\"wrong\") }",
+            // A nested block hides the same early exit behind one statement.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        Err(_) => { { if skip { return Ok(()); } panic!(\"wrong\") } }",
+            "        Ok(_) => { { if skip { return Ok(()); }; panic!(\"ok\"); } }\n        Err(PayError::Insufficient) => {}\n        Err(other) => panic!(\"{other:?}\"),",
+        ] {
+            assert!(scan_one(arms).is_empty(), "must not pin: {arms}");
+        }
+    }
+
+    #[test]
+    fn nested_block_holding_one_failure_still_pins() {
+        let arms = "        Ok(_) => { { panic!(\"ok\"); } }\n        Err(PayError::Insufficient) => {}\n        Err(other) => { { panic!(\"{other:?}\") } }";
+        assert_eq!(scan_one(arms).len(), 1, "must pin: {arms}");
+    }
+}
+
+#[cfg(test)]
+mod call_path_tests {
+    use super::is_call_path;
+
+    #[test]
+    fn raw_identifier_prefix_must_name_a_segment() {
+        for callee in [
+            "r#check",
+            "svc.r#match",
+            "Api::<A, B>::check",
+            "check::<u8>",
+            "parse::<Vec<&'static str>>",
+        ] {
+            assert!(is_call_path(callee), "{callee}");
+        }
+        for callee in [
+            "r#",
+            "r#123",
+            "#check",
+            "r#.check",
+            "br#check",
+            "a < check",
+            "a..check",
+            "x::<A> < y, check",
+            "f::<A>> check",
+        ] {
+            assert!(!is_call_path(callee), "{callee}");
+        }
+    }
+
+    #[test]
+    fn grouping_is_read_through_eight_deep_and_refused_past_it() {
+        let grouped = |depth: usize| {
+            format!(
+                "{}check(300){}.unwrap_err()",
+                "(".repeat(depth),
+                ")".repeat(depth)
+            )
+        };
+        assert!(super::receiver_keeps_call_error(&grouped(8)));
+        assert!(!super::receiver_keeps_call_error(&grouped(9)));
+    }
+
+    #[test]
+    fn a_stray_brace_in_the_receiver_refuses_the_uncompared_unwrap_err() {
+        // The shared walker counts braces (#7860), so a `}` the line cannot
+        // pair, as on a line inside a multi-line string, refuses the read
+        // instead of crediting a weak oracle.
+        assert_eq!(
+            super::uncompared_unwrap_err("let _ = f(a }).unwrap_err();", ""),
+            None
+        );
+        assert_eq!(
+            super::uncompared_unwrap_err("let _ = f(a).unwrap_err();", ""),
+            Some("f(a).unwrap_err()".to_string())
+        );
     }
 }

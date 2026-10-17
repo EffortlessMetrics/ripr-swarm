@@ -2,22 +2,22 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/propagated_error_closing_early_path/input
 
-Summary: 2 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 probes (0 exposed, 1 weak, 0 unrevealed, 0 no path, 1 unknown); 2 of 2 findings unsuppressed
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 2 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s).
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s)
 
 Start here:
-  State: a test gap to inspect or repair (top_gap)
-  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
+  State: a test gap to inspect or repair
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:6
-  Static exposure: weak (weakly_exposed, warning, confidence 0.66)
+  Static exposure: weak (severity: warning, confidence 0.66)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:rust:src/lib.rs:check:error_variant:error_path:value.ok_or_failure_missing
   Changed behavior: value.ok_or( Failure::Missing )?
   Missing discriminator: No exact error variant discriminator was detected
   Related test: src/lib.rs:16 observes_only_the_early_error (ripr could not confirm that this assertion observes the changed behavior)
-  Next step: Inspect existing tests for activation of the changed `?` exit and whether their oracle constrains that path; static activation is unestablished.
+  Next step: Inspect existing tests for activation of the changed `?` exit and whether their oracle constrains that path; static activation is unestablished
   Evidence: reach yes · infection yes · propagation weak · observation yes · discriminator weak
     - reach yes: Related tests appear to reach check: observes_only_the_early_error
     - infection yes: Reachable tests can plausibly activate this changed behavior
@@ -31,6 +31,6 @@ Write a test for it:
 
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - fixtures/propagated_error_closing_early_path/input/src/lib.rs:8 (static_unknown)
+    - ./src/lib.rs:8 (unknown)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

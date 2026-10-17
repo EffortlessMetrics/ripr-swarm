@@ -1,11 +1,13 @@
 use super::evidence::{AssertionRefusalNote, ClassifiedProbeEvidence};
 use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ProbeContext, body_contains_owner_call,
-    ensure_unknown_stop_reason, exact_error_variant, missing_evidence, recommended_next_step,
-    stop_reasons, wrapper_error_seam_expression,
+    ensure_unknown_stop_reason, exact_error_variant, exact_oracle_gap_next_step, missing_evidence,
+    recommended_next_step, stop_reasons, wrapper_error_seam_expression,
 };
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::*;
+use std::collections::BTreeSet;
+use std::path::PathBuf;
 
 const STATIC_UNKNOWN_UNREACHED_NEXT_STEP: &str = "No static test path reaches this change; a test may still reach it through paths ripr cannot follow.";
 const PROXIMITY_ONLY_INSPECTION_NEXT_STEP: &str = "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.";
@@ -13,7 +15,7 @@ const PROXIMITY_ONLY_INSPECTION_NEXT_STEP: &str = "The indexed related tests do 
 pub(in crate::analysis) fn build_finding(
     context: &ProbeContext<'_>,
     class: ExposureClass,
-    evidence: ClassifiedProbeEvidence,
+    mut evidence: ClassifiedProbeEvidence,
 ) -> Finding {
     let missing = missing_evidence(
         context.probe,
@@ -37,6 +39,39 @@ pub(in crate::analysis) fn build_finding(
             &context.related_tests,
             &evidence,
         );
+    let confidence = evidence.confidence(&class);
+    // Annotate the miss reasons BEFORE the next-step selection: the #7393
+    // exact-oracle step reads which rows actually establish reach to the
+    // owner and which assertion is exact, so it must see the same final
+    // rows the JSON/human projections render, not the pre-annotation list.
+    let discriminate_summary = &evidence.ripr.reveal.discriminate.summary;
+    let unconfirmed = if discriminate_summary.contains("(observation_unverified)")
+        || discriminate_summary.contains(super::evidence::PROPAGATION_BOUNDARY_UNVERIFIED)
+    {
+        Unconfirmed::AllRows
+    } else if discriminate_summary.contains("(oracle_confirmation_mixed)")
+        && evidence.related_tests.len() >= evidence.related_tests_matched_total
+    {
+        // The strongest rank is read from the listed rows, so it is only
+        // reveal's strongest rank when the window dropped nothing; a
+        // truncated window could promote a confirming weaker row. Leave the
+        // rows unannotated rather than claim an unestablished miss.
+        Unconfirmed::StrongestRank
+    } else {
+        Unconfirmed::Confirmed
+    };
+    let mut related_tests = std::mem::take(&mut evidence.related_tests);
+    if !exact_oracle_covers_direct_sink {
+        annotate_related_test_misses(
+            &mut related_tests,
+            &class,
+            context.owner_fn.is_some(),
+            &context.probe.family,
+            &evidence.activation,
+            unconfirmed,
+            &evidence.implicit_dispatch_tests,
+        );
+    }
     // RIPR-SPEC-0263: no related test call enters the guard around the
     // changed line, so the repair is an input, not a stronger assertion.
     let unentered_guard = (class == ExposureClass::WeaklyExposed)
@@ -99,6 +134,21 @@ pub(in crate::analysis) fn build_finding(
         Some(refused_assertion_next_step(
             evidence.assertion_refusal.as_ref(),
         ))
+    } else if class == ExposureClass::WeaklyExposed
+        && !wrapper_error_seam_expression(&[context.probe.expression.as_str()])
+        && exact_error_variant(&context.probe.expression).is_none()
+        && let Some(step) = exact_oracle_gap_next_step(
+            context.probe,
+            &class,
+            &related_tests,
+            &evidence.activation.missing_discriminators,
+            context.owner_fn.is_some(),
+        )
+    {
+        // #7393: the family template presumes an assertion shape the
+        // related test does not have; the strongest related oracle is
+        // already exact, so name the input that is actually missing.
+        Some(step)
     } else {
         recommended_next_step(
             context.probe,
@@ -107,7 +157,6 @@ pub(in crate::analysis) fn build_finding(
             &stop_reasons,
         )
     };
-    let confidence = evidence.confidence(&class);
     let invalid_propagation_witness = evidence.propagation_witness().is_some_and(|diagnostic| {
         diagnostic.is_invalid() || !diagnostic.witness().digest_matches()
     });
@@ -137,36 +186,6 @@ pub(in crate::analysis) fn build_finding(
             "owner_shape: assertion_shaped ({})",
             crate::domain::ASSERTION_SHAPED_OWNER_REASON
         ));
-    }
-
-    // `reveal` names these downgrades in the stage summary; the same tokens
-    // are how `ClassifiedProbeEvidence` recognizes them.
-    let discriminate_summary = &evidence.ripr.reveal.discriminate.summary;
-    let unconfirmed = if discriminate_summary.contains("(observation_unverified)")
-        || discriminate_summary.contains(super::evidence::PROPAGATION_BOUNDARY_UNVERIFIED)
-    {
-        Unconfirmed::AllRows
-    } else if discriminate_summary.contains("(oracle_confirmation_mixed)")
-        && evidence.related_tests.len() >= evidence.related_tests_matched_total
-    {
-        // The strongest rank is read from the listed rows, so it is only
-        // reveal's strongest rank when the window dropped nothing; a
-        // truncated window could promote a confirming weaker row. Leave the
-        // rows unannotated rather than claim an unestablished miss.
-        Unconfirmed::StrongestRank
-    } else {
-        Unconfirmed::Confirmed
-    };
-    let mut related_tests = evidence.related_tests;
-    if !exact_oracle_covers_direct_sink {
-        annotate_related_test_misses(
-            &mut related_tests,
-            &class,
-            context.owner_fn.is_some(),
-            &context.probe.family,
-            &evidence.activation,
-            unconfirmed,
-        );
     }
 
     Finding {
@@ -227,8 +246,13 @@ enum Unconfirmed {
 /// boundary value, or when no assertion pins the exact error variant or field
 /// value the change alters, and an oracle `reveal` left unconfirmed (see
 /// [`Unconfirmed`]) is not established to observe it.
-/// `exposed` and the unknown classes are left alone: ripr does not claim a
-/// miss it has not established.
+/// `exposed` and the unknown classes name one established miss: a matched
+/// oracle row whose relation is proximity-only never calls the owner, so
+/// next to a reaching row its identical "uses ... oracle" line would
+/// attribute part of the discrimination to a test whose assertion is about
+/// different code (#7642). Rows without a matched oracle, and rows with no
+/// recorded relation reason, stay unannotated: ripr does not claim a miss
+/// it has not established.
 fn annotate_related_test_misses(
     related_tests: &mut [RelatedTest],
     class: &ExposureClass,
@@ -236,7 +260,15 @@ fn annotate_related_test_misses(
     family: &ProbeFamily,
     activation: &ActivationEvidence,
     unconfirmed: Unconfirmed,
+    implicit_dispatch_tests: &BTreeSet<(PathBuf, String)>,
 ) {
+    // Reach by known implicit dispatch is established even though the
+    // row's relation reason is proximity-only.
+    let reaches = |test: &RelatedTest| {
+        test.relation_reason
+            .is_some_and(|reason| reason.establishes_reach(owner_is_function))
+            || implicit_dispatch_tests.contains(&(test.file.clone(), test.name.clone()))
+    };
     let facts = &activation.missing_discriminators;
     let boundary = input_boundary_fact(facts, family).is_some();
     let exact = exact_assertion_fact(facts, family).is_some();
@@ -256,11 +288,10 @@ fn annotate_related_test_misses(
         // row keeps its miss: that value is what marks it examined-only
         // (`RelatedTest::is_unmatched`), and the no-static-path reach limit
         // and fix-site selection read `oracle_related_tests` through it.
-        for test in related_tests.iter_mut().filter(|test| {
-            test.relation_reason
-                .is_none_or(|reason| !reason.establishes_reach(owner_is_function))
-                && !test.is_unmatched()
-        }) {
+        for test in related_tests
+            .iter_mut()
+            .filter(|test| !reaches(test) && !test.is_unmatched())
+        {
             test.miss = Some(RelatedTestMiss::NoCallPath);
         }
     }
@@ -292,7 +323,23 @@ fn annotate_related_test_misses(
                     None
                 }
             }
-            _ => None,
+            _ => {
+                // #7642: on `exposed` and the unknown classes a matched row
+                // whose relation reason does not establish reach
+                // (`establishes_reach`, the rule `reach_evidence` reads,
+                // #7531) never invokes the owner, so its oracle cannot
+                // discriminate this change no matter how strong the
+                // assertion. Annotate the established fact; the verdict is
+                // untouched because `miss` is evidence-only. A row without
+                // a matched oracle or without a recorded relation reason
+                // keeps the unknown: the pass must not claim what the
+                // relation layer did not establish.
+                if test.oracle.is_some() && test.relation_reason.is_some() && !reaches(test) {
+                    Some(RelatedTestMiss::NoCallPath)
+                } else {
+                    None
+                }
+            }
         };
     }
 }
@@ -586,6 +633,110 @@ mod tests {
     }
 
     #[test]
+    fn exposed_marks_proximity_only_oracle_rows_as_no_call_path() {
+        // #7642: on an exposed finding a matched oracle row linked by
+        // proximity only never invokes the owner, so it must not render as
+        // an unqualified oracle row next to the reaching test.
+        let row = |name: &str, reason: Option<RelationReason>| RelatedTest {
+            relation_reason: reason,
+            ..matched_row(name, OracleStrength::Strong)
+        };
+        let mut rows = vec![
+            row("reaches_owner", Some(RelationReason::DirectOwnerCall)),
+            row(
+                "sibling_asserts_elsewhere",
+                Some(RelationReason::SameTestFile),
+            ),
+            row("named_after_owner", Some(RelationReason::OwnerNamedTest)),
+            row(
+                "assertion_target",
+                Some(RelationReason::AssertionTargetAffinity),
+            ),
+            row("no_relation_recorded", None),
+        ];
+        annotate_related_test_misses(
+            &mut rows,
+            &crate::domain::ExposureClass::Exposed,
+            true,
+            &ProbeFamily::MatchArm,
+            &ActivationEvidence::default(),
+            Unconfirmed::Confirmed,
+            &Default::default(),
+        );
+        assert_eq!(
+            rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
+            vec![
+                None,
+                Some(crate::domain::RelatedTestMiss::NoCallPath),
+                Some(crate::domain::RelatedTestMiss::NoCallPath),
+                Some(crate::domain::RelatedTestMiss::NoCallPath),
+                None,
+            ]
+        );
+        // For an owner without a function, assertion-target affinity is how
+        // the owner is observed, so that row keeps no miss; file proximity
+        // still does not call the owner.
+        let mut module_rows = vec![
+            row(
+                "sibling_asserts_elsewhere",
+                Some(RelationReason::SameTestFile),
+            ),
+            row(
+                "assertion_target",
+                Some(RelationReason::AssertionTargetAffinity),
+            ),
+        ];
+        annotate_related_test_misses(
+            &mut module_rows,
+            &crate::domain::ExposureClass::Exposed,
+            false,
+            &ProbeFamily::MatchArm,
+            &ActivationEvidence::default(),
+            Unconfirmed::Confirmed,
+            &Default::default(),
+        );
+        assert_eq!(
+            module_rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
+            vec![Some(crate::domain::RelatedTestMiss::NoCallPath), None,]
+        );
+    }
+
+    #[test]
+    fn exposed_keeps_unmatched_and_oracle_free_rows_unannotated() {
+        // Rows reveal already annotated, and rows with no matched oracle,
+        // keep their existing state: the pass annotates matched oracle rows
+        // only.
+        let mut rows = vec![
+            RelatedTest {
+                miss: Some(crate::domain::RelatedTestMiss::AssertionNotObserving),
+                relation_reason: Some(RelationReason::SameTestFile),
+                ..matched_row("examined_only", OracleStrength::None)
+            },
+            RelatedTest {
+                oracle: None,
+                relation_reason: Some(RelationReason::SameTestFile),
+                ..matched_row("no_oracle_row", OracleStrength::None)
+            },
+        ];
+        annotate_related_test_misses(
+            &mut rows,
+            &crate::domain::ExposureClass::StaticUnknown,
+            true,
+            &ProbeFamily::MatchArm,
+            &ActivationEvidence::default(),
+            Unconfirmed::Confirmed,
+            &Default::default(),
+        );
+        assert_eq!(
+            rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
+            vec![
+                Some(crate::domain::RelatedTestMiss::AssertionNotObserving),
+                None,
+            ]
+        );
+    }
+
+    #[test]
     fn mixed_confirmation_marks_only_the_strongest_rows_unconfirmed() {
         // A strong unconfirmed oracle beside a medium mock that confirms:
         // only the strong row is established as unconfirmed.
@@ -600,6 +751,7 @@ mod tests {
             &ProbeFamily::CallDeletion,
             &ActivationEvidence::default(),
             Unconfirmed::StrongestRank,
+            &Default::default(),
         );
         assert_eq!(
             rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
@@ -662,6 +814,7 @@ mod tests {
             &ProbeFamily::ReturnValue,
             &ActivationEvidence::default(),
             Unconfirmed::Confirmed,
+            &Default::default(),
         );
         assert_eq!(
             rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
@@ -686,6 +839,7 @@ mod tests {
             &ProbeFamily::ReturnValue,
             &ActivationEvidence::default(),
             Unconfirmed::Confirmed,
+            &Default::default(),
         );
         assert_eq!(
             module_owner_rows.last().and_then(|row| row.miss),
@@ -704,6 +858,7 @@ mod tests {
             &ProbeFamily::ReturnValue,
             &ActivationEvidence::default(),
             Unconfirmed::Confirmed,
+            &Default::default(),
         );
         assert_eq!(
             gap[0].miss,
@@ -725,6 +880,7 @@ mod tests {
             &ProbeFamily::CallDeletion,
             &ActivationEvidence::default(),
             Unconfirmed::AllRows,
+            &Default::default(),
         );
         assert!(rows.iter().all(|row| {
             row.miss == Some(crate::domain::RelatedTestMiss::ObservationUnconfirmed)
@@ -802,6 +958,7 @@ mod tests {
             reach_ruled_out: true,
             assertion_refusal: None,
             refusals_are_analyzer_limits: false,
+            implicit_dispatch_tests: Default::default(),
         }
     }
 

@@ -1,0 +1,21 @@
+{
+  "subject_id": "authored-log-template",
+  "origin": "authored",
+  "version_label": "authored 2026-10-14 for the log-capture limit's template binding (RIPR-SPEC-0096, 0231; #7133); log pinned to 0.4.34",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "2b7d1a663dc1967b253c00a53ca41e68b10541330c920b357af17d4a87c68aed"
+    },
+    {
+      "path": "Cargo.lock",
+      "sha256": "66c4b3e5b8ff52378bdbda372214b672a3fee21ab09f75ade5260639b86718f8"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "6e51fcc97d18412e40b2077216e94c680868b666871f11438f6d3f972b3fdb5b"
+    }
+  ]
+}

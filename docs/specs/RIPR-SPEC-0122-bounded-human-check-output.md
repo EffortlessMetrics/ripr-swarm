@@ -23,6 +23,9 @@ Linked issues:
 - [#2273](https://github.com/EffortlessMetrics/ripr-swarm/issues/2273) -
   digest discriminator label and `preview_limited` safe-next-action wording
   must reflect discriminator state and repair-packet completeness.
+- [#8165](https://github.com/EffortlessMetrics/ripr-swarm/issues/8165) -
+  the bounded default verdict uses plain language only; schema tokens stay
+  in `human-full`, JSON, and `explain`.
 
 Linked PRs:
 
@@ -71,7 +74,7 @@ view:
 Header
 Summary counts
 Start here:
-  State: <plain words> (top_gap | no_actionable_gap | preview_limited | static_limited | missing_scope)
+  State: <plain words>
   One selected finding or safe next action
 Hidden:                                    (only when N > 0)
   N lower-priority finding(s) omitted from default human output [(language identity)].
@@ -84,12 +87,25 @@ The Summary denominator counts unsuppressed findings against the total
 word is never "shown", because the bounded digest renders exactly one finding
 and the `Hidden:` block below names the rest.
 
-Human lines lead with plain words and keep the stable id in parentheses, so a
-reader does not need the internal vocabulary and a script can still match the
-id: `State: a test gap to inspect or repair (top_gap)`, `Analysis outcome:
-findings below (analysis complete; complete_with_findings).` and `Static exposure: weak
-(weakly_exposed, warning, confidence 0.92)`. The ids and their meanings are
-unchanged.
+Human lines use plain words only (#8165): the default surface carries no
+snake_case schema token and no parenthesized stable id, so a reader never
+needs the internal vocabulary: `State: a test gap to inspect or repair`,
+`Analysis outcome: findings below (analysis complete)`, the digest line
+`Static exposure: weak (severity: warning, confidence 0.92)`, the `Hidden:`
+bullets' plain class words, and a summary that names classes in plain words
+(`Summary: 4 probes (0 exposed, 2 weak, 1 unrevealed, 1 no path); 4 of 4
+findings unsuppressed`; with zero probes, `Summary: 0 probes analyzed; 0
+findings unsuppressed`). The three unknown classes share the one plain word
+`unknown` and sum into a single bucket named only when non-zero. Limitation
+lines on this surface likewise drop their parenthesized kind/stage and
+recovery tokens. The promise covers renderer-controlled labels on the
+bounded surface; producer prose (for example a next-step sentence), file
+paths, and required CLI or probe identifiers are data, not renderer labels,
+and are unchanged. The schema ids and their meanings are unchanged and stay
+available on the retention surfaces: `--format human-full` keeps the header,
+digest, limitation, and outcome schema forms it already rendered (the
+bounded-only triage sentence was never part of that surface), JSON is
+unchanged, and `ripr explain` keeps the exact schema tokens.
 
 The trailing block is state-dependent, because a `Hidden:` heading over a
 literal `0 lower-priority finding(s) omitted` line claims a suppressed
@@ -120,6 +136,13 @@ remainder that does not exist:
 
 The two format-pointer lines are identical in both states, so a consumer
 scraping them does not need to know which heading was used.
+
+Hidden finding locations use the same shared location renderer as selected
+and full findings: paths under the analysis root carry `./` and a
+workspace-relative path. Outside-root paths, parent-traversal remainders and
+unrooted relative paths retain the shared renderer's fallback spelling and
+encoding. This presentation rule also applies when no finding is selected;
+it does not re-coordinate base-side findings or change their currentness.
 
 When the hidden identity list exceeds its 20-finding window, its remainder
 line names `--format json with RIPR_CHECK_FINDINGS_BYTES=0` for every identity.

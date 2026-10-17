@@ -5,7 +5,13 @@ use ra_ap_syntax::{
     AstNode, SourceFile, TextSize,
     ast::{self, HasAttrs, HasGenericArgs, HasGenericParams, HasName},
 };
+#[cfg(test)]
+mod module_scope_walk_tests;
+mod probe_shapes;
 mod property_macros;
+use probe_shapes::extract_parser_probe_shapes;
+#[cfg(test)]
+mod probe_shape_walk_tests;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -116,6 +122,20 @@ pub(crate) fn rust_include_directives(
 /// become assertion evidence. `None` means the function text was not
 /// parser-valid; callers may use their existing lexical fallback then.
 pub(crate) fn parser_oracles_for_function(
+    function_text: &str,
+    function_start_line: usize,
+) -> Option<Vec<OracleFact>> {
+    // Pure in the text and start line; overlapping indexes of one diff run
+    // re-extract the same helpers (#5363).
+    super::run_memo::memoize(
+        super::run_memo::Product::FunctionOracles,
+        function_start_line,
+        function_text,
+        || parser_oracles_for_function_uncached(function_text, function_start_line),
+    )
+}
+
+fn parser_oracles_for_function_uncached(
     function_text: &str,
     function_start_line: usize,
 ) -> Option<Vec<OracleFact>> {
@@ -299,11 +319,19 @@ pub(crate) fn module_item_scopes_in(
             line_index.line(fn_token.text_range().start()),
             name.text().to_string(),
         );
-        if function
-            .syntax()
-            .descendants()
-            .filter_map(ast::Attr::cast)
-            .any(|attribute| {
+        let body = function.body();
+        let body_range = body.as_ref().map(|body| body.syntax().text_range());
+        let mut has_cfg = false;
+        let mut bound = Vec::new();
+        let mut local_use = false;
+        let mut deferred = body.is_some() && function.async_token().is_some();
+        let mut called = Vec::new();
+        // Keep descendant (not just immediate-child) semantics: nested
+        // attributes and bindings still belong to the enclosing summary.
+        // Body-only facts exclude signature nodes. Direct calls retain the
+        // existing nested-fn/closure/async boundary check below.
+        for node in function.syntax().descendants() {
+            if !has_cfg && let Some(attribute) = ast::Attr::cast(node.clone()) {
                 let compact: String = attribute
                     .syntax()
                     .text()
@@ -311,58 +339,49 @@ pub(crate) fn module_item_scopes_in(
                     .chars()
                     .filter(|character| !character.is_whitespace())
                     .collect();
-                compact.starts_with("#[cfg") || compact.starts_with("#![cfg")
-            })
-        {
+                has_cfg = compact.starts_with("#[cfg") || compact.starts_with("#![cfg");
+            }
+            if &node != function.syntax()
+                && let Some(name) =
+                    ast::AnyHasName::cast(node.clone()).and_then(|named| named.name())
+            {
+                bound.push(name.text().to_string());
+            }
+            if body_range.is_none_or(|range| !range.contains_range(node.text_range())) {
+                continue;
+            }
+            local_use |= ast::Use::can_cast(node.kind());
+            if !deferred {
+                deferred = ast::ClosureExpr::can_cast(node.kind())
+                    || ast::BlockExpr::cast(node.clone())
+                        .is_some_and(|block| block.async_token().is_some());
+            }
+            if let (Some(body), Some(call)) = (&body, ast::CallExpr::cast(node))
+                && !enclosed_by_nested_fn_like(call.syntax(), body)
+                && let Some(ast::Expr::PathExpr(path)) = call.expr()
+                && let Some(path) = path.path()
+                && path.qualifier().is_none()
+                && let Some(name) = path.segment().and_then(|segment| segment.name_ref())
+            {
+                called.push(name.text().to_string());
+            }
+        }
+        if has_cfg {
             scopes.fns_with_cfg.insert(key.clone());
         }
-        let bound = function
-            .syntax()
-            .descendants()
-            .filter(|node| node != function.syntax())
-            .filter_map(|node| {
-                ast::AnyHasName::cast(node)
-                    .and_then(|named| named.name())
-                    .map(|name| name.text().to_string())
-            })
-            .collect();
-        scopes.bound_names.insert(key.clone(), bound);
-        if let Some(body) = function.body() {
-            if body
-                .syntax()
-                .descendants()
-                .any(|node| ast::Use::can_cast(node.kind()))
-            {
+        scopes
+            .bound_names
+            .insert(key.clone(), bound.into_iter().collect());
+        if body.is_some() {
+            if local_use {
                 scopes.fns_with_local_use.insert(key.clone());
             }
-            if function.async_token().is_some()
-                || body.syntax().descendants().any(|node| {
-                    ast::ClosureExpr::can_cast(node.kind())
-                        || ast::BlockExpr::cast(node)
-                            .is_some_and(|block| block.async_token().is_some())
-                })
-            {
+            if deferred {
                 scopes.fns_with_deferred_code.insert(key.clone());
             }
-            let called = body
-                .syntax()
-                .descendants()
-                .filter_map(ast::CallExpr::cast)
-                // A call inside a closure, `async` block or nested `fn` may
-                // never run.
-                .filter(|call| !enclosed_by_nested_fn_like(call.syntax(), &body))
-                .filter_map(|call| match call.expr()? {
-                    ast::Expr::PathExpr(path) => {
-                        let path = path.path()?;
-                        if path.qualifier().is_some() {
-                            return None;
-                        }
-                        Some(path.segment()?.name_ref()?.text().to_string())
-                    }
-                    _ => None,
-                })
-                .collect();
-            scopes.direct_calls.insert(key.clone(), called);
+            scopes
+                .direct_calls
+                .insert(key.clone(), called.into_iter().collect());
         }
         let Some(parent) = function.syntax().parent() else {
             continue;
@@ -475,6 +494,38 @@ impl RustSyntaxAdapter for RaRustSyntaxAdapter {
 }
 
 pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, String> {
+    summarize_file_with_collectors(
+        path,
+        text,
+        module_item_scopes_in,
+        extract_parser_probe_shapes,
+    )
+}
+
+#[cfg(test)]
+fn summarize_file_with_item_scopes(
+    path: &Path,
+    text: &str,
+    collect_scopes: impl FnOnce(&ast::SourceFile, &LineIndex) -> ModuleItemScopes,
+) -> Result<FileFacts, String> {
+    summarize_file_with_collectors(path, text, collect_scopes, extract_parser_probe_shapes)
+}
+
+#[cfg(test)]
+fn summarize_file_with_probe_shapes(
+    path: &Path,
+    text: &str,
+    extract_probe_shapes: impl Fn(&ast::Fn, &str, &Arc<str>, &LineIndex) -> Vec<ProbeShapeFact>,
+) -> Result<FileFacts, String> {
+    summarize_file_with_collectors(path, text, module_item_scopes_in, extract_probe_shapes)
+}
+
+fn summarize_file_with_collectors(
+    path: &Path,
+    text: &str,
+    collect_scopes: impl FnOnce(&ast::SourceFile, &LineIndex) -> ModuleItemScopes,
+    extract_probe_shapes: impl Fn(&ast::Fn, &str, &Arc<str>, &LineIndex) -> Vec<ProbeShapeFact>,
+) -> Result<FileFacts, String> {
     if let Some(reason) = rust_nesting_refusal(text) {
         return Err(reason);
     }
@@ -525,9 +576,8 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
         let calls = extract_call_facts(&call_body, start_line);
         let returns = extract_return_facts(&body, start_line);
         let literals = extract_literal_facts(&body, start_line);
-        let probe_shapes =
-            extract_parser_probe_shapes(&function, text, &shared_source, &line_index);
-        // A plain helper inside an inline `#[cfg(test)]` module is test
+        let probe_shapes = extract_probe_shapes(&function, text, &shared_source, &line_index);
+        // A helper gated directly on test or inside a test-required module is test
         // infrastructure even when it has no `#[test]` attribute. Classify
         // that role at the producer boundary so diff probes, seam inventory,
         // evidence relation, and every downstream renderer consume the same
@@ -537,7 +587,12 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
         let has_test_attribute = has_test_attribute(&function);
         let source_role = if has_test_attribute {
             FunctionSourceRole::TestAttribute
-        } else if is_cfg_test_module_member(&function) {
+        } else if cfg_predicates::attributes_require_test(
+            function
+                .attrs()
+                .map(|attr| attr.syntax().text().to_string()),
+        ) || is_cfg_test_module_member(&function)
+        {
             FunctionSourceRole::CfgTestModule
         } else {
             FunctionSourceRole::Production
@@ -623,7 +678,7 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
             && a.text == b.text
     });
 
-    let mut item_scopes = module_item_scopes_in(&source, &line_index);
+    let mut item_scopes = collect_scopes(&source, &line_index);
     let keep: std::collections::BTreeSet<&str> = functions
         .iter()
         .flat_map(|function: &FunctionFact| {
@@ -1291,269 +1346,6 @@ fn enclosed_by_nested_fn_like(node: &ra_ap_syntax::SyntaxNode, body: &ast::Block
         })
 }
 
-fn extract_parser_probe_shapes(
-    function: &ast::Fn,
-    text: &str,
-    source: &Arc<str>,
-    line_index: &LineIndex,
-) -> Vec<ProbeShapeFact> {
-    let mut shapes = Vec::new();
-    push_unsafe_boundary_probe_shapes(&mut shapes, function, source, line_index);
-
-    for if_expr in function
-        .syntax()
-        .descendants()
-        .filter_map(ast::IfExpr::cast)
-    {
-        if let Some(condition) = if_expr.condition() {
-            push_probe_shape(
-                &mut shapes,
-                line_index,
-                text,
-                source,
-                ProbeShapeKind::Predicate,
-                condition.syntax().text_range().start(),
-                condition.syntax().text_range().end(),
-            );
-        }
-    }
-
-    for while_expr in function
-        .syntax()
-        .descendants()
-        .filter_map(ast::WhileExpr::cast)
-    {
-        if let Some(condition) = while_expr.condition() {
-            push_probe_shape(
-                &mut shapes,
-                line_index,
-                text,
-                source,
-                ProbeShapeKind::Predicate,
-                condition.syntax().text_range().start(),
-                condition.syntax().text_range().end(),
-            );
-        }
-    }
-
-    for bin_expr in function
-        .syntax()
-        .descendants()
-        .filter_map(ast::BinExpr::cast)
-    {
-        if bin_expr
-            .op_token()
-            .is_some_and(|token| is_predicate_operator(token.text()))
-        {
-            push_probe_shape(
-                &mut shapes,
-                line_index,
-                text,
-                source,
-                ProbeShapeKind::Predicate,
-                bin_expr.syntax().text_range().start(),
-                bin_expr.syntax().text_range().end(),
-            );
-        }
-    }
-
-    let body = function.body();
-    for return_expr in function
-        .syntax()
-        .descendants()
-        .filter_map(ast::ReturnExpr::cast)
-    {
-        let range = return_expr.syntax().text_range();
-        push_probe_shape(
-            &mut shapes,
-            line_index,
-            text,
-            source,
-            ProbeShapeKind::ReturnValue,
-            range.start(),
-            range.end(),
-        );
-        let return_text = slice_text(text, range.start(), range.end());
-        // #6904: a `return` inside a closure, `async` block or nested `fn`
-        // leaves that body, not the owner. Share the `direct_calls` filter.
-        if has_error_path_text(&return_text)
-            && !body
-                .as_ref()
-                .is_some_and(|body| enclosed_by_nested_fn_like(return_expr.syntax(), body))
-        {
-            push_probe_shape(
-                &mut shapes,
-                line_index,
-                text,
-                source,
-                ProbeShapeKind::ErrorPath,
-                range.start(),
-                range.end(),
-            );
-        }
-    }
-
-    if let Some(tail_expr) = body.as_ref().and_then(|body| body.tail_expr()) {
-        let range = tail_expr.syntax().text_range();
-        let tail_text = slice_text(text, range.start(), range.end());
-        if is_tail_return_value_text(&tail_text) {
-            push_probe_shape(
-                &mut shapes,
-                line_index,
-                text,
-                source,
-                ProbeShapeKind::ReturnValue,
-                range.start(),
-                range.end(),
-            );
-            if has_error_path_text(&tail_text) {
-                push_probe_shape(
-                    &mut shapes,
-                    line_index,
-                    text,
-                    source,
-                    ProbeShapeKind::ErrorPath,
-                    range.start(),
-                    range.end(),
-                );
-            }
-        }
-    }
-
-    for call_expr in function
-        .syntax()
-        .descendants()
-        .filter_map(ast::CallExpr::cast)
-    {
-        let range = call_expr.syntax().text_range();
-        let call_text = slice_text(text, range.start(), range.end());
-        push_call_deletion_probe_shape(&mut shapes, line_index, text, source, call_expr.syntax());
-        if has_return_value_text(&call_text) && !call_is_argument(&call_expr) {
-            push_probe_shape(
-                &mut shapes,
-                line_index,
-                text,
-                source,
-                ProbeShapeKind::ReturnValue,
-                range.start(),
-                range.end(),
-            );
-        }
-        if has_error_path_text(&call_text) {
-            push_probe_shape(
-                &mut shapes,
-                line_index,
-                text,
-                source,
-                ProbeShapeKind::ErrorPath,
-                range.start(),
-                range.end(),
-            );
-        }
-    }
-
-    for method_call in function
-        .syntax()
-        .descendants()
-        .filter_map(ast::MethodCallExpr::cast)
-    {
-        let range = method_call.syntax().text_range();
-        let method_text = slice_text(text, range.start(), range.end());
-        push_call_deletion_probe_shape(&mut shapes, line_index, text, source, method_call.syntax());
-        if method_call
-            .name_ref()
-            .is_some_and(|name| is_effect_call_name(&name.syntax().text().to_string()))
-            || has_effect_text(&method_text)
-        {
-            push_probe_shape(
-                &mut shapes,
-                line_index,
-                text,
-                source,
-                ProbeShapeKind::SideEffect,
-                range.start(),
-                range.end(),
-            );
-        }
-    }
-
-    for field in function
-        .syntax()
-        .descendants()
-        .filter_map(ast::RecordExprField::cast)
-    {
-        let range = field.syntax().text_range();
-        push_probe_shape(
-            &mut shapes,
-            line_index,
-            text,
-            source,
-            ProbeShapeKind::FieldConstruction,
-            range.start(),
-            range.end(),
-        );
-    }
-
-    for match_expr in function
-        .syntax()
-        .descendants()
-        .filter_map(ast::MatchExpr::cast)
-    {
-        if let Some(token) = match_expr.match_token() {
-            let snippet = match_expr_probe_text(
-                text,
-                match_expr.expr().map(|expr| expr.syntax().text_range()),
-                match_expr.syntax().text_range(),
-            );
-            push_probe_shape_with_text(
-                &mut shapes,
-                line_index,
-                ProbeShapeKind::MatchArm,
-                token.text_range().start(),
-                token.text_range().end(),
-                link_shape_text(source, token.text_range().start(), snippet),
-            );
-        }
-    }
-
-    for arm in function
-        .syntax()
-        .descendants()
-        .filter_map(ast::MatchArm::cast)
-    {
-        if let Some(token) = arm.fat_arrow_token() {
-            let snippet = match_arm_probe_text(
-                text,
-                arm.syntax().text_range().start(),
-                token.text_range().start(),
-            );
-            push_probe_shape_with_text(
-                &mut shapes,
-                line_index,
-                ProbeShapeKind::MatchArm,
-                token.text_range().start(),
-                token.text_range().end(),
-                link_shape_text(source, token.text_range().start(), snippet),
-            );
-        }
-    }
-
-    shapes.sort_by(|a, b| {
-        a.start_line
-            .cmp(&b.start_line)
-            .then(a.end_line.cmp(&b.end_line))
-            .then(a.kind.as_str().cmp(b.kind.as_str()))
-            .then(a.text.cmp(&b.text))
-    });
-    shapes.dedup_by(|a, b| {
-        a.start_line == b.start_line
-            && a.end_line == b.end_line
-            && a.kind == b.kind
-            && a.text == b.text
-    });
-    shapes
-}
-
 fn push_unsafe_boundary_probe_shapes(
     shapes: &mut Vec<ProbeShapeFact>,
     function: &ast::Fn,
@@ -1576,6 +1368,7 @@ fn push_unsafe_boundary_probe_shapes(
                 unsafe_token.text_range().start(),
                 format!("unsafe fn {name}"),
             ),
+            None,
         );
     }
 
@@ -1598,7 +1391,103 @@ fn push_unsafe_boundary_probe_shapes(
                 unsafe_token.text_range().start(),
                 "unsafe block".to_string(),
             ),
+            None,
         );
+    }
+}
+
+/// RIPR-SPEC-0228: the field path after `self` written by an assignment or
+/// compound assignment (`count` for `self.count += 1`, `child.count` for
+/// `self.child.count = 0`). Any other place (a local, `*p`, an index, a
+/// field of a call result or of another binding) gives `None`, and so does
+/// an assignment that spans lines (a changed continuation line would carry
+/// only part of it) or whose right-hand side contains, at any depth, a call,
+/// method call, macro, closure, `?` or `.await`, or a choice between values
+/// (`if`, `match`, a comparison or `&&`/`||`): those keep their
+/// `call_deletion`, predicate and other probes (RIPR-SPEC-0228 Non-Goals).
+pub(crate) fn field_assignment_path(bin_expr: &ast::BinExpr) -> Option<String> {
+    let op = bin_expr.op_token()?;
+    if !matches!(
+        op.text(),
+        "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>="
+    ) {
+        return None;
+    }
+    let rhs = bin_expr.rhs()?;
+    let keeps_other_probe = rhs.syntax().descendants().any(|node| {
+        matches!(
+            ast::Expr::cast(node.clone()),
+            Some(
+                ast::Expr::CallExpr(_)
+                    | ast::Expr::MethodCallExpr(_)
+                    | ast::Expr::MacroExpr(_)
+                    | ast::Expr::TryExpr(_)
+                    | ast::Expr::AwaitExpr(_)
+                    | ast::Expr::IfExpr(_)
+                    | ast::Expr::MatchExpr(_)
+                    | ast::Expr::ClosureExpr(_)
+                    // A block or loop can leave the owner before the write
+                    // (`self.n = { let Some(n) = x else { return }; n };`).
+                    | ast::Expr::BlockExpr(_)
+                    | ast::Expr::ReturnExpr(_)
+                    | ast::Expr::BreakExpr(_)
+                    | ast::Expr::ContinueExpr(_)
+                    | ast::Expr::LetExpr(_)
+                    | ast::Expr::LoopExpr(_)
+                    | ast::Expr::WhileExpr(_)
+                    | ast::Expr::ForExpr(_)
+            )
+        ) || ast::BinExpr::cast(node).is_some_and(|inner| {
+            inner
+                .op_kind()
+                .is_some_and(|op| matches!(op, ast::BinaryOp::CmpOp(_) | ast::BinaryOp::LogicOp(_)))
+        })
+    });
+    // A comment inside the assignment hides it from the textual
+    // `field_assignment_target` reader, which the evidence guard and the
+    // seam skip rely on, so such writes keep no probe.
+    let has_comment = bin_expr
+        .syntax()
+        .descendants_with_tokens()
+        .any(|element| element.kind() == ra_ap_syntax::SyntaxKind::COMMENT);
+    if bin_expr.syntax().text().contains_char('\n') || keeps_other_probe || has_comment {
+        return None;
+    }
+    let mut place = bin_expr.lhs()?;
+    let mut segments = Vec::new();
+    loop {
+        match place {
+            ast::Expr::FieldExpr(field) => {
+                // Only plain ASCII names (no `self.0`, `self.r#type` or
+                // non-ASCII names), matching `field_assignment_target`.
+                let name = field.name_ref()?.text().to_string();
+                let plain = name
+                    .chars()
+                    .next()
+                    .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+                    && name
+                        .chars()
+                        .all(|ch| ch == '_' || ch.is_ascii_alphanumeric());
+                if !plain {
+                    return None;
+                }
+                segments.push(name);
+                place = field.expr()?;
+            }
+            ast::Expr::PathExpr(path) => {
+                let path = path.path()?;
+                let is_self = path.qualifier().is_none()
+                    && path
+                        .segment()
+                        .is_some_and(|segment| segment.self_token().is_some());
+                if !is_self || segments.is_empty() {
+                    return None;
+                }
+                segments.reverse();
+                return Some(segments.join("."));
+            }
+            _ => return None,
+        }
     }
 }
 
@@ -1623,7 +1512,7 @@ fn push_probe_shape(
     let leading = raw.len() - raw.trim_start().len();
     let link_start = (u32::from(start) as usize).saturating_add(leading);
     let text = SourceText::shared_or_owned(source, link_start, &snippet);
-    push_probe_shape_with_text(shapes, line_index, kind, start, end, text);
+    push_probe_shape_with_text(shapes, line_index, kind, start, end, text, None);
 }
 
 fn push_probe_shape_with_text(
@@ -1633,6 +1522,7 @@ fn push_probe_shape_with_text(
     start: TextSize,
     end: TextSize,
     text: SourceText,
+    source_lines: Option<(usize, usize)>,
 ) {
     if text.is_empty() {
         return;
@@ -1645,6 +1535,7 @@ fn push_probe_shape_with_text(
         kind,
         text,
         value_consumed: false,
+        source_lines,
     });
 }
 
@@ -2364,13 +2255,14 @@ fn extract_parser_oracles(
             continue;
         };
         // RIPR-SPEC-0227: `unwrap()` / `expect()` panic on the `Err` side
-        // and read smoke; an `unwrap_err()` whose value is never compared
+        // and read smoke; an `unwrap_err()` or `expect_err(..)` whose value
+        // is never compared
         // panics on the `Ok` side, so it observes the `Err` side
         // (decision 2). Its statement shape is decided by the same
         // `uncompared_unwrap_err` the line scanner uses.
         let (kind, strength) = match name.as_str() {
             "unwrap" | "expect" => (OracleKind::SmokeOnly, OracleStrength::Smoke),
-            "unwrap_err" if uncompared_unwrap_err_statement(&method_call, text) => {
+            "unwrap_err" | "expect_err" if uncompared_unwrap_err_statement(&method_call, text) => {
                 (OracleKind::BroadError, OracleStrength::Weak)
             }
             _ => continue,
@@ -2386,6 +2278,30 @@ fn extract_parser_oracles(
             strength,
             observed_tokens: extract_identifier_tokens(&text),
             text,
+            ok_value_observed: None,
+        });
+    }
+
+    for call in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::CallExpr::cast)
+        .filter(is_result_expect_err_ufcs)
+    {
+        if !uncompared_unwrap_err_statement(&call, text) {
+            continue;
+        }
+        let range = call.syntax().text_range();
+        let call_text = slice_text(text, range.start(), range.end())
+            .trim()
+            .trim_end_matches(';')
+            .to_string();
+        assertions.push(OracleFact {
+            line: line_index.line(range.start()),
+            kind: OracleKind::BroadError,
+            strength: OracleStrength::Weak,
+            observed_tokens: extract_identifier_tokens(&call_text),
+            text: call_text,
             ok_value_observed: None,
         });
     }
@@ -2507,12 +2423,13 @@ fn extract_parser_oracles(
     assertions
 }
 
-/// Whether this `unwrap_err()` call is the whole value of a statement that
-/// never compares it (RIPR-SPEC-0227 decision 2): the statement text and the
-/// rest of the enclosing block go through `uncompared_unwrap_err`, so both
-/// adapters admit the same shapes.
-fn uncompared_unwrap_err_statement(method_call: &ast::MethodCallExpr, text: &str) -> bool {
-    let Some(statement) = method_call.syntax().parent() else {
+/// Whether this `unwrap_err()` / `expect_err(..)` call is the whole value of
+/// a statement that never compares it (RIPR-SPEC-0227 decision 2): the
+/// statement text and the rest of the enclosing block go through
+/// `uncompared_unwrap_err`, so both adapters admit the same shapes. Method
+/// calls and UFCS `Result::expect_err(<call>, <msg>)` share this gate.
+fn uncompared_unwrap_err_statement(expr: &impl AstNode, text: &str) -> bool {
+    let Some(statement) = expr.syntax().parent() else {
         return false;
     };
     if ast::LetStmt::cast(statement.clone()).is_none()
@@ -2527,9 +2444,27 @@ fn uncompared_unwrap_err_statement(method_call: &ast::MethodCallExpr, text: &str
         .map_or(range.end(), |block| block.text_range().end());
     let rest = slice_text(text, range.end(), block_end);
     crate::analysis::extract::uncompared_unwrap_err(&statement_text, &rest).is_some_and(|value| {
-        let call = method_call.syntax().text().to_string();
+        let call = expr.syntax().text().to_string();
         value.split_whitespace().eq(call.split_whitespace())
     })
+}
+
+fn is_result_expect_err_ufcs(call: &ast::CallExpr) -> bool {
+    let Some(ast::Expr::PathExpr(path_expr)) = call.expr() else {
+        return false;
+    };
+    let Some(path) = path_expr.path() else {
+        return false;
+    };
+    let Some(name) = path.segment().and_then(|segment| segment.name_ref()) else {
+        return false;
+    };
+    name.text() == "expect_err"
+        && path
+            .qualifier()
+            .and_then(|qualifier| qualifier.segment())
+            .and_then(|segment| segment.name_ref())
+            .is_some_and(|qualifier| qualifier.text() == "Result")
 }
 
 /// Token-local leaf form of [`is_assertion_macro`] for scanners that see
@@ -2602,6 +2537,52 @@ pub(crate) fn assertion_root_binding_is_unrebound(
                 .filter_map(ast::UseTree::cast)
                 .any(|tree| tree.star_token().is_some())
         })
+}
+
+/// Whether a `std::`- or `core::`-qualified macro path (`std::assert_eq`,
+/// `::core::assert`) names the standard macro as far as its file shows
+/// (#7857). The root must pass the drop-in rebinding checks and be
+/// available, and every glob import in the file must read an in-file
+/// module (`self::*`, or `super::*` inside an inline module), so no glob
+/// brings a `std` or `core` item from another file. Other drop-in crates
+/// (`pretty_assertions::`) also need a manifest check, which this file-local
+/// proof cannot make, so they stay unproved here.
+pub(crate) fn std_macro_root_is_unrebound(path: &str, node: &ra_ap_syntax::SyntaxNode) -> bool {
+    let unrooted = path.strip_prefix("::").unwrap_or(path);
+    matches!(unrooted.split_once("::"), Some(("std" | "core", leaf)) if !leaf.contains("::"))
+        && !drop_in_root_may_be_rebound(path, node, DropInScope::WholeFile)
+        && assertion_root_is_available(path, node)
+        && node.ancestors().last().is_some_and(|file| {
+            file.descendants()
+                .filter_map(ast::UseTree::cast)
+                .filter(|tree| tree.star_token().is_some())
+                .all(|tree| glob_reads_in_file_module(&tree))
+        })
+}
+
+/// `use self::*;`, or `use super::*;` inside an inline module: a glob whose
+/// source module is in the same file. Any other glob shape, including one
+/// nested in a use list, is not established.
+fn glob_reads_in_file_module(tree: &ast::UseTree) -> bool {
+    let Some(path) = tree.path() else {
+        return false;
+    };
+    if !tree
+        .syntax()
+        .parent()
+        .is_some_and(|parent| ast::Use::can_cast(parent.kind()))
+    {
+        return false;
+    }
+    match path.syntax().text().to_string().as_str() {
+        "self" => true,
+        "super" => tree
+            .syntax()
+            .ancestors()
+            .filter_map(ast::Module::cast)
+            .any(|module| module.item_list().is_some()),
+        _ => false,
+    }
 }
 
 /// Qualified operand capture requires every statement macro in the same
@@ -3087,6 +3068,38 @@ mod tests {
                 .is_some_and(|function| function.source_role == FunctionSourceRole::Production),
             "production control must remain production role"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn ra_adapter_marks_direct_cfg_helpers_without_registering_tests() -> Result<(), Box<dyn Error>>
+    {
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/data/source-role-corpus/cases/direct_cfg_helpers/src/lib.rs"
+        ));
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
+        assert_eq!(facts.tests.len(), 1);
+        for name in [
+            "production_lease",
+            "alternative_control",
+            "nontest_control",
+            "lookalike_control",
+        ] {
+            assert!(
+                facts.functions.iter().any(|function| function.name == name
+                    && function.source_role == FunctionSourceRole::Production),
+                "production control: {name}"
+            );
+        }
+        for name in ["standalone_helper", "conjunct_helper", "inline_helper"] {
+            assert!(
+                facts.functions.iter().any(|function| function.name == name
+                    && function.source_role == FunctionSourceRole::CfgTestModule),
+                "evidence-only helper: {name}"
+            );
+            assert!(facts.tests.iter().all(|test| test.name != name));
+        }
         Ok(())
     }
 
@@ -4509,5 +4522,60 @@ mod shadow_fact_equivalence_tests {
             "the nested fn's own walk must still emit its return: {return_errors:?}"
         );
         Ok(())
+    }
+
+    /// RIPR-SPEC-0228: which assignments are probed as field writes.
+    #[test]
+    fn field_assignment_path_reads_single_line_plain_self_field_writes() {
+        let path = |statement: &str| {
+            let source = format!("impl P {{ fn f(&mut self) {{ {statement} }} }}");
+            let parse = SourceFile::parse(&source, Edition::CURRENT);
+            parse
+                .tree()
+                .syntax()
+                .descendants()
+                .find_map(ast::BinExpr::cast)
+                .and_then(|bin_expr| field_assignment_path(&bin_expr))
+        };
+        for (statement, expected) in [
+            ("self.count += 2 - 1;", "count"),
+            ("self.child.count = 0;", "child.count"),
+            ("self.state = State::Done;", "state"),
+            ("self.total <<= 1;", "total"),
+            // A trailing comment is trivia outside the assignment node.
+            ("self.total += 1 /* c */;", "total"),
+        ] {
+            assert_eq!(path(statement).as_deref(), Some(expected), "{statement}");
+        }
+        for statement in [
+            "self.0 = 1;",
+            "self.r#type = 1;",
+            "self.z\u{e4}hler = 1;",
+            "self.count =\n    self.count + 1;",
+            "self.label = compute(2);",
+            "self.count = self.count + compute(2);",
+            "self.count = (self.size() as u32) * 2;",
+            "self.ok = !self.a.is_empty();",
+            "self.label = self.name.clone();",
+            "self.label = format!(\"x\");",
+            "self.count = parse()?;",
+            "count += 1;",
+            "other.count = 1;",
+            "self.items[0] = 1;",
+            "self.count == 1;",
+            "self.locked = self.count >= 4;",
+            "self.ok = self.a && self.b;",
+            "self.count = if self.locked { 2 } else { 5 };",
+            "self.count = match self.locked { true => 1, false => 2 };",
+            // #8061 review: a block can leave the owner before the write,
+            // and a comment hides the write from the textual reader.
+            "self.count = { let Some(n) = self.next else { return }; n };",
+            "self.count = { 1 };",
+            "self.count = loop { break 2 };",
+            "self.count /* c */ += 1;",
+            "self.count += /* c */ 1;",
+        ] {
+            assert_eq!(path(statement), None, "{statement}");
+        }
     }
 }

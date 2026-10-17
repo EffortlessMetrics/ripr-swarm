@@ -15,6 +15,7 @@ use std::path::{Component, Path, PathBuf};
 struct DerivedWitness {
     input: [bool; 2],
     result: String,
+    terminal: bool,
 }
 
 /// Refine only a still-missing discriminator for the bounded derived-local
@@ -63,6 +64,9 @@ pub(super) fn discrimination(
     let root = parsed(&facts.source)?;
     let function = named_function(&root, &owner.name)?;
     let witness = derived_witness(&facts.source, &function, context.probe)?;
+    if witness.terminal && !super::derived_admission::terminal_namespace_unambiguous(context) {
+        return None;
+    }
 
     for (test, reason) in &context.related_tests {
         if *reason != RelationReason::DirectOwnerCall {
@@ -99,12 +103,21 @@ pub(super) fn discrimination(
         // strict implementation here so this path keeps the same guarantees
         // even if the admission wiring in `tuple_match::discrimination` ever
         // changes; the former local weaker copy is deleted.
-        if super::derived_admission::top_level_projection_observes(
-            &test_function,
-            &owner.name,
-            witness.result.as_str(),
-        ) == Some(true)
-        {
+        let observes = if witness.terminal {
+            super::derived_admission::terminal_projection_observes(
+                &test_function,
+                &owner.name,
+                witness.result.as_str(),
+                Some(witness.input),
+            )
+        } else {
+            super::derived_admission::top_level_projection_observes(
+                &test_function,
+                &owner.name,
+                witness.result.as_str(),
+            )
+        };
+        if observes == Some(true) {
             return Some(StageEvidence::new(
                 StageState::Yes,
                 Confidence::High,
@@ -119,6 +132,11 @@ pub(super) fn discrimination(
 fn derived_witness(source: &str, function: &ast::Fn, probe: &Probe) -> Option<DerivedWitness> {
     if function.attrs().next().is_some() || function.async_token().is_some() {
         return None;
+    }
+    if let Some(terminal_match) = super::derived_admission::terminal_owner_match(function) {
+        let mut witness = derived_match_witness(source, &terminal_match, probe)?;
+        witness.terminal = true;
+        return Some(witness);
     }
     let body = function.body()?.stmt_list()?;
     if body.statements().next().is_some() {
@@ -272,7 +290,11 @@ fn current_arm(
             if selected.is_some() {
                 return None;
             }
-            selected = Some(DerivedWitness { input, result });
+            selected = Some(DerivedWitness {
+                input,
+                result,
+                terminal: false,
+            });
         }
     }
 
