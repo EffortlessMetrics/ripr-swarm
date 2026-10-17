@@ -650,6 +650,13 @@ fn load_package_roots(root: &Path) -> Result<Vec<PackageRoot>, PrecommitError> {
             format!("cargo metadata returned malformed JSON: {error}"),
         )
     })?;
+    package_roots_from_metadata(metadata, root)
+}
+
+fn package_roots_from_metadata(
+    metadata: CargoMetadata,
+    root: &Path,
+) -> Result<Vec<PackageRoot>, PrecommitError> {
     let mut roots = Vec::new();
     let workspace_members = metadata
         .workspace_members
@@ -719,6 +726,10 @@ fn cargo_metadata_args(root: &Path) -> Vec<String> {
         "metadata".to_string(),
         "--format-version".to_string(),
         "1".to_string(),
+        // The planner consumes only workspace-member packages and their
+        // declared dependencies (#8233); the resolved external graph is
+        // never read, so do not pay to serialize it.
+        "--no-deps".to_string(),
         "--manifest-path".to_string(),
         root.join("Cargo.toml").display().to_string(),
     ]
@@ -1847,5 +1858,132 @@ mod tests {
                 Ok(()) | Err(_) => {}
             }
         }
+    }
+
+    #[test]
+    fn metadata_args_request_workspace_only_packages() {
+        let args = cargo_metadata_args(Path::new("repo"));
+        assert!(args.iter().any(|arg| arg == "--no-deps"), "{args:?}");
+    }
+
+    /// #8233: full and workspace-only metadata must project to identical
+    /// package roots and impact plans on a workspace exercising renamed,
+    /// inherited, dev, build, and target-specific dependencies.
+    #[test]
+    fn workspace_only_metadata_projects_identical_roots_and_plan() -> Result<(), String> {
+        let sequence = NEXT_TEST_REPO_SEQUENCE.fetch_add(1, Ordering::SeqCst);
+        let root = fs::canonicalize(std::env::temp_dir())
+            .unwrap_or_else(|_| std::env::temp_dir())
+            .join(format!(
+                "ripr-precommit-8233-{}-{sequence}",
+                std::process::id()
+            ));
+        let write = |rel: &str, body: &str| -> Result<(), String> {
+            let path = root.join(rel);
+            fs::create_dir_all(path.parent().ok_or("fixture parent")?)
+                .map_err(|error| error.to_string())?;
+            fs::write(path, body).map_err(|error| error.to_string())
+        };
+        let result = (|| -> Result<(), String> {
+            write(
+                "Cargo.toml",
+                "[workspace]\nmembers = [\"base\", \"mid\", \"app\", \"unrelated\"]\nresolver = \"2\"\n[workspace.dependencies]\nbase = { path = \"base\" }\n",
+            )?;
+            write(
+                "base/Cargo.toml",
+                "[package]\nname = \"base\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            )?;
+            write("base/src/lib.rs", "pub fn base() {}\n")?;
+            // mid renames base; app inherits base from the workspace,
+            // depends on mid normally, base as dev/build/target deps.
+            write(
+                "mid/Cargo.toml",
+                "[package]\nname = \"mid\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[dependencies]\nrenamed_base = { package = \"base\", path = \"../base\" }\n",
+            )?;
+            write("mid/src/lib.rs", "pub fn mid() {}\n")?;
+            write(
+                "app/Cargo.toml",
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[dependencies]\nmid = { path = \"../mid\" }\nbase.workspace = true\n[dev-dependencies]\nbase = { path = \"../base\" }\n[build-dependencies]\nbase = { path = \"../base\" }\n[target.'cfg(windows)'.dependencies]\nbase = { path = \"../base\" }\n",
+            )?;
+            write("app/src/lib.rs", "pub fn app() {}\n")?;
+            write("app/build.rs", "fn main() {}\n")?;
+            write(
+                "unrelated/Cargo.toml",
+                "[package]\nname = \"unrelated\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            )?;
+            write("unrelated/src/lib.rs", "pub fn unrelated() {}\n")?;
+
+            let metadata = |extra: &[&str]| -> Result<CargoMetadata, String> {
+                let mut args: Vec<String> = vec![
+                    "metadata".to_string(),
+                    "--format-version".to_string(),
+                    "1".to_string(),
+                ];
+                args.extend(extra.iter().map(ToString::to_string));
+                args.push("--manifest-path".to_string());
+                let manifest = root.join("Cargo.toml").display().to_string();
+                args.push(manifest);
+                let bytes = capture_process_output("cargo", &args, &[])
+                    .map_err(|error| format!("cargo metadata failed: {}", error.message))?;
+                serde_json::from_slice(&bytes).map_err(|error| error.to_string())
+            };
+            let full = package_roots_from_metadata(metadata(&[])?, &root)
+                .map_err(|error| error.message)?;
+            let workspace_only = package_roots_from_metadata(metadata(&["--no-deps"])?, &root)
+                .map_err(|error| error.message)?;
+            let project = |roots: &[PackageRoot]| {
+                roots
+                    .iter()
+                    .map(|root| {
+                        let mut deps = root.dependencies.clone();
+                        deps.sort();
+                        (
+                            root.name.clone(),
+                            root.relative_root.clone(),
+                            deps,
+                            root.proc_macro,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            };
+            require(
+                project(&full) == project(&workspace_only),
+                "workspace-only metadata changed the package roots",
+            )?;
+            require(full.len() == 4, "expected four nonempty workspace roots")?;
+            let app = full
+                .iter()
+                .find(|root| root.name == "app")
+                .ok_or("app root missing")?;
+            require(
+                app.dependencies.iter().any(|dep| dep == "mid")
+                    && app.dependencies.iter().any(|dep| dep == "base"),
+                format!("app edges missing: {:?}", app.dependencies),
+            )?;
+            let change = ChangeSet {
+                complete: true,
+                changes: vec![ChangedPath {
+                    kind: "modified".to_string(),
+                    path: "base/src/lib.rs".to_string(),
+                    old_path: None,
+                    origins: vec!["test".to_string()],
+                }],
+                ..ChangeSet::empty()
+            };
+            let plan = build_impact_plan(&change, &workspace_only);
+            require(
+                plan.impacted_packages.iter().any(|name| name == "base")
+                    && plan.impacted_packages.iter().any(|name| name == "mid")
+                    && plan.impacted_packages.iter().any(|name| name == "app")
+                    && !plan
+                        .impacted_packages
+                        .iter()
+                        .any(|name| name == "unrelated"),
+                format!("reverse closure changed: {:?}", plan.impacted_packages),
+            )?;
+            Ok(())
+        })();
+        let _ = fs::remove_dir_all(&root);
+        result
     }
 }
