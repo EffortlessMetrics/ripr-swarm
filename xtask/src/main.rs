@@ -692,7 +692,7 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
 /// dependency-preparation gap is reported as such, never as a pass.
 fn precommit_goldens_for_output_changes() -> Result<(), String> {
     let mut changed = changed_files_vs_base(Path::new("."))?;
-    changed.extend(uncommitted_changed_files(Path::new("."))?);
+    changed.extend(git_changed_files(Path::new("."), "HEAD")?);
     let Some(trigger) = golden_staleness_trigger(&changed) else {
         println!("goldens check: skipped, no output-surface or golden file changed vs origin/main");
         return Ok(());
@@ -714,23 +714,6 @@ fn precommit_goldens_for_output_changes() -> Result<(), String> {
             Ok(())
         }
     }
-}
-
-/// Staged and unstaged edits, so a direct `precommit` before committing still
-/// sees a renderer or fixture-expectation change.
-fn uncommitted_changed_files(root: &Path) -> Result<Vec<String>, String> {
-    let output = std::process::Command::new("git")
-        .current_dir(root)
-        .args(["diff", "--name-only", "-z", "HEAD"])
-        .output()
-        .map_err(|err| format!("git diff --name-only HEAD failed: {err}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "git diff --name-only HEAD failed: exit status {}",
-            output.status
-        ));
-    }
-    decode_changed_files(&output.stdout)
 }
 
 fn publish_precommit_policy_report(ci_policy: bool) -> Result<(), String> {
@@ -980,13 +963,18 @@ fn categorize_changed_files(files: &[String]) -> ChangedFileCategories {
 }
 
 fn changed_files_vs_base(root: &Path) -> Result<Vec<String>, String> {
+    git_changed_files(root, "origin/main...HEAD")
+}
+
+/// `git diff --name-only <rev>`; a bare `HEAD` covers staged and unstaged edits.
+fn git_changed_files(root: &Path, rev: &str) -> Result<Vec<String>, String> {
     // Raw NUL-delimited inventory (#4006): `-z` output is never C-quoted,
     // so exotic names survive byte-exact; parsing rules come from the
     // shared authority in `decode_changed_files`, not from line splitting
     // here. The spawn site is unchanged (gate-runner policy entry).
     let output = std::process::Command::new("git")
         .current_dir(root)
-        .args(["diff", "--name-only", "-z", "origin/main...HEAD"])
+        .args(["diff", "--name-only", "-z", rev])
         .output()
         .map_err(|err| format!("git diff --name-only failed: {err}"))?;
     if !output.status.success() {
@@ -997,7 +985,7 @@ fn changed_files_vs_base(root: &Path) -> Result<Vec<String>, String> {
             stderr
         };
         return Err(format!(
-            "git diff --name-only origin/main...HEAD failed: {detail};              if origin/main is not available, run `git fetch origin main` first"
+            "git diff --name-only {rev} failed: {detail};              if origin/main is not available, run `git fetch origin main` first"
         ));
     }
     decode_changed_files(&output.stdout)
