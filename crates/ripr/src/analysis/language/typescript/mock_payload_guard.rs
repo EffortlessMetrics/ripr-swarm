@@ -1306,7 +1306,7 @@ mod tests {
             "  const h = { run(x): typeof cfg.try {\n  send(id);\n  } };"
         ));
         assert!(!has_method_like_block(
-            &"  if (a) {\n".repeat(8) + "  send(id);\n" + &"  }\n".repeat(8)
+            &("  if (a) {\n".repeat(8) + "  send(id);\n" + &"  }\n".repeat(8))
         ));
     }
 
