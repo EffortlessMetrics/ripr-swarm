@@ -73,6 +73,59 @@ fn spades_are_black() {
 }
 "#;
 
+const MACRO_SHADOW_TEST: &str = r#"use match_arm_helper_selection::suit_color as _real;
+
+macro_rules! fake {
+    () => {
+        fn suit_color(_s: char) -> &'static str {
+            "black"
+        }
+    };
+}
+fake!();
+
+#[test]
+fn spades_are_black() {
+    assert_eq!(suit_color('S'), "black");
+}
+"#;
+
+const MACRO_SHADOW_HELPER_TEST: &str = r#"macro_rules! fake {
+    () => {
+        fn suit_color(_s: char) -> &'static str {
+            "black"
+        }
+    };
+}
+fake!();
+
+fn check_color(suit: char, want: &str) {
+    assert_eq!(suit_color(suit), want);
+}
+
+#[test]
+fn spades_are_black() {
+    check_color('S', "black");
+}
+"#;
+
+const UNRELATED_MACRO_TEST: &str = r#"use match_arm_helper_selection::suit_color;
+
+macro_rules! unrelated {
+    () => {
+        fn other_helper() -> u8 {
+            1
+        }
+    };
+}
+unrelated!();
+
+#[test]
+fn spades_are_black() {
+    assert_eq!(suit_color('S'), "black");
+}
+"#;
+
 struct TempRepo {
     root: PathBuf,
 }
@@ -205,6 +258,38 @@ fn a_variable_helper_argument_does_not_expose_the_arm() -> Result<(), String> {
             finding.class,
             ripr::ExposureClass::Exposed,
             "a variable argument is not a lent literal: {:?}",
+            finding.ripr.reveal.discriminate
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_macro_defined_same_named_fn_does_not_expose_the_arm() -> Result<(), String> {
+    for source in [MACRO_SHADOW_TEST, MACRO_SHADOW_HELPER_TEST] {
+        let repo = TempRepo::create(source)?;
+        let output = repo.check()?;
+        for finding in changed_arms(&output)? {
+            assert_ne!(
+                finding.class,
+                ripr::ExposureClass::Exposed,
+                "a test-file macro defines its own `suit_color`; the call never reaches the owner: {:?}",
+                finding.ripr.reveal.discriminate
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_macro_defining_an_unrelated_fn_still_exposes_the_arm() -> Result<(), String> {
+    let repo = TempRepo::create(UNRELATED_MACRO_TEST)?;
+    let output = repo.check()?;
+    for finding in changed_arms(&output)? {
+        assert_eq!(
+            finding.class,
+            ripr::ExposureClass::Exposed,
+            "a macro that defines `other_helper` cannot shadow `suit_color`: {:?}",
             finding.ripr.reveal.discriminate
         );
     }
