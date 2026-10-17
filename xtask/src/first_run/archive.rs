@@ -14,6 +14,9 @@ use crate::reports::release_server::{server_asset_name, sha256_file};
 
 pub(super) const STEP: &str = "install_archive";
 const BASE_URL: &str = "https://github.com/EffortlessMetrics/ripr/releases/download";
+/// Largest executable the walk will write. Released servers are tens of MiB;
+/// the cap only stops a malformed archive from filling the disk.
+const MAX_EXECUTABLE_BYTES: u64 = 512 * 1024 * 1024;
 
 /// Server archive targets, matching `release_server`'s published assets.
 const TARGETS: [(&str, &str, &str); 5] = [
@@ -120,7 +123,7 @@ pub(super) fn install(
     let bin = work.join("bin");
     fs::create_dir_all(&bin).map_err(|err| format!("failed to create {}: {err}", bin.display()))?;
     let executable = bin.join(executable_name(target));
-    extract_executable(&archive, target, &executable)?;
+    extract_executable(&archive, target, &executable, MAX_EXECUTABLE_BYTES)?;
     let executable_bytes = fs::metadata(&executable)
         .map_err(|err| format!("failed to stat {}: {err}", executable.display()))?
         .len();
@@ -136,7 +139,8 @@ pub(super) fn install(
 
 /// Copy only the archive's root `ripr` entry. Other members, nested paths and
 /// links are never written, so a hostile archive cannot place files elsewhere.
-fn extract_executable(archive: &Path, target: &str, dest: &Path) -> Result<(), String> {
+/// The entry may not expand past `limit` bytes.
+fn extract_executable(archive: &Path, target: &str, dest: &Path, limit: u64) -> Result<(), String> {
     let wanted = executable_name(target);
     let file = fs::File::open(archive)
         .map_err(|err| format!("failed to open {}: {err}", archive.display()))?;
@@ -146,7 +150,7 @@ fn extract_executable(archive: &Path, target: &str, dest: &Path) -> Result<(), S
         let mut entry = zip
             .by_name(wanted)
             .map_err(|err| format!("the archive has no root `{wanted}` entry: {err}"))?;
-        return write_executable(&mut entry, dest);
+        return write_executable(&mut entry, dest, limit);
     }
     let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(file));
     let entries = tar
@@ -164,16 +168,26 @@ fn extract_executable(archive: &Path, target: &str, dest: &Path) -> Result<(), S
             .filter(|part| !matches!(part, std::path::Component::CurDir))
             .collect();
         if entry.header().entry_type().is_file() && root_relative == Path::new(wanted) {
-            return write_executable(&mut entry, dest);
+            return write_executable(&mut entry, dest, limit);
         }
     }
     Err(format!("the archive has no root `{wanted}` entry"))
 }
 
-fn write_executable(from: &mut dyn Read, dest: &Path) -> Result<(), String> {
+fn write_executable(from: &mut dyn Read, dest: &Path, limit: u64) -> Result<(), String> {
     let mut out = fs::File::create(dest)
         .map_err(|err| format!("failed to create {}: {err}", dest.display()))?;
-    io::copy(from, &mut out).map_err(|err| format!("failed to write {}: {err}", dest.display()))?;
+    // Read one byte past the limit so an over-size entry is told apart from one
+    // that is exactly `limit` bytes.
+    let written = io::copy(&mut from.take(limit.saturating_add(1)), &mut out)
+        .map_err(|err| format!("failed to write {}: {err}", dest.display()))?;
+    if written > limit {
+        drop(out);
+        let _ = fs::remove_file(dest);
+        return Err(format!(
+            "the archive's `ripr` entry is larger than the {limit}-byte limit; refusing to extract it"
+        ));
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -361,6 +375,26 @@ mod tests {
             .err()
             .ok_or("a nested executable was accepted")?;
         assert!(err.contains("no root `ripr` entry"), "{err}");
+        let _ = fs::remove_dir_all(&work);
+        Ok(())
+    }
+
+    #[test]
+    fn an_entry_larger_than_the_limit_is_refused_and_leaves_no_file() -> Result<(), String> {
+        let archive = tar_gz(&[("./ripr", &[7u8; 64])])?;
+        let work = scratch("cap");
+        fs::create_dir_all(&work).map_err(|err| err.to_string())?;
+        let path = work.join("a.tar.gz");
+        fs::write(&path, &archive).map_err(|err| err.to_string())?;
+        let dest = work.join("ripr");
+        let err = extract_executable(&path, TARGET, &dest, 63)
+            .err()
+            .ok_or("an over-size entry was extracted")?;
+        assert!(err.contains("larger than the 63-byte limit"), "{err}");
+        assert!(!dest.exists(), "the partial file was left behind");
+        // The boundary is inclusive: an entry of exactly `limit` bytes installs.
+        extract_executable(&path, TARGET, &dest, 64)?;
+        assert_eq!(fs::metadata(&dest).map_err(|e| e.to_string())?.len(), 64);
         let _ = fs::remove_dir_all(&work);
         Ok(())
     }
