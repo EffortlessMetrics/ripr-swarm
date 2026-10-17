@@ -20,12 +20,14 @@
         "replacement": "GRACE_DAYS <= overdue_days",
         "mutated_line": "if GRACE_DAYS <= overdue_days {",
         "outcome": "tests_passed",
+        "failing_test": null,
         "equivalence_review": "not equivalent: 30 days now sends"
       },
       {
         "replacement": "GRACE_DAYS + 1 < overdue_days",
         "mutated_line": "if GRACE_DAYS + 1 < overdue_days {",
         "outcome": "tests_passed",
+        "failing_test": null,
         "equivalence_review": "not equivalent: 31 days no longer sends"
       }
     ]
