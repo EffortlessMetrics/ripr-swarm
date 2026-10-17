@@ -4816,7 +4816,10 @@ mod tests {
         // pass a mock for the called parameter and pin the changed argument
         // (RIPR-SPEC-0238 rule 17), so both are `exposed` and drop their
         // `no_strong_oracle` cards.
-        if (direct, no_strong, orthogonal, family_selection) != (5, 27, 13, 1) {
+        // #8247: `python_cross_test_import_alias` withholds the owner credit an
+        // alias borrowed from another test's import, so its asserting test
+        // observes a different function and adds one orthogonal card.
+        if (direct, no_strong, orthogonal, family_selection) != (5, 27, 14, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));
