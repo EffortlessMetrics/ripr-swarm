@@ -195,11 +195,54 @@ fn files_outside_module_tree(
                 .files
                 .contains_key(&package_dir.join("src").join(root))
         });
-        if direct_src_module && package_root_indexed {
+        if direct_src_module
+            && package_root_indexed
+            && !module_may_be_declared_invisibly(index, workspace_root, &package_dir, file)
+        {
             outside.insert(file.clone());
         }
     }
     outside
+}
+
+/// True when a `mod <stem>` declaration for `file` could exist where the
+/// producer does not capture it: anywhere in the package's sources or build
+/// script as text (inline or nested modules, macro token trees), or when the
+/// package defines or uses a module-generating macro (`macro_rules!`,
+/// `cfg_if!`). Unreadable sources count as doubt.
+fn module_may_be_declared_invisibly(
+    index: &RustIndex,
+    workspace_root: &Path,
+    package_dir: &Path,
+    file: &Path,
+) -> bool {
+    let Some(stem) = file.file_stem().and_then(|stem| stem.to_str()) else {
+        return true;
+    };
+    let declaration = format!("mod {stem}");
+    let mut sources: Vec<PathBuf> = index
+        .files
+        .keys()
+        .filter(|candidate| candidate.starts_with(package_dir))
+        .cloned()
+        .collect();
+    sources.push(package_dir.join("build.rs"));
+    sources.iter().any(|source| {
+        let full = workspace_root.join(source);
+        match std::fs::read_to_string(&full) {
+            Ok(text) => {
+                text.contains("macro_rules!")
+                    || text.contains("cfg_if")
+                    || text.match_indices(&declaration).any(|(at, _)| {
+                        !text[at + declaration.len()..]
+                            .chars()
+                            .next()
+                            .is_some_and(|next| next.is_alphanumeric() || next == '_')
+                    })
+            }
+            Err(_) => source != &package_dir.join("build.rs"),
+        }
+    })
 }
 
 /// Grants the evidence-only `CfgTestModule` role to `Production` functions of
@@ -2333,6 +2376,54 @@ mod tests {
             .map_err(|error| error.to_string())?;
 
         assert!(!outside_tree(&index, "src/outer/inner.rs"));
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// A declaration the producer cannot see (macro token tree, inline
+    /// module, `macro_rules!`) must keep the file out of the marker.
+    #[test]
+    fn invisibly_declared_modules_are_never_marked_outside_the_tree() -> Result<(), String> {
+        let root = temp_dir("orphan-macro-declared")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                "cfg_if::cfg_if! { if #[cfg(unix)] { mod unix; } else { mod windows; } }\nmacro_rules! decl { ($n:ident) => { mod $n; } }\ndecl!(foo);\n",
+            )?,
+            write(&root, "src/unix.rs", "pub fn a() -> i32 { 1 }\n")?,
+            write(&root, "src/foo.rs", "pub fn b() -> i32 { 2 }\n")?,
+        ];
+
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+
+        assert!(!outside_tree(&index, "src/unix.rs"));
+        assert!(!outside_tree(&index, "src/foo.rs"));
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// A declaration in a build script compiles `src/helper.rs` too.
+    #[test]
+    fn build_script_declared_module_is_not_marked_outside_the_tree() -> Result<(), String> {
+        let root = temp_dir("orphan-build-script")?;
+        write_manifest(&root)?;
+        write(
+            &root,
+            "build.rs",
+            "#[path = \"src/helper.rs\"]\nmod helper;\nfn main() {}\n",
+        )?;
+        let files = vec![
+            write(&root, "src/lib.rs", "pub fn root() {}\n")?,
+            write(&root, "src/helper.rs", "pub fn h() -> i32 { 1 }\n")?,
+        ];
+
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+
+        assert!(!outside_tree(&index, "src/helper.rs"));
         let _ = fs::remove_dir_all(&root);
         Ok(())
     }
