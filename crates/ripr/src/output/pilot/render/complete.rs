@@ -712,6 +712,13 @@ pub(crate) fn render_pilot_terminal(
         .and_then(|entry| repair_start_command(context.root, entry))
     {
         out.push_str("Next, in order:\n");
+        if context
+            .current_change
+            .is_some_and(crate::output::pilot::PilotCurrentChange::is_uncommitted)
+        {
+            out.push_str(DIRTY_TREE_PRECONDITION);
+            out.push('\n');
+        }
         out.push_str(&format!("  1. {command}\n"));
         if let Some(form) = crate::output::markdown::powershell_text_variant(&command) {
             out.push_str(&format!("     (PowerShell) {form}\n"));
@@ -722,7 +729,7 @@ pub(crate) fn render_pilot_terminal(
                 .map(|entry| repair_edit_scope(entry))
                 .unwrap_or_default()
         ));
-        out.push_str("  3. run the `--attempt ... --phase after` command that step 1 prints\n");
+        out.push_str("  3. run the `ripr continue --attempt ...` command that step 1 prints\n");
         out.push_str(
             "  (do not redirect these commands' output into the checkout, for example `> packet.json`: the edit cage counts that file as an edit; use target/ripr/ or a directory outside the repository)\n",
         );
@@ -798,12 +805,18 @@ pub(crate) fn render_pilot_terminal(
             "Next, by hand: add the focused test named above, then compare against this run:\n",
         );
     } else {
-        out.push_str("Run after adding the focused test:\n");
+        // No recommended seam: there is no focused test to add or compare.
+        return out;
     }
     out.push_str(&format!("  {}\n", commands.after_snapshot));
     out.push_str(&format!("  {}\n", commands.outcome));
     out
 }
+
+/// Precondition printed ahead of the repair steps when the current change
+/// includes uncommitted tracked edits: the repair start refuses a production
+/// file whose worktree or index copy differs from HEAD.
+const DIRTY_TREE_PRECONDITION: &str = "  Before step 1: commit or stash your uncommitted edits to production files; the repair start refuses a production file that differs from HEAD.";
 
 /// Terminal note for a top seam whose focused test is named but that fails the
 /// repair-packet eligibility flip, so no `ripr agent repair` command is printed.

@@ -1862,6 +1862,48 @@ fn pilot_repair_line_follows_the_canonical_pilot_decision() -> Result<(), String
     Ok(())
 }
 
+/// The repair start refuses a dirty production file, so the next steps carry a
+/// precondition exactly when the change is uncommitted; step 3 names the
+/// `ripr continue` command that step 1 prints.
+#[test]
+fn pilot_next_steps_name_the_dirty_tree_precondition_only_when_uncommitted() -> Result<(), String> {
+    let artifacts = pilot_artifacts();
+    let root = Path::new(".");
+    let entries = [route_ready_entry(&["tests/pricing.rs"])];
+    let route = commands::repair_start_command(root, &entries[0])
+        .ok_or_else(|| "fixture seam must be repair eligible".to_string())?;
+    let render = |change: &PilotCurrentChange| {
+        let mut context = pilot_context(&artifacts);
+        context.current_change = Some(change);
+        render_pilot_terminal(&entries, context)
+    };
+
+    let dirty = render(&changed("src/pricing.rs", 3).with_working_tree(true));
+    let precondition = "commit or stash your uncommitted edits to production files";
+    assert!(dirty.contains(precondition), "{dirty}");
+    let order = dirty.find("Next, in order:").zip(dirty.find(precondition));
+    let step_one = dirty.find(&format!("  1. {route}"));
+    assert!(
+        matches!((order, step_one), (Some((head, pre)), Some(one)) if head < pre && pre < one),
+        "{dirty}"
+    );
+    assert!(
+        dirty.contains("  3. run the `ripr continue --attempt ...` command that step 1 prints\n"),
+        "{dirty}"
+    );
+
+    let committed = render(&changed("src/pricing.rs", 3));
+    assert!(!committed.contains(precondition), "{committed}");
+    assert!(
+        committed.contains(&format!("  1. {route}\n")),
+        "{committed}"
+    );
+
+    let no_change = render(&PilotCurrentChange::NoChange { base: None });
+    assert!(!no_change.contains(precondition), "{no_change}");
+    Ok(())
+}
+
 fn discovered_files(
     entries: &[(crate::domain::LanguageId, &str)],
 ) -> Vec<(crate::domain::LanguageId, PathBuf)> {
