@@ -335,7 +335,8 @@ Two pattern terms are used below.
    Some(expected))` caps and `assert_eq!(Some(r == Err(E::Bad)),
    Some(true))` reads as the comparison asserted true (#8101); a wrapped
    plain value still pins (`assert_eq!(Some(x), Some(3))`) and a lowercase
-   call stays an opaque call (`wrap(r == Err(E::Bad))`). A wrapped test reads
+   call stays an opaque call (`wrap(r == Err(E::Bad))`). A test held by one
+   of these call, array or `vec!` wrappers reads
    through its wrapper only against the same wrapper around a literal (the
    same constructor, a turbofish aside, or the same repeat count); otherwise
    it caps (`assert_eq!(Wrapper(r == Err(E::Bad)), true)`,
@@ -344,7 +345,9 @@ Two pattern terms are used below.
    or `Arc` may discard its argument, an empty or unknown-length repeat
    (`[..; 0]`, `[..; n]`) holds nothing, and a test paired with anything but
    `true` in an equal-length sequence caps (`assert_eq!([r == Err(E::Bad),
-   x == 1], [false, true])`). Such a comparison asserted by a
+   x == 1], [false, true])`). A struct literal, a statement block, or a field
+   or method on a wrapper is not yet read this way (#8615). Such a comparison
+   asserted by a
    boolean literal caps the same way (`assert_eq!((r == Err(E::Bad)) as u8
    == 0, true)`, `assert_eq!((r == Err(E::Bad)) == flag, true)`), and a
    path call to `not` negates like `!` (`assert_eq!(Not::not(r ==

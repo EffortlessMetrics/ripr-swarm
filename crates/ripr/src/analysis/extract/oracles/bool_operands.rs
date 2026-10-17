@@ -859,7 +859,7 @@ fn sides_compare_test_with_non_literal<'a>(mut left: &'a str, mut right: &'a str
                 return left
                     .iter()
                     .chain(&right)
-                    .any(|element| is_bool_test(element));
+                    .any(|element| is_bool_test(element) || holds_wrapped_test(element));
             }
             // A test paired with anything but `true` may be asserted false
             // (`[r == Err(E::Bad), x == 1]` against `[false, true]`).

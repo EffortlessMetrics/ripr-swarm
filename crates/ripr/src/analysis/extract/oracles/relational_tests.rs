@@ -1247,6 +1247,7 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
             &err,
         ),
         ("assert_eq!(Box::new(x == 3), Box::new(true));", &exact),
+        ("assert_eq!([Pair(r == Err(E::Bad), 0); 2], [p, q]);", &weak),
         ("assert_eq!(Some(r), Some(Err(E::Bad)));", &err),
         ("assert_eq!(Some(x), Some(3));", &exact),
         ("assert_eq!(Some(is_valid(x)), Some(false));", &exact),
