@@ -29466,6 +29466,45 @@ fn check_missing_base_advice_does_not_assume_origin_remote()
     Ok(())
 }
 
+/// An ancestor revision past the start of history (`HEAD~5`) is not fixed by
+/// adding a remote; the repair says the history is shorter, and an empty
+/// `--base` names itself instead of quoting an empty ref.
+#[test]
+fn check_ancestor_and_empty_base_advice_is_not_about_remotes()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("missing-base-ancestor");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(root.join("src/lib.rs"), "")?;
+    init_git_fixture_repo(&root)?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&["check", "--root", &root_arg, "--base", "HEAD~5"]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("`HEAD~5`")
+            && stderr.contains("history is shorter")
+            && stderr.contains("git log --oneline"),
+        "an ancestor revision must get the short-history repair: {stderr}"
+    );
+    assert!(
+        !stderr.contains("remote"),
+        "a remote cannot supply an ancestor revision: {stderr}"
+    );
+    let empty = run_ripr(&["check", "--root", &root_arg, "--base", ""]);
+    assert_eq!(empty.status.code(), Some(2), "{empty:?}");
+    let stderr = String::from_utf8_lossy(&empty.stderr);
+    assert!(
+        stderr.contains("the base is empty") && !stderr.contains("remote"),
+        "an empty base must be named as empty: {stderr}"
+    );
+    std::fs::remove_dir_all(&root)?;
+    Ok(())
+}
+
 /// #5252 item 8: with exactly one remote the missing-base advice names that
 /// remote instead of prescribing `origin`.
 #[test]

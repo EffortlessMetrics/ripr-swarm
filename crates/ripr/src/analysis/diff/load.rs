@@ -504,6 +504,13 @@ pub(crate) fn resolve_effective_base_core_with_commit(
              did not run). Pass `--base <ref>` for a ref this repository has."
         )));
     }
+    if explicit.trim().is_empty() {
+        return Err(CoreError::base_unresolvable(
+            "the base is empty (the analysis did not run). Pass `--base <ref>` with a branch, \
+             tag or commit hash, or omit `--base` to use the default base."
+                .to_string(),
+        ));
+    }
     let commit = format!("{explicit}^{{commit}}");
     match git_ref_output(root, &commit, git_timeout) {
         Some(output) if !output.status.success() => {
@@ -1307,6 +1314,13 @@ fn missing_ref_repair(root: &Path, missing_ref: &str, git_timeout: Option<Durati
          --unshallow` (in GitHub Actions, set `fetch-depth: 0` on actions/checkout)"
             .to_string();
     }
+    if is_ancestor_revision(missing_ref) {
+        return format!(
+            "`{missing_ref}` is relative to a commit, so fetching cannot supply it: this \
+             repository's history is shorter than that. Run `git log --oneline` to see how \
+             many commits it has and use a smaller offset"
+        );
+    }
     let remotes = configured_remotes(root, git_timeout);
     if let Some(advice) = qualified_remote_advice(missing_ref, remotes.as_deref()) {
         return advice;
@@ -1326,6 +1340,13 @@ fn missing_ref_repair(root: &Path, missing_ref: &str, git_timeout: Option<Durati
             "Fetch the ref (for example `git fetch`)".to_string()
         }
     }
+}
+
+/// A revision spelled relative to another commit (`HEAD~5`, `main^2`): an
+/// unresolved one means the history is too short, which a remote cannot fix.
+fn is_ancestor_revision(missing_ref: &str) -> bool {
+    !missing_ref.contains('/')
+        && (missing_ref.contains('~') || missing_ref.contains('^') || missing_ref.contains("@{"))
 }
 
 /// Advice for a remote-qualified missing ref (`origin/main`). The qualifier
@@ -3214,6 +3235,23 @@ mod tests {
 
         ignore_remove_dir_all(&dir);
         Ok(())
+    }
+
+    #[test]
+    fn ancestor_revisions_are_not_remote_fetch_problems() {
+        for relative in ["HEAD~1", "HEAD~5", "main^", "main~2", "HEAD@{1}"] {
+            assert!(is_ancestor_revision(relative), "{relative}");
+        }
+        // Named refs, hashes and remote-qualified refs keep the remote advice.
+        for named in [
+            "main",
+            "origin/main",
+            "refs/heads/x",
+            "abc1234",
+            "origin/a~b",
+        ] {
+            assert!(!is_ancestor_revision(named), "{named}");
+        }
     }
 
     #[test]

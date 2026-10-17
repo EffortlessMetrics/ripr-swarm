@@ -216,6 +216,11 @@ fn cli_command_from_dispatch(
 }
 
 fn unknown_command_error(command: &str) -> String {
+    // Version is a flag here, not a subcommand; say so instead of a bare refusal.
+    if command == "version" {
+        return "unknown command \"version\". Did you mean `--version`? Run `ripr --help`."
+            .to_string();
+    }
     match closest_command(command) {
         Some(suggestion) => {
             format!("unknown command {command:?}. Did you mean `{suggestion}`? Run `ripr --help`.")
@@ -419,6 +424,17 @@ mod tests {
         assert_eq!(
             CliCommand::from_parts(Some("unknown"), Vec::new()),
             Err("unknown command \"unknown\". Run `ripr --help`.".to_string())
+        );
+    }
+
+    #[test]
+    fn cli_command_from_parts_points_version_subcommand_at_the_flag() {
+        assert_eq!(
+            CliCommand::from_parts(Some("version"), Vec::new()),
+            Err(
+                "unknown command \"version\". Did you mean `--version`? Run `ripr --help`."
+                    .to_string()
+            )
         );
     }
 
