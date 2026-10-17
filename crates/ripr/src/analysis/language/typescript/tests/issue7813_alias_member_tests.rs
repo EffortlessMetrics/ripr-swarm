@@ -265,6 +265,46 @@ fn issue7813_namespace_alias_initializer_stays_exposed() -> Result<(), String> {
     Ok(())
 }
 
+/// A body-local `ns` shadows the namespace import, so `const r = ns.price(150)`
+/// is not an owner-module namespace initializer. A real `price(...)` smoke
+/// call keeps the test related; the pin must not confirm `exposed`.
+#[test]
+fn issue7813_shadowed_namespace_alias_initializer_is_not_exposed() -> Result<(), String> {
+    let lib = named_lib();
+    let owners = owners_of_lib(&lib);
+    let owner = price_owner_named(&owners)?;
+    let source = "import * as ns from '../src/lib';\nimport { price } from '../src/lib';\ntest('p', () => {\n  const ns = fakeLib();\n  price(150);\n  const r = ns.price(150);\n  expect(r).toBe(140);\n});\n";
+    let tests = tests_of(source);
+    assert_single_strong_exact(&tests, "r")?;
+    if !local_identifier_declared_in_test_body(&tests[0].body_text, "ns") {
+        return Err("body-local `ns` must read as a shadow".to_string());
+    }
+    assert_trusted_relation(owner, &tests)?;
+    let finding = classify_at_changed(&lib, &owners, &tests)?;
+    if matches!(finding.class, ExposureClass::Exposed) {
+        return Err("shadowed-namespace alias initializer must not read exposed".to_string());
+    }
+    Ok(())
+}
+
+/// `other.ns.price(150)` is a different receiver's member, not the
+/// owner-module namespace call, so aliasing it must not confirm the owner.
+#[test]
+fn issue7813_nested_receiver_alias_initializer_is_not_exposed() -> Result<(), String> {
+    let lib = named_lib();
+    let owners = owners_of_lib(&lib);
+    let owner = price_owner_named(&owners)?;
+    let source = "import * as ns from '../src/lib';\nimport { price } from '../src/lib';\ntest('p', () => {\n  price(150);\n  const r = other.ns.price(150);\n  expect(r).toBe(140);\n});\n";
+    let tests = tests_of(source);
+    assert_single_strong_exact(&tests, "r")?;
+    assert_trusted_relation(owner, &tests)?;
+    let finding = classify_at_changed(&lib, &owners, &tests)?;
+    if matches!(finding.class, ExposureClass::Exposed) {
+        return Err("nested-receiver alias initializer must not read exposed".to_string());
+    }
+    Ok(())
+}
+
 /// Method owners keep today's member-segment credit: `obj.price` is the
 /// honest needle, so asserting the local initialized from it stays `exposed`.
 #[test]
