@@ -2788,6 +2788,30 @@
       ]
     },
     {
+      "id": "py_cross_test_import_alias_not_borrowed",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_cross_test_import_alias",
+      "vector": "import_alias_binds_only_in_the_importing_test",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "py_unittest_list_equal_effectful_argument",
       "language": "python",
       "tier": "pure",
