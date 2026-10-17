@@ -686,6 +686,10 @@ pub(crate) struct DoctorCacheStatus {
     /// same evidence; the typed field keeps `doctor --json` as complete as
     /// the human report (#8257 review).
     pub(crate) artifact_ignore: DoctorArtifactIgnore,
+    /// Whether git already tracks files under `target/ripr` (#8276). This is
+    /// independent of `artifact_ignore`: an ignore rule never untracks files
+    /// that were committed before it existed.
+    pub(crate) artifact_tracking: DoctorArtifactTracking,
 }
 
 /// Whether git ignore rules cover ripr's own artifact root (`target/ripr`)
@@ -714,6 +718,29 @@ pub(crate) enum DoctorArtifactIgnore {
     /// Coverage could not be established: the root is not a git repository,
     /// git is unavailable, or the probe hit its deadline. Doctor stays quiet
     /// rather than claiming a checked fact it could not establish.
+    NotChecked,
+}
+
+/// Whether git already tracks files under ripr's artifact root
+/// (`target/ripr`) under the doctor root (#8276).
+///
+/// A repository can ignore `/target/ripr/` while earlier reports are still
+/// tracked, so `git add -A` keeps refreshing them and `ripr check` keeps
+/// diffing them. The verdict is fail-closed: only a positive answer from
+/// `git ls-files --cached` produces the warning.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DoctorArtifactTracking {
+    /// Git reports no tracked entries under the artifact root.
+    Untracked,
+    /// Git tracks at least one entry under the artifact root. `warning` is
+    /// the exact line the human screen prints.
+    Tracked {
+        /// The actionable warning, including the exact untrack command.
+        warning: String,
+    },
+    /// Tracking could not be established: the root is not a git repository,
+    /// git is unavailable, or the probe hit its deadline.
     NotChecked,
 }
 
@@ -4202,6 +4229,7 @@ mod tests {
                 size_bytes: 0,
                 size_display: "0 B".to_string(),
                 artifact_ignore: DoctorArtifactIgnore::NoArtifacts,
+                artifact_tracking: DoctorArtifactTracking::Untracked,
             },
             test_surfaces: Vec::new(),
             perl_preview: None,
@@ -4261,6 +4289,7 @@ mod tests {
                 size_bytes: 1024,
                 size_display: "1.00 KB".to_string(),
                 artifact_ignore: DoctorArtifactIgnore::Ignored,
+                artifact_tracking: DoctorArtifactTracking::Untracked,
             },
             test_surfaces: vec![DoctorTestSurface {
                 language: "python".to_string(),
