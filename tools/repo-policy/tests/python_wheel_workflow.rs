@@ -1476,7 +1476,7 @@ fn wheel_codegen_recipe_and_native_release_profile_are_preserved() -> TestResult
         .next()
         .ok_or("release body")?;
     let native_quality = |source: &str| {
-        ["lto = true", "strip = true", "codegen-units = 1"]
+        ["lto = \"thin\"", "strip = true", "codegen-units = 16"]
             .into_iter()
             .all(|retained| source.lines().any(|line| line == retained))
             && source
@@ -1486,9 +1486,20 @@ fn wheel_codegen_recipe_and_native_release_profile_are_preserved() -> TestResult
     };
     assert!(native_quality(release));
     assert!(!native_quality(&format!("{release}\nopt-level = 1\n")));
-    assert!(!native_quality(
-        &release.replace("lto = true", "lto = false")
-    ));
+    for retained in ["lto = \"thin\"", "strip = true", "codegen-units = 16"] {
+        let removed = release.replace(retained, "");
+        assert_ne!(removed, release);
+        assert!(!native_quality(&removed));
+    }
+    for (expected, wrong) in [
+        ("lto = \"thin\"", "lto = false"),
+        ("strip = true", "strip = false"),
+        ("codegen-units = 16", "codegen-units = 1"),
+    ] {
+        let changed = release.replace(expected, wrong);
+        assert_ne!(changed, release);
+        assert!(!native_quality(&changed));
+    }
     let build = shell_from_job(
         WORKFLOW,
         "build-wheel",
