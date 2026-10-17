@@ -297,9 +297,9 @@ fn item_after(lines: &[&str], from: usize) -> Option<usize> {
         .map(|(position, _)| position + 1)
 }
 
-/// A blank line, a plain or doc comment, or an attribute that is the whole
-/// line (an unclosed one continues on the next line, which then reads as
-/// the item and refuses).
+/// A blank line, a plain or doc comment, or an attribute that closes on its
+/// line with at most a trailing comment after it. An attribute that does not
+/// close there is the item line itself, which refuses.
 fn is_between_doc_and_item(line: &str) -> bool {
     let trimmed = line.trim_start();
     trimmed.is_empty() || trimmed.starts_with("//") || whole_line_attribute(trimmed)
@@ -323,7 +323,7 @@ fn whole_line_attribute(trimmed: &str) -> bool {
             _ => {}
         }
     }
-    true
+    false
 }
 
 /// Whether the doc run `lines[start..end]` shares its item's document with
@@ -411,10 +411,10 @@ fn opens_html_block(trimmed: &str) -> bool {
         .chars()
         .next()
         .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '/');
-    let link = rest
-        .split('>')
-        .next()
-        .is_some_and(|inner| inner.contains("://") || inner.contains('@'));
+    // An autolink holds no whitespace; `<img src="https://..">` is a tag.
+    let link = rest.split('>').next().is_some_and(|inner| {
+        !inner.contains(char::is_whitespace) && (inner.contains("://") || inner.contains('@'))
+    });
     tag_start && !link
 }
 

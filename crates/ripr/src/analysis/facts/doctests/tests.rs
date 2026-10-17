@@ -278,6 +278,8 @@ fn html_blocks_and_split_doc_fragments_yield_nothing() {
         format!("{example}#[cfg_attr(docsrs, doc = \"x\")]\npub fn read_u16() {{}}\n"),
         format!("/// ```text\n#[inline]\n{example}pub fn read_u16() {{}}\n"),
         format!("{example}// note\n/// more\npub fn read_u16() {{}}\n"),
+        // A tag whose attribute holds a URL is still a tag.
+        format!("/// <img src=\"https://example.com/a.png\">\n{example}pub fn read_u16() {{}}\n"),
     ] {
         assert_eq!(examples(&source), Vec::new(), "{source}");
     }
@@ -304,6 +306,17 @@ fn a_one_line_attributed_item_keeps_its_own_comment() -> Result<(), Box<dyn Erro
         ),
         (format!("{example}#[inline] pub fn read_u16() {{}}\n"), 0),
         (format!("{example}#[inline]\npub fn read_u16() {{}}\n"), 1),
+        (
+            format!("{example}#[inline] // hot\npub fn read_u16() {{}}\n"),
+            1,
+        ),
+        // An attribute that does not close on its line is the item line.
+        (
+            format!(
+                "{example}#[deprecated(note = \"[\")] pub(crate) fn helper() {{}}\npub fn read_u16() {{}}\n"
+            ),
+            0,
+        ),
     ] {
         package(&dir.0, "", &lib)?;
         assert_eq!(doctests(&dir.0, &["src/lib.rs"])?.len(), expected, "{lib}");

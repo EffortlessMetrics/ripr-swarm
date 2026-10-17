@@ -86,8 +86,9 @@ every condition holds; anything else registers nothing.
   and the function's name. An item inside a `#[cfg(test)]` module, a test,
   a non-function item, a `pub(crate)` or private function (an example
   calling it from outside the crate cannot compile), or a statement in a
-  function body registers nothing. Only attribute lines that hold nothing
-  but the attribute are skipped, so `#[inline] pub fn f` on one line
+  function body registers nothing. Only attribute lines that close on their
+  line, with at most a trailing comment, are skipped (a multi-line
+  attribute refuses), so `#[inline] pub fn f` on one line
   registers nothing. Privacy of enclosing modules is not checked.
 - The comment is the item's only doc fragment: no second `///` run and no
   attribute mentioning `doc` (`#[doc = ..]`, `#[cfg_attr(.., doc = ..)]`,
