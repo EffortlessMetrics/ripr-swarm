@@ -4059,6 +4059,17 @@ fn extract_tests_withholds_assertions_a_finalizer_completion_can_replace() {
         format!("for (;;) {{ try {{ {check} }} finally {{ continue; }} }}"),
         format!("a: for (;;) {{ for (;;) {{ try {{ {check} }} finally {{ break a; }} }} }}"),
         format!("try {{ f(); }} catch {{ {check} }} finally {{ return; }}"),
+        format!("try {{ {check} }} finally {{ if (x) {{ f(); }} else {{ return; }} }}"),
+        format!("try {{ {check} }} finally {{ {{ throw 1; }} }}"),
+        format!("try {{ {check} }} finally {{ while (x) {{ continue outer; }} }}"),
+        format!("try {{ {check} }} finally {{ for (const k in o) {{ return; }} }}"),
+        format!("try {{ {check} }} finally {{ for (const k of o) {{ break out; }} }}"),
+        format!("try {{ {check} }} finally {{ do {{ break out; }} while (x); }}"),
+        format!("try {{ {check} }} finally {{ lbl: {{ return; }} }}"),
+        format!("try {{ {check} }} finally {{ switch (x) {{ case 1: return; }} }}"),
+        format!("try {{ {check} }} finally {{ switch (x) {{ case 1: continue; }} }}"),
+        format!("try {{ {check} }} finally {{ try {{ f(); }} catch {{ return; }} }}"),
+        format!("try {{ {check} }} finally {{ with (o) {{ return; }} }}"),
     ] {
         assert!(assertions(&replaced).is_empty(), "{replaced}");
     }
@@ -4070,6 +4081,10 @@ fn extract_tests_withholds_assertions_a_finalizer_completion_can_replace() {
         format!("try {{ {check} }} finally {{ b: {{ break b; }} }}"),
         format!("try {{ f(); }} finally {{ {check} }}"),
         format!("try {{ f(); }} finally {{ {check} return; }}"),
+        format!("try {{ {check} }} finally {{ while (x) {{ continue; }} }}"),
+        format!("try {{ {check} }} finally {{ for (const k of o) {{ break; }} }}"),
+        format!("try {{ {check} }} finally {{ lbl: for (;;) {{ break lbl; }} }}"),
+        format!("try {{ {check} }} finally {{ if (x) {{ f(); }} else {{ g(); }} }}"),
     ] {
         assert_eq!(assertions(&kept), ["toBe"], "{kept}");
     }

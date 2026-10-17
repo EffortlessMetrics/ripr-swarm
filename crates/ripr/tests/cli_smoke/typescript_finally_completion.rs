@@ -122,9 +122,9 @@ fn benign_and_independent_finalizers_keep_credit() -> TestResult {
         // A break that stays inside the finalizer's own loop is local.
         format!("try {{ {CHECK} }} finally {{ for (;;) {{ break; }} }}"),
         // The finalizer's own awaited assertion is independent.
-        format!("try {{ throw 'setup'; }} finally {{ {CHECK} }}"),
-        format!("try {{ return; }} finally {{ {CHECK} }}"),
-        format!("try {{ {CHECK} }} finally {{ return; }}\n{CHECK}"),
+        format!("try {{}} finally {{ {CHECK} }}"),
+        // A finalizer return that is statically unreachable cannot replace it.
+        format!("try {{ {CHECK} }} finally {{ if (false) return; }}\n{CHECK}"),
     ] {
         Subject::new(&body)?.check("exposed", "exact_error_variant", "strong")?;
     }
