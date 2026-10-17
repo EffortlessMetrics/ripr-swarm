@@ -5888,6 +5888,10 @@ fn classify_probe_shape_reads_a_declared_arrow_and_paren_ternary_as_its_conditio
         "export function g(cb = x => x > 1 ? 1 : 2) {",
         "const f = (a) => (b) => b > 1 ? a : b;",
         "const x = (a) ? n => n > 1 ? 1 : 2 : d;",
+        "const s = (x) + \" => a > 1 ? b : c\";",
+        "const m = (kind) + ' => n > 1 ? a : b';",
+        "return (a) => a > 1 ? x : y;",
+        "return ((a) => a > 1 ? x : y);",
     ] {
         assert_eq!(typescript_boundary_discriminator(line), None, "{line}");
     }
