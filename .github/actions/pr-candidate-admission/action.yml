@@ -161,20 +161,31 @@ runs:
             return int(found.group(1)) if found else None
 
         def reconciled(current: dict, peer: dict, fields: dict, peer_fields: dict) -> bool:
-            # The PR template records the relationship decision. A candidate
-            # that is the recorded winner, that names the peer as the proposed
-            # replacement target, or whose peer records another winner is not
-            # a competing duplicate. This lets exactly one of two Ready PRs
-            # proceed instead of refusing both.
+            # Copied PR-body metadata confers no authority by itself: a record
+            # counts only when it is consistent from both sides, so at most
+            # one of two Ready PRs proceeds instead of both or neither.
             number = int(current.get("number") or 0)
             peer_number = int(peer.get("number") or 0)
             winner = first_ref(fields.get("winner", ""))
+            peer_winner = first_ref(peer_fields.get("winner", ""))
+            if winner == peer_number:
+                # The current PR records that it lost.
+                return False
+            if peer_winner == number:
+                # The peer concedes to the current PR.
+                return True
+            if peer_winner == peer_number:
+                # The peer also claims to win; the disposition is contested.
+                return False
             if winner == number:
                 return True
-            if peer_number in pr_refs(fields.get("replacement", "")):
-                return True
-            peer_winner = first_ref(peer_fields.get("winner", ""))
-            return peer_winner is not None and peer_winner != peer_number
+            # A proposed replacement is honored only when the peer does not
+            # claim to win and does not name the current PR as its own
+            # replacement target.
+            return (
+                peer_number in pr_refs(fields.get("replacement", ""))
+                and number not in pr_refs(peer_fields.get("replacement", ""))
+            )
 
         def head_repository(pr: dict) -> str:
             return (((pr.get("head") or {}).get("repo") or {}).get("full_name") or "")
@@ -299,6 +310,22 @@ runs:
             assert decide(loser, [winner, loser], "b" * 40, False)["reason"] == "competing_candidate"
             replaces = fixture(body=body(extra="Proposed replacement of PR (if any; not yet accepted): #11\n"), head=head)
             assert decide(replaces, [replaces, duplicate], head, False)["status"] == "admitted"
+            def won(number: int, winner_ref: str, head_char: str, extra: str = "") -> dict:
+                return fixture(number=number, head=head_char * 40, body=body(extra=(
+                    f"Accepted winner and losing candidate disposition (when decided): {winner_ref}\n{extra}")))
+            both_self = [won(10, "#10", "a"), won(11, "#11", "b")]
+            assert decide(both_self[0], both_self, "a" * 40, False)["reason"] == "competing_candidate"
+            assert decide(both_self[1], both_self, "b" * 40, False)["reason"] == "competing_candidate"
+            third = [won(10, "#10", "a"), won(11, "#99", "b")]
+            assert decide(third[0], third, "a" * 40, False)["status"] == "admitted"
+            assert decide(third[1], third, "b" * 40, False)["reason"] == "competing_candidate"
+            conceded = [won(10, "", "a"), won(11, "#10", "b")]
+            assert decide(conceded[0], conceded, "a" * 40, False)["status"] == "admitted"
+            mutual_replace = [
+                won(10, "", "a", "Proposed replacement of PR (if any; not yet accepted): #11\n"),
+                won(11, "", "b", "Proposed replacement of PR (if any; not yet accepted): #10\n"),
+            ]
+            assert decide(mutual_replace[0], mutual_replace, "a" * 40, False)["reason"] == "competing_candidate"
             assert decide(fixture(body="", head=head), [], head, False)["reason"] == "claim_identity_missing"
             oversized = fixture(body=body(), head=head, changed_files=161)
             assert decide(oversized, [oversized], head, False)["reason"] == "qualification_scope_oversized"
@@ -306,7 +333,7 @@ runs:
             assert decide(current, [current], "b" * 40, False)["reason"] == "candidate_head_moved"
             print(json.dumps({
                 "status": "self_test_pass",
-                "reason": "thirteen_discriminating_controls_passed",
+                "reason": "nineteen_discriminating_controls_passed",
                 "claim": "",
                 "acceptance_delta": "",
                 "competing_prs": [],
