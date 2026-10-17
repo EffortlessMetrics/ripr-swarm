@@ -1433,13 +1433,14 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let git = |args: &[&str]| -> Result<(), String> {
-            let status = std::process::Command::new("git")
-                .args(args)
-                .current_dir(&dir)
-                .env("GIT_CONFIG_NOSYSTEM", "1")
-                .status()
-                .map_err(|e| e.to_string())?;
-            if status.success() {
+            let output = crate::git::run_git_output_with_deadline_and_env(
+                &dir,
+                args,
+                &[("GIT_CONFIG_NOSYSTEM", std::ffi::OsStr::new("1"))],
+                None,
+            )
+            .map_err(|e| e.to_string())?;
+            if output.status.success() {
                 Ok(())
             } else {
                 Err(format!("git {args:?} failed"))
