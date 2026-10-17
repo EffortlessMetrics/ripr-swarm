@@ -80,6 +80,9 @@ The fallback detail keeps a SHA-256 identity of the native source-path bytes and
 the parser cause before the bounded source sample. A long path cannot consume
 the entire cause or make distinct file failures deduplicate solely because their
 displayed samples share a prefix.
+Reserve space for the source sample before bounding a long parser cause, and
+bound that cause before DTO detail validation. Character budgets apply to both
+ASCII and Unicode diagnostics; a long cause must not erase source identification.
 
 Human output must name incomplete or unsupported analysis before any empty
 finding message and must state that zero findings is not a clean result when a

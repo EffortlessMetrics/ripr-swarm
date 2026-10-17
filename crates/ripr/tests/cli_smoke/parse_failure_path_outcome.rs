@@ -285,6 +285,93 @@ fn long_nonportable_source_path_keeps_bounded_parser_cause() -> TestResult {
 }
 
 #[test]
+fn long_parser_causes_keep_nonportable_source_samples() -> TestResult {
+    // Oxc's real JSX diagnostic includes the opening tag name. The 400-char
+    // cause fits the DTO alone but crowds out the source in a naive fallback;
+    // the 600-char cause also rejects premature unbounded-detail validation.
+    for character in ['A', '\u{03a9}'] {
+        for length in [20, 400, 600] {
+            for relative in ["C:reason.tsx", "src/reason.tsx"] {
+                // Oversized portable causes keep their inherited behavior;
+                // this repair owns only the nonportable-path fallback.
+                if length == 600 && relative == "src/reason.tsx" {
+                    continue;
+                }
+                let fixture = Fixture::create(&LANGUAGES[2], relative, false)?;
+                let source_path = fixture.0.join(relative);
+                let mut source = fs::read_to_string(&source_path)?;
+                source.push_str(&format!(
+                    "const view = <{}></B>;\n",
+                    character.to_string().repeat(length)
+                ));
+                fs::write(source_path, source)?;
+                let (output, json) = fixture.check()?;
+                let label = format!("{relative}/{character}/{length}");
+                assert_eq!(
+                    json["analysis_outcome"]["analysis_complete"], false,
+                    "{label}"
+                );
+                let outcome = &json["analysis_outcome"]["outcome"];
+                assert_eq!(outcome["kind"], "partial_with_limitations", "{label}");
+                let limitations = outcome["limitations"].as_array().ok_or("no limitations")?;
+                assert_eq!(limitations.len(), 1, "{label}: {outcome}");
+                let limitation = &limitations[0];
+                assert_eq!(limitation["kind"], "language_scope_unsupported", "{label}");
+                assert_eq!(limitation["affected_items"], 1, "{label}");
+                assert_eq!(limitation["recovery"]["kind"], "retry", "{label}");
+                let detail = limitation["bounded_detail"].as_str().ok_or("no detail")?;
+                assert!(detail.chars().count() <= 512, "{label}: {detail}");
+                assert!(
+                    detail.contains("1 parser error(s): Expected corresponding JSX closing tag"),
+                    "{label}: {detail}"
+                );
+                if relative == "C:reason.tsx" {
+                    assert!(limitation["path"].is_null(), "{label}");
+                    assert!(
+                        detail.starts_with("source_path_sha256:a5844d3bb55400f62f5a83861141fe1d4ba6967de2bbdcb1e1a145b6534128b4; "),
+                        "{label}: {detail}"
+                    );
+                    assert!(
+                        detail.ends_with("; source: C:reason.tsx"),
+                        "{label}: {detail}"
+                    );
+                } else {
+                    assert_eq!(limitation["path"], relative, "{label}");
+                    assert_eq!(detail.chars().count(), length + 65, "{label}: {detail}");
+                }
+                let findings = json["findings"].as_array().ok_or("no findings")?;
+                assert_eq!(findings.len(), 1, "{label}");
+                let finding = &findings[0];
+                assert_eq!(finding["classification"], "static_unknown", "{label}");
+                assert_eq!(
+                    finding["static_limit_kind"], "unsupported_syntax",
+                    "{label}"
+                );
+                assert_eq!(finding["probe"]["file"], relative, "{label}");
+                assert_eq!(finding["probe"]["line"], 2, "{label}");
+                assert_eq!(finding["confidence"], serde_json::json!(0.2), "{label}");
+                assert_eq!(
+                    finding["preview_actionability"]["repair_packet_ready"], false,
+                    "{label}"
+                );
+                assert_eq!(
+                    finding["typescript_preview_card"]["repair_packet_ready"], false,
+                    "{label}"
+                );
+                assert!(json.get("language_runs").is_none(), "{label}: {json}");
+                assert_eq!(
+                    output.status.code(),
+                    Some(0),
+                    "{label}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn distinct_long_nonportable_paths_keep_distinct_parse_failures() -> TestResult {
     let prefix = format!(
         "C:{}/{}/{}/",

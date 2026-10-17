@@ -8530,6 +8530,7 @@ tests = [
   "crates/ripr/tests/cli_smoke/parse_failure_path_outcome.rs::syntax_errors_keep_partial_json_for_all_path_spellings",
   "crates/ripr/tests/cli_smoke/parse_failure_path_outcome.rs::valid_files_do_not_acquire_parse_limitations",
   "crates/ripr/tests/cli_smoke/parse_failure_path_outcome.rs::long_nonportable_source_path_keeps_bounded_parser_cause",
+  "crates/ripr/tests/cli_smoke/parse_failure_path_outcome.rs::long_parser_causes_keep_nonportable_source_samples",
   "crates/ripr/tests/cli_smoke/parse_failure_path_outcome.rs::distinct_long_nonportable_paths_keep_distinct_parse_failures",
   "crates/ripr/tests/cli_smoke/unsupported_diff_exit.rs::diff_json_outcomes_preserve_report_and_exit_contract",
   "crates/ripr/tests/cli_smoke/unsupported_diff_exit.rs::diff_human_unsupported_and_usage_keep_stream_contracts",
