@@ -189,8 +189,10 @@ schedule/merge queue), not the default PR path.
 ### 4) Hosted fallback boundary
 
 - Do **not** remove, narrow, or relabel the current protected GitHub-hosted
-  Rust-small fallback without updating the routed-runner docs, active-goal
-  state, and branch-protection contract in the same PR.
+  Rust-small fallback without updating the routed-runner docs and the
+  branch-protection contract in the same PR (the retired active-goal state
+  left with the `.ripr/goals/` scheduler in #1701 and has no successor to
+  update).
 - The current routed Rust-small workflow may select GitHub-hosted when a PR is
   untrusted, runner state cannot be read, or no idle image-ready CX53/CX43
   runner is available. That result remains a valid protected-path success while

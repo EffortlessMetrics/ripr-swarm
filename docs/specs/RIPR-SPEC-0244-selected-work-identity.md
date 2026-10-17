@@ -154,6 +154,21 @@ fails with `legacy_compatibility`/`reject_legacy_authority`. Campaign
 records carry durable intent only; they cannot promote readiness, proof,
 support or completion.
 
+Migration posture (recorded 2026-10, #1706 PR D, after the PR B consumers
+landed in #8325): the compat fields stay read-only in every consuming
+corpus. Each of the nine consumer specs (RIPR-SPEC-0269..0277) pins a
+negative case in which a legacy packet attempting write, readiness, merge
+or closeout authority fails closed with `reject_legacy_authority`, and each
+consumer check reruns this shared law engine rather than a forked copy, so
+the no-authority posture cannot drift per consumer. There is one supported
+direction only: a legacy ref may resolve into a `historical` campaign
+reference. No committed artifact may copy a legacy ref into a live
+selection field; doing so is a schema/law violation with the reconcile
+route, never a silently tolerated migration. Retirement is intentionally
+not automated: new packets simply omit the legacy fields, and the fields
+remain accepted only so historical captured packets still parse and still
+fail closed on authority.
+
 ### Frozen plan-disposition vocabulary
 
 `WorkPlanDispositionV1` freezes the eight #1646 wire names for the PR C
@@ -169,6 +184,16 @@ disposition at schema/fixture level; PR C consumes the enum.
   all twelve #1706 required scenarios and per-case pinned expectations.
 - `fixtures/work_selection_identity/provenance.json` SHA-256 bindings,
   recomputed fail-closed by `cargo xtask check-fixture-contracts`.
+- `fixtures/work_selection_identity/fresh_root_reconstruction.json` — the
+  #1706 PR D fresh-session receipt binding this shared corpus plus the nine
+  PR B consumer corpora by corpus/provenance SHA-256 digests, scenario/case
+  counts and pass state, so a fresh process rebuilds the whole selected-work
+  contract state from committed artifacts alone (no chat history, no
+  singleton goal file, no live GitHub state). `cargo xtask
+  check-fixture-contracts` validates its structure and digest bindings;
+  `cargo test -p xtask --bin xtask
+  work_selection_identity_fresh_root_receipt` re-runs all ten domain checks
+  in a fresh process and compares them against the receipt.
 - `cargo xtask work selection check` passing on the committed corpus, with
   byte-stable JSON output and a stable portable identity across runs.
 - `cargo test -p xtask work_selection_identity` pinning the acceptance
@@ -237,6 +262,9 @@ support.
 - `xtask/src/work_selection_identity.rs::tests::work_selection_identity_stable_forms_and_equality`
 - `xtask/src/work_selection_identity.rs::tests::work_selection_identity_burndown_partial_projection_states`
 - `xtask/src/work_selection_identity.rs::tests::work_selection_identity_fresh_root_resume_from_artifacts_only`
+- `xtask/src/work_selection_identity.rs::tests::work_selection_identity_fresh_root_receipt_reconstructs_all_domains`
+- `xtask/src/work_selection_identity.rs::tests::work_selection_identity_fresh_root_receipt_rejects_digest_drift`
+- `xtask/src/work_selection_identity.rs::tests::work_selection_identity_fresh_root_receipt_requires_all_ten_domains`
 - `xtask/src/work_selection_identity.rs::tests::work_selection_identity_deterministic_output`
 - `xtask/src/work_selection_identity.rs::tests::work_selection_identity_corpus_loader_fails_closed`
 - `xtask/src/work_selection_identity.rs::tests::work_selection_identity_provenance_fails_closed`
