@@ -101,6 +101,12 @@ preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
   shape and its `schema_version`.
 - **User error**: unknown command, missing required argument, or invalid
   config.
+- **Verification root failure**: `ripr agent verify-execute --json` with a
+  missing root or a file root retains exit `2` and the root recovery diagnostic.
+  It also emits the existing schema `1` `verification_wrong_root` response on
+  stdout with `executed: false` and `result_committed: false`. No packet runs
+  and no result is written. This is distinct from a packet path-policy refusal,
+  which retains typed-refusal exit `3`.
 - **Gate `--root` refusal**: `ripr gate evaluate --root <path>` that is
   missing or not a directory is an argv-level usage refusal: it exits `2`,
   names the root, and does not write `gate-decision.{json,md}`. Evaluation

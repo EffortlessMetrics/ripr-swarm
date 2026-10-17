@@ -729,12 +729,19 @@ cargo xtask release-readiness --version "$release_version"
 The unlocked install resolution step builds the packaged crate the way
 `cargo install ripr` without `--locked` does: it unpacks the `.crate`, deletes
 its `Cargo.lock`, re-resolves, and checks. It catches a dependency that only
-compiles under the committed lock (#3787):
+compiles under the committed lock (#3787). The Actions Bash step uses errexit;
+each prerequisite is a separate command so its failure stops the step before
+the final check (#8330):
 
 ```bash
 cargo package -p ripr --no-verify
-tar xzf "target/package/ripr-$release_version.crate" -C "$RUNNER_TEMP"
-cd "$RUNNER_TEMP/ripr-$release_version" && rm Cargo.lock && cargo generate-lockfile
+package_id="$(cargo pkgid -p ripr)"
+package_version="${package_id##*#}"
+test -n "$package_version"
+tar xzf "target/package/ripr-$package_version.crate" -C "$RUNNER_TEMP"
+cd "$RUNNER_TEMP/ripr-$package_version"
+rm Cargo.lock
+cargo generate-lockfile
 cargo check --target-dir "$RUNNER_TEMP/unlocked-target"
 ```
 

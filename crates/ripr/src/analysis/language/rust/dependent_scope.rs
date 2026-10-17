@@ -60,6 +60,36 @@ use rayon::prelude::*;
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
+/// Widened reach indexes retained at once. Owners alternate among a few
+/// closures, so two slots remove the rebuilds while bounding the memory
+/// the retained indexes hold (#5363; the 512 MB peak-RSS target stays).
+const REACH_INDEX_CAPACITY: usize = 2;
+
+/// The cached value for `key`, built by `build` on a miss. `cache` holds at
+/// most `capacity` entries, most recently used last, so a miss evicts the
+/// stalest. A failed build leaves the cache unchanged.
+fn most_recent_or_build<K: PartialEq, V>(
+    cache: &mut Vec<(K, V)>,
+    capacity: usize,
+    key: K,
+    build: impl FnOnce(&K) -> Result<V, String>,
+) -> Result<&V, String> {
+    if let Some(position) = cache.iter().position(|(cached, _)| *cached == key) {
+        let entry = cache.remove(position);
+        cache.push(entry);
+    } else {
+        let value = build(&key)?;
+        if cache.len() >= capacity {
+            cache.remove(0);
+        }
+        cache.push((key, value));
+    }
+    match cache.last() {
+        Some((_, value)) => Ok(value),
+        None => Err("reach index cache holds no entry after insertion".to_string()),
+    }
+}
+
 /// Dependent files read and scanned per parallel admission batch, bounding
 /// how many withheld files' bytes are held at once.
 const ADMISSION_BATCH_FILES: usize = 64;
@@ -475,9 +505,12 @@ pub(super) struct NarrowedScope {
     /// or where it passed the limit. The limit is fixed for the scope's
     /// run, so a cached `Over` stays valid.
     closures: std::collections::BTreeMap<String, Closure>,
-    /// The last widened index and the files it holds; owners whose closure
-    /// selects the same files reuse it.
-    reach_index: Option<(Vec<PathBuf>, RustIndex)>,
+    /// The most recently used widened indexes (at most
+    /// [`REACH_INDEX_CAPACITY`], least recent first) and the files each
+    /// holds; owners whose closure selects the same files reuse one.
+    /// Owners alternate between a few closures, so a single slot rebuilt
+    /// the same index repeatedly (#5363).
+    reach_index: Vec<(Vec<PathBuf>, RustIndex)>,
     test_harnesses: Vec<crate::config::TestHarnessRegistration>,
     /// Bytes the reach widening read, for the run's consumed sources.
     consumed: ConsumedRustSources,
@@ -747,7 +780,7 @@ pub(super) fn admit_dependents(
             withheld,
             tokens,
             closures: std::collections::BTreeMap::new(),
-            reach_index: None,
+            reach_index: Vec::new(),
             test_harnesses: test_harnesses.to_vec(),
             consumed: ConsumedRustSources::default(),
             widen: !core_only,
@@ -852,18 +885,15 @@ impl NarrowedScope {
                 limit,
             });
         }
-        if self
-            .reach_index
-            .as_ref()
-            .is_none_or(|(indexed, _)| *indexed != files)
-        {
-            let index = build_index(&self.root, &files, &self.test_harnesses, &mut self.consumed)?;
-            self.reach_index = Some((files, index));
-        }
-        Ok(self
-            .reach_index
-            .as_ref()
-            .map_or(ReachIndex::Main, |(_, index)| ReachIndex::Widened(index)))
+        let consumed = &mut self.consumed;
+        let (root, harnesses) = (&self.root, &self.test_harnesses);
+        let index = most_recent_or_build(
+            &mut self.reach_index,
+            REACH_INDEX_CAPACITY,
+            files,
+            |files| build_index(root, files, harnesses, consumed),
+        )?;
+        Ok(ReachIndex::Widened(index))
     }
 
     /// The bytes the reach widening read.
@@ -1529,5 +1559,47 @@ mod tests {
                 "{DEPENDENT_SCOPE_ENV} must be `auto`, `named` or `full`, got `all`"
             ))
         );
+    }
+}
+
+#[cfg(test)]
+mod reach_index_cache_tests {
+    use super::most_recent_or_build;
+    use std::cell::Cell;
+
+    #[test]
+    fn alternating_keys_build_once_each_within_capacity() {
+        let builds = Cell::new(0);
+        let mut cache = Vec::new();
+        for key in [1, 2, 1, 2, 1] {
+            let value = most_recent_or_build(&mut cache, 2, key, |key| {
+                builds.set(builds.get() + 1);
+                Ok(*key * 10)
+            });
+            assert_eq!(value, Ok(&(key * 10)));
+        }
+        assert_eq!(builds.get(), 2, "A,B,A,B,A must not rebuild");
+    }
+
+    #[test]
+    fn a_third_key_evicts_the_stalest_entry() {
+        let builds = Cell::new(0);
+        let mut cache = Vec::new();
+        for key in [1, 2, 1, 3, 2, 1] {
+            let _ = most_recent_or_build(&mut cache, 2, key, |key| {
+                builds.set(builds.get() + 1);
+                Ok(*key)
+            });
+        }
+        // 1,2 build; 1 hit; 3 evicts 2; 2 rebuilds (evicting 1); 1 rebuilds.
+        assert_eq!(builds.get(), 5);
+    }
+
+    #[test]
+    fn a_failed_build_keeps_the_cache() {
+        let mut cache = vec![(1, 10), (2, 20)];
+        let failed = most_recent_or_build(&mut cache, 2, 3, |_| Err("boom".to_string()));
+        assert_eq!(failed, Err("boom".to_string()));
+        assert_eq!(cache, vec![(1, 10), (2, 20)]);
     }
 }
