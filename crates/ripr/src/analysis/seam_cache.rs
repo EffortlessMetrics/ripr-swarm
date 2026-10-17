@@ -906,7 +906,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `1.42`: binding candidates include the names a macro definition's body
 /// defines or imports (#5991). `1.41` candidates omit them.
 /// `1.43`: direct test-required functions retain evidence-only roles (#3213).
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.43";
+/// `1.44`: binding candidates include a crate-root `extern crate x as std`
+/// alias (#8388); `1.43` candidates omit it.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.44";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -4403,7 +4405,8 @@ mod tests {
         // 1.39 -> 1.40: field-assignment probe shapes (RIPR-SPEC-0228).
         // 1.40 -> 1.41: trusted `expect_file` binding candidates (#6578).
         // 1.41 -> 1.42: macro-body binding candidates (#5991).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.43");
+        // 1.43 -> 1.44: `extern crate x as std` binding candidates (#8388).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.44");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes

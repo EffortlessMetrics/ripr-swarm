@@ -473,6 +473,9 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
         if json_namespace_rebound(&node) {
             names.insert("json".to_string());
         }
+        if renames_standard_crate(&node) {
+            return MacroBindingCandidates::Any;
+        }
         if let Some(name) = ast::MacroRules::cast(node.clone())
             .and_then(|item| item.name())
             .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()))
@@ -546,6 +549,19 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
     MacroBindingCandidates::Names(names)
 }
 
+/// An `extern crate other as std;` (or `core`, `alloc`) alias.
+fn renames_standard_crate(node: &SyntaxNode) -> bool {
+    ast::ExternCrate::cast(node.clone())
+        .and_then(|item| item.rename())
+        .and_then(|rename| rename.name())
+        .is_some_and(|name| {
+            matches!(
+                name.text().trim_start_matches("r#"),
+                "std" | "core" | "alloc"
+            )
+        })
+}
+
 // [`macro_binding_candidates`] is a stored over-approximation of this scan:
 // a new site kind, or a wider existing one, must widen it too and bump
 // `FILE_FACT_CACHE_SCHEMA_VERSION`, or cached candidates hide the new sites.
@@ -561,6 +577,7 @@ fn macro_binding_ambiguities(
     if !(trusted.contains(&"json") && source.contains("serde_json")
         || source.contains("macro")
         || source.contains("use")
+        || source.contains("extern")
         || source.contains("no_implicit_prelude")
         || source.contains('!'))
     {
@@ -627,6 +644,18 @@ fn macro_binding_ambiguities(
             })
     };
     for node in parse.tree().syntax().descendants() {
+        // `extern crate other as std;` at a crate root rebinds the name for
+        // every file, so a standard-root glob elsewhere cannot be trusted.
+        if let Some(rename) = ast::ExternCrate::cast(node.clone()).and_then(|k| k.rename())
+            && rename.name().is_some_and(|name| {
+                matches!(
+                    name.text().trim_start_matches("r#"),
+                    "std" | "core" | "alloc"
+                )
+            })
+        {
+            ambiguous.extend(all(line_of(&node), MacroBindingKind::Import, false));
+        }
         // An extern-crate alias or module in another file can defeat this
         // import's root even when that file never mentions `json` itself.
         if trusted.contains(&"json") && json_namespace_rebound(&node) {
@@ -842,7 +871,10 @@ fn macro_binding_ambiguities(
             // glob from any other root, stays a foreign glob.
             let standard_root = matches!(root, "std" | "core" | "alloc");
             for item in tree.syntax().descendants().filter_map(ast::UseTree::cast) {
-                if item.star_token().is_some() && standard_root && !drop_in_shadowed(root, external)
+                if item.star_token().is_some()
+                    && standard_root
+                    && !drop_in_shadowed(root, external)
+                    && drop_in_verified(root)
                 {
                     continue;
                 }

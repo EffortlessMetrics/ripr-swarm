@@ -302,7 +302,7 @@ impl WithheldMacroBindings {
             if krate == "serde_json" {
                 drop_ins.verified_literal_json(path)
             } else {
-                drop_ins.verified(path, krate)
+                drop_ins.verified_root(path, krate)
             }
         };
         let root = withheld_crate_root(path);
@@ -1816,7 +1816,7 @@ fn macro_binding_sites(
             if krate == "serde_json" {
                 index.drop_in_manifests.verified_literal_json(path)
             } else {
-                index.drop_in_manifests.verified(path, krate)
+                index.drop_in_manifests.verified_root(path, krate)
             }
         },
     )
@@ -1928,7 +1928,7 @@ fn scan_macro_sites(
                     if krate == "serde_json" {
                         index.drop_in_manifests.verified_literal_json(path)
                     } else {
-                        index.drop_in_manifests.verified(path, krate)
+                        index.drop_in_manifests.verified_root(path, krate)
                     }
                 },
             )
