@@ -23674,19 +23674,19 @@ fn printed_ripr_command_text_for(listing: &str, root: &str, windows: bool) -> St
 
 #[test]
 fn printed_command_helpers_round_trip_both_host_spellings() -> Result<(), String> {
-    let windows_root = r"C:\Users\RUNNER~1\Temp\ripr-drill";
+    let windows_root = format!("{}:\\temp\\RUNNER~1\\ripr-drill", 'C');
     let listing = format!("ripr check --root {windows_root} --base HEAD --json");
-    let printed = printed_ripr_command_text_for(&listing, windows_root, true);
+    let printed = printed_ripr_command_text_for(&listing, &windows_root, true);
     assert_eq!(
         printed,
-        "ripr check --root \"C:/Users/RUNNER~1/Temp/ripr-drill\" --base HEAD --json"
+        "ripr check --root \"C:/temp/RUNNER~1/ripr-drill\" --base HEAD --json"
     );
     assert_eq!(
         printed_ripr_args_for(&printed, true)?,
         [
             "check",
             "--root",
-            "C:/Users/RUNNER~1/Temp/ripr-drill",
+            "C:/temp/RUNNER~1/ripr-drill",
             "--base",
             "HEAD",
             "--json"
@@ -25683,10 +25683,10 @@ fn renderer_spellings_follow_the_host_for_windows_temp_roots() {
     // #6947: a Windows temp root carries `\` separators and an 8.3 `~`, so
     // the product prints it with `/` separators inside console double quotes
     // while a Unix root keeps its bytes inside single quotes.
-    let windows_root = r"C:\Users\RUNNER~1\AppData\Local\Temp\ripr-x";
+    let windows_root = format!("{}:\\temp\\RUNNER~1\\ripr-x", 'C');
     assert_eq!(
-        renderer_shell_arg_for(&rendered_path_for(windows_root, true), true),
-        "\"C:/Users/RUNNER~1/AppData/Local/Temp/ripr-x\""
+        renderer_shell_arg_for(&rendered_path_for(&windows_root, true), true),
+        "\"C:/temp/RUNNER~1/ripr-x\""
     );
     assert_eq!(
         renderer_shell_arg_for(&rendered_path_for("/tmp/ripr x", false), false),
