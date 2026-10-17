@@ -515,33 +515,47 @@ pub(crate) fn parse_ingest_text(text: &str) -> Result<Value, String> {
 /// The ripr build and install route a first-run ingest file names. A run that
 /// only ingests (the nightly `first-run-install` lane) measures no binary of
 /// its own, so without this the report records an empty identity and a
-/// committed baseline cannot say which ripr it describes.
+/// committed baseline cannot say which ripr it describes. The route is a label
+/// derived from the walk's install step, not the receipt's `binary`, which for
+/// the archive route is a path inside one run's output directory. A failed
+/// install reports its version as `unavailable`, which names no ripr.
 pub(crate) fn ingested_identity(value: &Value) -> Option<(String, String)> {
-    let nonempty = |v: &Value| v.as_str().filter(|t| !t.is_empty()).map(str::to_string);
-    match value["schema_version"].as_str() {
-        Some(FIRST_RUN_SCHEMA_VERSION) => {
-            Some((nonempty(&value["ripr"])?, nonempty(&value["binary"])?))
+    let version_of = |v: &Value| {
+        v.as_str()
+            .filter(|t| !t.is_empty() && *t != "unavailable")
+            .map(str::to_string)
+    };
+    let route_of = |steps: &mut dyn Iterator<Item = Option<&str>>| {
+        let mut found = None;
+        for step in steps.flatten() {
+            match step {
+                "install_published" => return Some("cargo install ripr --locked"),
+                "install_archive" => found = Some("prebuilt release archive"),
+                _ => {}
+            }
         }
+        found
+    };
+    let (version, route) = match value["schema_version"].as_str() {
+        Some(FIRST_RUN_SCHEMA_VERSION) => (
+            version_of(&value["ripr"])?,
+            route_of(
+                &mut value["setup"]
+                    .as_array()?
+                    .iter()
+                    .map(|s| s["step"].as_str()),
+            )?,
+        ),
         Some(FIRST_RUN_ROW_SCHEMA_VERSION) => {
             let rows = value["rows"].as_array()?;
-            let version = rows.iter().find_map(|row| nonempty(&row["ripr"]))?;
-            let route = if rows
-                .iter()
-                .any(|row| row["step"].as_str() == Some("install_published"))
-            {
-                "cargo install ripr --locked"
-            } else if rows
-                .iter()
-                .any(|row| row["step"].as_str() == Some("install_archive"))
-            {
-                "prebuilt release archive"
-            } else {
-                return None;
-            };
-            Some((version, route.to_string()))
+            (
+                rows.iter().find_map(|row| version_of(&row["ripr"]))?,
+                route_of(&mut rows.iter().map(|row| row["step"].as_str()))?,
+            )
         }
-        _ => None,
-    }
+        _ => return None,
+    };
+    Some((version, route.to_string()))
 }
 
 /// Fill an empty analyzer version and binary from the first ingest file that

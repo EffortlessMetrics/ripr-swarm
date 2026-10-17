@@ -3618,16 +3618,66 @@ fn ingested_first_run_rows_name_the_ripr_build_and_install_route() -> Result<(),
 }
 
 #[test]
-fn ingested_identity_never_replaces_a_measured_one() {
+fn ingested_receipt_and_failed_install_identities() -> Result<(), String> {
+    let receipt = |ripr: &str, step: &str| {
+        json!({
+            "schema_version": FIRST_RUN_SCHEMA_VERSION,
+            "ripr": ripr,
+            "binary": "/tmp/run-specific/ripr",
+            "setup": [{"step": step, "secs": 3.0}],
+            "cases": [],
+        })
+    };
+    assert_eq!(
+        ingested_identity(&receipt("ripr 0.10.0", "install_archive")),
+        Some((
+            "ripr 0.10.0".to_string(),
+            "prebuilt release archive".to_string()
+        ))
+    );
+    // A failed install writes `unavailable`, which names no ripr.
+    assert_eq!(
+        ingested_identity(&receipt("unavailable", "install_published")),
+        None
+    );
+    Ok(())
+}
+
+#[test]
+fn ingested_identity_fills_an_empty_context_and_never_replaces_a_measured_one() -> Result<(), String>
+{
+    let dir = crate::tests::temp_dir("dx-ingested-identity");
+    let unusable = dir.join("walk-only.jsonl");
+    let usable = dir.join("rows.jsonl");
+    let row = |step: &str| {
+        format!(
+            r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.10.0","case":"_setup","step":"{step}","metric":"secs","value":40.0,"budget":null,"better":"lower"}}"#
+        )
+    };
+    fs::write(&unusable, row("check")).map_err(|err| err.to_string())?;
+    fs::write(&usable, row("install_published")).map_err(|err| err.to_string())?;
+    let files = [dir.join("missing.jsonl"), unusable, usable];
+
+    let mut empty = RunContext::default();
+    record_ingested_identity(&mut empty, &files);
+    assert_eq!(empty.analyzer_version, "ripr 0.10.0");
+    assert_eq!(empty.binary, "cargo install ripr --locked");
+
     let mut measured = RunContext {
         analyzer_version: "ripr 0.11.0".to_string(),
         binary: "target/release/ripr".to_string(),
         ..RunContext::default()
     };
-    record_ingested_identity(&mut measured, &[PathBuf::from("does-not-exist.jsonl")]);
+    record_ingested_identity(&mut measured, &files);
     assert_eq!(measured.analyzer_version, "ripr 0.11.0");
     assert_eq!(measured.binary, "target/release/ripr");
-    let mut empty = RunContext::default();
-    record_ingested_identity(&mut empty, &[PathBuf::from("does-not-exist.jsonl")]);
-    assert!(empty.analyzer_version.is_empty() && empty.binary.is_empty());
+
+    let mut partial = RunContext {
+        binary: "target/release/ripr".to_string(),
+        ..RunContext::default()
+    };
+    record_ingested_identity(&mut partial, &files);
+    assert!(partial.analyzer_version.is_empty());
+    assert_eq!(partial.binary, "target/release/ripr");
+    Ok(())
 }
