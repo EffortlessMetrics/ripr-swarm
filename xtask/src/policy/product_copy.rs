@@ -320,6 +320,9 @@ mod tests {
         if first_run_command("no heading", "## CLI First Hour").is_ok() {
             return Err("a missing heading must be an error".to_string());
         }
+        if first_run_command("## CLI First Hour\n\nripr check\n", "## CLI First Hour").is_ok() {
+            return Err("a heading with no fenced block must be an error".to_string());
+        }
         Ok(())
     }
 
