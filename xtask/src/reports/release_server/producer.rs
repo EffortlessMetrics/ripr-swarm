@@ -11,7 +11,7 @@ use super::sha256_file;
 
 const PRODUCER_SCHEMA_VERSION: u32 = 1;
 const PRODUCER_KIND: &str = "ripr_final_native_payload_producer_build";
-const SHIPPED_RELEASE_PROFILE_ENV: &[(&str, &str)] = &[
+const ARCHIVE_PROFILE_ENV: &[(&str, &str)] = &[
     ("CARGO_PROFILE_RELEASE_LTO", "true"),
     ("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "1"),
 ];
@@ -87,10 +87,11 @@ pub(crate) fn build_release_executable(
         "--message-format=json-render-diagnostics".to_string(),
     ];
     // Archives ship the fully optimized profile; the workspace `release`
-    // profile trades that for build time. The overlay keeps the recorded
-    // cargo arguments unchanged.
+    // profile trades that for build time. The recorded cargo arguments do not
+    // include this overlay, so the receipt alone does not name the effective
+    // `lto`/`codegen-units`; they are fixed by this constant.
     let output =
-        run_output_owned_with_envs("cargo", &cargo_arguments, SHIPPED_RELEASE_PROFILE_ENV)?;
+        run_output_owned_with_envs("cargo", &cargo_arguments, ARCHIVE_PROFILE_ENV)?;
     let expected_executable = Path::new("target")
         .join(target)
         .join("release")
@@ -453,7 +454,7 @@ mod tests {
     #[test]
     fn shipped_archives_keep_the_fat_lto_single_codegen_unit_profile() {
         assert_eq!(
-            super::SHIPPED_RELEASE_PROFILE_ENV,
+            super::ARCHIVE_PROFILE_ENV,
             &[
                 ("CARGO_PROFILE_RELEASE_LTO", "true"),
                 ("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "1"),
