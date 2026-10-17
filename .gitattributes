@@ -68,7 +68,11 @@ docs/LEARNINGS.md merge=union
 # The spec-test-code registry is appended to by nearly every PR, so concurrent
 # PRs conflict at end-of-file even though their `[[...]]` entries are
 # independent (evidence: 4 of 13 conflicted open PRs on 2026-10-17 hit only
-# this file). Union keeps both sides' appended blocks; a same-entry edit from
-# both sides still fails `cargo xtask check-traceability` instead of merging
-# silently.
+# this file). Union keeps both sides' appended blocks. Verified locally:
+# two sides adding the same `[[behavior]]` id fails `check-traceability`
+# (duplicate id / duplicate keys), but two sides appending to the same
+# entry's `tests = [` array merge cleanly and silently (both sides' lines kept),
+# so review such merges. Only local/agent
+# `git merge` uses this driver; GitHub web merge, squash merge and the
+# "Update branch" button ignore merge drivers and still conflict.
 .ripr/traceability.toml merge=union
