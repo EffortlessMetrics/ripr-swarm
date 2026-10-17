@@ -75,6 +75,20 @@ Runtime mutation outcome words are allowed only in this calibration/runtime
 report family. Static check, exposure, badge, context, and editor reports must
 continue using the audit vocabulary.
 
+### Missing snapshot recovery paths
+
+When a supplied repo-exposure snapshot is missing, `calibrate cargo-mutants`
+names a capture command. The shared reader used by `outcome --before` and
+`--after` follows the same rule. Executable redirect operands retain the native
+UTF-8 path spelling before shell quoting; report path normalization is only for
+prose. On Unix, a literal backslash in a filename must not become a directory
+separator or retarget the capture to an existing slash-spelled file.
+
+The Unix CLI regression replays all three emitted capture routes with plain and
+quoted filenames, requires nonempty snapshot evidence at the requested path,
+and checks that the slash-spelled decoy keeps its bytes. This establishes POSIX
+shell replay on Unix, not universal shell or native Windows qualification.
+
 ## Required Evidence
 
 Each matched calibration row should carry:
@@ -359,6 +373,7 @@ Current tests:
 - `crates/ripr/src/output/mutation_calibration.rs::tests::calibrate_disclosure_treats_combined_directory_array_as_no_mutants_head`
 - `crates/ripr/tests/cli_smoke.rs::calibrate_foreign_same_line_join_discloses_missing_head`
 - `crates/ripr/tests/cli_smoke.rs::calibrate_headed_snapshot_names_the_assumed_subject`
+- `crates/ripr/tests/cli_smoke/snapshot_recovery.rs::missing_snapshot_recovery_preserves_native_redirect_target`
 - `crates/ripr/src/output/mutation_calibration.rs::tests::mutants_json_only_import_discloses_unexecuted_matched_total`
 - `crates/ripr/src/output/mutation_calibration.rs::tests::mixed_import_names_how_many_matched_rows_lack_outcomes`
 - `crates/ripr/src/output/mutation_calibration.rs::tests::unmatched_unknown_does_not_claim_matched_total_includes_it`
