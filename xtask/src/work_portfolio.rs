@@ -3345,9 +3345,11 @@ pub(crate) struct WorkCaptureNoticeV1 {
 /// committed default corpus is named as such however it was spelled.
 fn is_committed_fixture_dir(root: &Path) -> bool {
     let fixtures = workspace_path("fixtures");
+    // Fail closed: a path that cannot be resolved is never reported as the
+    // committed corpus, so a lexical prefix match cannot mislabel it.
     match (root.canonicalize(), fixtures.canonicalize()) {
         (Ok(root), Ok(fixtures)) => root.starts_with(fixtures),
-        _ => root.starts_with(&fixtures),
+        _ => false,
     }
 }
 
