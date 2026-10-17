@@ -1,7 +1,8 @@
 use super::*;
 #[test]
 fn timeout_json_retry_preserves_format_and_unknown_analysis() -> Result<(), String> {
-    let root = if cfg!(windows) { "C:/pilot" } else { "/pilot" };
+    let root = std::path::absolute("/pilot").map_err(|error| error.to_string())?;
+    let root = root.to_string_lossy().replace('\\', "/");
     let packet = PathBuf::from(format!("{root}/packet"));
     let artifacts = PilotArtifacts {
         repo_exposure_json: packet.join("repo-exposure.json"),
@@ -11,7 +12,7 @@ fn timeout_json_retry_preserves_format_and_unknown_analysis() -> Result<(), Stri
         pilot_summary_md: packet.join("pilot-summary.md"),
     };
     let context = PilotSummaryContext {
-        root: Path::new(root),
+        root: Path::new(&root),
         timeout_ms: 100,
         ..pilot_context(&artifacts)
     };
