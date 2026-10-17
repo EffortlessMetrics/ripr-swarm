@@ -639,11 +639,14 @@ mod tests {
     #[test]
     fn oversized_single_detail_stays_bounded_and_visible() -> Result<(), String> {
         let mut card = minimal_card();
-        let large = "x".repeat(1024 * 1024 + 7);
+        let large = "x".repeat(crate::domain::DEFAULT_REPAIR_CARD_MAX_SERIALIZED_BYTES + 7);
         let content = json(&large);
         let expected = serde_json::to_string(&content)
             .map_err(|error| error.to_string())?
             .len();
+        if expected <= crate::domain::DEFAULT_REPAIR_CARD_MAX_SERIALIZED_BYTES {
+            return Err("oversized detail fixture must exceed the wire budget".to_string());
+        }
         apply_repair_card_budget(
             &mut card,
             &[RepairCardDetailSource::current(
