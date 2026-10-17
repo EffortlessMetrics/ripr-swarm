@@ -153,7 +153,7 @@ pub(crate) fn render_pilot_timeout_summary_md(context: PilotSummaryContext<'_>) 
             "Rerun with an explicit --timeout-ms at least as large as the time already spent:\n\n",
         );
     }
-    out.push_str(super::COMMAND_SHELL_DISCLOSURE);
+    out.push_str(super::command_shell_disclosure());
     out.push_str("```bash\n");
     out.push_str(&commands.retry);
     out.push_str("\n```\n");

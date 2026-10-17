@@ -505,7 +505,12 @@ fn no_eligible_seam_message(
     if !reasons.is_empty() {
         message.push_str(&format!(" ({})", reasons.join("; ")));
     }
-    message.push_str(&format!(". Next: `ripr pilot --root {root}`"));
+    // `repair` inventories saved repository seams, while `check` reads a
+    // diff: promise a gap only when the branch has changed code, and keep
+    // the repository-wide route first.
+    message.push_str(&format!(
+        ". Next: `ripr pilot --root {root}` explores the whole repository; when this branch has changed code, `ripr check --root {root}` names a gap in it to test by hand"
+    ));
     message
 }
 

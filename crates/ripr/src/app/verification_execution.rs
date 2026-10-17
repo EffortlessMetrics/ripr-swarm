@@ -301,6 +301,12 @@ pub(crate) fn execute_verify_packet(
     }
 }
 
+/// Keep the adapter's root-admission diagnostic in the existing response shape.
+/// Admission failed before packet execution, so no observation was committed.
+pub(crate) fn render_unusable_root(reason: &str) -> String {
+    refusal_outcome(&Refusal::operational(DISPOSITION_WRONG_ROOT, reason)).rendered
+}
+
 fn refusal_outcome(refusal: &Refusal) -> ExecutionOutcome {
     let response = ExecutionResponse {
         schema_version: RESPONSE_SCHEMA_VERSION,

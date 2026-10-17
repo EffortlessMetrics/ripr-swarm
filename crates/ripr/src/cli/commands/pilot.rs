@@ -180,34 +180,23 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         // the packet directory does not present them as this run's outputs.
         // Removal, not in-place stale markers: no schema change, and a
         // missing file cannot be read as current evidence.
-        remove_unwritten_timeout_packet_siblings(&artifacts)?;
-        let context = output::pilot::PilotSummaryContext {
-            root: &input.root,
-            mode: &input.mode,
-            config_path: config.source_path(),
-            max_seams: options.max_seams,
-            timeout_ms: spent_timeout_ms,
-            timeout_extension_ms: extension_ms.unwrap_or(0),
-            artifacts: &artifacts,
-            python_first_use: None,
-            language_routes: None,
-            current_change: None,
-            seam_limit: None,
-        };
-        let summary_json = output::pilot::render_pilot_timeout_summary_json(context);
-        write_pilot_file(&artifacts.pilot_summary_json, &summary_json)?;
-        write_pilot_file(
-            &artifacts.pilot_summary_md,
-            output::pilot::render_pilot_timeout_summary_md(context),
+        publish_timeout_packet(
+            &artifacts,
+            options.format,
+            output::pilot::PilotSummaryContext {
+                root: &input.root,
+                mode: &input.mode,
+                config_path: config.source_path(),
+                max_seams: options.max_seams,
+                timeout_ms: spent_timeout_ms,
+                timeout_extension_ms: extension_ms.unwrap_or(0),
+                artifacts: &artifacts,
+                python_first_use: None,
+                language_routes: None,
+                current_change: None,
+                seam_limit: None,
+            },
         )?;
-        print!(
-            "{}",
-            pilot_stdout(
-                options.format,
-                &summary_json,
-                &output::pilot::render_pilot_timeout_terminal(context),
-            )
-        );
         return Ok(());
     };
 
@@ -281,8 +270,27 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // A snapshot holding seams `ripr check` never classifies is not the same
     // population as its after snapshot, so it is written without identity.
     let change_seams_added = folded.added > 0;
+    // Source admission is independent of the inventory cap. Without a
+    // supplement (or after a failed one), an absent changed source still
+    // needs the shared disclosure; observing file presence does not clear
+    // the failed supplement's classification caveat.
+    let absent_file_limitations = if let Some(limitations) = folded.absent_file_limitations {
+        Some(limitations)
+    } else if rust_enabled {
+        if current_change.changed_rust_files().is_empty() {
+            None
+        } else {
+            Some(analysis::absent_changed_rust_file_limitations(
+                &input.root,
+                &config,
+                &current_change.changed_files(),
+            )?)
+        }
+    } else {
+        None
+    };
     let current_change = current_change
-        .with_absent_file_limitations(folded.absent_file_limitations)
+        .with_absent_file_limitations(absent_file_limitations)
         .with_seams_counted(&classified, folded.caveat_limit);
     let pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
         current_change.keeps_past_budget(entry)
@@ -443,15 +451,20 @@ fn classify_change_past_seam_limit(
         );
     }
     let (root, config, change) = (root.to_path_buf(), config.clone(), change.clone());
+    let changed_paths = change.changed_files();
     Some(
         match run_pilot_analysis_with_timeout(
             remaining_ms,
             None,
             || {},
             move || {
-                analysis::classify_seams_in_files_at_with_config(&root, &config, &files, &|seam| {
-                    change.touches_seam(seam)
-                })
+                analysis::classify_seams_in_files_at_with_config(
+                    &root,
+                    &config,
+                    &files,
+                    &changed_paths,
+                    &|seam| change.touches_seam(seam),
+                )
             },
         ) {
             Ok(PilotAnalysisResult::Complete(classified)) => Ok(classified),
@@ -835,6 +848,34 @@ fn remove_timeout_packet_sibling(path: &Path) -> Result<(), String> {
             )
         }),
     }
+}
+
+/// Publish the timeout packet: remove the prior-run siblings this run will
+/// not rewrite (#7425), then overwrite the two summaries with the partial
+/// timeout result. Extracted verbatim from `pilot`'s timeout branch so the
+/// packet contract is testable deterministically, without racing a real
+/// process deadline.
+fn publish_timeout_packet(
+    artifacts: &output::pilot::PilotArtifacts,
+    format: PilotStdoutFormat,
+    context: output::pilot::PilotSummaryContext<'_>,
+) -> Result<(), String> {
+    remove_unwritten_timeout_packet_siblings(artifacts)?;
+    let summary_json = output::pilot::render_pilot_timeout_summary_json(context);
+    write_pilot_file(&artifacts.pilot_summary_json, &summary_json)?;
+    write_pilot_file(
+        &artifacts.pilot_summary_md,
+        output::pilot::render_pilot_timeout_summary_md(context),
+    )?;
+    print!(
+        "{}",
+        pilot_stdout(
+            format,
+            &summary_json,
+            &output::pilot::render_pilot_timeout_terminal(context),
+        )
+    );
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1356,45 +1397,52 @@ mod tests {
 
     #[test]
     fn timed_out_pilot_removes_prior_run_packet_siblings() -> Result<(), String> {
-        use crate::testing::unwritable_output::OutputDirFixture;
-
-        let env = OutputDirFixture::writable("pilot-timeout-stale", "packet")?;
-        std::fs::write(
-            env.root.join("Cargo.toml"),
-            "[package]\nname = \"timeout_stale\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-        )
-        .map_err(|err| format!("write Cargo.toml: {err}"))?;
-        std::fs::create_dir(env.root.join("src")).map_err(|err| format!("create src: {err}"))?;
-        std::fs::write(env.root.join("src/lib.rs"), "pub fn f() -> i32 { 1 }\n")
-            .map_err(|err| format!("write lib.rs: {err}"))?;
-
-        std::fs::create_dir_all(&env.target).map_err(|err| format!("create packet dir: {err}"))?;
+        // Drive the timeout packet publisher directly. Racing a real 1 ms
+        // `--timeout-ms` deadline against cold process startup let a tiny
+        // fixture's analysis finish inside the window on a fast host, so
+        // `pilot` took the complete branch and rewrote the packet before the
+        // timeout assertions could bind (#7937 residual). Which branch a
+        // real deadline race takes is host timing, not code behavior; the
+        // deadline machinery that selects the timeout branch is covered
+        // deterministically by the `run_pilot_analysis_with_timeout` tests
+        // above.
+        let dir = TempPacketDir::new("timeout-stale")?;
+        let artifacts = packet_dir_artifacts(&dir);
         let stale = "PREVIOUS_COMPLETE_RUN";
-        for name in [
-            "repo-exposure.json",
-            "repo-exposure.md",
-            "agent-seam-packets.json",
-            "pilot-summary.json",
+        for path in [
+            &artifacts.repo_exposure_json,
+            &artifacts.repo_exposure_md,
+            &artifacts.agent_seam_packets_json,
+            &artifacts.pilot_summary_json,
+            &artifacts.pilot_summary_md,
         ] {
-            std::fs::write(env.target.join(name), stale)
-                .map_err(|err| format!("write stale {name}: {err}"))?;
+            std::fs::write(path, stale)
+                .map_err(|err| format!("write stale {}: {err}", path.display()))?;
         }
-        std::fs::write(env.target.join("unrelated.txt"), "keep-me")
+        std::fs::write(dir.join("unrelated.txt"), "keep-me")
             .map_err(|err| format!("write unrelated: {err}"))?;
+        let root = dir.join("repo");
+        std::fs::create_dir(&root).map_err(|err| format!("create fixture root: {err}"))?;
 
-        let root = OutputDirFixture::path_arg(&env.root)?;
-        let out = OutputDirFixture::path_arg(&env.target)?;
-        pilot(&args(&[
-            "--root",
-            root,
-            "--out",
-            out,
-            "--timeout-ms",
-            "1",
-            "--quiet",
-        ]))?;
+        publish_timeout_packet(
+            &artifacts,
+            PilotStdoutFormat::Human,
+            output::pilot::PilotSummaryContext {
+                root: &root,
+                mode: &Mode::Draft,
+                config_path: None,
+                max_seams: 5,
+                timeout_ms: 1,
+                timeout_extension_ms: 0,
+                artifacts: &artifacts,
+                python_first_use: None,
+                language_routes: None,
+                current_change: None,
+                seam_limit: None,
+            },
+        )?;
 
-        let summary = std::fs::read_to_string(env.target.join("pilot-summary.json"))
+        let summary = std::fs::read_to_string(&artifacts.pilot_summary_json)
             .map_err(|err| format!("read timeout summary: {err}"))?;
         assert!(
             summary.contains(r#""status": "partial""#)
@@ -1405,19 +1453,29 @@ mod tests {
             !summary.contains(stale),
             "the partial summary must not carry the previous run's bytes:\n{summary}"
         );
+        let summary_md = std::fs::read_to_string(&artifacts.pilot_summary_md)
+            .map_err(|err| format!("read timeout summary md: {err}"))?;
+        assert!(
+            summary_md.contains("- Status: `partial`"),
+            "the timeout path must rewrite the markdown summary; got:\n{summary_md}"
+        );
+        assert!(
+            !summary_md.contains(stale),
+            "the markdown summary must not carry the previous run's bytes:\n{summary_md}"
+        );
         for name in [
             "repo-exposure.json",
             "repo-exposure.md",
             "agent-seam-packets.json",
         ] {
-            let path = env.target.join(name);
+            let path = dir.join(name);
             assert!(
                 !path.exists(),
                 "timed-out pilot must not leave leftover {name} from the previous run"
             );
         }
         assert_eq!(
-            std::fs::read_to_string(env.target.join("unrelated.txt"))
+            std::fs::read_to_string(dir.join("unrelated.txt"))
                 .map_err(|err| format!("read unrelated: {err}"))?,
             "keep-me"
         );

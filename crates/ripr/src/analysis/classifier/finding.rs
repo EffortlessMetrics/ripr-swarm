@@ -243,8 +243,13 @@ enum Unconfirmed {
 /// boundary value, or when no assertion pins the exact error variant or field
 /// value the change alters, and an oracle `reveal` left unconfirmed (see
 /// [`Unconfirmed`]) is not established to observe it.
-/// `exposed` and the unknown classes are left alone: ripr does not claim a
-/// miss it has not established.
+/// `exposed` and the unknown classes name one established miss: a matched
+/// oracle row whose relation is proximity-only never calls the owner, so
+/// next to a reaching row its identical "uses ... oracle" line would
+/// attribute part of the discrimination to a test whose assertion is about
+/// different code (#7642). Rows without a matched oracle, and rows with no
+/// recorded relation reason, stay unannotated: ripr does not claim a miss
+/// it has not established.
 fn annotate_related_test_misses(
     related_tests: &mut [RelatedTest],
     class: &ExposureClass,
@@ -308,7 +313,27 @@ fn annotate_related_test_misses(
                     None
                 }
             }
-            _ => None,
+            _ => {
+                // #7642: on `exposed` and the unknown classes a matched row
+                // whose relation reason does not establish reach
+                // (`establishes_reach`, the rule `reach_evidence` reads,
+                // #7531) never invokes the owner, so its oracle cannot
+                // discriminate this change no matter how strong the
+                // assertion. Annotate the established fact; the verdict is
+                // untouched because `miss` is evidence-only. A row without
+                // a matched oracle or without a recorded relation reason
+                // keeps the unknown: the pass must not claim what the
+                // relation layer did not establish.
+                if test.oracle.is_some()
+                    && test
+                        .relation_reason
+                        .is_some_and(|reason| !reason.establishes_reach(owner_is_function))
+                {
+                    Some(RelatedTestMiss::NoCallPath)
+                } else {
+                    None
+                }
+            }
         };
     }
 }
@@ -599,6 +624,107 @@ mod tests {
             relation_confidence: None,
             miss: None,
         }
+    }
+
+    #[test]
+    fn exposed_marks_proximity_only_oracle_rows_as_no_call_path() {
+        // #7642: on an exposed finding a matched oracle row linked by
+        // proximity only never invokes the owner, so it must not render as
+        // an unqualified oracle row next to the reaching test.
+        let row = |name: &str, reason: Option<RelationReason>| RelatedTest {
+            relation_reason: reason,
+            ..matched_row(name, OracleStrength::Strong)
+        };
+        let mut rows = vec![
+            row("reaches_owner", Some(RelationReason::DirectOwnerCall)),
+            row(
+                "sibling_asserts_elsewhere",
+                Some(RelationReason::SameTestFile),
+            ),
+            row("named_after_owner", Some(RelationReason::OwnerNamedTest)),
+            row(
+                "assertion_target",
+                Some(RelationReason::AssertionTargetAffinity),
+            ),
+            row("no_relation_recorded", None),
+        ];
+        annotate_related_test_misses(
+            &mut rows,
+            &crate::domain::ExposureClass::Exposed,
+            true,
+            &ProbeFamily::MatchArm,
+            &ActivationEvidence::default(),
+            Unconfirmed::Confirmed,
+        );
+        assert_eq!(
+            rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
+            vec![
+                None,
+                Some(crate::domain::RelatedTestMiss::NoCallPath),
+                Some(crate::domain::RelatedTestMiss::NoCallPath),
+                Some(crate::domain::RelatedTestMiss::NoCallPath),
+                None,
+            ]
+        );
+        // For an owner without a function, assertion-target affinity is how
+        // the owner is observed, so that row keeps no miss; file proximity
+        // still does not call the owner.
+        let mut module_rows = vec![
+            row(
+                "sibling_asserts_elsewhere",
+                Some(RelationReason::SameTestFile),
+            ),
+            row(
+                "assertion_target",
+                Some(RelationReason::AssertionTargetAffinity),
+            ),
+        ];
+        annotate_related_test_misses(
+            &mut module_rows,
+            &crate::domain::ExposureClass::Exposed,
+            false,
+            &ProbeFamily::MatchArm,
+            &ActivationEvidence::default(),
+            Unconfirmed::Confirmed,
+        );
+        assert_eq!(
+            module_rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
+            vec![Some(crate::domain::RelatedTestMiss::NoCallPath), None,]
+        );
+    }
+
+    #[test]
+    fn exposed_keeps_unmatched_and_oracle_free_rows_unannotated() {
+        // Rows reveal already annotated, and rows with no matched oracle,
+        // keep their existing state: the pass annotates matched oracle rows
+        // only.
+        let mut rows = vec![
+            RelatedTest {
+                miss: Some(crate::domain::RelatedTestMiss::AssertionNotObserving),
+                relation_reason: Some(RelationReason::SameTestFile),
+                ..matched_row("examined_only", OracleStrength::None)
+            },
+            RelatedTest {
+                oracle: None,
+                relation_reason: Some(RelationReason::SameTestFile),
+                ..matched_row("no_oracle_row", OracleStrength::None)
+            },
+        ];
+        annotate_related_test_misses(
+            &mut rows,
+            &crate::domain::ExposureClass::StaticUnknown,
+            true,
+            &ProbeFamily::MatchArm,
+            &ActivationEvidence::default(),
+            Unconfirmed::Confirmed,
+        );
+        assert_eq!(
+            rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
+            vec![
+                Some(crate::domain::RelatedTestMiss::AssertionNotObserving),
+                None,
+            ]
+        );
     }
 
     #[test]
