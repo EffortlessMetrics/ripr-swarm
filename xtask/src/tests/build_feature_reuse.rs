@@ -27,6 +27,8 @@ fn feature_variants(rows: &str) -> Result<FeatureVariants, String> {
 fn cargo_features(root: &std::path::Path, package: &str) -> Result<FeatureVariants, String> {
     use std::time::Duration;
     let args = [
+        "--color",
+        "never",
         "tree",
         "--locked",
         "--offline",
@@ -44,7 +46,8 @@ fn cargo_features(root: &std::path::Path, package: &str) -> Result<FeatureVarian
         env!("CARGO"),
         &args,
         Some(root),
-        &[],
+        // CI forces color; the explicit machine-output option must override it.
+        &[("CARGO_TERM_COLOR", "always")],
         Duration::from_secs(30),
         "offline dependency feature inventory",
     )?;
