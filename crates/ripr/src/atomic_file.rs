@@ -39,8 +39,8 @@ fn ensure_default_output_contained_with(
         };
         if escapes {
             return Err(format!(
-                "refusing to write ripr output: {} is a symlink that resolves outside the workspace {}. \\
-                 A repository can check in such a link to redirect where ripr writes. Either replace it with a real directory, \\
+                "refusing to write ripr output: {} is a symlink that resolves outside the workspace {}. \
+                 A repository can check in such a link to redirect where ripr writes. Either replace it with a real directory, \
                  or choose the location yourself, for example: RIPR_CACHE_DIR=/var/cache/ripr ripr check",
                 path.display(),
                 root.display()
@@ -841,7 +841,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
         // An explicit RIPR_CACHE_DIR is the opt-in and passes the guard.
         ensure_default_output_contained_with(&ws, Some("/var/cache/ripr"))?;
-        assert!(escaped.is_err_and(|e| e.contains("RIPR_CACHE_DIR=/var/cache/ripr")));
+        assert!(
+            escaped.is_err_and(|e| {
+                e.contains("RIPR_CACHE_DIR=/var/cache/ripr") && !e.contains('\\')
+            })
+        );
         assert!(escaped_ripr.is_err());
         Ok(())
     }
