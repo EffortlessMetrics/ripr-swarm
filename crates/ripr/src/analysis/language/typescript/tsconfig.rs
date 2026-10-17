@@ -146,7 +146,7 @@ impl TsAliasUnresolveCause {
     }
 }
 
-/// Why no alias map exists even though the opt-in flag is ON (#4106-B).
+/// Why no alias map exists even though the flag is ON (#4106-B).
 ///
 /// The flag-ON fail-closed paths used to collapse into the generic
 /// "no alias map was available — enable the flag" advice, which told the
