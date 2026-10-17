@@ -1314,6 +1314,21 @@ fn unsized_mut_reference_parameters_bind_an_owned_stand_in() {
         owned_mut_binding("str", "name"),
         ("std::string::String".to_string(), "&mut name".to_string())
     );
+    // A slice of arrays is still unsized; a parenthesized object type too.
+    assert_eq!(
+        owned_mut_binding("[[u8; 4]]", "rows"),
+        (
+            "std::vec::Vec<[u8; 4]>".to_string(),
+            "&mut rows".to_string()
+        )
+    );
+    assert_eq!(
+        owned_mut_binding("(dyn Sink + Send)", "sink"),
+        (
+            "std::boxed::Box<dyn Sink + Send>".to_string(),
+            "&mut *sink".to_string()
+        )
+    );
     // A fixed-size array is sized: it stays as written.
     assert_eq!(
         owned_mut_binding("[u8; 4]", "buf"),
