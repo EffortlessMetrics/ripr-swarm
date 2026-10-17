@@ -111,20 +111,22 @@ fn name_is_direct_owner_result(
         if !(trimmed.ends_with(';') || trimmed.ends_with('{') || trimmed.ends_with('}')) {
             continue;
         }
-        match statement_binding_verdict(&statement, name, owner_name) {
-            Some(BindingVerdict::Scoped(owner_bound)) => {
-                scope.retain(|(bound_at, _)| *bound_at < statement_depth);
-                scope.push((statement_depth, owner_bound));
-            }
-            // A reassignment or a pattern binder we do not scope-track may
-            // leave any enclosing binding changed after its block ends.
-            Some(BindingVerdict::Withdrawn) => {
-                for (_, owner_bound) in &mut scope {
-                    *owner_bound = false;
+        for piece in statement.split_inclusive(';') {
+            match statement_binding_verdict(piece, name, owner_name) {
+                Some(BindingVerdict::Scoped(owner_bound)) => {
+                    scope.retain(|(bound_at, _)| *bound_at < statement_depth);
+                    scope.push((statement_depth, owner_bound));
                 }
-                scope.push((statement_depth, false));
+                // A reassignment or a pattern binder we do not scope-track may
+                // leave any enclosing binding changed after its block ends.
+                Some(BindingVerdict::Withdrawn) => {
+                    for (_, owner_bound) in &mut scope {
+                        *owner_bound = false;
+                    }
+                    scope.push((statement_depth, false));
+                }
+                None => {}
             }
-            None => {}
         }
         statement.clear();
     }
@@ -181,16 +183,23 @@ fn binds_by_pattern(statement: &str, name: &str) -> bool {
     if !contains_word(statement, name) {
         return false;
     }
-    let header = statement.strip_prefix("else ").unwrap_or(statement);
+    let header = statement.trim_start_matches('}').trim_start();
+    let header = header.strip_prefix("else ").unwrap_or(header);
     if header.starts_with("if let ")
         || header.starts_with("while let ")
         || header.starts_with("for ")
     {
         return true;
     }
-    if let Some((pattern, _)) = statement.split_once("=>") {
-        let arm = pattern.rsplit_once('{').map_or(pattern, |(_, arm)| arm);
-        return contains_word(arm, name);
+    if statement.contains("=>") {
+        let mut arms: Vec<&str> = statement.split("=>").collect();
+        arms.pop();
+        return arms.iter().any(|pattern| {
+            let arm = pattern
+                .rsplit_once([',', '{'])
+                .map_or(*pattern, |(_, arm)| arm);
+            contains_word(arm, name)
+        });
     }
     statement.contains('|') && !statement.contains("||")
 }

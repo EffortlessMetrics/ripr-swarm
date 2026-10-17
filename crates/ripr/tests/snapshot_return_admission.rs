@@ -171,3 +171,30 @@ fn transformed_owner_call_is_not_the_owner_result() -> Result<(), String> {
     assert_weak(&fixture.seam()?);
     Ok(())
 }
+
+#[test]
+fn else_if_let_shadow_cannot_carry_the_owner_result_snapshot() -> Result<(), String> {
+    let fixture = Fixture::new(
+        "let count = make_count(2);\n        if count == 0 {\n            return;\n        } else if let Some(count) = Some(2usize) {\n            insta::assert_json_snapshot!(count);\n        }",
+    )?;
+    assert_weak(&fixture.seam()?);
+    Ok(())
+}
+
+#[test]
+fn later_match_arm_binder_cannot_carry_the_owner_result_snapshot() -> Result<(), String> {
+    let fixture = Fixture::new(
+        "let count = make_count(2);\n        match Some(2usize) {\n            None => 1,\n            Some(count) => {\n                insta::assert_json_snapshot!(count);\n                2\n            }\n        };",
+    )?;
+    assert_weak(&fixture.seam()?);
+    Ok(())
+}
+
+#[test]
+fn same_line_rebind_cannot_carry_the_owner_result_snapshot() -> Result<(), String> {
+    let fixture = Fixture::new(
+        "let count = make_count(2);\n        let other = 1usize; let count = other;\n        insta::assert_json_snapshot!(count);",
+    )?;
+    assert_weak(&fixture.seam()?);
+    Ok(())
+}
