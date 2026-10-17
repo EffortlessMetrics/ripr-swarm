@@ -90,8 +90,7 @@ pub(crate) fn build_release_executable(
     // profile trades that for build time. The recorded cargo arguments do not
     // include this overlay, so the receipt alone does not name the effective
     // `lto`/`codegen-units`; they are fixed by this constant.
-    let output =
-        run_output_owned_with_envs("cargo", &cargo_arguments, ARCHIVE_PROFILE_ENV)?;
+    let output = run_output_owned_with_envs("cargo", &cargo_arguments, ARCHIVE_PROFILE_ENV)?;
     let expected_executable = Path::new("target")
         .join(target)
         .join("release")
