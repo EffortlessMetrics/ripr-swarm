@@ -381,3 +381,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_static_limit (15)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless ts_static_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

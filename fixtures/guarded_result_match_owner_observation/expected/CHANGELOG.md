@@ -227,3 +227,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — guarded_result_match_owner_observation (19)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless guarded_result_match_owner_observation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
