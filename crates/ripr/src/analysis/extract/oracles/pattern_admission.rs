@@ -6,6 +6,11 @@
 //! The reading is syntactic. A path the line cannot resolve (a variant, a
 //! unit struct, a constant) counts as pinning a value, which keeps today's
 //! reading; only patterns that are shown not to pin a value are weakened.
+//! A unique `struct` or single-variant `enum` in the same source the
+//! classifier is given is enough to show `Cfg { .. }` or `Only::Value`
+//! (#6737); anything the file cannot uniquely name stays pinning.
+
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::domain::{OracleKind, OracleStrength};
@@ -37,11 +42,145 @@ enum Reading {
     Pins,
 }
 
+/// Struct and single-variant enum names the same source uniquely declares.
+///
+/// RIPR-SPEC-0231 rule 3: a path is irrefutable only when it can be shown to
+/// name a struct, or the sole variant of an enum shown to have one variant.
+/// A second item of the same name, or a path this table does not name,
+/// stays unresolved and keeps today's exact reading.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LocalDecls {
+    structs: BTreeSet<String>,
+    /// Enum name → its only variant.
+    single_variant_enums: BTreeMap<String, String>,
+}
+
+impl LocalDecls {
+    pub(crate) fn from_source(source: &str) -> Self {
+        if source.is_empty() {
+            return Self::default();
+        }
+        let masked = mask_comments_and_strings(source);
+        let mut kinds: BTreeMap<String, BTreeSet<ItemKind>> = BTreeMap::new();
+        let mut enum_variants: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let bytes = masked.as_bytes();
+        let mut index = 0usize;
+        while index < bytes.len() {
+            if !is_identifier_byte(bytes[index]) {
+                index += 1;
+                continue;
+            }
+            let start = index;
+            index += 1;
+            while index < bytes.len() && is_identifier_byte(bytes[index]) {
+                index += 1;
+            }
+            if start > 0 && is_identifier_byte(bytes[start - 1]) {
+                continue;
+            }
+            let Some(word) = masked.get(start..index) else {
+                continue;
+            };
+            let kind = match word {
+                "struct" => ItemKind::Struct,
+                "enum" => ItemKind::Enum,
+                "union" => ItemKind::Union,
+                "type" => ItemKind::Type,
+                _ => continue,
+            };
+            let after = skip_whitespace(&masked, index);
+            let Some((name, name_end)) = ident_at(&masked, after) else {
+                continue;
+            };
+            kinds.entry(name.to_string()).or_default().insert(kind);
+            if kind == ItemKind::Enum {
+                // A second same-named enum cannot uniquely count variants.
+                if enum_variants.contains_key(name) {
+                    enum_variants.insert(name.to_string(), Vec::new());
+                } else {
+                    let body_at = skip_whitespace(&masked, skip_generics(&masked, name_end));
+                    let variants = next_brace_at_depth_zero(&masked, body_at)
+                        .and_then(|open| {
+                            let close = matching_close(&masked, open)?;
+                            enum_variant_names(masked.get(open + 1..close)?)
+                        })
+                        .unwrap_or_default();
+                    enum_variants.insert(name.to_string(), variants);
+                }
+            }
+            index = name_end;
+        }
+        let mut structs = BTreeSet::new();
+        let mut single_variant_enums = BTreeMap::new();
+        for (name, declared) in kinds {
+            if declared.len() != 1 {
+                continue;
+            }
+            if declared.contains(&ItemKind::Struct) {
+                structs.insert(name);
+                continue;
+            }
+            if declared.contains(&ItemKind::Enum) {
+                let Some(variants) = enum_variants.get(&name) else {
+                    continue;
+                };
+                if variants.len() == 1
+                    && let Some(variant) = variants.first()
+                {
+                    single_variant_enums.insert(name, variant.clone());
+                }
+            }
+        }
+        Self {
+            structs,
+            single_variant_enums,
+        }
+    }
+
+    fn shown_struct(&self, path: &str) -> bool {
+        let path = normalized_path(path);
+        !path.contains("::") && self.structs.contains(&path)
+    }
+
+    fn shown_single_variant(&self, path: &str) -> bool {
+        let path = normalized_path(path);
+        let Some((ty, variant)) = path.rsplit_once("::") else {
+            return false;
+        };
+        !ty.contains("::")
+            && self
+                .single_variant_enums
+                .get(ty)
+                .is_some_and(|only| only == variant)
+    }
+
+    fn shown_irrefutable_constructor(&self, path: &str) -> bool {
+        self.shown_struct(path) || self.shown_single_variant(path)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum ItemKind {
+    Struct,
+    Enum,
+    Union,
+    Type,
+}
+
 /// The classification a whole-pattern assertion earns from its pattern, or
 /// `None` when the pattern pins a value and the ordinary chain decides.
 pub(super) fn pattern_assertion_classification(line: &str) -> Option<OracleClassification> {
+    pattern_assertion_classification_in(line, &LocalDecls::default())
+}
+
+/// Same as [`pattern_assertion_classification`], using the test file's own
+/// type declarations when they uniquely show a struct or single-variant enum.
+pub(super) fn pattern_assertion_classification_in(
+    line: &str,
+    decls: &LocalDecls,
+) -> Option<OracleClassification> {
     let (scrutinee, pattern) = asserted_pattern(line)?;
-    pattern_pair_classification(&scrutinee, &pattern)
+    pattern_pair_classification(&scrutinee, &pattern, decls)
 }
 
 /// RIPR-SPEC-0231 rule 3 (#7715): whether some `matches!` invocation in
@@ -80,7 +219,8 @@ pub(super) fn some_matches_pins_a_value(text: &str) -> bool {
         super::arguments::delimited_contents_at(text, after + offset).is_none_or(|contents| {
             match super::arguments::split_top_level_commas(&contents).as_slice() {
                 [scrutinee, pattern, ..] => {
-                    pattern_pair_classification(scrutinee, pattern).is_none()
+                    pattern_pair_classification(scrutinee, pattern, &LocalDecls::default())
+                        .is_none()
                 }
                 _ => true,
             }
@@ -117,13 +257,17 @@ fn is_std_macro_path(before: &str) -> bool {
 pub(super) fn is_unpinned_pattern(text: &str) -> bool {
     complete_macro_arguments(text, "matches!").is_some_and(|arguments| {
         matches!(arguments.as_slice(), [scrutinee, pattern, ..]
-            if pattern_pair_classification(scrutinee, pattern).is_some())
+            if pattern_pair_classification(scrutinee, pattern, &LocalDecls::default()).is_some())
     })
 }
 
 /// The reading a `matches!` with this scrutinee and pattern earns, or `None`
 /// when the pattern pins a value and the ordinary chain decides.
-fn pattern_pair_classification(scrutinee: &str, pattern: &str) -> Option<OracleClassification> {
+fn pattern_pair_classification(
+    scrutinee: &str,
+    pattern: &str,
+    decls: &LocalDecls,
+) -> Option<OracleClassification> {
     let (pattern, guard) = split_guard(pattern);
     // A guard that equates the scrutinee, a pattern binding, or a field /
     // deref / tuple projection of either with a value pins that value
@@ -136,9 +280,9 @@ fn pattern_pair_classification(scrutinee: &str, pattern: &str) -> Option<OracleC
     let guarded = guard.is_some();
     let alternatives = split_top_level(pattern, '|');
     if alternatives.len() > 1 {
-        return or_pattern_classification(&alternatives, guarded);
+        return or_pattern_classification(&alternatives, guarded, decls);
     }
-    reading_classification(read_pattern(pattern), guarded)
+    reading_classification(read_pattern(pattern, decls), guarded)
 }
 
 /// The pattern operand of an `assert_matches!` / `debug_assert_matches!`, or
@@ -422,9 +566,12 @@ fn split_top_level(text: &str, separator: char) -> Vec<&str> {
             '(' | '[' | '{' => depth += 1,
             ')' | ']' | '}' => depth = depth.saturating_sub(1),
             _ if ch == separator && depth == 0 => {
-                let doubled = separator == '|'
+                let doubled = (separator == '|'
                     && (bytes.get(index + 1) == Some(&b'|')
-                        || (index > 0 && bytes[index - 1] == b'|'));
+                        || (index > 0 && bytes[index - 1] == b'|')))
+                    || (separator == ':'
+                        && (bytes.get(index + 1) == Some(&b':')
+                            || (index > 0 && bytes[index - 1] == b':')));
                 if !doubled {
                     parts.push(text[start..index].trim());
                     start = index + separator.len_utf8();
@@ -459,10 +606,14 @@ fn reading_classification(reading: Reading, guarded: bool) -> Option<OracleClass
     Some(OracleClassification { kind, strength })
 }
 
-fn or_pattern_classification(alternatives: &[&str], guarded: bool) -> Option<OracleClassification> {
+fn or_pattern_classification(
+    alternatives: &[&str],
+    guarded: bool,
+    decls: &LocalDecls,
+) -> Option<OracleClassification> {
     let readings = alternatives
         .iter()
-        .map(|alternative| read_pattern(alternative))
+        .map(|alternative| read_pattern(alternative, decls))
         .collect::<Vec<_>>();
     let covers = |a: Side, b: Side| {
         readings.contains(&Reading::SideOnly(a)) && readings.contains(&Reading::SideOnly(b))
@@ -612,7 +763,126 @@ fn matching_close(masked: &str, open: usize) -> Option<usize> {
     None
 }
 
-fn read_pattern(pattern: &str) -> Reading {
+fn skip_whitespace(text: &str, mut index: usize) -> usize {
+    while text
+        .as_bytes()
+        .get(index)
+        .is_some_and(u8::is_ascii_whitespace)
+    {
+        index += 1;
+    }
+    index
+}
+
+fn ident_at(text: &str, start: usize) -> Option<(&str, usize)> {
+    let bytes = text.as_bytes();
+    if !bytes.get(start).copied().is_some_and(is_identifier_byte) {
+        return None;
+    }
+    let mut end = start + 1;
+    while bytes.get(end).copied().is_some_and(is_identifier_byte) {
+        end += 1;
+    }
+    Some((text.get(start..end)?, end))
+}
+
+fn skip_generics(text: &str, start: usize) -> usize {
+    let start = skip_whitespace(text, start);
+    if text.as_bytes().get(start) != Some(&b'<') {
+        return start;
+    }
+    let mut depth = 0usize;
+    for (index, byte) in text.bytes().enumerate().skip(start) {
+        match byte {
+            b'<' => depth = depth.saturating_add(1),
+            b'>' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return index.saturating_add(1);
+                }
+            }
+            _ => {}
+        }
+    }
+    start
+}
+
+fn next_brace_at_depth_zero(text: &str, start: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (index, byte) in text.bytes().enumerate().skip(start) {
+        match byte {
+            b'<' | b'(' | b'[' => depth = depth.saturating_add(1),
+            b'>' | b')' | b']' => depth = depth.saturating_sub(1),
+            b'{' if depth == 0 => return Some(index),
+            b'{' => depth = depth.saturating_add(1),
+            b'}' => depth = depth.saturating_sub(1),
+            b';' if depth == 0 => return None,
+            _ => {}
+        }
+    }
+    None
+}
+
+fn enum_variant_names(body: &str) -> Option<Vec<String>> {
+    let mut names = Vec::new();
+    for chunk in split_top_level(body, ',') {
+        let rest = skip_leading_attrs_and_vis(chunk)?;
+        if rest.is_empty() {
+            continue;
+        }
+        let (name, _) = ident_at(rest, 0)?;
+        if matches!(name, "ref" | "mut" | "const" | "true" | "false") {
+            return None;
+        }
+        names.push(name.to_string());
+    }
+    Some(names)
+}
+
+fn skip_leading_attrs_and_vis(text: &str) -> Option<&str> {
+    let mut rest = text.trim_start();
+    loop {
+        rest = rest.trim_start();
+        let Some(after_hash) = rest.strip_prefix('#') else {
+            break;
+        };
+        let after_hash = after_hash.trim_start();
+        let after_hash = after_hash
+            .strip_prefix('!')
+            .unwrap_or(after_hash)
+            .trim_start();
+        if !after_hash.starts_with('[') {
+            return None;
+        }
+        let close = matching_close(after_hash, 0)?;
+        rest = after_hash.get(close.saturating_add(1)..)?;
+    }
+    rest = rest.trim_start();
+    if let Some(after) = rest.strip_prefix("pub")
+        && after
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_whitespace() || ch == '(')
+    {
+        let after = after.trim_start();
+        rest = if after.starts_with('(') {
+            let close = matching_close(after, 0)?;
+            after.get(close.saturating_add(1)..)?.trim_start()
+        } else {
+            after
+        };
+    }
+    Some(rest)
+}
+
+fn normalized_path(path: &str) -> String {
+    path.split_whitespace()
+        .collect::<String>()
+        .trim_start_matches("::")
+        .to_string()
+}
+
+fn read_pattern(pattern: &str, decls: &LocalDecls) -> Reading {
     let pattern = strip_wrappers(pattern);
     // Comments and literal contents never make a binding or wildcard.
     let masked = mask_comments_and_strings(pattern);
@@ -622,7 +892,7 @@ fn read_pattern(pattern: &str) -> Reading {
     }
     let alternatives = split_top_level(pattern, '|');
     if alternatives.len() > 1 {
-        return nested_or_reading(&alternatives);
+        return nested_or_reading(&alternatives, decls);
     }
     if is_range(pattern) {
         return Reading::Range { err: false };
@@ -632,28 +902,33 @@ fn read_pattern(pattern: &str) -> Reading {
     }
     let (path, payload) = constructor_parts(pattern);
     match payload {
-        Some(('(', inner)) if path.is_empty() => tuple_reading(inner),
-        Some(('[', inner)) if path.is_empty() => slice_reading(inner),
+        Some(('(', inner)) if path.is_empty() => tuple_reading(inner, decls),
+        Some(('[', inner)) if path.is_empty() => slice_reading(inner, decls),
         Some(('(', inner)) => match side_of_path(&path) {
-            Some(side) => side_payload_reading(side, inner),
+            Some(side) => side_payload_reading(side, inner, decls),
+            None if decls.shown_irrefutable_constructor(&path) => tuple_reading(inner, decls),
             // A tuple-struct or variant the line cannot resolve.
             None => Reading::Pins,
         },
+        Some(('{', inner)) if decls.shown_irrefutable_constructor(&path) => {
+            struct_payload_reading(inner, decls)
+        }
         // A struct-like path is read as a variant unless it can be shown to
-        // name a struct, which needs type information this reader lacks.
+        // name a struct or the sole variant of a single-variant enum.
         Some(_) => Reading::Pins,
         None => match side_of_path(&path) {
             Some(Side::None) => Reading::SideOnly(Side::None),
+            _ if decls.shown_irrefutable_constructor(&path) => Reading::Irrefutable,
             _ => Reading::Pins,
         },
     }
 }
 
 /// An or-pattern inside a constructor or tuple (`Some(Ok(_) | Err(_))`).
-fn nested_or_reading(alternatives: &[&str]) -> Reading {
+fn nested_or_reading(alternatives: &[&str], decls: &LocalDecls) -> Reading {
     let readings = alternatives
         .iter()
-        .map(|alternative| read_pattern(alternative))
+        .map(|alternative| read_pattern(alternative, decls))
         .collect::<Vec<_>>();
     let covers = |a: Side, b: Side| {
         readings.contains(&Reading::SideOnly(a)) && readings.contains(&Reading::SideOnly(b))
@@ -697,7 +972,7 @@ fn nested_or_reading(alternatives: &[&str]) -> Reading {
     }
 }
 
-fn side_payload_reading(side: Side, inner: &str) -> Reading {
+fn side_payload_reading(side: Side, inner: &str, decls: &LocalDecls) -> Reading {
     let err = side == Side::Err;
     let elements = split_top_level(inner, ',');
     let elements = elements
@@ -710,7 +985,7 @@ fn side_payload_reading(side: Side, inner: &str) -> Reading {
             if element.trim() == ".." {
                 Reading::Irrefutable
             } else {
-                read_pattern(element)
+                read_pattern(element, decls)
             }
         })
         .collect::<Vec<_>>();
@@ -749,11 +1024,11 @@ fn combine(readings: &[Reading], all_irrefutable: Reading) -> Reading {
     }
 }
 
-fn tuple_reading(inner: &str) -> Reading {
+fn tuple_reading(inner: &str, decls: &LocalDecls) -> Reading {
     let elements = split_top_level(inner, ',');
     // `(p)` is a parenthesized pattern, not a one-tuple.
     if elements.len() == 1 {
-        return read_pattern(inner);
+        return read_pattern(inner, decls);
     }
     let readings = elements
         .iter()
@@ -762,14 +1037,34 @@ fn tuple_reading(inner: &str) -> Reading {
             if *element == ".." {
                 Reading::Irrefutable
             } else {
-                read_pattern(element)
+                read_pattern(element, decls)
             }
         })
         .collect::<Vec<_>>();
     combine(&readings, Reading::Irrefutable)
 }
 
-fn slice_reading(inner: &str) -> Reading {
+fn struct_payload_reading(inner: &str, decls: &LocalDecls) -> Reading {
+    let readings = split_top_level(inner, ',')
+        .into_iter()
+        .filter(|element| !element.is_empty())
+        .map(|element| {
+            if element == ".." {
+                return Reading::Irrefutable;
+            }
+            let fields = split_top_level(element, ':');
+            let pattern = if fields.len() == 2 {
+                fields[1]
+            } else {
+                element
+            };
+            read_pattern(pattern, decls)
+        })
+        .collect::<Vec<_>>();
+    combine(&readings, Reading::Irrefutable)
+}
+
+fn slice_reading(inner: &str, decls: &LocalDecls) -> Reading {
     let elements = split_top_level(inner, ',')
         .into_iter()
         .filter(|element| !element.is_empty())
@@ -794,7 +1089,7 @@ fn slice_reading(inner: &str) -> Reading {
             if is_rest(element) {
                 Reading::Irrefutable
             } else {
-                read_pattern(element)
+                read_pattern(element, decls)
             }
         })
         .collect::<Vec<_>>();
@@ -1031,9 +1326,9 @@ mod tests {
         }
         // Patterns that pin a value keep the ordinary chain's reading, and
         // compound conditions are not pattern assertions. `Only::Value` and
-        // `Cfg { .. }` pin nothing per examples 24 and 25, but the line
-        // cannot resolve them, so they keep today's reading (decision 6,
-        // #6737).
+        // `Cfg { .. }` pin nothing per examples 24 and 25, but a line with
+        // no local declarations cannot show them, so they keep today's
+        // exact reading until [`LocalDecls`] names the type (#6737).
         for text in [
             "assert!(matches!(check(5), Ok(5)))",
             "assert!(matches!(check(20), Err(E::Bad)))",
@@ -1074,6 +1369,81 @@ mod tests {
             if actual.is_some() {
                 return Err(format!(
                     "{text}: expected no pattern reading, got {actual:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn spec_0231_local_struct_and_single_variant_enum_are_weak() -> Result<(), String> {
+        use super::super::classify::classify_assertion_in;
+        use super::{LocalDecls, pattern_assertion_classification_in};
+        use OracleKind::{ExactValue, RelationalCheck};
+        use OracleStrength::{Strong, Weak};
+
+        let source = r#"
+pub struct Cfg { pub retries: u32 }
+pub fn cfg() -> Cfg { Cfg { retries: 2 } }
+enum Only { Value }
+fn make() -> Only { Only::Value }
+enum Wrap { Value(u32) }
+fn wrap() -> Wrap { Wrap::Value(1) }
+enum Two { A, B }
+"#;
+        let decls = LocalDecls::from_source(source);
+        let weakened = [
+            "assert!(matches!(cfg(), Cfg { .. }))",
+            "assert!(matches!(cfg(), Cfg { retries: _ }))",
+            "assert!(matches!(make(), Only::Value))",
+            "assert!(matches!(wrap(), Wrap::Value(_)))",
+            "assert_matches!(cfg(), Cfg { .. })",
+        ];
+        for text in weakened {
+            let actual = pattern_assertion_classification_in(text, &decls);
+            if actual.as_ref().map(|c| (&c.kind, &c.strength)) != Some((&RelationalCheck, &Weak)) {
+                return Err(format!(
+                    "{text}: expected RelationalCheck/Weak from local decls, got {actual:?}"
+                ));
+            }
+            let classified = classify_assertion_in(text, source);
+            if classified.kind != RelationalCheck || classified.strength != Weak {
+                return Err(format!(
+                    "{text}: expected RelationalCheck/Weak through classify_assertion_in, got {:?}/{:?}",
+                    classified.kind, classified.strength
+                ));
+            }
+        }
+
+        let still_pin = [
+            "assert!(matches!(cfg(), Cfg { retries: 2 }))",
+            "assert!(matches!(make(), Two::A))",
+            "assert!(matches!(make(), crate::Only::Value))",
+            "assert!(matches!(cfg(), other::Cfg { .. }))",
+        ];
+        for text in still_pin {
+            if pattern_assertion_classification_in(text, &decls).is_some() {
+                return Err(format!(
+                    "{text}: expected no pattern ceiling with local decls"
+                ));
+            }
+            let classified = classify_assertion_in(text, source);
+            if classified.kind != ExactValue || classified.strength != Strong {
+                return Err(format!(
+                    "{text}: expected ExactValue/Strong when the path is not shown, got {:?}/{:?}",
+                    classified.kind, classified.strength
+                ));
+            }
+        }
+
+        let empty = LocalDecls::from_source("");
+        for text in [
+            "assert!(matches!(cfg(), Cfg { .. }))",
+            "assert!(matches!(make(), Only::Value))",
+        ] {
+            if pattern_assertion_classification_in(text, &empty).is_some() {
+                return Err(format!(
+                    "{text}: empty decls must keep today's exact reading"
                 ));
             }
         }
