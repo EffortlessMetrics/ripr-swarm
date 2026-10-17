@@ -645,6 +645,43 @@ fn check_prints_the_stub_route_only_when_the_printed_command_yields_a_stub() -> 
     scratch.cleanup()
 }
 
+/// #8361: families beyond predicate/return_value/error_path/match_arm used to
+/// print neither a route nor a reason. A field_construction finding whose
+/// owner takes `impl Into<String>` now prints the stub producer's refusal.
+#[test]
+fn check_prints_the_stub_refusal_for_a_field_construction_finding() -> Result<(), String> {
+    const FIELD_LIB: &str = "pub struct Opts { pub jobs: usize }\nimpl Opts { pub fn new(name: impl Into<String>) -> Self { let _n: String = name.into(); Self { jobs: 2 } } }\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn builds() {\n        let _ = Opts::new(\"x\");\n    }\n}\n";
+    let scratch = Scratch::new()?;
+    let root = scratch.directory.clone();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"stub_field\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), FIELD_LIB).map_err(|error| error.to_string())?;
+    let diff = one_line_diff(
+        &scratch,
+        "src/lib.rs",
+        &FIELD_LIB
+            .lines()
+            .nth(1)
+            .ok_or("fixture has a second line")?
+            .replace("jobs: 2", "jobs: 1"),
+        FIELD_LIB
+            .lines()
+            .nth(1)
+            .ok_or("fixture has a second line")?,
+    )?;
+    let stdout = check_human(&root, &diff)?;
+    assert!(stdout.contains("src/lib.rs:2"), "{stdout}");
+    assert!(
+        stdout.contains("No test stub here: a parameter or the return type uses `impl Trait`"),
+        "a refused field_construction stub prints its reason: {stdout}"
+    );
+    assert!(!stdout.contains("Write a test for it:"), "{stdout}");
+    scratch.cleanup()
+}
+
 /// #5471: without `--kind` no `check` finding vouches for the location, so a
 /// bare `--at` keeps the gap filter: a seam the tests already pin is not
 /// stubbed, while an unpinned one in the same file still is.
