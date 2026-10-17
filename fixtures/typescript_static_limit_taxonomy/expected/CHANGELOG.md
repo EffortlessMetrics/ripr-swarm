@@ -611,3 +611,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_static_limit_taxonomy (17)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless typescript_static_limit_taxonomy --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

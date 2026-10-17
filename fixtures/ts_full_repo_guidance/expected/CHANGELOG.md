@@ -94,3 +94,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_full_repo_guidance (8)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless ts_full_repo_guidance --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_full_repo_guidance (9)
+
+Reason:
+RIPR-SPEC-0122: bounded limitation lines drop schema tokens (#8165)
+
+Command:
+`cargo xtask goldens bless ts_full_repo_guidance --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
