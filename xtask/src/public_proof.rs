@@ -627,9 +627,11 @@ fn first_run_value(id: &str, receipt: &Value, ctx: &str) -> Result<Option<f64>, 
             steps
                 .iter()
                 .filter(|s| {
-                    friction_of(s)
-                        .iter()
-                        .any(|f| f.as_str().is_some_and(|t| t.contains("budget")))
+                    friction_of(s).iter().any(|f| {
+                        f.as_str().is_some_and(|t| {
+                            t.contains("budget") && !crate::first_run::is_workflow_size_flag(t)
+                        })
+                    })
                 })
                 .count(),
         ),
@@ -2168,6 +2170,21 @@ mod tests {
             .find("## Mutation agreement")
             .ok_or("no mutation section")?;
         assert!(shortfalls < mutation);
+        Ok(())
+    }
+
+    #[test]
+    fn workflow_size_friction_is_not_an_over_budget_step() -> Result<(), String> {
+        let receipt = serde_json::json!({"cases": [{"steps": [
+            {"exit": 0, "friction": ["generated workflow is 2374 lines, over the 1500-line review budget"]},
+            {"exit": 0, "friction": ["12.0s, over the 10s budget"]},
+            {"exit": 0, "friction": ["80 stdout lines, over the 60-line read budget"]},
+            {"exit": 0, "friction": []}
+        ]}]});
+        let over = first_run_value("first_run.over_budget_steps", &receipt, "test")?;
+        assert_eq!(over, Some(2.0));
+        let friction = first_run_value("first_run.friction_events", &receipt, "test")?;
+        assert_eq!(friction, Some(3.0));
         Ok(())
     }
 

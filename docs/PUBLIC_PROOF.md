@@ -23,7 +23,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 
 ## Scoreboard
 
-46 bars. ripr meets 16, is below the bar on 25, and has not measured 5. Bold values miss their bar. A comparable trend shows the baseline revision and prior value it compares. A cross-class trend shows the earlier runner class and, when available, its prior value; it does not compare measurements. A measured row with no earlier measurement is a first measurement. Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them.
+46 bars. ripr meets 17, is below the bar on 24, and has not measured 5. Bold values miss their bar. A comparable trend shows the baseline revision and prior value it compares. A cross-class trend shows the earlier runner class and, when available, its prior value; it does not compare measurements. A measured row with no earlier measurement is a first measurement. Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them.
 
 By board, so the weak areas show before the full table:
 
@@ -33,7 +33,7 @@ By board, so the weak areas show before the full table:
 | CI adoption | 1 | 1 | 1 | 0 |
 | Trust | 8 | 9 | 2 | 0 |
 | Pasted commands | 2 | 0 | 0 | 0 |
-| First run | 2 | 3 | 2 | 0 |
+| First run | 3 | 2 | 2 | 0 |
 | corpus | 2 | 0 | 0 | 0 |
 | ranking | 1 | 8 | 0 | 0 |
 
@@ -72,7 +72,7 @@ By board, so the weak areas show before the full table:
 | First run | Simple boundary edits on unfamiliar crates that get an `*_unknown` verdict | **3 cases** | <= 0 cases | below the bar | was 1 in ripr 0.10.0 |
 | First run | Friction events logged during the scripted first run | **4 events** | <= 0 events | below the bar | was 6 in ripr 0.10.0 |
 | First run | First-run steps that exit nonzero | 0 steps | <= 0 steps | meets the bar | unchanged from ripr 0.10.0 (0) |
-| First run | First-run steps over their own time, output-length or workflow-size budget | **3 steps** | <= 0 steps | below the bar | unchanged from ripr 0.10.0 (3) |
+| First run | First-run steps over their own time or output-length budget | 0 steps | <= 0 steps | meets the bar | unchanged from ripr 0.10.0 (0) |
 | First run | Seconds for the scripted walk on one crate, setup excluded | 3.56 s | <= 10 s | meets the bar | was 0.58 in ripr 0.10.0 |
 | corpus | Pinned repository whose diff-scoped `ripr check` did not reach `analyzed` | 0 repos | <= 0 repos | meets the bar | -1 repo since adf4e63 (was 1 repo) |
 | corpus | Diff-scoped `ripr check` on a pinned real change | 3.5 s | <= 5.0 s | meets the bar | earlier receipt on another runner class `local-linux-x86_64-4cpu` (was 13.2 s) |

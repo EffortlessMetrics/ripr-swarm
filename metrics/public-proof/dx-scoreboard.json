@@ -15636,7 +15636,7 @@
       "source": "ingest:first-run",
       "status": "not_measured",
       "target": 0.0,
-      "title": "First-run steps over their own time, output-length or workflow-size budget",
+      "title": "First-run steps over their own time or output-length budget",
       "unit": "steps",
       "value": null
     },
