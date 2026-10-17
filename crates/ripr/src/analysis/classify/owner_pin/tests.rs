@@ -5604,6 +5604,45 @@ fn refusal_site_lookups_pay_at_most_two_full_index_passes() {
     );
 }
 
+/// #8282: the seam walk shares one run-scoped [`OwnerPinSyntax`] per
+/// [`CompactGripContext`], so the #8255 two-full-index-pass bound holds
+/// for an entire walk however many seams consult the macro-binding
+/// authority. Every fixture owner is a `Vec::push` state write whose
+/// related test asserts on a differently named binding: the direct
+/// collection observer fails (the asserted subject is not the owner's
+/// receiver), so each seam's evidence takes the collection-argument path
+/// whose first authority check pays the trusted-macro ambiguity pass. A
+/// per-seam fresh instance paid it once per seam here.
+#[test]
+fn seam_walk_pays_at_most_two_full_index_passes() {
+    const PUSH_LIB: &str = "pub fn keep_first(v: &mut Vec<u32>, x: u32) {\n    v.push(x * 1);\n}\npub fn keep_second(v: &mut Vec<u32>, x: u32) {\n    v.push(x * 1);\n}\npub fn keep_third(v: &mut Vec<u32>, x: u32) {\n    v.push(x * 1);\n}\n";
+    const PUSH_TESTS: &str = "use demo::{keep_first, keep_second, keep_third};\n\n#[test]\nfn keeps_all() {\n    let mut first = Vec::new();\n    keep_first(&mut first, 11);\n    let mut second = Vec::new();\n    keep_second(&mut second, 12);\n    let mut third = Vec::new();\n    keep_third(&mut third, 13);\n    assert_eq!(first, vec![11]);\n    assert_eq!(second, vec![12]);\n    assert_eq!(third, vec![13]);\n}\n";
+    const KEEP_TESTS: &str = "tests/keep_tests.rs";
+    let index = index(&[(LIB, PUSH_LIB), (KEEP_TESTS, PUSH_TESTS)]);
+    let seams =
+        crate::analysis::seam_inventory::inventory_seams_from_index(&[PathBuf::from(LIB)], &index);
+    assert!(
+        seams.len() >= 3,
+        "fixture must yield one state-write seam per push owner, got {}",
+        seams.len()
+    );
+    let context = crate::analysis::test_grip_evidence::CompactGripContext::new(&index);
+    for seam in &seams {
+        crate::analysis::test_grip_evidence::compact_evidence_for_seam(seam, &context);
+    }
+    let passes = context.workspace_scan_passes();
+    assert!(
+        passes >= 1,
+        "the walk must consult the shared macro-binding authority for the bound to mean anything"
+    );
+    assert!(
+        passes <= 2,
+        "{} full-index passes for a {}-seam walk",
+        passes,
+        seams.len()
+    );
+}
+
 const GAUGE_LIB: &str = "pub trait Gauge {\n    fn base(&self) -> usize;\n\n    fn tally(&self) -> usize {\n        self.base() + 1\n    }\n}\n\npub struct Meter;\n\nimpl Meter {\n    pub fn new() -> Self {\n        Meter\n    }\n}\n\nimpl Gauge for Meter {\n    fn base(&self) -> usize {\n        0\n    }\n}\n";
 
 /// #5320: a default method's receiver binding `let m = Meter::new()` pins
