@@ -23,7 +23,9 @@ pub(crate) use diff::probes_for_file_with_relations;
 pub(crate) use diff::resolve_probe_source_currentness;
 pub(crate) use diff::same_connectives;
 pub(crate) use expectations::{expected_sinks, required_oracles};
-pub(crate) use ids::{fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression};
+pub(crate) use ids::{
+    fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression, sanitize_path,
+};
 #[cfg(test)]
 pub(crate) use repo::probes_for_repo_file;
 pub(crate) use repo::probes_for_repo_file_seeded;
