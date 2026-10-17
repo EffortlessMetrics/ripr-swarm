@@ -22,30 +22,31 @@ fn ensure_default_output_contained_with(
     if cache_dir_env.is_some_and(|value| !value.trim().is_empty()) {
         return Ok(());
     }
-    let Ok(canonical_root) = root.canonicalize() else {
-        return Ok(());
-    };
-    for relative in ["target", "target/ripr"] {
+    let canonical_root = root.canonicalize().map_err(|error| {
+        format!(
+            "refusing to write ripr output: cannot resolve workspace root {}: {error}",
+            root.display()
+        )
+    })?;
+    // Compare resolved locations rather than asking `is_symlink`, so NTFS
+    // junctions and other aliases are judged by where they actually land.
+    for relative in ["target", "target/ripr", "target/ripr/cache"] {
         let path = root.join(relative);
-        let Ok(metadata) = std::fs::symlink_metadata(&path) else {
-            continue;
-        };
-        if !metadata.file_type().is_symlink() {
+        if std::fs::symlink_metadata(&path).is_err() {
             continue;
         }
-        let escapes = match path.canonicalize() {
-            Ok(canonical) => !canonical.starts_with(&canonical_root),
-            Err(_) => true,
+        let problem = match path.canonicalize() {
+            Ok(canonical) if canonical.starts_with(&canonical_root) => continue,
+            Ok(_) => "resolves outside the workspace",
+            Err(_) => "cannot be resolved (dangling or looping link)",
         };
-        if escapes {
-            return Err(format!(
-                "refusing to write ripr output: {} is a symlink that resolves outside the workspace {}. \
-                 A repository can check in such a link to redirect where ripr writes. Either replace it with a real directory, \
-                 or choose the location yourself, for example: RIPR_CACHE_DIR=/var/cache/ripr ripr check",
-                path.display(),
-                root.display()
-            ));
-        }
+        return Err(format!(
+            "refusing to write ripr output: {} {problem} (workspace {}). \
+             A repository can check in a link to redirect where ripr writes. Either replace it with a real directory, \
+             or choose the location yourself, for example: RIPR_CACHE_DIR=/var/cache/ripr ripr check",
+            path.display(),
+            root.display()
+        ));
     }
     Ok(())
 }
@@ -860,6 +861,11 @@ mod tests {
         std::fs::create_dir_all(&ws).map_err(|e| e.to_string())?;
         std::fs::create_dir_all(&outside).map_err(|e| e.to_string())?;
         std::os::unix::fs::symlink(&outside, ws.join("target")).map_err(|e| e.to_string())?;
+        if std::env::var("RIPR_CACHE_DIR").is_ok_and(|value| !value.trim().is_empty()) {
+            // The explicit opt-in disables the guard; nothing to prove here.
+            let _ = std::fs::remove_dir_all(&base);
+            return Ok(());
+        }
         let input = crate::app::CheckInput {
             root: ws.clone(),
             ..crate::app::CheckInput::default()
