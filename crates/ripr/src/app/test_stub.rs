@@ -354,12 +354,13 @@ fn const_consumer_route(
 ) -> Option<StubRouteDecision> {
     let source = std::fs::read_to_string(root.join(file)).ok()?;
     let lines = source.lines().collect::<Vec<_>>();
-    // Everything from the first `#[cfg(test)]` on is test code, which a
-    // stub never targets.
-    let test_start = lines
+    // Test modules (the parser's governed `cfg(test)` inventory) are never
+    // stub targets; an unparsed file has no consumer to find anyway.
+    let test_start = analysis::governed_cfg_test_modules(&source)?
         .iter()
-        .position(|text| text.trim() == "#[cfg(test)]")
-        .map_or(lines.len() + 1, |index| index + 1);
+        .map(|module| source[..module.item_start].matches('\n').count() + 1)
+        .min()
+        .unwrap_or(lines.len() + 1);
     let mut seen_fns: Vec<(usize, usize)> = Vec::new();
     let mut first_refusal = None;
     for (index, text) in lines.iter().enumerate() {
