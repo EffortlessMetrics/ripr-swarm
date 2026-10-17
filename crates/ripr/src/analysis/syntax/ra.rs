@@ -2431,11 +2431,23 @@ fn extract_parser_oracles(
 
 /// True when a line-scanned oracle is the parsed expect-test comparison
 /// itself or only its `.assert_*` continuation, not a sibling assertion
-/// sharing a line (#7911).
+/// sharing a line (#7911). A custom helper such as `assert_eq(&render(4))`
+/// can be a text suffix of the comparison without being that continuation.
 fn is_expect_test_continuation(oracle_text: &str, comparison_text: &str) -> bool {
     let oracle = oracle_text.trim().trim_end_matches(';').trim();
     let comparison = comparison_text.trim().trim_end_matches(';').trim();
-    !oracle.is_empty() && (comparison == oracle || comparison.ends_with(oracle))
+    if oracle.is_empty() {
+        return false;
+    }
+    if comparison == oracle {
+        return true;
+    }
+    comparison.ends_with(oracle)
+        && oracle.strip_prefix('.').is_some_and(|rest| {
+            EXPECT_TEST_COMPARISONS
+                .iter()
+                .any(|name| rest.starts_with(name))
+        })
 }
 
 /// Whether this `unwrap_err()` / `expect_err(..)` call is the whole value of
@@ -3769,6 +3781,32 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
             }),
             "later custom assert_eq helper must remain: {oracles:?}"
         );
+    }
+
+    /// #7911 review: any non-empty suffix of the comparison is not the
+    /// continuation. Only the comparison itself or a leading `.assert_eq` /
+    /// `.assert_debug_eq` method call is.
+    #[test]
+    fn expect_test_continuation_is_the_comparison_or_its_assert_method() {
+        let comparison = "expect![[\"w12\"]].assert_eq(&render(4));";
+        assert!(is_expect_test_continuation(comparison, comparison));
+        assert!(is_expect_test_continuation(
+            ".assert_eq(&render(4));",
+            comparison
+        ));
+        assert!(is_expect_test_continuation(
+            "    .assert_debug_eq(&row(4));",
+            "expect![[r#\"x\"#]]\n    .assert_debug_eq(&row(4));"
+        ));
+        assert!(!is_expect_test_continuation(
+            "assert_eq(&render(4));",
+            comparison
+        ));
+        assert!(!is_expect_test_continuation(
+            "ensure!(other() == 2, \"must be two\");",
+            comparison
+        ));
+        assert!(!is_expect_test_continuation("", comparison));
     }
 }
 
