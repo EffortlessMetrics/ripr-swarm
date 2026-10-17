@@ -2721,6 +2721,40 @@ pub(crate) fn file_seams_without_evidence_at_with_config(
     Ok(seams_from_index_files(&files, &index))
 }
 
+/// Classify only the seams in `file`, gathering test-grip evidence from a
+/// bounded index of `file` plus `evidence_files` — the files a caller
+/// already knows carry the relevant finding's related tests (#8320).
+/// Unlike the diff-scoped inventory this never builds a workspace-wide
+/// index or evidence context: evidence for these seams comes only from
+/// the named files, so a seam gripped solely by a test outside them can
+/// classify as a gap here where the full inventory would not. Callers
+/// must therefore treat a route admitted from this scope as bounded
+/// evidence and fail closed when the scope cannot decide, never as a
+/// workspace-wide eligibility proof.
+pub(crate) fn classify_seams_in_file_with_related_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+    file: &Path,
+    evidence_files: &[PathBuf],
+) -> Result<Vec<ClassifiedSeam>, String> {
+    let context = production_role_context(root, config, std::iter::once(file));
+    if !workspace::classify_with(file, &context).seeds_production_findings() {
+        return Ok(Vec::new());
+    }
+    let mut files = vec![file.to_path_buf()];
+    for evidence_file in evidence_files {
+        if !files.contains(evidence_file) {
+            files.push(evidence_file.clone());
+        }
+    }
+    let mut index =
+        rust_index::build_index_with_test_harnesses(root, &files, harness_registrations(config))?;
+    rust_index::apply_oracle_policy(&mut index, config.oracles());
+    let seams = seams_from_index_files(&[file.to_path_buf()], &index);
+    let evidence = test_grip_evidence::evidence_for_seams(&seams, &index);
+    Ok(seam_classification::classify_seams(&seams, &evidence))
+}
+
 fn seams_from_index_files(production_files: &[PathBuf], index: &RustIndex) -> Vec<RepoSeam> {
     let mut seams: Vec<RepoSeam> = Vec::new();
 

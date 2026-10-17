@@ -752,7 +752,7 @@ pub(super) enum AnalysisPendingRecovery {
     /// analysis until the configuration is repaired.
     FixConfiguration,
     /// The root authority blocks analysis; carries the authority's own
-    /// recovery route (`refresh` or `select_root_and_restart`).
+    /// recovery route (`refresh` or `use_single_workspace_root_and_restart`).
     RootBlocked(&'static str),
 }
 
