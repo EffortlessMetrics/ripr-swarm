@@ -520,8 +520,9 @@ pub(crate) fn build_gap_decision_ledger_report(
             warnings.push(format!(
                 // #7753: count-aware noun — "1 finding", never "1 findings".
                 "check output contained {findings}, but the --check-output route \
-                 projects Python/TypeScript/Perl findings only; no gap records were derived \
-                 from them",
+                 projects presentation/output-text and Python/TypeScript/Perl findings only; \
+                 no gap records were derived from them. For Rust findings, use `ripr check` \
+                 to read them and `ripr repair` to start a repair",
                 findings =
                     crate::output::count_noun::count_noun(input_items, "finding", "findings"),
             ));
@@ -3772,6 +3773,8 @@ mod tests {
                 warning.contains("3 findings")
                     && warning.contains("Python/TypeScript/Perl")
                     && warning.contains("--check-output")
+                    && warning.contains("ripr check")
+                    && warning.contains("ripr repair")
             }),
             "zero derived records from a valid Rust check output must carry the \
              route-coverage warning, got {:?}",
