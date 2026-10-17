@@ -3053,6 +3053,11 @@ id = "RIPR-SPEC-0027"
 name = "TypeScript preview static facts"
 spec = "docs/specs/RIPR-SPEC-0027-typescript-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::report_snippet_collapses_complete_multiline_spans_before_bounding",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::report_snippet_keeps_selected_file_boundaries_and_refuses_invalid_spans",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::report_snippet_marks_only_display_overflow_and_counts_unicode_scalars",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::report_snippet_partial_test_disclosure_preserves_file_line_and_closing_tokens",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::report_snippet_partial_owner_disclosure_preserves_selected_source_identity",
   "crates/ripr/src/analysis/language/typescript/tests/table_case_tests.rs::empty_parameter_tables_register_no_test_evidence",
   "crates/ripr/src/analysis/language/typescript/tests/table_case_tests.rs::empty_tables_preserve_partial_disclosure_for_evaluated_title_expressions",
   "crates/ripr/src/analysis/language/typescript/tests/table_case_tests.rs::empty_tables_preserve_partial_disclosure_for_evaluated_sequence_titles",
