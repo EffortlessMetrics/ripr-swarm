@@ -9686,6 +9686,30 @@
           "class": "weakly_exposed"
         }
       ]
+    },
+    {
+      "id": "rust_field_match_raw_option_shadow",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/field_match_raw_option_shadow",
+      "vector": "raw_option_names_keep_scope_and_binding_identity",
+      "probe_family": "match_arm",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
     }
   ]
 }

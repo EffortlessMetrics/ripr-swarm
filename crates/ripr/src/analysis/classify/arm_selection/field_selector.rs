@@ -61,6 +61,14 @@ impl FieldSelector {
             return;
         };
         let tree = parse.tree();
+        // Reuse the existing value-binding authority, including raw names,
+        // prelude-pattern distinctions and opaque glob refusal (#7712).
+        if ["Some", "None"]
+            .into_iter()
+            .any(|name| crate::analysis::syntax::source_binds_value_name(source, name))
+        {
+            return;
+        }
         if !self.original_pattern_admitted {
             return;
         }
@@ -95,16 +103,14 @@ impl FieldSelector {
         // module-level macro may introduce an unread declaration too.
         if tree.syntax().descendants().any(|node| {
             ast::Name::cast(node.clone()).is_some_and(|name| {
-                (name.text() == self.record_type
+                (name.text().strip_prefix("r#").unwrap_or(name.text()) == self.record_type
                     && !name
                         .syntax()
                         .parent()
                         .is_some_and(|parent| ast::Struct::can_cast(parent.kind())))
                     || matches!(
-                        name.text().as_ref(),
+                        name.text().strip_prefix("r#").unwrap_or(name.text()),
                         "Option"
-                            | "Some"
-                            | "None"
                             | "std"
                             | "core"
                             | "u64"
@@ -114,11 +120,24 @@ impl FieldSelector {
                             | "Copy"
                             | "PartialEq"
                             | "Eq"
-                    ) && !(name.text() == "None"
-                        && name
-                            .syntax()
-                            .parent()
-                            .is_some_and(|parent| ast::IdentPat::can_cast(parent.kind())))
+                    )
+            }) || ast::NameRef::cast(node.clone()).is_some_and(|name| {
+                name.text().strip_prefix("r#").is_some_and(|plain| {
+                    plain == self.record_type
+                        || matches!(
+                            plain,
+                            "Option"
+                                | "std"
+                                | "core"
+                                | "u64"
+                                | "u128"
+                                | "Debug"
+                                | "Clone"
+                                | "Copy"
+                                | "PartialEq"
+                                | "Eq"
+                        )
+                })
             }) || ast::MacroRules::can_cast(node.kind())
                 || (ast::MacroCall::can_cast(node.kind())
                     && !node.ancestors().any(|p| ast::Fn::can_cast(p.kind())))
@@ -165,11 +184,10 @@ impl FieldSelector {
         if super::flattened_use_paths(source).iter().any(|import| {
             let leaf = import.path.rsplit("::").next().unwrap_or_default();
             let bound = import.alias.as_deref().unwrap_or(leaf);
+            let bound = bound.strip_prefix("r#").unwrap_or(bound);
             matches!(
                 bound,
                 "Option"
-                    | "Some"
-                    | "None"
                     | "std"
                     | "core"
                     | "u64"
@@ -372,6 +390,10 @@ mod tests {
             format!("#[derive(Custom)] {RECORD}"),
             format!("{RECORD}\nuse other::Debug;"),
             format!("{RECORD}\n#[custom] fn generated() {{}}"),
+            format!("{RECORD}\nconst r#None: Option<u128> = Some(1001);"),
+            format!("{RECORD}\nmod tests {{ type r#Lease = Other; }}"),
+            format!("{RECORD}\nuse other::r#None;"),
+            format!("{RECORD}\nuse other::Record as r#Lease;"),
             RECORD.replace("None => lease.timeout", "foreign::None => lease.timeout"),
         ] {
             let mut field =

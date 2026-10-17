@@ -15196,6 +15196,7 @@ id = "RIPR-SPEC-0229"
 name = "Match-arm selection names the unselected arm"
 spec = "docs/specs/RIPR-SPEC-0229-match-arm-selection-discriminator.md"
 tests = [
+  "crates/ripr/tests/field_match_selector.rs::raw_identifier_option_shadows_cannot_borrow_prelude_identity",
   "crates/ripr/tests/field_match_selector.rs::a_foreign_option_constant_cannot_name_the_selected_field_arm",
   "crates/ripr/src/analysis/classify/arm_selection/field_selector.rs::pattern_currentness_tests::original_foreign_patterns_and_changed_owner_bodies_cannot_borrow_admission",
   "crates/ripr/tests/field_match_selector.rs::a_direct_record_selector_is_paired_with_its_own_asserted_call",
@@ -15319,6 +15320,7 @@ tests = [
   "crates/ripr/tests/match_guard_edit.rs::an_added_guard_conjunct_keeps_the_arm_head",
 ]
 fixtures = [
+  "fixtures/field_match_raw_option_shadow",
   "fixtures/field_match_foreign_option_constant",
   "fixtures/match_arm_blind",
   "fixtures/match_arm_expected_side_trap",

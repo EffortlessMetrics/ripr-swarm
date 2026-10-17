@@ -387,3 +387,27 @@ fn a_foreign_option_constant_cannot_name_the_selected_field_arm()
     }
     Ok(())
 }
+
+#[test]
+fn raw_identifier_option_shadows_cannot_borrow_prelude_identity()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!("../../../fixtures/field_match_raw_option_shadow/input/src/lib.rs");
+    let diff = include_str!("../../../fixtures/field_match_raw_option_shadow/diff.patch");
+    let fixture = Fixture::new(source, diff)?;
+    let output = fixture.check()?;
+    let arms = output
+        .findings
+        .iter()
+        .filter(|finding| finding.probe.family == ripr::ProbeFamily::MatchArm)
+        .collect::<Vec<_>>();
+    assert_eq!(arms.len(), 2, "both changed-arm subjects must be analyzed");
+    for arm in arms {
+        assert_ne!(
+            arm.class,
+            ExposureClass::Exposed,
+            "raw identifiers retain their binding identity: {}",
+            arm.id
+        );
+    }
+    Ok(())
+}

@@ -719,6 +719,8 @@ record must be a unique nongeneric root struct in the same indexed source file
 as every related test; its selected field must have unambiguous prelude
 `Option<u64>` or `Option<u128>` type. Namespace ambiguity, unknown item macros,
 conditional fields, imported/aliased records and unread source refuse proof.
+Critical raw identifier bindings retain their normalized identity for shadow
+checks; raw references with unresolved provenance cannot borrow prelude names.
 The current root owner's exact body must match the indexed source. Current and
 original arm patterns must use unqualified prelude `Some`, `None` or `_` with
 irrefutable payload bindings. A qualified constant named `None` cannot borrow
