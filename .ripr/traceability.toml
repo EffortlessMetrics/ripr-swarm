@@ -1033,6 +1033,8 @@ tests = [
   "crates/ripr/src/cli/commands/doctor.rs::tests::doctor_first_command_has_no_enable_step_for_rust_only",
   "crates/ripr/src/cli/commands/doctor.rs::tests::final_line_attributes_total_and_slowest_measured_check",
   "crates/ripr/src/output/doctor.rs::tests::elapsed_times_are_additive_and_slowest_spans_checks_and_probes",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::final_line_names_a_segment_when_it_is_the_slowest_measured",
+  "crates/ripr/src/output/doctor.rs::tests::segments_serialize_when_present_and_are_absent_when_empty",
   "crates/ripr/tests/cli_smoke.rs::doctor_reports_malformed_config_error",
   "crates/ripr/src/cli/commands.rs::tests::doctor_core_report_fails_closed_for_invalid_config",
   "crates/ripr/src/cli/commands.rs::tests::doctor_core_report_fails_closed_for_missing_root",
