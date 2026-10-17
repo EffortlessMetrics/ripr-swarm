@@ -200,15 +200,16 @@ version=0.11.0
 smoke=target/ripr/install-smoke-path/init-pin
 rm -rf "$smoke" && mkdir -p "$smoke" && git init -q "$smoke"
 target/ripr/install-smoke-path/bin/ripr init --ci github --dry-run \
-  --root "$smoke" > "$smoke/stdout.txt" 2> "$smoke/stderr.txt"
-test ! -s "$smoke/stderr.txt"
-! grep -q 'is unreleased' "$smoke/stdout.txt"
-grep -q "cargo install ripr --version $version --locked" "$smoke/stdout.txt"
+  --root "$smoke" > "$smoke/stdout.txt" 2> "$smoke/stderr.txt" &&
+  test ! -s "$smoke/stderr.txt" &&
+  ! grep -q 'is unreleased' "$smoke/stdout.txt" &&
+  grep -q "cargo install ripr --version $version --locked" "$smoke/stdout.txt" &&
+  echo "init self-pin smoke: pass" || { echo "init self-pin smoke: FAIL" >&2; false; }
 ```
 
 The step passes only when the dry run exits 0, prints no unreleased-generator
 warning on stderr, and pins `$version` in the rendered workflow. On a binary
-whose constant was not bumped it fails at the first `test`, because the warning
+whose constant was not bumped it fails at the stderr check, because the warning
 is non-empty. To disprove the check, build a scratch binary from the release
 commit with `LATEST_RELEASED_VERSION` reverted to the previous release and
 confirm the step fails; do not commit that revert. This step applies to the
