@@ -492,24 +492,42 @@ mod tests {
     }
 
     #[test]
-    fn subtest_table_records_unvaried_default_column() {
+    fn subtest_table_records_unvaried_default_column() -> Result<(), String> {
         let source = "def test_default(self):\n    for iterable, default in [\n        ([], None),\n        (iter([]), None),\n    ]:\n        with self.subTest(iterable=iterable, default=default):\n            self.assertEqual(last(iterable, default=default), default)\n";
-        let table = cases(source).expect("subTest table");
-        assert_eq!(table.len(), 2);
-        assert_eq!(table[0].get("default").map(String::as_str), Some("None"));
-        assert_eq!(table[1].get("default").map(String::as_str), Some("None"));
-        assert_eq!(
-            unvaried_column_value(&table, "default").as_deref(),
-            Some("None")
-        );
-        assert!(unvaried_column_value(&table, "iterable").is_none());
+        let table = cases(source).ok_or_else(|| "subTest table should parse".to_string())?;
+        if table.len() != 2 {
+            return Err(format!("expected 2 rows, got {}", table.len()));
+        }
+        let first = table
+            .first()
+            .ok_or_else(|| "first row".to_string())?
+            .get("default")
+            .map(String::as_str);
+        let second = table
+            .get(1)
+            .ok_or_else(|| "second row".to_string())?
+            .get("default")
+            .map(String::as_str);
+        if first != Some("None") || second != Some("None") {
+            return Err(format!("default column: {first:?}, {second:?}"));
+        }
+        if unvaried_column_value(&table, "default").as_deref() != Some("None") {
+            return Err("default column should be unvaried None".to_string());
+        }
+        if unvaried_column_value(&table, "iterable").is_some() {
+            return Err("iterable column is not a scalar literal".to_string());
+        }
+        Ok(())
     }
 
     #[test]
-    fn a_row_that_varies_default_is_not_unvaried() {
+    fn a_row_that_varies_default_is_not_unvaried() -> Result<(), String> {
         let source = "def test_default(self):\n    for iterable, default in [([], None), (iter([]), 0)]:\n        with self.subTest(iterable=iterable):\n            self.assertEqual(last(iterable, default=default), default)\n";
-        let table = cases(source).expect("varied table");
-        assert!(unvaried_column_value(&table, "default").is_none());
+        let table = cases(source).ok_or_else(|| "varied table should parse".to_string())?;
+        if unvaried_column_value(&table, "default").is_some() {
+            return Err("varied default column must not look unvaried".to_string());
+        }
+        Ok(())
     }
 
     #[test]
