@@ -212,3 +212,13 @@ reason = "Immutable verbatim GitHub timeline capture for the #4930 read-only int
 path = "fixtures/issue_lifecycle_intake/snapshots/issue-5439-timeline.json"
 owner = "test-infra"
 reason = "Immutable verbatim GitHub timeline capture for the #4930 read-only intake pilot; the captured cross-referenced issue body enumerates the prohibited mutation-runtime vocabulary as data, not as static classification output."
+
+[[allow]]
+path = "fixtures/issue_lifecycle_real_rows/snapshots/row-a-current-head.json"
+owner = "test-infra"
+reason = "Immutable verbatim GitHub compare capture for the #4932 real closeout rows; the 41-commit range payload quotes third-party commit messages and patches that name the prohibited mutation-runtime vocabulary as data, not as static classification output."
+
+[[allow]]
+path = "fixtures/issue_lifecycle_real_rows/snapshots/row-a-pr-8285.json"
+owner = "test-infra"
+reason = "Immutable verbatim GitHub PR capture for the #4932 real closeout rows; the captured bot review body quotes the prohibited mutation-runtime vocabulary as review data, not as static classification output."

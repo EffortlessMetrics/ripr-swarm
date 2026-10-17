@@ -1,0 +1,300 @@
+{
+ "schema_version": "issue_lifecycle_corpus.v1",
+ "rows": [
+  {
+   "schema_version": "issue_lifecycle_attempt.v1",
+   "lifecycle_id": "lifecycle-real-7795-8285-closeout",
+   "observation_key": "issue-lifecycle:EffortlessMetrics/ripr-swarm#7795",
+   "synthetic": false,
+   "disposition": "completed",
+   "base_attempts": [
+    {
+     "attempt_id": "gh-capture:issue-lifecycle-real-rows:row-a:2026-10-17",
+     "shared_facts": [
+      "context",
+      "execution",
+      "verification",
+      "cleanup"
+     ]
+    }
+   ],
+   "issue": {
+    "snapshot_id": "gh-issue-snapshot:sha256:fd502c220b8baffd62249e00ae21fed4cac1b7ee161e22634f44464f62e2201d",
+    "issue_ref": "EffortlessMetrics/ripr-swarm#7795",
+    "comments_ref": "gh-issue-comments:sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "labels_ref": "gh-issue-labels:sha256:5ca96b441f07f048a60cf7e717dee9264d58e08023ffc3fd9995f990a08c1486",
+    "assignees_ref": null,
+    "milestone_ref": null
+   },
+   "initial": {
+    "information_completeness": "complete",
+    "issue_family": "narrow_bug"
+   },
+   "context": {
+    "current_main": "b038650091ca6183e252e459b91c4aff35eef701",
+    "relevant_prs": [
+     "EffortlessMetrics/ripr-swarm#8285"
+    ],
+    "portfolio": "rolling",
+    "selected_work": "issue:EffortlessMetrics/ripr-swarm#7795",
+    "claim_ids": []
+   },
+   "intake": {
+    "evidence": [
+     {
+      "identity": "snapshot:row-a-issue-7795.json:sha256:fd502c220b8baffd62249e00ae21fed4cac1b7ee161e22634f44464f62e2201d",
+      "bytes": 13862
+     },
+     {
+      "identity": "snapshot:row-a-issue-7795-comments.json:sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "bytes": 2
+     },
+     {
+      "identity": "snapshot:row-a-issue-7795-labels.json:sha256:5ca96b441f07f048a60cf7e717dee9264d58e08023ffc3fd9995f990a08c1486",
+      "bytes": 236
+     },
+     {
+      "identity": "snapshot:row-a-pr-8285.json:sha256:5abbe870f95b470b8ecf427672e4306de5c546f19903cf896f70d65423abb226",
+      "bytes": 8053
+     },
+     {
+      "identity": "snapshot:row-a-pr-8285-reviews.json:sha256:d38cd185f1695558bcc337ce05dd82b3b20d136f9d9a79ef0e621e4892ed78a4",
+      "bytes": 3237
+     },
+     {
+      "identity": "snapshot:row-a-current-head.json:sha256:9737b6a14153149bf31e17830c0990addeaaeff5808f46a61d22c9648a714fab",
+      "bytes": 1370440
+     }
+    ],
+    "missing_evidence_questions": []
+   },
+   "contract_decision": {
+    "spec_required": false,
+    "decision_rationale": "narrow accepted-contract diff-parsing defect with five literal acceptance predicates; no new spec artifact required",
+    "root_disposition": "closed_via_merge"
+   },
+   "contract_artifacts": {
+    "proposal": null,
+    "spec": null,
+    "adr": null,
+    "challenge": null,
+    "amendments": [],
+    "acceptance": null
+   },
+   "plan": {
+    "plan_id": "plan:issue-7795:one-pr-mixed-quote-disclosure",
+    "work_items": [
+     "work-item:issue-7795:mixed-quote-rename-disclosure"
+    ],
+    "dependencies": [],
+    "acceptance_coverage": [
+     "acceptance #7795 predicate 1: literal native-inventory controls cover all four old/new quoting combinations pure and edited",
+     "acceptance #7795 predicate 2: pure mixed-quote rename counted and disclosed without invented probes or malformed-diff accusation; adjacent parseable file cannot conceal it",
+     "acceptance #7795 predicate 3: edited mixed-quote findings retain new path, line 2, live/committed expression and old-path-association limitation",
+     "acceptance #7795 predicate 4: confinement and adversarial path controls remain fail-closed; quotePath pin kept; no wrong golden relabeled",
+     "acceptance #7795 predicate 5: pre-repair red, candidate green, exact-head review and ordinary hosted CI preceded the protected squash merge"
+    ]
+   },
+   "claim_events": [],
+   "execution_refs": {
+    "pr": "pr:EffortlessMetrics/ripr-swarm#8285",
+    "review": "gh-review:5555346876",
+    "checks": [
+     "gh-check-run:1b4a5f651b1bac1b7bf789858ad1e591ca8061be:Ripr Rust Small Result:success",
+     "gh-check-run:1b4a5f651b1bac1b7bf789858ad1e591ca8061be:Ripr Rust Small on GitHub Hosted / Rust gates:success",
+     "gh-check-run:1b4a5f651b1bac1b7bf789858ad1e591ca8061be:source-of-truth:success",
+     "gh-check-run:1b4a5f651b1bac1b7bf789858ad1e591ca8061be:cargo-deny:success"
+    ],
+    "verification": "gh-compare:f3fa41d265e1fb51f280d6d8d5f0c4967c362025...b038650091ca6183e252e459b91c4aff35eef701:behind_by=0",
+    "merge": "gh-merge-commit:f3fa41d265e1fb51f280d6d8d5f0c4967c362025",
+    "current_main": "b038650091ca6183e252e459b91c4aff35eef701"
+   },
+   "progress": {
+    "mutation_plan": null,
+    "before_digest": null,
+    "after_digest": null,
+    "suppressed_unchanged": false
+   },
+   "burn_down": {
+    "state": "closed",
+    "uncovered_rows": [],
+    "contradicted_rows": [],
+    "deferred_rows": []
+   },
+   "closeout": {
+    "state": "completed",
+    "reason": "issue #7795 closed by squash merge f3fa41d265e1fb51f280d6d8d5f0c4967c362025 (Closes #7795, mergedAt 2026-10-17T02:05:11Z, issue closedAt 2026-10-17T02:05:12Z); five acceptance predicates covered and current-head verified at main b038650091ca6183e252e459b91c4aff35eef701",
+    "remaining_limitations": [
+     "no formal durable or local claim record was filed for the published lane; claim identities unknown",
+     "no #4925 base orchestration attempt receipt exists for this lane; the gh capture named in base_attempts is the bound base evidence",
+     "the only GitHub review on record for PR #8285 is a github-actions COMMENTED review (id 5555346876); no human approving review is recorded on GitHub",
+     "the independent exact-head review receipt lives outside GitHub in the producer workspace; it is named by the issue and PR text but not re-verifiable via gh",
+     "current-head verification is a capture-time observation at main b038650091ca6183e252e459b91c4aff35eef701 on 2026-10-17; later main movement is not tracked by this row"
+    ],
+    "current_head_verification": "snapshot:row-a-current-head.json:sha256:9737b6a14153149bf31e17830c0990addeaaeff5808f46a61d22c9648a714fab"
+   },
+   "limitations": [
+    "no formal durable or local claim record was filed for the published lane; claim identities unknown",
+    "no #4925 base orchestration attempt receipt exists for this lane; the gh capture named in base_attempts is the bound base evidence",
+    "the only GitHub review on record for PR #8285 is a github-actions COMMENTED review (id 5555346876); no human approving review is recorded on GitHub",
+    "the independent exact-head review receipt lives outside GitHub in the producer workspace; it is named by the issue and PR text but not re-verifiable via gh",
+    "current-head verification is a capture-time observation at main b038650091ca6183e252e459b91c4aff35eef701 on 2026-10-17; later main movement is not tracked by this row"
+   ],
+   "non_claims": [
+    "counts this one journey only and claims no broad lifecycle accuracy",
+    "does not establish that merge alone closes an issue; this closeout is bound to acceptance coverage plus current-head proof"
+   ],
+   "row_digest": "1c340bfd95e8d95109c4fa7b9d9a831a244dbe0301c9d2f8cf60653c2d81fbcc"
+  },
+  {
+   "schema_version": "issue_lifecycle_attempt.v1",
+   "lifecycle_id": "lifecycle-real-8325-1706-pending-closeout",
+   "observation_key": "issue-lifecycle:EffortlessMetrics/ripr-swarm#1706:pr-8325",
+   "synthetic": false,
+   "disposition": "merged_pending_closeout",
+   "base_attempts": [
+    {
+     "attempt_id": "gh-capture:issue-lifecycle-real-rows:row-b:2026-10-17",
+     "shared_facts": [
+      "context",
+      "execution",
+      "verification",
+      "cleanup"
+     ]
+    }
+   ],
+   "issue": {
+    "snapshot_id": "gh-issue-snapshot:sha256:03325a705a5fee76fee2bc32dbc73973db680f9658cfed21722064ed7a1cc880",
+    "issue_ref": "EffortlessMetrics/ripr-swarm#1706",
+    "comments_ref": "gh-issue-comments:sha256:f7a97e91860fc4eb7dc1d2d305c22d71b1535d2a48d59b303888c3cbf6d097c3",
+    "labels_ref": "gh-issue-labels:sha256:3e3fe54e606490e2cc338c2e38fb46592d9a0ea5dcc3ae6291403c5253bd0c6a",
+    "assignees_ref": null,
+    "milestone_ref": null
+   },
+   "initial": {
+    "information_completeness": "complete",
+    "issue_family": "public_contract"
+   },
+   "context": {
+    "current_main": "b038650091ca6183e252e459b91c4aff35eef701",
+    "relevant_prs": [
+     "EffortlessMetrics/ripr-swarm#8325"
+    ],
+    "portfolio": "rolling",
+    "selected_work": "issue:EffortlessMetrics/ripr-swarm#1706",
+    "claim_ids": []
+   },
+   "intake": {
+    "evidence": [
+     {
+      "identity": "snapshot:row-b-issue-1706.json:sha256:03325a705a5fee76fee2bc32dbc73973db680f9658cfed21722064ed7a1cc880",
+      "bytes": 10018
+     },
+     {
+      "identity": "snapshot:row-b-issue-1706-comments.json:sha256:f7a97e91860fc4eb7dc1d2d305c22d71b1535d2a48d59b303888c3cbf6d097c3",
+      "bytes": 24771
+     },
+     {
+      "identity": "snapshot:row-b-issue-1706-labels.json:sha256:3e3fe54e606490e2cc338c2e38fb46592d9a0ea5dcc3ae6291403c5253bd0c6a",
+      "bytes": 588
+     },
+     {
+      "identity": "snapshot:row-b-pr-8325.json:sha256:a68a6ea69d424e9aad19d20a6e7b0a266cfcfad2b01504990ce1d32ce440b24d",
+      "bytes": 19285
+     }
+    ],
+    "missing_evidence_questions": []
+   },
+   "contract_decision": {
+    "spec_required": true,
+    "decision_rationale": "#1706 defines one shared selected-work and portfolio-basis contract consumed across the orchestration trains; PR B migrates one slice of consumers",
+    "root_disposition": "partial"
+   },
+   "contract_artifacts": {
+    "proposal": null,
+    "spec": "RIPR-SPEC-0274 (issue #1706 delivery slice PR B)",
+    "adr": null,
+    "challenge": null,
+    "amendments": [],
+    "acceptance": null
+   },
+   "plan": {
+    "plan_id": "plan:issue-1706:portfolio-selected-work-basis",
+    "work_items": [
+     "work-item:1706-pr-a-shared-identity-schemas",
+     "work-item:1706-pr-b-context-task-plan-claim-consumers",
+     "work-item:1706-pr-c-issue-lifecycle-consumers",
+     "work-item:1706-pr-d-docs-compat-fresh-session-proof"
+    ],
+    "dependencies": [
+     "issue #1704 singleton active-goal correction"
+    ],
+    "acceptance_coverage": []
+   },
+   "claim_events": [],
+   "execution_refs": {
+    "pr": "pr:EffortlessMetrics/ripr-swarm#8325",
+    "review": null,
+    "checks": [
+     "gh-check-run:1178aef8cecdea229c8c935fd9d0732fdb426254:Ripr Rust Small Result:failure",
+     "gh-check-run:1178aef8cecdea229c8c935fd9d0732fdb426254:Ripr Rust Small Result:success",
+     "gh-check-run:1178aef8cecdea229c8c935fd9d0732fdb426254:Ripr Rust Small on GitHub Hosted / Rust gates:failure",
+     "gh-check-run:1178aef8cecdea229c8c935fd9d0732fdb426254:Ripr Rust Small on GitHub Hosted / Rust gates:success"
+    ],
+    "verification": null,
+    "merge": "gh-merge-commit:70d053fb7b4a32c5855fb62cf30249e91752f3be",
+    "current_main": "b038650091ca6183e252e459b91c4aff35eef701"
+   },
+   "progress": {
+    "mutation_plan": null,
+    "before_digest": null,
+    "after_digest": null,
+    "suppressed_unchanged": false
+   },
+   "burn_down": {
+    "state": "open",
+    "uncovered_rows": [
+     "acceptance #1706 row 1: one shared identity vocabulary consumed by packets, tasks/results, plans, claims, synthesis, issue intake and burn-down",
+     "acceptance #1706 row 2: no consumer requires or fabricates one repository-wide current/default campaign",
+     "acceptance #1706 row 3: relevant campaigns remain discoverable and source-linked without execution authority",
+     "acceptance #1706 row 4: standalone qualified issue work representable without rewriting tracked campaign state",
+     "acceptance #1706 row 5: existing PR/claim/worktree overlap visible before mutation",
+     "acceptance #1706 row 6: independent campaigns produce concurrent read-only waves and separately claimed writers",
+     "acceptance #1706 row 7: legacy fields are read-only compatibility references that cannot promote readiness, proof, support or completion",
+     "acceptance #1706 row 8: stale/wrong identity states return exact recompile/reconcile routes",
+     "acceptance #1706 row 9: human and JSON projections derive from one DTO and agree on selection, completeness, conflicts and non-claims",
+     "acceptance #1706 row 10: default root packets and syntheses bounded; raw portfolio/issues/logs stay behind references"
+    ],
+    "contradicted_rows": [],
+    "deferred_rows": [
+     "delivery slice PR C (issue lifecycle consumers) not yet landed",
+     "delivery slice PR D (docs, compatibility cleanup, fresh-session proof) not yet landed"
+    ]
+   },
+   "closeout": {
+    "state": "pending",
+    "reason": "merge 70d053fb7b4a32c5855fb62cf30249e91752f3be landed PR B only; acceptance coverage and a current-head closeout receipt remain outstanding, so the lifecycle stays merged_pending_closeout",
+    "remaining_limitations": [
+     "parent issue #1706 remained OPEN at capture 2026-10-17 with status/needs-work; merge alone did not close it",
+     "no current-head verification receipt is bound for this lane; closeout.current_head_verification stays absent",
+     "PR #8325 head 1178aef8cecdea229c8c935fd9d0732fdb426254 carries both a failed and a succeeded Ripr Rust Small Result run; the merge followed the re-dispatched success",
+     "no formal durable claim record was filed for the PR B lane",
+     "no #4925 base orchestration attempt receipt exists for this lane; the gh capture named in base_attempts is the bound base evidence"
+    ],
+    "current_head_verification": null
+   },
+   "limitations": [
+    "parent issue #1706 remained OPEN at capture 2026-10-17 with status/needs-work; merge alone did not close it",
+    "no current-head verification receipt is bound for this lane; closeout.current_head_verification stays absent",
+    "PR #8325 head 1178aef8cecdea229c8c935fd9d0732fdb426254 carries both a failed and a succeeded Ripr Rust Small Result run; the merge followed the re-dispatched success",
+    "no formal durable claim record was filed for the PR B lane",
+    "no #4925 base orchestration attempt receipt exists for this lane; the gh capture named in base_attempts is the bound base evidence"
+   ],
+   "non_claims": [
+    "demonstrates that merge is not closeout for this lane; does not judge the PR B implementation quality",
+    "does not cover the PR C and PR D residual slices of issue #1706"
+   ],
+   "row_digest": "c93b4396e3fb5a70538e0a9452bcda910996e8544e5870b9a444dd8364e027c6"
+  }
+ ]
+}

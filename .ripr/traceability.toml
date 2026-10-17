@@ -16334,3 +16334,33 @@ outputs = [
   "docs/specs/RIPR-SPEC-0268-flow-sink-row-collapse.md",
 ]
 metrics = ["unit_test_pass_rate"]
+
+[[behavior]]
+id = "RIPR-SPEC-0278"
+name = "Issue lifecycle real closeout rows pilot over two captured journeys"
+spec = "docs/specs/RIPR-SPEC-0278-issue-lifecycle-real-closeout-rows.md"
+tests = [
+  "xtask/src/issue_lifecycle_real_rows.rs::tests::both_real_rows_load_with_intact_provenance_bindings",
+  "xtask/src/issue_lifecycle_real_rows.rs::tests::row_a_dispositions_through_to_completed_closeout",
+  "xtask/src/issue_lifecycle_real_rows.rs::tests::row_b_stays_merged_pending_closeout",
+  "xtask/src/issue_lifecycle_real_rows.rs::tests::wrong_head_or_merge_identity_variant_rejects",
+  "xtask/src/issue_lifecycle_real_rows.rs::tests::zero_subject_verification_cannot_close",
+  "xtask/src/issue_lifecycle_real_rows.rs::tests::missing_or_stale_current_head_proof_blocks_closeout",
+  "xtask/src/issue_lifecycle_real_rows.rs::tests::uncovered_acceptance_row_keeps_a_merge_partial",
+  "xtask/src/issue_lifecycle_real_rows.rs::tests::duplicate_import_deduplicates_by_observation_key",
+  "xtask/src/issue_lifecycle_real_rows.rs::tests::synthetic_fixtures_stay_outside_the_real_count",
+]
+fixtures = [
+  "fixtures/issue_lifecycle_real_rows",
+]
+code = [
+  "xtask/src/issue_lifecycle_real_rows.rs",
+  "xtask/src/fixture_contracts/general_validators.rs",
+  "xtask/src/reports/fixtures.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0278-issue-lifecycle-real-closeout-rows.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
