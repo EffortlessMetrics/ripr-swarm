@@ -1,0 +1,54 @@
+{
+  "case_id": "spec0228-keyed-getter-other-field",
+  "subject_id": "authored-keyed-getter",
+  "diff": "cases/spec0228-keyed-getter-other-field.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 75
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect",
+  "test_shape": "unit_test_assert_eq_keyed_getter_other_field",
+  "hard_case": "false-credit trap: same key, same lookup shape, but the getter looks the key up in another map than the one the owner writes",
+  "spec_examples": [
+    "RIPR-SPEC-0228#19"
+  ],
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.stock.insert(sku.to_owned(), qty + 1);",
+        "mutated_line": "self.stock.insert(sku.to_owned(), qty + 1);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the stored count changes"
+      },
+      {
+        "replacement": "",
+        "mutated_line": "",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the count is no longer stored"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "receive_holds_nothing receives \"BOLT\" into the stock map and asserts held(\"BOLT\") == 0, and held reads the held map, so a changed or deleted stock insert passes. Spec cell: RIPR-SPEC-0228 example 19, a keyed getter of another field map is not a read of the written entry.",
+  "labeling_observation": {
+    "ripr_commit": "58e4ced56",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

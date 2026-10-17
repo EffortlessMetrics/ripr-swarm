@@ -39,6 +39,16 @@ The default contract is:
 - Successful `ripr init` follow-up commands for `doctor` and `check` bind
   the selected root, including a relative or implicit root, so copying them
   from another directory still inspects the repository that was configured.
+  If neither the supplied absolute spelling nor the resolved filesystem path
+  is lossless, completed writes and success
+  status remain truthful while executable follow-ups are omitted with an
+  actionable UTF-8-parent/alias remedy.
+- Existing-config and existing-workflow `ripr init` refusals bind every
+  executable retry (overwrite, dry-run preview, and config-preserving CI
+  refresh) to the selected root. Pasting from another directory must not
+  initialize or overwrite that directory. Real and dry runs retain the same
+  refusal. If no lossless root spelling exists, omit executable retries and
+  name the UTF-8-parent/alias remedy while leaving existing files intact.
 - A missing `ripr.toml` and a freshly generated `ripr.toml` should produce
   equivalent default policy behavior, except for filesystem artifacts
   intentionally created by `init` or other commands.
@@ -149,6 +159,13 @@ nearest Cargo package or JavaScript/Python workspace declaration, then a
 verified Git work-tree root. `ripr cache` shares this resolver. Explicit
 `--root` remains authoritative.
 
+Structural-marker hardening (#8126) narrows the former field-presence rule:
+`package.json` marks a workspace only when its top-level `workspaces` value is
+an array or object, including Yarn object forms. String, number, Boolean, and
+`null` values do not select that directory. This shared rule also governs
+TypeScript package-discovery evidence (RIPR-SPEC-0085). It does not validate
+members, globs, or package-manager schemas or execute a package manager.
+
 A `.git` entry alone is not proof of a Git root. An inert ancestor marker must
 not move a standalone project's analysis away from its current directory or
 lose marker-based Python detection (#5111). Valid repositories, linked-worktree
@@ -193,8 +210,14 @@ not present the empty ranking as a clean result: the terminal and Markdown name
 each such language, its diff-first `ripr check --root <root>` route (or, when
 this binary cannot analyze the language, the unavailable-adapter notice), and
 close with that route instead of the Rust before/after snapshot commands. When
-Rust seams exist, the human output is unchanged and other languages are listed
-only in `pilot-summary.json` `language_routes` (#3906).
+an enabled language has that check route and no Rust seam or Python repair
+card ranks, the Top recommendation names the route (`analyze the Python
+diff: ripr check --root <root>`) instead of `none`; the "pilot ranks Rust
+seams and found none" explanation stays secondary. Disabled preview languages
+still list the route in the languages section. JSON `language_routes` and
+`current_change.top_recommendation_in_change` are unchanged (#3906, #7665).
+When Rust seams exist, the human output is unchanged and other languages are
+listed only in `pilot-summary.json` `language_routes`.
 
 Pilot's ranking is repo-wide, but a developer who just ran `ripr check` on a
 branch reads its top recommendation as the next step for that change. Pilot
@@ -203,7 +226,11 @@ resolves it, against the live working tree when it has uncommitted tracked
 changes, otherwise `<base>...HEAD`), ranks actionable seams on its changed
 lines first, and says in the terminal, Markdown and
 `pilot-summary.json` (`current_change`) whether the top recommendation is part
-of the change. When the change has no ranked seam, pilot says the
+of the change. For match seams, changed-line membership uses the parser-owned
+inclusive match head: the `match` keyword through the scrutinee, or the arm
+pattern and guard through `=>`. Separate arm-body lines do not touch that head.
+Token anchors, seam IDs and calibration spans stay unchanged. The coverage
+survives cached facts and classifications. When the change has no ranked seam, pilot says the
 recommendation is elsewhere in the repo, says why no seam on the change ranks
 (pilot withholds its seams as static limitations, they are already gripped,
 intentional or suppressed, the seam limit left seams unanalyzed, the change is
@@ -217,17 +244,31 @@ check` reads committed history only. When the repo-exposure seam limit cuts
 the inventory, pilot classifies the seams on the change's lines on their own,
 within what is left of its deadline, and adds the ones the cut dropped, so they
 still rank change-first and count as analyzed; the inventory seam-limit caveat
-about the change then no longer applies. A successful supplement also retains
-the producer's existing `changed_file_absent_from_worktree` limitations for
-requested changed files absent from the working tree. The terminal and Markdown
-name each path and its recovery action under "Inspected", even when a present
-changed seam is the top recommendation. `current_change.absent_changed_files`
-in the JSON summary records those portable paths; it is omitted if the
-supplement did not run or failed, and is an empty array only after a successful
-supplement found no absent requested files. Neither an empty classification nor
-an empty absence array establishes that every changed seam was classified.
-Restoring a regular source file at the same HEAD makes the next supplement
-inspect it and replaces the absence list, without stale cache disclosures.
+about the change then no longer applies. When Rust is enabled and the loaded
+change names Rust source files, pilot records the shared source-admission
+observation regardless of whether the inventory cap fired or supplemental
+classification succeeded. It retains the producer's existing
+`changed_file_absent_from_worktree` limitations for absent requested files.
+The fallback and successful supplement apply the shared diff-aware
+generated-source policy before admission, including handwritten opt-ins,
+stronger explicit patterns and changed vendor checksum markers, so source known
+to be excluded gains no restoration warning under either inventory cap. The
+supplement retains all changed paths as policy context, including missing
+markers, while its classification scope stays Rust-only. Its absence observation
+precedes classification and is carried on success. Header-only exclusions still depend on available
+worktree bytes or an active committed-source overlay; pilot creates no new
+overlay to determine the header of a sparse missing file.
+The terminal and Markdown name each path and its recovery action under
+"Inspected", even when a present changed seam is the top recommendation.
+`current_change.absent_changed_files` in the JSON summary records those portable
+paths (or a null entry for a bounded path-less disclosure when a name is
+refused). The field is omitted when no source-admission observation was
+requested, including Rust-disabled scope; an empty array means that observation
+found no absent requested files. Intentionally deleted files are excluded by
+the shared diff parser. Neither an empty classification nor an empty absence
+array establishes that every changed seam was classified. Restoring a regular
+source file at the same HEAD replaces the absence list on the next run,
+without stale cache disclosures.
 If that classification fails or runs out of time, pilot says so on stderr,
 keeps the inventory caveat and still completes. When
 pilot added any such seam, its `repo-exposure.json` is written without the
@@ -431,6 +472,12 @@ when init selects A through an absolute, relative, or implicit root,
 then its printed doctor and check commands still inspect A when replayed in B,
 including when A's path contains spaces or an apostrophe.
 A successful command that reports B's configuration is not accepted.
+If the supplied spelling contains non-UTF-8 cwd bytes but the selected
+filesystem target has a UTF-8 path, then usable follow-ups select that target,
+including parent traversal and symlink/.. traversal.
+If neither spelling is lossless, init still writes the intended config and
+succeeds, but omits follow-ups that would target a replacement-character directory.
+A valid UTF-8 absolute alias to the physical root still yields usable follow-ups.
 ```
 
 ### Init does not overwrite accidentally
@@ -470,6 +517,20 @@ then pilot names each detected language and its diff-first ripr check route,
 or says the language is not available from this ripr binary, and does not
 report the empty ranking as a clean result.
 
+Given a workspace whose code is an enabled supported language (Python on a
+detected Python project, or TypeScript/JavaScript listed in `[languages]
+enabled`) with a runnable ripr check route, no Rust seams, and no Python
+repair card,
+when a user runs ripr pilot,
+then the Top recommendation names that language's check route rather than
+"none", and still says that pilot ranks Rust seams and found none.
+
+Given a workspace with TypeScript or JavaScript files, no Rust seams, and
+that language not listed in `[languages] enabled`,
+when a user runs ripr pilot,
+then the Top recommendation stays "none" while the languages section still
+names the check route.
+
 Given a workspace with Rust seams and other-language files,
 when a user runs ripr pilot,
 then the terminal and Markdown output are unchanged and pilot-summary.json
@@ -491,6 +552,16 @@ when a user runs ripr pilot with either a warm or isolated cold cache,
 then the restored changed predicate ranks, absent_changed_files is empty, and
 the missing-file disclosure clears. The supplement does not alter ordinary
 repo-exposure results stored in the diff-independent classified cache.
+
+Given sparse changed handwritten, convention-generated, explicitly excluded and
+vendored files, with the changed vendor checksum marker also absent,
+when pilot runs with an uncapped inventory or a cap that triggers a successful
+supplement,
+then all three summaries name the same analyzable absent paths. Exact handwritten
+opt-ins admit convention-only paths; explicit exclusion and the changed vendor
+marker still win. A missing file whose generated header is unavailable remains
+named. Same-HEAD restoration clears absence and retains a nonempty changed
+ranking without admitting excluded source or polluting the ordinary inventory.
 ```
 
 ### Pilot says whether its top recommendation is part of the current change
@@ -500,6 +571,12 @@ Given a branch whose committed or uncommitted change touches a ranked seam,
 when a user runs ripr pilot,
 then that seam ranks ahead of better-classed seams elsewhere and pilot says the
 top recommendation is part of the current change.
+
+Given an edit to a later line of a multiline match scrutinee, pattern or guard,
+when a user runs ripr pilot with cold or warm caches and either seam cap,
+then the corresponding match seam counts as changed, retains its original
+seam ID and ranks as part of the change. An edit confined to a separate arm
+body does not mark that match head as changed.
 
 Given a branch whose change touches no ranked seam,
 when a user runs ripr pilot,
@@ -599,6 +676,7 @@ Current tests and reports that support the contract:
 
 - `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_sparse_missing_changed_file_and_recovers_same_head`
 - `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_mixed_missing_changed_file_even_with_changed_recommendation`
+- `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_capped_absence_matches_uncapped_generated_policy_and_recovers`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_current_change_preserves_absent_file_coverage_through_empty_and_mixed_supplements`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_renderers_disclose_absent_changed_files_independently_of_top_recommendation`
 
@@ -614,6 +692,11 @@ Current tests and reports that support the contract:
 - `crates/ripr/src/cli/commands.rs::tests::init_ci_github_refuses_existing_workflow_without_force`
 - `crates/ripr/tests/cli_smoke.rs::init_writes_conservative_config_and_doctor_loads_it`
 - `crates/ripr/tests/cli_smoke/init_followups.rs::init_followups_replay_the_selected_root_from_foreign_cwd`
+- `crates/ripr/tests/cli_smoke/init_followups.rs::init_refusal_retries_replay_the_selected_root`
+- `crates/ripr/tests/cli_smoke/init_followups.rs::init_refusal_omits_retries_for_an_unrepresentable_root`
+- `crates/ripr/tests/cli_smoke/init_followups.rs::init_omits_followups_for_an_unrepresentable_implicit_root`
+- `crates/ripr/tests/cli_smoke/init_followups.rs::init_followups_replay_a_utf8_alias_to_a_non_utf8_root`
+- `crates/ripr/tests/cli_smoke/init_followups.rs::init_followups_replay_utf8_targets_from_a_non_utf8_cwd`
 - `crates/ripr/tests/cli_smoke.rs::init_dry_run_prints_config_without_writing`
 - `crates/ripr/tests/cli_smoke.rs::init_ci_github_dry_run_prints_config_and_workflow_without_writing`
 - `crates/ripr/tests/cli_smoke.rs::init_ci_github_writes_non_blocking_report_workflow`
@@ -641,6 +724,10 @@ Current tests and reports that support the contract:
 - `crates/ripr/tests/cli_smoke.rs::pilot_withholds_static_limitations_and_keeps_a_true_gap`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_excludes_solved_governed_classes`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_puts_seams_in_the_current_change_first`
+- `crates/ripr/src/output/pilot/tests.rs::multiline_match_heads_follow_changed_lines_without_moving_seam_identity`
+- `crates/ripr/src/output/pilot/tests.rs::multiline_match_guard_lines_exclude_the_arm_body`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_match_source_lines_preserve_identity_and_refuse_invalid_ranges`
+- `crates/ripr/tests/cli_smoke.rs::pilot_ranks_multiline_match_head_edits_with_warm_caches_and_caps`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_current_change_matches_the_seam_span_and_new_side_lines`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change`
 - `crates/ripr/tests/cli_smoke.rs::pilot_ranks_and_labels_seams_in_the_current_change`
@@ -657,6 +744,7 @@ Current tests and reports that support the contract:
 - `crates/ripr/src/output/pilot/tests.rs::pilot_markdown_and_terminal_use_python_repair_card_when_no_seam_ranked`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_language_routes_state_follows_rust_seams_and_discovered_languages`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_renderers_show_language_routes_only_without_rust_seams`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_headline_names_supported_language_check_route_when_no_rust_seams`
 - `crates/ripr/tests/cli_smoke.rs::pilot_writes_default_packet_outputs_for_boundary_gap_fixture`
 - `crates/ripr/src/cli/commands/pilot.rs::tests::timed_out_pilot_removes_prior_run_packet_siblings`
 - `crates/ripr/src/cli/commands/pilot.rs::tests::remove_unwritten_timeout_packet_siblings_is_a_no_op_when_absent`

@@ -1,0 +1,11 @@
+pub static PICK: fn(u64) -> u64 = |total| if total >= 100 { 20 } else { 0 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pick_large_order() {
+        assert_eq!(PICK(150), 20);
+    }
+}

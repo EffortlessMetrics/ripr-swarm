@@ -56,7 +56,11 @@ Routed surfaces:
   the full profile keeps base-side evidence visible as history.
 - SARIF results and GitHub annotations — current CI diagnostics — carry
   candidate-actionable findings only; the check JSON and human output
-  remain the visibility surfaces for base-side evidence.
+  remain the visibility surfaces for base-side evidence. Diff-scoped
+  SARIF records `runs[].properties.omitted_not_current` when that filter
+  drops findings (#5091), so an all-omitted complete run is not
+  indistinguishable from a clean analysis; GitHub annotations already
+  emit the matching denominator notice (#4393).
 - PR evidence severe-gap counts and targeted-mutation candidates recompute
   from candidate-actionable findings when the findings array is present,
   falling back to the classification summary only when it is absent.
@@ -110,10 +114,10 @@ eligibility map directly.
 `crates/ripr/src/domain/probe.rs` pins the predicate and the delta rule;
 `crates/ripr/src/output/badge/tests.rs` the recurrence test; projection
 tests in `output/gap_decision_ledger.rs`, `output/first_pr.rs`,
-`output/json/finding_alignment.rs`, `lsp/diagnostics.rs`, `output/sarif.rs`,
-`output/github.rs`, and `app/pr_evidence.rs` pin each routed surface with
-`candidate_current` fixtures; re-blessed goldens carry the completed
-preview dispositions.
+`output/json/finding_alignment.rs`, `lsp/diagnostics.rs`, `output/sarif.rs`
+(including `omitted_not_current` accounting), `output/github.rs`, and
+`app/pr_evidence.rs` pin each routed surface with `candidate_current`
+fixtures; re-blessed goldens carry the completed preview dispositions.
 
 ## Non-Goals
 

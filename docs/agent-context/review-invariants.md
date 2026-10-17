@@ -117,12 +117,8 @@ For Droid workflows:
 - Do not use `Factory-AI/droid-action` directly for MiniMax BYOK workflows
   unless a future upstream SHA has an explicit debug-artifact disable input and
   the checker allowlist is updated.
-- `automatic_review: true` and `automatic_security_review: true` must be set.
 - `review_depth: shallow` unless intentionally changed.
-- `cancel-in-progress: false` with per-PR concurrency group.
-- `pull_request` types are `opened`, `synchronize`, `reopened`, `labeled`, `unlabeled`; `ready_for_review` must not repeat advisory computation (#4987).
-- Same-repo guard (`head.repo.full_name == github.repository`) is required.
-- Draft PRs must not be filtered out.
+- Same-repo guard (`head.repo.full_name == github.repository`) is required for manual PR mentions.
 - `MINIMAX_API_KEY` must be job-level env referencing `${{ secrets.MINIMAX_API_KEY }}`.
 - Action refs must be immutable 40-character commit SHAs.
 - The manual workflow (`droid.yml`) must have trusted actor guards (`OWNER`, `MEMBER`, `COLLABORATOR`).
@@ -132,12 +128,10 @@ For Droid workflows:
   `security_block_on_critical: true`, and `security_block_on_high: false`.
 - These invariants, including scheduled security-scan shape and explicit `show_full_output: false`, are enforced by `cargo xtask check-droid-review-config`.
 
-## Queueing invariants
+## Automatic review retirement
 
-For automatic Droid PR review:
-
-- Run on same-repo PRs and every commit.
-- Draft PRs are reviewable.
-- Do not cancel an active Droid review.
-- Keep at most the latest queued review per PR.
-- Allow separate PRs to run concurrently.
+Automatic Droid PR review was retired under #5086. Do not restore its workflow,
+event-admission requirements, or CI lane entries. The manual `@droid` workflow
+and scheduled security scan retain their existing triggers, runner routing,
+permissions, model configuration, and safeguards. The legacy command name
+`check-droid-review-config` continues to validate those retained workflows.

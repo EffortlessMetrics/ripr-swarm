@@ -91,6 +91,9 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     /// Run-scoped activation memo, keyed by slots of the same index.
     test_value_facts: super::TestValueFacts,
     owner_pin_syntax: super::OwnerPinSyntax,
+    /// Run-scoped unseen-reach scan. `includes_external_docs` parses each
+    /// file; asking per owner re-parsed the crate on every changed function.
+    unseen_reach: super::UnseenReachNames,
     /// Run-scoped #5830 caller-walk memo, keyed by owner slot (#7024).
     owner_caller_names: super::super::classifier::OwnerCallerNames,
     /// The analysis root that probe paths are joined onto, while index and
@@ -163,6 +166,7 @@ impl RelatedTestCandidateIndex {
             }
         }
         candidates.common_tokens = CommonTestTokens::new(index.tests());
+        candidates.unseen_reach = super::UnseenReachNames::build(index);
 
         candidates
     }
@@ -175,6 +179,10 @@ impl RelatedTestCandidateIndex {
 
     pub(in crate::analysis) fn owner_pin_syntax(&self) -> &super::OwnerPinSyntax {
         &self.owner_pin_syntax
+    }
+
+    pub(in crate::analysis) fn unseen_reach_names(&self) -> &super::UnseenReachNames {
+        &self.unseen_reach
     }
 
     /// Record the root that probe paths are joined onto, so same-file
@@ -734,22 +742,11 @@ fn find_related_tests_with_candidates<'a>(
     // #6292/#6537: a module-level owner with same-named module-level rivals
     // in its package is told apart by the call's spelled path. A test whose
     // every call of the name settles on a rival relates through no signal.
+    // The identity is shared per analysis run (#7716): its construction and
+    // its per-test memo would otherwise repeat for every probe.
     let call_identity = owner_fn
         .filter(|_| indexed_same_name_ids.len() > 1)
-        .and_then(|owner| match candidates {
-            RelatedTestCandidates::Indexed(candidate_index) => super::OwnerCallIdentity::new(
-                owner,
-                candidate_index
-                    .function_indices(owner_name)
-                    .iter()
-                    .map(|&function_index| index.functions().at(function_index)),
-                index,
-            ),
-            #[cfg(test)]
-            RelatedTestCandidates::FullScan => {
-                super::OwnerCallIdentity::new(owner, index.functions().iter(), index)
-            }
-        });
+        .and_then(|owner| super::call_identity::shared_owner_call_identity(index, owner));
 
     // For module-level struct/field probes (owner_fn is None) derive the package
     // prefix from the probe's source file so cross-crate spurious matches are
@@ -3471,83 +3468,6 @@ pub(in crate::analysis) fn test_calls_free_function(test: &TestSummary, name: &s
 /// of `name`, with comments and strings masked first.
 pub(in crate::analysis) fn call_text_may_call_free_function(text: &str, name: &str) -> bool {
     free_function_call_start_in(&mask_comments_and_strings(text), name).is_some()
-}
-
-/// Specific call-site syntax for targeted owner selection. A captured fact
-/// contains a whole line, so retain every same-named site on that line.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(in crate::analysis) enum TargetedCallShape {
-    Bare,
-    Path { prefix: String, generic: bool },
-    Unsupported,
-}
-
-pub(in crate::analysis) fn targeted_call_shapes(
-    text: &str,
-    name: &str,
-) -> BTreeSet<TargetedCallShape> {
-    let masked = mask_comments_and_strings(text);
-    let mut shapes = BTreeSet::new();
-    for (at, _) in masked.match_indices(name) {
-        if !ident_boundary(masked.as_bytes(), at, at + name.len())
-            || !call_paren_follows(&masked, at + name.len())
-        {
-            continue;
-        }
-        let before = masked[..at].trim_end();
-        // A raw callee marker otherwise hides a preceding path from this
-        // line-level selector; retain it as unresolved, never as bare.
-        if before.ends_with("r#") {
-            shapes.insert(TargetedCallShape::Unsupported);
-            continue;
-        }
-        if ident_ending_at(before, before.len()) == Some("fn") {
-            continue;
-        }
-        if let Some(qualifier) = before.strip_suffix("::") {
-            let mut qualifier = qualifier.trim_end();
-            let generic = qualifier.ends_with('>');
-            if generic {
-                let Some(open) =
-                    matching_open(qualifier.as_bytes(), qualifier.len() - 1, b'<', b'>')
-                else {
-                    shapes.insert(TargetedCallShape::Unsupported);
-                    continue;
-                };
-                // A turbofish qualifies a named type; UFCS and unresolved
-                // generic syntax remain unsupported here.
-                let Some(base) = qualifier[..open].trim_end().strip_suffix("::") else {
-                    shapes.insert(TargetedCallShape::Unsupported);
-                    continue;
-                };
-                qualifier = base.trim_end();
-            }
-            let start = qualifier
-                .char_indices()
-                .rev()
-                .find(|(_, ch)| !ch.is_alphanumeric() && !matches!(ch, '_' | ':'))
-                .map_or(0, |(at, ch)| at + ch.len_utf8());
-            let prefix = &qualifier[start..];
-            let preceding = qualifier[..start].trim_end();
-            if prefix.is_empty()
-                || prefix.starts_with("::")
-                || preceding.ends_with("::")
-                || preceding.ends_with("r#")
-            {
-                shapes.insert(TargetedCallShape::Unsupported);
-            } else {
-                shapes.insert(TargetedCallShape::Path {
-                    prefix: prefix.to_string(),
-                    generic,
-                });
-            }
-        } else if is_free_function_call_at(&masked, at, name) {
-            shapes.insert(TargetedCallShape::Bare);
-        } else {
-            shapes.insert(TargetedCallShape::Unsupported);
-        }
-    }
-    shapes
 }
 
 /// The suffix of a captured call's raw source text that starts at its first

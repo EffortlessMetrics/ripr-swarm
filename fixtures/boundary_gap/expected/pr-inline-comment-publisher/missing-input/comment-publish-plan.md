@@ -4,7 +4,7 @@ Mode: plan
 Status: advisory
 
 Blocked:
-- missing_pr_guidance: no review-comments JSON was supplied
+- missing_pr_guidance: 1 item blocked (no review-comments JSON was supplied)
 
 Next:
 - run `ripr review-comments` before planning inline comments.

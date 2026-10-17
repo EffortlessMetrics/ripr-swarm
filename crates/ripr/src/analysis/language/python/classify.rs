@@ -4,6 +4,7 @@ use super::assertion_selection::{
 };
 use super::boundary::{BoundaryActivation, python_boundary_evidence};
 use super::discriminators::python_missing_discriminators;
+use super::guard_activation;
 use super::no_behavior::{
     changed_default_overridden_params, format_param_name_list, is_annotation_only_def_change,
     is_annotation_only_var_change, is_new_def_header_without_defaults, is_python_no_behavior_line,
@@ -30,7 +31,7 @@ use crate::analysis::diff::lines_look_alike;
 use crate::domain::{
     Confidence, ExposureClass, Finding, LanguageId as DomainLanguageId, LanguageStatus,
     MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily, RevealEvidence,
-    RiprEvidence, SourceLocation, StageEvidence, StageState,
+    RiprEvidence, SourceLocation, StageEvidence, StageState, indefinite_article,
 };
 use std::path::Path;
 
@@ -57,7 +58,32 @@ pub(super) fn classify_change_with_old(
     owners: &[PythonOwner],
     all_tests: &[PythonTest],
 ) -> Option<Finding> {
-    classify_change_with_context(
+    classify_change_with_source(
+        file,
+        line,
+        line_text,
+        old_line_text,
+        owners,
+        all_tests,
+        None,
+    )
+}
+
+/// Classify with the new-side source text of the changed file when the
+/// caller has it. The guarded-arm activation gate (#7392) reads the owner
+/// body to find the `if` arms enclosing the changed line; without source
+/// text that gate stays off and the existing verdict stands.
+#[cfg(test)]
+pub(super) fn classify_change_with_source(
+    file: &Path,
+    line: usize,
+    line_text: &str,
+    old_line_text: Option<&str>,
+    owners: &[PythonOwner],
+    all_tests: &[PythonTest],
+    owner_source: Option<&str>,
+) -> Option<Finding> {
+    classify_change_full(
         file,
         line,
         line_text,
@@ -65,6 +91,7 @@ pub(super) fn classify_change_with_old(
         owners,
         all_tests,
         PythonNoBehaviorContext::default(),
+        owner_source,
     )
 }
 
@@ -106,8 +133,14 @@ fn same_indentation(old: &str, new: &str) -> bool {
     leading(old) == leading(new)
 }
 
-/// Classify a change from producer-owned owner, relation, and oracle facts.
-/// Discriminator narration follows the final class, not oracle strength alone.
+/// Classify a change with the new-side source text of the changed file. The
+/// guarded-arm activation gate (#7392) reads the owner body to find the `if`
+/// arms enclosing the changed line; without source text that gate stays off
+/// and the existing verdict stands.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "entry point mirrors the per-line classification inputs; bundling them would hide which caller lacks each input"
+)]
 pub(super) fn classify_change_with_context(
     file: &Path,
     line: usize,
@@ -116,6 +149,37 @@ pub(super) fn classify_change_with_context(
     owners: &[PythonOwner],
     all_tests: &[PythonTest],
     no_behavior: PythonNoBehaviorContext,
+    owner_source: Option<&str>,
+) -> Option<Finding> {
+    classify_change_full(
+        file,
+        line,
+        line_text,
+        old_line_text,
+        owners,
+        all_tests,
+        no_behavior,
+        owner_source,
+    )
+}
+
+/// Classify a change from producer-owned owner, relation, and oracle facts.
+/// Discriminator narration follows the final class, not oracle strength alone.
+/// The optional new-side `owner_source` feeds the guarded-arm activation
+/// gate (#7392); without it that gate stays off.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the no-behavior context and source are independent optional inputs threaded from distinct callers"
+)]
+fn classify_change_full(
+    file: &Path,
+    line: usize,
+    line_text: &str,
+    old_line_text: Option<&str>,
+    owners: &[PythonOwner],
+    all_tests: &[PythonTest],
+    no_behavior: PythonNoBehaviorContext,
+    owner_source: Option<&str>,
 ) -> Option<Finding> {
     // No-op / no-behavior-delta guard (#1279): a docstring-only, comment-only, or
     // blank-line change has no runtime behavior, so there is nothing for a test to
@@ -175,6 +239,7 @@ pub(super) fn classify_change_with_context(
         owners,
         all_tests,
         no_behavior,
+        owner_source,
     )
 }
 
@@ -195,6 +260,7 @@ pub(super) fn classify_change_for_owner(
     owners: &[PythonOwner],
     all_tests: &[PythonTest],
     no_behavior: PythonNoBehaviorContext,
+    owner_source: Option<&str>,
 ) -> Option<Finding> {
     let ChangeSite { file, line, owner } = site;
     // Bare-variable annotation-only suppression at MODULE SCOPE only (#1289):
@@ -350,6 +416,32 @@ pub(super) fn classify_change_for_owner(
         })
         .flatten();
     let mut term_downgraded = false;
+    // Guarded-arm activation gate (#7392): a return-value change inside a
+    // guarding `if` arm executes only when the guarding comparisons accept a
+    // call's inputs. When every strong related call provably fails the guard,
+    // the changed line never runs under an observed input and a strong
+    // exact-value oracle passes either way — the same fail-closed rule as the
+    // predicate boundary gate, read on the reachability side instead of the
+    // equality side. Unreadable guards, unbound operands, and rows without
+    // literal inputs fail open and keep the existing oracle verdict.
+    let guarded_arm_gap = (static_limit.is_none()
+        && matches!(family, ProbeFamily::ReturnValue)
+        && boundary_gap.is_none()
+        && inactive_term.is_none()
+        && !no_behavior.multi_line_def_header_line)
+        .then(|| {
+            owner_source.and_then(|source| {
+                guard_activation::python_guarded_arm_gap(
+                    owner,
+                    source,
+                    line,
+                    &related_candidates,
+                    &focus,
+                )
+            })
+        })
+        .flatten();
+    let mut guarded_arm_downgraded = false;
     // An existing exact-list assertion cannot justify prescribing the same
     // assertion again when this bounded path cannot prove unequal values.
     let unproven_list_equality = !alignment.observes()
@@ -415,6 +507,7 @@ pub(super) fn classify_change_for_owner(
         && changed_default_exercised_ok
         && boundary_gap.is_none()
         && inactive_term.is_none()
+        && guarded_arm_gap.is_none()
     {
         (
             ExposureClass::Exposed,
@@ -422,8 +515,10 @@ pub(super) fn classify_change_for_owner(
             StageState::Yes,
             StageState::Yes,
             vec![format!(
-                "Related Python test reaches `{}` with a `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator.",
+                // #7752: the article follows the oracle-kind label ("an `exact_value`").
+                "Related Python test reaches `{}` with {} `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator.",
                 owner.name,
+                indefinite_article(strongest_kind.as_str()),
                 strongest_kind.as_str()
             )],
         )
@@ -469,6 +564,25 @@ pub(super) fn classify_change_for_owner(
                     .map(|value| format!(" `{value}`"))
                     .unwrap_or_default(),
                 gap.reason,
+            )],
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank()
+        && alignment.observes()
+        && let Some(gap) = guarded_arm_gap.as_ref()
+    {
+        // A strong oracle observes the owner's output, but every strong
+        // related call provably fails the guarding arm's conditions, so the
+        // changed line never executes under an observed input and the oracle
+        // cannot discriminate a line it never runs (#7392).
+        guarded_arm_downgraded = true;
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Yes,
+            StageState::Weak,
+            vec![format!(
+                "A strong Python oracle reaches `{}`, but static evidence does not place a related test input inside the guarding arm `{}`; every observed input leaves the changed line unexecuted (observation_unverified). Add a test input that satisfies the guarding condition.",
+                owner.name, gap.discriminator,
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
@@ -606,7 +720,7 @@ pub(super) fn classify_change_for_owner(
     let infect = StageEvidence::new(
         if static_limit.is_some() {
             StageState::Unknown
-        } else if boundary_downgraded || term_downgraded {
+        } else if boundary_downgraded || term_downgraded || guarded_arm_downgraded {
             StageState::Weak
         } else {
             StageState::Yes
@@ -619,6 +733,8 @@ pub(super) fn classify_change_for_owner(
             )
         } else if boundary_downgraded {
             "Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.".to_string()
+        } else if guarded_arm_downgraded {
+            "Related tests reach the changed owner, but every strong related test call provably fails the guarding arm, so the changed line never executes under an observed input.".to_string()
         } else if term_downgraded {
             "Related tests reach the changed term, but every strong related test call gives it the value 0.".to_string()
         } else {
@@ -648,6 +764,19 @@ pub(super) fn classify_change_for_owner(
                             reason: gap.reason.clone(),
                             flow_sink: flow_sink.clone(),
                         })
+                })
+                .into_iter()
+                .collect()
+        } else if guarded_arm_downgraded {
+            // The guarded-arm downgrade names the guarding condition a call
+            // input would need to satisfy, with the reason listing the values
+            // the strong related calls actually bind.
+            guarded_arm_gap
+                .as_ref()
+                .map(|gap| MissingDiscriminatorFact {
+                    value: gap.discriminator.clone(),
+                    reason: gap.reason.clone(),
+                    flow_sink: flow_sink.clone(),
                 })
                 .into_iter()
                 .collect()
@@ -710,14 +839,18 @@ pub(super) fn classify_change_for_owner(
         )
     } else if matches!(class, ExposureClass::Exposed) {
         format!(
-            "Related Python test uses a `{}` oracle; static evidence suggests the changed behavior is discriminated.",
+            // #7752: the article follows the oracle-kind label ("an `exact_value`").
+            "Related Python test uses {} `{}` oracle; static evidence suggests the changed behavior is discriminated.",
+            indefinite_article(strongest_kind.as_str()),
             strongest_kind.as_str()
         )
     } else if strongest_strength >= OracleStrength::Strong.rank() {
         // Strength alone cannot override the classifier's alignment, error-path,
         // or default-activation decision. Keep the narrative at that verdict.
         format!(
-            "Related Python test uses a `{}` oracle, but static evidence does not establish discrimination of the changed behavior.",
+            // #7752: the article follows the oracle-kind label ("an `exact_value`").
+            "Related Python test uses {} `{}` oracle, but static evidence does not establish discrimination of the changed behavior.",
+            indefinite_article(strongest_kind.as_str()),
             strongest_kind.as_str()
         )
     } else {
@@ -911,6 +1044,12 @@ pub(super) fn classify_change_for_owner(
             observed_values: if term_downgraded {
                 inactive_term
                     .map(|term| term.observed_values)
+                    .unwrap_or_default()
+            } else if guarded_arm_downgraded {
+                // A guarded-arm downgrade names the guarding comparison; show
+                // the literal inputs the strong related calls actually bind.
+                guarded_arm_gap
+                    .map(|gap| gap.observed_values)
                     .unwrap_or_default()
             } else {
                 boundary

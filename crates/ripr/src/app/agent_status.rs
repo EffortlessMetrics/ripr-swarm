@@ -25,7 +25,7 @@ use crate::domain::{
     select_canonical_next_action,
 };
 use crate::output::agent_receipt::AgentReceiptReading;
-use crate::output::markdown::{COMMAND_SHELL_DISCLOSURE, PowershellForm, powershell_form};
+use crate::output::markdown::{PowershellForm, command_shell_disclosure, powershell_form};
 use serde_json::Value;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -598,7 +598,9 @@ fn status_repair_attempt(
                     (
                         "awaiting_edit",
                         "resumable",
-                        Some(manifest.next_command.clone()),
+                        Some(crate::agent::human_after_phase_follow_up(
+                            &manifest.next_command,
+                        )),
                     ),
                 ),
                 Some(AfterPhaseHeadAdmission::FinishesStale { .. }) => (
@@ -1667,7 +1669,7 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
         if next.runs_after_test_edit() {
             rendered.push_str(&format!("{AFTER_TEST_EDIT_NOTE}\n\n"));
         }
-        rendered.push_str(COMMAND_SHELL_DISCLOSURE);
+        rendered.push_str(command_shell_disclosure());
         rendered.push_str("```bash\n");
         rendered.push_str(&next.command);
         rendered.push_str("\n```\n");
@@ -2586,7 +2588,7 @@ pub(crate) fn render_agent_attempt_status_markdown(report: &AgentAttemptStatusRe
         if next.runs_after_test_edit() {
             rendered.push_str(&format!("{AFTER_TEST_EDIT_NOTE}\n\n"));
         }
-        rendered.push_str(COMMAND_SHELL_DISCLOSURE);
+        rendered.push_str(command_shell_disclosure());
         rendered.push_str("```bash\n");
         rendered.push_str(&next.command);
         rendered.push_str("\n```\n");
@@ -3170,11 +3172,13 @@ mod tests {
                 "an awaiting attempt must name its retained after command".to_string()
             })?;
             if next.step != "repair_attempt_after"
+                || !next.command.starts_with("ripr continue --root ")
                 || !next.command.contains("--attempt")
                 || !next.command.contains(attempt_id.as_str())
+                || next.command.contains("--phase after")
             {
                 return Err(format!(
-                    "next action was not the retained after command: {next:?}"
+                    "next action must name ordinary `ripr continue`, not `--phase after`: {next:?}"
                 ));
             }
 
@@ -4042,9 +4046,18 @@ mod tests {
             bash_fence < powershell_fence,
             "bash form must be presented before the PowerShell variant"
         );
+        // Host-aware shell boundary (#7729): off Windows the disclosure
+        // states cmd.exe is unsupported; on Windows the commands are
+        // double-quoted for the Windows console, so the disclosure names
+        // the consoles they paste into instead.
+        let boundary_disclosed = if cfg!(windows) {
+            rendered.contains("Windows console")
+        } else {
+            rendered.contains("cmd.exe is not supported.")
+        };
         assert!(
-            rendered.contains("cmd.exe is not supported."),
-            "next command presentation must state the cmd.exe boundary:\n{rendered}"
+            boundary_disclosed,
+            "next command presentation must state the host shell boundary:\n{rendered}"
         );
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
@@ -4974,15 +4987,23 @@ mod tests {
     #[test]
     fn agent_status_quotes_paths_with_spaces() {
         // Issue #3872: the redirect anchors at the resolved root, so the
-        // quoted expectation names the anchored absolute target: the quoting
-        // under test is the single-quote shell encoding around both values.
+        // quoted expectation names the anchored absolute target. The quoting
+        // form is host-dependent (#7729): single quotes off Windows, double
+        // quotes on it.
+        let quote = |value: &str| shell_arg(value);
         let command = agent_packet_command("repo root", "seam-a", WORKFLOW_AGENT_PACKET_ARTIFACT);
         assert!(
-            command.starts_with("ripr agent packet --root 'repo root' --seam-id seam-a --json > '"),
-            "root and target must stay single-quoted: {command}"
+            command.starts_with(&format!(
+                "ripr agent packet --root {} --seam-id seam-a --json > ",
+                quote("repo root")
+            )),
+            "root must stay host-quoted: {command}"
         );
         assert!(
-            command.ends_with("/repo root/target/ripr/workflow/agent-packet.json'"),
+            command.ends_with(&format!(
+                "/repo root/target/ripr/workflow/agent-packet.json{}",
+                if cfg!(windows) { "\"" } else { "'" }
+            )),
             "redirect must anchor under the resolved root: {command}"
         );
     }

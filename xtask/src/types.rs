@@ -122,6 +122,8 @@ pub(crate) struct GhPrStatusPullRequest {
     pub(crate) review_decision: String,
     pub(crate) checks: Vec<PrTriageCheck>,
     pub(crate) reviews: Vec<GhPrStatusReview>,
+    pub(crate) provider_review_observations:
+        crate::provider_review_observations::ProviderReviewObservations,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

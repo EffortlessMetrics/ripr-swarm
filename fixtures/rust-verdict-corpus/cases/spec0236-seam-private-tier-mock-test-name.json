@@ -1,0 +1,58 @@
+{
+  "case_id": "spec0236-seam-private-tier-mock-test-name",
+  "subject_id": "authored-spec0236-22",
+  "diff": "cases/spec0236-seam-private-tier-mock-test-name.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "integration_test_public_chain_named_mock",
+  "hard_case": "Probe c4 with the test named `mock_checkout` (RIPR-SPEC-0236 example 22): `tier` reach opaque, summary names rust_integration_public_api_path_unresolved and `mock_checkout` (tests/checkout.rs:2) calls `checkout`; class opaque. Known gap: the reach limitation category reads unsupported_mock_shape, chosen from the test name in the summary, where the example adopts opaque_static_evidence (only the class-level opaque entry reads opaque_static_evidence today). The diff finding reads no_static_path with no related test, although the integration test kills two of three mutants. Only the `mock_checkout` test-name variant of example 22 is realized here; the `generated_route` entry-name variant has no case. Category deviation tracked in #7958.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if total > 100 { 20 } else { 0 }",
+        "mutated_line": "if total > 100 { 20 } else { 0 }",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: total == 100 now gives 0; 150 still gives 20"
+      },
+      {
+        "replacement": "if total >= 200 { 20 } else { 0 }",
+        "mutated_line": "if total >= 200 { 20 } else { 0 }",
+        "outcome": "tests_failed",
+        "failing_test": "mock_checkout",
+        "equivalence_review": "not equivalent: totals 100..=199 give 0, so 150 gives 0"
+      },
+      {
+        "replacement": "if total >= 100 { 30 } else { 0 }",
+        "mutated_line": "if total >= 100 { 30 } else { 0 }",
+        "outcome": "tests_failed",
+        "failing_test": "mock_checkout",
+        "equivalence_review": "not equivalent: the discount for large totals becomes 30"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "tests/checkout.rs asserts checkout(150) == 20 through route and tier in a test named `mock_checkout`; 150 does not sit on the 100 boundary, so the boundary shift survives. Spec cells: RIPR-SPEC-0236 example 22.",
+  "labeling_observation": {
+    "ripr_commit": "b0428d112",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

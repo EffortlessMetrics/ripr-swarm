@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 36529b4..74e0e97 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,7 +1,7 @@
+ //! Short-circuit owner tails (RIPR-SPEC-0197 rule 3).
+ 
+ pub fn both_zero(x: i32, y: i32) -> bool {
+-    x == 0 && y == 0
++    x == 0 && 0 == y
+ }
+ 
+ pub fn in_band(level: u8, open: bool) -> bool {

@@ -295,7 +295,10 @@ it. Follow `build-candidate` for the bounded sequence.
 Hosted PR CI owns the required merge-gate matrix. Do not serially duplicate the
 whole matrix locally before publishing. Use `cargo xtask ci-full` for an
 explicit complete local review/evidence/package pass, or reproduce a named gate.
-`precommit` alone does not claim CI-equivalent completeness. Check runner,
+`precommit` alone does not claim CI-equivalent completeness. Hosted Rust policy
+uses `cargo xtask ci-policy`, the same policy/change-set/whitespace owner without
+local selected Clippy; the required lane retains one explicit full workspace
+Clippy command. Ordinary local `precommit` retains its impact-selected Clippy. Check runner,
 features, selected/executed/ignored subjects, artifacts and identity; Cargo test
 and nextest are not interchangeable by assertion. `check-pr` is non-release
 proof. Package/readiness, candidate qualification and publication are separate.
@@ -334,6 +337,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo doc --workspace --no-deps
 cargo package -p ripr --list
+cargo xtask check-packaged-readme
 cargo publish -p ripr --dry-run
 cargo xtask check-static-language
 cargo xtask check-policy-all

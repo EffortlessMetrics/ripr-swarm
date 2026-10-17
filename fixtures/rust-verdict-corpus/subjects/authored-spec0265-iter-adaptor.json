@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-spec0265-iter-adaptor",
+  "origin": "authored",
+  "version_label": "authored 2026-10-14 for RIPR-SPEC-0265 acceptance examples 4 and 5",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "10f51f4e18c33eaf688d580aa26c552c3007f95a90823b3b387143b0eadaaa30"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "d7c0dd4e73c8fc8567c602097404df9e374e31dc6d1fae0da37f6fece451e124"
+    }
+  ]
+}

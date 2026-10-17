@@ -90,9 +90,48 @@ are not yet read as settling the outcome: the evaluator treats the introduced
 attribute as ordinary, so the gap is withheld. Both cases err toward an
 honest unknown, never toward a false gap.
 
+An earlier `return` is a gap-keeping shape, with one value-guard exception
+(trap-tally-reached-assert-control). The assertion is `assert_eq!(call, e)`
+with `e` an integer literal. The test body's only `return` (outside closures
+and nested items) is the whole body of a root statement
+`if call <op> k { return; }` with no `else`, where `call` is the same text and one bare call `name(..)` (no path,
+receiver or projection around it),
+`k` is an integer literal and `<op>` is one comparison. If that condition
+does not hold at `e` and also spares at least one wrong value, the
+assertion runs for the value it expects and for some value it rejects, and
+which one a mutant returns is a value ripr does not evaluate. A `!=` guard
+spares no wrong value: the assertion runs only when it passes, so it stays a
+certain gap. ripr does not know the integer type, so a neighbour of `e`
+counts only when the guard's own threshold holds it (`> k` with `e < k`
+spares `e + 1`) or every type holding `e` holds it: `e - 1` for `e >= 1`
+or a negative `e` above every signed minimum, `e + 1` for an `e` that is no
+type's maximum. `if count() > 0 { return; }` before
+`assert_eq!(count(), 0)` therefore stays a gap. An `==` guard spares every
+wrong value but `k`, including a default-like `k` such as `0` (#7932 tally
+review). `AssertionRefusal::ValueGuard` is then an analyzer limit, and the
+classifier counts it only when `call` is the owner's call. When the
+condition holds at `e`, this exception does not apply and the existing
+guarded-return refusal stands: its twin `trap-steps-early-return`
+(`if steps(2) < 1000 { return; }` before `assert_eq!(steps(2), 14)`, which
+also returns early for every wrong value below 1000) stays
+`reachable_unrevealed`. A guard that holds at `e` but at no wrong value
+(`== e`) lets every wrong value reach the assertion; it still reads as a
+gap and is a separate, pre-existing case (#7044). A call with a
+string or char literal argument stays out, since matching the guard's
+call ignores whitespace. Both cases' labeled mutants were run (runtime mutant
+kill truth in the verdict corpus). An unconditional `return;` before the
+assertion, which the runtime controls pin, is untouched.
+
 The refusal scope covers only related tests that could have credited an
 oracle (`oracle_crediting_relations`, shared with reveal): a name-only
 relation does not count while a reach-bearing test exists.
+
+For a string-valued predicate, a shared reason literal in an unrelated
+same-file/module assertion cannot supply observation or discrimination while
+an actual owner-reaching test exists (#7763). Keep that assertion visible with
+`no_call_path`. A possible opaque or transitive owner call retains the existing
+allowance. This does not resolve formatted/local input activation or turn a
+runtime validation bypass rejection into static exposure.
 
 The classifier marks a `reachable_unrevealed` finding whose observe summary is
 `rust_assertion_context_unestablished` when it has at least one refused related
@@ -124,6 +163,45 @@ A matching finding becomes:
 
 The stage evidence is unchanged, so `evidence_path` still shows what ripr
 read. The rule never upgrades a class.
+
+### Panic outcome of a `#[should_panic]` test
+
+A `#[should_panic]` test with no assertion still has an oracle: it fails
+when the code it runs does not panic. ripr reads such a test as having no
+assertion, so a changed panic guard (`if index >= 100 { panic!(..) }`)
+reached only by that test read as a certain gap even when every mutant that
+stops the panic fails it. `gap_admission::withhold_should_panic_gap` withholds
+that gap under `rust_panic_outcome_unresolved` when all of these hold:
+
+- the finding is `reachable_unrevealed` with no `static_limit_kind`;
+- the changed line is inside the owner function, and the owner's body
+  (comments and strings masked) invokes a panicking macro (`name!(`,
+  `name![` or `name!{`) (`panic!`,
+  `unreachable!`, `todo!`, `unimplemented!`, `assert!`, `assert_eq!`,
+  `assert_ne!` or a `debug_assert` form) on the changed line or after it;
+- a related test with a `direct_owner_call` relation has no assertion and
+  carries `#[should_panic]` without `#[ignore]`, either bare, with
+  `expected = ""` (which matches any message), or with `expected = ".."`
+  whose text is in a string literal argument of a panicking macro invoked
+  on or after the changed line. A literal elsewhere in the owner does not
+  count, and neither does a `format!` template. Other attribute forms
+  (`#[should_panic = ".."]`, a raw string, `cfg_attr`) keep the gap.
+
+It runs in `apply_probe_and_oracle_limits` after the log-capture limit and
+before `withhold_unsupported_gap`, and writes the finding the same way, with
+`next_step` naming the tests. The panic is not credited: a bare
+`#[should_panic]` also passes on a panic from another callee, so its twin
+`trap-row-of-unrelated-panic` (`Grid::new(0)` panics first) moves from gap
+to limited, which its case accepts. An `expected` message the owner never
+raises on or after the changed line, a change after the owner's last panic,
+an owner with no panicking macro, a test without `#[should_panic]`, and a
+`#[should_panic]` test with an assertion, and an ignored test keep the gap; only the matching
+test's start line binds it to its related row.
+`spec0227-check-variant-should-panic` is untouched: it reads as
+`weakly_exposed` (the test's `unwrap`), and its owner has no panicking macro.
+A panicking macro inside a nested `fn`, closure or `macro_rules!` in the
+owner still counts; that over-reads toward `static_unknown`, never toward a
+gap or credit.
 
 ## Scope boundary
 
@@ -198,16 +276,23 @@ Tests in `crates/ripr/src/analysis/classify/gap_admission.rs`:
 - `a_marker_without_the_refused_observe_keeps_the_gap_and_is_consumed`
 - `an_existing_named_limit_and_non_gap_classes_are_untouched`
 - `withholding_twice_adds_one_stop_reason`
+- `a_panic_macro_is_read_by_its_own_name`
+- `a_should_panic_test_expects_the_owner_panic_only_when_the_message_matches`
 
 Tests in `crates/ripr/src/analysis/classify/owner_pin/tests.rs`:
 
 - `analyzer_limit_refusals_are_limits_of_ripr_reading`
 - `refusals_that_can_keep_an_assertion_from_running_are_not_limits`
 - `an_outcome_settling_attribute_is_the_refusal_wherever_it_sits`
+- `a_return_guard_that_spares_the_expected_value_is_an_analyzer_limit`
+- `a_direct_call_name_is_one_bare_call_ending_the_subject`
 
 Integration: `crates/ripr/tests/owner_pin_execution.rs`
 (`owner_pin_matched_static_and_runtime_controls`,
-`macro_use_module_admission_matches_runtime`).
+`macro_use_module_admission_matches_runtime`) and
+`crates/ripr/tests/should_panic_limit.rs`
+(`a_should_panic_test_on_a_changed_panic_guard_reads_as_static_unknown`,
+`a_panic_outcome_the_rule_does_not_cover_keeps_the_gap`).
 
 Fixtures: `gap_withheld_feature_gated_test`, `gap_kept_ignored_test`.
 

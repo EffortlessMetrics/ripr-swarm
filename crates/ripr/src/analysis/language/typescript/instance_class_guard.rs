@@ -41,19 +41,24 @@ const BUILTIN_CLASSES: [&str; 17] = [
 /// (RIPR-SPEC-0250).
 #[derive(Debug, Default)]
 pub(crate) struct PinFacts {
-    /// Test file, assertion line, observed expression and matcher of each pin.
-    credited: Vec<(PathBuf, usize, String, String)>,
+    /// Test file, assertion line, observed expression, matcher and expected
+    /// value of each pin. The expected value keeps a second assertion with
+    /// the same matcher on the same line and subject from sharing the pin.
+    credited: Vec<(PathBuf, usize, String, String, Option<String>)>,
 }
 
 impl PinFacts {
     /// `true` when `assertion` in the test at `file` is a credited pin.
     pub(crate) fn credits(&self, file: &Path, assertion: &TypeScriptAssertion) -> bool {
-        self.credited.iter().any(|(path, line, observed, matcher)| {
-            path == file
-                && *line == assertion.line
-                && *matcher == assertion.matcher
-                && assertion.observed_expression.as_deref() == Some(observed.as_str())
-        })
+        self.credited
+            .iter()
+            .any(|(path, line, observed, matcher, expected)| {
+                path == file
+                    && *line == assertion.line
+                    && *matcher == assertion.matcher
+                    && assertion.observed_expression.as_deref() == Some(observed.as_str())
+                    && assertion.expected_value_or_variant == *expected
+            })
     }
 
     /// Record `assertion` in the test at `file` as a credited pin.
@@ -64,6 +69,7 @@ impl PinFacts {
                 assertion.line,
                 observed,
                 assertion.matcher.clone(),
+                assertion.expected_value_or_variant.clone(),
             ));
         }
     }
@@ -888,7 +894,8 @@ pub(crate) fn ts_instance_class_facts(
         if local_identifier_declared_in_test_body(&candidate.test.body_text, &owner.name) {
             continue;
         }
-        let receivers = owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
+        let receivers =
+            unshadowed_owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
         for assertion in candidate.test.assertions.iter().filter(|a| pins(a)) {
             let Some(class) = assertion.expected_value_or_variant.as_deref() else {
                 continue;
@@ -914,7 +921,12 @@ pub(crate) fn ts_instance_class_facts(
                     alias_map,
                     workspace_root,
                 )
-                && ts_observes_whole_owner_result(candidate.test, assertion, owner, &receivers)
+                && ts_observes_whole_owner_result_through_identity(
+                    candidate.test,
+                    assertion,
+                    owner,
+                    &receivers,
+                )
             {
                 facts.credit(&candidate.test.file, assertion);
             }

@@ -90,7 +90,9 @@ legacy `node:assert`.** A call `<receiver>.assert.<method>(...)`
 - `<receiver>` is the test callback's first parameter, as the
   execution-context recogniser already requires, including an awaited
   `t.test` subtest's own parameter (RIPR-SPEC-0246 rule 2);
-- `assert` and `<method>` are static member names;
+- `assert` is a static member name or a computed member whose key is a
+  string literal (`t["assert"]`, `t['assert']`), and `<method>` is a
+  static member name;
 - `<method>` is in the `node:assert` method table.
 
 It reads exactly as the same call on a legacy `node:assert` binding:
@@ -101,7 +103,8 @@ or a literal message object pin the error (RIPR-SPEC-0243 rule 10), and
 `ok` keeps its truthiness reading. Argument order is (actual, expected).
 
 Anything else yields no assertion, as before: a method outside the table,
-a computed member (`t["assert"]`), another receiver
+a computed member whose key is not a string literal (`t[key]`,
+`` t[`assert`] ``), another receiver
 (`helper.assert.equal`), or a file without a `node:test` import.
 
 ### Decisions
@@ -120,6 +123,13 @@ documented decisions and proceed"). Recorded on #6654.
    receiver, which would credit a user object that happens to have an
    `assert` member. Rejected after review: any file that imports from
    `node:test`, which credits another runner's context in a mixed file.
+3. **String-literal computed member (amended 2026-10-14, #6654).**
+   Adopted: `t["assert"]` names the same property as `t.assert`, so it
+   reads the same way; the corpus case `nodetest-t-bracket-assert` is a
+   discriminated test that read as a gap. Rejected: keep reading no
+   assertion, which reports a test the user already wrote as missing.
+   A template-literal or variable key stays unread: ripr does not evaluate
+   it.
 
 ### Known limits
 
@@ -137,6 +147,8 @@ documented decisions and proceed"). Recorded on #6654.
   an import renamed away from `test` / `it` / `specify`
   (`import { test as nt } from "node:test"; nt(...)`) is not recognised as
   a test registration at all, so its `t.assert` calls are not read.
+- `` t[`assert`] `` and `t[key]` name the same member at runtime but
+  are not read (under-credit): ripr reads only a string-literal key.
 - `const { assert } = t;`, `t.assert` passed to a helper, optional or
   parenthesized forms (`t.assert?.equal`, `(t).assert`), and `t.assert`
   inside a `forEach` or `.then` callback or on an outer `t` inside a
@@ -150,6 +162,9 @@ documented decisions and proceed"). Recorded on #6654.
 
 - On the TypeScript verdict corpus, `nodetest-latefee-t-assert` moves from
   `gap` to `credited` and no other row moves.
+- Amended 2026-10-14: `nodetest-t-bracket-assert` moves from `gap` to
+  `credited` (false verdicts 7/127 to 5/127 together with the
+  RIPR-SPEC-0247 amendment), and no other row moves.
 - `cargo xtask goldens check` reports no drift.
 
 ## Non-Goals
@@ -166,7 +181,10 @@ documented decisions and proceed"). Recorded on #6654.
    `credited`.
 2. `t.assert.strictEqual(...)` and `t.assert.deepStrictEqual(...)`:
    `exact_value` / strong.
-3. `t.assert.equal(lateFee(10), want)` with a variable `want`:
+3. `t.assert.equal(lateFee(10), want)` with `const want = 20;` declared
+   at the top level of the test body before the assertion:
+   `exact_value` / strong (RIPR-SPEC-0247 rule 2). With `let want = 20`,
+   a `want` bound to a call, or the assertion nested in a block:
    `relational_check` / weak.
 4. `t.assert.throws(() => lateFee(-1), /^Error: days must be positive$/)`
    and `await t.assert.rejects(async () => lateFee(-1), { message: "days
@@ -177,20 +195,25 @@ documented decisions and proceed"). Recorded on #6654.
    type-only `node:test` import, a test registered through another
    runner in a file that imports `mock` from `node:test`, on
    `helper.assert`, on another context member (`t.check.equal`), through
-   `t["assert"]` or `t.assert.strict`, or with a method outside the table
-   (`snapshot`, an unknown name): no assertion.
+   `t[key]`, `` t[`assert`] `` or `t.assert.strict`, or with a method
+   outside the table (`snapshot`, an unknown name): no assertion.
+7. `t["assert"].equal(holdFee(4), 5)` in a test registered through a
+   `node:test` binding: read as `t.assert.equal(holdFee(4), 5)`,
+   `exact_value` / strong.
 
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs`:
   `node_test_context_assert_reads_as_legacy_node_assert` pins examples 1
-  to 5; `node_test_context_assert_needs_the_runner_receiver_and_a_known_method`
+  to 5 and 7; `node_test_context_assert_needs_the_runner_receiver_and_a_known_method`
   pins example 6.
 - `crates/ripr/src/analysis/language/typescript/admission_tests.rs`:
   `assertion_admission_separates_no_assertion_from_unresolved_assertion_like_forms`
   reads `t.assert.ok` as recognized and `t.assert.verifies` as unresolved.
 - `fixtures/typescript-verdict-corpus` pins example 1:
-  `nodetest-latefee-t-assert` reads `credited`.
+  `nodetest-latefee-t-assert` reads `credited`; example 3:
+  `nodetest-t-assert-equal-variable` reads `credited`; example 7:
+  `nodetest-t-bracket-assert` reads `credited`.
 
 ## Implementation Mapping
 

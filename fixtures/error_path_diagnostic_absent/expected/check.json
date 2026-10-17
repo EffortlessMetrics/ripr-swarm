@@ -99,8 +99,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "Assert the exact error variant or payload instead of only is_err().",
-      "suggested_next_action": "Assert the exact error variant or payload instead of only is_err().",
+      "recommended_next_step": "The related test `reads_successfully` already asserts an exact value; the gap is not the assertion shape. Add a test input that executes the changed error arm and assert the exact variant or payload it produces.",
+      "suggested_next_action": "The related test `reads_successfully` already asserts an exact value; the gap is not the assertion shape. Add a test input that executes the changed error arm and assert the exact variant or payload it produces.",
       "language": "rust",
       "source_currentness": "candidate_current"
     },
@@ -136,7 +136,7 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"unknown","confidence":"low","summary":"Assertions exist, but oracle strength is unknown"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach read_all: reads_successfully", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink: unknown sink (line 5)", "related test src/lib.rs:14 reads_successfully uses unknown exact value oracle: assert_eq!(rdr.len(), 10);", "source assertion argument value 10 at line 17", "source assertion argument value 10 at line 18"],
+      "evidence_path": ["reach yes: Related tests appear to reach read_all: reads_successfully", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 5)", "related test src/lib.rs:14 reads_successfully uses unknown exact value oracle: assert_eq!(rdr.len(), 10);", "source assertion argument value 10 at line 17", "source assertion argument value 10 at line 18"],
       "flow_sinks": [
         {"kind":"unknown","text":"unknown sink","line":5}
       ],
