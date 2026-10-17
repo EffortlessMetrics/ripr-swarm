@@ -5,6 +5,8 @@ use ra_ap_syntax::{
     AstNode, SourceFile, TextSize,
     ast::{self, HasAttrs, HasGenericArgs, HasGenericParams, HasName},
 };
+#[cfg(test)]
+mod module_scope_walk_tests;
 mod probe_shapes;
 mod property_macros;
 use probe_shapes::extract_parser_probe_shapes;
@@ -303,11 +305,19 @@ pub(crate) fn module_item_scopes_in(
             line_index.line(fn_token.text_range().start()),
             name.text().to_string(),
         );
-        if function
-            .syntax()
-            .descendants()
-            .filter_map(ast::Attr::cast)
-            .any(|attribute| {
+        let body = function.body();
+        let body_range = body.as_ref().map(|body| body.syntax().text_range());
+        let mut has_cfg = false;
+        let mut bound = Vec::new();
+        let mut local_use = false;
+        let mut deferred = body.is_some() && function.async_token().is_some();
+        let mut called = Vec::new();
+        // Keep descendant (not just immediate-child) semantics: nested
+        // attributes and bindings still belong to the enclosing summary.
+        // Body-only facts exclude signature nodes. Direct calls retain the
+        // existing nested-fn/closure/async boundary check below.
+        for node in function.syntax().descendants() {
+            if !has_cfg && let Some(attribute) = ast::Attr::cast(node.clone()) {
                 let compact: String = attribute
                     .syntax()
                     .text()
@@ -315,58 +325,49 @@ pub(crate) fn module_item_scopes_in(
                     .chars()
                     .filter(|character| !character.is_whitespace())
                     .collect();
-                compact.starts_with("#[cfg") || compact.starts_with("#![cfg")
-            })
-        {
+                has_cfg = compact.starts_with("#[cfg") || compact.starts_with("#![cfg");
+            }
+            if &node != function.syntax()
+                && let Some(name) =
+                    ast::AnyHasName::cast(node.clone()).and_then(|named| named.name())
+            {
+                bound.push(name.text().to_string());
+            }
+            if body_range.is_none_or(|range| !range.contains_range(node.text_range())) {
+                continue;
+            }
+            local_use |= ast::Use::can_cast(node.kind());
+            if !deferred {
+                deferred = ast::ClosureExpr::can_cast(node.kind())
+                    || ast::BlockExpr::cast(node.clone())
+                        .is_some_and(|block| block.async_token().is_some());
+            }
+            if let (Some(body), Some(call)) = (&body, ast::CallExpr::cast(node))
+                && !enclosed_by_nested_fn_like(call.syntax(), body)
+                && let Some(ast::Expr::PathExpr(path)) = call.expr()
+                && let Some(path) = path.path()
+                && path.qualifier().is_none()
+                && let Some(name) = path.segment().and_then(|segment| segment.name_ref())
+            {
+                called.push(name.text().to_string());
+            }
+        }
+        if has_cfg {
             scopes.fns_with_cfg.insert(key.clone());
         }
-        let bound = function
-            .syntax()
-            .descendants()
-            .filter(|node| node != function.syntax())
-            .filter_map(|node| {
-                ast::AnyHasName::cast(node)
-                    .and_then(|named| named.name())
-                    .map(|name| name.text().to_string())
-            })
-            .collect();
-        scopes.bound_names.insert(key.clone(), bound);
-        if let Some(body) = function.body() {
-            if body
-                .syntax()
-                .descendants()
-                .any(|node| ast::Use::can_cast(node.kind()))
-            {
+        scopes
+            .bound_names
+            .insert(key.clone(), bound.into_iter().collect());
+        if body.is_some() {
+            if local_use {
                 scopes.fns_with_local_use.insert(key.clone());
             }
-            if function.async_token().is_some()
-                || body.syntax().descendants().any(|node| {
-                    ast::ClosureExpr::can_cast(node.kind())
-                        || ast::BlockExpr::cast(node)
-                            .is_some_and(|block| block.async_token().is_some())
-                })
-            {
+            if deferred {
                 scopes.fns_with_deferred_code.insert(key.clone());
             }
-            let called = body
-                .syntax()
-                .descendants()
-                .filter_map(ast::CallExpr::cast)
-                // A call inside a closure, `async` block or nested `fn` may
-                // never run.
-                .filter(|call| !enclosed_by_nested_fn_like(call.syntax(), &body))
-                .filter_map(|call| match call.expr()? {
-                    ast::Expr::PathExpr(path) => {
-                        let path = path.path()?;
-                        if path.qualifier().is_some() {
-                            return None;
-                        }
-                        Some(path.segment()?.name_ref()?.text().to_string())
-                    }
-                    _ => None,
-                })
-                .collect();
-            scopes.direct_calls.insert(key.clone(), called);
+            scopes
+                .direct_calls
+                .insert(key.clone(), called.into_iter().collect());
         }
         let Some(parent) = function.syntax().parent() else {
             continue;
@@ -479,12 +480,36 @@ impl RustSyntaxAdapter for RaRustSyntaxAdapter {
 }
 
 pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, String> {
-    summarize_file_with_probe_shapes(path, text, extract_parser_probe_shapes)
+    summarize_file_with_collectors(
+        path,
+        text,
+        module_item_scopes_in,
+        extract_parser_probe_shapes,
+    )
 }
 
+#[cfg(test)]
+fn summarize_file_with_item_scopes(
+    path: &Path,
+    text: &str,
+    collect_scopes: impl FnOnce(&ast::SourceFile, &LineIndex) -> ModuleItemScopes,
+) -> Result<FileFacts, String> {
+    summarize_file_with_collectors(path, text, collect_scopes, extract_parser_probe_shapes)
+}
+
+#[cfg(test)]
 fn summarize_file_with_probe_shapes(
     path: &Path,
     text: &str,
+    extract_probe_shapes: impl Fn(&ast::Fn, &str, &Arc<str>, &LineIndex) -> Vec<ProbeShapeFact>,
+) -> Result<FileFacts, String> {
+    summarize_file_with_collectors(path, text, module_item_scopes_in, extract_probe_shapes)
+}
+
+fn summarize_file_with_collectors(
+    path: &Path,
+    text: &str,
+    collect_scopes: impl FnOnce(&ast::SourceFile, &LineIndex) -> ModuleItemScopes,
     extract_probe_shapes: impl Fn(&ast::Fn, &str, &Arc<str>, &LineIndex) -> Vec<ProbeShapeFact>,
 ) -> Result<FileFacts, String> {
     if let Some(reason) = rust_nesting_refusal(text) {
@@ -634,7 +659,7 @@ fn summarize_file_with_probe_shapes(
             && a.text == b.text
     });
 
-    let mut item_scopes = module_item_scopes_in(&source, &line_index);
+    let mut item_scopes = collect_scopes(&source, &line_index);
     let keep: std::collections::BTreeSet<&str> = functions
         .iter()
         .flat_map(|function: &FunctionFact| {

@@ -81,7 +81,7 @@ pub(crate) fn render_finding_digest_with_config(
         }
     }
     out.push_str(&format!(
-        "  Static exposure: {}{}, confidence {:.2})\n",
+        "  Static exposure: {}severity: {}, confidence {:.2})\n",
         finding.class.human_lead(),
         severity,
         finding.confidence

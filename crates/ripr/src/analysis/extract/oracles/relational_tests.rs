@@ -1239,3 +1239,64 @@ fn a_shared_constructor_does_not_hide_a_test_compared_with_a_non_literal() -> Re
     require_classification("assert_eq!(Some(total(2)), Some(5));", &exact)?;
     Ok(())
 }
+
+// #8101: arithmetic over an integer-cast test and another non-literal term no
+// longer says whether the test held, so it caps like the bare comparison.
+#[test]
+fn arithmetic_over_a_cast_test_does_not_pin_the_test() -> Result<(), String> {
+    let weak = (OracleKind::RelationalCheck, OracleStrength::Weak);
+    for text in [
+        "assert_eq!(k * (r == Err(E::Bad)) as u32, n);",
+        "assert_eq!(k + (r == Err(E::Bad)) as u32, n);",
+        "assert_eq!((r == Err(E::Bad)) as u32 * k, n);",
+        "assert_eq!(k * u32::from(r == Err(E::Bad)), n);",
+        "assert_eq!(k * (r == Err(E::Bad)) as u32, 0);",
+        "assert_eq!(k - u32::from(matches!(r, Err(E::Bad))), n);",
+    ] {
+        require_classification(text, &weak)?;
+    }
+    // A cast test beside only literals can still pin the test.
+    let pinned = (OracleKind::ExactErrorVariant, OracleStrength::Strong);
+    for text in [
+        "assert_eq!((r == Err(E::Bad)) as u32 + 1, 2);",
+        "assert_eq!(1 + (r == Err(E::Bad)) as u32, 2);",
+    ] {
+        require_classification(text, &pinned)?;
+    }
+    // Controls: arithmetic with no test, a call that merely contains a
+    // comparison, and a value cast keep their readings.
+    for text in [
+        "assert_eq!(k * score(x) as u32, n);",
+        "assert_eq!(total(a == b) + 1, n);",
+        "assert_eq!(x as u32 + 1, 3);",
+    ] {
+        let plain = classify_assertion(text);
+        if plain.strength == OracleStrength::Weak && plain.kind == OracleKind::RelationalCheck {
+            return Err(format!("{text}: control capped"));
+        }
+    }
+    Ok(())
+}
+
+// #8101: two sequences of the same length compare element by element, so a
+// test compared with a non-literal inside one caps like the bare comparison.
+#[test]
+fn a_sequence_does_not_hide_a_test_compared_with_a_non_literal() -> Result<(), String> {
+    let weak = (OracleKind::RelationalCheck, OracleStrength::Weak);
+    for text in [
+        "assert_eq!(vec![r == Err(E::Bad)], vec![expected]);",
+        "assert_eq!([r == Err(E::Bad)], [expected]);",
+        "assert_eq!(vec![x, r == Err(E::Bad)], vec![y, expected]);",
+        "assert_eq!([matches!(r, Err(E::Bad))], [expected]);",
+        "assert_eq!(vec![Some(r == Err(E::Bad))], vec![Some(expected)]);",
+    ] {
+        require_classification(text, &weak)?;
+    }
+    // A literal element asserts the test, and plain elements still pin.
+    let variant = (OracleKind::ExactErrorVariant, OracleStrength::Strong);
+    require_classification("assert_eq!(vec![r == Err(E::Bad)], vec![true]);", &variant)?;
+    let exact = (OracleKind::ExactValue, OracleStrength::Strong);
+    require_classification("assert_eq!(vec![total(2)], vec![expected]);", &exact)?;
+    require_classification("assert_eq!(vec![total(2), 3], vec![5, 3]);", &exact)?;
+    Ok(())
+}

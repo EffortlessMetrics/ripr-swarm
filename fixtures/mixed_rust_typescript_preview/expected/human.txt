@@ -3,18 +3,18 @@ mode: fast
 root: fixtures/mixed_rust_typescript_preview/input
 config: <cwd>/fixtures/mixed_rust_typescript_preview/input/ripr.toml
 
-Summary: 2 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 probes (0 exposed, 2 weak, 0 unrevealed, 0 no path); 2 of 2 findings unsuppressed
 
 Changed file(s) by language: rust = 1, typescript = 1
 
-Analysis outcome: findings below (analysis complete; complete_with_findings)
+Analysis outcome: findings below (analysis complete)
   Counts: 2 changed file(s), 4 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s)
 
 Start here:
-  State: a test gap to inspect or repair (top_gap)
+  State: a test gap to inspect or repair
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:2
-  Static exposure: weak (weakly_exposed, warning, confidence 0.92)
+  Static exposure: weak (severity: warning, confidence 0.92)
   Why weak: a related test reaches this change, but no test input tells the old and new behavior apart
   Canonical gap: gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold
   Changed behavior: amount >= discount_threshold
@@ -29,12 +29,13 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/mixed_rust_typescript_preview/input --diff <cwd>/fixtures/mixed_rust_typescript_preview/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
   ripr context --root <cwd>/fixtures/mixed_rust_typescript_preview/input --diff <cwd>/fixtures/mixed_rust_typescript_preview/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
+  ripr repair 67fc764ba37d77bd --root <cwd>/fixtures/mixed_rust_typescript_preview/input
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/mixed_rust_typescript_preview/input --at src/lib.rs:2 --kind predicate
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).
-    - web/discount.ts:2 (weakly_exposed)
+    - web/discount.ts:2 (weak)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

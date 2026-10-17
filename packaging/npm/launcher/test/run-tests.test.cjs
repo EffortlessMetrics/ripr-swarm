@@ -20,6 +20,8 @@ const REQUIRED_PORTABLE_TESTS = Object.freeze([
   "npm package contents are explicit and exclude tests and build residue",
 ]);
 const REQUIRED_POSIX_TESTS = Object.freeze([
+  "non-executable native payload gives exact recovery for each POSIX target",
+  "public bin non-executable recovery survives a directory move and restores launch",
   "forwards direct SIGTERM to native child exactly once and re-emits signal",
   "retains the first observed signal when a supervisor escalates SIGINT to SIGTERM",
   "observes terminal SIGINT and SIGHUP without forwarding duplicates to the native child",

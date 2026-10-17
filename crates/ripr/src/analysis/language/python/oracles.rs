@@ -666,7 +666,9 @@ fn oracle_for_call(
                 .args
                 .get(1)
                 .or_else(|| keyword_value(call, "expected_regex"))
-                .is_some_and(|pattern| is_trivial_message_pattern(pattern, source)) =>
+                .is_some_and(|pattern| {
+                    is_trivial_message_pattern(pattern, source, usize::from(call.range.start()))
+                }) =>
         {
             Some((
                 OracleKind::BroadError,
@@ -687,8 +689,11 @@ fn oracle_for_call(
         "raises" if name == "pytest.raises" || name == "raises" => {
             // Rule 13: in the callable form pytest passes `match=` to the
             // callable instead of checking the message.
+            let call_start = usize::from(call.range.start());
             let pattern = keyword_value(call, "match").filter(|_| call.args.len() < 2);
-            if pattern.is_some_and(|pattern| !is_trivial_message_pattern(pattern, source)) {
+            if pattern
+                .is_some_and(|pattern| !is_trivial_message_pattern(pattern, source, call_start))
+            {
                 Some((
                     OracleKind::ExactErrorVariant,
                     OracleStrength::Strong,
@@ -841,20 +846,26 @@ fn keyword_value<'a>(call: &'a ast::ExprCall, name: &str) -> Option<&'a Expr> {
 /// RIPR-SPEC-0238 rule 2: a literal message pattern that admits any message
 /// (`''`, `.*`, `.+`, `^`, `$`, `^.*$`, `(?s).*`), or an alternation that can
 /// admit both the old and the new message (`'empty|blank'`), pins only the
-/// exception class. A bare name reads as the string literal it is bound to
+/// exception class, as does a literal `None` (matching disabled). A bare name reads as the string literal it is bound to
 /// when the file assigns that name exactly once, to a literal (Decision 5).
-fn is_trivial_message_pattern(pattern: &Expr, source: &str) -> bool {
+fn is_trivial_message_pattern(pattern: &Expr, source: &str, call_start: usize) -> bool {
     let text = match pattern {
         Expr::Constant(ast::ExprConstant {
             value: ast::Constant::Str(text),
             ..
         }) => text.as_str(),
+        // `match=None` / `assertRaisesRegex(E, None)` disables message
+        // matching in pytest and unittest, so it pins only the class.
+        Expr::Constant(ast::ExprConstant {
+            value: ast::Constant::None,
+            ..
+        }) => return true,
         Expr::Constant(ast::ExprConstant {
             value: ast::Constant::Bytes(bytes),
             ..
         }) => return std::str::from_utf8(bytes).is_ok_and(pattern_admits_any_message),
         Expr::Name(name) => {
-            return name_bound_once_to_literal(source, name.id.as_str())
+            return name_bound_once_to_literal(source, name.id.as_str(), call_start)
                 .is_some_and(|text| pattern_admits_any_message(&text));
         }
         _ => return false,
@@ -862,17 +873,153 @@ fn is_trivial_message_pattern(pattern: &Expr, source: &str) -> bool {
     pattern_admits_any_message(text)
 }
 
+/// The line holding the `:` that ends a `def` signature starting at
+/// `def_line`: the first colon outside strings and brackets. `None` when no
+/// such line is found.
+fn signature_end(lines: &[&str], def_line: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    for (index, line) in lines.iter().enumerate().skip(def_line) {
+        let mut escaped = false;
+        for ch in line.chars() {
+            if let Some(open) = quote {
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == open {
+                    quote = None;
+                }
+                continue;
+            }
+            match ch {
+                '\'' | '"' => quote = Some(ch),
+                '#' => break,
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth = depth.saturating_sub(1),
+                ':' if depth == 0 => return Some(index),
+                _ => {}
+            }
+        }
+        quote = None;
+    }
+    None
+}
+
+/// The source lines a bare `name` at `call_start` can be bound by: the
+/// enclosing function's body plus module-level (unindented) lines, so a
+/// same-named binding in another function cannot supply the pattern. `None`
+/// when the enclosing function takes `name` as a parameter (a fixture,
+/// parametrize argument or default), since its value is then not read from
+/// an assignment. Without an enclosing function the whole file is visible.
+fn visible_scope_text(source: &str, name: &str, call_start: usize) -> Option<String> {
+    let indent = |line: &str| line.len() - line.trim_start().len();
+    let raw: Vec<&str> = source.split_inclusive('\n').collect();
+    let lines: Vec<&str> = raw
+        .iter()
+        .map(|line| line.trim_end_matches(['\r', '\n']))
+        .collect();
+    let mut offset = 0;
+    let mut call_line = lines.len();
+    for (index, line) in raw.iter().enumerate() {
+        if call_start < offset + line.len() {
+            call_line = index;
+            break;
+        }
+        offset += line.len();
+    }
+    let Some(call_text) = lines.get(call_line) else {
+        return Some(source.to_string());
+    };
+    let mut threshold = indent(call_text);
+    let mut def_line = None;
+    for index in (0..call_line).rev() {
+        let line = lines[index];
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() || trimmed.starts_with('#') || indent(line) >= threshold {
+            continue;
+        }
+        if trimmed.starts_with("def ") || trimmed.starts_with("async def ") {
+            def_line = Some(index);
+            break;
+        }
+        threshold = indent(line);
+        if threshold == 0 {
+            break;
+        }
+    }
+    let Some(def_line) = def_line else {
+        return Some(source.to_string());
+    };
+    let def_indent = indent(lines[def_line]);
+    // A def nested in another def or in an `if`/`try` block reads names the
+    // enclosing scope binds, which this scan does not model: keep the whole
+    // file, as before.
+    // Only lines that actually enclose the def count; a `class` body does
+    // not make a method nested.
+    let mut enclosing_indent = def_indent;
+    let mut nested = false;
+    for index in (0..def_line).rev() {
+        let line = lines[index];
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() || trimmed.starts_with('#') || indent(line) >= enclosing_indent {
+            continue;
+        }
+        if !trimmed.starts_with("class ") {
+            nested = true;
+            break;
+        }
+        enclosing_indent = indent(line);
+        if enclosing_indent == 0 {
+            break;
+        }
+    }
+    let Some(body_start) = signature_end(&lines, def_line).filter(|_| !nested) else {
+        return Some(source.to_string());
+    };
+    let signature = lines[def_line..=body_start].join("\n");
+    if super::mentions_python_name(&signature, name) {
+        return None;
+    }
+    let body_end = (body_start + 1..lines.len())
+        .find(|&index| !lines[index].trim().is_empty() && indent(lines[index]) <= def_indent)
+        .unwrap_or(lines.len());
+    let visible = lines.iter().enumerate().filter(|(index, line)| {
+        (*index > body_start && *index < body_end) || (indent(line) == 0 && !line.trim().is_empty())
+    });
+    Some(
+        visible
+            .map(|(_, line)| *line)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
+
 /// The string literal `name` is bound to when the file has exactly one
-/// assignment to it (`name = '.*'`) and that assignment is a plain literal.
-fn name_bound_once_to_literal(source: &str, name: &str) -> Option<String> {
-    let mut assignments = source.lines().filter_map(|line| {
+/// assignment to it (`name = '.*'`) and that assignment is a plain literal
+/// (`name = None` reads as the empty pattern).
+fn name_bound_once_to_literal(source: &str, name: &str, call_start: usize) -> Option<String> {
+    let scope = visible_scope_text(source, name, call_start)?;
+    let mut assignments = scope.lines().filter_map(|line| {
         let (target, value) = line.split_once('=')?;
         let value = value.strip_prefix('=').map_or(Some(value), |_| None)?;
-        (target.trim() == name).then(|| value.trim())
+        (target.trim() == name).then(|| {
+            // An unspaced `name=None` is a default argument (a wrapped
+            // signature or call), not an assignment.
+            if value.trim() == "None" && !(target.ends_with(' ') && value.starts_with(' ')) {
+                "<default-argument>"
+            } else {
+                value.trim()
+            }
+        })
     });
     let value = assignments.next()?;
     if assignments.next().is_some() {
         return None;
+    }
+    // `name = None` disables matching like `''` does: it admits any message.
+    if value == "None" {
+        return Some(String::new());
     }
     let value = value.strip_prefix('r').unwrap_or(value);
     let quote = value.chars().next().filter(|ch| matches!(ch, '\'' | '"'))?;
