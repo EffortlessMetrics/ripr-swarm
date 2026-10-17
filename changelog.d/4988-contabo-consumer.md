@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Add a reviewed dispatch-only governed standard consumer using the existing Rust product commands, pre-allocation SHA validation and matching LLVM setup; retain exact terminal command receipts through the pinned central ripr-product lane and lightweight authenticated-import result policy, specify genuine product artifact custody and coordinated legacy routing/cleanup retirement, and keep one provider-neutral consumer for future NixOS capacity until qualified activation (#4988).

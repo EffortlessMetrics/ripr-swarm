@@ -839,6 +839,35 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), CommandError> {
     run_agent_repair_with_identity(options, None)
 }
 
+/// Selection has not established that the attempt can resume. Offer only
+/// read-only inspection, preserving the authority's error and classification.
+pub(super) fn repair_attempt_input_error(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: Option<&str>,
+    error: String,
+) -> String {
+    let Some(id) = attempt_id else {
+        return error;
+    };
+    // State refusals (for example an ended attempt) already end with their own
+    // `ripr agent status` or façade `ripr status` next step; adding another
+    // would duplicate guidance.
+    if error.contains("ripr agent status") || error.contains("ripr status") {
+        return error;
+    }
+    if crate::app::repair_attempt::RepairAttemptId::parse(id.to_string()).is_err() {
+        return error;
+    }
+    use crate::agent::loop_commands::{bound_root, shell_arg};
+    let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
+    let store_flag = crate::app::repair_attempt::quoted_store_flag(store);
+    let attempt_arg = shell_arg(id);
+    format!(
+        "{error}. For repair attempt `{id}`, inspect it with `ripr agent status --root {root_arg}{store_flag} --attempt {attempt_arg}`. No new repair attempt was started."
+    )
+}
+
 pub(in crate::cli) fn run_before_repair_with_identity(
     options: AgentRepairOptions,
     identity: &crate::app::repair_attempt::BeforeRepairAttemptIdentity,
@@ -1368,14 +1397,18 @@ fn run_agent_repair_phase(
             if let Some(id) = attempt_id.as_deref() {
                 crate::app::repair_attempt::complete_pending_terminal_retention_from(
                     &root, store_ref, id,
-                )?;
+                )
+                .map_err(|error| repair_attempt_input_error(&root, store_ref, Some(id), error))?;
             }
             let attempt = crate::app::repair_attempt::resolve_awaiting_repair_attempt_from(
                 &root,
                 store_ref,
                 attempt_id.as_deref(),
                 seam_id.as_deref(),
-            )?;
+            )
+            .map_err(|error| {
+                repair_attempt_input_error(&root, store_ref, attempt_id.as_deref(), error)
+            })?;
             refusal.selected_attempt =
                 Some((root.clone(), store.clone(), attempt.attempt_id.clone()));
             eprintln!(
@@ -2663,6 +2696,34 @@ mod tests {
     use super::*;
     use crate::app::agent_brief::AgentBriefLine;
     use crate::cli::agent::AgentBriefWorkingSet;
+
+    /// #8222: an ended-attempt refusal already carries its own
+    /// `ripr agent status` next step; the retained-evidence wrapper must not
+    /// append a second one, while a bare read failure still gets guidance.
+    #[test]
+    fn repair_attempt_input_error_does_not_duplicate_state_refusal_guidance() {
+        let root = std::path::Path::new("repo");
+        let id = "repair-attempt-000000000000000000000001";
+        let refusal = "repair attempt x already finished. Next: `ripr agent status --root repo` reads the outcome".to_string();
+        assert_eq!(
+            repair_attempt_input_error(root, None, Some(id), refusal.clone()),
+            refusal
+        );
+        let facade_refusal =
+            "repair attempt x already finished. Inspect: `ripr status --attempt x --root repo`"
+                .to_string();
+        assert_eq!(
+            repair_attempt_input_error(root, None, Some(id), facade_refusal.clone()),
+            facade_refusal
+        );
+        assert!(
+            crate::app::repair_attempt::RepairAttemptId::parse(id.to_string()).is_ok(),
+            "fixture id must parse so the wrapping branch is exercised"
+        );
+        let read_failure = "canonicalize artifact a failed: missing".to_string();
+        let wrapped = repair_attempt_input_error(root, None, Some(id), read_failure);
+        assert_eq!(wrapped.matches("ripr agent status").count(), 1, "{wrapped}");
+    }
     use crate::cli::commands_agent_support::{
         agent_brief_lines_from_diff, agent_brief_owners_for_lines, normalize_agent_brief_path,
     };

@@ -105,6 +105,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         }
         XtaskCommand::MutationSpotCheck(args) => super::reports::mutation_spot_check(&args),
         XtaskCommand::PilotRanking(args) => super::reports::pilot_ranking(&args),
+        XtaskCommand::RealCrateDogfood(args) => super::reports::real_crate_dogfood(&args),
         XtaskCommand::DxScoreboard(args) => super::reports::dx_scoreboard(&args),
         XtaskCommand::ScaleCliffBenchmark(args) => super::reports::scale_cliff_benchmark(&args),
         XtaskCommand::RustCorpus(args) => super::reports::rust_corpus(&args),
