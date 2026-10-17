@@ -2584,12 +2584,6 @@ impl OwnerReturnPin {
         })
     }
 
-    /// The test-side gates: whether `assertion` in `test` pins the owner's
-    /// return value through a call that names the owner.
-    /// [`owner_call_shape`], reading an `async` owner's result through one
-    /// trailing `.await` (`total(&[1, 2]).await`). A sync owner's `.await`
-    /// awaits a future it returns, whose output its return expression does
-    /// not hold, so that stays refused.
     /// RIPR-SPEC-0197 check-helper argument pins: the test-scope texts a
     /// borrowed helper assertion's two compared parameters stand for, read
     /// only for a whole-return owner pin whose assertion is
@@ -2645,6 +2639,12 @@ impl OwnerReturnPin {
         })
     }
 
+    /// The test-side gates: whether `assertion` in `test` pins the owner's
+    /// return value through a call that names the owner.
+    /// [`owner_call_shape`], reading an `async` owner's result through one
+    /// trailing `.await` (`total(&[1, 2]).await`). A sync owner's `.await`
+    /// awaits a future it returns, whose output its return expression does
+    /// not hold, so that stays refused.
     fn awaited_call_shape<'a>(&self, operand: &'a str, name: &str) -> Option<CallShape<'a>> {
         let operand = operand.trim();
         // An async owner's bare call is its future, not its return value.

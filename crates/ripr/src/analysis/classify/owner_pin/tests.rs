@@ -10035,6 +10035,8 @@ fn a_scalar_rendering_compared_with_exact_text_pins() {
         "assert_eq!(format!(\"{}\", crate::weight(dbg!(4))), \"12\");",
         "assert_eq!(format!(\"{}\", crate::weight(4) / 2), \"6\");",
         "assert_eq!(format!(\"{}\", crate::weight(4)).len(), 2);",
+        "assert_eq!(format!(\"{}\", crate::weight(4)).len().to_string(), \"2\");",
+        "assert_eq!(format!(\"{}\", crate::weight(4)).replace(\"6\", \"2\"), \"12\");",
         "assert_ne!(format!(\"{}\", crate::weight(4)), \"13\");",
         "assert!(!format!(\"{:?}\", crate::weight(4)).is_empty());",
     ] {

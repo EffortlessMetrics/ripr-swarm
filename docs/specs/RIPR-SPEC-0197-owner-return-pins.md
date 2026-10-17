@@ -1354,7 +1354,7 @@ the actual side and the string literal as the expected value when:
    with literal text around it: `{{` and `}}` read as braces, and `\"` and
    `\\` are the only escapes. Flags, width, precision, positional or
    named placeholders, raw strings, a second argument, or anything chained
-   after `format!(..)` refuses. The call is the owner call shape of rule 1,
+   after `format!(..)` (`format!("{}", f(4)).len().to_string()`) refuses. The call is the owner call shape of rule 1,
    with nothing around it.
 3. The other operand is a string literal whose only escapes are `\"` and
    `\\`, and whose text is the template's text before the placeholder, a
@@ -1678,10 +1678,12 @@ arguments, in the test's own scope, when:
    rule 7's plain check helper: its parameters are plain and never
    rebound, and it never names the owner anywhere, so neither side can be
    fed from the owner inside it.
-2. The two parameters declare the same type, one of the primitive scalars,
-   `String` or `&str`, and no workspace item may rebind that type's name:
-   `==` on two of them compares their values, while a workspace type or two
-   different types may carry a `PartialEq` that ignores its operands.
+2. The two parameters declare the same type, one of the primitive scalars
+   or `String`, and no workspace item may rebind that type's name: `==` on
+   two of them compares their values, while a workspace type or two
+   different types may carry a `PartialEq` that ignores its operands. `&str`
+   is refused: a `&W` whose `Deref` targets `str` coerces into it at the
+   call, and `==` then compares only that view.
 3. The test's call is an eager statement `helper(..);` with nothing else
    on its line and one argument per parameter. Each argument is read as
    written, or, when it is a plain name, through its one `let` under
@@ -1701,8 +1703,8 @@ String::from("{\"score\":4}"); assert_json_eq(actual, expected);` pins
 credited on a reading that can be wrong: an owner call written inline as
 the argument (`check(score(2), 4)`), which rule 7's eager-call lines do
 not hold because the line has a second call; an argument passed by
-reference (`check(&actual, "4")`); a helper over a workspace type or two
-different types; and `.to_string()` or `.into()` expected values.
+reference (`check(&actual, "4")`); a helper over `&str`, a workspace type
+or two different types; and `.to_string()` or `.into()` expected values.
 
 ## Required Evidence
 

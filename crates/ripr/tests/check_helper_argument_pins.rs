@@ -221,13 +221,25 @@ fn decoy_helper_arguments_lend_no_pin() -> Result<(), String> {
             ),
         ),
         (
-            "binding used twice",
+            "owner binding used again besides the call",
             format!(
                 "{SCALAR_HELPER}{}",
                 test_fn(
                     "        let actual = score(2);
-        let expected = actual;
-        check(actual, expected);
+        let copy = actual;
+        check(actual, 4);
+        assert!(copy > 0);
+"
+                )
+            ),
+        ),
+        (
+            "a workspace item rebinds the parameter type",
+            format!(
+                "{SCALAR_HELPER}    #[allow(non_camel_case_types)]\n    type u32 = core::primitive::u32;\n{}",
+                test_fn(
+                    "        let actual = score(2);
+        check(actual, 4);
 "
                 )
             ),
@@ -278,7 +290,12 @@ fn decoy_helper_arguments_lend_no_pin() -> Result<(), String> {
         ),
     ] {
         let finding = TempRepo::create(&source(&tests))?.changed()?;
-        assert_ne!(finding.class, ExposureClass::Exposed, "{name}: {finding:?}");
+        // Each decoy keeps the unconfirmed reading it had before the pin.
+        assert_eq!(
+            finding.class,
+            ExposureClass::WeaklyExposed,
+            "{name}: {finding:?}"
+        );
     }
     Ok(())
 }

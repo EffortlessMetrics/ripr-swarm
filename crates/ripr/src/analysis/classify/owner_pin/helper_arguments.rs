@@ -15,10 +15,12 @@ use ra_ap_syntax::{
 };
 
 /// The parameter types a helper may compare with the standard `==`: the
-/// primitive scalars, `String` and `&str`, each of which compares by value.
+/// primitive scalars and `String`, each of which compares by value and takes
+/// no coercion at the call. `&str` is left out: a `&W` whose `Deref` targets
+/// `str` coerces into it and compares only that view.
 const BY_VALUE_TYPES: &[&str] = &[
     "bool", "char", "f32", "f64", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32",
-    "u64", "u128", "usize", "String", "&str",
+    "u64", "u128", "usize", "String",
 ];
 
 /// The test-scope texts the helper's `compared` parameters stand for at one
@@ -51,7 +53,7 @@ pub(super) fn substituted_operands(
     // when the two types differ, or when either is a workspace type.
     if left_type != right_type
         || !BY_VALUE_TYPES.contains(&left_type.as_str())
-        || wrapper_may_be_rebound(left_type.trim_start_matches('&'), index)
+        || wrapper_may_be_rebound(left_type, index)
     {
         return None;
     }
@@ -198,14 +200,25 @@ pub(super) fn rendered_template_call<'a>(operand: &'a str, expected: &str) -> Op
     (!middle.is_empty() && middle != "NaN").then_some(call)
 }
 
-/// The template and the one argument of a `format!` argument list.
+/// The template and the one argument of a `format!` argument list. The
+/// wrapped call must be the whole statement: text chained after the
+/// closing parenthesis (`format!(..).len().to_string()`) leaves `inner`
+/// unbalanced, and the wrapper then parses as a method call on it.
 fn template_and_call(inner: &str) -> Option<(&str, &str)> {
     let parse = parse_clean_source_file(&format!("fn ripr_args() {{ ripr({inner}); }}"))?;
-    let call = parse
+    let function = parse
         .tree()
         .syntax()
         .descendants()
-        .find_map(ast::CallExpr::cast)?;
+        .find_map(ast::Fn::cast)?;
+    let mut statements = function.body()?.stmt_list()?.statements();
+    let (Some(ast::Stmt::ExprStmt(statement)), None) = (statements.next(), statements.next())
+    else {
+        return None;
+    };
+    let ast::Expr::CallExpr(call) = statement.expr()? else {
+        return None;
+    };
     let arguments: Vec<ast::Expr> = call.arg_list()?.args().collect();
     let [template, argument] = arguments.as_slice() else {
         return None;
@@ -320,6 +333,10 @@ mod tests {
             // Escapes other than quote and backslash.
             (r#"format!("a\n{}", f(1))"#, r#""a\n1""#),
             (r#"format!(r"{}", f(1))"#, r#""1""#),
+            // A transform chained after the rendering.
+            (r#"format!("{}", f(1)).len().to_string()"#, r#""1""#),
+            (r#"format!("{}", f(12)).replace("6", "2")"#, r#""12""#),
+            (r#"format!("w{}", f(1)).trim_start_matches('w')"#, r#""w1""#),
         ] {
             assert_eq!(rendered_template_call(operand, expected), None, "{operand}");
         }
