@@ -3,8 +3,77 @@ use super::activation::{
     boundary_constant_operand_name, comparison_operands, has_observed_boundary_equality,
     is_computed_value_expression, owner_input_values,
 };
+use super::owner_pin::short_circuit::ShortCircuitTail;
 use crate::analysis::probes::same_connectives;
 use crate::domain::*;
+use std::collections::{BTreeMap, BTreeSet};
+
+/// #7970: whether ripr can show that no related test input evaluates the
+/// changed operands of a pure `&&`/`||` predicate. Each run is the literal
+/// `name = value` arguments of one owner call line. Fail closed toward
+/// `false` (the ordinary reading stays): a table, builder or other input
+/// source ripr cannot place on a call line, an unreadable argument, an
+/// operand outside the pure-chain grammar, or a changed operator or operand
+/// count all decline.
+fn changed_operands_are_never_evaluated(probe: &Probe, activation: &ActivationEvidence) -> bool {
+    let Some(before) = probe.before.as_deref() else {
+        return false;
+    };
+    if !same_connectives(&probe.expression, before) {
+        return false;
+    }
+    let mut lines: BTreeMap<usize, BTreeMap<String, Option<String>>> = BTreeMap::new();
+    for fact in &activation.observed_values {
+        match fact.context {
+            ValueContext::FunctionArgument => {}
+            ValueContext::AssertionArgument => continue,
+            // Inputs ripr cannot place on a call line may evaluate the operand.
+            _ => return false,
+        }
+        // A derived fact such as `x == 0 || y == 1` is not an argument.
+        let Some((name, value)) = fact.value.split_once(" = ") else {
+            continue;
+        };
+        let name = name.trim();
+        if name.is_empty()
+            || !name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        {
+            return false;
+        }
+        // The same parameter twice on a line is two calls; neither is read.
+        let line = lines.entry(fact.line).or_default();
+        let read = if line.contains_key(name) {
+            None
+        } else {
+            Some(value.trim().to_string())
+        };
+        line.insert(name.to_string(), read);
+    }
+    let parameters = lines
+        .values()
+        .flat_map(|line| line.keys().cloned())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let runs = lines
+        .values()
+        .map(|line| {
+            parameters
+                .iter()
+                .map(|name| line.get(name).cloned().flatten())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    match (
+        ShortCircuitTail::from_chain(parameters.clone(), &probe.expression),
+        ShortCircuitTail::from_chain(parameters, before),
+    ) {
+        (Some(after), Some(before)) => after.changed_operands_never_evaluated(&before, &runs),
+        _ => false,
+    }
+}
 
 #[cfg(test)]
 pub(in crate::analysis) fn infection_evidence(
@@ -82,6 +151,20 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
                     StageState::Weak,
                     Confidence::Medium,
                     "Related tests contain input values, but the equality-boundary discriminator is missing",
+                )
+            } else if changed_operands_are_never_evaluated(probe, activation) {
+                // #7970: the edit keeps the `&&`/`||` operand count and
+                // changes some operands, but every test input short-circuits
+                // before reaching them (`x == 0 || y == 1` called only with
+                // `x = 0`). An input at the *unchanged* operand's boundary
+                // is not an input at the changed one.
+                StageEvidence::new(
+                    StageState::Weak,
+                    Confidence::Medium,
+                    format!(
+                        "Every related test input short-circuits `{}` before its changed operand is evaluated, so no test input reaches the changed boundary",
+                        probe.expression.trim()
+                    ),
                 )
             } else if changed_operands.is_none() && has_observed_boundary_equality(activation) {
                 StageEvidence::new(

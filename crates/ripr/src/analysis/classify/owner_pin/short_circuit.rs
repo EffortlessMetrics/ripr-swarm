@@ -78,6 +78,15 @@ impl ShortCircuitTail {
         if !is_whole_body(function, changed) {
             return None;
         }
+        Self::from_chain(parameters, changed)
+    }
+
+    /// The chain `changed` over the named `parameters`, with no claim about
+    /// where the chain sits in an owner's body.
+    pub(in crate::analysis::classify) fn from_chain(
+        parameters: Vec<String>,
+        changed: &str,
+    ) -> Option<Self> {
         // Split where the masked text holds the operator, so a `&&` inside
         // a string or comment is never one; read operands from the original
         // text, which masking keeps aligned byte for byte.
@@ -101,6 +110,51 @@ impl ShortCircuitTail {
             operator,
             parameters,
             operands,
+        })
+    }
+
+    /// #7970: whether `self` (the edited chain) differs from `before` in
+    /// some operands and, on every run in `runs`, none of those operands is
+    /// evaluated. `||` returns at the first `true` operand and `&&` at the
+    /// first `false` one, so an operand is evaluated only when every earlier
+    /// operand took the value that does not short-circuit.
+    ///
+    /// Fail closed toward `false` (the question stays open): `true` needs the
+    /// same operator, parameters and operand count, at least one changed
+    /// operand, at least one run, and on every run all arguments readable and
+    /// some operand before the earliest changed one short-circuiting.
+    pub(in crate::analysis::classify) fn changed_operands_never_evaluated(
+        &self,
+        before: &Self,
+        runs: &[Vec<Option<String>>],
+    ) -> bool {
+        if self.operator != before.operator
+            || self.parameters != before.parameters
+            || self.operands.len() != before.operands.len()
+            || runs.is_empty()
+        {
+            return false;
+        }
+        // The earliest changed operand is evaluated whenever any changed
+        // one is, so the operands before it decide every run.
+        let Some(first) =
+            (0..self.operands.len()).find(|&at| self.operands[at] != before.operands[at])
+        else {
+            return false;
+        };
+        let continues = self.operator == "&&";
+        runs.iter().all(|values| {
+            if !values.iter().all(Option::is_some) {
+                return false;
+            }
+            for operand in &self.operands[..first] {
+                match operand.evaluate(values) {
+                    Some(value) if value == continues => {}
+                    Some(_) => return true,
+                    None => return false,
+                }
+            }
+            false
         })
     }
 
@@ -526,6 +580,36 @@ mod tests {
         ] {
             assert!(tail(function, changed).is_none(), "{changed}");
         }
+    }
+
+    #[test]
+    fn changed_operands_are_never_evaluated_only_when_every_run_short_circuits()
+    -> Result<(), String> {
+        let names = || vec!["x".to_string(), "y".to_string()];
+        let run = |x: &str, y: &str| vec![Some(x.to_string()), Some(y.to_string())];
+        let or = ShortCircuitTail::from_chain(names(), "x == 0 || y == 1").ok_or("or")?;
+        let or_before =
+            ShortCircuitTail::from_chain(names(), "x == 0 || y == 0").ok_or("before")?;
+        // `x == 0` holds on every run, so `||` never reaches `y == 1`.
+        assert!(or.changed_operands_never_evaluated(&or_before, &[run("0", "3"), run("0", "0")]));
+        // One run with `x != 0` evaluates it; an unreadable run proves nothing.
+        assert!(!or.changed_operands_never_evaluated(&or_before, &[run("0", "3"), run("1", "1")]));
+        assert!(!or.changed_operands_never_evaluated(
+            &or_before,
+            &[run("0", "3"), vec![None, Some("1".to_string())]]
+        ));
+        assert!(!or.changed_operands_never_evaluated(&or_before, &[]));
+        // The first operand is evaluated on every run.
+        let first = ShortCircuitTail::from_chain(names(), "x == 1 || y == 0").ok_or("first")?;
+        assert!(!first.changed_operands_never_evaluated(&or_before, &[run("0", "3")]));
+        // `&&` short-circuits on `false`.
+        let and = ShortCircuitTail::from_chain(names(), "x == 0 && y == 1").ok_or("and")?;
+        let and_before = ShortCircuitTail::from_chain(names(), "x == 0 && y == 0").ok_or("ab")?;
+        assert!(and.changed_operands_never_evaluated(&and_before, &[run("5", "1")]));
+        assert!(!and.changed_operands_never_evaluated(&and_before, &[run("0", "1")]));
+        // A different operator never compares.
+        assert!(!or.changed_operands_never_evaluated(&and_before, &[run("0", "3")]));
+        Ok(())
     }
 
     #[test]

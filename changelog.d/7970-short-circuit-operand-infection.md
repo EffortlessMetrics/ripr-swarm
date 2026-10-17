@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust predicate edit inside a pure `||`/`&&` chain (`x == 0 || y == 1`, edited from `y == 0`) no longer reads `exposed` when every literal test input short-circuits before the changed operand runs (every call passes `x = 0`). An input at the unchanged operand's boundary is not an input at the changed one; infection now reads `weak` until a call evaluates the edit. Inputs ripr cannot place on a literal call line (tables, builders, computed arguments) keep the ordinary reading (#7970).
