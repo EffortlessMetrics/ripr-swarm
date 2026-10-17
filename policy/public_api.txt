@@ -70,7 +70,7 @@ pub enum ripr::lsp::diagnostic_budget::OmittedDiagnosticReason
 
 # CLI exit-code contract (swarm/q3-exit-codes): owner cli; reason:
 # intentional public error type returned by `ripr::cli::run`; carries the
-# exit-code contract (Failure -> 2, Decision -> 3) documented in
+# exit-code contract (Failure -> 2, Decision -> 3, Interrupted -> 130) documented in
 # docs/EXIT_CODES.md; covered_by: cargo test -p ripr --lib cli,
 # cargo xtask check-public-api.
 pub enum ripr::cli::CommandError
@@ -81,6 +81,8 @@ pub fn ripr::app::qualify_legacy_ripr_plus_receipt
 pub fn ripr::app::repair_card_usability::repair_card_usability_report
 pub fn ripr::app::render_check
 pub fn ripr::cli::run
+# Explicit once-per-process standalone signal ownership (#7618); ordinary run preserves caller policy.
+pub fn ripr::cli::run_with_interrupt_handling
 # Global verbose stripping owner (#5009): owner cli; reason: the binary
 # startup route strips the global flag before MCP routing and must call the
 # same single-pass extraction as `ripr::cli::run`, so the owner is
