@@ -31,7 +31,7 @@ and `D_dyn_closure` did not compile (fixed in #8371). Three cases read
 `exposed` although the changed code passes every test (tracked in #8361).
 
 | case | static exposure | stub route |
-|---|---|---|
+|---|---|--- |
 | `A_bulk_price` | unknown | no route, no reason |
 | `A_discount_codes` | unknown | no route, no reason |
 | `A_invoice_summary` | weak | stub offered |
@@ -46,7 +46,7 @@ and `D_dyn_closure` did not compile (fixed in #8371). Three cases read
 | `B_name_validator` | unknown | stub offered |
 | `B_path_utils` | unknown | no route, no reason |
 | `B_semver_lite` | weak | stub offered |
-| `B_str_case` | unknown | refused: the owner has type parameters the stub cannot choo |
+| `B_str_case` | unknown | refused: the owner has type parameters the stub cannot choose |
 | `B_tok_lexer` | unknown | stub offered |
 | `C_inventory_ledger` | weak | stub offered |
 | `C_lru_cache` | weak | no route, no reason |
@@ -56,16 +56,16 @@ and `D_dyn_closure` did not compile (fixed in #8371). Three cases read
 | `C_scheduler` | weak | no route, no reason |
 | `C_state_machine` | weak | stub offered |
 | `C_workspace_pricing` | weak | stub offered |
-| `D_async_fn` | weak | refused: the owner is async and needs a runtime the stub ca |
+| `D_async_fn` | weak | refused: the owner is async and needs a runtime the stub cannot pick |
 | `D_dyn_closure` | unknown | stub offered |
-| `D_generic_bounds` | unknown | refused: the owner has type parameters the stub cannot choo |
-| `D_generic_impl` | unknown | refused: the owner's impl has type or const generics |
+| `D_generic_bounds` | unknown | refused: the owner has type parameters the stub cannot choose |
+| `D_generic_impl` | unknown | refused: the owner's impl has type or const generics (its own parameters or its self type's arguments) the stub cannot choose |
 | `D_impl_iterator` | unknown | refused: the owner returns `impl Trait` |
 | `D_io_time` | exposed | no route (exposed) |
 | `D_lifetimes` | unknown | stub offered |
 | `D_macro_cfg` | weak | no route, no reason |
-| `D_trait_defaults` | unknown | refused: the owner is a trait default method or nested func |
+| `D_trait_defaults` | unknown | refused: the owner is a trait default method or nested function |
 | `D_unsafe_const` | unknown | stub offered |
 
-This table is a snapshot from one run, not a gate. Re-run after stub changes
+The static exposure and route columns are read from `ripr check` output for each case. This table is a snapshot from one run, not a gate. Re-run after stub changes
 and update it in the same PR.
