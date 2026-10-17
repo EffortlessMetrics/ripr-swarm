@@ -9,9 +9,9 @@ use crate::analysis::classify::{
     direct_call_name, direct_collection_mutation_receiver, expected_operand_value,
     fallible_check_receipt, fallible_literal_witness, function_returns_value, getter_plainly_reads,
     getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
-    helper_pins_owner_call, infection_evidence_with_boundary_input, local_flow_sinks,
-    method_cannot_store, observes_returned_element_field, operand_only_pin,
-    oracle_crediting_relations, owner_touches_field_only_at, package_prefix, parameter_rebound,
+    helper_pins_owner_call, infection_evidence_for_owner, local_flow_sinks, method_cannot_store,
+    observes_returned_element_field, operand_only_pin, oracle_crediting_relations,
+    owner_touches_field_only_at, package_prefix, parameter_rebound,
     propagation_evidence_with_witness, reach_evidence, reveal_outcome,
     same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
     unconditional_owner_insert_field,
@@ -86,7 +86,11 @@ fn return_ledger_limit(
 }
 
 impl ClassifiedProbeEvidence {
-    pub(in crate::analysis) fn gather(context: &ProbeContext<'_>, reveal_expression: &str) -> Self {
+    pub(in crate::analysis) fn gather(
+        context: &ProbeContext<'_>,
+        reveal_expression: &str,
+        proximity_reach: &TransitiveReachIndex<'_>,
+    ) -> Self {
         let test_summaries = context.related_test_summaries();
         let fallback_pin_syntax = OwnerPinSyntax::default();
         let pin_syntax = context.owner_pin_syntax.unwrap_or(&fallback_pin_syntax);
@@ -267,11 +271,24 @@ impl ClassifiedProbeEvidence {
                 .missing_discriminators
                 .retain(|fact| !is_unselected_input_reason(&fact.reason));
         }
-        let infect = infection_evidence_with_boundary_input(
+        let infect = infection_evidence_for_owner(
             context.probe,
             &test_summaries,
             &activation,
             gathered.unresolved_boundary.as_deref(),
+            context.owner_fn,
+            // #7970: a function that is not one of the related tests and
+            // calls the owner by name (a wrapper, a helper, a production
+            // caller) may feed it inputs the literal call lines do not show.
+            context.owner_fn.is_none_or(|owner| {
+                context.index.functions().iter().any(|function| {
+                    function.id != owner.id
+                        && !test_summaries
+                            .iter()
+                            .any(|test| test.file == function.file && test.name == function.name)
+                        && function.calls.iter().any(|call| call.name == owner.name)
+                })
+            }),
         );
         // #6796's computed-argument discipline, wrapper edition (#6672,
         // #6694): when the tests reach the owner only through the helper
@@ -483,9 +500,9 @@ impl ClassifiedProbeEvidence {
             )
         });
         let package_defeats_by_file = FileDefeatMemo::default();
-        // Built lazily: only a match arm beside an owner-calling test asks
-        // whether a same-file test may run the owner (#6297).
-        let proximity_reach = TransitiveReachIndex::new(context.index);
+        // The run-level graph is lazy and shared with reach-limit disclosure
+        // (#6778). Keep this owner walk local to the probe; unused proximity
+        // gates still do not build the graph.
         let owner_reach = std::cell::OnceCell::new();
         let owner_locals = context
             .owner_fn
@@ -693,6 +710,7 @@ impl ClassifiedProbeEvidence {
                 },
             },
             arm_selector.as_ref(),
+            context.diff_touched,
         );
         let (observe, discriminate, related_tests, matched_total) = (
             reveal.observe,
@@ -877,6 +895,24 @@ impl ClassifiedProbeEvidence {
         } else {
             discriminate
         };
+        // #8480: the generic oracle path credits a whole-object equality
+        // assertion on the returned value without consulting the owner
+        // return pin, so a returned type whose `Drop` may exit while
+        // unwinding from a failed assertion demotes here, at the final
+        // semantic owner, exactly as the pin's own refusal does.
+        let discriminate = if matches!(context.probe.family, ProbeFamily::ReturnValue)
+            && discriminate.state == StageState::Yes
+            && context.owner_fn.is_some_and(|owner| {
+                !OwnerReturnPin::returned_types_drop_plain(owner, context.index)
+            }) {
+            StageEvidence::new(
+                StageState::Weak,
+                Confidence::Medium,
+                "Discriminator unconfirmed: a non-plain Drop on the returned type may exit while unwinding from a failed assertion (observation_unverified)",
+            )
+        } else {
+            discriminate
+        };
         // Tests kept only as suggested locations never run the owner, so
         // they neither activate the change nor observe it.
         let reach_ruled_out = reach.state == StageState::No
@@ -926,7 +962,7 @@ impl ClassifiedProbeEvidence {
         };
         let mut evidence =
             evidence_summaries([&reach, &infect, &propagate, &observe, &discriminate]);
-        // Disclose a refused related `assert_eq!` whenever the refusal can
+        // Disclose a refused related assertion whenever the refusal can
         // matter: the reveal is not fully established. See
         // `preferred_refusal_note` for which one.
         let owner_name = context.owner_fn.map_or("", |owner| owner.name.as_str());
@@ -954,7 +990,12 @@ impl ClassifiedProbeEvidence {
                         let calls_owner = body_contains_owner_call(&assertion.text, owner_name);
                         let note = AssertionRefusalNote {
                             location: format!(
-                                "`assert_eq!` in {} at {}:{}",
+                                "`{}!` in {} at {}:{}",
+                                if context.probe.family == ProbeFamily::MatchArm {
+                                    "assert"
+                                } else {
+                                    "assert_eq"
+                                },
                                 test.name,
                                 test.file.display(),
                                 assertion.line
@@ -1524,7 +1565,73 @@ mod tests {
         ClassifiedProbeEvidence::gather(
             &context,
             "if trimmed != Some(expected_id.trim()).as_str() {",
+            &crate::analysis::classify::TransitiveReachIndex::new(context.index),
         )
+    }
+
+    /// #8480 residual: the generic oracle path credits a whole-object
+    /// equality assertion on the returned value without consulting the
+    /// owner return pin, so a returned type whose Drop may exit during
+    /// unwind must still demote `return_value` at the final owner.
+    #[test]
+    fn a_non_plain_drop_on_the_returned_type_keeps_return_value_weakly() -> Result<(), String> {
+        use crate::domain::ExposureClass;
+
+        let class_for = |drop_body: &str| -> Result<ExposureClass, String> {
+            let source = format!(
+                "#[derive(Debug, PartialEq)]\npub struct Cfg {{\n    pub n: u32,\n}}\n\nimpl Drop for Cfg {{\n    fn drop(&mut self) {{{drop_body}\n    }}\n}}\n\npub fn make(x: u32) -> Cfg {{\n    Cfg {{ n: x * 3 }}\n}}\n\n#[test]\nfn makes() {{\n    assert_eq!(make(4), Cfg {{ n: 12 }});\n}}\n"
+            );
+            let path = PathBuf::from("src/lib.rs");
+            let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, &source)?;
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions: facts.functions.clone(),
+                tests: facts.tests.clone(),
+                files: [(path, facts)].into_iter().collect(),
+                ..Default::default()
+            });
+            let owner = index
+                .functions()
+                .iter()
+                .find(|function| function.name == "make")
+                .ok_or("missing owner")?;
+            let test = index
+                .tests()
+                .iter()
+                .find(|test| test.name == "makes")
+                .ok_or("missing test")?;
+            let probe = Probe {
+                id: ProbeId("probe:returned-type-drop".to_string()),
+                location: SourceLocation::new("src/lib.rs", 11, 5),
+                owner: Some(owner.id.clone()),
+                family: ProbeFamily::ReturnValue,
+                delta: DeltaKind::Value,
+                before: Some("x * 2".to_string()),
+                after: Some("x * 3".to_string()),
+                expression: "Cfg { n: x * 3 }".to_string(),
+                expected_sinks: Vec::new(),
+                required_oracles: Vec::new(),
+            };
+            let context = ProbeContext::new(
+                &probe,
+                Some(owner),
+                vec![(test, RelationReason::DirectOwnerCall)],
+                false,
+                &index,
+                true,
+            );
+            let evidence = ClassifiedProbeEvidence::gather(
+                &context,
+                &probe.expression,
+                &crate::analysis::classify::TransitiveReachIndex::new(context.index),
+            );
+            Ok(evidence.classify(&probe))
+        };
+        assert_eq!(
+            class_for("\n        std::process::exit(0);")?,
+            ExposureClass::WeaklyExposed
+        );
+        assert_eq!(class_for("")?, ExposureClass::Exposed);
+        Ok(())
     }
 
     /// The memo computes a defeat once per (file, callee) and keeps
@@ -1667,7 +1774,11 @@ mod tests {
         };
         let index = RustIndex::default();
         let context = ProbeContext::new(&probe, Some(&owner), Vec::new(), false, &index, true);
-        let evidence = ClassifiedProbeEvidence::gather(&context, "amount");
+        let evidence = ClassifiedProbeEvidence::gather(
+            &context,
+            "amount",
+            &crate::analysis::classify::TransitiveReachIndex::new(context.index),
+        );
         let Some(diagnostic) = evidence.propagation_witness() else {
             return Err("gather discarded the producer witness".to_string());
         };
@@ -1714,7 +1825,11 @@ mod tests {
         };
         let index = RustIndex::default();
         let context = ProbeContext::new(&probe, Some(&owner), Vec::new(), false, &index, true);
-        let mut evidence = ClassifiedProbeEvidence::gather(&context, "amount");
+        let mut evidence = ClassifiedProbeEvidence::gather(
+            &context,
+            "amount",
+            &crate::analysis::classify::TransitiveReachIndex::new(context.index),
+        );
         let Some(PropagationWitnessDiagnostic::Valid(witness)) =
             evidence.propagation_witness.as_mut()
         else {
@@ -2077,7 +2192,11 @@ mod tests {
             true,
         )
         .with_helper_chain(Some(chain));
-        let evidence = ClassifiedProbeEvidence::gather(&context, &probe.expression);
+        let evidence = ClassifiedProbeEvidence::gather(
+            &context,
+            &probe.expression,
+            &crate::analysis::classify::TransitiveReachIndex::new(context.index),
+        );
         let diagnostic = evidence
             .propagation_witness()
             .ok_or("missing retained witness")?;

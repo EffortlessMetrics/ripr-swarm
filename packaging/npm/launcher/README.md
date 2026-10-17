@@ -24,6 +24,19 @@ enabled. This also covers corrupt metadata, missing manifests, and broken export
 targets: a missing module alone does not establish that the package directory is
 absent. Resolution errors go to stderr and exit with status 1.
 
+If the matching native package resolves but its executable is missing, the
+launcher names that package, version, and executable path. Restore the missing
+file from that native package's matching tarball, or reinstall the same exact
+launcher version in its owning npm environment with optional dependencies enabled.
+An unsupported platform or Linux libc still fails closed; reinstalling the same
+version does not add a payload for an unsupported target.
+
+On POSIX, a native file without executable permissions also names its package,
+exact version, and executable path. Restore that file from the matching native
+package tarball with executable permissions preserved, or reinstall the same
+exact launcher version in its owning npm environment with optional dependencies
+enabled. The launcher does not change the file's permissions itself.
+
 If direct resolution of the packaged `lib/launcher.cjs` raises Node's
 `MODULE_NOT_FOUND`, the command retains that reason and advises restoring the file
 from the matching package tarball or reinstalling the same exact launcher version

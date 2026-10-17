@@ -5,12 +5,12 @@
   "ripr_build_msrv": "1.95",
   "root": "fixtures/doctor-json-parity/input",
   "profile": "analysis",
-  "status": "pass",
+  "status": "fail",
   "checks": [
     { "name": "root_directory", "status": "pass", "evidence": "root directory exists at fixtures/doctor-json-parity/input" },
     { "name": "cargo_toml", "status": "pass", "evidence": "Cargo.toml found at fixtures/doctor-json-parity/input/Cargo.toml" },
     { "name": "git_repository", "status": "pass", "evidence": "inside a Git work tree at fixtures/doctor-json-parity/input" },
-    { "name": "config", "status": "pass", "evidence": "loaded ripr.toml at fixtures/doctor-json-parity/input/ripr.toml" },
+    { "name": "config", "status": "fail", "evidence": "ripr.toml at fixtures/doctor-json-parity/input/ripr.toml failed to parse" },
     { "name": "tool_git", "status": "pass", "evidence": "git version 2.54.0" },
     { "name": "tool_cargo", "status": "advisory", "evidence": "cargo is not on PATH" },
     { "name": "generated_workflow", "status": "advisory", "evidence": ".github/workflows/ripr.yml installs ripr without a version" }
@@ -19,6 +19,28 @@
     { "language": "python", "tool": "python3", "status": "fail", "evidence": "python3 not available", "required": false, "hint": "install python3" }
   ],
   "languages": ["rust"],
+  "canonical_next_action": {
+    "schema_version": "canonical_next_action.v1",
+    "producer": "doctor",
+    "subject": {
+      "root": "/workspace/fixtures/doctor-json-parity/input",
+      "diff_source": { "committed": { "base": null, "head": null } },
+      "item": "config"
+    },
+    "currentness": {
+      "head_expected": null,
+      "head_observed": null,
+      "config_expected": null,
+      "config_observed": null
+    },
+    "action_class": "satisfy_prerequisite",
+    "stop": {
+      "kind": "doctor_recovery",
+      "check_name": "config",
+      "recovery_route": "correct `ripr.toml` so it loads, then rerun `ripr doctor`"
+    },
+    "non_claim": "Advisory selection from producer-bound state; it does not execute, complete, or prove the repair, and the display string is never execution authority."
+  },
   "detected_languages": [
     { "language": "rust", "status": "stable", "adapter_available": true, "enabled": true },
     { "language": "python", "status": "preview", "adapter_available": true, "enabled": false },
@@ -42,7 +64,8 @@
     "relocated_by_env": false,
     "size_bytes": 2048,
     "size_display": "2.00 KB",
-    "artifact_ignore": "ignored"
+    "artifact_ignore": "ignored",
+    "artifact_tracking": "untracked"
   },
   "test_surfaces": [
     { "language": "rust", "framework": "cargo test", "evidence": "rust: cargo test (#[cfg(test)])" },
@@ -56,6 +79,7 @@
     "adapter_compiled": true,
     "producer": null,
     "ignored_configured_executable": null,
+    "canonical_exporter_on_path": false,
     "exporter": { "state": "incompatible", "executable": "bin/perllsp", "version": "perllsp 0.17.0" },
     "expected_schema": "ripr-perl-facts-v1",
     "test_roots": ["t/"],

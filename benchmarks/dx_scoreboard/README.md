@@ -312,8 +312,9 @@ attributable observation provenance. #7555 proposed a refresh and was held for
 that decision. The later
 `3961078c56b8c89258af56068fdf989f97b7d776` report has eight differing rows and is
 not a replacement. Historical per-case contradiction denominators are absent
-and were not reconstructed. Legacy TypeScript/Python observations still lack
-attributable population evidence and fail comparison explicitly (#8035).
+and were not reconstructed. Legacy TypeScript/Python observations lacked
+attributable population evidence and failed comparison explicitly until
+#8035 recorded them (below).
 
 #7325 is that policy decision: the owner accepted the retained Rust abstention
 rise, and the five Rust verdict-corpus entries of the operational baseline
@@ -325,6 +326,16 @@ actionable 26/236, abstention 177/477, false silent 0/241, false exposed
 `expected/rows` tree. The witness file above is unchanged; a test pins the
 operational baseline to it in every other field, and the public-proof
 scoreboard copy to the operational baseline byte for byte.
+
+#8035 records the remaining thirteen trust comparisons at
+`76651d1cdf9242b301c9ddf28c442838ccf73c59` with the same provenance shape,
+approved in #8035: TypeScript false actionable 5/101, false exposed 0/68,
+false silent 0/68; Python false actionable 0/35, false exposed 0/34, false
+silent 0/34; Perl (producer packets) false verdict 8/27, false actionable
+5/15, false exposed 3/12, false silent 0/12, abstention 8/27; and the Rust
+corpus oracle accuracy 44/44 and overclaim rate 0/44. Each sample names its
+language corpus `corpus.json` blob and `expected/rows` tree. No target or
+threshold changed.
 
 `testdata/7552-rust-abstention.json` freezes committed expected records at
 `6da363f9b630845d82d8a073c42429d90cd03732`, rather than executing the analyzer.

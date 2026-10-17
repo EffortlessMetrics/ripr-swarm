@@ -38,6 +38,10 @@ fixtures/evidence-promotion-honesty-corpus/discarded-matcher-reports/*/human-ful
 # header contains significant space-only continuation lines; never normalize it.
 xtask/src/reports/release/candidate_harness/live_head/fixtures/last-integrated.commit -text -whitespace
 
+# #8445 retains the timestamp separator and native diagnostic blanks verbatim.
+# The captured LF fixture is pinned by SHA-256 in its adjacent README.
+xtask/tests/windows_advisory_identity/owner_pin_execution-39023007917.log whitespace=-blank-at-eol
+
 # Labeled verdict corpus (RIPR-SPEC-0219): case diffs carry patch-syntax
 # context spaces, and retained subjects are byte-identical upstream files
 # pinned by sha256, so whitespace rules cannot rewrite either.
@@ -60,3 +64,15 @@ fixtures/python-verdict-corpus/subjects/** -whitespace
 # files keep the default merge driver.
 /CHANGELOG.md merge=union
 docs/LEARNINGS.md merge=union
+
+# The spec-test-code registry is appended to by nearly every PR, so concurrent
+# PRs conflict at end-of-file even though their `[[...]]` entries are
+# independent (evidence: 4 of 13 conflicted open PRs on 2026-10-17 hit only
+# this file). Union keeps both sides' appended blocks. Verified locally:
+# two sides adding the same `[[behavior]]` id fails `check-traceability`
+# (duplicate id / duplicate keys), but two sides appending to the same
+# entry's `tests = [` array merge cleanly and silently (both sides' lines kept),
+# so review such merges. Only local/agent
+# `git merge` uses this driver; GitHub web merge, squash merge and the
+# "Update branch" button ignore merge drivers and still conflict.
+.ripr/traceability.toml merge=union

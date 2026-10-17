@@ -5,7 +5,7 @@ use crate::config::RiprConfig;
 use crate::domain::{
     CanonicalNextActionV1, ExposureClass, Finding, LanguageId, NextActionAlternative,
     NextActionCheckCase, NextActionCurrentness, NextActionDiffSource, NextActionInput,
-    NextActionProducer, NextActionStop, ProbeFamily, StaticLimitKind, current_command_platform,
+    NextActionProducer, NextActionStop, StaticLimitKind, current_command_platform,
     select_canonical_next_action,
 };
 use crate::output::path::display_path;
@@ -136,11 +136,9 @@ pub(crate) fn render_human_triage(
     provenance: CheckDiffProvenance,
 ) {
     out.push_str("Start here:\n");
-    out.push_str(&format!(
-        "  State: {} ({})\n",
-        triage.state.plain_label(),
-        triage.state.as_str()
-    ));
+    // #8165: the default (bounded) human render speaks plain language only;
+    // the `HumanTriageState` schema token stays in machine surfaces.
+    out.push_str(&format!("  State: {}\n", triage.state.plain_label()));
     // The canonical decision (#6304) selects the line family; the prose
     // below is unchanged, so the decision has one authority while rendered
     // bytes stay put.
@@ -273,6 +271,16 @@ pub(crate) fn render_human_triage(
                 out.push_str(&format!(
                     "  Safe next action: the working tree has no changed tracked files against `{base}`; make a change, or `git add -N <path>` a new file, and re-run\n"
                 ));
+            } else if let Some(base) = output.base.as_deref()
+                && let Some(candidate) = empty_diff_base_candidate(output, base)
+            {
+                // The analyzed base resolved to HEAD itself, so committing
+                // or `--worktree` against it stays empty; the one canonical
+                // remediation is the probed other base, named identically
+                // on stderr by the check hedge (#7644).
+                out.push_str(&format!(
+                    "  Safe next action: no changed files were compared against `{base}`; pass `--base {candidate}` to compare against `{candidate}` instead\n"
+                ));
             } else if let Some(base) = output.base.as_deref() {
                 // "tracked" (#5258): `--worktree` diffs tracked edits only,
                 // so the line must not promise it covers untracked files.
@@ -280,9 +288,14 @@ pub(crate) fn render_human_triage(
                     "  Safe next action: no changed files were compared against `{base}`; commit a change and re-run, or add `--worktree` to include uncommitted tracked edits\n"
                 ));
             } else {
-                out.push_str(
-                    "  Safe next action: provide an analysis scope; this empty output is not an all-clear\n",
-                );
+                // No base was established: name the same canonical pair
+                // every format names (domain::next_action) — provide a diff
+                // scope, or explore the whole repository with pilot.
+                out.push_str(&format!(
+                    "  Safe next action: no analysis scope was provided; run `{}` with BASE set to an existing ref to analyze your changes, or `{}` for whole-repository exploration; this empty output is not an all-clear\n",
+                    crate::domain::NO_SCOPE_BASE_COMMAND,
+                    crate::domain::WHOLE_REPO_PILOT_COMMAND,
+                ));
             }
         }
     }
@@ -301,6 +314,15 @@ pub(crate) fn render_human_triage(
                 out.push_str(&format!("  {command}\n"));
                 super::push_powershell_variant(out, "  ", &command);
             }
+            // #8166 Slice C: an eligible top finding also gets the repair
+            // start, naming the seam identity the check pipeline's
+            // producer-owned gate established. No route, no line: an
+            // ineligible or unbound finding keeps only explain/context.
+            if let Some(route) = navigation.repair_route_for(&finding.id) {
+                let command = navigation.repair_command(&route.seam_id);
+                out.push_str(&format!("  {command}\n"));
+                super::push_powershell_variant(out, "  ", &command);
+            }
             // #5355: a Rust gap gets the one-step route to a runnable test.
             // A gap withheld because ripr could not read the related
             // assertions (RIPR-SPEC-0240) claims no missing test, so it gets
@@ -310,13 +332,7 @@ pub(crate) fn render_human_triage(
                 && finding.static_limit_kind
                     != Some(StaticLimitKind::RustAssertionContextUnresolved)
                 && !super::sections::untraced_reach_weak_finding(finding)
-                && matches!(
-                    finding.probe.family,
-                    ProbeFamily::Predicate
-                        | ProbeFamily::ReturnValue
-                        | ProbeFamily::ErrorPath
-                        | ProbeFamily::MatchArm
-                )
+                && finding.probe.offers_stub_route()
                 && finding
                     .probe
                     .location
@@ -394,7 +410,7 @@ pub(crate) fn render_human_triage(
                 "    - {}:{} ({}{})\n",
                 crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
                 finding.probe.location.line,
-                finding.class.as_str(),
+                finding.class.plain_label(),
                 currentness
             ));
         }
@@ -561,6 +577,24 @@ pub(crate) fn canonical_next_action_for_triage(
     select_canonical_next_action(&input)
 }
 
+/// The probed `--base` candidate for an empty result whose analyzed base
+/// resolved to HEAD's own commit: the first other branch whose range
+/// against HEAD is non-empty, never the current `base`. `None` when the
+/// analyzed revisions do not establish base == HEAD, so the ordinary
+/// commit/`--worktree` action keeps owning those states.
+fn empty_diff_base_candidate(output: &CheckOutput, base: &str) -> Option<String> {
+    let revisions = output.analyzed_revisions.as_ref()?;
+    match (
+        revisions.base_commit.as_deref(),
+        revisions.head_commit.as_deref(),
+    ) {
+        (Some(base_commit), Some(head_commit)) if base_commit == head_commit => {}
+        _ => return None,
+    }
+    crate::analysis::another_base_candidate(&output.root, None)
+        .filter(|candidate| !candidate.is_empty() && candidate != base)
+}
+
 /// The scope identity bound when triage selected no finding: the compared
 /// base, the working tree, or the explicit lack of scope.
 fn check_scope_descriptor(triage: &HumanTriage<'_>, output: &CheckOutput) -> String {
@@ -679,16 +713,26 @@ fn selected_hidden_line(omitted: &[&Finding]) -> String {
             suffix
         ),
         (base_side, 0, lower_priority) => format!(
-            "  {} lower-priority finding(s) omitted; {} base-side evidence, not candidate edit targets{}.\n",
-            lower_priority, base_side, suffix
+            "  {} finding(s) omitted: {} lower-priority, {} base-side evidence (not candidate edit targets){}.\n",
+            omitted.len(),
+            lower_priority,
+            base_side,
+            suffix
         ),
         (0, unresolved, lower_priority) => format!(
-            "  {} lower-priority finding(s) omitted; {} unresolved currentness, not candidate edit targets{}.\n",
-            lower_priority, unresolved, suffix
+            "  {} finding(s) omitted: {} lower-priority, {} unresolved currentness (not candidate edit targets){}.\n",
+            omitted.len(),
+            lower_priority,
+            unresolved,
+            suffix
         ),
         (base_side, unresolved, lower_priority) => format!(
-            "  {} lower-priority finding(s) omitted; {} base-side evidence and {} unresolved currentness, not candidate edit targets{}.\n",
-            lower_priority, base_side, unresolved, suffix
+            "  {} finding(s) omitted: {} lower-priority, {} base-side evidence and {} unresolved currentness (the last two are not candidate edit targets){}.\n",
+            omitted.len(),
+            lower_priority,
+            base_side,
+            unresolved,
+            suffix
         ),
     }
 }
@@ -995,8 +1039,9 @@ mod tests {
     use super::*;
     use crate::app::Mode;
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, NextActionClass, Probe, ProbeId, RevealEvidence,
-        RiprEvidence, SourceCurrentness, SourceLocation, StageEvidence, StageState, Summary,
+        ActivationEvidence, Confidence, DeltaKind, NextActionClass, Probe, ProbeFamily, ProbeId,
+        RevealEvidence, RiprEvidence, SourceCurrentness, SourceLocation, StageEvidence, StageState,
+        Summary,
     };
     use std::path::PathBuf;
 
@@ -1399,6 +1444,84 @@ mod tests {
     }
 
     #[test]
+    fn scope_missing_names_the_probed_base_candidate_when_base_is_head() -> Result<(), String> {
+        // The stdout Safe next action and the stderr hedge must name the
+        // same probed `--base` candidate, not divergent remediations.
+        let dir =
+            std::env::temp_dir().join(format!("ripr-triage-empty-diff-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let git = |args: &[&str]| -> Result<(), String> {
+            let output = crate::git::run_git_output_with_deadline_and_env(
+                &dir,
+                args,
+                &[("GIT_CONFIG_NOSYSTEM", std::ffi::OsStr::new("1"))],
+                None,
+            )
+            .map_err(|e| e.to_string())?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(format!("git {args:?} failed"))
+            }
+        };
+        let setup = (|| -> Result<(), String> {
+            git(&["init", "-b", "master"])?;
+            git(&["config", "user.email", "ripr@example.invalid"])?;
+            git(&["config", "user.name", "ripr test"])?;
+            std::fs::write(dir.join("README"), "init").map_err(|e| e.to_string())?;
+            git(&["add", "."])?;
+            git(&["commit", "-m", "init"])?;
+            git(&["branch", "base-candidate"])?;
+            std::fs::write(dir.join("README"), "second").map_err(|e| e.to_string())?;
+            git(&["add", "."])?;
+            git(&["commit", "-m", "second"])?;
+            Ok(())
+        })();
+        if let Err(error) = setup {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err(error);
+        }
+        let mut output = test_output(Vec::new());
+        output.root = dir.clone();
+        output.base = Some("master".to_string());
+        output.no_scope_provided = true;
+        output.analyzed_revisions = Some(crate::analysis::AnalyzedRevisions {
+            base_ref: "master".to_string(),
+            base_commit: Some("abc".to_string()),
+            merge_base_commit: None,
+            head_commit: Some("abc".to_string()),
+            working_tree: false,
+        });
+        let triage = HumanTriage {
+            state: HumanTriageState::MissingScope,
+            selected: None,
+            omitted: Vec::new(),
+        };
+        let mut out = String::new();
+        render_human_triage(
+            &mut out,
+            &triage,
+            &output,
+            &crate::config::RiprConfig::default(),
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        if !out.contains("pass `--base base-candidate`") {
+            return Err(format!(
+                "safe next action must name the probed candidate, got:\n{out}"
+            ));
+        }
+        if out.contains("commit a change and re-run") {
+            return Err(format!(
+                "divergent commit remediation must not shadow the candidate, got:\n{out}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn check_adapter_binds_limitations_and_scope_modes() -> Result<(), String> {
         let mut output = test_output(Vec::new());
         output.base = None;
@@ -1617,15 +1740,15 @@ mod tests {
         ]);
         let rendered = super::super::render(&output);
         assert!(
-            rendered.contains("    - src/sample.rs:7 (weakly_exposed, lower-priority candidate)\n"),
+            rendered.contains("    - src/sample.rs:7 (weak, lower-priority candidate)\n"),
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/lib.rs:26 (weakly_exposed, base-side)\n"),
+            rendered.contains("    - src/lib.rs:26 (weak, base-side)\n"),
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/lib.rs:31 (weakly_exposed, unresolved currentness)\n"),
+            rendered.contains("    - src/lib.rs:31 (weak, unresolved currentness)\n"),
             "{rendered}"
         );
     }
@@ -1645,15 +1768,12 @@ mod tests {
         // the count line already named the single category.
         assert_eq!(rendered.matches("\n    - src/").count(), 1, "{rendered}");
         assert!(
-            !rendered.contains("(weakly_exposed, lower-priority candidate)"),
+            !rendered.contains("(weak, lower-priority candidate)"),
             "{rendered}"
         );
+        assert!(!rendered.contains("(weak, base-side)"), "{rendered}");
         assert!(
-            !rendered.contains("(weakly_exposed, base-side)"),
-            "{rendered}"
-        );
-        assert!(
-            !rendered.contains("(weakly_exposed, unresolved currentness)"),
+            !rendered.contains("(weak, unresolved currentness)"),
             "{rendered}"
         );
     }

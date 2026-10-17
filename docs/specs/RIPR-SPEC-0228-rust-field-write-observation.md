@@ -418,6 +418,24 @@ changes `self.count += 2` to `self.count += 1`.
   counts any `else`, since a `let .. else` block may exit through a
   never-typed call no token catches, so an ordinary `if/else` completed
   before the push widens the same conservative cap.
+- A seeded-collection expectation is implemented (#8205, extending
+  #8051): `assertion_restates_seeded_collection` in
+  `propagation_witness.rs` and the `seeded_after_skipped_push` cap in
+  `reveal.rs` recognize an `assert_eq!` whose expected side exactly
+  restates, with whitespace removed, the collection state the test
+  seeded in the binding's own construction (a struct-literal field
+  entry or a bare assignment read from the test body). When the owner
+  may leave before the push, such an assertion only restates what the
+  collection already held, for example a seeded `vec![9]` asserted
+  after a locked owner returns early, so it neither confirms
+  observation nor counts as a strong oracle for `side_effect` or
+  `call_deletion` probes on a field collection write. An expectation
+  that differs from the seeded state (including the seeded state plus
+  the pushed element, `vec![9, 1]` after `push(1)`) keeps its
+  strength, as does any expectation when the owner cannot exit before
+  the push or when no seeded construction is spelled out. The same
+  owner-wide limit as the empty-collection cap applies: the cap cannot
+  read which path one test took.
 - Keyed reads of a field-map insert are implemented (examples 16-20):
   `field_collection_insert_key` and `assertion_keyed_getter_reads` in
   `propagation_witness.rs`, `keyed_field_read_confirms` and

@@ -1,0 +1,43 @@
+schema_version = "2.0"
+id = "ripr.slice.pilot-json-timeout-retry.v1"
+generation = 1
+
+source_issue = "issue:8472"
+design_reference = "RIPR-SPEC-0009"
+change_class = "behavior_change"
+
+claim_boundary = """
+The timeout pilot-summary.json next.retry_command explicitly requests JSON
+stdout while preserving the existing command bindings, retry budget and human
+retry formats. Partial analysis remains incomplete with unknown totals and
+only the actually written summaries declared. No schema version change.
+"""
+
+non_goals = [
+  "analysis, ranking, process ownership or timeout-budget changes",
+  "exit-code, schema-shape or support-tier changes",
+  "releases or deployment",
+]
+
+return_conditions = [
+  "Return to root if recovery stdout is not one JSON document.",
+  "Return to root if partial unknown totals become zero or complete.",
+  "Return to root if the shared human retry command changes.",
+]
+
+owned_seams = ["seam:ripr:output:pilot-timeout-json-retry"]
+shared_seams = ["seam:ripr:output:pilot-command-bindings"]
+forbidden_seams = ["seam:ripr:analysis:classification", "seam:ripr:process:ownership"]
+
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0009"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+
+[evidence]
+state = "outstanding"
+
+[support_claim]
+state = "unchanged"

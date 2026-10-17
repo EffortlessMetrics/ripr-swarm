@@ -37,13 +37,16 @@ proving a universal RSS threshold.
 - Ordinary classified-cache publication serializes borrowed
   `ClassifiedSeam` records. It does not build `chunk.to_vec()`,
   `seams.to_vec()`, or an equivalent deep-cloned shard payload.
-- A cache write that succeeds also removes `.ripr-atomic-<pid>-<nanos>-<seq>.tmp`
+- A cache write that succeeds, and the start of normal Rust file-fact
+  analysis (including fully warm analysis), remove `.ripr-atomic-<pid>-<nanos>-<seq>.tmp`
   files in its directory that a terminated run stranded, once per directory
   per process: regular files only, matching that exact name, untouched for
   ten minutes. A younger file may belong to a live writer; a writer stalled
   longer than that can lose its temporary file if a sweep reaches the
   directory while it is stale, and its rename then fails and the cache
-  write is skipped.
+  write is skipped. Plain cache reads and current-snapshot export do not
+  invoke cleanup. Cache-entry bytes and mtimes stay unchanged on warm hits
+  (#8474).
 - Encoding writes through a bounded IO buffer into the existing atomic
   temporary-file protocol. The store path does not retain the complete
   encoded entry or shard as a `Vec<u8>`.
@@ -165,6 +168,7 @@ proving a universal RSS threshold.
 - `crates/ripr/src/atomic_file.rs::tests::write_cache_sweeps_an_aged_stranded_temp_file_once_per_directory`
 - `crates/ripr/src/atomic_file.rs::tests::write_cache_streamed_sweeps_an_aged_stranded_temp_file`
 - `crates/ripr/tests/stale_temp_sweep.rs::next_run_removes_an_old_stranded_temp_file_and_keeps_a_young_one`
+- `crates/ripr/src/atomic_file.rs::tests::terminated_cache_fill_recovers_without_publishing_partial_bytes`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::borrowed_shard_matches_owned_codec_bytes`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::borrowed_writers_match_owned_bytes_with_shared_related_tests`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::below_exactly_and_one_byte_over_the_encoded_ceiling`

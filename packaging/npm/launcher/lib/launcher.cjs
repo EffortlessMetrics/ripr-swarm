@@ -250,7 +250,7 @@ function resolveNativeExecutable(options) {
   } catch (error) {
     throw new LauncherError(
       "native_executable_missing",
-      `native package ${selected.package}@${contract.version} does not contain ${nativeMetadata.executable}`,
+      `native package ${selected.package}@${contract.version} does not contain ${nativeMetadata.executable}; restore ${nativeMetadata.executable} from the matching native package tarball, or reinstall ${LAUNCHER_NAME}@${contract.version} in its owning npm environment with optional dependencies enabled`,
       error,
     );
   }
@@ -265,7 +265,7 @@ function resolveNativeExecutable(options) {
     throw new LauncherError("native_executable_escape", `native executable resolves outside package root: ${nativeMetadata.executable}`);
   }
   if (selected.nodePlatform !== "win32" && (stat.mode & 0o111) === 0) {
-    throw new LauncherError("native_executable_not_executable", `native executable is not executable: ${nativeMetadata.executable}`);
+    throw new LauncherError("native_executable_not_executable", `native package ${selected.package}@${contract.version} executable is not executable: ${nativeMetadata.executable}; restore ${nativeMetadata.executable} from the matching native package tarball with executable permissions preserved, or reinstall ${LAUNCHER_NAME}@${contract.version} in its owning npm environment with optional dependencies enabled`);
   }
 
   return Object.freeze({ executablePath: realExecutable, contract, selected, nativeManifestPath, nativeRoot });

@@ -202,3 +202,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_named_constant_boundary_repair_gap (18)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless python_named_constant_boundary_repair_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -1,0 +1,67 @@
+{
+ "schema_version": "issue_lifecycle_real_rows_controls.v1",
+ "spec": "RIPR-SPEC-0278",
+ "issue": 4932,
+ "controls": [
+  {
+   "id": "wrong_identity_rejected",
+   "requirement": "Wrong issue/work-item/PR/head/merge identity is rejected",
+   "covered_by": "adapter tests (wrong-head and wrong-merge variants of Row A reject on the row_digest binding); snapshot digest drift rejects in check-fixture-contracts",
+   "covered": true
+  },
+  {
+   "id": "merge_without_current_head_stays_pending",
+   "requirement": "Merge without current-main proof remains pending",
+   "covered_by": "Row B (negative control) and adapter test variants stripping the current-head receipt",
+   "covered": true
+  },
+  {
+   "id": "merge_with_uncovered_acceptance_stays_partial",
+   "requirement": "Merge with uncovered acceptance remains partial",
+   "covered_by": "Row B keeps ten uncovered #1706 acceptance rows visible under merged_pending_closeout; adapter test variant asserting partially_landed downgrade law",
+   "covered": true
+  },
+  {
+   "id": "zero_subject_verification_cannot_close",
+   "requirement": "Passing zero-subject verification cannot close",
+   "covered_by": "adapter test: a Row A variant with no verification receipt and no check subjects cannot keep a completed closeout",
+   "covered": true
+  },
+  {
+   "id": "stale_proof_blocks_closeout",
+   "requirement": "Stale proof/current-main receipt blocks closeout",
+   "covered_by": "adapter test: Row A variant with a stale current-main receipt downgrades to stale",
+   "covered": true
+  },
+  {
+   "id": "unchanged_progress_update_suppressed",
+   "requirement": "Unchanged progress update is suppressed",
+   "covered_by": "RIPR-SPEC-0218 fixture scenario unchanged_progress_update_suppressed (synthetic mechanics corpus)",
+   "covered": true
+  },
+  {
+   "id": "duplicate_import_deduplicated",
+   "requirement": "Duplicate import of one journey is deduplicated",
+   "covered_by": "adapter test importing the real corpus twice yields two lifecycles with two observations each",
+   "covered": true
+  },
+  {
+   "id": "synthetic_fixtures_outside_real_count",
+   "requirement": "Synthetic pilot fixtures do not enter the real count",
+   "covered_by": "adapter test combining both committed corpora: 13 synthetic lifecycles outside the denominator, 2 real lifecycles inside",
+   "covered": true
+  },
+  {
+   "id": "blocked_unrelated_campaign_does_not_block_closeout",
+   "requirement": "A blocked unrelated campaign does not block valid closeout",
+   "covered_by": "Row A closed while unrelated lanes stayed open; the counting law binds only this row's evidence (documented, not a live experiment)",
+   "covered": true
+  },
+  {
+   "id": "missing_1707_telemetry_not_measured",
+   "requirement": "Missing #1707 telemetry stays not measured",
+   "covered_by": "not measured: no #1707 telemetry exists and none is fabricated; the row keeps zero fabricated evidence",
+   "covered": false
+  }
+ ]
+}

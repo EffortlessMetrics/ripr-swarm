@@ -722,6 +722,7 @@ mod tests {
         // Positive control for the #7741 guard: `--repo-exposure` alongside a
         // candidate-feeding input must flow to evaluation, not the up-front
         // refusal. Advisory visible-only decision, reports written.
+        let fixture = crate::testing::fixture_workspace::hermetic_gate_fixture_root()?;
         let dir = unique_command_test_dir("gate-guidance-plus-exposure");
         std::fs::create_dir_all(&dir).map_err(|err| format!("create gate dir: {err}"))?;
         let exposure = dir.join("repo-exposure.json");
@@ -732,9 +733,7 @@ mod tests {
         gate(&args(&[
             "evaluate",
             "--root",
-            &crate::testing::fixture_workspace::hermetic_gate_fixture_root()?
-                .display()
-                .to_string(),
+            &fixture.path().display().to_string(),
             "--pr-guidance",
             "fixtures/boundary_gap/expected/pr-guidance/exact-line/comments.json",
             "--repo-exposure",
@@ -806,6 +805,7 @@ mod tests {
 
     #[test]
     fn gate_command_writes_visible_only_reports() -> Result<(), CommandError> {
+        let fixture = crate::testing::fixture_workspace::hermetic_gate_fixture_root()?;
         let dir = unique_command_test_dir("gate-visible");
         std::fs::create_dir_all(&dir).map_err(|err| format!("create gate dir: {err}"))?;
         let out = dir.join("gate-decision.json");
@@ -813,9 +813,7 @@ mod tests {
         gate(&args(&[
             "evaluate",
             "--root",
-            &crate::testing::fixture_workspace::hermetic_gate_fixture_root()?
-                .display()
-                .to_string(),
+            &fixture.path().display().to_string(),
             "--pr-guidance",
             "fixtures/boundary_gap/expected/pr-guidance/exact-line/comments.json",
             "--out",
@@ -838,15 +836,14 @@ mod tests {
 
     #[test]
     fn gate_command_writes_blocked_report_before_error() -> Result<(), CommandError> {
+        let fixture = crate::testing::fixture_workspace::hermetic_gate_fixture_root()?;
         let dir = unique_command_test_dir("gate-blocked");
         std::fs::create_dir_all(&dir).map_err(|err| format!("create gate dir: {err}"))?;
         let out = dir.join("gate-decision.json");
         let result = gate(&args(&[
             "evaluate",
             "--root",
-            &crate::testing::fixture_workspace::hermetic_gate_fixture_root()?
-                .display()
-                .to_string(),
+            &fixture.path().display().to_string(),
             "--pr-guidance",
             "fixtures/boundary_gap/expected/pr-guidance/exact-line/comments.json",
             "--mode",
