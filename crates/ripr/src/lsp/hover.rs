@@ -696,7 +696,7 @@ fn push_preview_boundary(lines: &mut Vec<String>, finding: &Finding) {
         lines.push(format!(
             "Static limit: {} \u{2014} {}",
             static_limit_kind.as_str(),
-            static_limit_kind.describe()
+            static_limit_kind.describe_for_family(&finding.probe.family)
         ));
     }
     if finding.language_status.is_some() {

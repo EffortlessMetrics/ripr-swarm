@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/currentness_matrix_tail/input
 
-Summary: 3 probes (0 exposed, 0 weak, 0 unrevealed, 3 no path); 3 of 3 findings unsuppressed
+Summary: 3 probes (0 exposed, 0 weak, 0 unrevealed, 3 no path); 3 of 3 findings unsuppressed (3 base-side evidence, not candidate edit targets)
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 5 changed line(s), 1 candidate line(s), 3 probe(s), 3 finding(s)

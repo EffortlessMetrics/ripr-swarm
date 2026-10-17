@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/owner_return_pin_identity_traps/input
 
-Summary: 6 probes (0 exposed, 4 weak, 0 unrevealed, 0 no path, 2 unknown); 6 of 6 findings unsuppressed
+Summary: 6 probes (0 exposed, 4 weak, 0 unrevealed, 0 no path, 2 unknown); 6 of 6 findings unsuppressed (2 base-side evidence, not candidate edit targets)
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 8 changed line(s), 4 candidate line(s), 6 probe(s), 6 finding(s)
@@ -31,7 +31,7 @@ Next: drill into the top finding:
 No test stub here: the owner is a trait default method or nested function, sits in an impl local to a block or whose self type is not a plain path, sits behind a cfg a plain `cargo test` build may not enable, or takes a typed `self` receiver
 
 Hidden:
-  3 lower-priority finding(s) omitted; 2 base-side evidence, not candidate edit targets.
+  5 finding(s) omitted: 3 lower-priority, 2 base-side evidence (not candidate edit targets).
     - ./src/lib.rs:7 (weak, lower-priority candidate)
     - ./src/lib.rs:7 (unknown, base-side)
     - ./src/lib.rs:50 (weak, lower-priority candidate)

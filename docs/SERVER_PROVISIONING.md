@@ -12,10 +12,16 @@ The VS Code/Open VSX extension resolves the server in this order:
 1. ripr.server.path
 2. bundled server binary, if present
 3. downloaded cached server binary
-4. verified first-run download from GitHub Releases
-5. ripr on PATH
-6. actionable error
+4. ripr on PATH, when `ripr.server.version` is empty (checked before any download)
+5. verified first-run download from GitHub Releases
+6. ripr on PATH, when `ripr.server.version` is set or the download did not produce a server
+7. actionable error
 ```
+
+An unpinned install therefore never makes a network call for a user who already
+installed a compatible `ripr` (cargo, binstall, a package manager). Setting
+`ripr.server.version` asks for that exact managed release, so the download keeps
+its place ahead of `PATH`.
 
 `ripr.server.path` is an override for pinned or enterprise-managed binaries. The
 PATH fallback remains useful for local development and offline installs.
