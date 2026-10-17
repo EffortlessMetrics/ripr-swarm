@@ -124,11 +124,11 @@ An overclaim is a mutant ripr said a test would catch that no test caught. A fal
 
 | Repository | Revision | cargo-mutants | Mutants | Joined | Ambiguous | Unmatched | Canonical-precise |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| rust-hex | `e25a8701f7f6` | 27.1.0 | 86 | 36 | 0 | 48 | 22 |
-| semver | `280ebcb6edac` | 27.1.0 | 365 | 199 | 0 | 140 | 139 |
-| strsim-rs | `dacc84c0dc61` | 27.1.0 | 358 | 126 | 0 | 230 | 95 |
+| rust-hex | `e25a8701f7f6` | 27.1.0 | 86 | 36 | 2 | 48 | 22 |
+| semver | `280ebcb6edac` | 27.1.0 | 365 | 199 | 26 | 140 | 139 |
+| strsim-rs | `dacc84c0dc61` | 27.1.0 | 358 | 126 | 2 | 230 | 95 |
 | bytesize | `66a3715e3336` | 27.1.0 | 362 | 310 | 3 | 49 | 127 |
-| humantime | `76c8929b4cc2` | 27.1.0 | 574 | 185 | 0 | 376 | 110 |
+| humantime | `76c8929b4cc2` | 27.1.0 | 574 | 185 | 13 | 376 | 110 |
 
 Real mutation outcomes by ripr grip class, canonical-precise joins only:
 
@@ -138,6 +138,11 @@ Real mutation outcomes by ripr grip class, canonical-precise joins only:
 | `opaque` | caught 46, missed 1 |
 | `strongly_gripped` | caught 61, missed 2 |
 | `ungripped` | missed 12 |
+
+Overclaim examples, as recorded:
+
+- bytesize `src/lib.rs:240` return_value `ByteSize(size * EB)` is `strongly_gripped`; mutant `replace * with + in ByteSize::eb` was missed.
+- bytesize `src/parse.rs:24` return_value `Ok(Self((v * u) as u64))` is `strongly_gripped`; mutant `replace * with + in <impl str::FromStr for ByteSize>::from_str` was missed.
 
 ## Verdict corpus
 

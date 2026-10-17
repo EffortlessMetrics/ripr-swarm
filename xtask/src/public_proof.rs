@@ -1564,7 +1564,9 @@ fn mutation_section(page: &mut Page, mutation: &Value) -> Result<(), String> {
             req_str(repo, "cargo_mutants_version", &rctx)?,
             req_u64(metrics, "mutants_total", &rctx)?.to_string(),
             req_u64(metrics, "matched_total", &rctx)?.to_string(),
-            req_u64(metrics, "ambiguous_file_line_total", &rctx)?.to_string(),
+            (req_u64(metrics, "ambiguous_file_line_total", &rctx)?
+                + req_u64(metrics, "ambiguous_span_overlap_total", &rctx)?)
+            .to_string(),
             req_u64(metrics, "unmatched_mutants_total", &rctx)?.to_string(),
             req_u64(field(repo, "pairings"), "canonical_precise", &rctx)?.to_string(),
         ]);
@@ -1607,12 +1609,18 @@ fn mutation_section(page: &mut Page, mutation: &Value) -> Result<(), String> {
     page.blank();
     page.table(&["Grip class", "Mutation outcomes"], &grip_rows);
 
-    let examples = items(field(mutation, "disagreement_examples"), "false_gap");
-    if !examples.is_empty() {
-        page.line("False-gap examples, as recorded:");
+    for (key, heading, label) in [
+        ("false_gap", "False-gap examples, as recorded:", "false-gap"),
+        ("overclaim", "Overclaim examples, as recorded:", "overclaim"),
+    ] {
+        let examples = items(field(mutation, "disagreement_examples"), key);
+        if examples.is_empty() {
+            continue;
+        }
+        page.line(heading);
         page.blank();
         for example in examples {
-            let ectx = format!("{ctx} false-gap example");
+            let ectx = format!("{ctx} {label} example");
             let mutant = req_str(example, "mutant", &ectx)?;
             page.line(format!(
                 "- {} `{}:{}` {} `{}` is `{}`; mutant `{}` was {}.",
