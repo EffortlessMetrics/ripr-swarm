@@ -187,6 +187,13 @@ Options:
   --out-dir <path>           Output directory. Defaults to target/ripr/reports.
   --check                    Verify the existing start-here packet is up to date.
 
+Exit status:
+  0  the start-here packet was written, or --check found a current, unblocked packet
+  2  usage error, unresolvable input, or --check found a missing, stale or malformed packet,
+     or a current packet that records a blocked state (wrong root, missing or malformed artifacts)
+  Write mode exits 0 after composing a packet, including a recovery packet; read its
+  Output state, or run --check, to gate on the packet state.
+
 Start-here language:
   - start here: open target/ripr/reports/start-here.md first when it exists
   - safe next action: repair one named gap, regenerate missing evidence, or stop on no-action
