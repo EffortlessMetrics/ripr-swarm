@@ -238,6 +238,26 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
             match JsonRpcMessageCodec::<ClientJsonRpcMessage>::default().decode_eof(&mut bytes) {
                 Ok(Some(message)) => {
                     if let ClientJsonRpcMessage::Request(request) = &message
+                        && serde_json::to_vec(&request.id)
+                            .map(|id| id.len() > super::MAX_REQUEST_ID_BYTES)
+                            .unwrap_or(true)
+                    {
+                        match protocol_error_frame(
+                            -32600,
+                            "MCP request id exceeds the configured byte limit",
+                        ) {
+                            Ok(frame) => self.pending_protocol_error = Some(frame),
+                            Err(error) => {
+                                record_failure(
+                                    &self.failure,
+                                    super::writer::failure_reason(&error),
+                                );
+                                return None;
+                            }
+                        }
+                        continue;
+                    }
+                    if let ClientJsonRpcMessage::Request(request) = &message
                         && self.admission.admit(request.id.clone()).is_err()
                     {
                         record_failure(&self.failure, "MCP admission unavailable");
