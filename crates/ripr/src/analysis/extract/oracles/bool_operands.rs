@@ -635,13 +635,15 @@ fn sides_compare_test_with_non_literal<'a>(mut left: &'a str, mut right: &'a str
                 return is_bool_test(left)
                     || is_bool_test(right)
                     || arithmetic_over_test(left)
-                    || arithmetic_over_test(right);
+                    || arithmetic_over_test(right)
+                    || indexed_by_test(left)
+                    || indexed_by_test(right);
             }
             (true, false) => right,
             (false, true) => left,
             (true, true) => return false,
         };
-        if arithmetic_over_test(other) {
+        if arithmetic_over_test(other) || indexed_by_test(other) {
             return true;
         }
         let (core, _, _) = strip_negations(other);
@@ -660,6 +662,49 @@ fn sequence_elements(side: &str) -> Option<Vec<String>> {
     let contents = super::arguments::delimited_contents_at(array, 0)
         .filter(|contents| array.starts_with('[') && contents.len() + 2 == array.len())?;
     Some(super::arguments::split_top_level_commas(&contents))
+}
+
+/// Whether `side` indexes something by a test
+/// (`table[(r == Err(E::Bad)) as usize]`; #8101). The table may hold the same
+/// value at both positions, so the lookup no longer says whether the test
+/// held, whatever it is compared with.
+fn indexed_by_test(side: &str) -> bool {
+    let masked = mask_comments_and_strings(side);
+    let mut depth = 0usize;
+    let mut open_at = None;
+    for (at, ch) in masked.char_indices() {
+        match ch {
+            '(' | '{' => depth += 1,
+            ')' | '}' => depth = depth.saturating_sub(1),
+            '[' => {
+                if depth == 0 {
+                    open_at = Some(at);
+                }
+                depth += 1;
+            }
+            ']' => {
+                depth = depth.saturating_sub(1);
+                // Every top-level bracket group is read, whatever follows it
+                // (`table[test].name`, `table[test][0]`).
+                if let (0, Some(open)) = (depth, open_at.take()) {
+                    let indexes_a_value = masked[..open]
+                        .trim_end()
+                        .chars()
+                        .next_back()
+                        .is_some_and(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | ')' | ']'));
+                    let index = masked[open + 1..at].trim();
+                    if indexes_a_value
+                        && (is_bool_test(index)
+                            || bool_preserving_operand(index).is_some_and(is_bool_test))
+                    {
+                        return true;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Whether `side` is arithmetic over an integer-cast test and another

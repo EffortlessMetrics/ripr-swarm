@@ -450,6 +450,20 @@ id = "RIPR-SPEC-0005"
 name = "repo seam inventory and test grip"
 spec = "docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md"
 tests = [
+  "crates/ripr/tests/snapshot_return_admission.rs::snapshot_of_an_unrelated_value_cannot_close_the_owner_return",
+  "crates/ripr/tests/snapshot_return_admission.rs::snapshot_of_the_owner_result_binding_keeps_its_grade",
+  "crates/ripr/tests/snapshot_return_admission.rs::snapshot_of_the_direct_owner_call_keeps_its_grade",
+  "crates/ripr/tests/snapshot_return_admission.rs::rebound_owner_result_name_cannot_carry_the_snapshot",
+  "crates/ripr/tests/snapshot_return_admission.rs::independent_literal_assertion_remains_strong_beside_an_unrelated_snapshot",
+  "crates/ripr/tests/snapshot_return_admission.rs::read_only_comparisons_do_not_rebind_the_owner_result",
+  "crates/ripr/tests/snapshot_return_admission.rs::inner_block_owner_binding_cannot_carry_an_outer_literal_snapshot",
+  "crates/ripr/tests/snapshot_return_admission.rs::pattern_binder_shadow_cannot_carry_the_owner_result_snapshot",
+  "crates/ripr/tests/snapshot_return_admission.rs::transformed_owner_call_is_not_the_owner_result",
+  "crates/ripr/tests/snapshot_return_admission.rs::else_if_let_shadow_cannot_carry_the_owner_result_snapshot",
+  "crates/ripr/tests/snapshot_return_admission.rs::later_match_arm_binder_cannot_carry_the_owner_result_snapshot",
+  "crates/ripr/tests/snapshot_return_admission.rs::same_line_rebind_cannot_carry_the_owner_result_snapshot",
+  "crates/ripr/src/analysis/test_grip_evidence/snapshot_owner_binding.rs::tests::reads_and_comparisons_are_not_assignments",
+  "crates/ripr/src/analysis/test_grip_evidence/snapshot_owner_binding.rs::tests::plain_and_compound_assignments_are_assignments",
   "crates/ripr/tests/snapshot_field_admission.rs::snapshot_of_another_receiver_cannot_close_the_owner_field",
   "crates/ripr/tests/snapshot_field_admission.rs::snapshot_without_an_expected_file_cannot_close_the_owner_field",
   "crates/ripr/tests/snapshot_field_admission.rs::snapshot_only_expected_edits_do_not_invent_field_discrimination",
@@ -1597,6 +1611,9 @@ tests = [
   "crates/ripr/tests/task_first_facade.rs::repair_explicit_eligible_seam_starts_one_attempt",
   "crates/ripr/tests/task_first_facade.rs::repair_explicit_ineligible_seam_refuses_without_attempt_or_lock",
   "crates/ripr/tests/task_first_facade.rs::repair_explicit_policy_omitted_gap_and_seam_refuse_without_attempt_or_lock",
+  "crates/ripr/tests/task_first_facade.rs::repair_accepts_the_producer_gap_id_check_prints",
+  "crates/ripr/src/analysis/language/rust/probe_shape.rs::tests::producer_gap_id_names_only_the_seam_it_was_minted_from",
+  "crates/ripr/src/analysis/language/rust/probe_shape.rs::tests::producer_gap_id_rejects_other_languages_and_hash_ids",
   "crates/ripr/tests/task_first_facade.rs::check_drill_down_prints_repair_identity_that_starts_the_same_seam",
   "crates/ripr/tests/task_first_facade.rs::check_drill_down_omits_repair_when_top_seam_is_not_eligible",
   "crates/ripr/tests/task_first_facade.rs::check_drill_down_omits_repair_when_seam_inventory_is_truncated",
@@ -3036,6 +3053,11 @@ id = "RIPR-SPEC-0027"
 name = "TypeScript preview static facts"
 spec = "docs/specs/RIPR-SPEC-0027-typescript-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::report_snippet_collapses_complete_multiline_spans_before_bounding",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::report_snippet_keeps_selected_file_boundaries_and_refuses_invalid_spans",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::report_snippet_marks_only_display_overflow_and_counts_unicode_scalars",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::report_snippet_partial_test_disclosure_preserves_file_line_and_closing_tokens",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::report_snippet_partial_owner_disclosure_preserves_selected_source_identity",
   "crates/ripr/src/analysis/language/typescript/tests/table_case_tests.rs::empty_parameter_tables_register_no_test_evidence",
   "crates/ripr/src/analysis/language/typescript/tests/table_case_tests.rs::empty_tables_preserve_partial_disclosure_for_evaluated_title_expressions",
   "crates/ripr/src/analysis/language/typescript/tests/table_case_tests.rs::empty_tables_preserve_partial_disclosure_for_evaluated_sequence_titles",
@@ -7440,6 +7462,8 @@ id = "RIPR-SPEC-0094"
 name = "observation_unverified guard generalization"
 spec = "docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md"
 tests = [
+  "crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_graph_is_shared_across_changed_arms_cold_and_warm",
+  "crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_graph_rebuilds_after_a_same_path_helper_edit",
   "crates/ripr/src/analysis/facts/cfg_predicates/tests.rs::plain_test_gate_excludes_conditional_attribute_expansion",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::field_projected_collection_repo_seam_retains_indexed_target",
   "crates/ripr/src/analysis/classify/propagation_witness/collection_argument.rs::tests::field_argument_observer_retains_withheld_macro_authority",
@@ -10613,6 +10637,10 @@ id = "RIPR-SPEC-0153"
 name = "Rust producer-owned source role"
 spec = "docs/specs/RIPR-SPEC-0153-rust-source-role.md"
 tests = [
+  "crates/ripr/src/analysis/syntax/ra.rs::tests::ra_adapter_marks_direct_cfg_helpers_without_registering_tests",
+  "crates/ripr/src/analysis/facts/test_styles/tests.rs::direct_cfg_helpers_have_evidence_role_on_parser_and_lexical_paths",
+  "crates/ripr/src/analysis/source_role_corpus.rs::direct_cfg_helpers_keep_one_executable_test_and_production_controls",
+  "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_skips_direct_cfg_helpers_and_keeps_production_controls",
   "crates/ripr/src/analysis/facts/cfg_predicates/tests.rs::plain_test_gate_excludes_conditional_attribute_expansion",
   "crates/ripr/tests/cache_clear_safety.rs::classified_cache_cargo_config_edit_revert_rename_delete_matches_cold",
   "crates/ripr/tests/cache_clear_safety.rs::classified_cache_saved_test_edit_revert_rename_delete_matches_cold",
@@ -14908,6 +14936,8 @@ tests = [
   "crates/ripr/src/analysis/classify/activation.rs::field_reads_count_only_on_the_owner_result",
   "crates/ripr/src/analysis/classify/element_field_pin.rs::tests::a_test_pinning_the_probed_element_observes_its_field",
   "crates/ripr/src/analysis/classify/element_field_pin.rs::tests::a_sibling_field_that_may_exit_before_the_assertion_observes_nothing",
+  "crates/ripr/src/analysis/classify/element_field_pin.rs::tests::a_drop_impl_with_a_body_is_not_plain",
+  "crates/ripr/tests/returned_element_field_pin.rs::a_non_plain_drop_on_the_element_type_keeps_the_gap",
   "crates/ripr/src/analysis/classify/element_field_pin.rs::tests::a_membership_another_element_may_satisfy_observes_nothing",
   "crates/ripr/src/analysis/classify/element_field_pin.rs::tests::a_test_that_does_not_pin_the_element_alone_observes_nothing",
   "crates/ripr/src/analysis/classify/element_field_pin.rs::tests::an_owner_that_is_not_one_array_of_one_struct_is_not_read",
@@ -14936,6 +14966,14 @@ tests = [
   "crates/ripr/tests/variant_field_pattern.rs::a_test_side_build_or_input_stays_unconfirmed",
 ]
 fixtures = [
+  "fixtures/rust_array_element_drop_exit",
+  "fixtures/rust_array_element_drop_plain",
+  "fixtures/rust_array_element_drop_exit/expected/check.json",
+  "fixtures/rust_array_element_drop_exit/expected/human.txt",
+  "fixtures/rust_array_element_drop_exit/expected/human-full.txt",
+  "fixtures/rust_array_element_drop_plain/expected/check.json",
+  "fixtures/rust_array_element_drop_plain/expected/human.txt",
+  "fixtures/rust_array_element_drop_plain/expected/human-full.txt",
   "fixtures/rust_array_sibling_exit_field",
   "fixtures/rust_array_sibling_plain_field",
   "fixtures/rust_array_sibling_exit_field/expected/check.json",
@@ -15148,6 +15186,13 @@ tests = [
   "crates/ripr/tests/match_arm_helper_selection.rs::a_helper_lent_literal_that_selects_the_arm_exposes_it",
   "crates/ripr/tests/match_arm_helper_selection.rs::a_helper_lent_literal_for_another_arm_does_not_expose_it",
   "crates/ripr/tests/match_arm_helper_selection.rs::a_variable_helper_argument_does_not_expose_the_arm",
+  "crates/ripr/tests/match_arm_helper_selection.rs::a_macro_defined_same_named_fn_does_not_expose_the_arm",
+  "crates/ripr/tests/match_arm_helper_selection.rs::a_macro_defining_an_unrelated_fn_still_exposes_the_arm",
+  "crates/ripr/tests/match_arm_helper_selection.rs::the_macro_alone_defeats_the_helper_credit",
+  "crates/ripr/src/analysis/classify/macro_item_names.rs::tests::a_std_expression_macro_mentioning_the_name_defines_nothing",
+  "crates/ripr/src/analysis/classify/macro_item_names.rs::tests",
+  "crates/ripr/src/analysis/classify/helper_transfer.rs::tests::test_call_is_shadowed_by_a_macro_defined_same_named_fn",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::macro_defined_same_name_is_a_foreign_rebind_for_every_gate_caller",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::refutable_or_unprovable_patterns_stay_unknown",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::computed_or_rebound_scrutinee_establishes_nothing",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_match_the_call_may_skip_never_credits_the_arm",
@@ -15248,6 +15293,7 @@ code = [
   "crates/ripr/src/analysis/classify/activation.rs",
   "crates/ripr/src/analysis/classify/arm_selection.rs",
   "crates/ripr/src/analysis/classify/infection.rs",
+  "crates/ripr/src/analysis/classify/macro_item_names.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/classifier/evidence.rs",
   "crates/ripr/src/analysis/probes/diff.rs",
@@ -15334,6 +15380,7 @@ tests = [
   "crates/ripr/src/analysis/extract/oracles/relational_tests.rs::a_shared_constructor_does_not_hide_a_test_compared_with_a_non_literal",
   "crates/ripr/src/analysis/extract/oracles/relational_tests.rs::arithmetic_over_a_cast_test_does_not_pin_the_test",
   "crates/ripr/src/analysis/extract/oracles/relational_tests.rs::a_sequence_does_not_hide_a_test_compared_with_a_non_literal",
+  "crates/ripr/src/analysis/extract/oracles/relational_tests.rs::indexing_by_a_test_does_not_pin_the_test",
   "crates/ripr/src/analysis/extract/oracles/patterns.rs::spec_0106_tests::deciding_disjunctions_are_found_past_comments_and_groups",
   "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_inequality_spellings_are_weak",
   "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_inequality_helper_keeps_observer_readings",
@@ -16379,3 +16426,33 @@ outputs = [
   "docs/specs/RIPR-SPEC-0268-flow-sink-row-collapse.md",
 ]
 metrics = ["unit_test_pass_rate"]
+
+[[behavior]]
+id = "RIPR-SPEC-0278"
+name = "Issue lifecycle real closeout rows pilot over two captured journeys"
+spec = "docs/specs/RIPR-SPEC-0278-issue-lifecycle-real-closeout-rows.md"
+tests = [
+  "xtask/src/issue_lifecycle_real_rows.rs::tests::both_real_rows_load_with_intact_provenance_bindings",
+  "xtask/src/issue_lifecycle_real_rows.rs::tests::row_a_dispositions_through_to_completed_closeout",
+  "xtask/src/issue_lifecycle_real_rows.rs::tests::row_b_stays_merged_pending_closeout",
+  "xtask/src/issue_lifecycle_real_rows.rs::tests::wrong_head_or_merge_identity_variant_rejects",
+  "xtask/src/issue_lifecycle_real_rows.rs::tests::zero_subject_verification_cannot_close",
+  "xtask/src/issue_lifecycle_real_rows.rs::tests::missing_or_stale_current_head_proof_blocks_closeout",
+  "xtask/src/issue_lifecycle_real_rows.rs::tests::uncovered_acceptance_row_keeps_a_merge_partial",
+  "xtask/src/issue_lifecycle_real_rows.rs::tests::duplicate_import_deduplicates_by_observation_key",
+  "xtask/src/issue_lifecycle_real_rows.rs::tests::synthetic_fixtures_stay_outside_the_real_count",
+]
+fixtures = [
+  "fixtures/issue_lifecycle_real_rows",
+]
+code = [
+  "xtask/src/issue_lifecycle_real_rows.rs",
+  "xtask/src/fixture_contracts/general_validators.rs",
+  "xtask/src/reports/fixtures.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0278-issue-lifecycle-real-closeout-rows.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

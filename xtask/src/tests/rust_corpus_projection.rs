@@ -127,7 +127,7 @@ fn genuine_rust_capture(root: &Path) -> ProofResult<Value> {
     let corpus = &value["source_subject"]["corpus"];
     require(
         corpus["scope"] == "rust_workspace"
-            && corpus["cache_schema_version"] == CURRENT_CORPUS_CACHE_SCHEMA_VERSION
+            && corpus["cache_schema_version"] == "1.81"
             && corpus["files_content_hash"].as_str().is_some_and(|hash| {
                 hash.len() == 16
                     && hash

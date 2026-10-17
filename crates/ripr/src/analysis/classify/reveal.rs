@@ -21,7 +21,7 @@ use super::builder_override::{
 };
 use super::propagation_witness::{
     assertion_field_collection_reads, assertion_keyed_getter_reads,
-    assertion_observes_direct_collection_in_test, direct_collection_mutation_receiver,
+    assertion_observes_direct_collection_in_test_for_probe, direct_collection_mutation_receiver,
     field_collection_insert_key, field_collection_write_appends, field_collection_write_path,
 };
 use super::reach::{invokes_opaque_macro, is_proximity_only};
@@ -451,13 +451,19 @@ fn effect_observer_confirms(assertion: &OracleFact) -> bool {
 
 fn collection_observer_confirms(
     expression: &str,
+    count_reads: bool,
     test: &TestSummary,
     assertion: &OracleFact,
 ) -> bool {
     let Some(receiver) = direct_collection_mutation_receiver(expression) else {
         return false;
     };
-    assertion_observes_direct_collection_in_test(&assertion.text, receiver, &test.body)
+    assertion_observes_direct_collection_in_test_for_probe(
+        &assertion.text,
+        receiver,
+        &test.body,
+        count_reads,
+    )
 }
 
 /// RIPR-SPEC-0228: whether `assertion` observes the field collection `path`
@@ -2111,8 +2117,16 @@ fn analyze_related_assertions(
                 let observation_confirmed = !self_computed
                     && (!confirm_required
                         || (confirms_observation
-                            && (collection_observer_confirms(&probe.expression, test, assertion)
-                                || field_collection_read
+                            && (collection_observer_confirms(
+                                &probe.expression,
+                                // #6640: only a deleted push changes how
+                                // many elements the collection holds; a
+                                // changed pushed value does not, so a pure
+                                // count read confirms only CallDeletion.
+                                matches!(probe.family, ProbeFamily::CallDeletion),
+                                test,
+                                assertion,
+                            ) || field_collection_read
                                 || collection_argument_read
                                 || (direct_collection_mutation_receiver(&probe.expression)
                                     .is_none()
@@ -3843,6 +3857,9 @@ pub(in crate::analysis) fn file_imports_foreign_callee_name(
     crate_names: &std::collections::BTreeSet<String>,
 ) -> bool {
     use_statements_import_foreign_callee_name(&file_use_statements(source), callee, crate_names)
+        // #7985: a macro that may define an item of the name rebinds it as
+        // an import does, for every direct caller of this shared gate.
+        || super::macro_item_names::macro_may_define_item_named(source, callee)
 }
 
 /// The crate-identifier form of a manifest name: hyphens normalize to
@@ -3865,9 +3882,31 @@ fn crate_identifier(name: &str) -> String {
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct FileUseStatements {
     by_file: std::cell::RefCell<std::collections::BTreeMap<std::path::PathBuf, Vec<String>>>,
+    /// #7985: per file and name, whether a macro invocation may define an
+    /// item of that name.
+    macro_defined:
+        std::cell::RefCell<std::collections::BTreeMap<(std::path::PathBuf, String), bool>>,
 }
 
 impl FileUseStatements {
+    /// #7985: whether a macro in `source` may define an item named
+    /// `callee`, which makes a bare call of the name ambiguous exactly as a
+    /// foreign import does. Scanned once per file and name.
+    pub(in crate::analysis) fn macro_may_define_callee_name(
+        &self,
+        file: &std::path::Path,
+        source: &str,
+        callee: &str,
+    ) -> bool {
+        let key = (file.to_path_buf(), callee.to_string());
+        if let Some(known) = self.macro_defined.borrow().get(&key) {
+            return *known;
+        }
+        let defined = super::macro_item_names::macro_may_define_item_named(source, callee);
+        self.macro_defined.borrow_mut().insert(key, defined);
+        defined
+    }
+
     /// `use_statements_import_foreign_callee_name` over `source`'s statements,
     /// scanning `source` only on the first query for `file`. Every caller
     /// must pass the indexed source that `file` resolves to.
@@ -4911,6 +4950,40 @@ mod tests {
         ));
         let value_side = "fn case() {\n    let mut shelf = Shelf::new();\n    shelf.stock = BTreeMap::from([(\"B\", \"A\")]);\n    shelf.restock(\"A\", 2);\n    assert_eq!(shelf.stock.len(), 2);\n}";
         assert!(confirms(value_side, "assert_eq!(shelf.stock.len(), 2);", 5));
+    }
+
+    /// #6640 (spec0231-oracle-events-sent-len-eq): `send(&mut events, 7)`
+    /// followed by `assert_eq!(events.len(), 1)` pins the count, not the
+    /// pushed id — a `push(id + 1)` mutant passes it. The count read must
+    /// confirm only a deleted push, never the payload; payload reads and
+    /// wrong-receiver refusals are unchanged.
+    #[test]
+    fn direct_collection_count_read_confirms_only_call_deletion() {
+        let confirms = |count_reads: bool, assertion_text: &str| {
+            let test = test_with_body_assertions(
+                "send_records_one_event",
+                "fn send_records_one_event() {\n    let mut events = Vec::new();\n    send(&mut events, 7);\n}",
+                vec![oracle(
+                    assertion_text,
+                    OracleKind::ExactValue,
+                    OracleStrength::Strong,
+                )],
+            );
+            collection_observer_confirms(
+                "events.push(0 + id)",
+                count_reads,
+                &test,
+                &test.assertions[0],
+            )
+        };
+        assert!(!confirms(false, "assert_eq!(events.len(), 1);"));
+        assert!(!confirms(false, "assert!(events.is_empty());"));
+        assert!(confirms(true, "assert_eq!(events.len(), 1);"));
+        assert!(confirms(false, "assert_eq!(events, vec![7]);"));
+        assert!(confirms(false, "assert_eq!(events[0], 7);"));
+        assert!(confirms(false, "assert_eq!(events.contains(&7), true);"));
+        assert!(!confirms(true, "assert_eq!(other.len(), 1);"));
+        assert!(!confirms(false, "assert_eq!(other, vec![7]);"));
     }
     /// RIPR-SPEC-0228 keyed reads: a `#[should_panic]` test passes when the
     /// compared values differ, so it never confirms a keyed read.
@@ -8408,6 +8481,25 @@ return Err(\"typed pin\".into());
             file_imports_foreign_callee_name(import, "expect_response", &foreign_names),
             "a foreign first segment must still defeat"
         );
+    }
+
+    /// #7985: the shared gate (also read by the owner-pin callers) treats a
+    /// macro that may define the name as a rebind; an unrelated macro is not.
+    #[test]
+    fn macro_defined_same_name_is_a_foreign_rebind_for_every_gate_caller() {
+        let crate_names = std::collections::BTreeSet::new();
+        let defines = "macro_rules! fake {\n    () => { fn expect_response() {} };\n}\nfake!();\n";
+        assert!(file_imports_foreign_callee_name(
+            defines,
+            "expect_response",
+            &crate_names
+        ));
+        let unrelated = defines.replace("fn expect_response", "fn other_name");
+        assert!(!file_imports_foreign_callee_name(
+            &unrelated,
+            "expect_response",
+            &crate_names
+        ));
     }
 
     /// #3731 review (G1): the cross-package same-name defeat threads

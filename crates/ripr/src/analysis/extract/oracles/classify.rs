@@ -1508,6 +1508,64 @@ mod tests {
         Ok(())
     }
 
+    /// #7900: `x.m() || !x.m()` on one receiver is a tautology for any
+    /// method, including through a snapshot wrapper that would otherwise
+    /// grade medium. Different receivers, different methods, and `&&`
+    /// keep the snapshot reading.
+    #[test]
+    fn same_receiver_method_or_negation_is_a_tautology() -> Result<(), String> {
+        use OracleKind::{RelationalCheck, Snapshot};
+        use OracleStrength::{Medium, Weak};
+        let mut mismatches = Vec::new();
+        for (text, expected_kind, expected_strength) in [
+            (
+                "assert!(r.is_empty() || !r.is_empty());",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(!r.is_empty() || r.is_empty());",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(r.is_empty() || !(r.is_empty()));",
+                RelationalCheck,
+                Weak,
+            ),
+            ("assert!(r.is_ok() || !r.is_ok());", RelationalCheck, Weak),
+            (
+                r#"expect![["true"]].assert_eq(&(r.is_empty() || !r.is_empty()).to_string());"#,
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                r#"expect![["true"]].assert_eq(&(a.is_empty() || !b.is_empty()).to_string());"#,
+                Snapshot,
+                Medium,
+            ),
+            (
+                r#"expect![["true"]].assert_eq(&(r.is_empty() || !r.is_ok()).to_string());"#,
+                Snapshot,
+                Medium,
+            ),
+            (
+                r#"expect![["true"]].assert_eq(&(r.is_empty() && !r.is_empty()).to_string());"#,
+                Snapshot,
+                Medium,
+            ),
+        ] {
+            if let Err(mismatch) = require_classification(text, expected_kind, expected_strength) {
+                mismatches.push(mismatch);
+            }
+        }
+        if mismatches.is_empty() {
+            Ok(())
+        } else {
+            Err(mismatches.join("\n"))
+        }
+    }
+
     /// Rules 2 and 3 through the classifier and the scanner that feed
     /// related tests, not only through the pattern reader.
     #[test]
@@ -1812,6 +1870,44 @@ fn ok_literal() {
                 "(check(300)).expect_err(\"too long\");",
                 vec![(BroadError, Weak)],
             ),
+            // Optional whitespace between `expect_err` and `(` is still
+            // `Result::expect_err`, not mockall's `expect_err` (#7979).
+            (
+                "expect_err_spaced",
+                "check(300).expect_err ( \"too long\" );",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_ufcs",
+                "Result::expect_err(check(300), \"too long\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_ufcs_spaced",
+                "Result::expect_err (check(300), \"too long\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_ufcs_error_mapped",
+                "Result::expect_err(check(300).map_err(Wrap), \"too long\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_ufcs_fallback_error",
+                "Result::expect_err(check(300).and(Err(E::Other)), \"too long\");",
+                vec![],
+            ),
+            // A returned or operand UFCS value is used, not discarded.
+            (
+                "expect_err_ufcs_returned",
+                "return Result::expect_err(check(300), \"too long\");",
+                vec![],
+            ),
+            (
+                "expect_err_ufcs_negated",
+                "!Result::expect_err(check(300), \"too long\");",
+                vec![],
+            ),
             (
                 "expect_err_compared_binding",
                 "let e = check(300).expect_err(\"too long\");\n    assert_eq!(e, E::TooLong);",
@@ -1844,6 +1940,19 @@ fn ok_literal() {
                 "mock.expect_err();",
                 vec![(MockExpectation, Medium)],
             ),
+            // `expect_err` at byte 0 is not `.expect_err` / `Result::expect_err`;
+            // the matcher must not subtract before that check (debug overflow
+            // on GitHub Hosted ripr-pr).
+            (
+                "mock_expectation_for_err_method_at_line_start",
+                "expect_err();",
+                vec![(MockExpectation, Medium)],
+            ),
+            (
+                "mock_expectation_message_at_line_start",
+                "expect_err(\"too long\");",
+                vec![(MockExpectation, Medium)],
+            ),
             (
                 "mock_expectation_for_err_method_configured",
                 "mock.expect_err().returning(|| ());",
@@ -1859,6 +1968,11 @@ fn ok_literal() {
             (
                 "mock_expectation_for_err_method_spaced",
                 "MockFoo::new().expect_err( );",
+                vec![(MockExpectation, Medium)],
+            ),
+            (
+                "mock_expectation_for_err_method_space_before_paren",
+                "MockFoo::new().expect_err ();",
                 vec![(MockExpectation, Medium)],
             ),
             // A comment is not an argument.

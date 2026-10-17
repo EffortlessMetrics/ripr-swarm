@@ -1131,10 +1131,15 @@ pub fn resolve_base_commit(
 /// to `<branch>`, or a `git branch` copy) is not a candidate, and neither
 /// is a branch whose resulting tree matches `HEAD`'s despite distinct
 /// commits: advising either would reproduce the empty result. Bounded like
-/// the default-base failure context; any Git failure answers `false`, so
+/// the default-base failure context; any Git failure answers `None`, so
 /// callers never advise a `--base` repair that this probe could not
 /// support (#7644).
-pub fn another_base_candidate_exists(root: &Path, git_timeout: Option<Duration>) -> bool {
+/// The first branch (in `for-each-ref` order) that
+/// could serve as one, named as a usable
+/// `--base` value (`main`, `origin/main`). Callers that advise a
+/// `--base` repair must name this probed ref, never a hardcoded
+/// example, and must not name the base already in use.
+pub fn another_base_candidate(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
     let git_lines = |args: &[&str]| -> Vec<String> {
         crate::git::run_git_output_with_deadline(root, args, git_timeout)
             .ok()
@@ -1164,11 +1169,9 @@ pub fn another_base_candidate_exists(root: &Path, git_timeout: Option<Duration>)
             .map(str::to_string)
     })
     .filter(|name| !current.contains(name));
-    let Some(head_commit) = resolve_base_commit(root, Some("HEAD"), git_timeout) else {
-        return false;
-    };
+    let head_commit = resolve_base_commit(root, Some("HEAD"), git_timeout)?;
     const MERGE_BASE_PROBE_CAP: usize = 64;
-    others.take(MERGE_BASE_PROBE_CAP).any(|name| {
+    others.take(MERGE_BASE_PROBE_CAP).find(|name| {
         let merge_base_differs = crate::git::run_git_output_with_deadline(
             root,
             &["merge-base", name.as_str(), "HEAD"],
@@ -2510,20 +2513,26 @@ mod tests {
         ignore_remove_dir_all(&dir);
         init_git_repo(&dir, "master")?;
         assert!(
-            !another_base_candidate_exists(&dir, None),
+            another_base_candidate(&dir, None).is_none(),
             "a lone branch must not count as its own --base candidate"
         );
+        assert_eq!(another_base_candidate(&dir, None), None);
         run_git_checked(&dir, &["branch", "base-candidate"])?;
         assert!(
-            !another_base_candidate_exists(&dir, None),
+            another_base_candidate(&dir, None).is_none(),
             "an alias at HEAD's own commit must not count as a --base candidate"
         );
         fs::write(dir.join("README"), "second")?;
         run_git_checked(&dir, &["add", "."])?;
         run_git_checked(&dir, &["commit", "-m", "second"])?;
         assert!(
-            another_base_candidate_exists(&dir, None),
+            another_base_candidate(&dir, None).is_some(),
             "an ancestor branch sharing history must count as a --base candidate"
+        );
+        assert_eq!(
+            another_base_candidate(&dir, None).as_deref(),
+            Some("base-candidate"),
+            "the probe must name the actual candidate a --base repair would use"
         );
         // A descendant branch has HEAD as its merge base: not a candidate.
         run_git_checked(&dir, &["checkout", "-b", "descendant"])?;
@@ -2533,7 +2542,7 @@ mod tests {
         run_git_checked(&dir, &["checkout", "master"])?;
         run_git_checked(&dir, &["branch", "-D", "base-candidate"])?;
         assert!(
-            !another_base_candidate_exists(&dir, None),
+            another_base_candidate(&dir, None).is_none(),
             "a descendant of HEAD must not count as a --base candidate"
         );
         ignore_remove_dir_all(&dir);
@@ -2555,7 +2564,7 @@ mod tests {
         run_git_checked(&dir, &["add", "."])?;
         run_git_checked(&dir, &["commit", "-m", "restore"])?;
         assert!(
-            !another_base_candidate_exists(&dir, None),
+            another_base_candidate(&dir, None).is_none(),
             "a range restoring the merge-base tree must not count as a --base candidate"
         );
         ignore_remove_dir_all(&dir);
@@ -2582,7 +2591,7 @@ mod tests {
         run_git_checked(&dir, &["add", "."])?;
         run_git_checked(&dir, &["commit", "-m", "outside sub"])?;
         assert!(
-            !another_base_candidate_exists(&sub, None),
+            another_base_candidate(&sub, None).is_none(),
             "a branch differing only outside the analysis root must not count"
         );
         // A later change inside `sub` makes the same branch a candidate.
@@ -2590,7 +2599,7 @@ mod tests {
         run_git_checked(&dir, &["add", "."])?;
         run_git_checked(&dir, &["commit", "-m", "inside sub"])?;
         assert!(
-            another_base_candidate_exists(&sub, None),
+            another_base_candidate(&sub, None).is_some(),
             "a branch differing inside the analysis root must count"
         );
         ignore_remove_dir_all(&dir);
