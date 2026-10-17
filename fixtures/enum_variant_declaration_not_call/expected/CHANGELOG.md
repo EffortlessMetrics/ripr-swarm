@@ -208,3 +208,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — enum_variant_declaration_not_call (18)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless enum_variant_declaration_not_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

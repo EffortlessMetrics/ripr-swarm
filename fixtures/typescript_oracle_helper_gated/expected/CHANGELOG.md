@@ -360,3 +360,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_oracle_helper_gated (18)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless typescript_oracle_helper_gated --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
