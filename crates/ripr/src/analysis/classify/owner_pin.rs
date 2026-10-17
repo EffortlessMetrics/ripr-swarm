@@ -2135,6 +2135,232 @@ struct WholeValueField {
     string_from_may_be_rebound: bool,
 }
 
+/// #8480: records constructed in exit positions of `body`: the block
+/// tail and every `return` value of the owner itself (a `return` inside
+/// a nested closure or item returns from that closure or item, not the
+/// owner), plus records a `let` or assignment binds and an exit value
+/// then names. Deduplicated by source range.
+fn exit_position_records(body: &ast::BlockExpr) -> Vec<ast::RecordExpr> {
+    let mut records: Vec<ast::RecordExpr> = Vec::new();
+    let mut roots: Vec<ast::Expr> = Vec::new();
+    if let Some(tail) = body.stmt_list().and_then(|list| list.tail_expr()) {
+        roots.push(tail);
+    }
+    for node in body.syntax().descendants() {
+        let Some(returned) = ast::ReturnExpr::cast(node) else {
+            continue;
+        };
+        let nested = returned
+            .syntax()
+            .ancestors()
+            .take_while(|ancestor| ancestor != body.syntax())
+            .any(|ancestor| {
+                ast::ClosureExpr::can_cast(ancestor.kind()) || ast::Fn::can_cast(ancestor.kind())
+            });
+        if !nested && let Some(value) = returned.expr() {
+            roots.push(value);
+        }
+    }
+    for root in &roots {
+        collect_exit_records(root, &mut records);
+    }
+    // A record bound by a `let` or an assignment becomes the result
+    // when an exit value names the binding; follow such names through
+    // binding initializers to a fixed point. Bindings no exit value
+    // names stay local.
+    let mut sought: BTreeSet<String> = roots
+        .iter()
+        .flat_map(|root| syntax_identifiers(root.syntax()))
+        .collect();
+    let mut bindings: Vec<(String, ast::Expr)> = Vec::new();
+    for node in body.syntax().descendants() {
+        if let Some(binding) = ast::LetStmt::cast(node.clone())
+            && let Some(initializer) = binding.initializer()
+        {
+            let names: Vec<String> = binding
+                .pat()
+                .map(|pat| {
+                    pat.syntax()
+                        .descendants()
+                        .filter_map(ast::IdentPat::cast)
+                        .filter_map(|ident| ident.name().map(|name| name.text().to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            // A pattern binding no name (`let _ = ..`, a literal
+            // pattern) cannot carry the value into an exit value.
+            for name in names {
+                bindings.push((name, initializer.clone()));
+            }
+        }
+        if let Some(binary) = ast::BinExpr::cast(node)
+            && matches!(binary.op_kind(), Some(ast::BinaryOp::Assignment { .. }))
+            && let (Some(lhs), Some(rhs)) = (binary.lhs(), binary.rhs())
+            && let ast::Expr::PathExpr(path) = unwrap_exit_parens(&lhs)
+            && let Some(name) = path
+                .path()
+                .and_then(|path| path.segment())
+                .map(|segment| segment.syntax().text().to_string())
+        {
+            bindings.push((name, rhs));
+        }
+    }
+    let mut resolved: BTreeSet<(usize, usize)> = BTreeSet::new();
+    loop {
+        let mut progressed = false;
+        for (name, initializer) in &bindings {
+            let range = initializer.syntax().text_range();
+            let key = (usize::from(range.start()), usize::from(range.end()));
+            if !sought.contains(name) || !resolved.insert(key) {
+                continue;
+            }
+            collect_exit_records(initializer, &mut records);
+            for identifier in syntax_identifiers(initializer.syntax()) {
+                sought.insert(identifier);
+            }
+            progressed = true;
+        }
+        if !progressed {
+            break;
+        }
+    }
+    records
+}
+
+fn syntax_identifiers(node: &SyntaxNode) -> Vec<String> {
+    node.descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| token.kind() == ra_ap_syntax::SyntaxKind::IDENT)
+        .map(|token| token.text().to_string())
+        .collect()
+}
+
+fn push_record(record: &ast::RecordExpr, records: &mut Vec<ast::RecordExpr>) {
+    let range = record.syntax().text_range();
+    if !records
+        .iter()
+        .any(|known| known.syntax().text_range() == range)
+    {
+        records.push(record.clone());
+    }
+}
+
+fn collect_all_records(node: &SyntaxNode, records: &mut Vec<ast::RecordExpr>) {
+    for descendant in node.descendants() {
+        if let Some(record) = ast::RecordExpr::cast(descendant) {
+            push_record(&record, records);
+        }
+    }
+}
+
+fn unwrap_exit_parens(expression: &ast::Expr) -> ast::Expr {
+    let mut expression = expression.clone();
+    while let ast::Expr::ParenExpr(paren) = &expression {
+        let Some(inner) = paren.expr() else {
+            break;
+        };
+        expression = inner;
+    }
+    expression
+}
+
+/// Collect records in `expression`, which sits in an exit position.
+/// Only wrappers that carry a value into the result are followed;
+/// every other shape in an exit position fails closed and contributes
+/// all of its records.
+fn collect_exit_records(expression: &ast::Expr, records: &mut Vec<ast::RecordExpr>) {
+    match expression {
+        ast::Expr::RecordExpr(record) => {
+            push_record(record, records);
+            if let Some(fields) = record.record_expr_field_list() {
+                for field in fields.fields() {
+                    if let Some(value) = field.expr() {
+                        collect_exit_records(&value, records);
+                    }
+                }
+                if let Some(spread) = fields.spread() {
+                    collect_exit_records(&spread, records);
+                }
+            }
+        }
+        ast::Expr::ParenExpr(paren) => {
+            if let Some(inner) = paren.expr() {
+                collect_exit_records(&inner, records);
+            }
+        }
+        ast::Expr::BlockExpr(block) => {
+            if let Some(tail) = block.stmt_list().and_then(|list| list.tail_expr()) {
+                collect_exit_records(&tail, records);
+            }
+        }
+        ast::Expr::IfExpr(if_expr) => {
+            if let Some(then_branch) = if_expr.then_branch() {
+                collect_exit_records(&ast::Expr::BlockExpr(then_branch), records);
+            }
+            match if_expr.else_branch() {
+                Some(ast::ElseBranch::Block(block)) => {
+                    collect_exit_records(&ast::Expr::BlockExpr(block), records);
+                }
+                Some(ast::ElseBranch::IfExpr(else_if)) => {
+                    collect_exit_records(&ast::Expr::IfExpr(else_if), records);
+                }
+                None => {}
+            }
+        }
+        ast::Expr::MatchExpr(match_expr) => {
+            if let Some(arms) = match_expr.match_arm_list() {
+                for arm in arms.arms() {
+                    if let Some(value) = arm.expr() {
+                        collect_exit_records(&value, records);
+                    }
+                }
+            }
+        }
+        ast::Expr::CallExpr(call) => {
+            if let Some(args) = call.arg_list() {
+                for arg in args.args() {
+                    collect_exit_records(&arg, records);
+                }
+            }
+        }
+        ast::Expr::TupleExpr(tuple) => {
+            for field in tuple.fields() {
+                collect_exit_records(&field, records);
+            }
+        }
+        ast::Expr::ArrayExpr(array) => {
+            for element in array.exprs() {
+                collect_exit_records(&element, records);
+            }
+        }
+        ast::Expr::ReturnExpr(returned) => {
+            if let Some(value) = returned.expr() {
+                collect_exit_records(&value, records);
+            }
+        }
+        ast::Expr::BreakExpr(break_expr) => {
+            if let Some(value) = break_expr.expr() {
+                collect_exit_records(&value, records);
+            }
+        }
+        ast::Expr::TryExpr(try_expr) => {
+            if let Some(value) = try_expr.expr() {
+                collect_exit_records(&value, records);
+            }
+        }
+        ast::Expr::AwaitExpr(await_expr) => {
+            if let Some(value) = await_expr.expr() {
+                collect_exit_records(&value, records);
+            }
+        }
+        ast::Expr::PathExpr(_)
+        | ast::Expr::Literal(_)
+        | ast::Expr::ContinueExpr(_)
+        | ast::Expr::UnderscoreExpr(_) => {}
+        other => collect_all_records(other.syntax(), records),
+    }
+}
+
 impl OwnerReturnPin {
     /// The owner-side gates: `None` when the probe is not a return value
     /// (or a changed `return Err(..)`, filed as `error_path`),
@@ -2269,10 +2495,18 @@ impl OwnerReturnPin {
         })
     }
 
-    /// Whether every record type constructed in the owner's return
-    /// expression has at most a plain `Drop` impl in the workspace (#8480).
-    /// Types constructed nowhere in the body (scalar returns, calls) have
-    /// nothing to refuse.
+    /// Whether every record type constructed in an exit position of
+    /// the owner has at most a plain `Drop` impl in the workspace
+    /// (#8480). Exit positions are values that can become the function
+    /// result: the block tail, a `return` value, branch and match-arm
+    /// tails feeding one of those, and records nested in wrappers along
+    /// such a path. Records built only in non-exit positions (let
+    /// initializers that are not returned, statement expressions,
+    /// conditions, loop bodies, statement call arguments) drop inside
+    /// the owner and do not refuse. Shapes ripr cannot place in one of
+    /// those positions fail closed and still count as exit positions.
+    /// Types constructed in no exit position (scalar returns, calls)
+    /// have nothing to refuse.
     pub(in crate::analysis) fn returned_types_drop_plain(
         owner: &FunctionSummary,
         index: &RustIndex,
@@ -2287,20 +2521,17 @@ impl OwnerReturnPin {
         let Some(body) = function.body() else {
             return false;
         };
-        body.syntax()
-            .descendants()
-            .filter_map(ast::RecordExpr::cast)
-            .all(|record| {
-                record
-                    .path()
-                    .and_then(|path| path.segment())
-                    .is_some_and(|segment| {
-                        super::element_field_pin::drop_is_plain(
-                            index,
-                            &segment.syntax().text().to_string(),
-                        )
-                    })
-            })
+        exit_position_records(&body).iter().all(|record| {
+            record
+                .path()
+                .and_then(|path| path.segment())
+                .is_some_and(|segment| {
+                    super::element_field_pin::drop_is_plain(
+                        index,
+                        &segment.syntax().text().to_string(),
+                    )
+                })
+        })
     }
 
     /// #6692: the owner-side gates for a `field_construction` probe in a

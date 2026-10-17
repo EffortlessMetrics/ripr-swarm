@@ -1634,6 +1634,63 @@ mod tests {
         Ok(())
     }
 
+    /// #8480 exit-position narrowing: a non-plain Drop record built only
+    /// as a local guard drops inside the owner, so a return_value finding
+    /// for the plain record the owner returns stays exposed. The scalar
+    /// form of this shape is covered by the
+    /// `rust_returned_type_drop_local_guard` fixture.
+    #[test]
+    fn a_local_non_plain_drop_guard_keeps_return_value_exposed() -> Result<(), String> {
+        use crate::domain::ExposureClass;
+
+        let source = "#[derive(Debug, PartialEq)]\npub struct Cfg {\n    pub n: u32,\n}\n\nimpl Drop for Cfg {\n    fn drop(&mut self) {\n    }\n}\n\npub struct Guard {\n    pub n: u32,\n}\n\nimpl Drop for Guard {\n    fn drop(&mut self) {\n        self.n = self.n.wrapping_add(1);\n    }\n}\n\npub fn make(x: u32) -> Cfg { let _guard = Guard { n: 0 };\n    Cfg { n: x * 3 }\n}\n\n#[test]\nfn makes() {\n    assert_eq!(make(4), Cfg { n: 12 });\n}\n";
+        let path = PathBuf::from("src/lib.rs");
+        let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, source)?;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: facts.functions.clone(),
+            tests: facts.tests.clone(),
+            files: [(path, facts)].into_iter().collect(),
+            ..Default::default()
+        });
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "make")
+            .ok_or("missing owner")?;
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "makes")
+            .ok_or("missing test")?;
+        let probe = Probe {
+            id: ProbeId("probe:local-drop-guard".to_string()),
+            location: SourceLocation::new("src/lib.rs", 21, 5),
+            owner: Some(owner.id.clone()),
+            family: ProbeFamily::ReturnValue,
+            delta: DeltaKind::Value,
+            before: Some("x * 2".to_string()),
+            after: Some("x * 3".to_string()),
+            expression: "Cfg { n: x * 3 }".to_string(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        };
+        let context = ProbeContext::new(
+            &probe,
+            Some(owner),
+            vec![(test, RelationReason::DirectOwnerCall)],
+            false,
+            &index,
+            true,
+        );
+        let evidence = ClassifiedProbeEvidence::gather(
+            &context,
+            &probe.expression,
+            &crate::analysis::classify::TransitiveReachIndex::new(context.index),
+        );
+        assert_eq!(evidence.classify(&probe), ExposureClass::Exposed);
+        Ok(())
+    }
+
     /// The memo computes a defeat once per (file, callee) and keeps
     /// different files and callees apart, so a cached answer never leaks
     /// from one test file to another.
