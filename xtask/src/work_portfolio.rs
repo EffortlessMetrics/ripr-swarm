@@ -3010,9 +3010,13 @@ fn md_table_row(cells: &[String]) -> String {
 
 /// Human Markdown for the portfolio. Derived from the same DTO; it can never
 /// strengthen readiness or ranking.
-pub(crate) fn work_portfolio_markdown(snapshot: &WorkPortfolioSnapshotV1) -> String {
+pub(crate) fn work_portfolio_markdown(
+    snapshot: &WorkPortfolioSnapshotV1,
+    notice: Option<&WorkCaptureNoticeV1>,
+) -> String {
     let mut body = String::new();
     body.push_str("# Work portfolio\n\n");
+    body.push_str(&capture_preamble(notice));
     body.push_str(&format!(
         "- repository: `{}`\n",
         snapshot.repository.repository
@@ -3127,9 +3131,10 @@ pub(crate) fn work_portfolio_markdown(snapshot: &WorkPortfolioSnapshotV1) -> Str
     body
 }
 
-fn candidate_markdown(candidate: &WorkCandidateV1, heading: &str) -> String {
+fn candidate_markdown(candidate: &WorkCandidateV1, heading: &str, preamble: &str) -> String {
     let mut body = String::new();
     body.push_str(&format!("{heading}\n\n"));
+    body.push_str(preamble);
     body.push_str(&format!("- candidate: `{}`\n", candidate.candidate_id));
     body.push_str(&format!("- kind: `{}`\n", wire_label(&candidate.kind)));
     body.push_str(&format!(
@@ -3221,9 +3226,13 @@ fn candidate_markdown(candidate: &WorkCandidateV1, heading: &str) -> String {
     body
 }
 
-pub(crate) fn work_candidates_markdown(view: &WorkCandidatesViewV1) -> String {
+pub(crate) fn work_candidates_markdown(
+    view: &WorkCandidatesViewV1,
+    notice: Option<&WorkCaptureNoticeV1>,
+) -> String {
     let mut body = String::new();
     body.push_str("# Work candidates\n\n");
+    body.push_str(&capture_preamble(notice));
     body.push_str(&format!(
         "- portfolio identity: `{}`\n",
         view.portfolio_identity
@@ -3242,7 +3251,7 @@ pub(crate) fn work_candidates_markdown(view: &WorkCandidatesViewV1) -> String {
     body.push_str(&format!("- claim boundary: {}\n\n", view.claim_boundary));
     for (rank, candidate) in view.candidates.iter().enumerate() {
         let heading = format!("## {}. `{}`", rank + 1, candidate.candidate_id);
-        body.push_str(&candidate_markdown(candidate, &heading));
+        body.push_str(&candidate_markdown(candidate, &heading, ""));
         body.push('\n');
     }
     if view.candidates.is_empty() {
@@ -3253,9 +3262,12 @@ pub(crate) fn work_candidates_markdown(view: &WorkCandidatesViewV1) -> String {
     body
 }
 
-pub(crate) fn work_explain_markdown(view: &WorkExplainViewV1) -> String {
+pub(crate) fn work_explain_markdown(
+    view: &WorkExplainViewV1,
+    notice: Option<&WorkCaptureNoticeV1>,
+) -> String {
     let heading = format!("# Work candidate `{}`", view.candidate.candidate_id);
-    let mut body = candidate_markdown(&view.candidate, &heading);
+    let mut body = candidate_markdown(&view.candidate, &heading, &capture_preamble(notice));
     body.push_str(&format!(
         "\n- portfolio identity: `{}`\n",
         view.portfolio_identity
@@ -3318,10 +3330,58 @@ fn has_json_flag(args: &[String], usage: &str) -> Result<bool, String> {
     Ok(json)
 }
 
+/// Where the compiled input came from. Rendered only in the human Markdown
+/// header so a reader can tell fixture bytes from live capture; it is not
+/// part of any DTO, JSON body or portable identity digest.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct WorkCaptureNoticeV1 {
+    pub dir: String,
+    pub captured_at: String,
+    pub default_branch_sha: String,
+    pub committed_fixture: bool,
+}
+
+/// True when `root` resolves under the workspace `fixtures/` tree, so the
+/// committed default corpus is named as such however it was spelled.
+fn is_committed_fixture_dir(root: &Path) -> bool {
+    let fixtures = workspace_path("fixtures");
+    // Fail closed: a path that cannot be resolved is never reported as the
+    // committed corpus, so a lexical prefix match cannot mislabel it.
+    match (root.canonicalize(), fixtures.canonicalize()) {
+        (Ok(root), Ok(fixtures)) => root.starts_with(fixtures),
+        _ => false,
+    }
+}
+
+fn capture_notice_markdown(notice: &WorkCaptureNoticeV1) -> String {
+    let mut body = String::new();
+    if notice.committed_fixture {
+        body.push_str(
+            "> **Committed fixture corpus, not live state.** Candidates, issue and PR \
+             numbers below are synthetic and may not exist on GitHub. Pass `--captured <dir>` \
+             with a live capture to rank real work.\n\n",
+        );
+    }
+    body.push_str(&format!("- captured from: `{}`\n", notice.dir));
+    body.push_str(&format!(
+        "- captured at: `{}` @ `{}` (compare with the current default branch head; the \
+         input is not refreshed)\n",
+        notice.captured_at, notice.default_branch_sha
+    ));
+    body
+}
+
+/// The notice block placed directly under a document title: empty when no
+/// notice applies, otherwise the notice bullets followed by no blank line so
+/// they continue the header list.
+fn capture_preamble(notice: Option<&WorkCaptureNoticeV1>) -> String {
+    notice.map(capture_notice_markdown).unwrap_or_default()
+}
+
 fn load_and_compile(
     dir: &str,
     captured_dir: Option<&str>,
-) -> Result<WorkPortfolioSnapshotV1, String> {
+) -> Result<(WorkPortfolioSnapshotV1, WorkCaptureNoticeV1), String> {
     // A user-supplied `--captured` directory is cwd-relative (absolute paths
     // honored as-is); only when it does not exist relative to the cwd does
     // it fall back to the workspace root, which keeps the documented default
@@ -3333,7 +3393,14 @@ fn load_and_compile(
         workspace_path(dir)
     };
     let captured = load_work_captured_dir(&root)?;
-    compile_work_portfolio(&captured, captured_dir)
+    let notice = WorkCaptureNoticeV1 {
+        dir: dir.to_string(),
+        captured_at: captured.manifest.captured_at.clone(),
+        default_branch_sha: captured.manifest.default_branch_sha.clone(),
+        committed_fixture: is_committed_fixture_dir(&root),
+    };
+    let snapshot = compile_work_portfolio(&captured, captured_dir)?;
+    Ok((snapshot, notice))
 }
 
 /// `cargo xtask work portfolio [--captured <dir>] [--json]` (#1704,
@@ -3345,14 +3412,15 @@ pub(crate) fn work_portfolio_command(args: &[String]) -> Result<(), String> {
     const USAGE: &str = "usage: cargo xtask work portfolio [--captured <dir>] [--json]";
     let (dir, explicit_captured, rest) = split_captured_arg(args, USAGE)?;
     let json = has_json_flag(&rest, USAGE)?;
-    let snapshot = load_and_compile(&dir, explicit_captured.as_deref())?;
+    let (snapshot, notice) = load_and_compile(&dir, explicit_captured.as_deref())?;
     let json_body = work_portfolio_json(&snapshot)?;
     crate::write_report("work-portfolio.json", &json_body)?;
-    crate::write_report("work-portfolio.md", &work_portfolio_markdown(&snapshot))?;
+    let markdown = work_portfolio_markdown(&snapshot, Some(&notice));
+    crate::write_report("work-portfolio.md", &markdown)?;
     if json {
         print!("{json_body}");
     } else {
-        print!("{}", work_portfolio_markdown(&snapshot));
+        print!("{markdown}");
     }
     Ok(())
 }
@@ -3407,7 +3475,7 @@ pub(crate) fn work_candidates_command(args: &[String]) -> Result<(), String> {
             other => return Err(format!("unknown argument `{other}`\n{USAGE}")),
         }
     }
-    let snapshot = load_and_compile(&dir, explicit_captured.as_deref())?;
+    let (snapshot, notice) = load_and_compile(&dir, explicit_captured.as_deref())?;
     let view = build_candidates_view(
         &snapshot,
         campaign.as_deref(),
@@ -3417,11 +3485,12 @@ pub(crate) fn work_candidates_command(args: &[String]) -> Result<(), String> {
     )?;
     let json_body = work_portfolio_json(&view)?;
     crate::write_report("work-candidates.json", &json_body)?;
-    crate::write_report("work-candidates.md", &work_candidates_markdown(&view))?;
+    let markdown = work_candidates_markdown(&view, Some(&notice));
+    crate::write_report("work-candidates.md", &markdown)?;
     if json {
         print!("{json_body}");
     } else {
-        print!("{}", work_candidates_markdown(&view));
+        print!("{markdown}");
     }
     Ok(())
 }
@@ -3457,15 +3526,16 @@ pub(crate) fn work_explain_command(args: &[String]) -> Result<(), String> {
     let Some(candidate) = candidate else {
         return Err(format!("missing required --candidate <id>\n{USAGE}"));
     };
-    let snapshot = load_and_compile(&dir, explicit_captured.as_deref())?;
+    let (snapshot, notice) = load_and_compile(&dir, explicit_captured.as_deref())?;
     let view = build_explain_view(&snapshot, &candidate)?;
     let json_body = work_portfolio_json(&view)?;
     crate::write_report("work-explain.json", &json_body)?;
-    crate::write_report("work-explain.md", &work_explain_markdown(&view))?;
+    let markdown = work_explain_markdown(&view, Some(&notice));
+    crate::write_report("work-explain.md", &markdown)?;
     if json {
         print!("{json_body}");
     } else {
-        print!("{}", work_explain_markdown(&view));
+        print!("{markdown}");
     }
     Ok(())
 }
@@ -3893,7 +3963,7 @@ mod tests {
         let explain_json: Value = serde_json::from_str(&work_portfolio_json(&explain)?)
             .map_err(|error| error.to_string())?;
         assert_eq!(explain_json["candidate"], rows[0]);
-        let portfolio_md = work_portfolio_markdown(&snapshot);
+        let portfolio_md = work_portfolio_markdown(&snapshot, None);
         assert!(portfolio_md.contains("| ranking key |"));
         assert!(portfolio_md.contains("ascending lexicographic; ties by `candidate_id`"));
         for (key, id) in &expected {
@@ -3904,8 +3974,8 @@ mod tests {
             assert!(row.contains(&format!("| `{key:?}` |")));
         }
         for markdown in [
-            work_candidates_markdown(&view),
-            work_explain_markdown(&explain),
+            work_candidates_markdown(&view, None),
+            work_explain_markdown(&explain, None),
         ] {
             assert!(markdown.contains("ranking key: `[0, 0, 0, 0, 0, 2, 1, 0]`"));
             assert!(markdown.contains("ascending lexicographic; ties by `candidate_id`"));
@@ -3929,10 +3999,11 @@ mod tests {
         let mut legacy_snapshot = snapshot.clone();
         legacy_snapshot.candidates[0].ranking_key = None;
         assert!(
-            work_portfolio_markdown(&legacy_snapshot).contains("| unavailable (legacy artifact) |")
+            work_portfolio_markdown(&legacy_snapshot, None)
+                .contains("| unavailable (legacy artifact) |")
         );
         assert!(
-            candidate_markdown(&legacy, "# Legacy")
+            candidate_markdown(&legacy, "# Legacy", "")
                 .contains("ranking key: unavailable (legacy artifact)")
         );
         for malformed in [
@@ -4730,12 +4801,151 @@ mod tests {
         Ok(())
     }
 
+    /// The default corpus is synthetic fixture input: the human header must
+    /// say so, name the capture date and branch sha, and sit under the title.
+    #[test]
+    fn capture_notice_names_fixture_corpus_date_and_sha_under_the_title() -> Result<(), String> {
+        let (snapshot, notice) = load_and_compile(DEFAULT_WORK_CAPTURED_DIR, None)?;
+        if !notice.committed_fixture {
+            return Err("the default corpus must be detected as a committed fixture".to_string());
+        }
+        let markdown = work_candidates_markdown(
+            &build_candidates_view(&snapshot, None, None, 3, None)?,
+            Some(&notice),
+        );
+        let mut lines = markdown.lines();
+        if lines.next() != Some("# Work candidates") {
+            return Err(format!("title must stay first: {markdown}"));
+        }
+        for needle in [
+            "Committed fixture corpus, not live state",
+            "captured from: `fixtures/work_portfolio/corpus`",
+            "captured at: `2026-10-05T12:00:00Z` @ `7cb64d60c9dd0dda59586e6b72dcdf150296a26f`",
+            "- portfolio identity:",
+        ] {
+            if !markdown.contains(needle) {
+                return Err(format!("capture notice lost `{needle}`: {markdown}"));
+            }
+        }
+        let captured = load_work_captured_dir(&workspace_path(DEFAULT_WORK_CAPTURED_DIR))?;
+        let at_and_sha = format!(
+            "captured at: `{}` @ `{}`",
+            captured.manifest.captured_at, captured.manifest.default_branch_sha
+        );
+        if !markdown.contains(&at_and_sha) {
+            return Err(format!(
+                "notice must carry manifest date and sha: {markdown}"
+            ));
+        }
+        // Every human renderer places the notice directly under its title.
+        let portfolio = work_portfolio_markdown(&snapshot, Some(&notice));
+        let explain = work_explain_markdown(
+            &build_explain_view(&snapshot, "candidate:issue:9101")?,
+            Some(&notice),
+        );
+        for (name, rendered, title) in [
+            ("portfolio", &portfolio, "# Work portfolio"),
+            (
+                "explain",
+                &explain,
+                "# Work candidate `candidate:issue:9101`",
+            ),
+        ] {
+            let Some(title_at) = rendered.find(title) else {
+                return Err(format!("{name} lost its title: {rendered}"));
+            };
+            let Some(notice_at) = rendered.find("captured from") else {
+                return Err(format!("{name} lost the capture notice: {rendered}"));
+            };
+            if rendered.lines().next() != Some(title) || title_at > notice_at {
+                return Err(format!("{name} notice must follow the title: {rendered}"));
+            }
+        }
+        // The notice is Markdown-only: JSON and the portable identity are
+        // byte-identical with or without it.
+        if work_portfolio_json(&snapshot)?.contains("Committed fixture") {
+            return Err("the capture notice must not enter the JSON body".to_string());
+        }
+        Ok(())
+    }
+
+    /// A directory outside `fixtures/` is a live capture: no fixture banner,
+    /// but the capture date still prints.
+    #[test]
+    fn capture_notice_omits_fixture_banner_for_non_fixture_directories() -> Result<(), String> {
+        let notice = WorkCaptureNoticeV1 {
+            dir: "/tmp/live".to_string(),
+            captured_at: "2026-10-17T00:00:00Z".to_string(),
+            default_branch_sha: "abc123".to_string(),
+            committed_fixture: false,
+        };
+        let markdown = capture_preamble(Some(&notice));
+        if markdown.is_empty() {
+            return Err("a notice must render".to_string());
+        }
+        if markdown.contains("fixture") || !markdown.contains("2026-10-17T00:00:00Z") {
+            return Err(format!("unexpected live-capture notice: {markdown}"));
+        }
+        if !markdown.starts_with("- captured from: `/tmp/live`") {
+            return Err(format!("unexpected notice shape: {markdown}"));
+        }
+        let none = work_portfolio_markdown(&committed()?, None);
+        if none.contains("captured from") {
+            return Err("no notice, no capture lines".to_string());
+        }
+        if is_committed_fixture_dir(Path::new("/tmp/live")) {
+            return Err("an unrelated directory is not the committed fixture tree".to_string());
+        }
+        Ok(())
+    }
+
+    /// Fixture detection fails closed: an unresolvable path under `fixtures/`
+    /// and a lexically similar sibling are never the committed corpus, while
+    /// the real corpus directory is.
+    #[test]
+    fn committed_fixture_detection_fails_closed_for_unresolvable_paths() -> Result<(), String> {
+        if !is_committed_fixture_dir(&workspace_path(DEFAULT_WORK_CAPTURED_DIR)) {
+            return Err("the committed corpus must be detected".to_string());
+        }
+        for path in [
+            workspace_path("fixtures/does-not-exist-7429"),
+            workspace_path("fixtures-sibling-7429"),
+        ] {
+            if is_committed_fixture_dir(&path) {
+                return Err(format!(
+                    "`{}` must not be a committed fixture",
+                    path.display()
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// A real `load_and_compile` over a non-fixture directory reports a live
+    /// capture, not the committed fixture corpus.
+    #[test]
+    fn load_and_compile_marks_non_fixture_captured_dir_as_live() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "work_portfolio_live_capture_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        copy_dir(&workspace_path(DEFAULT_WORK_CAPTURED_DIR), &dir)?;
+        let result = load_and_compile(&dir.to_string_lossy(), None);
+        let _ = fs::remove_dir_all(&dir);
+        let (_, notice) = result?;
+        if notice.committed_fixture {
+            return Err("a temp capture must not be a committed fixture".to_string());
+        }
+        Ok(())
+    }
+
     /// Human Markdown derives from the same DTO and cannot strengthen
     /// readiness or ranking: a degraded candidate stays degraded in prose.
     #[test]
     fn work_portfolio_markdown_derives_from_same_dto_without_strengthening() -> Result<(), String> {
         let snapshot = committed()?;
-        let markdown = work_portfolio_markdown(&snapshot);
+        let markdown = work_portfolio_markdown(&snapshot, None);
         for needle in [
             "candidate:issue:9101",
             "repair_review",
@@ -4748,7 +4958,7 @@ mod tests {
             }
         }
         let view = build_explain_view(&snapshot, "candidate:issue:9107")?;
-        let explain = work_explain_markdown(&view);
+        let explain = work_explain_markdown(&view, None);
         // The rendered prose carries the snake_case wire identity of the
         // conflict edge (`edge:claim_collision:issue-9107`), not a kebab-case
         // label; the needle must match what the contract actually renders.
@@ -4757,8 +4967,10 @@ mod tests {
                 "the degraded candidate must stay degraded in the human rendering: {explain}"
             ));
         }
-        let candidates_md =
-            work_candidates_markdown(&build_candidates_view(&snapshot, None, None, 3, None)?);
+        let candidates_md = work_candidates_markdown(
+            &build_candidates_view(&snapshot, None, None, 3, None)?,
+            None,
+        );
         if !candidates_md.contains("omitted=9") {
             return Err("candidates markdown must report the omitted count honestly".to_string());
         }
@@ -4772,7 +4984,7 @@ mod tests {
     #[test]
     fn work_portfolio_markdown_renders_lists_as_plain_markdown_not_debug() -> Result<(), String> {
         let snapshot = committed()?;
-        let markdown = work_portfolio_markdown(&snapshot);
+        let markdown = work_portfolio_markdown(&snapshot, None);
         for campaign in &snapshot.campaigns {
             let debug = format!("{:?}", campaign.issues);
             if markdown.contains(&debug) {
@@ -4797,8 +5009,10 @@ mod tests {
         }
 
         let collision = candidate(&snapshot, 9107)?;
-        let explain =
-            work_explain_markdown(&build_explain_view(&snapshot, &collision.candidate_id)?);
+        let explain = work_explain_markdown(
+            &build_explain_view(&snapshot, &collision.candidate_id)?,
+            None,
+        );
         let debug_edges = format!("conflict edges: {:?}", collision.conflict_edges);
         if explain.contains(&debug_edges) {
             return Err(format!(
@@ -4823,8 +5037,10 @@ mod tests {
         }
 
         let regression = candidate(&snapshot, 9101)?;
-        let regression_md =
-            work_explain_markdown(&build_explain_view(&snapshot, &regression.candidate_id)?);
+        let regression_md = work_explain_markdown(
+            &build_explain_view(&snapshot, &regression.candidate_id)?,
+            None,
+        );
         let debug_risks = format!("regression risks: {:?}", regression.regression_risks);
         if regression_md.contains(&debug_risks) {
             return Err(format!(
