@@ -29,7 +29,8 @@ pub(crate) fn repository_display_path(root: &Path, file: &Path) -> String {
 
 /// Whether this host's default filesystem compares path names without regard
 /// to ASCII case: Windows (NTFS) and macOS (default APFS). Linux stays
-/// case-sensitive. This is the single host predicate for case-folding path
+/// case-sensitive. Assumes the default case-insensitive APFS volume on macOS.
+/// This is the single host predicate for case-folding path
 /// identity; separator and verbatim-prefix handling stays keyed on Windows.
 pub(crate) const fn host_paths_case_insensitive() -> bool {
     cfg!(any(windows, target_os = "macos"))
