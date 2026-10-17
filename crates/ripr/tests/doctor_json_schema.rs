@@ -494,6 +494,37 @@ fn published_doctor_schema_rejects_documents_the_schema_forbids() -> Result<(), 
         format!("a populated unignored artifact-ignore must stay legal: {error}")
     })?;
 
+    // #8276: `cache.artifact_tracked` is its own `oneOf` union, required
+    // beside `artifact_ignore`. Each arm must discriminate.
+    let mut unlisted_tracked = base.clone();
+    unlisted_tracked["cache"]["artifact_tracked"] = Value::String("unknown".to_string());
+    assert_rejected(
+        "unlisted artifact-tracked verdict",
+        &unlisted_tracked,
+        &schema,
+    )?;
+
+    let mut warningless_tracked = base.clone();
+    warningless_tracked["cache"]["artifact_tracked"] = serde_json::json!({"tracked": {}});
+    assert_rejected(
+        "tracked without its warning line",
+        &warningless_tracked,
+        &schema,
+    )?;
+
+    let mut missing_tracked = base.clone();
+    if let Some(cache) = missing_tracked["cache"].as_object_mut() {
+        cache.remove("artifact_tracked");
+    }
+    assert_rejected("cache without artifact_tracked", &missing_tracked, &schema)?;
+
+    let mut populated_tracked = base.clone();
+    populated_tracked["cache"]["artifact_tracked"] = serde_json::json!(
+        {"tracked": {"warning": "! tracked; run git rm --cached -r -- target/ripr"}}
+    );
+    check(&populated_tracked, &schema, &schema, "doctor")
+        .map_err(|error| format!("a populated tracked artifact must stay legal: {error}"))?;
+
     let mut wrong_test_surface_type = base.clone();
     wrong_test_surface_type["test_surfaces"] = Value::String("rust".to_string());
     assert_rejected(

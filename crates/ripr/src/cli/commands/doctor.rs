@@ -300,6 +300,7 @@ fn cache_status(root: &Path) -> output::doctor::DoctorCacheStatus {
         size_bytes,
         size_display: format_bytes(size_bytes),
         artifact_ignore: ripr_artifact_ignore(root),
+        artifact_tracked: ripr_artifact_tracked(root),
     }
 }
 
@@ -619,6 +620,9 @@ Point RIPR_CACHE_DIR at a writable directory.",
     if let output::doctor::DoctorArtifactIgnore::Unignored { warning } = &cache.artifact_ignore {
         lines.push(warning.clone());
     }
+    if let output::doctor::DoctorArtifactTracked::Tracked { warning } = &cache.artifact_tracked {
+        lines.push(warning.clone());
+    }
 
     lines.extend(preview_language_enable_suggestions(
         environment.preview_enablement.as_ref(),
@@ -755,6 +759,9 @@ fn cache_detail_lines(cache: &output::doctor::DoctorCacheStatus) -> Vec<String> 
     ));
     // Same typed verdict the compact screen renders (#7663, #8257 review).
     if let output::doctor::DoctorArtifactIgnore::Unignored { warning } = &cache.artifact_ignore {
+        lines.push(warning.clone());
+    }
+    if let output::doctor::DoctorArtifactTracked::Tracked { warning } = &cache.artifact_tracked {
         lines.push(warning.clone());
     }
     lines
@@ -2464,6 +2471,40 @@ fn ripr_artifact_ignore(root: &Path) -> output::doctor::DoctorArtifactIgnore {
     }
 }
 
+/// Whether ripr's own artifact root has entries in the git index (#8276).
+///
+/// `ripr_artifact_ignore` answers only whether ignore RULES cover the path;
+/// files committed earlier stay tracked regardless, so `git add -A` keeps
+/// refreshing them. `git ls-files --cached` lists the index entries, and a
+/// successful empty listing is the only `None` answer; anything else that
+/// is not a listing is `NotChecked`.
+fn ripr_artifact_tracked(root: &Path) -> output::doctor::DoctorArtifactTracked {
+    use output::doctor::DoctorArtifactTracked;
+    if !root.join("target").join("ripr").is_dir() {
+        return DoctorArtifactTracked::None;
+    }
+    let probe = match crate::git::run_git_output_with_deadline(
+        root,
+        &["ls-files", "--cached", "-z", "--", "target/ripr"],
+        Some(std::time::Duration::from_secs(5)),
+    ) {
+        Ok(probe) => probe,
+        Err(_) => return DoctorArtifactTracked::NotChecked,
+    };
+    if !probe.status.success() {
+        return DoctorArtifactTracked::NotChecked;
+    }
+    if probe.stdout.is_empty() {
+        return DoctorArtifactTracked::None;
+    }
+    DoctorArtifactTracked::Tracked {
+        warning: "! ripr artifacts under target/ripr are tracked in the git index, so \
+                  `git add -A` keeps refreshing them and `ripr check` keeps diffing them. \
+                  Untrack them with: git rm --cached -r -- target/ripr"
+            .to_string(),
+    }
+}
+
 /// Why a cache entry could not be created under `cache_dir`, or `None` when
 /// one could. For every directory a production cache writes entries into,
 /// probes the nearest existing ancestor with a short-lived
@@ -2904,6 +2945,7 @@ mod tests {
                     size_bytes: 0,
                     size_display: "0 B".to_string(),
                     artifact_ignore: output::doctor::DoctorArtifactIgnore::Ignored,
+                    artifact_tracked: output::doctor::DoctorArtifactTracked::None,
                 },
                 test_surfaces: Vec::new(),
                 perl_preview: None,
@@ -3783,6 +3825,47 @@ mod tests {
         std::fs::write(root.join(".gitignore"), "/target/ripr/\n")
             .map_err(|error| error.to_string())?;
         assert_eq!(ripr_artifact_ignore(&root), DoctorArtifactIgnore::Ignored);
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_artifact_tracked_names_the_untrack_command() -> Result<(), String> {
+        use output::doctor::DoctorArtifactTracked;
+        let root = unique_command_test_dir("artifact-tracked");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        assert_eq!(ripr_artifact_tracked(&root), DoctorArtifactTracked::None);
+
+        let artifact = root.join("target").join("ripr").join("pilot");
+        std::fs::create_dir_all(&artifact).map_err(|error| error.to_string())?;
+        for args in [
+            ["init"].as_slice(),
+            ["config", "user.email", "ripr@example.invalid"].as_slice(),
+            ["config", "user.name", "ripr tests"].as_slice(),
+        ] {
+            crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
+        }
+        std::fs::write(artifact.join("report.json"), "{}").map_err(|error| error.to_string())?;
+        // Untracked files are not index entries.
+        assert_eq!(ripr_artifact_tracked(&root), DoctorArtifactTracked::None);
+
+        // An ignore rule does not hide an already-committed report.
+        crate::git::run_git(&root, &["add", "-f", "target/ripr/pilot/report.json"])
+            .map_err(|error| error.to_string())?;
+        std::fs::write(root.join(".gitignore"), "/target/ripr/\n")
+            .map_err(|error| error.to_string())?;
+        match ripr_artifact_tracked(&root) {
+            DoctorArtifactTracked::Tracked { warning } => {
+                assert!(
+                    warning.contains("git rm --cached -r -- target/ripr"),
+                    "{warning}"
+                );
+            }
+            other => return Err(format!("expected Tracked, got {other:?}")),
+        }
+        crate::git::run_git(&root, &["rm", "--cached", "-r", "-q", "--", "target/ripr"])
+            .map_err(|error| error.to_string())?;
+        assert_eq!(ripr_artifact_tracked(&root), DoctorArtifactTracked::None);
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
