@@ -345,12 +345,17 @@ pub(crate) fn collect_expect_assertions_in_statement(
             }
         }
         Statement::TryStatement(try_stmt) => {
-            collect_expect_assertions_from_statement_vec(
-                &try_stmt.block.body,
-                source,
-                &nested,
-                out,
-            );
+            // A handler can swallow a synchronous assertion failure or an
+            // awaited matcher rejection. Without proving that it rethrows,
+            // the protected body cannot supply a discriminator (#8242).
+            if try_stmt.handler.is_none() {
+                collect_expect_assertions_from_statement_vec(
+                    &try_stmt.block.body,
+                    source,
+                    &nested,
+                    out,
+                );
+            }
             if let Some(handler) = &try_stmt.handler {
                 collect_expect_assertions_from_statement_vec(
                     &handler.body.body,

@@ -244,6 +244,30 @@ can only hint that a caller "may lead here" without changing anything.
   multiple call sites, computed (non-literal, non-parameter)
   arguments, hop-bound exhaustion, and unsupported return bodies.
 
+## One-hop primitive field observation
+
+A field-construction value probe may carry its existing complete local witness
+through one production free-function wrapper when that wrapper's sole tail is
+`owner(parameters...).changed_field`. Both functions are unique, same-file,
+unattributed root functions with immutable `usize` parameters. The owner solely
+returns a local record literal whose fields are declared builtin `usize`, with
+initializers restricted to decimal literals, parameters, parentheses and `+`/`-`
+within a depth budget of 16. The workspace must satisfy the existing closed-field
+premise and contain no impl blocks or procedural-macro declarations.
+
+The observer must be an admitted, executing plain `#[test]` assertion in the
+same file: `assert_eq!(wrapper(decimal_literals...), decimal_literal)` (either
+operand order). The existing propagation witness carries the exact field,
+owner, wrapper, source and assertion identities with semantic and validation
+digests. Reach and an unrelated strong equality cannot be pooled into a path.
+Wrong-sink, discarded-result and sibling-field assertions keep the existing
+`helper_result_not_forwarded` refusal.
+
+This exception does not support indexing, collections, method receivers, nested
+helpers, let-bound or transformed projections, aliases, custom impls, generated
+code, test-helper wrappers, or general interprocedural evaluation. It does not
+change punctuation extraction. Existing direct-field observation remains valid.
+
 ## Relation to RIPR-SPEC-0114
 
 The 0114 transitive-reach walk is **lexical** (name-match only) and
@@ -339,7 +363,8 @@ propagation stop, rebinding stop).
   names its own body's predicates; the caller's predicate on the
   helper call evaluates only when it is the probe's comparison
   operand.
-- No propagation claim beyond the existing owner-local machinery.
+- No propagation claim beyond the existing owner-local machinery and the exact
+  one-hop primitive field observation described above.
 
 ## Implementation Mapping
 

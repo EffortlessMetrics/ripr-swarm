@@ -57,6 +57,7 @@ pub(in crate::analysis) use gap_admission::{
     REFUSALS_ARE_ANALYZER_LIMITS, withhold_log_capture_gap, withhold_should_panic_gap,
     withhold_unsupported_gap,
 };
+pub(in crate::analysis) use helper_transfer::{FieldProjectionReceipt, field_projection_receipt};
 pub(in crate::analysis) use helper_transfer::{
     HELPER_RESULT_NOT_FORWARDED, HelperChain, ReturnedLedger,
     ambiguous_helper_entry_called_by_tests, callee_is_unique, chain_forwards_to_observed_hops,
@@ -77,12 +78,14 @@ pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
 pub(in crate::analysis) use propagation_witness::{
     PropagationWitnessV1, assertion_observes_collection_argument,
     assertion_observes_direct_collection, current_path_witness_with,
-    direct_collection_mutation_receiver, field_assignment_target, retain_returned_ledger,
-    returned_ledger_witness,
+    direct_collection_mutation_receiver, field_assignment_target, owner_may_exit_before_line,
+    retain_returned_ledger, returned_ledger_witness,
 };
 pub(in crate::analysis) use propagation_witness::{
     constant_tail_witness, fallible_literal_witness, format_tail_witness,
 };
+#[cfg(test)]
+pub(in crate::analysis) use reach::take_external_docs_parse_count;
 pub(in crate::analysis) use reach::{
     UnseenReachNames, includes_external_docs, invokes_opaque_macro, is_proximity_only,
     is_trait_impl_method, names_identifier_outside_fn_definition, owner_may_be_reached_unseen,
@@ -94,6 +97,7 @@ pub(in crate::analysis) use related_tests::{
     manifests_with_unindexed_files, method_call_resolves_to_impl, module_stem, owner_call_text,
     owner_dispatch_trait, package_prefix, test_calls_free_function,
 };
+pub(in crate::analysis) use reveal::is_inline_expect_snapshot;
 pub(in crate::analysis) use reveal::reveal_outcome;
 pub(in crate::analysis) use reveal::unconditional_owner_insert_field;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;

@@ -24,7 +24,7 @@ use crate::app::agent_brief::AgentBriefPolicy;
 use crate::app::repair_card_handoff::AgentCardError;
 use crate::cli::CommandError;
 use crate::cli::agent::AgentCardOptions;
-use crate::cli::commands_context::ensure_command_root;
+use crate::cli::commands_context::{ensure_command_root, write_stderr_refusal_json};
 use crate::config::load_for_root;
 use crate::domain::{AgentCardRefusalKind, RepairCardTarget, RepairCardV1};
 use crate::output;
@@ -65,9 +65,7 @@ pub(super) fn agent_card_stdout(options: AgentCardOptions) -> Result<String, Com
                 match render_agent_card_refusal(&options, kind, &message) {
                     // A JSON document, not report text: bidi characters become
                     // JSON escapes so the envelope stays parseable (#6309).
-                    Ok(rendered) => {
-                        ::std::eprint!("{}", crate::terminal_text::json_terminal_safe(rendered))
-                    }
+                    Ok(rendered) => write_stderr_refusal_json(rendered),
                     Err(render_error) => eprintln!("ripr: {render_error}"),
                 }
             }

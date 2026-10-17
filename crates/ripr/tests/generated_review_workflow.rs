@@ -802,11 +802,9 @@ fn doctor_packet_refresh_missing_root_keeps_recovery_nonwriting() -> Result<(), 
     assert_eq!(doctor.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&doctor.stderr).contains("doctor found issues"));
     let stdout = String::from_utf8(doctor.stdout)?;
-    assert!(stdout.contains("not yet generated"), "{stdout}");
     assert!(!stdout.contains("--head HEAD` refreshes it"), "{stdout}");
-    // #5252 item 3: the recovery is the recommendation now, not the old
-    // `ripr check --root <missing>` template, which failed the same way
-    // doctor just did. The non-writing half below is unchanged.
+    // Compact failing doctor names the recovery on the fail/Fix/recommended
+    // lines and omits the missing-packet dump (#8168).
     assert!(
         stdout.contains(
             "- Recommended first command: The selected root does not exist; rerun with `--root <path>` naming an existing repository directory"
@@ -855,7 +853,8 @@ fn doctor_packet_refresh_missing_alias_never_selects_decoy() -> Result<(), Box<d
         let doctor = replay::ripr(&parent, &["doctor", "--root", &spelling.to_string_lossy()])?;
         assert_eq!(doctor.status.code(), Some(2));
         let stdout = String::from_utf8(doctor.stdout)?;
-        assert!(stdout.contains("not yet generated"), "{stdout}");
+        // Compact failing doctor names the recovery on the fail/Fix/recommended
+        // lines and omits the missing-packet dump (#8168).
         assert!(!stdout.contains("--head HEAD` refreshes it"), "{stdout}");
         let command = stdout
             .lines()
@@ -962,7 +961,8 @@ fn doctor_packet_refresh_uses_lossless_alias_for_non_utf8_physical_root()
     let no_packet = replay::ripr(&physical, &["doctor", "--root", "repo"])?;
     assert!(no_packet.status.success());
     let stdout = String::from_utf8(no_packet.stdout)?;
-    assert!(stdout.contains("not yet generated"), "{stdout}");
+    // Compact omits the missing-packet dump; the lossless refusal still
+    // names the next action (#8168).
     assert!(
         stdout.contains("- Safe next action: selected root cannot be represented losslessly"),
         "{stdout}"

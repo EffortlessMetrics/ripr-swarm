@@ -290,6 +290,43 @@ fn match_object_pin_stays_weak_without_the_listed_field_on_the_whole_result() ->
     Ok(())
 }
 
+#[test]
+fn match_object_expected_with_escaped_proto_key_is_refused_as_pin() -> Result<(), String> {
+    for (label, body) in [
+        (
+            "bare-proto",
+            "  expect(buildProfile(\"bo\", 18)).toMatchObject({ __proto__: false });",
+        ),
+        (
+            "quoted-proto",
+            "  expect(buildProfile(\"bo\", 18)).toMatchObject({ \"__proto__\": false });",
+        ),
+        (
+            "escaped-proto",
+            "  expect(buildProfile(\"bo\", 18)).toMatchObject({ \"\\u005f_proto__\": false });",
+        ),
+    ] {
+        let finding = profile_finding(label, &profile_test(body))?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{label}: expected object with proto key must not be credited as pin: {:?}",
+            finding.missing
+        );
+        let row = finding
+            .related_tests
+            .first()
+            .ok_or_else(|| format!("{label}: expected a related test row"))?;
+        assert_ne!(
+            (row.oracle_kind.clone(), row.oracle_strength.clone()),
+            (OracleKind::ExactValue, OracleStrength::Strong),
+            "{label}"
+        );
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+    }
+    Ok(())
+}
+
 /// The refused matcher readings keep their parsed subject: a dynamic
 /// argument records no expected value and keeps the unresolved-assertion
 /// limitation, and `.rejects.toMatchObject` keeps its RIPR-SPEC-0243
@@ -841,6 +878,22 @@ fn colon_proto_is_not_a_listed_match_object_field() -> Result<(), String> {
         flat_object_keys("{ __proto__: 0, adult: true }"),
         Some(vec!["adult".to_string()]),
         "skipping colon __proto__: must still list sibling own fields"
+    );
+    // A comment between the key and the colon is the same prototype
+    // setter: it must not list, and sibling own fields still list
+    // (#8148 review).
+    let commented = flat_object_keys("{ __proto__ /* note */: 0, adult: true }");
+    assert!(
+        commented
+            .as_ref()
+            .is_some_and(|keys| keys.iter().any(|key| key == "adult")),
+        "commented colon __proto__: must still list sibling own fields, got {commented:?}"
+    );
+    assert!(
+        !commented
+            .as_ref()
+            .is_some_and(|keys| keys.iter().any(|key| key == "__proto__")),
+        "commented colon __proto__: must not list an own field, got {commented:?}"
     );
 
     let root = ts_unique_tempdir("match-object-colon-proto")?;

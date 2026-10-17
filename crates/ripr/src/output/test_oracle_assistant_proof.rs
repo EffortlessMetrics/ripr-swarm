@@ -1286,10 +1286,21 @@ mod tests {
             serde_json::from_str(&rendered).map_err(|err| format!("parse JSON: {err}"))?;
         let mut commands = Vec::new();
         collect_strings(&value, &mut commands);
-        let start = "ripr agent start --root 'it'\\''s a repo' --seam-id 'src_we ird_it'\\''s;x.rs:predicate:ec6d6f91' --out target/ripr/workflow";
-        let verify = "ripr agent verify --root 'it'\\''s a repo' --before 'before snap.json' --after 'after;snap.json' --json";
-        assert!(commands.iter().any(|text| text == start), "{commands:?}");
-        assert!(commands.iter().any(|text| text == verify), "{commands:?}");
+        // Host-aware quoting (#7729): bash single quotes off Windows, double
+        // quotes on it.
+        let start = format!(
+            "ripr agent start --root {} --seam-id {} --out target/ripr/workflow",
+            shell_arg("it's a repo"),
+            shell_arg(seam)
+        );
+        let verify = format!(
+            "ripr agent verify --root {} --before {} --after {} --json",
+            shell_arg("it's a repo"),
+            shell_arg("before snap.json"),
+            shell_arg("after;snap.json")
+        );
+        assert!(commands.iter().any(|text| text == &start), "{commands:?}");
+        assert!(commands.iter().any(|text| text == &verify), "{commands:?}");
         Ok(())
     }
 

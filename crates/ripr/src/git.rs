@@ -795,6 +795,7 @@ impl CatFileBatch {
     /// Other stream failures keep their existing Display message.
     fn classify_read_error(&mut self, error: CatFileBatchReadError) -> CoreError {
         match error {
+            CatFileBatchReadError::Cancelled(cancelled) => self.abort("cancellation", cancelled),
             CatFileBatchReadError::TimedOut => {
                 let message = CoreError::git_invocation_timeout(
                     &self.describe,
@@ -949,6 +950,7 @@ impl CatFileBatch {
 /// stream errors through unchanged.
 #[derive(Debug)]
 enum CatFileBatchReadError {
+    Cancelled(crate::analysis::cancellation::AnalysisCancellation),
     TimedOut,
     Failed(String),
 }
@@ -972,30 +974,43 @@ impl CatFileBatchStream {
         }
     }
 
+    fn checkpoint(deadline: Instant) -> Result<(), CatFileBatchReadError> {
+        crate::analysis::cancellation::checkpoint_typed()
+            .map_err(CatFileBatchReadError::Cancelled)?;
+        if Instant::now() >= deadline {
+            return Err(CatFileBatchReadError::TimedOut);
+        }
+        Ok(())
+    }
+
     /// Pull the next chunk when the current one is exhausted.
     /// `Ok(false)` is end of stream. The wait allowance is recomputed from
     /// the absolute `deadline` on every chunk so a stream dribbling
     /// fragments just under each wait can never outlive the overall budget.
     /// Bytes buffered or queued before the deadline are still rejected once
     /// it has passed: consumption after the budget is a timeout, not
-    /// success.
+    /// success. Silent producers are polled at the shared subprocess cadence
+    /// so cooperative cancellation can abort and reap without waiting for
+    /// the independent Git deadline.
     fn next_chunk(&mut self, deadline: Instant) -> Result<bool, CatFileBatchReadError> {
-        if Instant::now() >= deadline {
-            return Err(CatFileBatchReadError::TimedOut);
-        }
-        if self.offset < self.current.len() {
-            return Ok(true);
-        }
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        match self.receiver.recv_timeout(remaining) {
-            Ok(Ok(chunk)) => {
-                self.current = chunk;
-                self.offset = 0;
-                Ok(true)
+        loop {
+            Self::checkpoint(deadline)?;
+            if self.offset < self.current.len() {
+                return Ok(true);
             }
-            Ok(Err(read_error)) => Err(CatFileBatchReadError::Failed(read_error)),
-            Err(mpsc::RecvTimeoutError::Timeout) => Err(CatFileBatchReadError::TimedOut),
-            Err(mpsc::RecvTimeoutError::Disconnected) => Ok(false),
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let wait = remaining.min(crate::process_owner::POLL_BACKOFF_CEILING);
+            match self.receiver.recv_timeout(wait) {
+                Ok(Ok(chunk)) => {
+                    self.current = chunk;
+                    self.offset = 0;
+                    // Recheck after receiving: cancellation or the absolute
+                    // deadline can arrive while the channel is blocked.
+                }
+                Ok(Err(read_error)) => return Err(CatFileBatchReadError::Failed(read_error)),
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(false),
+            }
         }
     }
 
@@ -1003,9 +1018,7 @@ impl CatFileBatchStream {
     fn read_line(&mut self, deadline: Instant) -> Result<Vec<u8>, CatFileBatchReadError> {
         let mut line = Vec::new();
         loop {
-            if Instant::now() >= deadline {
-                return Err(CatFileBatchReadError::TimedOut);
-            }
+            Self::checkpoint(deadline)?;
             if let Some(position) = self.current[self.offset..]
                 .iter()
                 .position(|byte| *byte == b'\n')
@@ -1039,9 +1052,7 @@ impl CatFileBatchStream {
     ) -> Result<(), CatFileBatchReadError> {
         let mut filled = 0;
         while filled < buf.len() {
-            if Instant::now() >= deadline {
-                return Err(CatFileBatchReadError::TimedOut);
-            }
+            Self::checkpoint(deadline)?;
             if self.offset >= self.current.len() && !self.next_chunk(deadline)? {
                 return Err(CatFileBatchReadError::Failed(
                     "git cat-file --batch stream ended in the middle of a blob".to_string(),
@@ -2628,6 +2639,179 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
                 "ready bytes past the deadline must still time out, got {other:?}"
             )),
         }
+    }
+
+    #[test]
+    fn cat_file_batch_stream_preserves_received_failures_over_a_later_budget() -> Result<(), String>
+    {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        for read_error in [true, false] {
+            let (sender, receiver) = mpsc::channel();
+            if read_error {
+                sender
+                    .send(Err("ordinary read failure".to_string()))
+                    .map_err(|error| error.to_string())?;
+            }
+            drop(sender);
+            let mut stream = CatFileBatchStream::new(receiver);
+            let started = Instant::now();
+            let checks = AtomicUsize::new(0);
+            let token = AnalysisCancellationToken::with_budget(
+                started,
+                Duration::from_millis(1),
+                std::sync::Arc::new(move || {
+                    // The read and pre-wait gates are active. A later clock
+                    // query while classifying the received failure expires.
+                    if checks.fetch_add(1, Ordering::Relaxed) < 2 {
+                        started
+                    } else {
+                        started + Duration::from_secs(1)
+                    }
+                }),
+            );
+            let result = with_token(&token, || {
+                stream.read_exact(&mut [0_u8; 1], started + Duration::from_secs(3))
+            });
+            let expected = if read_error {
+                "ordinary read failure"
+            } else {
+                "ended in the middle of a blob"
+            };
+            match result {
+                Err(CatFileBatchReadError::Failed(message)) if message.contains(expected) => {}
+                other => return Err(format!("received failure was replaced: {other:?}")),
+            }
+            if token.observed_abort().is_some() {
+                return Err("classifying a received failure observed a later abort".to_string());
+            }
+        }
+        Ok(())
+    }
+
+    fn assert_batch_child_reaped(child: &mut OwnedProcess) -> Result<(), String> {
+        // try_wait can reap a terminated zombie itself. On Linux observe
+        // absence first, while the production owner must already have reaped.
+        #[cfg(target_os = "linux")]
+        match std::fs::metadata(format!("/proc/{}", child.id())) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            other => {
+                return Err(format!(
+                    "batch primary still exists before reap observer: {other:?}"
+                ));
+            }
+        }
+        if child
+            .try_wait()
+            .map_err(|error| error.to_string())?
+            .is_none()
+        {
+            return Err("batch read returned before its child exited".to_string());
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn cat_file_batch_cancellation_reap_observer_rejects_kill_without_wait() -> Result<(), String> {
+        let root = std::env::current_dir().map_err(|error| error.to_string())?;
+        let mut session = CatFileBatch::spawn(&root, Duration::from_secs(3))
+            .map_err(|error| error.to_string())?;
+        session.child.kill().map_err(|error| error.to_string())?;
+        if assert_batch_child_reaped(&mut session.child).is_ok() {
+            return Err("kill without wait satisfied the reap observer".to_string());
+        }
+        session.child.terminate_tree()?;
+        assert_batch_child_reaped(&mut session.child)
+    }
+
+    /// A live batch child stays owned while a silent transport waits. The
+    /// analysis budget starts active even under scheduler delays, then uses
+    /// the real monotonic clock. Expiry must stop the read, rather than wait
+    /// for the independent, longer Git timeout, and reap before returning.
+    fn assert_batch_read_cancellation(operation: &str) -> Result<(), String> {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let root = std::env::current_dir().map_err(|error| error.to_string())?;
+        let mut session = CatFileBatch::spawn(&root, Duration::from_secs(3))
+            .map_err(|error| error.to_string())?;
+        let (sender, receiver) = mpsc::channel();
+        let _real_stdout =
+            std::mem::replace(&mut session.stdout, CatFileBatchStream::new(receiver));
+        if session
+            .child
+            .try_wait()
+            .map_err(|error| error.to_string())?
+            .is_some()
+        {
+            return Err("batch cancellation fixture child already exited".to_string());
+        }
+        let started = Instant::now();
+        let first = AtomicBool::new(true);
+        let token = AnalysisCancellationToken::with_budget(
+            started,
+            Duration::from_millis(50),
+            std::sync::Arc::new(move || {
+                if first.swap(false, Ordering::Relaxed) {
+                    started
+                } else {
+                    Instant::now()
+                }
+            }),
+        );
+        let result = with_token(&token, || match operation {
+            "header" => session.request_blob("HEAD:Cargo.toml").map(|_| ()),
+            "body" => session.read_blob_bytes(&mut [0_u8; 1]),
+            "delimiter" => session.end_blob(),
+            _ => Err(CoreError::message("unknown test read operation")),
+        });
+        // Hold the producer through the read so disconnect cannot satisfy
+        // the control. The real child is still waiting for further stdin.
+        drop(sender);
+        let error = result.err().ok_or("cancelled batch read succeeded")?;
+        if !error.is_analysis_cancelled() || error.is_git_invocation_timeout() {
+            return Err(format!("{operation} read lost typed cancellation: {error}"));
+        }
+        if token.observed_abort() != Some(AnalysisAbortKind::DeadlineExceeded) {
+            return Err(format!(
+                "{operation} read did not observe its analysis budget"
+            ));
+        }
+        assert_batch_child_reaped(&mut session.child)
+    }
+
+    #[test]
+    fn cat_file_batch_cancellation_interrupts_a_stalled_header() -> Result<(), String> {
+        assert_batch_read_cancellation("header")
+    }
+
+    #[test]
+    fn cat_file_batch_cancellation_interrupts_a_stalled_body() -> Result<(), String> {
+        assert_batch_read_cancellation("body")
+    }
+
+    #[test]
+    fn cat_file_batch_cancellation_interrupts_a_stalled_delimiter() -> Result<(), String> {
+        assert_batch_read_cancellation("delimiter")
+    }
+
+    #[test]
+    fn cat_file_batch_cancellation_rejects_a_buffered_delimiter() -> Result<(), String> {
+        let root = std::env::current_dir().map_err(|error| error.to_string())?;
+        let mut session = CatFileBatch::spawn(&root, Duration::from_secs(3))
+            .map_err(|error| error.to_string())?;
+        session.stdout.current = b"\n".to_vec();
+        let token = AnalysisCancellationToken::new();
+        token.cancel(AnalysisAbortKind::Superseded);
+        let error = with_token(&token, || session.end_blob())
+            .err()
+            .ok_or("cancelled batch accepted a buffered delimiter")?;
+        if !error.is_analysis_cancelled() || error.is_git_invocation_timeout() {
+            return Err(format!(
+                "buffered delimiter lost typed cancellation: {error}"
+            ));
+        }
+        assert_batch_child_reaped(&mut session.child)
     }
 
     /// Real-repository session round trip (#5015): one process answers

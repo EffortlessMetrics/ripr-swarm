@@ -2542,3 +2542,51 @@ fn load_for_root_parse_error_uses_the_human_path_and_keeps_canonical_source_path
     }
     Ok(())
 }
+
+#[test]
+fn config_error_display_keeps_misplaced_mode_hint_without_source() {
+    let err = tests_only_parse("mode = \"deep\"\n").expect_err("top-level mode must fail");
+    let compact = config_error_display_lines(&err, false);
+    assert_eq!(compact.len(), 1, "{compact:?}");
+    assert!(
+        compact[0].contains("belongs under [analysis]"),
+        "compact must keep the allowlisted hint: {compact:?}"
+    );
+    assert!(
+        !compact.join("\n").contains("mode = \"deep\""),
+        "compact must not print the source assignment: {compact:?}"
+    );
+    let verbose = config_error_display_lines(&err, true);
+    assert!(
+        verbose
+            .iter()
+            .any(|line| line.contains("unknown field `mode`")),
+        "verbose must keep the parser reason: {verbose:?}"
+    );
+    assert!(
+        verbose
+            .iter()
+            .any(|line| line.contains("belongs under [analysis]")),
+        "verbose must keep the allowlisted hint: {verbose:?}"
+    );
+    assert!(
+        !verbose.join("\n").contains("mode = \"deep\""),
+        "verbose must not restore the source excerpt: {verbose:?}"
+    );
+}
+
+#[test]
+fn config_error_display_keeps_unclosed_table_reason() {
+    let err = tests_only_parse("[languages\n").expect_err("unclosed table must fail");
+    let verbose = config_error_display_lines(&err, true);
+    assert!(
+        verbose
+            .iter()
+            .any(|line| line.contains("unclosed") || line.contains("expected")),
+        "verbose must keep the unclosed-table reason: {verbose:?}"
+    );
+    assert!(
+        !verbose.iter().any(|line| is_toml_source_excerpt_line(line)),
+        "verbose must not reprint the TOML snippet: {verbose:?}"
+    );
+}

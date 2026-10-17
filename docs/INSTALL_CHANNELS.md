@@ -66,7 +66,8 @@ alone does not prove CI is running 0.11. See [CI](CI.md).
 
 ### Re-select the diff and review suppressions
 
-Use the installed `check --help` and [quickstart](QUICKSTART.md) to select the
+Use the installed `check --help` (`check --help --all` lists every option) and
+[quickstart](QUICKSTART.md) to select the
 intended working-tree, staged, or committed comparison. Select `--base REF`
 when an explicit existing Git ref is required; do not assume an old invocation
 and the new default cover the same edits. Check the reported scope and files

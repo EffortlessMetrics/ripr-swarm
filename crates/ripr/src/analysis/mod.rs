@@ -9,7 +9,9 @@ mod diff;
 mod extract;
 mod facts;
 mod generated_rust_corpus;
-pub(crate) use generated_rust_corpus::generated_rust_recovery;
+pub(crate) use generated_rust_corpus::{
+    absent_changed_rust_file_limitations, generated_rust_recovery,
+};
 pub(crate) mod harness_projection;
 mod language;
 pub(crate) mod new_test_target;
@@ -49,8 +51,8 @@ pub use diff::records::{
     PathRecordError, StatusRecord, parse_git_path_records, parse_git_status_records,
 };
 pub(crate) use diff::{
-    AnalyzedRevisions, load_diff, load_diff_core, load_diff_range_with_deadline_core,
-    load_diff_with_effective_base_core, load_worktree_diff,
+    AnalyzedRevisions, another_base_candidate_exists, load_diff, load_diff_core,
+    load_diff_range_with_deadline_core, load_diff_with_effective_base_core, load_worktree_diff,
     load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis, parse_unified_diff,
     probe_working_tree_tracked_changes_within, resolve_base_commit, resolve_effective_base,
     resolve_effective_base_core, working_tree_has_tracked_changes,
@@ -107,7 +109,9 @@ pub(crate) use seam_inventory::{
     pilot_seam_budget, seam_kind_for_probe_family, workspace_cache_key_at_with_config,
 };
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
-pub(crate) use syntax::fn_signature::{owner_fn_line_span, rust_source_parses_cleanly};
+pub(crate) use syntax::fn_signature::{
+    owner_call_shape_at_line, owner_fn_line_span, rust_source_parses_cleanly,
+};
 pub(crate) use syntax::governed_cfg_test_modules;
 pub(crate) use syntax::parse_clean_source_file;
 pub(crate) use workspace::DiffOnlySource;
@@ -1910,3 +1914,9 @@ mod git_candidate_entry_tests {
         Ok(())
     }
 }
+
+pub(crate) mod input_boundary;
+#[cfg(test)]
+pub(crate) use pipeline::diff_pipeline_entry_count;
+
+pub(crate) use workspace::cargo_input_identity;
