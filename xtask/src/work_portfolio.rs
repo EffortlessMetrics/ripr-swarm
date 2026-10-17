@@ -3010,9 +3010,13 @@ fn md_table_row(cells: &[String]) -> String {
 
 /// Human Markdown for the portfolio. Derived from the same DTO; it can never
 /// strengthen readiness or ranking.
-pub(crate) fn work_portfolio_markdown(snapshot: &WorkPortfolioSnapshotV1) -> String {
+pub(crate) fn work_portfolio_markdown(
+    snapshot: &WorkPortfolioSnapshotV1,
+    notice: Option<&WorkCaptureNoticeV1>,
+) -> String {
     let mut body = String::new();
     body.push_str("# Work portfolio\n\n");
+    body.push_str(&capture_preamble(notice));
     body.push_str(&format!(
         "- repository: `{}`\n",
         snapshot.repository.repository
@@ -3127,9 +3131,10 @@ pub(crate) fn work_portfolio_markdown(snapshot: &WorkPortfolioSnapshotV1) -> Str
     body
 }
 
-fn candidate_markdown(candidate: &WorkCandidateV1, heading: &str) -> String {
+fn candidate_markdown(candidate: &WorkCandidateV1, heading: &str, preamble: &str) -> String {
     let mut body = String::new();
     body.push_str(&format!("{heading}\n\n"));
+    body.push_str(preamble);
     body.push_str(&format!("- candidate: `{}`\n", candidate.candidate_id));
     body.push_str(&format!("- kind: `{}`\n", wire_label(&candidate.kind)));
     body.push_str(&format!(
@@ -3221,9 +3226,13 @@ fn candidate_markdown(candidate: &WorkCandidateV1, heading: &str) -> String {
     body
 }
 
-pub(crate) fn work_candidates_markdown(view: &WorkCandidatesViewV1) -> String {
+pub(crate) fn work_candidates_markdown(
+    view: &WorkCandidatesViewV1,
+    notice: Option<&WorkCaptureNoticeV1>,
+) -> String {
     let mut body = String::new();
     body.push_str("# Work candidates\n\n");
+    body.push_str(&capture_preamble(notice));
     body.push_str(&format!(
         "- portfolio identity: `{}`\n",
         view.portfolio_identity
@@ -3242,7 +3251,7 @@ pub(crate) fn work_candidates_markdown(view: &WorkCandidatesViewV1) -> String {
     body.push_str(&format!("- claim boundary: {}\n\n", view.claim_boundary));
     for (rank, candidate) in view.candidates.iter().enumerate() {
         let heading = format!("## {}. `{}`", rank + 1, candidate.candidate_id);
-        body.push_str(&candidate_markdown(candidate, &heading));
+        body.push_str(&candidate_markdown(candidate, &heading, ""));
         body.push('\n');
     }
     if view.candidates.is_empty() {
@@ -3253,9 +3262,12 @@ pub(crate) fn work_candidates_markdown(view: &WorkCandidatesViewV1) -> String {
     body
 }
 
-pub(crate) fn work_explain_markdown(view: &WorkExplainViewV1) -> String {
+pub(crate) fn work_explain_markdown(
+    view: &WorkExplainViewV1,
+    notice: Option<&WorkCaptureNoticeV1>,
+) -> String {
     let heading = format!("# Work candidate `{}`", view.candidate.candidate_id);
-    let mut body = candidate_markdown(&view.candidate, &heading);
+    let mut body = candidate_markdown(&view.candidate, &heading, &capture_preamble(notice));
     body.push_str(&format!(
         "\n- portfolio identity: `{}`\n",
         view.portfolio_identity
@@ -3357,14 +3369,11 @@ fn capture_notice_markdown(notice: &WorkCaptureNoticeV1) -> String {
     body
 }
 
-/// Insert the capture notice directly under the document title, leaving the
-/// DTO-derived renderers and their JSON twins untouched.
-fn with_capture_notice(markdown: &str, notice: &WorkCaptureNoticeV1) -> String {
-    let notice_body = capture_notice_markdown(notice);
-    match markdown.split_once("\n\n") {
-        Some((title, rest)) => format!("{title}\n\n{notice_body}{rest}"),
-        None => format!("{markdown}\n\n{notice_body}"),
-    }
+/// The notice block placed directly under a document title: empty when no
+/// notice applies, otherwise the notice bullets followed by no blank line so
+/// they continue the header list.
+fn capture_preamble(notice: Option<&WorkCaptureNoticeV1>) -> String {
+    notice.map(capture_notice_markdown).unwrap_or_default()
 }
 
 fn load_and_compile(
@@ -3404,7 +3413,7 @@ pub(crate) fn work_portfolio_command(args: &[String]) -> Result<(), String> {
     let (snapshot, notice) = load_and_compile(&dir, explicit_captured.as_deref())?;
     let json_body = work_portfolio_json(&snapshot)?;
     crate::write_report("work-portfolio.json", &json_body)?;
-    let markdown = with_capture_notice(&work_portfolio_markdown(&snapshot), &notice);
+    let markdown = work_portfolio_markdown(&snapshot, Some(&notice));
     crate::write_report("work-portfolio.md", &markdown)?;
     if json {
         print!("{json_body}");
@@ -3474,7 +3483,7 @@ pub(crate) fn work_candidates_command(args: &[String]) -> Result<(), String> {
     )?;
     let json_body = work_portfolio_json(&view)?;
     crate::write_report("work-candidates.json", &json_body)?;
-    let markdown = with_capture_notice(&work_candidates_markdown(&view), &notice);
+    let markdown = work_candidates_markdown(&view, Some(&notice));
     crate::write_report("work-candidates.md", &markdown)?;
     if json {
         print!("{json_body}");
@@ -3519,7 +3528,7 @@ pub(crate) fn work_explain_command(args: &[String]) -> Result<(), String> {
     let view = build_explain_view(&snapshot, &candidate)?;
     let json_body = work_portfolio_json(&view)?;
     crate::write_report("work-explain.json", &json_body)?;
-    let markdown = with_capture_notice(&work_explain_markdown(&view), &notice);
+    let markdown = work_explain_markdown(&view, Some(&notice));
     crate::write_report("work-explain.md", &markdown)?;
     if json {
         print!("{json_body}");
@@ -3952,7 +3961,7 @@ mod tests {
         let explain_json: Value = serde_json::from_str(&work_portfolio_json(&explain)?)
             .map_err(|error| error.to_string())?;
         assert_eq!(explain_json["candidate"], rows[0]);
-        let portfolio_md = work_portfolio_markdown(&snapshot);
+        let portfolio_md = work_portfolio_markdown(&snapshot, None);
         assert!(portfolio_md.contains("| ranking key |"));
         assert!(portfolio_md.contains("ascending lexicographic; ties by `candidate_id`"));
         for (key, id) in &expected {
@@ -3963,8 +3972,8 @@ mod tests {
             assert!(row.contains(&format!("| `{key:?}` |")));
         }
         for markdown in [
-            work_candidates_markdown(&view),
-            work_explain_markdown(&explain),
+            work_candidates_markdown(&view, None),
+            work_explain_markdown(&explain, None),
         ] {
             assert!(markdown.contains("ranking key: `[0, 0, 0, 0, 0, 2, 1, 0]`"));
             assert!(markdown.contains("ascending lexicographic; ties by `candidate_id`"));
@@ -3988,10 +3997,11 @@ mod tests {
         let mut legacy_snapshot = snapshot.clone();
         legacy_snapshot.candidates[0].ranking_key = None;
         assert!(
-            work_portfolio_markdown(&legacy_snapshot).contains("| unavailable (legacy artifact) |")
+            work_portfolio_markdown(&legacy_snapshot, None)
+                .contains("| unavailable (legacy artifact) |")
         );
         assert!(
-            candidate_markdown(&legacy, "# Legacy")
+            candidate_markdown(&legacy, "# Legacy", "")
                 .contains("ranking key: unavailable (legacy artifact)")
         );
         for malformed in [
@@ -4797,9 +4807,9 @@ mod tests {
         if !notice.committed_fixture {
             return Err("the default corpus must be detected as a committed fixture".to_string());
         }
-        let markdown = with_capture_notice(
-            &work_candidates_markdown(&build_candidates_view(&snapshot, None, None, 3, None)?),
-            &notice,
+        let markdown = work_candidates_markdown(
+            &build_candidates_view(&snapshot, None, None, 3, None)?,
+            Some(&notice),
         );
         let mut lines = markdown.lines();
         if lines.next() != Some("# Work candidates") {
@@ -4833,12 +4843,19 @@ mod tests {
             default_branch_sha: "abc123".to_string(),
             committed_fixture: false,
         };
-        let markdown = with_capture_notice("# Work portfolio\n\n- repository: `x`\n", &notice);
+        let markdown = capture_preamble(Some(&notice));
+        if markdown.is_empty() {
+            return Err("a notice must render".to_string());
+        }
         if markdown.contains("fixture") || !markdown.contains("2026-10-17T00:00:00Z") {
             return Err(format!("unexpected live-capture notice: {markdown}"));
         }
-        if !markdown.starts_with("# Work portfolio\n\n- captured from: `/tmp/live`") {
-            return Err(format!("notice must sit under the title: {markdown}"));
+        if !markdown.starts_with("- captured from: `/tmp/live`") {
+            return Err(format!("unexpected notice shape: {markdown}"));
+        }
+        let none = work_portfolio_markdown(&committed()?, None);
+        if none.contains("captured from") {
+            return Err("no notice, no capture lines".to_string());
         }
         if is_committed_fixture_dir(Path::new("/tmp/live")) {
             return Err("an unrelated directory is not the committed fixture tree".to_string());
@@ -4851,7 +4868,7 @@ mod tests {
     #[test]
     fn work_portfolio_markdown_derives_from_same_dto_without_strengthening() -> Result<(), String> {
         let snapshot = committed()?;
-        let markdown = work_portfolio_markdown(&snapshot);
+        let markdown = work_portfolio_markdown(&snapshot, None);
         for needle in [
             "candidate:issue:9101",
             "repair_review",
@@ -4864,7 +4881,7 @@ mod tests {
             }
         }
         let view = build_explain_view(&snapshot, "candidate:issue:9107")?;
-        let explain = work_explain_markdown(&view);
+        let explain = work_explain_markdown(&view, None);
         // The rendered prose carries the snake_case wire identity of the
         // conflict edge (`edge:claim_collision:issue-9107`), not a kebab-case
         // label; the needle must match what the contract actually renders.
@@ -4873,8 +4890,10 @@ mod tests {
                 "the degraded candidate must stay degraded in the human rendering: {explain}"
             ));
         }
-        let candidates_md =
-            work_candidates_markdown(&build_candidates_view(&snapshot, None, None, 3, None)?);
+        let candidates_md = work_candidates_markdown(
+            &build_candidates_view(&snapshot, None, None, 3, None)?,
+            None,
+        );
         if !candidates_md.contains("omitted=9") {
             return Err("candidates markdown must report the omitted count honestly".to_string());
         }
@@ -4888,7 +4907,7 @@ mod tests {
     #[test]
     fn work_portfolio_markdown_renders_lists_as_plain_markdown_not_debug() -> Result<(), String> {
         let snapshot = committed()?;
-        let markdown = work_portfolio_markdown(&snapshot);
+        let markdown = work_portfolio_markdown(&snapshot, None);
         for campaign in &snapshot.campaigns {
             let debug = format!("{:?}", campaign.issues);
             if markdown.contains(&debug) {
@@ -4913,8 +4932,10 @@ mod tests {
         }
 
         let collision = candidate(&snapshot, 9107)?;
-        let explain =
-            work_explain_markdown(&build_explain_view(&snapshot, &collision.candidate_id)?);
+        let explain = work_explain_markdown(
+            &build_explain_view(&snapshot, &collision.candidate_id)?,
+            None,
+        );
         let debug_edges = format!("conflict edges: {:?}", collision.conflict_edges);
         if explain.contains(&debug_edges) {
             return Err(format!(
@@ -4939,8 +4960,10 @@ mod tests {
         }
 
         let regression = candidate(&snapshot, 9101)?;
-        let regression_md =
-            work_explain_markdown(&build_explain_view(&snapshot, &regression.candidate_id)?);
+        let regression_md = work_explain_markdown(
+            &build_explain_view(&snapshot, &regression.candidate_id)?,
+            None,
+        );
         let debug_risks = format!("regression risks: {:?}", regression.regression_risks);
         if regression_md.contains(&debug_risks) {
             return Err(format!(
