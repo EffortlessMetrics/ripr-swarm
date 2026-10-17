@@ -76,7 +76,11 @@ row claims and keeps `merged_pending_closeout`: merge alone cannot close.
 fail-closed over LF-normalized bytes (matching the LF bytes git stores per
 `.gitattributes * text=auto eol=lf`), rebinds each row digest through the
 unchanged RIPR-SPEC-0218 counting law, and rejects any drift between the
-corpus, the provenance and the captures. The adapter tests in
+corpus, the provenance and the captures. It also cross-checks capture-time
+consistency: `provenance.captured_at` must not predate the latest
+`mergedAt`/`closedAt` event any bound snapshot records, so a provenance
+claiming to capture evidence before that evidence existed rejects instead
+of passing silently. The adapter tests in
 `cargo test -p xtask issue_lifecycle_real_rows` pin both rows loading and
 counting, Row A dispositions through to completed closeout, Row B staying
 `merged_pending_closeout`, wrong-head/wrong-merge identity rejection on the

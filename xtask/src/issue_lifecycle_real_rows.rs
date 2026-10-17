@@ -149,6 +149,31 @@ pub(crate) fn real_rows_snapshot_digest(root: &Path, file: &str) -> Result<(Stri
     Ok((crate::blind_journey::sha256_hex(&lf), lf.len() as u64))
 }
 
+/// Recursively collect the values of `mergedAt`/`closedAt` keys from a
+/// snapshot JSON body. These are GitHub's ISO-8601 UTC timestamps; as
+/// `YYYY-MM-DDTHH:MM:SSZ` strings they order lexicographically, so no date
+/// library is needed for the consistency check.
+fn collect_event_timestamps(value: &serde_json::Value, out: &mut Vec<String>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, value) in map {
+                if matches!(key.as_str(), "mergedAt" | "closedAt")
+                    && let Some(timestamp) = value.as_str()
+                {
+                    out.push(timestamp.to_string());
+                }
+                collect_event_timestamps(value, out);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_event_timestamps(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Fail-closed provenance binding for the whole corpus: snapshot digests,
 /// row digests, observation keys and lifecycle ids must all agree with the
 /// committed captures; both rows must count at their recorded dispositions
@@ -162,6 +187,7 @@ pub(crate) fn verify_real_rows_bindings(
     if !snapshot_dir.is_dir() {
         return Err("real rows corpus is missing its snapshots directory".to_string());
     }
+    let mut latest_event: Option<String> = None;
     for snapshot in &provenance.snapshots {
         let (computed, bytes) = real_rows_snapshot_digest(root, &snapshot.file)?;
         if computed != snapshot.sha256_lf {
@@ -176,6 +202,34 @@ pub(crate) fn verify_real_rows_bindings(
                 snapshot.file, snapshot.bytes_lf
             ));
         }
+        let body = fs::read(snapshot_dir.join(&snapshot.file))
+            .map_err(|error| format!("read snapshot {} for timestamps: {error}", snapshot.file))?;
+        let value: serde_json::Value = serde_json::from_slice(&body)
+            .map_err(|error| format!("parse snapshot {} for timestamps: {error}", snapshot.file))?;
+        let mut events = Vec::new();
+        collect_event_timestamps(&value, &mut events);
+        for event in events {
+            if event.len() < 20 || !event.ends_with('Z') {
+                return Err(format!(
+                    "snapshot {} records a non-UTC mergedAt/closedAt `{event}`",
+                    snapshot.file
+                ));
+            }
+            if latest_event
+                .as_deref()
+                .is_none_or(|latest| event.as_str() > latest)
+            {
+                latest_event = Some(event);
+            }
+        }
+    }
+    if let Some(latest) = latest_event
+        && provenance.captured_at < latest
+    {
+        return Err(format!(
+            "provenance captured_at `{}` predates the latest captured merge/close event `{latest}`; the capture session cannot record an event that had not happened yet",
+            provenance.captured_at
+        ));
     }
     if provenance.rows.len() != corpus.rows.len() {
         return Err(format!(
@@ -363,6 +417,31 @@ mod tests {
                 "row B must keep the merge bound, the current-head receipt absent and uncovered rows visible"
                     .to_string(),
             );
+        }
+        Ok(())
+    }
+
+    /// Capture-time consistency (review follow-up on #8440): the committed
+    /// captured_at must not predate the latest mergedAt/closedAt event any
+    /// bound snapshot records; a provenance claiming to capture evidence
+    /// before that evidence existed is internally inconsistent and must
+    /// reject.
+    #[test]
+    fn capture_time_predating_a_bound_event_rejects() -> Result<(), String> {
+        let corpus = load_real_rows_corpus()?;
+        let mut provenance = load_real_rows_provenance()?;
+        verify_real_rows_bindings(&real_root(), &corpus, &provenance)?;
+        provenance.captured_at = "2026-10-16T00:00:00Z".to_string();
+        let error = match verify_real_rows_bindings(&real_root(), &corpus, &provenance) {
+            Ok(()) => {
+                return Err(
+                    "a captured_at before every bound merge/close event must reject".to_string(),
+                );
+            }
+            Err(error) => error,
+        };
+        if !error.contains("predates") {
+            return Err(format!("expected a predates rejection, got: {error}"));
         }
         Ok(())
     }

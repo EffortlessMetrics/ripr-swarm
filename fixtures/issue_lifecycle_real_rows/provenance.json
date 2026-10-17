@@ -1,7 +1,7 @@
 {
  "schema_version": "issue_lifecycle_real_rows_provenance.v1",
  "repository": "EffortlessMetrics/ripr-swarm",
- "captured_at": "2026-10-17T02:27:00Z",
+ "captured_at": "2026-10-17T06:27:51Z",
  "base_main": "b038650091ca6183e252e459b91c4aff35eef701",
  "capture_method": "read-only gh capture (issue view, issue comments, issue labels, pr view, pr reviews, compare); zero GitHub mutation; the compare receipt and the PR #8325 receipt are jq-reduced to context-clean receipts (base/head SHAs and merge facts only) so no third-party commit payload or PR body prose enters the fixture",
  "digest_normalization": "all sha256 digests and byte counts are computed over LF-normalized bytes, matching the LF bytes git stores per .gitattributes `* text=auto eol=lf`",
