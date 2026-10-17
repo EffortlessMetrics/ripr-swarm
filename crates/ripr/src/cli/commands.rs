@@ -124,6 +124,8 @@ mod pr_comments_github;
 
 #[path = "commands/check.rs"]
 mod check;
+#[path = "commands/check_budget.rs"]
+mod check_budget;
 #[path = "commands/check_fanout.rs"]
 mod check_fanout;
 pub(super) use check::check;
