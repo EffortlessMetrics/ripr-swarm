@@ -255,6 +255,51 @@ fn a_helper_test_may_evaluate_the_changed_operand() -> Result<(), String> {
     Ok(())
 }
 
+fn only_the_test_differs(test: &str) -> Result<(), String> {
+    let findings = findings_on_changed_line(
+        &lib("||", "y == 1"),
+        "    x == 0 || y == 1",
+        "    x == 0 || y == 0",
+        test,
+    )?;
+    assert_no_skipped_operand_claim(&findings);
+    Ok(())
+}
+
+#[test]
+fn a_hex_literal_argument_is_not_read_as_decimal() -> Result<(), String> {
+    // Control: `0x1` is 1, so `either(0x1, 1)` skips `x == 0` and evaluates
+    // `y == 1`; the argument extractor reads it as `0`.
+    only_the_test_differs(
+        "use short_circuit::either;\n\n#[test]\nfn hex() {\n    assert_eq!(either(0x0, 3), true);\n    assert_eq!(either(0x1, 1), true);\n}\n",
+    )
+}
+
+#[test]
+fn two_owner_calls_on_one_line_are_not_read_as_one() -> Result<(), String> {
+    // Control: the second call, `either(1, 1)`, evaluates `y == 1`.
+    only_the_test_differs(
+        "use short_circuit::either;\n\n#[test]\nfn pair() {\n    assert!(either(0, 3) && either(1, 1));\n}\n",
+    )
+}
+
+#[test]
+fn a_test_macro_may_expand_to_an_owner_call() -> Result<(), String> {
+    // Control: `chk!(1, 1)` expands to `either(1, 1)`.
+    only_the_test_differs(
+        "use short_circuit::either;\n\nmacro_rules! chk {\n    ($a:expr, $b:expr) => {\n        assert!(either($a, $b));\n    };\n}\n\n#[test]\nfn through_macro() {\n    assert_eq!(either(0, 3), true);\n    chk!(1, 1);\n}\n",
+    )
+}
+
+#[test]
+fn an_owner_reached_through_a_local_binding_is_not_a_direct_call() -> Result<(), String> {
+    // Control: `call(1, 1)` is `either(1, 1)`, but no `either(` call names it
+    // and no other function calls `either` by name.
+    only_the_test_differs(
+        "use short_circuit::either;\n\n#[test]\nfn bound() {\n    assert_eq!(either(0, 3), true);\n    let call = either;\n    assert!(call(1, 1));\n}\n",
+    )
+}
+
 #[test]
 fn a_shadowed_parameter_is_not_the_called_value() -> Result<(), String> {
     // Control: `let x = x + 1;` makes `x == 0` false for `either(0, _)`, so

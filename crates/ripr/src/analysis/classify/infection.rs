@@ -21,6 +21,11 @@ use std::collections::BTreeMap;
 /// direct calls whose arguments were read: a test that calls the owner
 /// through a wrapper or a helper, or at all differently, may evaluate the
 /// operand on an input this reading never saw.
+///
+/// Ladder order (#7970): the caller tries this after the missing-equality
+/// rung and before the observed-boundary-equality rung. Moving it below that
+/// rung lets an unchanged operand's boundary input read `Yes` again; moving
+/// it above the missing-equality rung would hide a missing discriminator.
 fn changed_operands_are_never_evaluated(
     probe: &Probe,
     activation: &ActivationEvidence,
@@ -96,14 +101,27 @@ fn changed_operands_are_never_evaluated(
 
 /// Whether `test` calls the owner directly and routes nowhere else that
 /// could reach it: it has an owner call in its own body, no call lifted
-/// from a helper outside its body, and no body call other than assertion
-/// macros and plain constructors.
+/// from a helper outside its body, no body call other than assertion
+/// macros and plain constructors, and no macro that could expand to an
+/// owner call. Every owner call is the only one on its line and has plain
+/// decimal or boolean literal arguments: the argument extractor reads a hex
+/// or suffixed literal as another number, and two calls on one line collapse
+/// into one call fact.
 fn test_reaches_owner_only_directly(test: &TestSummary, owner: &str) -> bool {
     const INERT: &[&str] = &["vec", "Some", "Ok", "Err", "format", "matches"];
     let inert = |name: &str| {
         name.starts_with("assert") || name.starts_with("debug_assert") || INERT.contains(&name)
     };
-    test.body_calls().any(|call| call.name == owner)
+    let mut owner_calls = 0;
+    for call in test.body_calls().filter(|call| call.name == owner) {
+        owner_calls += 1;
+        if !owner_call_has_plain_literal_arguments(&call.text, owner) {
+            return false;
+        }
+    }
+    owner_calls > 0
+        && word_call_offsets(&test.body, owner).len() == owner_calls
+        && only_std_assertion_macros(&test.body)
         && test.calls.iter().all(|call| {
             if (test.start_line..=test.end_line).contains(&call.line) {
                 // The facts list the test's own declaration as a call.
@@ -112,6 +130,96 @@ fn test_reaches_owner_only_directly(test: &TestSummary, owner: &str) -> bool {
                 false
             }
         })
+}
+
+fn is_ident_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+/// Byte offsets of each `name(` call-shaped use of `name` in `text`.
+fn word_call_offsets(text: &str, name: &str) -> Vec<usize> {
+    let bytes = text.as_bytes();
+    text.match_indices(name)
+        .filter(|(at, _)| *at == 0 || !is_ident_byte(bytes[at - 1]))
+        .filter(|(at, _)| {
+            bytes[at + name.len()..]
+                .iter()
+                .find(|byte| !byte.is_ascii_whitespace())
+                == Some(&b'(')
+        })
+        .map(|(at, _)| at)
+        .collect()
+}
+
+/// `text` holds exactly one `owner(...)` call whose arguments are all plain
+/// decimal integers or booleans and whose parenthesis closes on the line.
+fn owner_call_has_plain_literal_arguments(text: &str, owner: &str) -> bool {
+    let &[at] = word_call_offsets(text, owner).as_slice() else {
+        return false;
+    };
+    let rest = &text[at + owner.len()..];
+    let Some(open) = rest.find('(') else {
+        return false;
+    };
+    let mut depth = 0usize;
+    let mut close = None;
+    for (index, byte) in rest.bytes().enumerate().skip(open) {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    close = Some(index);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(close) = close else {
+        return false;
+    };
+    let arguments = &rest[open + 1..close];
+    !arguments.trim().is_empty()
+        && arguments.split(',').all(|argument| {
+            let argument = argument.trim();
+            let digits = argument.strip_prefix('-').unwrap_or(argument);
+            argument == "true"
+                || argument == "false"
+                || (!digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit()))
+        })
+}
+
+/// Every `name!(`/`name![`/`name!{` in `body` is a std assertion or
+/// constructor macro. A user macro, even one defined elsewhere in the test
+/// file, may expand to an owner call whose arguments this reading never saw.
+fn only_std_assertion_macros(body: &str) -> bool {
+    const ALLOWED: &[&str] = &[
+        "assert",
+        "assert_eq",
+        "assert_ne",
+        "debug_assert",
+        "debug_assert_eq",
+        "debug_assert_ne",
+        "matches",
+        "vec",
+        "format",
+    ];
+    let bytes = body.as_bytes();
+    bytes.iter().enumerate().all(|(at, byte)| {
+        if *byte != b'!' || at == 0 || !is_ident_byte(bytes[at - 1]) {
+            return true;
+        }
+        let invoked = bytes[at + 1..]
+            .iter()
+            .find(|byte| !byte.is_ascii_whitespace())
+            .is_some_and(|byte| matches!(byte, b'(' | b'[' | b'{'));
+        let start = bytes[..at]
+            .iter()
+            .rposition(|byte| !is_ident_byte(*byte))
+            .map_or(0, |index| index + 1);
+        !invoked || ALLOWED.contains(&&body[start..at])
+    })
 }
 
 #[cfg(test)]
