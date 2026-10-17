@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A glob import from the standard distribution (`use core::simd::prelude::*;`, `use std::io::prelude::*;`) no longer counts as a foreign glob that may rebind `assert_eq!`, so it stops withholding assertion credit from every test in the crate (`assertion not credited: ripr could not establish that it runs as the standard macro`). A glob from any other crate, or from a root a module or alias in the file takes over, still refuses (#8388).

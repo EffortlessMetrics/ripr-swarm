@@ -5439,6 +5439,67 @@ fn index_without_other(tests: &str) -> RustIndex {
     index(&[(LIB, WEIGHT_LIB), (TESTS, tests)])
 }
 
+/// #8388: a glob from the standard distribution lists only the standard
+/// macros, so it is not a may-rebind site; any other root, or a root a
+/// module or alias in the file takes over, still is.
+#[test]
+fn standard_library_globs_are_not_foreign_macro_binding_sites() {
+    let sites = |source: &str| {
+        trusted_macro_binding_sites(
+            source,
+            &BTreeSet::new(),
+            &assertion_context_macros(),
+            &|_, _| false,
+            &|_| false,
+        )
+    };
+    for source in [
+        "#[cfg(feature = \"simd_support\")]\nuse core::simd::prelude::*;\n",
+        "use std::io::prelude::*;\n",
+        "use ::std::fmt::*;\n",
+        "use alloc::vec::*;\n",
+    ] {
+        assert!(sites(source).is_empty(), "{source}");
+    }
+    for source in [
+        "use other::io::prelude::*;\n",
+        "use stdx::prelude::*;\n",
+        "mod core {}\nuse core::prelude::*;\n",
+        "extern crate other as std;\nuse std::prelude::*;\n",
+    ] {
+        let found = sites(source);
+        assert!(
+            found
+                .iter()
+                .any(|(_, site)| matches!(site.kind, MacroBindingKind::ForeignGlob(_))),
+            "{source}"
+        );
+    }
+    // The workspace-wide pass agrees: no refusal site for `assert_eq`
+    // from a standard glob in another file, one from a foreign glob.
+    for (glob, refused) in [
+        ("core::simd::prelude::*", false),
+        ("other::prelude::*", true),
+    ] {
+        let index = index(&[
+            (LIB, "pub fn id(x: u32) -> u32 {\n    x\n}\n"),
+            (
+                "src/globs.rs",
+                &format!("use {glob};\npub fn drain() {{}}\n"),
+            ),
+        ]);
+        // Run-scoped memos: a fresh syntax per workspace.
+        let syntax = OwnerPinSyntax::default();
+        assert_eq!(
+            syntax
+                .workspace_macro_site("assert_eq", Some(Path::new(TESTS)), &index)
+                .is_some(),
+            refused,
+            "{glob}"
+        );
+    }
+}
+
 #[test]
 fn trusted_macro_scan_skips_files_only_once_every_name_is_ambiguous() {
     let unresolved = |_: &Path, _: usize, _: &str| false;
@@ -5464,7 +5525,7 @@ fn trusted_macro_scan_skips_files_only_once_every_name_is_ambiguous() {
         // A foreign glob saturates the set before the defining file is read.
         (
             vec![
-                ("src/a.rs", "use std::io::prelude::*;\n"),
+                ("src/a.rs", "use other::io::prelude::*;\n"),
                 ("src/b.rs", shadowing),
             ],
             true,
@@ -5539,7 +5600,7 @@ fn convergence_index() -> RustIndex {
     index(&[
         (
             CONVERGENCE_GLOB,
-            "use std::io::prelude::*;\npub fn drain(input: &mut Vec<u8>) {\n    input.clear();\n}\n",
+            "use other::io::prelude::*;\npub fn drain(input: &mut Vec<u8>) {\n    input.clear();\n}\n",
         ),
         (
             LIB,
