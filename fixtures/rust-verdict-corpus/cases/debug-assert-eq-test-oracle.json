@@ -1,0 +1,52 @@
+{
+  "case_id": "debug-assert-eq-test-oracle",
+  "subject_id": "authored-debug-assert-test-oracle",
+  "diff": "cases/debug-assert-eq-test-oracle.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 6
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "unit_test_debug_assert_eq_as_only_oracle",
+  "hard_case": "The test's only check is debug_assert_eq! on the owner's return. It discriminates under the default cargo test profile and is compiled out under --release, so a missing-assertion gap would be false and credit would depend on the profile.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "base + (grams / 100) * 41",
+        "mutated_line": "base + (grams / 100) * 41",
+        "outcome": "tests_failed",
+        "failing_test": "tests::a_kilo_parcel_costs_six_fifty",
+        "equivalence_review": "not equivalent: a 1000 g parcel costs 660"
+      },
+      {
+        "replacement": "base + (grams / 10) * 40",
+        "mutated_line": "base + (grams / 10) * 40",
+        "outcome": "tests_failed",
+        "failing_test": "tests::a_kilo_parcel_costs_six_fifty",
+        "equivalence_review": "not equivalent: a 1000 g parcel costs 4250"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "a_kilo_parcel_costs_six_fifty pins shipping_cents(1000) == 650 with debug_assert_eq!, so either mutant fails under cargo test. Under cargo test --release both mutants pass because the check is compiled out, so the label depends on the test profile; a gap verdict would be false.",
+  "labeling_observation": {
+    "ripr_commit": "3fc24dfc3",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -810,6 +810,89 @@ pub(in crate::analysis) fn withhold_should_panic_gap(
     true
 }
 
+const DEBUG_ASSERTION_LIMIT: StaticLimitKind = StaticLimitKind::RustDebugAssertionProfileUnresolved;
+const DEBUG_ASSERTION_FIRST_UNRESOLVED_EDGE: &str =
+    "whether the tests run with debug assertions, which the `debug_assert` check needs";
+
+/// #8051: a related test that calls the owner directly and checks it with a
+/// strong `debug_assert_eq!` or `debug_assert!` discriminates under the
+/// default `cargo test` profile, where debug assertions run, and never under
+/// `--release`, where they are compiled out. ripr does not resolve which
+/// profile runs the tests, so neither the gap nor credit is established: the
+/// gap is withheld under its own limit. The owner pin still refuses the
+/// `debug_` spellings (RIPR-SPEC-0197), so this never upgrades a class. A
+/// weak debug check (`debug_assert_ne!`, a relational condition) keeps the
+/// gap, since it would not discriminate as a standard assertion either.
+/// Returns `true` when the finding was rewritten to `static_unknown`.
+pub(in crate::analysis) fn withhold_debug_assertion_gap(
+    finding: &mut Finding,
+    index: &RustIndex,
+) -> bool {
+    if finding.static_limit_kind.is_some()
+        || !matches!(
+            finding.class,
+            ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+        )
+    {
+        return false;
+    }
+    let checking: Vec<String> = finding
+        .related_tests
+        .iter()
+        .filter(|related| {
+            related.relation_reason == Some(RelationReason::DirectOwnerCall)
+                && !related.is_unmatched()
+                && related.oracle_strength == OracleStrength::Strong
+                && related.oracle.as_deref().is_some_and(is_debug_assertion)
+                && index.tests().iter().any(|test| {
+                    test.name == related.name
+                        && test.file == related.file
+                        && test.start_line == related.line
+                        && !is_ignored(test)
+                })
+        })
+        .map(|related| {
+            format!(
+                "`{}` ({}:{})",
+                related.name,
+                related.file.display().to_string().replace('\\', "/"),
+                related.line
+            )
+        })
+        .collect();
+    if checking.is_empty() {
+        return false;
+    }
+    let next_step = format!(
+        "{} checks this code only with a `debug_` assertion, which runs under the default test profile and is compiled out with `--release`, so ripr does not report a gap. If the tests may run with `--release`, use `assert_eq!` or `assert!` instead.",
+        checking.join(", ")
+    );
+    withhold_gap(
+        finding,
+        DEBUG_ASSERTION_LIMIT,
+        DEBUG_ASSERTION_FIRST_UNRESOLVED_EDGE,
+        next_step,
+        &checking,
+    );
+    true
+}
+
+/// One `debug_assert_eq!` or `debug_assert!` invocation, bare or under a
+/// `std`/`core` root. `debug_assert_ne!` passes for every other value, so it
+/// is not read here.
+fn is_debug_assertion(oracle: &str) -> bool {
+    let text = oracle.trim_start();
+    let text = text.strip_prefix("::").unwrap_or(text);
+    let text = text
+        .strip_prefix("std::")
+        .or_else(|| text.strip_prefix("core::"))
+        .unwrap_or(text);
+    ["debug_assert_eq", "debug_assert"].iter().any(|name| {
+        text.strip_prefix(name)
+            .is_some_and(|rest| rest.trim_start().starts_with('!'))
+    })
+}
+
 /// The byte ranges of the bracketed arguments of every panicking macro
 /// invoked at or after byte `from` of the masked body: `name!(..)`,
 /// `name![..]` or `name!{..}` (`std::panic!` and `core::panic!` included;

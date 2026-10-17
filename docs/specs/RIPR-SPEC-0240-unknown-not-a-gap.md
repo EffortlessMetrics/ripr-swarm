@@ -203,11 +203,45 @@ A panicking macro inside a nested `fn`, closure or `macro_rules!` in the
 owner still counts; that over-reads toward `static_unknown`, never toward a
 gap or credit.
 
+### Profile-dependent `debug_` assertion
+
+`debug_assert_eq!` and `debug_assert!` run under the default `cargo test`
+profile and are compiled out under `--release` (unless the profile turns
+debug assertions back on). A test checked only by one of them discriminates
+in the first profile and never in the second. Before #8051 the parser did not
+collect the `debug_` forms, so such a test read as having no assertion and
+the finding as a certain `reachable_unrevealed` gap. The parser now collects
+them (`is_assertion_macro`), and the owner pin still refuses them
+(RIPR-SPEC-0197), so the finding reads `weakly_exposed` with
+`observation_unverified`. `gap_admission::withhold_debug_assertion_gap`
+withholds that gap under `rust_debug_assertion_profile_unresolved` when:
+
+- the finding is `weakly_exposed` or `reachable_unrevealed` with no
+  `static_limit_kind`;
+- a related row with a `direct_owner_call` relation, not an unmatched
+  examined test, carries a `strong` oracle whose text is one
+  `debug_assert_eq!` or `debug_assert!` invocation, bare or under a `std` or
+  `core` root;
+- the row's test (bound by name, file and start line) is not `#[ignore]`.
+
+It runs after the `#[should_panic]` limit and before
+`withhold_unsupported_gap`. Decision (#8051, reversible): withhold rather
+than credit. Crediting would claim a discriminator that a `--release` test
+run never executes, and ripr does not read the CI command or the profile
+settings; keeping the gap would claim a missing test the default run does
+have. This matches the corpus precedent for a production `debug_assert!`
+(`mined-debug-assert-only-oracle`, RIPR-SPEC-0219), which scores
+`static_unknown` as `abstained`. `debug_assert_ne!` and a relational
+`debug_assert!` (`one() > 0`) keep their gap, since neither would
+discriminate as the standard macro.
+
 ## Scope boundary
 
 - Rust check findings only. The pilot seam rule is RIPR-SPEC-0230 (#5569).
 - `weakly_exposed` findings are out of scope: a credited weak oracle is read
-  evidence even when a stronger assertion was refused.
+  evidence even when a stronger assertion was refused. The one exception is
+  the profile-dependent `debug_` assertion above, whose oracle is strong and
+  weak only because it may not run.
 - Two broader rules were built and dropped. Withholding every refused-context
   gap hid the runtime-controlled gaps above. Withholding `weakly_exposed` when
   a strong oracle's text does not name the changed arm hid the sibling-arm

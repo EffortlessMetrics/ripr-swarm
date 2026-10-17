@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust test that calls the changed owner and checks it with a strong `debug_assert_eq!` or `debug_assert!` no longer reads as a missing assertion. The finding reads `static_unknown` with the new `rust_debug_assertion_profile_unresolved` limit, because the check runs under the default test profile and is compiled out under `--release`; it is not credited either. `debug_assert_ne!`, relational `debug_assert!` checks and ignored tests keep their gap (#8051).

@@ -16089,6 +16089,9 @@ tests = [
   "crates/ripr/src/analysis/classify/gap_admission.rs::tests::a_should_panic_test_expects_the_owner_panic_only_when_the_message_matches",
   "crates/ripr/tests/should_panic_limit.rs::a_should_panic_test_on_a_changed_panic_guard_reads_as_static_unknown",
   "crates/ripr/tests/should_panic_limit.rs::a_panic_outcome_the_rule_does_not_cover_keeps_the_gap",
+  "crates/ripr/tests/debug_assertion_limit.rs::a_strong_debug_assertion_reads_as_a_profile_limit",
+  "crates/ripr/tests/debug_assertion_limit.rs::standard_assertions_and_weak_debug_checks_keep_their_class",
+  "crates/ripr/src/analysis/syntax/ra/property_macros.rs::tests::debug_assertion_macros_keep_assertion_authority",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::analyzer_limit_refusals_are_limits_of_ripr_reading",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::refusals_that_can_keep_an_assertion_from_running_are_not_limits",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_outcome_settling_attribute_is_the_refusal_wherever_it_sits",
@@ -16121,6 +16124,7 @@ code = [
   "crates/ripr/src/analysis/classifier/evidence.rs",
   "crates/ripr/src/analysis/classifier/finding.rs",
   "crates/ripr/src/analysis/language/rust/mod.rs",
+  "crates/ripr/src/analysis/syntax/ra.rs",
 ]
 outputs = [
   "fixtures/gap_withheld_feature_gated_test/expected/check.json",

@@ -959,3 +959,11 @@ The unchanged-after-attempt before/after corpus generation moves from 1.81 to
 commitments and dependent verify/receipt byte hashes follow that exact change.
 Routing, unchanged movement, incomplete receipt and all tamper controls remain.
 The live producer normalization test validates this bounded fixture update.
+
+### #8051 — classified-cache generation parity
+
+The unchanged-after-attempt before/after corpus generation moves from 1.82 to
+1.83 for the profile-dependent `debug_` assertion limit (RIPR-SPEC-0240).
+Content commitments and dependent verify/receipt byte hashes follow that exact
+change. Routing, unchanged movement, incomplete receipt and all tamper controls
+remain.

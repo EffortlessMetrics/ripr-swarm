@@ -2220,7 +2220,8 @@ JSON fields:
   `python_transitive_reach_unresolved`, or
   `rust_assertion_context_unresolved`, or
   `rust_log_capture_unresolved`, or
-  `rust_panic_outcome_unresolved`.
+  `rust_panic_outcome_unresolved`, or
+  `rust_debug_assertion_profile_unresolved`.
 - `rust_field_match_selector_unresolved`: a plain owner-parameter field selects a changed statement-free tail match. A strong oracle in a directly calling test exists, but the field value at that invocation and whether an assertion observes that invocation's return are unresolved. The match header and unique direct-arm lines may carry this metadata; computed selectors, local bindings, nested matches, guarded arms and ambiguous same-line subjects are excluded. This does not establish an `Option` type, same-invocation proof, coverage, or absence of a test gap. Finding/probe IDs, classes, RIPR stages, missing discriminators and raw class counts are unchanged. The existing typed-limitation contract withholds canonical repair-gap projection and can change repair readiness and derived gate routing; this names uncertainty, not resolved test debt. Inspect the existing call/assertion before adding a test. The optional kind uses the existing wire shape/version; consumers still require their own producer compatibility qualification.
 - `static_limitation` is an additive optional per-finding object emitted only
   when a finding with `static_limit_kind` also carries a complete structured
@@ -2753,6 +2754,7 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 - `rust_assertion_context_unresolved` -- (RIPR-SPEC-0240, additive) Every related `assert_eq!` ripr refused was refused for a limit of its own reading (an unparsed or unplaced file, an unidentified test, a feature `cfg`, a binding that only may rebind the macro). The `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim.
 - `rust_log_capture_unresolved` -- (#7133, additive) A changed `log::` record is checked by a related test that installs a capturing logger before calling the owner and asserts exactly on the captured store, against a string literal that carries the record's static template text. `tracing::` events and count or status assertions (`lines.len()`) keep their gap. ripr does not resolve the logger or the format template, so the `weakly_exposed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim.
 - `rust_panic_outcome_unresolved` -- (RIPR-SPEC-0240, additive) A related, non-ignored test with no assertion carries `#[should_panic]` (bare, `expected = ""`, or an `expected` message found in a literal argument of a panicking macro on or after the changed line), calls the owner directly, and the owner invokes a panicking macro on or after the changed line. ripr does not resolve whether the changed code decides that panic, so the `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim.
+- `rust_debug_assertion_profile_unresolved` -- (RIPR-SPEC-0240, additive, #8051) A related, non-ignored test calls the owner directly and its strongest oracle row is a strong `debug_assert_eq!` or `debug_assert!` (bare or `std`/`core`-rooted; never `debug_assert_ne!`). Debug assertions run under the default `cargo test` profile and are compiled out under `--release`, and ripr does not resolve which profile runs the tests, so the `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim, and never exposure credit.
 
 Reserved `flow_sink` values:
 
@@ -18057,7 +18059,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.82",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.83",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -18757,7 +18759,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.43",
+    "schema_version": "1.44",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -18768,7 +18770,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.82",
+      "schema_version": "1.83",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
