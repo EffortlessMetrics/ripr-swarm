@@ -60,6 +60,11 @@ use rayon::prelude::*;
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
+/// Widened reach indexes retained at once. Owners alternate among a few
+/// closures, so two slots remove the rebuilds while bounding the memory
+/// the retained indexes hold (#5363; the 512 MB peak-RSS target stays).
+const REACH_INDEX_CAPACITY: usize = 2;
+
 /// Dependent files read and scanned per parallel admission batch, bounding
 /// how many withheld files' bytes are held at once.
 const ADMISSION_BATCH_FILES: usize = 64;
@@ -475,9 +480,12 @@ pub(super) struct NarrowedScope {
     /// or where it passed the limit. The limit is fixed for the scope's
     /// run, so a cached `Over` stays valid.
     closures: std::collections::BTreeMap<String, Closure>,
-    /// The last widened index and the files it holds; owners whose closure
-    /// selects the same files reuse it.
-    reach_index: Option<(Vec<PathBuf>, RustIndex)>,
+    /// The most recently used widened indexes (at most
+    /// [`REACH_INDEX_CAPACITY`], least recent first) and the files each
+    /// holds; owners whose closure selects the same files reuse one.
+    /// Owners alternate between a few closures, so a single slot rebuilt
+    /// the same index repeatedly (#5363).
+    reach_index: Vec<(Vec<PathBuf>, RustIndex)>,
     test_harnesses: Vec<crate::config::TestHarnessRegistration>,
     /// Bytes the reach widening read, for the run's consumed sources.
     consumed: ConsumedRustSources,
@@ -747,7 +755,7 @@ pub(super) fn admit_dependents(
             withheld,
             tokens,
             closures: std::collections::BTreeMap::new(),
-            reach_index: None,
+            reach_index: Vec::new(),
             test_harnesses: test_harnesses.to_vec(),
             consumed: ConsumedRustSources::default(),
             widen: !core_only,
@@ -852,17 +860,24 @@ impl NarrowedScope {
                 limit,
             });
         }
-        if self
+        if let Some(position) = self
             .reach_index
-            .as_ref()
-            .is_none_or(|(indexed, _)| *indexed != files)
+            .iter()
+            .position(|(indexed, _)| *indexed == files)
         {
+            // Most recently used last, so eviction drops the stalest.
+            let entry = self.reach_index.remove(position);
+            self.reach_index.push(entry);
+        } else {
             let index = build_index(&self.root, &files, &self.test_harnesses, &mut self.consumed)?;
-            self.reach_index = Some((files, index));
+            if self.reach_index.len() >= REACH_INDEX_CAPACITY {
+                self.reach_index.remove(0);
+            }
+            self.reach_index.push((files, index));
         }
         Ok(self
             .reach_index
-            .as_ref()
+            .last()
             .map_or(ReachIndex::Main, |(_, index)| ReachIndex::Widened(index)))
     }
 
