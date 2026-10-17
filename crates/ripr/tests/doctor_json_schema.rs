@@ -555,3 +555,33 @@ fn published_doctor_schema_rejects_documents_the_schema_forbids() -> Result<(), 
 
     Ok(())
 }
+
+/// #6986: a recovery state emits `canonical_next_action` through the real
+/// command, the document still conforms to the published schema, and the
+/// runnable-command root omits the member.
+#[test]
+fn doctor_json_names_the_canonical_recovery_only_when_setup_needs_one() -> Result<(), String> {
+    let schema = published_schema()?;
+    let root = fixture_root("recovery")?;
+    let healthy = doctor_json(&root);
+    let broken = std::fs::write(root.join("ripr.toml"), "this is = not [valid toml")
+        .map_err(|error| format!("break ripr.toml: {error}"))
+        .and_then(|()| doctor_json(&root));
+    let _ = std::fs::remove_dir_all(&root);
+    let healthy = healthy?;
+    let broken = broken?;
+
+    if healthy.get("canonical_next_action").is_some() {
+        return Err(format!(
+            "a runnable first command must not carry a recovery action: {healthy}"
+        ));
+    }
+    check(&broken, &schema, &schema, "doctor")?;
+    let action = broken
+        .get("canonical_next_action")
+        .ok_or_else(|| format!("an unloadable config must name a recovery: {broken}"))?;
+    if action["stop"]["kind"] != "doctor_recovery" || action["stop"]["check_name"] != "config" {
+        return Err(format!("expected the config recovery stop: {action}"));
+    }
+    Ok(())
+}

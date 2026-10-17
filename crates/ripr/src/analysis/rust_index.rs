@@ -1638,6 +1638,7 @@ fn feature_gated_test() {}
                 role_provenance: crate::analysis::facts::SourceRoleProvenance {
                     edges: Vec::new(),
                     earliest_unresolved_reason: Some("rust_module_ambiguous_parent".to_string()),
+                    ..Default::default()
                 },
                 ..FileFacts::default()
             },

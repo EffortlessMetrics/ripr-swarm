@@ -31,9 +31,9 @@ use related_tests::{
 };
 
 use super::classify::{
-    assertion_observes_collection_argument, assertion_observes_direct_collection,
-    call_text_may_call_free_function, direct_collection_mutation_receiver, owner_call_text,
-    reach_evidence as classify_reach_evidence, relation_establishes_reach,
+    assertion_observes_direct_collection, call_text_may_call_free_function,
+    direct_collection_mutation_receiver, mutexed_assertion_observes_collection_argument,
+    owner_call_text, reach_evidence as classify_reach_evidence, relation_establishes_reach,
     test_calls_free_function,
 };
 use super::facts::{CallFact, FunctionImplContext};
@@ -57,6 +57,7 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
@@ -353,10 +354,10 @@ fn evidence_for_seam_with_context(
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
     let (activate, observed_values, missing_discriminators) =
         activate_evidence(seam, &related_indexed, context, owner_fn);
-    let pin_syntax = crate::analysis::classify::OwnerPinSyntax::default();
-    let propagate = propagate_evidence(seam, &related, owner_fn, context.index, &pin_syntax);
+    let pin_syntax = context.pin_syntax_mutex();
+    let propagate = propagate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
     let observe = observe_evidence(&related);
-    let discriminate = discriminate_evidence(seam, &related, owner_fn, context.index, &pin_syntax);
+    let discriminate = discriminate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
 
     let related_tests: Vec<Arc<RelatedTestGrip>> = related_with_reason
         .iter()
@@ -367,7 +368,7 @@ fn evidence_for_seam_with_context(
                 *reason,
                 context,
                 owner_fn,
-                &pin_syntax,
+                pin_syntax,
             ))
         })
         .collect();
@@ -437,10 +438,10 @@ pub(crate) fn compact_evidence_for_seam(
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
     let (activate, missing_discriminators) =
         compact_activate_evidence(seam, &related_indexed, context, owner_fn);
-    let pin_syntax = crate::analysis::classify::OwnerPinSyntax::default();
-    let propagate = propagate_evidence(seam, &related, owner_fn, context.index, &pin_syntax);
+    let pin_syntax = context.pin_syntax_mutex();
+    let propagate = propagate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
     let observe = observe_evidence(&related);
-    let discriminate = discriminate_evidence(seam, &related, owner_fn, context.index, &pin_syntax);
+    let discriminate = discriminate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
     let statically_contradicted_related_tests = related
         .iter()
         .filter(|test| test_has_contradicted_assertion(test, owner_fn))
@@ -483,6 +484,9 @@ fn reach_evidence(
     owner_fn: Option<&FunctionSummary>,
     context: &CompactGripContext<'_>,
 ) -> StageEvidence {
+    if let Some(summary) = reach_limit::outside_module_tree_summary(seam, context) {
+        return StageEvidence::new(StageState::Opaque, Confidence::Low, summary);
+    }
     if related.is_empty() {
         return reach_limit::reach_without_related_tests(seam.owner(), owner_fn, context);
     }
@@ -1890,7 +1894,7 @@ fn propagate_evidence(
     related: &[&TestSummary],
     owner_fn: Option<&FunctionSummary>,
     index: &RustIndex,
-    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+    pin_syntax: &Mutex<crate::analysis::classify::OwnerPinSyntax>,
 ) -> StageEvidence {
     if related.is_empty() {
         return StageEvidence::new(
@@ -1924,7 +1928,7 @@ fn oracles_match_sink(
     test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,
     index: &RustIndex,
-    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+    pin_syntax: &Mutex<crate::analysis::classify::OwnerPinSyntax>,
 ) -> bool {
     test.assertions
         .iter()
@@ -1988,7 +1992,7 @@ fn discriminate_evidence(
     related: &[&TestSummary],
     owner_fn: Option<&FunctionSummary>,
     index: &RustIndex,
-    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+    pin_syntax: &Mutex<crate::analysis::classify::OwnerPinSyntax>,
 ) -> StageEvidence {
     if related.is_empty() {
         return StageEvidence::new(
@@ -2115,7 +2119,7 @@ fn oracle_discriminates_seam_in_test(
     test: &TestSummary,
     owner: Option<&FunctionSummary>,
     index: &RustIndex,
-    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+    pin_syntax: &Mutex<crate::analysis::classify::OwnerPinSyntax>,
 ) -> bool {
     // #8121: a snapshot admitted by kind for a return-value seam must also
     // observe the owner's own result, not an unrelated value in the test.
@@ -2131,7 +2135,7 @@ fn oracle_discriminates_seam_in_test(
             .zip(owner)
             .is_some_and(|(receiver, owner)| {
                 collection_state_write_oracle_kind(&oracle.kind)
-                    && assertion_observes_collection_argument(
+                    && mutexed_assertion_observes_collection_argument(
                         receiver, owner, index, test, oracle, pin_syntax,
                     )
             })
@@ -2801,7 +2805,7 @@ fn related_test_grip(
     reason: RelationReason,
     context: &CompactGripContext<'_>,
     owner_fn: Option<&FunctionSummary>,
-    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+    pin_syntax: &Mutex<crate::analysis::classify::OwnerPinSyntax>,
 ) -> RelatedTestGrip {
     let (kind, strength, contradiction) =
         best_oracle(test, seam, owner_fn, context.index, pin_syntax);
@@ -2874,7 +2878,7 @@ fn best_oracle(
     seam: &RepoSeam,
     owner_fn: Option<&FunctionSummary>,
     index: &RustIndex,
-    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+    pin_syntax: &Mutex<crate::analysis::classify::OwnerPinSyntax>,
 ) -> (OracleKind, OracleStrength, Option<String>) {
     let mut best_kind = OracleKind::Unknown;
     let mut best_strength = OracleStrength::None;
