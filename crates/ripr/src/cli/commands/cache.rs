@@ -288,6 +288,17 @@ fn reject_symlinked_ancestor(cache_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Symlink-alias refusal detail (#7487). The real directory comes from
+/// `canonicalize`, which spells a Windows drive path with the verbatim `\\?\`
+/// prefix; the printed token uses the shared human renderer like `Cache dir:`.
+fn symlink_refusal_detail(real: &Path, windows: bool) -> String {
+    format!(
+        "it is a symlink to {}; ripr check reads and writes the cache through \
+         this alias, but clear requires the real directory path",
+        output::path::human_path_text(&real.to_string_lossy(), windows)
+    )
+}
+
 /// Reject any path `clear` must not delete before touching cache contents.
 ///
 /// Empty, relative, traversing, near-root, non-directory, leaf-symlink, and
@@ -324,13 +335,7 @@ fn classify_cache_root(cache_dir: &Path) -> Result<CacheRoot, String> {
             // behind it, so the refusal must name the real directory it
             // protects instead of a bare "it is a symlink".
             let resolved = std::fs::canonicalize(cache_dir)
-                .map(|real| {
-                    format!(
-                        "it is a symlink to {}; ripr check reads and writes the cache through \
-                         this alias, but clear requires the real directory path",
-                        real.display()
-                    )
-                })
+                .map(|real| symlink_refusal_detail(&real, cfg!(windows)))
                 .unwrap_or_else(|_| "it is a symlink, not a cache directory".to_string());
             Err(format!(
                 "refusing to clear {display}: {resolved}; no files were removed"
@@ -685,6 +690,24 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
+    // #7487: the clear refusal for a symlink alias names the real directory
+    // through the shared human renderer, not the verbatim `\\?\` spelling.
+    #[test]
+    fn symlink_refusal_detail_strips_windows_verbatim_prefix() {
+        let verbatim = PathBuf::from(format!(r"\\?\{}\work\target\ripr\cache", "F:"));
+        let windows = symlink_refusal_detail(&verbatim, true);
+        assert!(
+            windows.contains(&format!("symlink to {}/work/target/ripr/cache;", "F:")),
+            "{windows}"
+        );
+        assert!(!windows.contains(r"\\?\"), "{windows}");
+        let unix = symlink_refusal_detail(&verbatim, false);
+        assert!(
+            unix.contains(&verbatim.to_string_lossy().to_string()),
+            "{unix}"
+        );
+    }
 
     fn cache_contents(root: &Path) -> Result<std::collections::BTreeMap<PathBuf, Vec<u8>>, String> {
         fn walk(
@@ -1741,7 +1764,8 @@ mod tests {
                 force: true,
             },
         );
-        let real_display = resolved_real.display().to_string();
+        let real_display =
+            output::path::human_path_text(&resolved_real.to_string_lossy(), cfg!(windows));
         match &refused {
             Ok(message) => {
                 remove_base(&base)?;
