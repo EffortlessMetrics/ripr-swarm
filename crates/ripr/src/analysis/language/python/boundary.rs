@@ -482,12 +482,8 @@ fn equality_predicate_gate(condition: &str, old_line_text: Option<&str>) -> Opti
     if operators.len() != 1 {
         return None;
     }
-    let Some(old) = old_line_text else {
-        return Some(EqualityGate {
-            operators,
-            old_operands: None,
-        });
-    };
+    // `==` -> `==` only: an added line has no old equality to compare.
+    let old = old_line_text?;
     let old_condition = predicate_condition(old);
     if contains_ungated_identity_or_inequality(&old_condition)
         || !relational_operators(&old_condition).is_empty()

@@ -2010,6 +2010,24 @@ fn equality_predicate_at_old_constant_stays_exposed() -> Result<(), String> {
     Ok(())
 }
 
+/// A newly added equality predicate has no paired old `==`, so the gate
+/// stays off and today's strong-oracle verdict stands.
+#[test]
+fn equality_predicate_without_old_line_stays_outside_the_gate() -> Result<(), String> {
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, EQ_SOURCE);
+    let tests = extract_tests(
+        Path::new("tests/test_subject.py"),
+        "from src.subject import eq\n\ndef test_eq():\n    assert eq(20) == False\n",
+    );
+    let finding = classify_change_with_old(file, 2, "    if n == 10:", None, &owners, &tests)
+        .ok_or_else(|| "behavioral fixture must produce a finding".to_string())?;
+    assert_owner(&finding, "eq");
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert!(finding.activation.observed_values.is_empty());
+    Ok(())
+}
+
 /// `!=` and `is` stay outside this gate (handle `==` only). Complementary
 /// `!=` -> `==` still discriminates every input, so it must keep `exposed`.
 #[test]
