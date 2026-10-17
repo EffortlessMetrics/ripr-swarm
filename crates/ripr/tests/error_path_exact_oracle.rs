@@ -63,6 +63,27 @@ impl Drop for Fixture {
     }
 }
 
+fn check_hex_source(source: &str) -> Result<CheckOutput, Box<dyn std::error::Error>> {
+    let fixture = Fixture::new(
+        source,
+        "*byte = val(data, 2 * i)?;",
+        "*byte = val(data, 2 * i)? ^ 0;",
+    )?;
+    std::fs::write(
+        fixture.0.join("Cargo.toml"),
+        include_str!("../../../fixtures/rust-verdict-corpus/subjects/rust-hex/Cargo.toml"),
+    )?;
+    let support = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/rust-verdict-corpus/subjects/rust-hex/src");
+    for name in ["error", "serde"] {
+        std::fs::copy(
+            support.join(format!("{name}.rs.txt")),
+            fixture.0.join(format!("src/{name}.rs")),
+        )?;
+    }
+    Ok(fixture.check()?)
+}
+
 #[test]
 fn literal_hex_callee_error_does_not_prescribe_an_already_existing_test()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -81,24 +102,7 @@ fn literal_hex_callee_error_does_not_prescribe_an_already_existing_test()
             "missing literal witness: {witness}"
         );
     }
-    let fixture = Fixture::new(
-        SOURCE,
-        "*byte = val(data, 2 * i)?;",
-        "*byte = val(data, 2 * i)? ^ 0;",
-    )?;
-    std::fs::write(
-        fixture.0.join("Cargo.toml"),
-        include_str!("../../../fixtures/rust-verdict-corpus/subjects/rust-hex/Cargo.toml"),
-    )?;
-    let support = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/rust-verdict-corpus/subjects/rust-hex/src");
-    for name in ["error", "serde"] {
-        std::fs::copy(
-            support.join(format!("{name}.rs.txt")),
-            fixture.0.join(format!("src/{name}.rs")),
-        )?;
-    }
-    let output = fixture.check()?;
+    let output = check_hex_source(SOURCE)?;
 
     let anchored = output
         .findings
@@ -150,6 +154,56 @@ fn literal_hex_callee_error_does_not_prescribe_an_already_existing_test()
                 .missing
                 .iter()
                 .any(|s| s == "No exact error variant discriminator was detected")
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn exact_error_oracle_beyond_display_cap_keeps_the_propagation_limit()
+-> Result<(), Box<dyn std::error::Error>> {
+    // Extra successful calls do not remove the original exact error tests.
+    // Vary name order as well as forcing the eight-row display window.
+    for prefix in ["a", "z"] {
+        let mut source = SOURCE.to_string();
+        source.push_str("\n#[cfg(test)]\nmod additional_successes {\nuse super::*;\n");
+        for i in 0..8 {
+            source.push_str(&format!(
+                "#[test]\nfn {prefix}{i}_success() {{ assert_eq!(decode_to_slice(b\"6b697769\", &mut [0u8;4]), Ok(())); }}\n"
+            ));
+        }
+        source.push_str("}\n");
+        let output = check_hex_source(&source)?;
+        let errors = output
+            .findings
+            .iter()
+            .filter(|f| {
+                f.probe.location.line == 332
+                    && f.probe.family == ripr::domain::ProbeFamily::ErrorPath
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(errors.len(), 1);
+        let error = errors[0];
+        assert_eq!(error.related_tests.len(), 8);
+        assert!(error.related_tests_total() > error.related_tests.len());
+        if prefix == "a" {
+            assert!(
+                error.related_tests.iter().all(|test| {
+                    test.oracle_kind != ripr::domain::OracleKind::ExactErrorVariant
+                })
+            );
+        }
+        assert_eq!(
+            error.class,
+            ExposureClass::PropagationUnknown,
+            "extra success test prefix {prefix}: {:?}",
+            error.recommended_next_step
+        );
+        assert!(
+            error
+                .recommended_next_step
+                .as_deref()
+                .is_some_and(|step| !step.contains("Add a test input"))
         );
     }
     Ok(())
@@ -325,5 +379,49 @@ fn success() {
         errors[0].class,
         ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
     ));
+    Ok(())
+}
+
+#[test]
+fn proximity_error_oracle_does_not_replace_a_reaching_error_oracle()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = "#[derive(Debug, PartialEq)]
+enum E { Bad }
+fn leaf(c: char) -> Result<u8, E> { if c == '1' { Ok(1) } else { Err(E::Bad) } }
+fn parse(c: char) -> Result<u8, E> {
+    let d = leaf(c)?;
+    Ok(d)
+}
+#[test]
+fn success() { assert_eq!(parse('1'), Ok(1)); }
+";
+    for (error_test, expected) in [
+        (
+            "fn sibling() -> Result<u8, E> { Err(E::Bad) }\n#[test]\nfn exact_sibling() { assert_eq!(sibling(), Err(E::Bad)); }\n",
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            "#[test]\nfn exact_owner() { assert_eq!(parse('x'), Err(E::Bad)); }\n",
+            ExposureClass::PropagationUnknown,
+        ),
+    ] {
+        let fixture = Fixture::new(
+            &format!("{source}{error_test}"),
+            "let d = leaf(c)?;",
+            "let d = leaf(c)? + 0;",
+        )?;
+        let output = fixture.check()?;
+        let errors = output
+            .findings
+            .iter()
+            .filter(|f| f.probe.family == ripr::domain::ProbeFamily::ErrorPath)
+            .collect::<Vec<_>>();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].related_tests.iter().any(|test| {
+            test.oracle_kind == ripr::domain::OracleKind::ExactErrorVariant
+                && test.oracle_strength == ripr::domain::OracleStrength::Strong
+        }));
+        assert_eq!(errors[0].class, expected, "{error_test}");
+    }
     Ok(())
 }

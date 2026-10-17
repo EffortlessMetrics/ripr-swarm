@@ -951,18 +951,9 @@ impl ClassifiedProbeEvidence {
                 sink.kind == FlowSinkKind::ErrorVariant
                     && sink.text == context.probe.expression.trim().trim_end_matches(';').trim()
             })
-            && related_tests.iter().any(|test| {
-                !test.is_unmatched()
-                    && test
-                        .oracle
-                        .as_deref()
-                        .is_some_and(|text| !text.trim().is_empty())
-                    && test.oracle_kind == OracleKind::ExactErrorVariant
-                    && test.oracle_strength == OracleStrength::Strong
-                    && test
-                        .relation_reason
-                        .is_some_and(|reason| reason.establishes_reach(context.owner_fn.is_some()))
-            });
+            && reveal
+                .exact_error_oracle_relation
+                .is_some_and(|reason| reason.establishes_reach(context.owner_fn.is_some()));
         let (propagate, flow_sinks, propagation_witness) = if unresolved_error_oracle {
             let sinks = flow_sinks
                 .into_iter()

@@ -287,6 +287,8 @@ so `has_token_match=true` clears `observation_unverified`.
 | `error_path_exact_oracle::opaque_error_conversion_retains_its_existing_limit` | Wrapper conversion retains its existing limitation |
 | `error_path_exact_oracle::direct_odd_length_error_keeps_its_exact_discriminator` | Direct matching error variant remains exposed |
 | `error_path_exact_oracle::success_only_checks_keep_the_missing_error_arm_gap` | A success-only exact assertion does not trigger abstention |
+| `error_path_exact_oracle::exact_error_oracle_beyond_display_cap_keeps_the_propagation_limit` | Extra successful tests and name order cannot erase the admitted error oracle |
+| `error_path_exact_oracle::proximity_error_oracle_does_not_replace_a_reaching_error_oracle` | An exact sibling error assertion cannot substitute for owner reach |
 
 ## Non-Goals
 
@@ -399,11 +401,13 @@ or a missing error test. The evidence owner marks the sink and propagation
 unknown, removes the fallback propagation witness, and uses the existing
 inspection guidance. Missing evidence describes the unresolved connection to
 the existing oracle instead of claiming that no exact error assertion exists.
+The admitted exact-error relation is retained before the related-test display
+cap; adding successful tests or changing their order cannot erase this fact.
 
 This is `propagation_unknown`, never new oracle credit. Concrete missing
 variants or inputs, success-only tests, modeled error sinks and boxed wrapper
 conversions retain their own decisions. The literal retained-source regression
-and five controls in `crates/ripr/tests/error_path_exact_oracle.rs` pin those
+and seven controls in `crates/ripr/tests/error_path_exact_oracle.rs` pin those
 boundaries. The decoding case also retains its separate exposed caller-buffer
 finding. Native wrong-byte, removed-write and wrong-error controls label the
 case's runtime truth; they do not resolve this static propagation limitation.

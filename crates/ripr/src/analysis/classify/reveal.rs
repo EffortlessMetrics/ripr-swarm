@@ -232,6 +232,10 @@ pub(in crate::analysis) struct RevealOutcome {
     pub(in crate::analysis) discriminate: StageEvidence,
     pub(in crate::analysis) related: Vec<RelatedTest>,
     pub(in crate::analysis) related_total: usize,
+    /// Presence of an admitted strong exact error oracle, retained before the
+    /// display cap. Prefer a function-reaching relation over item-only affinity;
+    /// the caller still decides whether that relation reaches its owner kind.
+    pub(in crate::analysis) exact_error_oracle_relation: Option<RelationReason>,
     /// #6692: an assertion credited to this probe pinned the owner's
     /// return value through `ReturnOracleAdmission::owner_return_pin`
     /// after every reveal gate (name-only relations next to a
@@ -269,6 +273,7 @@ pub(in crate::analysis) fn reveal_outcome(
             ),
             related: Vec::new(),
             related_total: 0,
+            exact_error_oracle_relation: None,
             owner_pin_credited: false,
         };
     }
@@ -283,6 +288,25 @@ pub(in crate::analysis) fn reveal_outcome(
         return_admission,
         arm_selector,
     );
+    let exact_error_oracle_relation = if probe.family == ProbeFamily::ErrorPath {
+        analysis
+            .related
+            .iter()
+            .filter(|test| {
+                !test.is_unmatched()
+                    && test
+                        .oracle
+                        .as_deref()
+                        .is_some_and(|text| !text.trim().is_empty())
+                    && test.oracle_kind == OracleKind::ExactErrorVariant
+                    && test.oracle_strength == OracleStrength::Strong
+            })
+            .filter_map(|test| test.relation_reason)
+            .filter(|reason| reason.establishes_reach(false))
+            .max_by_key(|reason| reason.establishes_reach(true))
+    } else {
+        None
+    };
     let (related, related_tests_total) = finalize_related_tests(analysis.related, diff_touched);
     let observe = build_observe_evidence(analysis.matched_any, analysis.refused_context);
     let discriminate = if analysis.refused_context && !analysis.matched_any {
@@ -333,6 +357,7 @@ pub(in crate::analysis) fn reveal_outcome(
         discriminate,
         related,
         related_total: related_tests_total,
+        exact_error_oracle_relation,
         owner_pin_credited: analysis.owner_pin_credited,
     }
 }
