@@ -74,6 +74,15 @@ pub(crate) fn probes_for_file_with_relations(
     // Rebuilt once per file and shared by every reader of the old file (#7637).
     let old_source = super::classify::old_source(index, changed);
     let old_source = old_source.as_deref();
+    // Block-comment content is prose, not behavior: `name: value` or `x < y`
+    // inside `/* .. */` or `/*! .. */` must not seed probes. Line comments are
+    // already skipped by prefix.
+    let added_block_comments = find_file_facts(index, &changed.path)
+        .map(|facts| crate::analysis::syntax::block_comment_only_lines(&facts.source))
+        .unwrap_or_default();
+    let removed_block_comments = old_source
+        .map(crate::analysis::syntax::block_comment_only_lines)
+        .unwrap_or_default();
     let removed_bounds = removed_type_bounds(root, registrations, old_source, changed);
     let old_test_module_ranges = removed_bounds
         .old_index
@@ -88,7 +97,10 @@ pub(crate) fn probes_for_file_with_relations(
 
     for (added_index, added) in changed.added_lines.iter().enumerate() {
         let text = added.text.trim();
-        if should_ignore_changed_line(text) || skip_added[added_index] {
+        if should_ignore_changed_line(text)
+            || skip_added[added_index]
+            || added_block_comments.contains(&added.new_side_line)
+        {
             continue;
         }
         if changed_line_is_test_evidence(
@@ -352,7 +364,10 @@ pub(crate) fn probes_for_file_with_relations(
     let represented_short_lines = represented_short_replacements(changed, &probes);
     for (removed_index, removed) in changed.removed_lines.iter().enumerate() {
         let text = removed.text.trim();
-        if should_ignore_changed_line(text) || skip_removed[removed_index] {
+        if should_ignore_changed_line(text)
+            || skip_removed[removed_index]
+            || removed_block_comments.contains(&removed.line)
+        {
             continue;
         }
         // Local bound roles use reconstructed old syntax rather than candidate
@@ -1546,6 +1561,43 @@ mod tests {
                 .iter()
                 .any(|sink| sink == "branch result")
         );
+    }
+
+    #[test]
+    fn block_comment_prose_seeds_no_probe_but_the_same_text_as_code_does() {
+        // dogfood (regex `e358341`): `For example:` inside a block doc comment
+        // was read as a `name: value` field construction.
+        let path = PathBuf::from("src/lib.rs");
+        let probes_for = |source: &str| {
+            let changed = ChangedFile {
+                path: path.clone(),
+                added_lines: vec![ChangedLine {
+                    line: 2,
+                    new_side_line: 2,
+                    text: "limit: threshold,".to_string(),
+                }],
+                removed_lines: vec![],
+            };
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                files: BTreeMap::from([(
+                    path.clone(),
+                    FileFacts {
+                        path: path.clone(),
+                        source: source.into(),
+                        ..FileFacts::default()
+                    },
+                )]),
+                ..Default::default()
+            });
+            probes_for_file(Path::new("workspace"), &changed, &index)
+        };
+        let as_code = probes_for("let c = Config {\n limit: threshold,\n};\n");
+        assert!(
+            !as_code.is_empty(),
+            "control: the same text outside a comment must still seed a probe"
+        );
+        let in_comment = probes_for("/*\n limit: threshold,\n*/\n");
+        assert!(in_comment.is_empty(), "{in_comment:?}");
     }
 
     #[test]
