@@ -542,7 +542,12 @@ fn is_test_fn(lines: &[&str], start: usize) -> bool {
         .rev()
         .take(8)
         .map(|text| text.trim())
-        .take_while(|text| !text.is_empty() && !text.ends_with(['{', '}', ';']))
+        .take_while(|text| {
+            !text.is_empty()
+                && (text.starts_with("#[")
+                    || text.starts_with("//")
+                    || !text.ends_with(['{', '}', ';']))
+        })
         .filter(|text| text.starts_with("#["))
         .any(|text| {
             let path = text[2..].split(['(', ']', '=']).next().unwrap_or("").trim();
@@ -1021,6 +1026,9 @@ mod tests {
             "#[test]\n#[should_panic(\n    expected = \"x\"\n)]\n/// doc\n#[ignore]\nfn t() {}",
         );
         assert!(is_test_fn(&stacked, 7));
+        let doc_ends_in_brace =
+            lines("#[test]\n/// takes the `{` branch;\n#[cfg(feature = \"x\")]\nfn t() {}");
+        assert!(is_test_fn(&doc_ends_in_brace, 4));
         let neighbour = lines("#[test]\nfn t() {}\nfn prod() {}");
         assert!(!is_test_fn(&neighbour, 3));
         assert!(!is_test_fn(&lines("#[inline]\nfn f() {}"), 2));
