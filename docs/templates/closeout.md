@@ -56,8 +56,10 @@ What is intentionally left for a later proposal, spec, plan, or goal?
 
 ## Archive updates
 
-Which active-goal manifest, plan, or handoff archive changed?
+Which plan, campaign ledger, or handoff archive changed? (The retired
+active-goal manifest no longer exists; record no manifest update.)
 
 ## Next recommended goal
 
 Name the next ready lane or explicitly state that no next goal is selected.
+(Selection comes from the live GitHub/worktree state — no manifest names it.)
