@@ -1,0 +1,39 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_bound_receiver_assertion/input
+config: <cwd>/fixtures/python_bound_receiver_assertion/input/ripr.toml
+
+Summary: 1 probe (1 exposed, 0 weak, 0 unrevealed, 0 no path); 1 of 1 finding unsuppressed
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+Start here:
+  State: preview language, advisory only
+  Safe next action: preview-language evidence is advisory; a related test appears to observe this change, so there is no repair to make; verify independently before relying on it
+  File: src/cart.py:3
+  Language: python
+  Language status: preview
+  Static exposure: exposed (severity: info, confidence 0.60)
+  Canonical gap: gap:python:src/cart.py:Cart.total:return_value:return_value:amount*3
+  Changed behavior: return amount * 3
+  Discriminator (observed, advisory): Related Python test reaches `total` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator
+  Related test: tests/test_cart.py:4 test_total_on_the_owner_receiver
+  Next step — Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
+  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
+    - reach yes: 1 related Python test(s) found for owner `total`
+    - infection yes: Changed Python return expression can alter the owner return value: `return amount * 3`
+    - 5 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/python_bound_receiver_assertion/input --diff <cwd>/fixtures/python_bound_receiver_assertion/diff.patch --mode fast probe:src_cart.py:python_preview:95942161
+  ripr context --root <cwd>/fixtures/python_bound_receiver_assertion/input --diff <cwd>/fixtures/python_bound_receiver_assertion/diff.patch --mode fast --at probe:src_cart.py:python_preview:95942161
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.
