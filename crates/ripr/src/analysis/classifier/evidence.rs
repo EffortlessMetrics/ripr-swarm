@@ -3,7 +3,7 @@ use crate::analysis::classify::{
     HELPER_RESULT_NOT_FORWARDED, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
     PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
     activation_and_boundary_input, assertion_observes_collection_argument,
-    body_contains_owner_call, call_parameter_names, callee_is_unique,
+    body_contains_owner_call, call_parameter_names, callee_is_unique, chain_entry_pin_admits,
     chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
     confidence_score, constructor_starts_empty, contains_as_whole_word, current_path_witness_with,
     direct_call_name, direct_collection_mutation_receiver, expected_operand_value,
@@ -606,11 +606,30 @@ impl ClassifiedProbeEvidence {
             })
         };
         let owner_pin_admits = |test: &TestSummary, assertion: &OracleFact| {
-            field_projection.as_ref().is_some_and(|receipt| {
-                receipt.valid_for(context.probe) && receipt.admits(test, assertion)
-            }) || fallible_checks
-                .iter()
-                .any(|receipt| receipt.valid_for(context.probe) && receipt.admits(test, assertion))
+            // #5352: an exact assertion on the helper chain's entry pins
+            // the owner's returned value when every observed hop
+            // forwards it (the entry form of the owner-return pin).
+            let entry_pinned = matches!(context.probe.family, ProbeFamily::ReturnValue)
+                && context.owner_fn.is_some_and(|owner| {
+                    context.helper_chain.as_ref().is_some_and(|chain| {
+                        chain_entry_pin_admits(
+                            &owner.name,
+                            &context.probe.expression,
+                            chain,
+                            &context.related_tests,
+                            context.index,
+                            test,
+                            assertion,
+                        )
+                    })
+                });
+            entry_pinned
+                || field_projection.as_ref().is_some_and(|receipt| {
+                    receipt.valid_for(context.probe) && receipt.admits(test, assertion)
+                })
+                || fallible_checks.iter().any(|receipt| {
+                    receipt.valid_for(context.probe) && receipt.admits(test, assertion)
+                })
                 || owner_return_pin.as_ref().is_some_and(|pin| {
                     pin.admits(
                         test,

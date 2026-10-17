@@ -60,6 +60,25 @@ can only hint that a caller "may lead here" without changing anything.
   direct call would produce. The owner's exact input rows bind down
   the chain, so #3295's boundary machinery evaluates the helper's
   operands with the tests' literals.
+- Method hops (#5352): a hop may also bind at a method call site when
+  identity is established by the impl, never by the bare name. A
+  `self.<callee>(..)` site binds only when the caller and the callee
+  are methods of the same impl self type; a call on a value
+  constructed from the callee's type (`Parser { .. }.parse()`,
+  `Parser::new(..).parse()`) binds only when the constructed type is
+  the callee's impl type. A variable receiver (`parser.parse()`),
+  another type's same-named method, and any other receiver fail
+  closed. The callee name must still be unique in the workspace.
+  Forwarding accepts a caller tail that is exactly the identity-bound
+  hop call, optionally wrapped in one constructor
+  (`Some(Parser { .. }.parse())`); a caller body containing `?` or an
+  early `return` still refuses forwarding. An exact assertion on the
+  entry's result pins a `return_value` owner through the chain under
+  the same conditions as forwarding to the observed hops, with
+  exactly one entry call in the assertion. A `match_arm` owner whose
+  scrutinee selection through the entry is not established (for
+  example a `self.<field>` set through a `from_str` match behind `?`)
+  keeps its fail-closed class; only its reach is established.
 - The chain relation outranks any file-path, test-name or token
   proximity reason (#6694, #6672): a test that calls a resolved hop's
   caller relates as `HelperOwnerCall`, not `same_test_file`,
@@ -352,7 +371,10 @@ Reach on that rewritten finding is `unknown` and the stop reason is
 branch); `analysis/classify/activation.rs` (transferred rows and the
 call operand); fixtures `helper_chain_{one_hop,multi_hop,controls}`;
 `crates/ripr/tests/helper_wrapper_reach.rs` (relation precedence, hop
-propagation stop, rebinding stop).
+propagation stop, rebinding stop);
+`crates/ripr/tests/method_helper_reach.rs` (#5352 method hops: public
+entry credit, smoke/wrong-owner/variable-receiver controls, and the
+unselected `match_arm` control).
 
 ## Non-Goals
 

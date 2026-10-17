@@ -1,0 +1,8 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -3,3 +3,3 @@
+ impl Parser {
+     fn secs(&self) -> u64 {
+-        self.n * 999_999
++        self.n * 1_209_600

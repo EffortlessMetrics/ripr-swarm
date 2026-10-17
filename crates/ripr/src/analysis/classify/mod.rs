@@ -63,9 +63,9 @@ pub(in crate::analysis) use gap_admission::{
 pub(in crate::analysis) use helper_transfer::{FieldProjectionReceipt, field_projection_receipt};
 pub(in crate::analysis) use helper_transfer::{
     HELPER_RESULT_NOT_FORWARDED, HelperChain, ReturnedLedger,
-    ambiguous_helper_entry_called_by_tests, callee_is_unique, chain_forwards_to_observed_hops,
-    chain_passes_effect_target_to_observed_hops, helper_only_reach,
-    hop_reach_keeps_weak_oracle_gap, resolve_chain, returned_ledger,
+    ambiguous_helper_entry_called_by_tests, callee_is_unique, chain_entry_pin_admits,
+    chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops,
+    helper_only_reach, hop_reach_keeps_weak_oracle_gap, resolve_chain, returned_ledger,
     returned_ledger_caller_is_observed, selected_inherent_calls,
 };
 pub(in crate::analysis) use infection::infection_evidence_for_owner;

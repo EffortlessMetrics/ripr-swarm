@@ -9705,6 +9705,20 @@
       ]
     },
     {
+      "id": "rust_method_entry_private_method_pin",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/helper_chain_method_entry",
+      "vector": "public_entry_exact_assertion_pins_private_method_return_value_through_method_hops",
+      "control": "must_stay_exposed",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
       "id": "rust_committed_golden_expected_file",
       "language": "rust",
       "tier": "pure",

@@ -11042,6 +11042,11 @@ tests = [
   "crates/ripr/tests/helper_wrapper_reach.rs::weak_oracle_does_not_lift_the_effect_target_rule",
   "crates/ripr/tests/helper_wrapper_reach.rs::effect_macro_exception_needs_every_hop_through_the_macro",
   "crates/ripr/tests/helper_wrapper_reach.rs::user_type_between_owner_and_caller_abstains",
+  "crates/ripr/tests/method_helper_reach.rs::public_entry_exact_assertion_credits_private_method",
+  "crates/ripr/tests/method_helper_reach.rs::smoke_assertion_through_entry_stays_weak",
+  "crates/ripr/tests/method_helper_reach.rs::variable_receiver_entry_is_not_credited",
+  "crates/ripr/tests/method_helper_reach.rs::match_arm_through_entry_is_not_credited_without_selection",
+  "crates/ripr/tests/method_helper_reach.rs::wrong_owner_method_is_not_credited",
 ]
 fixtures = [
   "fixtures/one_hop_field_projection",
@@ -11052,6 +11057,7 @@ fixtures = [
   "fixtures/helper_chain_one_hop",
   "fixtures/helper_chain_multi_hop",
   "fixtures/helper_chain_controls",
+  "fixtures/helper_chain_method_entry",
 ]
 code = [
   "crates/ripr/src/analysis/classify/helper_transfer/field_projection.rs",

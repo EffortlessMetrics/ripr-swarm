@@ -584,13 +584,121 @@ pub(crate) fn direct_callers<'a>(
         .collect()
 }
 
+/// The bare type name of an inherent/trait impl self type, if any.
+fn impl_self_type(function: &FunctionSummary) -> Option<String> {
+    match &function.impl_context {
+        crate::analysis::facts::FunctionImplContext::Impl { self_type } => self_type
+            .split('<')
+            .next()
+            .unwrap_or(self_type)
+            .rsplit("::")
+            .next()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string),
+        _ => None,
+    }
+}
+
+/// Receiver identity of a method call site (#5352): `self` inside the
+/// same impl, or a value constructed from the callee's own type
+/// (`Parser { .. }.parse()`, `Parser::new(..).parse()`). A variable
+/// receiver (`parser.parse()`) is not typed here and never binds.
+#[derive(Debug, PartialEq, Eq)]
+enum MethodReceiver {
+    SelfReceiver,
+    Constructed(String),
+}
+
+/// The receiver of the first `.<callee>(` occurrence in `text`, with the
+/// byte index of its argument-list paren.
+fn method_call_site(text: &str, callee_name: &str) -> Option<(usize, MethodReceiver)> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    let needle = format!(".{callee_name}(");
+    let mut search = 0usize;
+    while let Some(relative) = masked[search..].find(&needle) {
+        let dot = search + relative;
+        let paren = dot + needle.len() - 1;
+        let receiver = masked[..dot].trim_end();
+        if receiver == "self" || receiver.ends_with(" self") || receiver.ends_with("(self") {
+            return Some((paren, MethodReceiver::SelfReceiver));
+        }
+        if let Some(open) = receiver.rfind(['}', ')']) {
+            let close_char = receiver.as_bytes()[open];
+            let (open_char, _) = if close_char == b'}' {
+                ('{', '}')
+            } else {
+                ('(', ')')
+            };
+            let mut depth = 0usize;
+            let mut start = None;
+            for (at, ch) in receiver.char_indices().rev() {
+                if ch == close_char as char {
+                    depth += 1;
+                } else if ch == open_char {
+                    depth -= 1;
+                    if depth == 0 {
+                        start = Some(at);
+                        break;
+                    }
+                }
+            }
+            if let Some(start) = start {
+                let head = receiver[..start].trim_end();
+                let ty = head
+                    .rsplit(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == ':'))
+                    .next()
+                    .unwrap_or("")
+                    .split("::")
+                    .next()
+                    .unwrap_or("");
+                if !ty.is_empty()
+                    && ty
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_ascii_uppercase() || c == '_')
+                {
+                    return Some((paren, MethodReceiver::Constructed(ty.to_string())));
+                }
+            }
+        }
+        search = dot + 1;
+    }
+    None
+}
+
+/// Whether `caller` may invoke the method `callee` at this receiver:
+/// identity is the shared impl type, never the bare name (#5352).
+fn method_site_binds(
+    caller: &FunctionSummary,
+    callee: &FunctionSummary,
+    receiver: &MethodReceiver,
+) -> bool {
+    let Some(callee_type) = impl_self_type(callee) else {
+        return false;
+    };
+    match receiver {
+        MethodReceiver::SelfReceiver => {
+            impl_self_type(caller).as_deref() == Some(callee_type.as_str())
+        }
+        MethodReceiver::Constructed(ty) => ty == &callee_type,
+    }
+}
+
 /// The call sites in `caller` that invoke `callee_name`, with their
 /// split argument texts. `None` when a call text cannot be split.
 pub(crate) fn call_sites(
     caller: &FunctionSummary,
     callee_name: &str,
+    index: &RustIndex,
 ) -> Option<Vec<(String, Vec<String>)>> {
     let mut sites = Vec::new();
+    // The unique callee the chain resolver already admitted by name;
+    // a method callee additionally needs impl identity at the site.
+    let callee = index
+        .functions()
+        .iter()
+        .find(|function| function.name == callee_name);
     for call in &caller.calls {
         if call.name != callee_name {
             continue;
@@ -599,10 +707,22 @@ pub(crate) fn call_sites(
         // path-qualified invocation (`internal::inner(..)`) is recorded
         // under the bare callee name, and name identity is not callee
         // identity. Only a direct free-function call site may bind.
-        if !is_direct_call_site(&call.text, callee_name) {
+        if is_direct_call_site(&call.text, callee_name) {
+            let arguments = split_call_arguments_text(&call.text, callee_name)?;
+            sites.push((call.text.clone(), arguments));
             continue;
         }
-        let arguments = split_call_arguments_text(&call.text, callee_name)?;
+        // #5352: a `self.` hop inside the callee's own impl, or a call
+        // on a value constructed from the callee's type, binds by impl
+        // identity. Any other receiver stays unbound (fail closed).
+        let Some(callee) = callee else { continue };
+        let Some((paren, receiver)) = method_call_site(&call.text, callee_name) else {
+            continue;
+        };
+        if !method_site_binds(caller, callee, &receiver) {
+            continue;
+        }
+        let arguments = split_call_arguments_at_paren(&call.text, paren)?;
         sites.push((call.text.clone(), arguments));
     }
     (!sites.is_empty()).then_some(sites)
@@ -646,6 +766,53 @@ pub(crate) fn is_direct_call_site(text: &str, callee_name: &str) -> bool {
 pub(crate) fn split_call_arguments_text(text: &str, callee_name: &str) -> Option<Vec<String>> {
     let open = direct_call_paren(text, callee_name)?;
     let after = &text[open + callee_name.len() + 1..];
+    let mut arguments = Vec::new();
+    let mut depth = 0usize;
+    let mut literal: Option<char> = None;
+    let mut escaped = false;
+    let mut start = 0usize;
+    for (at, character) in after.char_indices() {
+        if let Some(quote) = literal {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == quote {
+                literal = None;
+            }
+            continue;
+        }
+        match character {
+            '"' | '\'' => literal = Some(character),
+            '(' | '[' => depth += 1,
+            ')' | ']' => {
+                if depth == 0 {
+                    let last = after[start..at].trim();
+                    if !last.is_empty() {
+                        arguments.push(last.to_string());
+                    }
+                    return Some(arguments);
+                }
+                depth -= 1;
+            }
+            ',' if depth == 0 => {
+                let argument = after[start..at].trim();
+                if !argument.is_empty() {
+                    arguments.push(argument.to_string());
+                }
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Split the argument texts of the call whose argument list opens at
+/// byte `open_paren` in `text` (the method-call form of
+/// [`split_call_arguments_text`]).
+fn split_call_arguments_at_paren(text: &str, open_paren: usize) -> Option<Vec<String>> {
+    let after = &text[open_paren + 1..];
     let mut arguments = Vec::new();
     let mut depth = 0usize;
     let mut literal: Option<char> = None;
@@ -744,7 +911,7 @@ pub(crate) fn resolve_chain(
         ));
     }
     let caller = callers[0];
-    let Some(sites) = call_sites(caller, callee_name) else {
+    let Some(sites) = call_sites(caller, callee_name, index) else {
         return stopped(format!(
             "call site for `{callee_name}` in `{}` is not statically splittable",
             caller.name
@@ -1034,6 +1201,95 @@ pub(crate) fn helper_only_reach(
 /// boundary.
 pub(crate) fn chain_forwards_owner_result(owner_name: &str, chain: &HelperChain) -> bool {
     hops_forward_owner_result(owner_name, &chain.hops)
+}
+
+/// Whether an exact assertion on the chain entry's result pins the
+/// owner's returned value through the chain (#5352): the owner is
+/// reached only through the chain, every observed hop forwards its
+/// result, the test calls the entry (the top hop's caller) directly
+/// and unshadowed, and the assertion holds exactly one entry call as
+/// an operand. Identity is the resolved entry function, never a name
+/// token alone; any other shape fails closed.
+pub(crate) fn chain_entry_pin_admits(
+    owner_name: &str,
+    probe_expression: &str,
+    chain: &HelperChain,
+    related_tests: &[(
+        &crate::analysis::facts::TestSummary,
+        crate::domain::RelationReason,
+    )],
+    index: &RustIndex,
+    test: &crate::analysis::facts::TestSummary,
+    assertion: &crate::analysis::facts::OracleFact,
+) -> bool {
+    use crate::domain::OracleKind;
+    if !matches!(assertion.kind, OracleKind::ExactValue) || !helper_only_reach(related_tests) {
+        return false;
+    }
+    // A comparison-shaped returned value (`items >= 10`) is a boundary
+    // predicate in return-value clothing: an exact pin at a
+    // non-boundary input does not discriminate it, and the predicate
+    // probe's boundary pairing owns that decision.
+    let masked_probe = crate::analysis::extract::mask_comments_and_strings(probe_expression);
+    if ["==", "!=", ">=", "<="]
+        .iter()
+        .any(|op| masked_probe.contains(op))
+    {
+        return false;
+    }
+    // A bare `<` / `>` at depth 0 is a comparison too; `->`, `=>` and
+    // turbofish `::<` are not.
+    let bytes = masked_probe.as_bytes();
+    let mut depth = 0usize;
+    for (at, ch) in masked_probe.char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            '<' | '>' if depth == 0 => {
+                let prev = if at == 0 {
+                    None
+                } else {
+                    bytes.get(at - 1).copied()
+                };
+                let next = bytes.get(at + 1).copied();
+                let arrow = matches!((ch, prev), ('>', Some(b'-' | b'=')) | ('<', Some(b':')));
+                if !arrow && next != Some(b'=') {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    if !chain_forwards_to_observed_hops(owner_name, chain, related_tests) {
+        return false;
+    }
+    let Some(entry) = chain.hops.last() else {
+        return false;
+    };
+    let entry_name = entry.caller.name.as_str();
+    let calls_entry = test.calls.iter().any(|call| {
+        call.name == entry_name
+            && is_direct_call_site(&call.text, entry_name)
+            && !test_call_is_shadowed(index, test, entry_name, call.line)
+    });
+    if !calls_entry {
+        return false;
+    }
+    // Exactly one entry call in the assertion, as a whole operand: an
+    // expected side computed through the entry would move with the
+    // owner's change, and a buried call is not the observed result.
+    let masked = crate::analysis::extract::mask_comments_and_strings(&assertion.text);
+    let occurrences = masked.match_indices(entry_name).filter(|(at, _)| {
+        let before_ok = masked[..*at]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !c.is_ascii_alphanumeric() && c != '_');
+        before_ok
+            && masked[at + entry_name.len()..]
+                .trim_start()
+                .starts_with('(')
+    });
+    occurrences.count() == 1
 }
 
 /// Whether reach through a non-forwarding hop keeps the existing evidence
@@ -1587,7 +1843,7 @@ fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {
                     None => return false,
                 },
             };
-            caller_tail_forwards_call(&hop.caller.body, callee)
+            caller_tail_forwards_call(&hop.caller.body, callee, &hop.call_text)
                 && hop.arguments.iter().all(|argument| {
                     !is_identifier(argument.trim())
                         || !caller_rebinds_parameter(&hop.caller.body, argument.trim())
@@ -1595,7 +1851,7 @@ fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {
         })
 }
 
-fn caller_tail_forwards_call(body: &str, callee: &str) -> bool {
+fn caller_tail_forwards_call(body: &str, callee: &str, call_text: &str) -> bool {
     let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
     if masked.len() != body.len() || callee.is_empty() {
         return false;
@@ -1639,6 +1895,26 @@ fn caller_tail_forwards_call(body: &str, callee: &str) -> bool {
     };
     if is_exact_call(tail, callee) {
         return true;
+    }
+    // #5352: the identity-bound method hop forwards when the tail is
+    // exactly that hop's method call (`self.secs()`,
+    // `Parser { n }.total()`), or that call wrapped in one constructor
+    // (`Some(Parser { .. }.parse())`). The hop's recorded call text
+    // must itself be a method call site: a direct-call hop whose tail
+    // merely contains the call (`unit_cents(qty) + 1`) never forwards
+    // through this branch.
+    if method_call_site(call_text, callee).is_some()
+        && let Some((paren, _receiver)) = method_call_site(tail, callee)
+        && let Some(close) = matching_close(tail, paren)
+    {
+        let after = tail[close + 1..].trim();
+        // A wrapped tail is only the `Some(..)` / `Ok(..)` constructor
+        // form: any other outer call may transform the hop's result.
+        if after.is_empty()
+            || (after == ")" && (tail.starts_with("Some(") || tail.starts_with("Ok(")))
+        {
+            return true;
+        }
     }
     let Some(after_if) = tail.strip_prefix("if ") else {
         return false;
