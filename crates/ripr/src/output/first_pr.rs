@@ -1259,11 +1259,11 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
         // blocked state offers; the ledger's own warning names the coverage.
         let message = first_string_array_item(gap_ledger, &["warnings"]).map_or_else(
             || {
-                "The check-output gap ledger parsed but projected no records for this PR's language; regenerate the ledger from the workspace evidence.".to_string()
+                "The check-output gap ledger parsed but projected no records: the --check-output route covers presentation/output-text and Python/TypeScript/Perl findings only, so Rust-only predicate findings are not projected. Use `ripr check` to read the Rust findings and `ripr repair` to start a repair, or regenerate the ledger from the workspace evidence.".to_string()
             },
             |warning| {
                 format!(
-                    "The check-output gap ledger parsed but projected no records: {warning}. Regenerate the ledger from the workspace evidence."
+                    "The check-output gap ledger parsed but projected no records: {warning}. Regenerating the ledger will not change this for Rust-only findings; otherwise regenerate it from the workspace evidence."
                 )
             },
         );
@@ -3363,7 +3363,7 @@ mod tests {
                 "status": status,
                 "inputs": {"source_kind": source_kind},
                 "records": [],
-                "warnings": ["check output contained 3 findings, but the --check-output route projects Python/TypeScript/Perl findings only; no gap records were derived from them"]
+                "warnings": ["check output contained 3 findings, but the --check-output route projects presentation/output-text and Python/TypeScript/Perl findings only; no gap records were derived from them. For Rust findings, use `ripr check` to read them and `ripr repair` to start a repair"]
             })
         };
         let root = temp_repo("first-pr-no-records-recovery")?;
@@ -3375,9 +3375,14 @@ mod tests {
             Selection::Blocked {
                 state,
                 next_command,
+                message,
                 ..
             } => {
                 assert_eq!(state, "blocked_artifact");
+                assert!(
+                    message.contains("ripr check") && message.contains("ripr repair"),
+                    "the projection-miss message must point Rust findings to the working commands: {message}"
+                );
                 let command = next_command
                     .as_deref()
                     .ok_or("the projection-miss recovery must carry a next command")?;
