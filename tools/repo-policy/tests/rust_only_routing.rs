@@ -415,11 +415,6 @@ fn gated_lanes_admit_pull_requests_only_on_the_merge_ready_labeled_event() {
     const EXPLICIT: &str =
         "github.event.action == 'labeled' && github.event.label.name == 'merge-ready'";
     for (name, source) in GATED {
-        let gated_ifs: Vec<&str> = source
-            .lines()
-            .filter(|line| line.trim_start().starts_with("if:") && line.contains("'merge-ready'"))
-            .collect();
-        assert!(!gated_ifs.is_empty(), "{name} has no merge-ready guard");
         if source.contains("\nconcurrency:\n") {
             const REQUEST: &str = "github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready'";
             let prefix = match name {
@@ -447,14 +442,51 @@ fn gated_lanes_admit_pull_requests_only_on_the_merge_ready_labeled_event() {
                 "{name}: only a merge-ready request may cancel pull_request runs"
             );
         }
-        for line in gated_ifs {
-            assert!(line.contains(EXPLICIT), "{name}: {line}");
-            for event in ["opened", "synchronize", "reopened", "ready_for_review"] {
-                assert!(
-                    !line.contains(&format!("'{event}'")),
-                    "{name} re-admits {event}: {line}"
-                );
+        let mut job: Option<&str> = None;
+        let mut guarded: Vec<(&str, bool)> = Vec::new();
+        let mut in_jobs = false;
+        for line in source.lines() {
+            if line == "jobs:" {
+                in_jobs = true;
+            } else if in_jobs && !line.starts_with(' ') && !line.trim().is_empty() {
+                in_jobs = false;
             }
+            if !in_jobs {
+                continue;
+            }
+            if let Some(key) = line
+                .strip_prefix("  ")
+                .filter(|rest| !rest.starts_with(' '))
+                .and_then(|rest| rest.strip_suffix(':'))
+                .filter(|key| {
+                    key.chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+                })
+            {
+                job = Some(key);
+                guarded.push((key, false));
+            } else if line.starts_with("    if:") && job.is_some() {
+                assert!(
+                    line.contains("'merge-ready'") && line.contains(EXPLICIT),
+                    "{name}: job {job:?} guard must admit only the explicit merge-ready event: {line}"
+                );
+                for event in ["opened", "synchronize", "reopened", "ready_for_review"] {
+                    assert!(
+                        !line.contains(&format!("'{event}'")),
+                        "{name} re-admits {event}: {line}"
+                    );
+                }
+                if let Some(entry) = guarded.last_mut() {
+                    entry.1 = true;
+                }
+            }
+        }
+        assert!(!guarded.is_empty(), "{name} declares no jobs");
+        for (job, has_guard) in guarded {
+            assert!(
+                has_guard,
+                "{name}: job `{job}` has no single-line merge-ready guard"
+            );
         }
     }
 }
