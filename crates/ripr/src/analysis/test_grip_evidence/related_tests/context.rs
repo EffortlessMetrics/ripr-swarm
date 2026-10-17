@@ -5,6 +5,13 @@ use crate::analysis::test_grip_evidence::shared_grips::SharedGrips;
 use crate::analysis::value_resolution::{FileValueScan, ValueEnvFacts};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
+static NEXT_RUN_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+thread_local! {
+    static RUN_PIN_SYNTAX: std::cell::RefCell<Option<(u64, crate::analysis::classify::OwnerPinSyntax)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// Precomputed per-test facts for repo seam evidence consumers. This
 /// avoids repeatedly tokenizing the same test assertions and import
 /// lines while classifying every seam in a workspace.
@@ -82,6 +89,9 @@ pub(crate) struct CompactGripContext<'a> {
     /// Records are immutable, so sharing one does not couple seams. Window
     /// boundaries drop only the records no seam holds any more.
     shared_grips: Mutex<SharedGrips>,
+    /// Identifies this context's run for the per-thread `OwnerPinSyntax`
+    /// retained by [`Self::with_owner_pin_syntax`] (#8282).
+    run_id: u64,
 }
 
 /// Candidate generation only: the existing `contains` and `same_module`
@@ -237,6 +247,29 @@ impl<'a> CompactGripContext<'a> {
         memo(&self.same_module_cache).clear();
         memo(&self.parsed_sources).clear();
         memo(&self.shared_grips).release_unheld();
+    }
+
+    /// Run `f` with the calling thread's `OwnerPinSyntax` for this run.
+    ///
+    /// `OwnerPinSyntax` is single-threaded and index-bound, and its
+    /// full-index macro-site pass is bounded per instance (#8255). A fresh
+    /// instance per seam re-paid that pass for every seam (#8282); one per
+    /// worker thread keeps it to a constant number of passes per run. A
+    /// retained instance from an earlier run is replaced, and a re-entrant
+    /// call (a worker stealing another seam while joined) gets a throwaway
+    /// instance rather than aliasing the held one.
+    pub(in crate::analysis::test_grip_evidence) fn with_owner_pin_syntax<R>(
+        &self,
+        f: impl FnOnce(&crate::analysis::classify::OwnerPinSyntax) -> R,
+    ) -> R {
+        let held = RUN_PIN_SYNTAX.with(|slot| slot.take());
+        let syntax = match held {
+            Some((run_id, syntax)) if run_id == self.run_id => syntax,
+            _ => crate::analysis::classify::OwnerPinSyntax::default(),
+        };
+        let result = f(&syntax);
+        RUN_PIN_SYNTAX.with(|slot| slot.replace(Some((self.run_id, syntax))));
+        result
     }
 
     /// The run's shared copy of `grip`: an equal record already handed out,
@@ -602,6 +635,7 @@ impl<'a> CompactGripContext<'a> {
             unresolved_reach: Mutex::new(BTreeMap::new()),
             unseen_reach_names: OnceLock::new(),
             shared_grips: Mutex::new(SharedGrips::default()),
+            run_id: NEXT_RUN_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         })
     }
 

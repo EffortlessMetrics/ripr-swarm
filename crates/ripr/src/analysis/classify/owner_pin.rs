@@ -781,7 +781,10 @@ impl OwnerPinSyntax {
                 .any(|candidate| candidate == name)
     }
 
-    fn trusted_macro_ambiguities(&self, index: &RustIndex) -> BTreeSet<String> {
+    pub(in crate::analysis) fn trusted_macro_ambiguities(
+        &self,
+        index: &RustIndex,
+    ) -> BTreeSet<String> {
         let resolved_modules = self.resolved_module_declarations(index);
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
             resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
@@ -925,7 +928,7 @@ impl OwnerPinSyntax {
     /// paid, bounded at two (the ambiguity pass plus at most one
     /// completion) however many (name, test root) refusals follow.
     #[cfg(test)]
-    fn workspace_scan_passes(&self) -> u32 {
+    pub(in crate::analysis) fn workspace_scan_passes(&self) -> u32 {
         self.workspace_scan_passes.get()
     }
 

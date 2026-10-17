@@ -19586,3 +19586,43 @@ fn field_projected_collection_repo_seam_retains_indexed_target() -> Result<(), S
     }
     Ok(())
 }
+
+/// #8282: the seam walk shares one `OwnerPinSyntax` per run and thread, so
+/// the #8255 full-index pass bound is run-scoped. A fresh instance per seam
+/// re-paid the first pass for every seam; a new run must still start clean.
+#[test]
+fn seam_walk_shares_owner_pin_syntax_within_a_run() -> Result<(), String> {
+    let index = index_from_files(&[
+        (
+            PathBuf::from("src/globs.rs"),
+            "use std::io::prelude::*;\npub fn drain(input: &mut Vec<u8>) {\n    input.clear();\n}\n",
+        ),
+        (
+            PathBuf::from("src/lib.rs"),
+            "macro_rules! matches { ($($tokens:tt)*) => {} }\npub fn gate(value: u32) -> bool {\n    10 <= value\n}\n",
+        ),
+    ])?;
+    let context = CompactGripContext::new(&index);
+    let passes_after = |context: &CompactGripContext<'_>| {
+        context.with_owner_pin_syntax(|syntax| {
+            let _ = syntax.trusted_macro_ambiguities(&index);
+            syntax.workspace_scan_passes()
+        })
+    };
+    let first = passes_after(&context);
+    assert!(first >= 1, "the first seam must pay the index pass");
+    for _ in 0..50 {
+        assert_eq!(
+            passes_after(&context),
+            first,
+            "later seams in the run must reuse the retained scan"
+        );
+    }
+    let other_run = CompactGripContext::new(&index);
+    assert_eq!(
+        other_run.with_owner_pin_syntax(|syntax| syntax.workspace_scan_passes()),
+        0,
+        "a new run must not inherit the previous run's syntax"
+    );
+    Ok(())
+}

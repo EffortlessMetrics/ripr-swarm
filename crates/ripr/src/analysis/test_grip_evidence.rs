@@ -335,6 +335,16 @@ fn evidence_for_seam_with_context(
     seam: &RepoSeam,
     context: &CompactGripContext<'_>,
 ) -> TestGripEvidence {
+    context.with_owner_pin_syntax(|pin_syntax| {
+        evidence_for_seam_with_pin_syntax(seam, context, pin_syntax)
+    })
+}
+
+fn evidence_for_seam_with_pin_syntax(
+    seam: &RepoSeam,
+    context: &CompactGripContext<'_>,
+    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+) -> TestGripEvidence {
     let mut related_with_reason = find_related_tests_with_context(seam, context);
     let owner_fn = context.owner_function(seam.file(), seam.display_line());
     sort_related_tests_for_seam(seam, context, owner_fn, &mut related_with_reason);
@@ -352,10 +362,9 @@ fn evidence_for_seam_with_context(
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
     let (activate, observed_values, missing_discriminators) =
         activate_evidence(seam, &related_indexed, context, owner_fn);
-    let pin_syntax = crate::analysis::classify::OwnerPinSyntax::default();
-    let propagate = propagate_evidence(seam, &related, owner_fn, context.index, &pin_syntax);
+    let propagate = propagate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
     let observe = observe_evidence(&related);
-    let discriminate = discriminate_evidence(seam, &related, owner_fn, context.index, &pin_syntax);
+    let discriminate = discriminate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
 
     let related_tests: Vec<Arc<RelatedTestGrip>> = related_with_reason
         .iter()
@@ -366,7 +375,7 @@ fn evidence_for_seam_with_context(
                 *reason,
                 context,
                 owner_fn,
-                &pin_syntax,
+                pin_syntax,
             ))
         })
         .collect();
@@ -420,6 +429,16 @@ pub(crate) fn compact_evidence_for_seam(
     seam: &RepoSeam,
     context: &CompactGripContext<'_>,
 ) -> TestGripEvidence {
+    context.with_owner_pin_syntax(|pin_syntax| {
+        compact_evidence_for_seam_with_pin_syntax(seam, context, pin_syntax)
+    })
+}
+
+fn compact_evidence_for_seam_with_pin_syntax(
+    seam: &RepoSeam,
+    context: &CompactGripContext<'_>,
+    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+) -> TestGripEvidence {
     let ranked = find_related_tests_ranked(seam, context);
     let related_reasons: Vec<(&TestSummary, RelationReason)> = ranked
         .iter()
@@ -436,10 +455,9 @@ pub(crate) fn compact_evidence_for_seam(
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
     let (activate, missing_discriminators) =
         compact_activate_evidence(seam, &related_indexed, context, owner_fn);
-    let pin_syntax = crate::analysis::classify::OwnerPinSyntax::default();
-    let propagate = propagate_evidence(seam, &related, owner_fn, context.index, &pin_syntax);
+    let propagate = propagate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
     let observe = observe_evidence(&related);
-    let discriminate = discriminate_evidence(seam, &related, owner_fn, context.index, &pin_syntax);
+    let discriminate = discriminate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
     let statically_contradicted_related_tests = related
         .iter()
         .filter(|test| test_has_contradicted_assertion(test, owner_fn))
