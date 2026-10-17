@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- The public-proof page's steps-over-budget bar no longer counts the generated-workflow size flag, matching the dx-scoreboard split in #8491. It now counts only time and output-length budgets (3 steps become 0 on the committed receipts); the workflow size stays visible in the page's friction listing, and the stale "workflow-size" wording is dropped from the metric title (#8492, #5983).

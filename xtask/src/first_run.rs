@@ -30,6 +30,17 @@ const ROW_SCHEMA: &str = "first_run_row.v1";
 const ROWS_FILE: &str = "first-run-rows.jsonl";
 /// A developer is asked to review the generated workflow before committing it.
 const MAX_WORKFLOW_LINES: usize = 1500;
+
+/// Friction text for an oversized generated workflow.
+fn workflow_size_flag(lines: usize) -> String {
+    format!("generated workflow is {lines} lines, over the {MAX_WORKFLOW_LINES}-line review budget")
+}
+
+/// Whether a friction line is the workflow-size flag, so a consumer of the
+/// receipt can keep it apart from the time and output-length budgets.
+pub(crate) fn is_workflow_size_flag(text: &str) -> bool {
+    text.starts_with("generated workflow is ") && text.ends_with("-line review budget")
+}
 const INSTALL_STDERR_LOG: &str = "install_published.stderr.log";
 const ARCHIVE_STDERR_LOG: &str = "install_archive.stderr.log";
 const OUT_MARKER: &str = ".first-run-output";
@@ -929,9 +940,7 @@ fn friction(result: &StepResult, workflow: Option<&str>) -> Vec<String> {
             Some(text) => {
                 let lines = text.lines().count();
                 if lines > MAX_WORKFLOW_LINES {
-                    flags.push(format!(
-                        "generated workflow is {lines} lines, over the {MAX_WORKFLOW_LINES}-line review budget"
-                    ));
+                    flags.push(workflow_size_flag(lines));
                 }
                 if text.contains("cargo install ripr") && !text.contains("sha256") {
                     flags.push(
@@ -1372,6 +1381,15 @@ mod tests {
         let init = step("init_ci", 0, "Wrote ./ripr.toml\n", "", 0.1);
         assert_eq!(friction(&init, None).len(), 1);
         assert!(friction(&init, Some("name: ripr\n")).is_empty());
+    }
+
+    #[test]
+    fn the_workflow_size_predicate_recognises_exactly_what_the_producer_emits() {
+        assert!(is_workflow_size_flag(&workflow_size_flag(2374)));
+        assert!(!is_workflow_size_flag("12.5s, over the 10s budget"));
+        assert!(!is_workflow_size_flag(
+            "900 stdout lines, over the 400-line read budget"
+        ));
     }
 
     #[test]
