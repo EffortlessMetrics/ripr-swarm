@@ -11,3 +11,16 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — field_match_foreign_option_constant (2)
+
+Reason:
+RIPR-SPEC-0229: required full human audit preserves the independently verified qualified-constant gap
+
+Command:
+`cargo xtask goldens bless field_match_foreign_option_constant --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -139,8 +139,22 @@ impl FieldSelector {
                         )
                 })
             }) || ast::MacroRules::can_cast(node.kind())
-                || (ast::MacroCall::can_cast(node.kind())
-                    && !node.ancestors().any(|p| ast::Fn::can_cast(p.kind())))
+                || ast::MacroCall::cast(node.clone()).is_some_and(|call| {
+                    if !node.ancestors().any(|p| ast::Fn::can_cast(p.kind())) {
+                        return true;
+                    }
+                    // An opaque statement expansion can introduce caller-visible
+                    // bindings such as `const None = Some(1001)`. Expression
+                    // expansions cannot introduce bindings into the caller scope.
+                    if !crate::analysis::syntax::macro_call_is_statement(&call) {
+                        return false;
+                    }
+                    let path = call.path().map(|path| path.syntax().text().to_string());
+                    path.as_deref().is_none_or(|name| {
+                        !crate::analysis::syntax::TRUSTED_MACRO_NAMES.contains(&name)
+                            || crate::analysis::syntax::source_binds_value_name(source, name)
+                    })
+                })
         }) {
             return;
         }
@@ -370,6 +384,31 @@ mod tests {
             "&Lease { #[cfg(test)] elapsed: Some(1001), timeout: 600 }",
         ] {
             assert_eq!(field.project(input), None, "{input}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unread_statement_macros_refuse_field_identity_but_standard_assertions_remain()
+    -> Result<(), String> {
+        let input = "&Lease { elapsed: None, timeout: 600 }";
+        for (body, admitted) in [
+            (
+                "fn test() { assert_eq!(reason(&Lease { elapsed: None, timeout: 600 }), 600); }",
+                true,
+            ),
+            ("fn test() { foreign::shadow!(); }", false),
+            ("fn test() { foreign::shadow! {} }", false),
+            (
+                "fn test() { use foreign::shadow as assert_eq; assert_eq!(); }",
+                false,
+            ),
+            ("fn test() { foreign::assert_eq!(); }", false),
+        ] {
+            let mut field =
+                FieldSelector::new("elapsed", "Lease", OWNER).ok_or("field descriptor")?;
+            field.admit_source(&format!("{RECORD}\n{body}"));
+            assert_eq!(field.project(input).is_some(), admitted, "{body}");
         }
         Ok(())
     }

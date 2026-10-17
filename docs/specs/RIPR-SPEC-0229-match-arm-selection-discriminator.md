@@ -745,3 +745,15 @@ this extension makes no claim that their observations or the consumer's strict
 qualification have passed. The #8479 typed limitation continues to describe
 those unsupported cases. Public wire schemas and gap policy do not change;
 classified-cache generations must invalidate older semantic results.
+
+The direct-record field slice also refuses unread statement macro expansions:
+they can introduce caller-visible `Some`/`None` bindings without spelling those
+names at the invocation. Existing macro-position and value-binding authority
+admit only unshadowed trusted standard statement macros in this bounded path.
+`fixtures/field_match_macro_option_shadow` pins a compiled counterexample whose
+unchanged test passes even after the unobserved `None` arm is made wrong.
+
+When supported direct record inputs all select sibling arms, the existing
+missing-arm fact remains actionable. The legacy field-selector limitation must
+not overwrite that established input boundary or withhold its repair identity.
+Unsupported helper/mutable inputs still retain their limitation unchanged.

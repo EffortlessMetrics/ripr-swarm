@@ -1,0 +1,14 @@
+# Golden Output Changes
+
+## Pending — field_match_macro_option_shadow (1)
+
+Reason:
+RIPR-SPEC-0229: imported statement expansion binds None to Some; wrong None-arm runtime still passes and must remain weak
+
+Command:
+`cargo xtask goldens bless field_match_macro_option_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -349,6 +349,10 @@ fn a_direct_record_sibling_names_the_missing_arm_and_wrong_calls_never_credit_it
             assert_ne!(arm.class, ExposureClass::Exposed, "case {case}: {}", arm.id);
             if case == 0 {
                 assert!(arm.activation.missing_discriminators.iter().any(|missing| missing.value == "Some(ms)"), "{}", arm.id);
+                assert!(arm.static_limit_kind.is_none(),
+                    "a proven sibling input is a real gap, not an unresolved field value");
+                assert!(arm.canonical_gap.is_some(),
+                    "the supported missing-arm discriminator must retain its repair identity");
             }
         }
     }
@@ -406,6 +410,40 @@ fn raw_identifier_option_shadows_cannot_borrow_prelude_identity()
             arm.class,
             ExposureClass::Exposed,
             "raw identifiers retain their binding identity: {}",
+            arm.id
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_imported_statement_macro_cannot_supply_an_unread_option_binding()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!("../../../fixtures/field_match_macro_option_shadow/input/src/lib.rs");
+    let diff = include_str!("../../../fixtures/field_match_macro_option_shadow/diff.patch");
+    let fixture = Fixture::new(source, diff)?;
+    std::fs::write(
+        fixture.0.join("src/foreign.rs"),
+        include_str!("../../../fixtures/field_match_macro_option_shadow/input/src/foreign.rs"),
+    )?;
+    let output = fixture.check()?;
+    let arms = output
+        .findings
+        .iter()
+        .filter(|finding| {
+            finding.probe.family == ripr::ProbeFamily::MatchArm && finding.probe.location.line == 5
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        arms.len(),
+        2,
+        "current and deleted arm subjects must be analyzed"
+    );
+    for arm in arms {
+        assert_ne!(
+            arm.class,
+            ExposureClass::Exposed,
+            "an unread statement expansion can shadow None: {}",
             arm.id
         );
     }

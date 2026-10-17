@@ -9710,6 +9710,30 @@
           "class": "weakly_exposed"
         }
       ]
+    },
+    {
+      "id": "rust_field_match_macro_option_shadow",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/field_match_macro_option_shadow",
+      "vector": "imported_statement_macro_can_shadow_option_constructor",
+      "probe_family": "match_arm",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
     }
   ]
 }
