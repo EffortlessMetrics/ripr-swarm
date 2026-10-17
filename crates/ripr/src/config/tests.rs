@@ -1984,6 +1984,21 @@ fn a_recorded_retired_key_names_its_release_and_replacement() -> Result<(), Stri
     );
     // The shipped table records nothing, so today's errors are unchanged.
     assert_eq!(retired_key_hint(err), None);
+    // An error that is not an unknown-field refusal never yields a hint.
+    assert_eq!(
+        retired_key_hint_in(&retired, "invalid type: integer `1`, expected a string"),
+        None
+    );
+    // The hint also reads the error the real parser produces, so the lookup is
+    // tied to serde's wording and not only to a hand-built string.
+    let Err(real) = parse_config("old_mode = 1\n") else {
+        return Err("an unknown top-level key must be refused".to_string());
+    };
+    assert_eq!(
+        retired_key_hint_in(&retired, &real),
+        Some("\n`old_mode` was retired in ripr 9.9.0; use `analysis.mode` instead".to_string()),
+        "real parser error: {real}"
+    );
     Ok(())
 }
 

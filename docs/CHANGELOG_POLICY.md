@@ -61,7 +61,9 @@ Retire a key in this order (#7453):
 1. In the release that renames or replaces it, keep the old spelling working and
    print a named warning that says the key is deprecated and what replaces it.
    File the change under `Deprecated`.
-2. Keep that behavior for at least one minor release.
+2. Keep that behavior for at least one minor release. While ripr is pre-1.0 a
+   minor release is the next `0.N.0` bump, so a key deprecated in `0.12.0` can be
+   retired no earlier than `0.13.0`.
 3. In the release that stops accepting the key, add it to `RETIRED_KEYS` in
    `crates/ripr/src/config.rs`, so the load error names the release that
    retired it and its replacement instead of a bare `unknown field`. File the
