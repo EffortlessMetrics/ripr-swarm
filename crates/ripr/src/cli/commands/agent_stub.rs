@@ -75,11 +75,11 @@ pub(super) fn run_agent_stub(options: AgentStubOptions) -> Result<(), CommandErr
                 // A JSON document, not report text: keep it parseable (#6309).
                 write_stderr_refusal_json(render(&document)?);
             }
-            return Err(CommandError::Decision(format!(
-                "agent stub: no test stub for seam {} ({}): {}",
-                resolution.seam_id,
+            return Err(CommandError::Decision(refusal_message(
+                &resolution.seam_id,
                 refusal.as_str(),
-                refusal.reason()
+                &refusal.reason(),
+                resolution.at_note.as_deref(),
             )));
         }
     };
@@ -235,6 +235,17 @@ struct StubGripDisclosure {
     warnings: Vec<String>,
 }
 
+/// The human refusal text. A refused nearest gap still names the seam, so the
+/// `--at` substitution note must travel with it or the line the user named
+/// is swapped for another silently (#6298).
+fn refusal_message(seam_id: &str, kind: &str, reason: &str, at_note: Option<&str>) -> String {
+    let mut message = format!("agent stub: no test stub for seam {seam_id} ({kind}): {reason}");
+    if let Some(note) = at_note {
+        message.push_str(&format!(". {note}"));
+    }
+    message
+}
+
 fn stub_grip_disclosure(
     seam_id: &str,
     grip_class: Option<SeamGripClass>,
@@ -256,6 +267,25 @@ fn stub_grip_disclosure(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn human_refusal_carries_the_at_substitution_note() {
+        let plain = refusal_message("seam:1", "observer_required", "needs an observer", None);
+        assert_eq!(
+            plain,
+            "agent stub: no test stub for seam seam:1 (observer_required): needs an observer"
+        );
+        let noted = refusal_message(
+            "seam:1",
+            "observer_required",
+            "needs an observer",
+            Some("note: src/lib.rs:8 has no stubbable gap"),
+        );
+        assert_eq!(
+            noted,
+            "agent stub: no test stub for seam seam:1 (observer_required): needs an observer. note: src/lib.rs:8 has no stubbable gap"
+        );
+    }
 
     /// #7390: the not-found refusal — the most common agent-stub refusal, a
     /// stale or mistyped seam id — must render the same versioned

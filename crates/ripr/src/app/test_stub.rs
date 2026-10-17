@@ -1095,9 +1095,8 @@ impl Size {
         );
         let note = off.at_note.ok_or("a substituted line must carry a note")?;
         assert!(
-            note.contains("src/lib.rs:8")
-                && note.contains("src/lib.rs:7")
-                && note.contains("nearest"),
+            note.starts_with("note: src/lib.rs:8 has no stubbable gap")
+                && note.ends_with(", src/lib.rs:7"),
             "{note}"
         );
         Ok(())
