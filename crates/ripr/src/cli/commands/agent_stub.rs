@@ -78,7 +78,7 @@ pub(super) fn run_agent_stub(options: AgentStubOptions) -> Result<(), CommandErr
             return Err(CommandError::Decision(refusal_message(
                 &resolution.seam_id,
                 refusal.as_str(),
-                &refusal.reason(),
+                refusal.reason(),
                 resolution.at_note.as_deref(),
             )));
         }
