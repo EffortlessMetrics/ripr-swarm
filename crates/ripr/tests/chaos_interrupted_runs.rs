@@ -650,12 +650,9 @@ exit 66
                 .trim_end(),
         );
         // The exporter runs in the fixture root and is handed a root-relative
-        // output path, so a relative report names a file under that root.
-        let tmp = if reported.is_relative() {
-            fixture.root.join(reported)
-        } else {
-            reported
-        };
+        // output path, so a relative report names a file under that root; `join` keeps an
+        // absolute report as is.
+        let tmp = fixture.root.join(reported);
         let cache = fixture.root.join("managed-packets");
         let parent = tmp.parent().ok_or("packet temporary path has no parent")?;
         // Accept the old shared location so baseline/wrong-implementation
