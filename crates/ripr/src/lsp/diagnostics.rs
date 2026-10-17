@@ -3082,9 +3082,12 @@ fn diagnostic_range_for_finding(
         // replaced by a saved-line search. Absent maps keep the heuristic.
         return crate::lsp::position::range_from_encoded_origin(origin, position_encoding);
     }
-    let line = finding.probe.location.line.saturating_sub(1) as u32;
+    let analyzer_line = finding.probe.location.line.saturating_sub(1) as u32;
     let column = finding.probe.location.column;
-    let saved_line = saved_line_for_finding(root, finding);
+    let (line, saved_line) = match saved_line_for_finding(root, finding) {
+        Some((line, text)) => (line, Some(text)),
+        None => (analyzer_line, None),
+    };
     crate::lsp::position::expression_span_range_on_saved_line(
         line,
         column,
@@ -3094,11 +3097,79 @@ fn diagnostic_range_for_finding(
     )
 }
 
-fn saved_line_for_finding(root: &Path, finding: &Finding) -> Option<String> {
+/// The saved line an editor shows for a finding, with its editor line index.
+fn saved_line_for_finding(root: &Path, finding: &Finding) -> Option<(u32, String)> {
     let path = absolute_finding_path(root, finding);
     let contents = std::fs::read_to_string(path).ok()?;
     let line_index = finding.probe.location.line.saturating_sub(1);
-    contents.lines().nth(line_index).map(str::to_owned)
+    saved_editor_line(&contents, line_index, &finding.probe.expression)
+}
+
+/// Resolve the analyzer's zero-based line to the editor line holding the
+/// finding.
+///
+/// The analyzer numbers lines by `\n`, as git does, so a bare `\r` is not a
+/// line break there. Editors end a line at `\n`, `\r\n` or a bare `\r`
+/// (#8589). When the analyzer line holds a bare `\r`, it spans several editor
+/// lines: locate the expression inside it and return the editor line it falls
+/// on, or the analyzer line's first editor line when the expression is empty
+/// or absent. Without a bare `\r` both models agree and the line is unchanged.
+pub(super) fn saved_editor_line(
+    contents: &str,
+    analyzer_index: usize,
+    expression: &str,
+) -> Option<(u32, String)> {
+    let mut start = 0usize;
+    let mut analyzer_line = None;
+    for (index, raw) in contents.split_inclusive('\n').enumerate() {
+        if index == analyzer_index {
+            analyzer_line = Some((start, raw));
+            break;
+        }
+        start += raw.len();
+    }
+    let (line_start, raw) = analyzer_line?;
+    let text = raw
+        .strip_suffix('\n')
+        .map_or(raw, |line| line.strip_suffix('\r').unwrap_or(line));
+    if !text.contains('\r') {
+        return Some((analyzer_index as u32, text.to_owned()));
+    }
+    let offset = if expression.is_empty() {
+        0
+    } else {
+        text.find(expression).unwrap_or(0)
+    };
+    let (line, editor_text) = editor_line_containing(contents, line_start + offset);
+    Some((line, editor_text.to_owned()))
+}
+
+/// The editor line (terminators `\n`, `\r\n`, bare `\r`) that holds a byte
+/// offset, with its text excluding the terminator.
+fn editor_line_containing(contents: &str, byte: usize) -> (u32, &str) {
+    let bytes = contents.as_bytes();
+    let mut line = 0u32;
+    let mut start = 0usize;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let terminator_len = match bytes[index] {
+            b'\n' => 1,
+            b'\r' if bytes.get(index + 1) == Some(&b'\n') => 2,
+            b'\r' => 1,
+            _ => 0,
+        };
+        if terminator_len == 0 {
+            index += 1;
+            continue;
+        }
+        if byte <= index {
+            return (line, &contents[start..index]);
+        }
+        line += 1;
+        index += terminator_len;
+        start = index;
+    }
+    (line, &contents[start..])
 }
 
 fn related_information_for_finding(
