@@ -13,15 +13,27 @@ ripr uses static analysis; it does not run mutants or write the test for you.
 Fastest, with no Rust toolchain: download the checksummed prebuilt 0.10.0
 archive (about a second here). This example is Linux x86-64; the
 [release](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.10.0) also
-has macOS and Windows archives:
+has macOS and Windows archives. On macOS set `t=aarch64-apple-darwin` (Apple
+silicon) or `t=x86_64-apple-darwin` (Intel); macOS ships `shasum`, not
+`sha256sum`, so the verify step falls back to `shasum -a 256`:
 
 ```bash
 v=0.10.0; t=x86_64-unknown-linux-gnu; f=ripr-server-v$v-$t.tar.gz
 b=https://github.com/EffortlessMetrics/ripr/releases/download/v$v
 curl -fsSLO $b/$f && curl -fsSLO $b/$f.sha256
-echo "$(cat $f.sha256)  $f" | sha256sum -c - && tar xzf $f \
+echo "$(cat $f.sha256)  $f" | { sha256sum -c - || shasum -a 256 -c -; } && tar xzf $f \
   && export PATH="$PWD:$PATH"   # ./ripr is now first on PATH for this shell
 ```
+
+The macOS archives are not signed or notarized. A `curl` and `tar` download like
+the one above normally carries no quarantine attribute, so `./ripr` runs
+without a prompt. A browser, AirDrop or mail download of the archive is
+quarantined, and Gatekeeper then blocks the extracted `ripr` with a dialog such
+as "Apple could not verify "ripr" is free of malware" or ""ripr" cannot be
+opened because the developer cannot be verified". Verify the checksum first,
+then clear the attribute with `xattr -d com.apple.quarantine ./ripr` (or
+`xattr -dr com.apple.quarantine <extracted-dir>`). Do that only for an archive
+whose `.sha256` matched.
 
 Or install the published CLI with Cargo, which compiles from source:
 

@@ -197,6 +197,66 @@ fn docs_keep_the_canonical_role_vocabulary() -> Result<(), String> {
     Ok(())
 }
 
+/// Both docs say the release has macOS archives, and stock macOS has `shasum`
+/// but no `sha256sum`. A verify step that only names `sha256sum` fails there
+/// before extraction, so the copy-paste block must keep the `shasum` fallback
+/// and the docs must name the macOS target triples.
+#[test]
+fn prebuilt_install_block_verifies_on_macos() -> Result<(), String> {
+    for (name, doc) in [
+        ("README.md", ROOT_README),
+        ("docs/QUICKSTART.md", QUICKSTART_DOC),
+    ] {
+        let block = first_bash_block(doc)?;
+        assert_contains(name, &block, "sha256sum -c - || shasum -a 256 -c -")?;
+        let flat = doc.replace('\n', " ");
+        for triple in ["aarch64-apple-darwin", "x86_64-apple-darwin"] {
+            assert_contains(name, &flat, triple)?;
+        }
+    }
+    Ok(())
+}
+
+/// The macOS archives are unsigned. Browser, AirDrop or mail downloads are
+/// quarantined and Gatekeeper blocks the binary, so both install docs must say
+/// so, point at the checksum-first `xattr` remedy, and keep the claim that
+/// command-line downloads are normally not quarantined.
+#[test]
+fn install_docs_explain_macos_gatekeeper_quarantine() -> Result<(), String> {
+    for (name, doc) in [
+        ("README.md", ROOT_README),
+        ("docs/QUICKSTART.md", QUICKSTART_DOC),
+    ] {
+        let flat = doc.split_whitespace().collect::<Vec<_>>().join(" ");
+        for needle in [
+            "not signed or notarized",
+            "Gatekeeper",
+            "normally carries no quarantine attribute",
+            "xattr -d com.apple.quarantine",
+            "whose `.sha256` matched",
+        ] {
+            assert_contains(name, &flat, needle)?;
+        }
+        let paired = match (
+            flat.find("xattr -d com.apple.quarantine"),
+            flat.find("whose `.sha256` matched"),
+        ) {
+            (Some(remedy), Some(check)) => remedy < check,
+            _ => false,
+        };
+        if !paired {
+            return Err(format!(
+                "{name} must pair the xattr remedy with the checksum condition"
+            ));
+        }
+        let removed = flat.replace("xattr -d com.apple.quarantine", "");
+        if assert_contains(name, &removed, "xattr -d com.apple.quarantine").is_ok() {
+            return Err(format!("{name} negative control kept the xattr remedy"));
+        }
+    }
+    Ok(())
+}
+
 /// #2930 drift rule: the discovery chain (#4873, #4962, #4965, #4971) shipped
 /// after #2931 closed the original prose-alignment claim, so the hierarchy
 /// guide must name the landed discovery surfaces in its drift rule and its
