@@ -3030,12 +3030,9 @@ impl Backend {
         let Some((digest, input_identity)) = committed else {
             return false;
         };
-        self.documents
-            .lock()
-            .ok()
-            .is_some_and(|mut documents| {
-                documents.adopt_committed_identity(uri, &digest, input_identity)
-            })
+        self.documents.lock().ok().is_some_and(|mut documents| {
+            documents.adopt_committed_identity(uri, &digest, input_identity)
+        })
     }
 
     /// Whether a clean open still carries an input the committed snapshot
