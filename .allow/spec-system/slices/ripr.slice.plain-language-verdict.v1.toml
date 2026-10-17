@@ -1,0 +1,61 @@
+schema_version = "2.0"
+id = "ripr.slice.plain-language-verdict.v1"
+generation = 1
+
+source_issue = "issue:8165"
+design_reference = "RIPR-SPEC-0122#default-human-output"
+change_class = "behavior_change"
+
+claim_boundary = """
+The bounded (default) `ripr check` human render speaks plain language:
+the summary names classes with plain words (exposed, weak, unrevealed,
+no path, and the three unknown classes summed as unknown), the triage
+state and the `Hidden:` list drop their parenthesized schema tokens,
+the finding digest drops the duplicate schema token from its
+`Static exposure:` line, and the analysis-outcome line drops its
+`(; <kind>)` token suffix. The zero-probe summary reads
+`Summary: 0 probes analyzed; N findings unsuppressed`. No snake_case
+schema token and no forbidden promotion term appears on this surface.
+`--format human-full`, JSON, and
+`ripr explain` keep every schema token byte-identical; classification,
+evidence promotion, scoring, and schema vocabulary are unchanged.
+"""
+
+non_goals = [
+  "changes to JSON schemas, field names, or API outputs",
+  "changes to classification algorithms, evidence promotion, or scoring",
+  "changes to `ripr explain` or `--format human-full` diagnostics",
+  "new classification vocabulary or probe families",
+]
+
+return_conditions = [
+  "Return to root if the bounded/human-full split cannot be made without changing human-full bytes.",
+  "Return to root if a golden outside default-human (human.txt) expectations must move.",
+]
+
+owned_seams = [
+  "seam:ripr:output:human-renderer",
+  "seam:ripr:output:human-triage",
+]
+
+shared_seams = [
+  "seam:ripr:output:schema",
+]
+
+forbidden_seams = [
+  "seam:ripr:domain:classification-vocabulary",
+  "seam:ripr:analysis:classification",
+]
+
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0122#default-human-output"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+
+[evidence]
+state = "outstanding"
+
+[support_claim]
+state = "unchanged"
