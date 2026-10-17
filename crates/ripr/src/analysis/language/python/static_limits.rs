@@ -301,10 +301,66 @@ pub(super) fn is_transparent_owner_decorator_for_owner(
             &owner.cli_receiver_names,
         )
         || is_imported_functools_memoization_decorator(decorator, &owner.imports)
+        || is_builtin_property_decorator(decorator, &owner.imports)
 }
 
 fn is_functools_memoization_name(name: &str) -> bool {
     matches!(name, "lru_cache" | "cache" | "cached_property")
+}
+
+fn import_binds_stdlib_builtins_module(import: &PythonImport) -> bool {
+    import.imported == "builtins" && import.source_module.is_empty()
+}
+
+fn import_binds_builtin_property_name(import: &PythonImport) -> bool {
+    import.imported == "property" && import.source_module == "builtins"
+}
+
+/// `import wrappers as builtins` / `from helpers import builtins` rebound
+/// the name; a plain `import builtins` did not.
+fn receiver_is_rebound_from_non_stdlib_builtins(imports: &[PythonImport], receiver: &str) -> bool {
+    imports
+        .iter()
+        .any(|import| import.alias == receiver && !import_binds_stdlib_builtins_module(import))
+}
+
+fn property_name_is_rebound(imports: &[PythonImport], name: &str) -> bool {
+    imports
+        .iter()
+        .any(|import| import.alias == name && !import_binds_builtin_property_name(import))
+}
+
+/// Bare `@property` is the built-in accessor unless `property` is rebound
+/// (`from helpers import property` or `import property`). `@builtins.property`
+/// is the stdlib qualified spelling unless `builtins` is rebound. `from
+/// builtins import property as accessor` then `@accessor` is the same binding
+/// unless `accessor` is also rebound. `@v.setter` / `@v.deleter` are not this
+/// name and stay limited.
+fn is_builtin_property_decorator(decorator: &str, imports: &[PythonImport]) -> bool {
+    if let Some((receiver, method)) = decorator.rsplit_once('.') {
+        if method != "property" {
+            return false;
+        }
+        if receiver_is_rebound_from_non_stdlib_builtins(imports, receiver) {
+            return false;
+        }
+        if receiver == "builtins" {
+            return true;
+        }
+        return imports
+            .iter()
+            .any(|import| import_binds_stdlib_builtins_module(import) && import.alias == receiver);
+    }
+    if decorator == "property" {
+        return !property_name_is_rebound(imports, "property");
+    }
+    let from_builtins = imports
+        .iter()
+        .any(|import| import_binds_builtin_property_name(import) && import.alias == decorator);
+    let competing_alias = imports
+        .iter()
+        .any(|import| import.alias == decorator && !import_binds_builtin_property_name(import));
+    from_builtins && !competing_alias
 }
 
 fn import_binds_stdlib_functools_module(import: &PythonImport) -> bool {
@@ -921,6 +977,172 @@ mod tests {
                 },
             ],
         );
+        assert_eq!(
+            decorator_limit(&owner),
+            Some(StaticLimitKind::DecoratorIndirection)
+        );
+    }
+
+    fn from_builtins(name: &str) -> PythonImport {
+        PythonImport {
+            imported: name.to_string(),
+            alias: name.to_string(),
+            source_module: "builtins".to_string(),
+        }
+    }
+
+    fn import_builtins() -> PythonImport {
+        PythonImport {
+            imported: "builtins".to_string(),
+            alias: "builtins".to_string(),
+            source_module: String::new(),
+        }
+    }
+
+    #[test]
+    fn plain_property_decorator_does_not_limit() {
+        assert!(
+            !is_transparent_owner_decorator("property"),
+            "bare `property` needs owner import context so a rebound stays limited"
+        );
+        let owner = owner_with(&["property"], Vec::new());
+        assert!(
+            is_transparent_owner_decorator_for_owner("property", &owner),
+            "plain built-in `@property` with no competing import is a transparent accessor"
+        );
+        assert_eq!(
+            decorator_limit(&owner),
+            None,
+            "plain `@property` must not emit decorator_indirection"
+        );
+        assert_eq!(
+            decorator_limit(&owner_with(&["property"], vec![from_builtins("property")])),
+            None,
+            "`from builtins import property` is still the built-in accessor"
+        );
+        assert_eq!(
+            decorator_limit(&owner_with(&["builtins.property"], vec![import_builtins()])),
+            None,
+            "`@builtins.property` with `import builtins` is the built-in spelling"
+        );
+        assert_eq!(
+            decorator_limit(&owner_with(&["builtins.property"], Vec::new())),
+            None,
+            "`@builtins.property` with no competing import is the built-in spelling"
+        );
+        assert_eq!(
+            decorator_limit(&owner_with(
+                &["bi.property"],
+                vec![PythonImport {
+                    imported: "builtins".to_string(),
+                    alias: "bi".to_string(),
+                    source_module: String::new(),
+                }]
+            )),
+            None,
+            "`import builtins as bi` then `@bi.property` is the built-in spelling"
+        );
+    }
+
+    #[test]
+    fn rebound_property_decorator_stays_limited() {
+        let from_helpers = owner_with(
+            &["property"],
+            vec![PythonImport {
+                imported: "property".to_string(),
+                alias: "property".to_string(),
+                source_module: "helpers".to_string(),
+            }],
+        );
+        assert_eq!(
+            decorator_limit(&from_helpers),
+            Some(StaticLimitKind::DecoratorIndirection),
+            "`from helpers import property` must keep decorator_indirection"
+        );
+
+        let import_module = owner_with(
+            &["property"],
+            vec![PythonImport {
+                imported: "property".to_string(),
+                alias: "property".to_string(),
+                source_module: String::new(),
+            }],
+        );
+        assert_eq!(
+            decorator_limit(&import_module),
+            Some(StaticLimitKind::DecoratorIndirection),
+            "`import property` binds a module, not the built-in"
+        );
+
+        let rebound_builtins = owner_with(
+            &["builtins.property"],
+            vec![PythonImport {
+                imported: "wrappers".to_string(),
+                alias: "builtins".to_string(),
+                source_module: String::new(),
+            }],
+        );
+        assert_eq!(
+            decorator_limit(&rebound_builtins),
+            Some(StaticLimitKind::DecoratorIndirection),
+            "`import wrappers as builtins` then `@builtins.property` must stay limited"
+        );
+
+        let competing = owner_with(
+            &["property"],
+            vec![
+                PythonImport {
+                    imported: "property".to_string(),
+                    alias: "property".to_string(),
+                    source_module: "helpers".to_string(),
+                },
+                from_builtins("property"),
+            ],
+        );
+        assert_eq!(
+            decorator_limit(&competing),
+            Some(StaticLimitKind::DecoratorIndirection),
+            "a competing non-builtins `property` binding must stay limited"
+        );
+    }
+
+    #[test]
+    fn aliased_from_builtins_property_is_transparent() {
+        let owner = owner_with(
+            &["accessor"],
+            vec![PythonImport {
+                imported: "property".to_string(),
+                alias: "accessor".to_string(),
+                source_module: "builtins".to_string(),
+            }],
+        );
+        assert_eq!(decorator_limit(&owner), None);
+    }
+
+    #[test]
+    fn property_setter_and_deleter_stay_limited() {
+        for decorator in [
+            "v.setter",
+            "v.deleter",
+            "property.setter",
+            "property.deleter",
+        ] {
+            let owner = owner_with(&[decorator], Vec::new());
+            assert!(
+                !is_transparent_owner_decorator(decorator),
+                "expected `{decorator}` to remain a static limit"
+            );
+            assert_eq!(
+                decorator_limit(&owner),
+                Some(StaticLimitKind::DecoratorIndirection),
+                "`{decorator}` must keep decorator_indirection"
+            );
+        }
+    }
+
+    #[test]
+    fn property_plus_retry_still_limits() {
+        let owner = owner_with(&["property", "retry"], Vec::new());
         assert_eq!(
             decorator_limit(&owner),
             Some(StaticLimitKind::DecoratorIndirection)

@@ -2581,6 +2581,89 @@ fn changed_sink_token_requires_delta_not_unchanged_operand() -> Result<(), Strin
 }
 
 #[test]
+fn builtin_property_owner_is_not_decorator_indirection() -> Result<(), String> {
+    // #6585: a changed body line of a plain built-in `@property` with a
+    // related attribute-read test must not hide behind decorator_indirection.
+    // If this classifies `no_static_path`, the attribute-read relation is
+    // missing and that reach work is out of this claim.
+    let source = "class C:\n    @property\n    def v(self):\n        return 2\n";
+    let owners = extract_owners(Path::new("src/c.py"), source);
+    let tests = extract_tests(
+        Path::new("tests/test_c.py"),
+        "from src.c import C\n\n\ndef test_v():\n    assert C().v == 2\n",
+    );
+    let Some(finding) = classify_change_with_old(
+        Path::new("src/c.py"),
+        4,
+        "        return 2",
+        Some("        return 1"),
+        &owners,
+        &tests,
+    ) else {
+        return Err("changed @property body should classify".to_string());
+    };
+    assert_ne!(
+        finding.class,
+        ExposureClass::NoStaticPath,
+        "attribute-read of `.v` should relate to the `@property` owner; no_static_path is out of this claim"
+    );
+    assert_eq!(
+        finding.static_limit_kind, None,
+        "plain `@property` must not emit a static limit, got {:?}",
+        finding.static_limit_kind
+    );
+    assert_ne!(
+        finding.class,
+        ExposureClass::StaticUnknown,
+        "plain `@property` must not fail closed as static_unknown, got {:?}",
+        finding.class
+    );
+    // Attribute reads relate through same_stem, which does not use the
+    // oracle. Promoting that relation is reach work and out of this claim.
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "transparent `@property` plus an attribute-read test is weakly_exposed via same_stem, got {:?}",
+        finding.class
+    );
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|entry| entry == "related_test_relation: same_stem (test_v)"),
+        "expected same_stem relation for `.v`, got {:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+#[test]
+fn rebound_property_owner_keeps_decorator_indirection() -> Result<(), String> {
+    let source = "from helpers import property\n\nclass C:\n    @property\n    def v(self):\n        return 2\n";
+    let owners = extract_owners(Path::new("src/c.py"), source);
+    let tests = extract_tests(
+        Path::new("tests/test_c.py"),
+        "from src.c import C\n\n\ndef test_v():\n    assert C().v == 2\n",
+    );
+    let Some(finding) = classify_change_with_old(
+        Path::new("src/c.py"),
+        6,
+        "        return 2",
+        Some("        return 1"),
+        &owners,
+        &tests,
+    ) else {
+        return Err("rebound @property body should classify".to_string());
+    };
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::DecoratorIndirection)
+    );
+    Ok(())
+}
+
+#[test]
 fn changed_sink_token_credits_when_oracle_observes_the_delta_value() -> Result<(), String> {
     // Positive control: the changed VALUE "paid" IS the delta, and the oracle
     // observes it on the same owner instance — the credit stands.
