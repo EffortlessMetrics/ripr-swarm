@@ -839,7 +839,13 @@ mod tests {
         std::fs::create_dir_all(ws.join("target")).map_err(|e| e.to_string())?;
         std::os::unix::fs::symlink(&outside, ws.join("target/ripr")).map_err(|e| e.to_string())?;
         let escaped_ripr = ensure_default_output_contained_with(&ws, None);
+        std::fs::remove_file(ws.join("target/ripr")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(ws.join("target/ripr")).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&outside, ws.join("target/ripr/cache"))
+            .map_err(|e| e.to_string())?;
+        let escaped_cache = ensure_default_output_contained_with(&ws, None);
         let _ = std::fs::remove_dir_all(&base);
+        assert!(escaped_cache.is_err(), "target/ripr/cache link must refuse");
         // An explicit RIPR_CACHE_DIR is the opt-in and passes the guard.
         ensure_default_output_contained_with(&ws, Some("/var/cache/ripr"))?;
         assert!(
