@@ -9997,7 +9997,7 @@ return Err(\"typed pin\".into());
             let probe = probe(family.clone(), "items.push(5)");
             let seeded = test_with_body_assertions(
                 "keeps_seeded_items",
-                "let mut items = vec![9];\n    record(&mut items);",
+                "let mut items = vec![9];\n    record(&mut items);\n    assert_eq!(items, vec![9]);",
                 vec![oracle(
                     "assert_eq!(items, vec![9]);",
                     OracleKind::WholeObjectEquality,
@@ -10046,7 +10046,7 @@ return Err(\"typed pin\".into());
             // discriminates the push: the skipped push leaves vec![8].
             let differing = test_with_body_assertions(
                 "expects_more_than_the_seed",
-                "let mut items = vec![8];\n    record(&mut items);",
+                "let mut items = vec![8];\n    record(&mut items);\n    assert_eq!(items, vec![9]);",
                 vec![oracle(
                     "assert_eq!(items, vec![9]);",
                     OracleKind::WholeObjectEquality,
