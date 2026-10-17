@@ -644,11 +644,18 @@ exit 66
     }
 
     fn temporary_path(fixture: &Fixture, marker: &Path) -> Result<PathBuf, String> {
-        let tmp = PathBuf::from(
+        let received = PathBuf::from(
             fs::read_to_string(marker.with_extension("path"))
                 .map_err(|error| error.to_string())?
                 .trim_end(),
         );
+        // The exporter runs with the checkout root as its working directory
+        // and receives a root-relative `--out` (#8352); resolve it here.
+        let tmp = if received.is_absolute() {
+            received
+        } else {
+            fixture.root.join(received)
+        };
         let cache = fixture.root.join("managed-packets");
         let parent = tmp.parent().ok_or("packet temporary path has no parent")?;
         // Accept the old shared location so baseline/wrong-implementation
