@@ -288,9 +288,11 @@ pub(super) fn is_smoke_check(text: &str) -> bool {
 
 /// RIPR-SPEC-0231 rule 4: `r.is_ok()` with `r.is_err()`, or `r.is_some()`
 /// with `r.is_none()`, as sibling alternatives of one `||` on the same
-/// receiver, accepts every value. `left.is_ok() || right.is_err()` checks two
-/// values, and `r.is_ok() && r.is_err() || fallback` joins the calls with
-/// `&&`, so neither does.
+/// receiver, accepts every value. So does `x.m() || !x.m()` for any method
+/// on that receiver (#7900). `left.is_ok() || right.is_err()` checks two
+/// values, `a.m() || !b.m()` and `x.m() || !x.n()` mix receivers or
+/// methods, and `r.is_ok() && r.is_err() || fallback` joins the calls with
+/// `&&`, so none of those do.
 pub(super) fn tests_both_sides(text: &str) -> bool {
     let masked = mask_comments_and_strings(text);
     if !masked.contains("||") {
@@ -301,16 +303,25 @@ pub(super) fn tests_both_sides(text: &str) -> bool {
             .into_iter()
             .filter_map(side_call)
             .collect::<Vec<_>>();
-        let has = |receiver: &str, name: &str| {
+        let unnegated = |receiver: &str, name: &str| {
             calls
                 .iter()
-                .any(|(other, method)| other == receiver && *method == name)
+                .any(|(other, method, negated)| !*negated && other == receiver && method == name)
         };
-        calls.iter().any(|(receiver, method)| match *method {
-            "is_ok" => has(receiver, "is_err"),
-            "is_some" => has(receiver, "is_none"),
-            _ => false,
-        })
+        let complementary = calls.iter().any(|(receiver, method, negated)| {
+            !*negated
+                && match method.as_str() {
+                    "is_ok" => unnegated(receiver, "is_err"),
+                    "is_some" => unnegated(receiver, "is_none"),
+                    _ => false,
+                }
+        });
+        let tautology = calls.iter().any(|(receiver, method, negated)| {
+            calls.iter().any(|(other, other_method, other_negated)| {
+                other == receiver && other_method == method && negated != other_negated
+            })
+        });
+        complementary || tautology
     })
 }
 
@@ -366,17 +377,14 @@ fn split_top_level_operator<'a>(text: &'a str, operator: &str) -> Vec<&'a str> {
     parts
 }
 
-/// A disjunct that is exactly `receiver.is_ok()` (or `is_err`, `is_some`,
-/// `is_none`), optionally parenthesized: the receiver with whitespace
-/// removed, and the method.
-fn side_call(disjunct: &str) -> Option<(String, &'static str)> {
-    let mut text = disjunct.trim();
-    while let Some(inner) = text
-        .strip_prefix('(')
-        .and_then(|rest| rest.strip_suffix(')'))
-        .filter(|inner| balanced(inner))
-    {
-        text = inner.trim();
+/// A disjunct that is exactly `receiver.method()` or `!receiver.method()`,
+/// optionally parenthesized: the receiver with whitespace removed, the
+/// method, and whether the call is negated.
+fn side_call(disjunct: &str) -> Option<(String, String, bool)> {
+    let mut text = unwrap_parens(disjunct.trim());
+    let negated = text.starts_with('!');
+    if negated {
+        text = unwrap_parens(text.get(1..)?.trim_start());
     }
     let call = text
         .strip_suffix(')')?
@@ -384,14 +392,38 @@ fn side_call(disjunct: &str) -> Option<(String, &'static str)> {
         .strip_suffix('(')?
         .trim_end();
     let (receiver, method) = call.rsplit_once('.')?;
-    let method = ["is_ok", "is_err", "is_some", "is_none"]
-        .into_iter()
-        .find(|name| method.trim() == *name)?;
+    let method = method.trim();
+    if !is_method_ident(method) {
+        return None;
+    }
     let receiver = receiver.trim_end();
     if receiver.is_empty() || receiver_start(receiver, receiver.len()) != 0 {
         return None;
     }
-    Some((receiver.split_whitespace().collect(), method))
+    Some((
+        receiver.split_whitespace().collect(),
+        method.to_string(),
+        negated,
+    ))
+}
+
+fn unwrap_parens(mut text: &str) -> &str {
+    while let Some(inner) = text
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'))
+        .filter(|inner| balanced(inner))
+    {
+        text = inner.trim();
+    }
+    text
+}
+
+fn is_method_ident(name: &str) -> bool {
+    let mut bytes = name.bytes();
+    bytes
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == b'_')
+        && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
 }
 
 fn balanced(text: &str) -> bool {
