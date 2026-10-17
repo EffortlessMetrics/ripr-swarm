@@ -9771,6 +9771,58 @@
       ]
     },
     {
+      "id": "rust_returned_error_drop_exit_error_path",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_returned_error_drop_exit",
+      "vector": "returned_type_non_plain_drop_exits_during_unwind",
+      "probe_family": "error_path",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_returned_error_drop_plain_error_path",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_returned_error_drop_plain",
+      "vector": "returned_type_plain_drop_keeps_whole_value_credit",
+      "probe_family": "error_path",
+      "assertions": [
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
+      "id": "rust_predicate_returned_drop_exit_predicate",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_predicate_returned_drop_exit",
+      "vector": "returned_type_non_plain_drop_exits_during_unwind",
+      "probe_family": "predicate",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_predicate_returned_drop_plain_predicate",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_predicate_returned_drop_plain",
+      "vector": "returned_type_plain_drop_keeps_whole_value_credit",
+      "probe_family": "predicate",
+      "assertions": [
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
       "id": "rust_test_written_expected_file",
       "language": "rust",
       "tier": "pure",

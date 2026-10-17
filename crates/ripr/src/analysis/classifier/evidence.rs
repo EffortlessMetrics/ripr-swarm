@@ -899,9 +899,14 @@ impl ClassifiedProbeEvidence {
         // assertion on the returned value without consulting the owner
         // return pin, so a returned type whose `Drop` may exit while
         // unwinding from a failed assertion demotes here, at the final
-        // semantic owner, exactly as the pin's own refusal does.
-        let discriminate = if matches!(context.probe.family, ProbeFamily::ReturnValue)
-            && discriminate.state == StageState::Yes
+        // semantic owner, exactly as the pin's own refusal does. The same
+        // holds for the error-path and predicate families: their credited
+        // shapes hold the returned value in the asserting test while it
+        // decides, so the same unwind can mask the failure.
+        let discriminate = if matches!(
+            context.probe.family,
+            ProbeFamily::ReturnValue | ProbeFamily::ErrorPath | ProbeFamily::Predicate
+        ) && discriminate.state == StageState::Yes
             && context.owner_fn.is_some_and(|owner| {
                 !OwnerReturnPin::returned_types_drop_plain(owner, context.index)
             }) {
