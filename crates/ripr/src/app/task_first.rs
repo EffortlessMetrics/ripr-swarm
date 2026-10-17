@@ -12,7 +12,9 @@ use std::path::Path;
 use crate::agent::artifact::current_git_head;
 use crate::agent::command_specs::repair_start_command_spec;
 use crate::agent::loop_commands::{bound_root, shell_arg};
-use crate::analysis::canonical_gap::{canonical_gap_identity, producer_gap_id_names_seam};
+use crate::analysis::canonical_gap::{
+    canonical_gap_identity, probe_id_names_seam, producer_gap_id_names_seam,
+};
 use crate::analysis::repair_route::{RepairPacketIneligibility, repair_packet_eligibility};
 use crate::app::agent_brief::AgentBriefPolicy;
 use crate::app::agent_status::{AgentAttemptStatusReport, build_agent_attempt_status};
@@ -234,15 +236,59 @@ pub(crate) enum RepairSubject {
     Decision(String),
 }
 
-/// Resolve an explicit `ripr repair` item to its seam: an exact seam ID, or
-/// a canonical gap ID naming exactly one seam. The gap ID may be the
-/// seam-derived `gap:<hash>` or the Rust producer gap ID `ripr check` prints
-/// as `Canonical gap:` (joined on file, owner, kind and discriminator). The resolved seam must pass
-/// the same repair-admission gate as the auto selector
-/// ([`repair_refusal_reason`]); an ineligible subject is a deliberate
-/// no-selection decision naming the reason, never a start. Anything else
-/// is a deliberate no-selection message, never an implicit pick.
+/// The structured outcome of resolving one explicit repair item, before
+/// either repair surface renders its refusal (#8166 residual). `ripr repair`
+/// and `ripr agent repair` share this resolution — an exact seam ID, a
+/// canonical gap ID, a `probe:`/`repo-probe:` finding ID, or a `file:line`
+/// location naming exactly one seam — and each renders the refusal in its
+/// own command's terms.
+pub(crate) enum RepairSubjectOutcome {
+    /// Exactly one seam, admitted by the shared repair gate.
+    Seam(String),
+    /// Exactly one seam, refused by the shared repair gate.
+    Ineligible { seam_id: String, reason: String },
+    /// Several seams name the item; the bounded seam IDs to choose from.
+    Ambiguous(Vec<String>),
+    /// No current seam names the item (stale or unmapped).
+    Unknown,
+}
+
+/// Resolve an explicit `ripr repair` item to its seam, rendering the
+/// structured [`resolve_repair_subject_outcome`] in this command's terms:
+/// an exact seam ID, or a canonical gap ID, `probe:` finding ID, or
+/// `file:line` location naming exactly one seam. An ineligible subject is a
+/// deliberate no-selection decision naming the reason, never a start.
+/// Anything else is a deliberate no-selection message, never an implicit
+/// pick.
 pub(crate) fn resolve_repair_subject(root: &Path, item: &str) -> Result<RepairSubject, String> {
+    Ok(match resolve_repair_subject_outcome(root, item)? {
+        RepairSubjectOutcome::Seam(seam_id) => RepairSubject::Seam(seam_id),
+        RepairSubjectOutcome::Ineligible { seam_id, reason } => {
+            RepairSubject::Decision(ineligible_repair_item(root, item, &seam_id, &reason))
+        }
+        RepairSubjectOutcome::Ambiguous(seam_ids) => {
+            let seam_refs: Vec<&str> = seam_ids.iter().map(String::as_str).collect();
+            RepairSubject::Decision(ambiguous_gap_item(root, item, &seam_refs))
+        }
+        RepairSubjectOutcome::Unknown => RepairSubject::Decision(unknown_repair_item(root, item)),
+    })
+}
+
+/// Resolve an explicit repair item to its structured outcome: an exact seam
+/// ID, or a cross-namespace selector naming exactly one seam (#8166
+/// residual). The cross-namespace selectors are the canonical gap IDs
+/// (seam-derived `gap:<hash>` and the Rust producer `gap:rust:...` `ripr
+/// check` prints), the `probe:`/`repo-probe:` finding ID `ripr check`
+/// prints (re-minted from the seam by [`probe_id_names_seam`]), and a
+/// `file:line` location. Every selector joins on seam identity — file,
+/// owner, kind, and the seam's own expression — never on a substring or a
+/// nearby line alone. The resolved seam must pass the same repair-admission
+/// gate as the auto selector ([`repair_refusal_reason`]); zero mappings are
+/// `Unknown` (stale), several are `Ambiguous`, and neither starts an attempt.
+pub(crate) fn resolve_repair_subject_outcome(
+    root: &Path,
+    item: &str,
+) -> Result<RepairSubjectOutcome, String> {
     let config = load_for_root(root)?;
     let (classified, limit_info) =
         crate::analysis::inventory_classified_seams_at_with_config(root, &config)?;
@@ -260,10 +306,11 @@ pub(crate) fn resolve_repair_subject(root: &Path, item: &str) -> Result<RepairSu
         .find(|entry| entry.seam.id().as_str() == item)
     {
         return Ok(match repair_refusal_reason(entry, policy) {
-            None => RepairSubject::Seam(item.to_string()),
-            Some(reason) => {
-                RepairSubject::Decision(ineligible_repair_item(root, item, item, &reason))
-            }
+            None => RepairSubjectOutcome::Seam(item.to_string()),
+            Some(reason) => RepairSubjectOutcome::Ineligible {
+                seam_id: item.to_string(),
+                reason,
+            },
         });
     }
     let matches: Vec<&crate::analysis::ClassifiedSeam> = classified
@@ -271,28 +318,29 @@ pub(crate) fn resolve_repair_subject(root: &Path, item: &str) -> Result<RepairSu
         .filter(|entry| {
             canonical_gap_identity(entry).is_some_and(|identity| identity.id == item)
                 || producer_gap_id_names_seam(item, entry)
+                || probe_id_names_seam(item, entry)
+                || super::selector::selector_matches_file_line(
+                    crate::analysis::stable_path_text(entry.seam.file()).as_ref(),
+                    entry.seam.display_line(),
+                    item,
+                )
         })
         .collect();
     match matches.len() {
         1 => {
             let seam_id = matches[0].seam.id().as_str().to_string();
             Ok(match repair_refusal_reason(matches[0], policy) {
-                None => RepairSubject::Seam(seam_id.clone()),
-                Some(reason) => {
-                    RepairSubject::Decision(ineligible_repair_item(root, item, &seam_id, &reason))
-                }
+                None => RepairSubjectOutcome::Seam(seam_id.clone()),
+                Some(reason) => RepairSubjectOutcome::Ineligible { seam_id, reason },
             })
         }
-        0 => Ok(RepairSubject::Decision(unknown_repair_item(root, item))),
-        _ => {
-            let seam_ids: Vec<&str> = matches
+        0 => Ok(RepairSubjectOutcome::Unknown),
+        _ => Ok(RepairSubjectOutcome::Ambiguous(
+            matches
                 .iter()
-                .map(|entry| entry.seam.id().as_str())
-                .collect();
-            Ok(RepairSubject::Decision(ambiguous_gap_item(
-                root, item, &seam_ids,
-            )))
-        }
+                .map(|entry| entry.seam.id().as_str().to_string())
+                .collect(),
+        )),
     }
 }
 
@@ -329,6 +377,23 @@ pub(crate) fn check_repair_route(
     output: &super::CheckOutput,
 ) -> Option<crate::app::RepairRoute> {
     let finding = crate::output::human::selected_triage_finding(output, check_config)?;
+    // #8166 residual (F3): a static-limited finding keeps its limitation
+    // guidance and gets no runnable repair line — the same static-limited
+    // definition the human triage state uses (a named static limitation, or
+    // a class static analysis could not establish a path for). Offering a
+    // repair start beside "inspect the static limitation before treating
+    // this as repair-ready" contradicts that guidance on one screen.
+    if finding.static_limit_kind.is_some()
+        || matches!(
+            finding.class,
+            crate::domain::ExposureClass::NoStaticPath
+                | crate::domain::ExposureClass::InfectionUnknown
+                | crate::domain::ExposureClass::PropagationUnknown
+                | crate::domain::ExposureClass::StaticUnknown
+        )
+    {
+        return None;
+    }
     let gap = finding.canonical_gap.as_ref()?;
     let config = load_for_root(root).ok()?;
     let evidence_files: Vec<std::path::PathBuf> = finding
@@ -395,9 +460,9 @@ fn unknown_repair_item(root: &Path, item: &str) -> String {
         "`ripr pilot --root {}` to list current seam IDs",
         shell_arg(&bound_root(&root.to_string_lossy()))
     );
-    if item.starts_with("probe:") {
+    if item.starts_with("probe:") || item.starts_with("repo-probe:") {
         return format!(
-            "repair item `{item}` is a `ripr check` finding ID, not a repair subject; run {list}"
+            "repair item `{item}` names no seam in the selected root; the `ripr check` finding ID is stale or maps to no current seam; run {list}"
         );
     }
     format!("repair item `{item}` names no seam in the selected root; run {list}")
