@@ -50,6 +50,7 @@ starts servers elsewhere.
 ```bash
 # Claude Code: writes a shareable .mcp.json in the project
 claude mcp add --scope project ripr -- ripr mcp --stdio
+# or let ripr write it (keeps your other servers): ripr init --mcp
 
 # Codex: adds an entry to its user config
 codex mcp add ripr -- ripr mcp --stdio
