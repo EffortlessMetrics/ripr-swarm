@@ -2320,6 +2320,16 @@ fn selector_location_misses_explain_syntax_and_preserve_retry_scope()
             .as_u64()
             .ok_or("finding must carry its source line")?;
         let locator = format!("src/lib.rs:{line}");
+        // A file:line locator resolves only when one finding carries it.
+        // A line shared by several findings is ambiguous under the
+        // fail-closed selector (#8166 Slice B) and must refuse instead of
+        // rendering the first match, so the expectation follows the
+        // fixture's actual sharing on this platform.
+        let locator_unique = findings
+            .iter()
+            .filter(|other| other["probe"]["line"].as_u64() == Some(line))
+            .count()
+            == 1;
 
         for command in ["explain", "context"] {
             for (selector, needs_hint, success) in [
@@ -2329,7 +2339,7 @@ fn selector_location_misses_explain_syntax_and_preserve_retry_scope()
                 (missing_repo_id, false, false),
                 ("src/lib.rs:999999", false, false),
                 (id, false, true),
-                (locator.as_str(), false, true),
+                (locator.as_str(), false, locator_unique),
             ] {
                 let mut args = vec![command, "--root", &root_arg, "--diff", &diff_arg];
                 if command == "context" {
