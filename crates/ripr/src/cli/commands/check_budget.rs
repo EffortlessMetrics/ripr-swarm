@@ -105,15 +105,18 @@ mod tests {
     }
 
     #[test]
-    fn work_error_inside_the_budget_is_not_a_timeout() {
+    fn work_error_inside_the_budget_is_not_a_timeout() -> Result<(), String> {
         let result: Result<u32, _> = run_with_budget(
             Some(Duration::from_secs(30)),
             || {},
             || Err(CoreError::message("boom")),
         );
-        let error = result.expect_err("worker failure must propagate");
+        let Err(error) = result else {
+            return Err("worker failure must propagate".to_string());
+        };
         assert_eq!(error.check_failure_kind(), None);
         assert_eq!(error.to_string(), "boom");
+        Ok(())
     }
 
     #[test]
@@ -128,17 +131,19 @@ mod tests {
     }
 
     #[test]
-    fn exhausted_budget_refuses_with_the_typed_timeout_and_no_result() {
+    fn exhausted_budget_refuses_with_the_typed_timeout_and_no_result() -> Result<(), String> {
         let started = std::time::Instant::now();
         let result: Result<u32, _> = run_with_budget(
             Some(Duration::from_millis(50)),
             || {},
             || {
-                std::thread::sleep(Duration::from_secs(60));
+                std::thread::sleep(Duration::from_mins(1));
                 Ok(1)
             },
         );
-        let error = result.expect_err("a stuck worker must hit the budget");
+        let Err(error) = result else {
+            return Err("a stuck worker must hit the budget".to_string());
+        };
         assert_eq!(
             error.check_failure_kind(),
             Some(CheckFailureKind::AnalysisTimeout)
@@ -149,6 +154,7 @@ mod tests {
         assert!(error.to_string().contains("not a clean result"));
         // The bound is the budget plus the cancel grace, not the worker's 60 s.
         assert!(started.elapsed() < Duration::from_secs(10));
+        Ok(())
     }
 
     #[test]
@@ -166,7 +172,12 @@ mod tests {
                 Err(CoreError::message("cancelled"))
             },
         );
-        assert!(result.is_err());
+        assert_eq!(
+            result,
+            Err(CoreError::analysis_timeout(timeout_detail(
+                Duration::from_millis(50)
+            )))
+        );
         assert_eq!(
             seen_rx.recv_timeout(Duration::from_secs(5)),
             Ok(Some(AnalysisAbortKind::DeadlineExceeded))
