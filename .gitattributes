@@ -60,3 +60,11 @@ fixtures/python-verdict-corpus/subjects/** -whitespace
 # files keep the default merge driver.
 /CHANGELOG.md merge=union
 docs/LEARNINGS.md merge=union
+
+# The spec-test-code registry is appended to by nearly every PR, so concurrent
+# PRs conflict at end-of-file even though their `[[...]]` entries are
+# independent (evidence: 4 of 13 conflicted open PRs on 2026-10-17 hit only
+# this file). Union keeps both sides' appended blocks; a same-entry edit from
+# both sides still fails `cargo xtask check-traceability` instead of merging
+# silently.
+.ripr/traceability.toml merge=union
