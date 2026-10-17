@@ -1871,13 +1871,20 @@ mod tests {
     /// inherited, dev, build, and target-specific dependencies.
     #[test]
     fn workspace_only_metadata_projects_identical_roots_and_plan() -> Result<(), String> {
-        let sequence = NEXT_TEST_REPO_SEQUENCE.fetch_add(1, Ordering::SeqCst);
+        let sequence = NEXT_TEST_REPO_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let root = fs::canonicalize(std::env::temp_dir())
             .unwrap_or_else(|_| std::env::temp_dir())
             .join(format!(
                 "ripr-precommit-8233-{}-{sequence}",
                 std::process::id()
             ));
+        // A path crate OUTSIDE the workspace root and not in `members`:
+        // `cargo metadata --no-deps` omits it, full metadata includes it as
+        // a non-member package; both must project the same member roots.
+        let outside = root.with_file_name(format!(
+            "ripr-precommit-8233-outside-{}-{sequence}",
+            std::process::id()
+        ));
         let write = |rel: &str, body: &str| -> Result<(), String> {
             let path = root.join(rel);
             fs::create_dir_all(path.parent().ok_or("fixture parent")?)
@@ -1903,7 +1910,8 @@ mod tests {
             write("mid/src/lib.rs", "pub fn mid() {}\n")?;
             write(
                 "app/Cargo.toml",
-                "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[dependencies]\nmid = { path = \"../mid\" }\nbase.workspace = true\n[dev-dependencies]\nbase = { path = \"../base\" }\n[build-dependencies]\nbase = { path = \"../base\" }\n[target.'cfg(windows)'.dependencies]\nbase = { path = \"../base\" }\n",
+                &"[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[dependencies]\nmid = { path = \"../mid\" }\nbase.workspace = true\n[dev-dependencies]\nbase = { path = \"../base\" }\n[build-dependencies]\nbase = { path = \"../base\" }\n[target.'cfg(windows)'.dependencies]\nbase = { path = \"../base\" }\n[dependencies.outside]\npath = \"{outside}\"\n"
+                    .replace("{outside}", &outside.display().to_string().replace('\\', "/")),
             )?;
             write("app/src/lib.rs", "pub fn app() {}\n")?;
             write("app/build.rs", "fn main() {}\n")?;
@@ -1912,6 +1920,14 @@ mod tests {
                 "[package]\nname = \"unrelated\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
             )?;
             write("unrelated/src/lib.rs", "pub fn unrelated() {}\n")?;
+            fs::create_dir_all(outside.join("src")).map_err(|error| error.to_string())?;
+            fs::write(
+                outside.join("Cargo.toml"),
+                "[package]\nname = \"outside\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            )
+            .map_err(|error| error.to_string())?;
+            fs::write(outside.join("src/lib.rs"), "pub fn outside() {}\n")
+                .map_err(|error| error.to_string())?;
 
             let metadata = |extra: &[&str]| -> Result<CargoMetadata, String> {
                 let mut args: Vec<String> = vec![
@@ -1951,13 +1967,21 @@ mod tests {
                 "workspace-only metadata changed the package roots",
             )?;
             require(full.len() == 4, "expected four nonempty workspace roots")?;
+            require(
+                !full
+                    .iter()
+                    .chain(&workspace_only)
+                    .any(|r| r.name == "outside"),
+                "non-member path dependency must not be a package root",
+            )?;
             let app = full
                 .iter()
                 .find(|root| root.name == "app")
                 .ok_or("app root missing")?;
             require(
                 app.dependencies.iter().any(|dep| dep == "mid")
-                    && app.dependencies.iter().any(|dep| dep == "base"),
+                    && app.dependencies.iter().any(|dep| dep == "base")
+                    && app.dependencies.iter().any(|dep| dep == "outside"),
                 format!("app edges missing: {:?}", app.dependencies),
             )?;
             let change = ChangeSet {
@@ -1984,6 +2008,42 @@ mod tests {
             Ok(())
         })();
         let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&outside);
         result
+    }
+
+    /// Negative control (#8233): a member id absent from `packages` (or no
+    /// members) yields no roots, and the planner reports an explicit
+    /// skipped reason (pinned behaviour, unchanged by `--no-deps`) rather than
+    /// fabricating impacted packages.
+    #[test]
+    fn missing_or_empty_members_yield_no_roots_and_explicit_skip() -> Result<(), String> {
+        let change = ChangeSet {
+            complete: true,
+            changes: vec![ChangedPath {
+                kind: "modified".to_string(),
+                path: "base/src/lib.rs".to_string(),
+                old_path: None,
+                origins: vec!["test".to_string()],
+            }],
+            ..ChangeSet::empty()
+        };
+        for members in [r#"["ghost 0.1.0 (path+file:///nowhere)"]"#, "[]"] {
+            let metadata: CargoMetadata = serde_json::from_str(&format!(
+                r#"{{"packages":[],"workspace_members":{members}}}"#
+            ))
+            .map_err(|error| error.to_string())?;
+            let roots = package_roots_from_metadata(metadata, Path::new("/repo"))
+                .map_err(|error| error.message)?;
+            require(roots.is_empty(), format!("expected no roots: {roots:?}"))?;
+            let plan = build_impact_plan(&change, &roots);
+            require(
+                plan.impacted_packages.is_empty()
+                    && !plan.workspace_clippy
+                    && plan.skipped_reason.is_some(),
+                format!("empty roots must yield an explicit skip: {plan:?}"),
+            )?;
+        }
+        Ok(())
     }
 }
