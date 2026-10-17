@@ -100,6 +100,9 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     /// test paths stay relative to it (#6791). `None` when the caller did not
     /// name one; same-file matching then infers the changed file's path.
     analysis_root: Option<std::path::PathBuf>,
+    /// Tests the diff adds or changes (#8387). Ranking only; see
+    /// [`super::DiffTouchedTests`].
+    diff_touched: super::DiffTouchedTests,
 }
 
 impl RelatedTestCandidateIndex {
@@ -191,6 +194,20 @@ impl RelatedTestCandidateIndex {
     pub(in crate::analysis) fn with_analysis_root(mut self, root: &Path) -> Self {
         self.analysis_root = Some(root.to_path_buf());
         self
+    }
+
+    /// Record which tests the diff adds or changes, so they lead their
+    /// confidence tier (#8387). Never admits a test or raises a confidence.
+    pub(in crate::analysis) fn with_diff_touched(
+        mut self,
+        diff_touched: super::DiffTouchedTests,
+    ) -> Self {
+        self.diff_touched = diff_touched;
+        self
+    }
+
+    pub(in crate::analysis) fn diff_touched(&self) -> &super::DiffTouchedTests {
+        &self.diff_touched
     }
 
     /// Fold in the macro bindings of files a narrowed diff index withheld
@@ -1126,9 +1143,22 @@ fn find_related_tests_with_candidates<'a>(
     // (`bytes_mut_unsplit_empty_self` for bytes' `try_get_int`) stand in
     // front of the `direct_owner_call` test that pins the returned value.
     // Within one confidence tier the order stays name, then file.
+    //
+    // #8387: within one confidence tier a test the diff itself adds or
+    // changes leads: the author wrote it for this change. This reorders
+    // candidates only; it admits nothing and never lifts a tier.
+    let diff_touched = match candidates {
+        RelatedTestCandidates::Indexed(candidate_index) => Some(&candidate_index.diff_touched),
+        #[cfg(test)]
+        RelatedTestCandidates::FullScan => None,
+    };
+    let touched_by_diff = |test: &TestSummary| {
+        diff_touched.is_some_and(|touched| touched.touches(&test.file, test.start_line))
+    };
     related.sort_by(|(a, a_reason), (b, b_reason)| {
         relation_rank(*b_reason)
             .cmp(&relation_rank(*a_reason))
+            .then_with(|| touched_by_diff(b).cmp(&touched_by_diff(a)))
             .then_with(|| a.name.cmp(&b.name))
             .then_with(|| a.file.cmp(&b.file))
     });
@@ -4111,6 +4141,98 @@ mod tests {
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "target_owner_is_observed");
         assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// #8387: a test the diff itself adds or changes leads its confidence
+    /// tier, ahead of name order, but is never lifted into a higher tier.
+    #[test]
+    fn diff_touched_test_leads_its_tier_without_changing_tiers() {
+        let owner = function("src/lib.rs", "target_owner");
+        let untouched_direct = test_with_call(
+            "tests/target.rs",
+            "a_direct_call",
+            "target_owner(1)",
+            "target_owner",
+        );
+        let mut touched_direct = test_with_call(
+            "tests/target.rs",
+            "z_direct_call",
+            "target_owner(2)",
+            "target_owner",
+        );
+        touched_direct.start_line = 20;
+        touched_direct.end_line = 30;
+        let mut touched_weak = test("tests/target.rs", "zz_target_owner_name_only", "helper(1)");
+        touched_weak.start_line = 40;
+        touched_weak.end_line = 50;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![untouched_direct, touched_direct, touched_weak],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "target_owner(value)");
+        let changed = crate::analysis::diff::ChangedFile {
+            path: PathBuf::from("tests/target.rs"),
+            added_lines: [25, 45]
+                .into_iter()
+                .map(|line| crate::analysis::diff::ChangedLine {
+                    line,
+                    text: String::new(),
+                    new_side_line: line,
+                })
+                .collect(),
+            removed_lines: Vec::new(),
+        };
+        let touched = crate::analysis::classify::DiffTouchedTests::from_changed_files(
+            &[changed],
+            index.tests().iter(),
+        );
+        assert!(touched.touches(Path::new("tests/target.rs"), 20), "setup");
+        assert!(touched.touches(Path::new("tests/target.rs"), 40), "setup");
+
+        let names = |candidate_index: &RelatedTestCandidateIndex| {
+            find_related_tests_with_candidate_index(
+                &probe,
+                Some(&owner),
+                &index,
+                true,
+                None,
+                None,
+                candidate_index,
+            )
+            .into_iter()
+            .map(|(test, reason)| (test.name.clone(), reason.confidence()))
+            .collect::<Vec<_>>()
+        };
+
+        let baseline = names(&RelatedTestCandidateIndex::new(&index));
+        assert_eq!(baseline[0].0, "a_direct_call", "name order without a diff");
+
+        let ranked = names(&RelatedTestCandidateIndex::new(&index).with_diff_touched(touched));
+        assert_eq!(
+            ranked
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .take(2)
+                .collect::<Vec<_>>(),
+            ["z_direct_call", "a_direct_call"],
+            "the diff-touched direct call leads its tier: {ranked:?}"
+        );
+        if let Some(weak) = ranked
+            .iter()
+            .find(|(name, _)| name == "zz_target_owner_name_only")
+        {
+            assert_ne!(
+                weak.1,
+                RelationConfidence::High,
+                "a touched name-only test is not lifted a tier"
+            );
+            assert_eq!(
+                ranked.last().map(|(name, _)| name.as_str()),
+                Some("zz_target_owner_name_only"),
+                "a touched lower-tier test still trails every higher-tier test: {ranked:?}"
+            );
+        }
     }
 
     #[test]

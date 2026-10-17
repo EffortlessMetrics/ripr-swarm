@@ -80,7 +80,8 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     .with_owner_pin_syntax(candidate_index.owner_pin_syntax())
     .with_unseen_reach_names(candidate_index.unseen_reach_names())
     .with_test_value_facts(candidate_index.test_value_facts())
-    .with_owner_caller_names(candidate_index.owner_caller_names());
+    .with_owner_caller_names(candidate_index.owner_caller_names())
+    .with_diff_touched(candidate_index.diff_touched());
     context.propagation_origin = propagation_origin;
     let reveal_expression = parser_expression_for_probe(
         index,
