@@ -269,29 +269,63 @@ impl AnalysisProgressTracker {
     /// notifications may follow a failed create, and analysis state is
     /// unaffected (best-effort).
     pub(super) async fn begin(&self, request: &RefreshRequest, phase: AnalysisProgressPhase) {
-        if !self.supported.load(Ordering::SeqCst) {
+        if self.register(request, phase) {
+            self.announce(request, phase).await;
+        }
+    }
+
+    /// Detached begin for the interactive refresh path: the token is
+    /// registered synchronously (so a concurrent `end` always finds it) and
+    /// the create round trip plus Begin notification run on a spawned task,
+    /// so an unanswered `window/workDoneProgress/create` can never delay the
+    /// analysis it decorates. Progress stays best-effort.
+    pub(super) fn begin_detached(
+        self: &Arc<Self>,
+        request: &RefreshRequest,
+        phase: AnalysisProgressPhase,
+    ) {
+        if !self.register(request, phase) {
             return;
         }
-        {
-            // Register BEFORE the sink awaits so a concurrent end() always
-            // finds the generation and terminates it cleanly instead of
-            // leaking a begin without an end.
-            let Ok(mut tokens) = self.tokens.lock() else {
-                return;
-            };
-            if tokens.contains_key(&request.generation) {
-                return;
-            }
-            tokens.insert(
-                request.generation,
-                TokenRecord {
-                    token: progress_token(request.generation),
-                    phase,
-                    started: false,
-                    last_stage: None,
-                },
-            );
+        let tracker = Arc::clone(self);
+        let request = request.clone();
+        tokio::spawn(async move {
+            tracker.announce(&request, phase).await;
+        });
+    }
+
+    /// Synchronously register the token for an accepted generation. Returns
+    /// false when progress is unsupported, the lock is poisoned, or the
+    /// generation is already registered.
+    fn register(&self, request: &RefreshRequest, phase: AnalysisProgressPhase) -> bool {
+        if !self.supported.load(Ordering::SeqCst) {
+            return false;
         }
+        // Register BEFORE the sink awaits so a concurrent end() always
+        // finds the generation and terminates it cleanly instead of
+        // leaking a begin without an end.
+        let Ok(mut tokens) = self.tokens.lock() else {
+            return false;
+        };
+        if tokens.contains_key(&request.generation) {
+            return false;
+        }
+        tokens.insert(
+            request.generation,
+            TokenRecord {
+                token: progress_token(request.generation),
+                phase,
+                started: false,
+                last_stage: None,
+            },
+        );
+        true
+    }
+
+    /// Create the token and send Begin for a registered generation. If
+    /// `end` already removed the registration while the create was in
+    /// flight, no Begin is sent, so no Begin can follow its own End.
+    async fn announce(&self, request: &RefreshRequest, phase: AnalysisProgressPhase) {
         let Some(sink) = self.sink() else {
             return;
         };
@@ -325,19 +359,26 @@ impl AnalysisProgressTracker {
                 .await;
             return;
         }
+        // Mark started under the lock only if the registration remained across the
+        // create; an `end` that ran meanwhile removed it and must not be
+        // followed by a Begin.
+        {
+            let Ok(mut tokens) = self.tokens.lock() else {
+                return;
+            };
+            let Some(record) = tokens.get_mut(&request.generation) else {
+                return;
+            };
+            record.started = true;
+        }
         sink.notify(
-            token.clone(),
+            token,
             ProgressNotificationValue::Begin {
                 title: "ripr analysis".to_string(),
                 message: phase.begin_message(request),
             },
         )
         .await;
-        if let Ok(mut tokens) = self.tokens.lock()
-            && let Some(record) = tokens.get_mut(&request.generation)
-        {
-            record.started = true;
-        }
     }
 
     /// Move a queued token to `analyzing` on the SAME token when the queued
@@ -882,6 +923,106 @@ mod tests {
                 if !tokens.contains_key(&11) {
                     return Err("a healthy retry must register the token".to_string());
                 }
+            }
+            Ok(())
+        })
+    }
+
+    /// A detached begin must return without awaiting the create round trip
+    /// (so analysis starts immediately), and an `end` that runs while the
+    /// create is still in flight must not be followed by a Begin.
+    #[test]
+    fn detached_begin_does_not_wait_for_create_and_never_begins_after_end() -> Result<(), String> {
+        struct GatedCreateSink {
+            gate: Arc<tokio::sync::Notify>,
+            inner: Arc<RecordingSink>,
+        }
+        impl ProgressSink for GatedCreateSink {
+            fn create(&self, token: String) -> BoxFuture<'_, Result<(), String>> {
+                Box::pin(async move {
+                    self.gate.notified().await;
+                    self.inner.create(token).await
+                })
+            }
+            fn notify(&self, token: String, value: ProgressNotificationValue) -> BoxFuture<'_, ()> {
+                self.inner.notify(token, value)
+            }
+        }
+        runtime()?.block_on(async {
+            let tracker = Arc::new(AnalysisProgressTracker::new(test_client()));
+            let gate = Arc::new(tokio::sync::Notify::new());
+            let recorder = Arc::new(RecordingSink::default());
+            tracker.install_test_sink(Arc::new(GatedCreateSink {
+                gate: Arc::clone(&gate),
+                inner: Arc::clone(&recorder),
+            }));
+            let request = test_request(21);
+            // Synchronous: returns although create is unanswered.
+            tracker.begin_detached(&request, AnalysisProgressPhase::Analyzing);
+            {
+                let Ok(tokens) = tracker.tokens.lock() else {
+                    return Err("tracker lock poisoned".to_string());
+                };
+                if !tokens.contains_key(&21) {
+                    return Err("token must be registered synchronously".to_string());
+                }
+            }
+            // Analysis finishes before the client ever answers the create.
+            tracker.end(21, AnalysisProgressEnd::Complete).await;
+            gate.notify_one();
+            for _ in 0..20 {
+                tokio::task::yield_now().await;
+            }
+            let events = recorder.events();
+            if events
+                .iter()
+                .any(|event| !matches!(event, ProgressEvent::Create { .. }))
+            {
+                return Err(format!("Begin/End leaked around an early end: {events:?}"));
+            }
+            Ok(())
+        })
+    }
+
+    /// With a client that never answers create, the detached begin neither
+    /// blocks the caller nor leaves a token behind once the liveness bound
+    /// expires, and no Begin/End is emitted.
+    #[test]
+    fn detached_begin_with_unanswered_create_is_nonblocking_and_expires_quietly()
+    -> Result<(), String> {
+        struct PendingCreateSink(Arc<RecordingSink>);
+        impl ProgressSink for PendingCreateSink {
+            fn create(&self, _token: String) -> BoxFuture<'_, Result<(), String>> {
+                Box::pin(std::future::pending())
+            }
+            fn notify(&self, token: String, value: ProgressNotificationValue) -> BoxFuture<'_, ()> {
+                self.0.notify(token, value)
+            }
+        }
+        runtime()?.block_on(async {
+            let tracker = Arc::new(AnalysisProgressTracker::with_client_request_timeout(
+                test_client(),
+                std::time::Duration::from_millis(50),
+            ));
+            let recorder = Arc::new(RecordingSink::default());
+            tracker.install_test_sink(Arc::new(PendingCreateSink(Arc::clone(&recorder))));
+            let started = std::time::Instant::now();
+            tracker.begin_detached(&test_request(22), AnalysisProgressPhase::Analyzing);
+            if started.elapsed() >= std::time::Duration::from_millis(25) {
+                return Err("begin_detached waited on the create round trip".to_string());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            tracker.end(22, AnalysisProgressEnd::Complete).await;
+            {
+                let Ok(tokens) = tracker.tokens.lock() else {
+                    return Err("tracker lock poisoned".to_string());
+                };
+                if tokens.contains_key(&22) {
+                    return Err("expired create left a token behind".to_string());
+                }
+            }
+            if !recorder.events().is_empty() {
+                return Err(format!("unexpected traffic: {:?}", recorder.events()));
             }
             Ok(())
         })

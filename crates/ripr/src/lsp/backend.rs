@@ -519,7 +519,14 @@ impl Backend {
             scope,
             reason,
         );
-        self.emit_progress_for_decision(&decision).await;
+        // A Start decision announces progress detached so an unanswered
+        // `window/workDoneProgress/create` can never delay the analysis.
+        if let RefreshDecision::Start(request) = &decision {
+            self.progress
+                .begin_detached(request, AnalysisProgressPhase::Analyzing);
+        } else {
+            self.emit_progress_for_decision(&decision).await;
+        }
         let mut request = match decision {
             RefreshDecision::Start(request) => {
                 let request = *request;
