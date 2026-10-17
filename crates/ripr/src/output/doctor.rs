@@ -1817,7 +1817,7 @@ fn evaluate_doctor_core_with_probe_for_profile(
                      history and cannot run here. For whole-repository exploration without Git \
                      history, run `ripr pilot --root {}`",
                     human_path(root),
-                    root.display()
+                    crate::agent::loop_commands::shell_arg(&human_path(root))
                 )),
             ),
             None => report.add_check(
@@ -2446,7 +2446,13 @@ mod tests {
         std::fs::write(gitfile.join(".git"), "not a gitfile\n")
             .map_err(|error| format!("write fixture gitfile: {error}"))?;
 
-        for fixture in [&bare, &gitfile] {
+        // A spaced root pins the paste-safety of the pilot command in the
+        // evidence: it must be shell-quoted, not a bare `root.display()`.
+        let spaced = unique_test_dir("outside work tree spaced");
+        std::fs::create_dir_all(&spaced).map_err(|error| format!("create fixture: {error}"))?;
+        git_in(&spaced, &["init", "--bare", "."])?;
+
+        for fixture in [&bare, &gitfile, &spaced] {
             let inside =
                 git_in(fixture, &["rev-parse", "--is-inside-work-tree"]).unwrap_or_default();
             if inside == "true" {
@@ -2489,6 +2495,15 @@ mod tests {
                             failures.push(format!("`{evidence}` does not say `{expected}`"));
                         }
                     }
+                    // The pilot root is shell-quoted so a spaced root
+                    // survives a paste into a shell.
+                    let quoted = format!(
+                        "ripr pilot --root {}",
+                        crate::agent::loop_commands::shell_arg(&human_path(fixture))
+                    );
+                    if !evidence.contains(&quoted) {
+                        failures.push(format!("`{evidence}` does not say `{quoted}`"));
+                    }
                 }
             }
         }
@@ -2511,6 +2526,7 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&bare);
         let _ = std::fs::remove_dir_all(&gitfile);
+        let _ = std::fs::remove_dir_all(&spaced);
         if failures.is_empty() {
             Ok(())
         } else {
