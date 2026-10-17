@@ -295,26 +295,61 @@ pub(crate) fn resolve_repair_subject(root: &Path, item: &str) -> Result<RepairSu
 /// selects (#8166 Slice C), or `None` when that finding may not be offered
 /// a repair start. The seam↔finding binding is the shared
 /// [`finding_for_seam`](super::repair_card_handoff::finding_for_seam)
-/// authority over the live classified-seam inventory, and admission is the
-/// same [`repair_refusal_reason`] gate the explicit resolver applies, so
-/// the printed seam ID round-trips through [`resolve_repair_subject`] to
-/// the same seam. Fail-closed throughout: a truncated inventory, zero or
-/// several binding seams, an ineligible or policy-omitted seam, and any
-/// unreadable authority yield no route rather than a guessed one.
+/// authority, and admission is the same [`repair_refusal_reason`] gate
+/// the explicit resolver applies, so the printed seam ID round-trips
+/// through [`resolve_repair_subject`] to the same seam.
+///
+/// The classified seams are derived only from the evidence this check
+/// run already computed: the selected finding's canonical gap names its
+/// file, and its related tests name the files that carry their evidence.
+/// Only that file's seams are classified, with test-grip evidence from
+/// the finding's own related-test files
+/// ([`classify_seams_in_file_with_related_at_with_config`](crate::analysis::classify_seams_in_file_with_related_at_with_config)).
+/// A fresh workspace inventory — full or diff-scoped — is never built
+/// here: on a large workspace either one builds a workspace-wide index
+/// and evidence context, and the full inventory additionally classified
+/// every seam in the repo, spinning human `ripr check` indefinitely
+/// (#8320). Scoping to the finding's file is sound for the binding
+/// because both binding branches require the seam's file to equal the
+/// finding's gap file, so no seam outside that file could claim this
+/// finding. Fail-closed throughout: a seam-limit-truncated candidate
+/// set, zero or several binding seams, an ineligible or policy-omitted
+/// seam, and any unreadable authority yield no route rather than a
+/// guessed one. When bounded evidence cannot decide eligibility the
+/// seam simply gets no route; `ripr repair` itself re-checks admission
+/// against the full inventory before starting any attempt.
 pub(crate) fn check_repair_route(
     root: &Path,
     check_config: &crate::config::RiprConfig,
     output: &super::CheckOutput,
 ) -> Option<crate::app::RepairRoute> {
     let finding = crate::output::human::selected_triage_finding(output, check_config)?;
-    finding.canonical_gap.as_ref()?;
+    let gap = finding.canonical_gap.as_ref()?;
     let config = load_for_root(root).ok()?;
-    let (classified, limit_info) =
-        crate::analysis::inventory_classified_seams_at_with_config(root, &config).ok()?;
-    if let Some(info) = &limit_info
-        && info.analyzed < info.total
-    {
-        return None;
+    let evidence_files: Vec<std::path::PathBuf> = finding
+        .related_tests
+        .iter()
+        .filter_map(|test| {
+            let relative = if test.file.is_absolute() {
+                test.file.strip_prefix(root).ok()?.to_path_buf()
+            } else {
+                test.file.clone()
+            };
+            (relative.extension().is_some_and(|ext| ext == "rs") && root.join(&relative).is_file())
+                .then_some(relative)
+        })
+        .collect();
+    let classified = crate::analysis::classify_seams_in_file_with_related_at_with_config(
+        root,
+        &config,
+        Path::new(&gap.file),
+        &evidence_files,
+    )
+    .ok()?;
+    match crate::analysis::repo_exposure_seam_limit() {
+        Ok(Some((limit, _))) if classified.len() > limit => return None,
+        Ok(_) => {}
+        Err(_) => return None,
     }
     let policy = AgentBriefPolicy::from_config(&config);
     let mut bound = classified.iter().filter(|entry| {
