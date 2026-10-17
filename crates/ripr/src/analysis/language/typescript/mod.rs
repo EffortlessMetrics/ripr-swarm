@@ -686,7 +686,7 @@ impl TypeScriptAdapter {
         let mut limitations = parse_limits
             .iter()
             .map(|limit| {
-                AnalysisLimitation::new(
+                let limitation = AnalysisLimitation::new(
                     AnalysisLimitationKind::LanguageScopeUnsupported,
                     AnalysisStage::LanguageAdapter,
                     AnalysisRecovery::new(
@@ -694,9 +694,21 @@ impl TypeScriptAdapter {
                         "Fix the TypeScript or JavaScript parse error, then re-run the analysis.",
                     )?,
                 )
-                .with_path(limit.file.to_string_lossy())?
                 .with_affected_items(1)?
-                .with_detail(limit.reason.clone())
+                .with_detail(limit.reason.clone())?;
+                // Legal Unix names such as `C:calc.ts` are not portable DTO
+                // paths. Retain the syntax limitation and source identity,
+                // matching the Rust/Python fallback. Put the reason first so
+                // a long path cannot consume the entire bounded detail.
+                match limitation.clone().with_path(limit.file.to_string_lossy()) {
+                    Ok(with_path) => Ok(with_path),
+                    Err(_) => limitation.with_detail(
+                        format!("{}; source: {}", limit.reason, limit.file.display())
+                            .chars()
+                            .take(crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS)
+                            .collect::<String>(),
+                    ),
+                }
             })
             .collect::<Result<Vec<_>, String>>()?;
         // Unreadable CHANGED files: their added lines are never classified
