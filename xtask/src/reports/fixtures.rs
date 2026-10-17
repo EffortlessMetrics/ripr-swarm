@@ -202,6 +202,10 @@ fn classify_precommit_goldens(violations: &[String]) -> Option<PrecommitGoldens>
     ))
 }
 
+fn is_fixture_expectation_path(path: &str) -> bool {
+    path.starts_with("fixtures/") && path.contains("/expected/")
+}
+
 /// The first changed path that can make a golden stale: output-surface code
 /// (the renderers and domain vocabulary every golden is produced from) or a
 /// fixture expectation itself. Analysis-only, docs-only and test-only diffs
@@ -210,7 +214,7 @@ pub(crate) fn golden_staleness_trigger(changed: &[String]) -> Option<&str> {
     changed
         .iter()
         .map(String::as_str)
-        .find(|path| crate::is_output_surface_path(path) || crate::is_golden_path(path))
+        .find(|path| crate::is_output_surface_path(path) || is_fixture_expectation_path(path))
 }
 
 /// Run the assistant-loop-health corpus contract used by `goldens check`.
@@ -2381,6 +2385,7 @@ mod tests {
         for path in [
             "crates/ripr/src/analysis/probe.rs",
             "docs/ROADMAP.md",
+            "docs/golden-guide.md",
             "xtask/src/main.rs",
             "fixtures/rust_map_overwrite_count/input/src/lib.rs",
         ] {

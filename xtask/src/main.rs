@@ -691,7 +691,8 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
 /// `origin/main` touches output-surface code or a fixture expectation. A
 /// dependency-preparation gap is reported as such, never as a pass.
 fn precommit_goldens_for_output_changes() -> Result<(), String> {
-    let changed = changed_files_vs_base(Path::new("."))?;
+    let mut changed = changed_files_vs_base(Path::new("."))?;
+    changed.extend(uncommitted_changed_files(Path::new("."))?);
     let Some(trigger) = golden_staleness_trigger(&changed) else {
         println!("goldens check: skipped, no output-surface or golden file changed vs origin/main");
         return Ok(());
@@ -713,6 +714,23 @@ fn precommit_goldens_for_output_changes() -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+/// Staged and unstaged edits, so a direct `precommit` before committing still
+/// sees a renderer or fixture-expectation change.
+fn uncommitted_changed_files(root: &Path) -> Result<Vec<String>, String> {
+    let output = std::process::Command::new("git")
+        .current_dir(root)
+        .args(["diff", "--name-only", "-z", "HEAD"])
+        .output()
+        .map_err(|err| format!("git diff --name-only HEAD failed: {err}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git diff --name-only HEAD failed: exit status {}",
+            output.status
+        ));
+    }
+    decode_changed_files(&output.stdout)
 }
 
 fn publish_precommit_policy_report(ci_policy: bool) -> Result<(), String> {
