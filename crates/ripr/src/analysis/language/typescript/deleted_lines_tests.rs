@@ -558,6 +558,14 @@ fn owner_headers_are_told_from_lines_that_only_hold_a_callback() {
         "export const pick = <T extends Record<string, unknown>>(obj: T) => {",
         "const handler = function (request) {",
         "  save: function (id) {",
+        "const f: <T = string>(a: T) => void = (a) => {",
+        "export default function (",
+        "export default class {",
+        "export default (x) => {",
+        "  get = (id) => {",
+        "  set = (id) => {",
+        "  get total() {",
+        "  set total(value) {",
     ] {
         assert!(super::deleted_lines::opens_an_owner(header), "{header}");
     }
@@ -633,6 +641,109 @@ fn deleted_body_under_a_renamed_header_is_not_the_new_owners() -> Result<(), Str
             "-export function oldTotal(items: number[]): number {",
             "-  audit(items);",
             "+export function cappedTotal(items: number[]): number {",
+            "   return items.length;",
+            " }",
+        ],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
+    Ok(())
+}
+
+/// #7705 shape 3: a typed binding whose type is itself a generic function
+/// (`const f: <T = string>(a: T) => void = (a) => {`) still opens an owner.
+/// `plain_assignment` must skip the `=` inside `<T = string>`, or the header
+/// is missed and a type-only header edit drops the deleted body line.
+#[test]
+fn deleted_body_under_a_type_parameter_default_header_keeps_its_owner() -> Result<(), String> {
+    let findings = analyze(
+        "type-param-default",
+        &[
+            "-export const cappedTotal: <T = number[]>(items: T) => number = (items) => {",
+            "-  audit(items);",
+            "+export const cappedTotal: <T = readonly number[]>(items: T) => number = (items) => {",
+            "   return items.length;",
+            " };",
+        ],
+    )?;
+    let base = base_side(&findings);
+    assert_eq!(base, vec![record(1, "cappedTotal")], "{findings:?}");
+    assert!(
+        findings
+            .iter()
+            .filter(|finding| finding.source_currentness.is_base_side())
+            .all(|finding| !finding.is_candidate_actionable()),
+        "base-side records must stay non-actionable: {findings:?}"
+    );
+    Ok(())
+}
+
+/// #7705 shape 9: an anonymous default function has no `owner_name`, but a
+/// type-only header edit still keeps the owner live so the deleted body
+/// line is recorded on it. Both headers being nameless is the same owner.
+#[test]
+fn deleted_body_under_an_anonymous_default_function_header_keeps_its_owner() -> Result<(), String> {
+    let findings = analyze(
+        "anon-default-function",
+        &[
+            "-export default function (items: number[]): number {",
+            "-  audit(items);",
+            "+export default function (items: readonly number[]): number {",
+            "   return items.length;",
+            " }",
+        ],
+    )?;
+    let base = base_side(&findings);
+    assert_eq!(base, vec![record(1, "default")], "{findings:?}");
+    assert!(
+        findings
+            .iter()
+            .filter(|finding| finding.source_currentness.is_base_side())
+            .all(|finding| !finding.is_candidate_actionable()),
+        "base-side records must stay non-actionable: {findings:?}"
+    );
+    Ok(())
+}
+
+/// #7705 shape 9: an anonymous default arrow is the same owner across a
+/// type-only header edit, so its deleted body line is kept.
+#[test]
+fn deleted_body_under_an_anonymous_default_arrow_header_keeps_its_owner() -> Result<(), String> {
+    let findings = analyze(
+        "anon-default-arrow",
+        &[
+            "-export default (items: number[]): number => {",
+            "-  audit(items);",
+            "+export default (items: readonly number[]): number => {",
+            "   return items.length;",
+            " };",
+        ],
+    )?;
+    let base = base_side(&findings);
+    assert_eq!(base, vec![record(1, "default")], "{findings:?}");
+    assert!(
+        findings
+            .iter()
+            .filter(|finding| finding.source_currentness.is_base_side())
+            .all(|finding| !finding.is_candidate_actionable()),
+        "base-side records must stay non-actionable: {findings:?}"
+    );
+    Ok(())
+}
+
+/// #7705 shape 10: a class field named `get` is an owner header, not a
+/// getter modifier. Deleting it with its body does not give those lines to
+/// the function that held the class.
+#[test]
+fn deleted_class_field_named_get_is_not_given_to_the_enclosing_function() -> Result<(), String> {
+    let findings = analyze(
+        "class-field-named-get",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "   class Cart {",
+            "-    get = (id: string) => {",
+            "-      audit(id);",
+            "-    };",
+            "   }",
             "   return items.length;",
             " }",
         ],

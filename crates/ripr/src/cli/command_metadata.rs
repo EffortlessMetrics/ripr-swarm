@@ -362,10 +362,13 @@ const METADATA: &[CommandMetadata] = &[
         primary_inputs: &["the selected repository root"],
         outputs: CommandOutputs {
             default: Some("ripr.toml"),
-            optional: &[".github/workflows/ripr.yml with --ci github"],
+            optional: &[
+                ".github/workflows/ripr.yml with --ci github",
+                ".mcp.json with --mcp",
+            ],
         },
         state_target: Some(
-            "ripr.toml, plus the repository's GitHub Actions workflow set with --ci",
+            "ripr.toml, plus the repository's GitHub Actions workflow set with --ci and .mcp.json with --mcp",
         ),
         json_support: false,
         example: "ripr init",

@@ -339,8 +339,12 @@ pub(crate) fn ts_lookup_table_witnessed(
             !local_identifier_declared_in_test_body(&candidate.test.body_text, &owner.name)
         })
         .any(|candidate| {
-            let receivers =
-                owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
+            let receivers = unshadowed_owner_namespace_receivers(
+                candidate.test,
+                owner,
+                alias_map,
+                workspace_root,
+            );
             let names = ts_owner_call_names(candidate, owner, alias_map, workspace_root);
             candidate.test.assertions.iter().any(|assertion| {
                 if assertion.oracle_strength.rank() < OracleStrength::Strong.rank()
