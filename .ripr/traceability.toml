@@ -7161,6 +7161,9 @@ tests = [
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::validator_parity_complete_finding_passes_shared_validator",
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::unconfirmed_strong_effect_observers_fail_shared_packet_validation",
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::effect_refusal_preserves_other_packet_target_paths",
+  "crates/ripr/tests/cli_smoke/typescript_finally_completion.rs::completion_replacing_finalizers_cannot_confirm_the_changed_throw",
+  "crates/ripr/tests/cli_smoke/typescript_finally_completion.rs::benign_and_independent_finalizers_keep_credit",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::extract_tests_withholds_assertions_a_finalizer_completion_can_replace",
   "crates/ripr/tests/cli_smoke/typescript_effect_aliases.rs::return_only_aliases_do_not_observe_the_changed_effect",
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::validator_parity_missing_verify_command_returns_none",
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::validator_parity_missing_oracle_expected_returns_none",
@@ -15911,6 +15914,7 @@ fixtures = [
   "fixtures/javascript_awaited_registration",
   "fixtures/typescript_effect_owner_alias",
   "fixtures/typescript_caught_assertion",
+  "fixtures/typescript_finally_completion",
 ]
 code = [
   "crates/ripr/src/analysis/language/typescript/admission.rs",
