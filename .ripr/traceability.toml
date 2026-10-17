@@ -15290,6 +15290,7 @@ tests = [
   "crates/ripr/src/analysis/extract/oracles/relational_tests.rs::bool_valued_operands_read_as_what_they_assert",
   "crates/ripr/src/analysis/extract/oracles/relational_tests.rs::a_shared_constructor_does_not_hide_a_test_compared_with_a_non_literal",
   "crates/ripr/src/analysis/extract/oracles/relational_tests.rs::arithmetic_over_a_cast_test_does_not_pin_the_test",
+  "crates/ripr/src/analysis/extract/oracles/relational_tests.rs::a_sequence_does_not_hide_a_test_compared_with_a_non_literal",
   "crates/ripr/src/analysis/extract/oracles/patterns.rs::spec_0106_tests::deciding_disjunctions_are_found_past_comments_and_groups",
   "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_inequality_spellings_are_weak",
   "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_inequality_helper_keeps_observer_readings",
