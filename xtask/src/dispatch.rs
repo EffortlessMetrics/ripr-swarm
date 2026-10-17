@@ -276,6 +276,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::WorkSynthesisCheck(args) => {
             super::work_synthesis_identity::work_synthesis_check_command(&args)
         }
+        XtaskCommand::WorkBurndownCheck(args) => {
+            super::work_burndown_identity::work_burndown_check_command(&args)
+        }
         XtaskCommand::Help(args) => print_help_route(&args),
         XtaskCommand::Unknown(command) if matches!(command.as_str(), "--help" | "-h") => {
             front_door::print()

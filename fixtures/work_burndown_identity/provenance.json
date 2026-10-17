@@ -1,0 +1,12 @@
+{
+ "schema_version": "work_burndown_identity_provenance.v1",
+ "repository": "EffortlessMetrics/ripr-swarm",
+ "captured_at": "2026-10-09T12:00:00Z",
+ "capture_method": "authored burn-down corpus for the RIPR-SPEC-0274 selected-work burn-down law checker against the committed RIPR-SPEC-0244 selection corpus",
+ "files": [
+  {
+   "path": "corpus.json",
+   "sha256": "f37bb59340a5f7c02080b1987d0da2740b0ecc8f186cb95d82a169e0dc0d9b9c"
+  }
+ ]
+}

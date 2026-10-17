@@ -14678,6 +14678,43 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0274"
+name = "Burn-down binds the selected-work portfolio basis"
+spec = "docs/specs/RIPR-SPEC-0274-burndown-selected-work-basis.md"
+tests = [
+  "xtask/src/work_burndown_identity.rs::tests::work_burndown_identity_committed_corpus_five_scenarios_hold",
+  "xtask/src/work_burndown_identity.rs::tests::work_burndown_identity_complete_evidence_burn_down_passes",
+  "xtask/src/work_burndown_identity.rs::tests::work_burndown_identity_standalone_burn_down_passes",
+  "xtask/src/work_burndown_identity.rs::tests::work_burndown_identity_partial_after_one_campaign_item_merges",
+  "xtask/src/work_burndown_identity.rs::tests::work_burndown_identity_campaign_override_and_wrong_inputs_fail",
+  "xtask/src/work_burndown_identity.rs::tests::work_burndown_identity_legacy_refs_read_only_no_authority",
+  "xtask/src/work_burndown_identity.rs::tests::work_burndown_identity_completion_is_a_closed_vocabulary",
+  "xtask/src/work_burndown_identity.rs::tests::work_burndown_identity_embedded_selection_reuses_shared_laws",
+  "xtask/src/work_burndown_identity.rs::tests::work_burndown_identity_burndown_schema_has_no_singleton_fields",
+  "xtask/src/work_burndown_identity.rs::tests::work_burndown_identity_human_and_json_projections_agree",
+  "xtask/src/work_burndown_identity.rs::tests::work_burndown_identity_deterministic_output",
+  "xtask/src/work_burndown_identity.rs::tests::work_burndown_identity_corpus_loader_fails_closed",
+  "xtask/src/work_burndown_identity.rs::tests::work_burndown_identity_committed_provenance_covers_every_corpus_byte",
+  "xtask/src/work_burndown_identity.rs::tests::work_burndown_identity_merged_item_keeps_open_acceptance_visible",
+  "xtask/src/work_burndown_identity.rs::tests::work_burndown_identity_command_mutate_nothing_mutation_negative",
+]
+fixtures = [
+  "fixtures/work_burndown_identity",
+]
+code = [
+  "xtask/src/work_burndown_identity.rs",
+  "xtask/src/work_selection_identity.rs",
+  "xtask/src/command.rs",
+  "xtask/src/dispatch.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0274-burndown-selected-work-basis.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0244"
 name = "Shared selected-work identity schemas and legacy compatibility"
 spec = "docs/specs/RIPR-SPEC-0244-selected-work-identity.md"

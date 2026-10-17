@@ -183,6 +183,7 @@ pub(crate) enum XtaskCommand {
     WorkWaveCheck(Vec<String>),
     WorkContextCheck(Vec<String>),
     WorkSynthesisCheck(Vec<String>),
+    WorkBurndownCheck(Vec<String>),
     Unknown(String),
 }
 
@@ -416,6 +417,13 @@ impl XtaskCommand {
                     Some("check") => Self::WorkSynthesisCheck(rest[2..].to_vec()),
                     _ => Self::Unknown(format!(
                         "work synthesis {}",
+                        rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
+                    )),
+                },
+                Some("burndown") => match rest.get(1).map(|arg| arg.as_str()) {
+                    Some("check") => Self::WorkBurndownCheck(rest[2..].to_vec()),
+                    _ => Self::Unknown(format!(
+                        "work burndown {}",
                         rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
                     )),
                 },
@@ -2440,6 +2448,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Validates committed WorkSynthesisV1 rows against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR B, RIPR-SPEC-0273, consuming #1636); every synthesis binds the repository, portfolio-snapshot identity, basis head and the selected-work identity it reports on, the reported transition must match the selected action, every uncovered or contradicted acceptance row must be named in the contradictions list, a reported campaign ref outside the bound selection's campaign refs is a silent switch that fails, the schema has no field that could create another selected issue, and no GitHub, branch, worktree, claim, spec, campaign or source state is touched.",
+        ),
+        command_entry(
+            "work burndown check [--corpus <dir>] [--json]",
+            "report_only",
+            "target/ripr/reports/work-burndown-check.{json,md}",
+            false,
+            false,
+            "Validates committed WorkBurnDownV1 rows against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR B, RIPR-SPEC-0274, consuming #1648); every burn-down binds the repository, portfolio-snapshot identity, basis head and the selected-work identity it tracks, completion derives from issue/spec acceptance, implementation slices, PRs and exact-head review/proof rows, a complete burn-down over an open or stale evidence row fails because campaign and work-item records are context only and cannot override current evidence, a wrong current main, an unknown campaign record or an empty evidence set fails with exact recompile/reconcile routes, and no GitHub, branch, worktree, claim, spec, campaign or source state is touched.",
         ),
     ]
 }
