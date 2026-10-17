@@ -5867,7 +5867,17 @@ fn agent_card_identity_is_portable_across_equivalent_checkout_roots()
     let clone = run_command(
         "git",
         Some(&root),
-        &["clone", &root.to_string_lossy(), &second.to_string_lossy()],
+        &[
+            "clone",
+            // Windows Git defaults to autocrlf=true, which would rewrite the
+            // clone's working tree as CRLF. This test varies only the
+            // absolute root; line-ending spelling has its own test below
+            // (#5270).
+            "-c",
+            "core.autocrlf=false",
+            &root.to_string_lossy(),
+            &second.to_string_lossy(),
+        ],
     )?;
     assert!(
         clone.status.success(),
@@ -5904,6 +5914,49 @@ fn agent_card_identity_is_portable_across_equivalent_checkout_roots()
     );
     std::fs::remove_dir_all(&root)?;
     std::fs::remove_dir_all(&second)?;
+    Ok(())
+}
+
+/// #5270 / #7203: a checkout whose working tree spells line breaks as CRLF
+/// (Windows `core.autocrlf=true`) mints the same seam ID as the LF checkout,
+/// so the card finds the seam by the same ID. Runs on every host: the CRLF
+/// spelling is written explicitly instead of relying on the host's Git
+/// defaults.
+#[test]
+fn agent_card_finds_the_same_seam_in_a_crlf_spelled_checkout()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unbuilt_repair_fixture("agent-card-crlf-checkout")?;
+    let source = std::fs::read_to_string(root.join("src/lib.rs"))?;
+    assert!(
+        !source.contains('\r'),
+        "precondition: the fixture source is LF-spelled"
+    );
+    std::fs::write(root.join("src/lib.rs"), source.replace('\n', "\r\n"))?;
+    let crlf = std::fs::read(root.join("src/lib.rs"))?;
+    assert!(
+        crlf.windows(2).any(|pair| pair == b"\r\n"),
+        "precondition: the fixture source is now CRLF-spelled"
+    );
+    run_git(&root, &["add", "src/lib.rs"])?;
+    commit_repair_fixture(&root, &["-qm", "crlf spelling"])?;
+
+    let root_arg = root.display().to_string();
+    let card = run_ripr(&[
+        "agent",
+        "card",
+        "--root",
+        &root_arg,
+        "--seam-id",
+        BOUNDARY_GAP_SEAM_ID,
+        "--json",
+    ]);
+    assert_success(&card);
+    let card: serde_json::Value = serde_json::from_slice(&card.stdout)?;
+    assert_eq!(
+        card["subject"]["seam_id"], BOUNDARY_GAP_SEAM_ID,
+        "a CRLF-spelled checkout must keep the LF seam ID: {card:#}"
+    );
+    std::fs::remove_dir_all(root)?;
     Ok(())
 }
 
