@@ -55,6 +55,52 @@ For a phase change or bounded worker return, use `deliver-pr`'s continuation
 handoff. Its [paired scenarios](docs/agent-context/delivery-continuation-scenarios.md)
 challenge both useful continuation and genuine stop boundaries.
 
+## Selected-candidate pre-merge flow
+
+Keep development cheap: focused warm proof, substantive review and joined repairs
+before expensive qualification. Useful alternative Drafts may be compared, but
+select the candidate intended to land for that objective before requesting full
+pre-merge CI. Do not run full qualification on every alternative. Independent
+objectives may proceed concurrently; selection is not a repository-wide max-one
+queue. Complete each focused objective's code, tests and documentation together.
+
+Use the actual installed request interface. The intended #4984/#4985/#4986 flow is
+explicit late qualification, normally at most 20 minutes of complete CI execution,
+then a separate current-repository/product/integration judgment and protected
+expected-head squash. Queue time is separate. No routine auto-merge or merge queue.
+`merge-ready` is a request spelling under discussion; `premerge-ci-request` and
+`request-premerge-ci` are proposals, not installed commands. #8082 owns the staged
+caller/skills integration. Preserve live required enforcement until its qualified
+cutover; this root update does not change triggers, settings or result producers.
+
+Source review and focused proof can be complete while hosted qualification is
+still missing. Publish their actual scope and exact source; do not require future
+CI green to request CI or promote an incomplete final-merge review to clearance.
+Qualify only the selected reviewed candidate. A retained label, quoted readiness
+word, sibling's green result or completed agent session cannot authorize another
+head. Reconcile existing native request/run/attempt state before creating more work.
+
+The same useful lead normally stays with its candidate through an ordinary CI wait,
+inspects complete results and current review/Conversation findings, makes the final
+judgment, performs the authorized protected merge and reads back the landing.
+Separate decisions do not require separate agents or a new routine human approval.
+Use supported waits/events or bounded checks without tight polling. Retain context
+and ownership; a real interruption or exhausted window gets an exact continuation,
+not duplicate CI or an uncertain merge write repeated blindly.
+
+Inspect submitted reviews, all inline threads including outdated unresolved ones,
+and ordinary Conversation comments. Repair or refute material findings with current
+evidence; reply before resolving and read back both effects. Provider quotas,
+partial reads and zero visible threads are not clean review. A valid later finding
+can block merge despite an earlier clean pass. Preserve unaffected evidence while
+refreshing materially changed review/proof dimensions.
+
+After landing, reconcile the actual issue/parent acceptance. No routine full
+post-merge CI replay; the intended independent main-health cadence requires both
+at least one hour and ten merges. Incident, deep and release proof retain their
+own purposes and authority. Do not skip the currently enforced path or weaken
+proof to claim the timing/cost target.
+
 ## Product contract
 
 `ripr` asks:
@@ -122,7 +168,7 @@ Rust baseline:
 
 ```text
 many distinct claims may be in flight
-one current candidate per coherent claim
+one selected qualification candidate per coherent claim
 one writer mutates each candidate branch/worktree at a time
 readers, researchers, reviewers, and tools may inspect it
 Git or integration proof surfaces real interactions when they occur
@@ -179,10 +225,12 @@ parent outcome, not just the local checklist. Correct unsupported prior claims
 instead of defending them through narrow wording. Put changing PR pointers and
 worker state in progress fields, not in the durable objective.
 
-When a PR reaches required CI, review, auto-merge or merge queue, leave it in
-flight and advance another ready claim when useful. If every useful transition
-is genuinely waiting, retain `GOAL_IN_FLIGHT` with the named boundaries. Do not
-turn unavailable review providers or an exhausted local queue into completion.
+A waiting PR blocks only its dependent transition. Keep its useful owning lead
+through a normal in-window review/CI wait and finish the authorized merge after
+actual result inspection and final judgment. Independent workers may advance other
+ready claims without abandoning that owner. If every useful transition is genuinely
+waiting, retain `GOAL_IN_FLIGHT` with exact run/attempt, owner and resume condition.
+Do not turn unavailable review providers or an exhausted local queue into completion.
 
 ## Judgment passes and subagents
 
@@ -203,9 +251,10 @@ Do not invent access to agents, workers or runtimes that are unavailable.
 
 ## Candidate boundary
 
-One coherent claim normally has one branch, worktree, candidate, and PR. Do not
-create rival implementations merely to consume parallel capacity. Disjoint
-pieces may be delegated only through one integrating candidate owner.
+One coherent claim normally has one branch, worktree, candidate, and PR. Useful
+alternatives may be compared with focused proof; select one to land before expensive
+qualification. Do not create rival implementations merely to consume parallel
+capacity. Disjoint pieces may be delegated through one integrating candidate owner.
 
 Do not create repository-global active-goal, current-writer, current-stage,
 liveness, lease, lock, candidate-frontier, or worker-state files. GitHub issues,
@@ -270,7 +319,7 @@ Keep separate:
 
 ```text
 PR head             implementation and review subject
-integration basis   current base or queued predecessors
+integration basis   actual evaluated base and combined tree
 squash result       combined-tree interaction subject
 ```
 
@@ -306,11 +355,13 @@ clean self-review records what was inspected and uses a `COMMENT` disposition on
 the author's PR; GitHub's inability to request changes from the author is not
 approval.
 
-Review binds only to committed Git objects. A pre-publication candidate review
-may establish source and oracle findings but must retain absent hosted checks,
-artifacts, and external review as `REVIEW_INCOMPLETE`. After the PR exists and
-remote evidence is current, re-run `review-pr` on the exact published head. Only
-that published-head pass may emit `REVIEW_READY` for merge convergence.
+Review binds only to committed Git objects. Record completed source/oracle review
+separately from missing hosted proof or provider evidence. A final-merge review can
+remain `REVIEW_INCOMPLETE` without making a finished source review incomplete or
+preventing the selected candidate from requesting CI. After the PR exists, inspect
+its current evidence on the exact published head. Only the complete final pass may
+emit `REVIEW_READY` for merge; preserve unaffected earlier review instead of repeating
+the whole pass merely to change its status name.
 
 ## Local validation
 
@@ -385,24 +436,26 @@ subjects.
 
 Use `.claude/skills/finish-pr/SKILL.md` for publication, review repair, CI,
 integration, merge, and reconciliation. A committed candidate with
-`REVIEW_INCOMPLETE` may be published so remote evidence can run. `finish-pr` may
-arm merge only after the exact published head has a `REVIEW_READY` disposition
-from `review-pr`; a later material head change refreshes affected review
-dimensions.
+`REVIEW_INCOMPLETE` may be published so missing remote evidence can run. The
+selected candidate's owning lead inspects current results, then merges only after
+the exact published head has the final `REVIEW_READY` disposition and all enforced
+conditions hold. A later material change refreshes affected review/proof dimensions.
+Do not arm auto-merge or substitute a queue for the final judgment.
 
 Useful remote-owned outcomes:
 
 ```text
 PR_IN_FLIGHT
-AUTO_MERGE_ARMED
 WAITING_REQUIRED_CHECKS
 WAITING_EXTERNAL_REVIEW
 WAITING_INTEGRATION_PROOF
 ```
 
-Do not poll unchanged remote state. Resume after a substantive finding,
-required failure, candidate-head change, concrete conflict, changed prerequisite,
-merge, or closure.
+These are continuation facts, not automatic instructions to end the owning session.
+Retain a useful warm owner through ordinary in-window CI and inspect its terminal
+result. Use a supported wait/event or bounded check, not tight unchanged-state
+polling. On actual interruption, resume from the exact request/run/attempt after
+checking findings, head, integration state and any uncertain remote effect.
 
 After merge:
 
@@ -442,9 +495,9 @@ file presence or a structural gate pass.
 - no Codex skill imports or routing;
 - no Kiro skill, overlay, lifecycle route, handoff, or provider entry;
 - no executor DAG or permanent role roster;
-- no candidate tournament for one claim;
+- no compulsory candidate tournament or rival implementation just to fill capacity;
 - no sibling-lane telemetry or reservation system;
 - no mandatory approval pause for ordinary engineering decisions;
-- no lifecycle state encoded in issue comments or labels;
+- no parallel mutable lifecycle database or label/prose token as proof authority;
 - no release, publication, tag, signing, marketplace, or secret operation
   without the existing explicit repository authority.
