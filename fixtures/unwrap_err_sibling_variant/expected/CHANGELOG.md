@@ -404,3 +404,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — unwrap_err_sibling_variant (35)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless unwrap_err_sibling_variant --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

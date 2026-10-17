@@ -125,6 +125,9 @@ mod unsupported_check_exit;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unsupported_diff_exit.rs"]
 mod unsupported_diff_exit;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/verify_execute_root.rs"]
+mod verify_execute_root;
 #[cfg(unix)]
 #[path = "cli_smoke/workflow_directory.rs"]
 mod workflow_directory;
@@ -5489,6 +5492,28 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     assert!(!repair.status.success());
     let stderr = String::from_utf8_lossy(&repair.stderr);
     assert!(stderr.contains("not a seam ID"), "{stderr}");
+    assert!(
+        stderr.contains("ripr pilot --root ") && stderr.contains("agent-packet-unknown-seam"),
+        "{stderr}"
+    );
+
+    // The other ID `ripr check` prints, its canonical gap ID, gets the same
+    // family-named refusal instead of the generic hint (#8158).
+    let gap_packet = run_ripr(&[
+        "agent",
+        "packet",
+        "--root",
+        &root_path,
+        "--seam-id",
+        "gap:0123456789abcdef",
+        "--json",
+    ]);
+    assert!(!gap_packet.status.success());
+    let stderr = String::from_utf8_lossy(&gap_packet.stderr);
+    assert!(
+        stderr.contains("is a `ripr check` canonical gap ID, not a seam ID"),
+        "{stderr}"
+    );
     assert!(
         stderr.contains("ripr pilot --root ") && stderr.contains("agent-packet-unknown-seam"),
         "{stderr}"
