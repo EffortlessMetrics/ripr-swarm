@@ -136,8 +136,9 @@ pub(crate) fn committed_history_ignored_message(
     let listing = name_paths(paths, display);
     Some(format!(
         "Gitignored files ({listing}) are not in the committed-history diff, which covers \
-         tracked files only, so their behavior was not analyzed; run `git add -f -N <path>` \
-         (force intent-to-add) or stage them with `git add -f`, then re-run `ripr check`."
+         tracked files only, so their behavior was not analyzed; `git add -f <path>` and \
+         commit them before re-running `ripr check --committed`, or run `git add -f -N <path>` \
+         (force intent-to-add) and re-run `ripr check --worktree`."
     ))
 }
 
