@@ -140,6 +140,29 @@ fn populate_duplicate_expression_fixture(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+const TRIPLE_LIB: &str = "pub fn tiered(amount: i32, threshold: i32) -> i32 {\n    let base = if amount >= threshold {\n        10\n    } else {\n        0\n    };\n    let bonus = if amount >= threshold {\n        5\n    } else {\n        0\n    };\n    let extra = if amount >= threshold {\n        2\n    } else {\n        0\n    };\n    base + bonus + extra\n}\n";
+/// The triple fixture after weakening only occurrences 1 and 3
+/// (`>=` -> `>` on lines 2 and 12; line 7 is unchanged).
+const TRIPLE_LIB_WEAKENED_1_AND_3: &str = "pub fn tiered(amount: i32, threshold: i32) -> i32 {\n    let base = if amount > threshold {\n        10\n    } else {\n        0\n    };\n    let bonus = if amount >= threshold {\n        5\n    } else {\n        0\n    };\n    let extra = if amount > threshold {\n        2\n    } else {\n        0\n    };\n    base + bonus + extra\n}\n";
+
+/// Populate a committed workspace whose one function holds three boundary
+/// seams with the same file, owner, kind and expression (lines 2, 7, 12).
+fn populate_triple_expression_fixture(root: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), TRIPLE_LIB).map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        "use boundary_gap_fixture::tiered;\n\n#[test]\nfn below_threshold_pays_nothing() {\n    assert_eq!(tiered(50, 100), 0);\n}\n\n#[test]\nfn far_above_threshold_pays() {\n    assert_eq!(tiered(10_000, 100), 17);\n}\n",
+    )
+    .map_err(|e| e.to_string())?;
+    init_repo(root)?;
+    run_git(root, &["add", "Cargo.toml", "src", "tests"])?;
+    git_commit(root, "triple-expression fixture source")?;
+    Ok(())
+}
+
 /// Populate a committed workspace with no actionable seam: an empty
 /// library. Takes the root instead of minting it so the [`Fixture`]
 /// guard owns the directory before any fallible step can leak it.
@@ -917,19 +940,18 @@ fn repair_refuses_unassignable_probe_ordinals() -> Result<(), String> {
     Ok(())
 }
 
-/// #8166 re-review: a legitimate `.2` probe ID with two real seams in the
-/// inventory resolves to the second seam (rank-binding) instead of
-/// refusing as ambiguous, and a repair started through the facade targets
-/// that second seam. The first/second seam IDs are learned through the
-/// public `file:line` repair surface on separate committed fixtures.
+/// #8166 round 3: a diff `probe:` `.2` with two changed duplicates is
+/// NOT rank-bound to the second seam. The diff producer ranked only the
+/// changed-line probes, so from the full inventory the ordinal cannot be
+/// distinguished from an unchanged-between case: it refuses as ambiguous
+/// (bounded seam list, no attempt). Seam IDs are learned through the
+/// public `file:line` surface on separate committed fixtures.
 #[test]
-fn repair_with_second_occurrence_probe_id_targets_the_second_seam() -> Result<(), String> {
+fn repair_with_second_occurrence_probe_id_refuses_as_ambiguous() -> Result<(), String> {
     let seam_at_line = |label: &str, location: &str| -> Result<String, String> {
         let fixture = Fixture::dir(label)?;
         let root = &fixture.root;
         populate_duplicate_expression_fixture(root)?;
-        // Match the main fixture's bytes exactly (weakened, committed):
-        // seam IDs carry byte offsets, which the weakening shifts.
         let lib = root.join("src/lib.rs");
         let source = std::fs::read_to_string(&lib).map_err(|e| e.to_string())?;
         std::fs::write(
@@ -951,10 +973,7 @@ fn repair_with_second_occurrence_probe_id_targets_the_second_seam() -> Result<()
     };
     let first_seam = seam_at_line("facade-probe-ordinal-first", "src/lib.rs:2")?;
     let second_seam = seam_at_line("facade-probe-ordinal-second", "src/lib.rs:7")?;
-    assert_ne!(
-        first_seam, second_seam,
-        "the duplicate seams must have distinct seam IDs"
-    );
+    assert_ne!(first_seam, second_seam);
 
     let fixture = Fixture::dir("facade-probe-ordinal-second-target")?;
     let root = &fixture.root;
@@ -970,42 +989,97 @@ fn repair_with_second_occurrence_probe_id_targets_the_second_seam() -> Result<()
     let check = run_worktree_check(root, &root_arg)?;
     let probe_id = printed_probe_identity(&stdout_text(&check))
         .ok_or_else(|| format!("check must print a probe ID:\n{}", stdout_text(&check)))?;
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "weaken both duplicate predicates")?;
+    for forged in [format!("{probe_id}.999"), format!("{probe_id}.2")] {
+        let repair = run_ripr(root, &["repair", &forged, "--root", &root_arg])?;
+        assert_exit(&repair, 3, "repair with a diff probe ordinal");
+        let stderr = stderr_text(&repair);
+        assert!(
+            stderr.contains("names 2 seams; select one explicitly")
+                && stderr.contains(&first_seam)
+                && stderr.contains(&second_seam),
+            "a diff probe ordinal must refuse as ambiguous listing both seams ({forged}):\n{stderr}"
+        );
+    }
+    assert!(
+        attempt_ids(root).is_empty(),
+        "a diff probe ordinal must create no attempt"
+    );
+    Ok(())
+}
+
+/// #8166 round 3 (reviewer case): three identical predicates where the
+/// diff touches only occurrences 1 and 3, so the second changed probe is
+/// `.2`. Inventory rank 2 is the unchanged middle seam; `.2` must not
+/// bind it. It refuses as ambiguous listing the real (changed) seams
+/// 1 and 3, excludes the middle seam, and creates no attempt.
+#[test]
+fn repair_with_diff_probe_ordinal_does_not_bind_unchanged_middle_seam() -> Result<(), String> {
+    let seam_at_line = |label: &str, location: &str| -> Result<String, String> {
+        let fixture = Fixture::dir(label)?;
+        let root = &fixture.root;
+        populate_triple_expression_fixture(root)?;
+        std::fs::write(root.join("src/lib.rs"), TRIPLE_LIB_WEAKENED_1_AND_3)
+            .map_err(|e| e.to_string())?;
+        run_git(root, &["add", "src/lib.rs"])?;
+        git_commit(root, "weaken occurrences 1 and 3")?;
+        let root_arg = root.to_string_lossy().into_owned();
+        let repair = run_ripr(root, &["repair", location, "--root", &root_arg])?;
+        assert_exit(&repair, 0, "repair learning a triple seam by file:line");
+        let ids = attempt_ids(root);
+        assert_eq!(ids.len(), 1, "exactly one learning attempt must be created");
+        read_manifest(root, &ids[0])?["seam_id"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| "learning attempt must name its seam".to_string())
+    };
+    let first_seam = seam_at_line("facade-triple-first", "src/lib.rs:2")?;
+    let middle_seam = seam_at_line("facade-triple-middle", "src/lib.rs:7")?;
+    let third_seam = seam_at_line("facade-triple-third", "src/lib.rs:12")?;
+    assert_ne!(first_seam, middle_seam);
+    assert_ne!(middle_seam, third_seam);
+
+    let fixture = Fixture::dir("facade-triple-diff-ordinal")?;
+    let root = &fixture.root;
+    populate_triple_expression_fixture(root)?;
+    // Diff touches only occurrences 1 and 3.
+    std::fs::write(root.join("src/lib.rs"), TRIPLE_LIB_WEAKENED_1_AND_3)
+        .map_err(|e| e.to_string())?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let check = run_worktree_check(root, &root_arg)?;
+    let probe_id = printed_probe_identity(&stdout_text(&check))
+        .ok_or_else(|| format!("check must print a probe ID:\n{}", stdout_text(&check)))?;
     assert!(
         !probe_id.contains(".2"),
         "the printed top probe ID must be the bare base ID: {probe_id}"
     );
-    // The before phase pins HEAD, so the weakened predicate is committed
-    // before any repair start (the probe ID stays valid: it re-mints from
-    // the committed seams' own expression).
     run_git(root, &["add", "src/lib.rs"])?;
-    git_commit(root, "weaken both duplicate predicates")?;
-    // An invented ordinal still refuses as stale with no attempt.
-    let forged = format!("{probe_id}.999");
-    let forged_repair = run_ripr(root, &["repair", &forged, "--root", &root_arg])?;
-    assert_exit(&forged_repair, 3, "repair with an invented probe ordinal");
+    git_commit(root, "weaken occurrences 1 and 3")?;
+    let second_id = format!("{probe_id}.2");
+    let repair = run_ripr(root, &["repair", &second_id, "--root", &root_arg])?;
+    assert_exit(
+        &repair,
+        3,
+        "repair with diff probe .2 over occurrences 1 and 3",
+    );
+    let stderr = stderr_text(&repair);
     assert!(
-        stderr_text(&forged_repair).contains("names no seam"),
-        "an invented ordinal must refuse as stale:\n{}",
-        stderr_text(&forged_repair)
+        stderr.contains("names 2 seams; select one explicitly"),
+        "diff .2 must refuse as ambiguous, not bind the middle seam:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(&first_seam) && stderr.contains(&third_seam),
+        "ambiguous refusal must list the real changed seams 1 and 3:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains(&middle_seam),
+        "ambiguous refusal must not list/bind the unchanged middle seam:\n{stderr}"
     );
     assert!(
         attempt_ids(root).is_empty(),
-        "an invented ordinal must create no attempt"
+        "diff .2 must not start an attempt (in particular not on the middle seam)"
     );
-    let second_id = format!("{probe_id}.2");
-    let repair = run_ripr(root, &["repair", &second_id, "--root", &root_arg])?;
-    assert_exit(&repair, 0, "repair with the legitimate .2 probe ID");
-    let ids = attempt_ids(root);
-    assert_eq!(ids.len(), 1, "exactly one attempt must be created");
-    let targeted = read_manifest(root, &ids[0])?["seam_id"]
-        .as_str()
-        .map(str::to_string)
-        .ok_or_else(|| "the .2 attempt must name its seam".to_string())?;
-    assert_eq!(
-        targeted, second_seam,
-        "the .2 probe ID must target the second seam"
-    );
-    assert_ne!(targeted, first_seam);
     Ok(())
 }
 
