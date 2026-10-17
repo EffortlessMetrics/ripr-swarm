@@ -23,7 +23,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 
 ## Scoreboard
 
-46 bars. ripr meets 16, is below the bar on 25, and has not measured 5. Bold values miss their bar. A comparable trend shows the baseline revision and prior value it compares. A cross-class trend shows the earlier runner class and, when available, its prior value; it does not compare measurements. A measured row with no earlier measurement is a first measurement. Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them.
+46 bars. ripr meets 17, is below the bar on 24, and has not measured 5. Bold values miss their bar. A comparable trend shows the baseline revision and prior value it compares. A cross-class trend shows the earlier runner class and, when available, its prior value; it does not compare measurements. A measured row with no earlier measurement is a first measurement. Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them.
 
 By board, so the weak areas show before the full table:
 
@@ -31,7 +31,7 @@ By board, so the weak areas show before the full table:
 | --- | --- | --- | --- | --- |
 | Speed and memory | 0 | 4 | 0 | 0 |
 | CI adoption | 1 | 1 | 1 | 0 |
-| Trust | 8 | 9 | 2 | 0 |
+| Trust | 9 | 8 | 2 | 0 |
 | Pasted commands | 2 | 0 | 0 | 0 |
 | First run | 2 | 3 | 2 | 0 |
 | corpus | 2 | 0 | 0 | 0 |
@@ -49,13 +49,13 @@ By board, so the weak areas show before the full table:
 | Trust | Commands that exit 0 when pointed at a missing repository | 0 commands | <= 0 commands | meets the bar | -2 commands since c6ccf9d (was 2 commands) |
 | Trust | Hostile-repository journeys (odd file names, symlink loops, shallow clones, submodules) where ripr neither finds nor refuses cleanly | 0 journeys | <= 0 journeys | meets the bar | no earlier measurement |
 | Trust | Findings or seams whose own evidence contradicts itself | 0 findings | <= 0 findings | meets the bar | -1 finding since c6ccf9d (was 1 finding) |
-| Trust | Wrong verdicts on hand-checked changes from real repositories | **5.6%** | <= 5.0% | below the bar | first receipt (verdict corpus, upstream cases only; all 488 cases: 2.7%) |
+| Trust | Wrong verdicts on hand-checked changes from real repositories | **5.6%** | <= 5.0% | below the bar | first receipt (verdict corpus, upstream cases only; all 488 cases: 2.5%) |
 | Trust | Hand-checked edits the crate's tests fully catch that ripr still flags as a gap | **11.0%** | <= 5.0% | below the bar | no earlier measurement (observed at 2af3f38) |
 | Trust | Hand-checked edits where ripr gives no specific verdict | **37.1%** | <= 20.0% | below the bar | no earlier measurement (observed at 2af3f38) |
 | Trust | Hand-checked edits the crate's tests miss that ripr reports as fine (counterweight to abstaining less) | 0.0% | <= 0.0% | meets the bar | no earlier measurement (observed at 2af3f38) |
 | Trust | Hand-checked edits the crate's tests miss that ripr credits as caught (false confidence; few credited cases so far, so read with its denominator) | **1.2%** | <= 0.0% | below the bar | no earlier measurement (observed at 2af3f38) |
-| Trust | When ripr says a test discriminates, real mutants are caught | 100.0% | >= 95.0% | meets the bar | first receipt (mutation spot check, 14 of 15 seam-precise `strongly_gripped` mutants scored; 1 unscored) |
-| Trust | When ripr reports a gap, real mutants survive | **4.3%** | >= 80.0% | below the bar | first receipt (mutation spot check, 23 of 23 seam-precise `ungripped` mutants scored; 0 unscored) |
+| Trust | When ripr says a test discriminates, real mutants are caught | 96.8% | >= 95.0% | meets the bar | first receipt (mutation spot check, 63 of 63 canonical-precise `strongly_gripped` mutants scored; 0 unscored) |
+| Trust | When ripr reports a gap, real mutants survive | 100.0% | >= 80.0% | meets the bar | first receipt (mutation spot check, 12 of 12 canonical-precise `ungripped` mutants scored; 0 unscored) |
 | Trust | Authored TypeScript edits the project's tests fully catch that ripr still flags as a gap | **14.5%** | <= 5.0% | below the bar | no earlier measurement |
 | Trust | Authored TypeScript edits the project's tests miss that ripr credits as caught | 0.0% | <= 0.0% | meets the bar | no earlier measurement |
 | Trust | Authored TypeScript edits the project's tests miss that ripr reports as fine | 0.0% | <= 0.0% | meets the bar | no earlier measurement |
@@ -63,7 +63,7 @@ By board, so the weak areas show before the full table:
 | Trust | Authored Python edits the project's tests miss that ripr credits as caught | **20.7%** | <= 0.0% | below the bar | no earlier measurement |
 | Trust | Authored Python edits the project's tests miss that ripr reports as fine | 0.0% | <= 0.0% | meets the bar | no earlier measurement |
 | Trust | When ripr pilot ranks a seam in its top ten, a real mutant there is missed | not measured | >= 60.0% | not measured | no earlier measurement |
-| Trust | Real mutants that join a ripr seam precisely (join coverage; 37 of 1745 enter an agreement rate) | **10.0%** | >= 50.0% | below the bar | first receipt (mutation spot check) |
+| Trust | Real mutants that join a ripr seam precisely (join coverage; 75 of 1745 enter an agreement rate) | **28.3%** | >= 50.0% | below the bar | first receipt (mutation spot check) |
 | Trust | False actionable rate on the Rust judged behavior panel | not measured | <= 0.0% | not measured | no earlier measurement |
 | Pasted commands | Printed commands that break or run injected code under a hostile repo path | 0 commands | <= 0 commands | meets the bar | unchanged since c6ccf9d (0 commands) |
 | Pasted commands | Printed commands that drop the selected repository root | 0 commands | <= 0 commands | meets the bar | unchanged since c6ccf9d (0 commands) |
@@ -100,8 +100,8 @@ Each line below is computed from the receipts above. Detail sections follow.
 
 - **Wrong gaps.** On changes from real repositories ripr reported a gap on 2 of 22 whose tests caught every listed mutant (9.1%): `regex-syntax-max-scalar-two-byte`, `strsim-sorensen-dice-equal`. On the authored cases, which were written to fill empty corpus cells, it did so on 10 of 217 (4.6%).
 - **Mostly unsure.** On real-repository changes it abstained on 27 of 36 cases (75.0%); on the authored cases, 148 of 452 (32.7%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
-- **Real mutants disagree with "no test would notice".** Of 23 mutants on seams ripr called ungripped, real mutation testing caught 22 that ripr said nothing would catch; ripr agreed on 1. The 12 recorded examples are all in: semver.
-- **Thin ground truth.** Only 37 of 1745 mutants (2.1%) enter an agreement rate. 174 join a ripr seam precisely, and 137 of those still do not enter a rate.
+- **Real mutants disagree with "no test would notice".** Of 12 mutants on seams ripr called ungripped, real mutation testing caught 0 that ripr said nothing would catch; ripr agreed on 12. No false-gap examples are recorded.
+- **Thin ground truth.** Only 75 of 1745 mutants (4.3%) enter an agreement rate. 493 join a ripr seam precisely, and 418 of those still do not enter a rate.
 - **Cold `ripr pilot` to first useful result.** Worst repository: ripr-swarm at 77.6 s; the bar is at most 30.0 s.
 - **Cold `ripr pilot` peak memory.** Worst repository: ripr-swarm at 1595 MB; the bar is at most 1024 MB.
 - **Warm `ripr check` on the last commit.** Worst repository: ripr-swarm at 5.1 s; the bar is at most 2.0 s.
@@ -111,48 +111,38 @@ Each line below is computed from the receipts above. Detail sections follow.
 
 ## Mutation agreement
 
-Agreement is scored only on seam_precise joins (operator mutants whose original operator appears in a predicate_boundary or return_value seam expression on the same line). Claims are limited to the recorded checkout revisions, cargo-mutants versions, and this join rule; this is not a suite adequacy measure. Status of this receipt: `advisory`.
+Agreement is scored only on canonical_precise records: a BinaryOperator or UnaryOperator mutant that ripr calibrate joined by seam_id or by unique span containment to a predicate_boundary or return_value seam, with a caught or missed outcome. File/line fallback joins, span-overlap ties, unmatched records, and unsupported genres, seam kinds or outcomes are counted as exclusions and never scored. Claims are limited to the recorded checkout revisions, cargo-mutants versions, and this join rule; this is not a suite adequacy measure. Status of this receipt: `advisory`.
 
-This receipt does not record which ripr build produced the static classifications, only the checkout revisions and the cargo-mutants version. The agreement rates below cannot be tied to a specific analyzer revision, and they may not describe the current build.
+Static classifications were produced by ripr 0.11.0 (731e36ef5a75b50b7dd38fc78c8fbb2a23c11d43).
 
 | Verdict class | Seams | Mutants | Agree | Overclaim | False gap | Agreement |
 | --- | --- | --- | --- | --- | --- | --- |
-| ripr found a discriminator (`strongly_gripped`) | 8 | 14 | 14 | 0 | 0 | 100.0% |
-| ripr found no discriminator (`ungripped`) | 12 | 23 | 1 | 0 | 22 | 4.3% |
+| ripr found a discriminator (`strongly_gripped`) | 31 | 63 | 61 | 2 | 0 | 96.8% |
+| ripr found no discriminator (`ungripped`) | 6 | 12 | 12 | 0 | 0 | 100.0% |
 
 An overclaim is a mutant ripr said a test would catch that no test caught. A false gap is a mutant ripr said nothing would catch that the tests did catch.
 
-| Repository | Revision | cargo-mutants | Mutants | Joined | Ambiguous | Unmatched | Seam-precise |
+| Repository | Revision | cargo-mutants | Mutants | Joined | Ambiguous | Unmatched | Canonical-precise |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| rust-hex | `e25a8701f7f6` | 27.1.0 | 86 | 36 | 34 | 16 | 2 |
-| semver | `280ebcb6edac` | 27.1.0 | 365 | 144 | 176 | 45 | 53 |
-| strsim-rs | `dacc84c0dc61` | 27.1.0 | 358 | 137 | 106 | 115 | 44 |
-| bytesize | `66a3715e3336` | 27.1.0 | 362 | 118 | 219 | 25 | 35 |
-| humantime | `76c8929b4cc2` | 27.1.0 | 574 | 101 | 137 | 336 | 40 |
+| rust-hex | `e25a8701f7f6` | 27.1.0 | 86 | 36 | 2 | 48 | 22 |
+| semver | `280ebcb6edac` | 27.1.0 | 365 | 199 | 26 | 140 | 139 |
+| strsim-rs | `dacc84c0dc61` | 27.1.0 | 358 | 126 | 2 | 230 | 95 |
+| bytesize | `66a3715e3336` | 27.1.0 | 362 | 310 | 3 | 49 | 127 |
+| humantime | `76c8929b4cc2` | 27.1.0 | 574 | 185 | 13 | 376 | 110 |
 
-Real mutation outcomes by ripr grip class, seam-precise joins only:
+Real mutation outcomes by ripr grip class, canonical-precise joins only:
 
 | Grip class | Mutation outcomes |
 | --- | --- |
-| `activation_unknown` | caught 95, missed 29, timeout 1 |
-| `strongly_gripped` | caught 14, timeout 1 |
-| `ungripped` | caught 22, missed 1 |
-| `weakly_gripped` | caught 8, missed 3 |
+| `activation_unknown` | caught 285, missed 86 |
+| `opaque` | caught 46, missed 1 |
+| `strongly_gripped` | caught 61, missed 2 |
+| `ungripped` | missed 12 |
 
-False-gap examples, as recorded:
+Overclaim examples, as recorded:
 
-- semver `src/display.rs:39` predicate_boundary `i > 0` is `ungripped`; mutant `replace > with < in <impl Display for VersionReq>::fmt` was caught.
-- semver `src/display.rs:69` predicate_boundary `self.op == Op::Wildcard` is `ungripped`; mutant `replace == with != in <impl Display for Comparator>::fmt` was caught.
-- semver `src/display.rs:72` predicate_boundary `self.op == Op::Wildcard` is `ungripped`; mutant `replace == with != in <impl Display for Comparator>::fmt` was caught.
-- semver `src/display.rs:157` predicate_boundary `val < 10` is `ungripped`; mutant `replace < with == in digits` was caught.
-- semver `src/error.rs:120` predicate_boundary `self.0 == '\0'` is `ungripped`; mutant `replace == with != in <impl Display for QuotedChar>::fmt` was caught.
-- semver `src/identifier.rs:411` return_value `(len_bits + 6) / 7` is `ungripped`; mutant `replace / with % in bytes_for_varint` was caught.
-- semver `src/impls.rs:94` predicate_boundary `ordering != Ordering::Equal` is `ungripped`; mutant `replace != with == in <impl Ord for Prerelease>::cmp` was caught.
-- semver `src/impls.rs:139` predicate_boundary `ordering != Ordering::Equal` is `ungripped`; mutant `replace != with == in <impl Ord for BuildMetadata>::cmp` was caught.
-- semver `src/parse.rs:235` predicate_boundary `segment_len == 0` is `ungripped`; mutant `replace == with != in identifier` was caught.
-- semver `src/parse.rs:242` predicate_boundary `pos == Position::Pre` is `ungripped`; mutant `replace == with != in identifier` was caught.
-- semver `src/parse.rs:243` predicate_boundary `segment_len > 1` is `ungripped`; mutant `replace > with < in identifier` was caught.
-- semver `src/parse.rs:394` predicate_boundary `depth + 1 == MAX_COMPARATORS` is `ungripped`; mutant `replace == with != in version_req` was caught.
+- bytesize `src/lib.rs:240` return_value `ByteSize(size * EB)` is `strongly_gripped`; mutant `replace * with + in ByteSize::eb` was missed.
+- bytesize `src/parse.rs:24` return_value `Ok(Self((v * u) as u64))` is `strongly_gripped`; mutant `replace * with + in <impl str::FromStr for ByteSize>::from_str` was missed.
 
 ## Verdict corpus
 
@@ -164,11 +154,11 @@ Only the upstream cases come from real repositories. The authored cases were wri
 
 | Rate | All cases | Upstream (real repositories) | Authored |
 | --- | --- | --- | --- |
-| False verdicts (all cases) | 13/488 (2.7%) | 2/36 (5.6%) | 11/452 (2.4%) |
+| False verdicts (all cases) | 12/488 (2.5%) | 2/36 (5.6%) | 10/452 (2.2%) |
 | False actionable (of discriminated) | 12/239 (5.0%) | 2/22 (9.1%) | 10/217 (4.6%) |
-| False exposed (of not fully discriminated) | 1/249 (0.4%) | 0/14 (0.0%) | 1/235 (0.4%) |
+| False exposed (of not fully discriminated) | 0/249 (0.0%) | 0/14 (0.0%) | 0/235 (0.0%) |
 | False silent (of not fully discriminated) | 0/249 (0.0%) | 0/14 (0.0%) | 0/235 (0.0%) |
-| Ideal verdict | 300/488 (61.5%) | 7/36 (19.4%) | 293/452 (64.8%) |
+| Ideal verdict | 301/488 (61.7%) | 7/36 (19.4%) | 294/452 (65.0%) |
 | Abstained (limited or silent where acceptable) | 175/488 (35.9%) | 27/36 (75.0%) | 148/452 (32.7%) |
 | Findings with a contradiction | 0/628 (0.0%) | not split by origin | not split by origin |
 
@@ -563,7 +553,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `spec0231-oracle-err-underscore-binding` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `spec0231-oracle-events-not-empty` | authored | partially_discriminated | gap | limited | propagation_unknown | abstained | none |
 | `spec0231-oracle-events-sent-contains` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `spec0231-oracle-events-sent-len-eq` | authored | partially_discriminated | gap | credited | exposed | false_exposed | none |
+| `spec0231-oracle-events-sent-len-eq` | authored | partially_discriminated | gap | gap | exposed, weakly_exposed | ideal | none |
 | `spec0231-oracle-helper-assert-json-eq` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
 | `spec0231-oracle-helper-assert-not-equal` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `spec0231-oracle-is-ok-or-is-err` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
@@ -751,7 +741,7 @@ Repositories the speed scoreboard ran on:
 ## What these numbers do not say
 
 - Numbers hold for the recorded revision, binary, runner class and pinned corpus only. Targets are proposed bars, not product guarantees. Wall-time and memory metrics are compared only against a baseline from the same runner class; peak memory is sampled from /proc every 10 ms on Linux and is a lower bound. Static verdict metrics do not claim runtime mutation outcomes.
-- Agreement is scored only on seam_precise joins (operator mutants whose original operator appears in a predicate_boundary or return_value seam expression on the same line). Claims are limited to the recorded checkout revisions, cargo-mutants versions, and this join rule; this is not a suite adequacy measure.
+- Agreement is scored only on canonical_precise records: a BinaryOperator or UnaryOperator mutant that ripr calibrate joined by seam_id or by unique span containment to a predicate_boundary or return_value seam, with a caught or missed outcome. File/line fallback joins, span-overlap ties, unmatched records, and unsupported genres, seam kinds or outcomes are counted as exclusions and never scored. Claims are limited to the recorded checkout revisions, cargo-mutants versions, and this join rule; this is not a suite adequacy measure.
 - Rates describe this corpus only; they are not a population estimate for Rust code or for ripr in general.
 - Authored cases were written to fill verdict, probe-family, test-shape and test-library oracle cells the upstream cases leave empty; their rates are reported separately under by_origin and are not real-world rates.
 - Truth comes from the listed mutants, not from exhaustive mutation; a discriminated label means every listed mutant made the test command fail.
@@ -769,4 +759,4 @@ cargo xtask public-proof --refresh-receipts  # re-copy canonical outputs, then r
 cargo xtask public-proof --check             # fail if this page is stale
 ```
 
-Receipts live in `metrics/public-proof/`. `dx-scoreboard.json`, `verdict-corpus.json` and `corpus-manifest.json` are copies of `metrics/dx-scoreboard/baseline.json`, the report `fixtures/rust-verdict-corpus/expected/rows/` describes (its summary derived from the row files, then the rows in file-name order) and `benchmarks/rust_corpus/manifest.json`; `--check` fails when a source moves ahead of its copy, and `--refresh-receipts` re-copies them. Verdict corpus case PRs do not refresh this page, so its corpus section is a snapshot that can trail the committed rows until the next refresh. Corpus and ranking scoreboard rows are read from `metrics/dx-scoreboard/corpus-full-baseline.json` (falling back to `corpus-fast-baseline.json`) and `metrics/dx-scoreboard/pilot-ranking-baseline.json` when the copied scoreboard receipt did not ingest those boards. The mutation, first-run, agent and install receipts have no in-repo source to compare against: they are committed copies of harness output from the revisions named in their sections, and `--check` cannot detect a hand edit to them. The mutation spot-check has no command in this repository yet.
+Receipts live in `metrics/public-proof/`. `dx-scoreboard.json`, `verdict-corpus.json` and `corpus-manifest.json` are copies of `metrics/dx-scoreboard/baseline.json`, the report `fixtures/rust-verdict-corpus/expected/rows/` describes (its summary derived from the row files, then the rows in file-name order) and `benchmarks/rust_corpus/manifest.json`; `--check` fails when a source moves ahead of its copy, and `--refresh-receipts` re-copies them. Verdict corpus case PRs do not refresh this page, so its corpus section is a snapshot that can trail the committed rows until the next refresh. Corpus and ranking scoreboard rows are read from `metrics/dx-scoreboard/corpus-full-baseline.json` (falling back to `corpus-fast-baseline.json`) and `metrics/dx-scoreboard/pilot-ranking-baseline.json` when the copied scoreboard receipt did not ingest those boards. The mutation, first-run, agent and install receipts have no in-repo source to compare against: they are committed copies of harness output from the revisions named in their sections, and `--check` cannot detect a hand edit to them. The mutation spot-check receipt is harness output from `cargo xtask mutation-spot-check`.
