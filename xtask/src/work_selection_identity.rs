@@ -1985,38 +1985,70 @@ pub(crate) const WORK_IDENTITY_FRESH_ROOT_RESULT: &str =
     "all_ten_domains_reconstruct_from_committed_artifacts_no_chat_history";
 
 /// The ten selected-work domains whose committed corpora the receipt binds,
-/// in pinned order: the shared selection contract (PR A, #6864) plus the nine
-/// PR B consumers (#8325, RIPR-SPEC-0269..0277).
-pub(crate) const WORK_IDENTITY_FRESH_ROOT_DOMAINS: [(&str, &str, &str); 10] = [
+/// in pinned order, each with its expected committed corpus directory: the
+/// shared selection contract (PR A, #6864) plus the nine PR B consumers
+/// (#8325, RIPR-SPEC-0269..0277). The corpus directory is pinned so a
+/// receipt cannot bind one domain's identity to another directory's bytes.
+pub(crate) const WORK_IDENTITY_FRESH_ROOT_DOMAINS: [(&str, &str, &str, &str); 10] = [
     (
         "selection",
         "RIPR-SPEC-0244",
         "cargo xtask work selection check",
+        DEFAULT_WORK_SELECTION_CORPUS_DIR,
     ),
-    ("result", "RIPR-SPEC-0269", "cargo xtask work result check"),
-    ("claim", "RIPR-SPEC-0270", "cargo xtask work claim check"),
-    ("wave", "RIPR-SPEC-0271", "cargo xtask work wave check"),
+    (
+        "result",
+        "RIPR-SPEC-0269",
+        "cargo xtask work result check",
+        crate::work_result_identity::DEFAULT_WORK_RESULT_CORPUS_DIR,
+    ),
+    (
+        "claim",
+        "RIPR-SPEC-0270",
+        "cargo xtask work claim check",
+        crate::work_claim_identity::DEFAULT_WORK_CLAIM_CORPUS_DIR,
+    ),
+    (
+        "wave",
+        "RIPR-SPEC-0271",
+        "cargo xtask work wave check",
+        crate::work_wave_identity::DEFAULT_WORK_WAVE_CORPUS_DIR,
+    ),
     (
         "context",
         "RIPR-SPEC-0272",
         "cargo xtask work context check",
+        crate::work_context_identity::DEFAULT_WORK_CONTEXT_CORPUS_DIR,
     ),
     (
         "synthesis",
         "RIPR-SPEC-0273",
         "cargo xtask work synthesis check",
+        crate::work_synthesis_identity::DEFAULT_WORK_SYNTHESIS_CORPUS_DIR,
     ),
     (
         "burndown",
         "RIPR-SPEC-0274",
         "cargo xtask work burndown check",
+        crate::work_burndown_identity::DEFAULT_WORK_BURNDOWN_CORPUS_DIR,
     ),
-    ("intake", "RIPR-SPEC-0275", "cargo xtask work intake check"),
-    ("plan", "RIPR-SPEC-0276", "cargo xtask work plan check"),
+    (
+        "intake",
+        "RIPR-SPEC-0275",
+        "cargo xtask work intake check",
+        crate::work_intake_identity::DEFAULT_WORK_INTAKE_CORPUS_DIR,
+    ),
+    (
+        "plan",
+        "RIPR-SPEC-0276",
+        "cargo xtask work plan check",
+        crate::work_plan_identity::DEFAULT_WORK_PLAN_CORPUS_DIR,
+    ),
     (
         "adapter",
         "RIPR-SPEC-0277",
         "cargo xtask work adapter check",
+        crate::work_adapter_identity::DEFAULT_WORK_ADAPTER_CORPUS_DIR,
     ),
 ];
 
@@ -2191,7 +2223,7 @@ pub(crate) fn verify_work_identity_fresh_root_receipt(
             );
         }
     }
-    let actual: Vec<(&str, &str, &str)> = receipt
+    let actual: Vec<(&str, &str, &str, &str)> = receipt
         .domains
         .iter()
         .map(|domain| {
@@ -2199,6 +2231,7 @@ pub(crate) fn verify_work_identity_fresh_root_receipt(
                 domain.domain.as_str(),
                 domain.spec.as_str(),
                 domain.command.as_str(),
+                domain.corpus.as_str(),
             )
         })
         .collect();
@@ -2207,6 +2240,8 @@ pub(crate) fn verify_work_identity_fresh_root_receipt(
             "work identity fresh-root receipt domains drifted from the pinned ten-domain set: {actual:?}"
         ));
     }
+    // The tuple check above pins each domain's corpus directory, so the
+    // digest loop below hashes exactly the bytes the domain check runs on.
     for domain in &receipt.domains {
         let corpus_root = workspace_path(&domain.corpus);
         for (file, recorded) in [

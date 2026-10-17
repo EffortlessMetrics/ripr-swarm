@@ -1195,3 +1195,20 @@ fn work_selection_identity_fresh_root_receipt_requires_all_ten_domains() -> Resu
     }
     Ok(())
 }
+
+/// Negative control: a receipt that points one domain at another domain's
+/// corpus directory binds bytes the domain check never ran on and must
+/// reject.
+#[test]
+fn work_selection_identity_fresh_root_receipt_rejects_corpus_swap() -> Result<(), String> {
+    let mut receipt = load_work_identity_fresh_root_receipt()?;
+    let domain = receipt
+        .domains
+        .get_mut(1)
+        .ok_or_else(|| "receipt must record at least two domains".to_string())?;
+    domain.corpus = "fixtures/work_selection_identity".to_string();
+    if verify_work_identity_fresh_root_receipt(&receipt).is_ok() {
+        return Err("a corpus-swapped receipt verified clean".to_string());
+    }
+    Ok(())
+}

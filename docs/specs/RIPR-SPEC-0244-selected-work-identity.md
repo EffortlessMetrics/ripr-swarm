@@ -156,18 +156,20 @@ support or completion.
 
 Migration posture (recorded 2026-10, #1706 PR D, after the PR B consumers
 landed in #8325): the compat fields stay read-only in every consuming
-corpus. Each of the nine consumer specs (RIPR-SPEC-0269..0277) pins a
-negative case in which a legacy packet attempting write, readiness, merge
-or closeout authority fails closed with `reject_legacy_authority`, and each
-consumer check reruns this shared law engine rather than a forked copy, so
-the no-authority posture cannot drift per consumer. There is one supported
-direction only: a legacy ref may resolve into a `historical` campaign
-reference. No committed artifact may copy a legacy ref into a live
-selection field; doing so is a schema/law violation with the reconcile
-route, never a silently tolerated migration. Retirement is intentionally
-not automated: new packets simply omit the legacy fields, and the fields
-remain accepted only so historical captured packets still parse and still
-fail closed on authority.
+corpus. This corpus pins the authority rejection itself — scenario 6 fails
+a legacy packet attempting `writer` authority closed with
+`legacy_compatibility`/`reject_legacy_authority` — and every consumer check
+(RIPR-SPEC-0269..0277) reruns this shared law engine rather than a forked
+copy, so the no-authority posture cannot drift per consumer; the consumer
+corpora additionally pin `legacy_compatibility` negative cases for
+unresolvable or wrong-bound legacy refs and carry legacy refs read-only
+inside their rows. There is one supported direction only: a legacy ref may
+resolve into a `historical` campaign reference. No committed artifact may
+copy a legacy ref into a live selection field; doing so is a schema/law
+violation with the reconcile route, never a silently tolerated migration.
+Retirement is intentionally not automated: new packets simply omit the
+legacy fields, and the fields remain accepted only so historical captured
+packets still parse and still fail closed on authority.
 
 ### Frozen plan-disposition vocabulary
 
@@ -265,6 +267,7 @@ support.
 - `xtask/src/work_selection_identity.rs::tests::work_selection_identity_fresh_root_receipt_reconstructs_all_domains`
 - `xtask/src/work_selection_identity.rs::tests::work_selection_identity_fresh_root_receipt_rejects_digest_drift`
 - `xtask/src/work_selection_identity.rs::tests::work_selection_identity_fresh_root_receipt_requires_all_ten_domains`
+- `xtask/src/work_selection_identity.rs::tests::work_selection_identity_fresh_root_receipt_rejects_corpus_swap`
 - `xtask/src/work_selection_identity.rs::tests::work_selection_identity_deterministic_output`
 - `xtask/src/work_selection_identity.rs::tests::work_selection_identity_corpus_loader_fails_closed`
 - `xtask/src/work_selection_identity.rs::tests::work_selection_identity_provenance_fails_closed`
