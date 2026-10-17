@@ -1259,11 +1259,11 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
         // blocked state offers; the ledger's own warning names the coverage.
         let message = first_string_array_item(gap_ledger, &["warnings"]).map_or_else(
             || {
-                "The check-output gap ledger parsed but projected no records: the --check-output route covers presentation/output-text and Python/TypeScript/Perl findings only, so Rust-only predicate findings are not projected. Use `ripr check` to read the Rust findings and `ripr repair` to start a repair, or regenerate the ledger from the workspace evidence.".to_string()
+                "The check-output gap ledger parsed but projected no records. The --check-output route covers presentation/output-text and Python/TypeScript/Perl findings only; if this PR changes Rust behavior, use `ripr check` to read the Rust findings and `ripr repair` to start a repair, otherwise regenerate the ledger from the workspace evidence.".to_string()
             },
             |warning| {
                 format!(
-                    "The check-output gap ledger parsed but projected no records: {warning}. Regenerating the ledger will not change this for Rust-only findings; otherwise regenerate it from the workspace evidence."
+                    "The check-output gap ledger parsed but projected no records: {warning}. If the warning points to `ripr check`/`ripr repair`, follow it; otherwise regenerate the ledger from the workspace evidence."
                 )
             },
         );
@@ -3389,6 +3389,29 @@ mod tests {
                 assert!(
                     command.contains("repo-exposure"),
                     "the Rust-root recovery compound regenerates repo-exposure evidence: {command}"
+                );
+            }
+            other => return Err(format!("expected a blocked recovery, got {other:?}")),
+        }
+
+        // A valid check output with zero findings yields `no_records` with no
+        // warning; the fallback must not claim Rust findings went unprojected.
+        let no_warning = select_from_gap_ledger(
+            &serde_json::json!({
+                "status": "no_records",
+                "inputs": {"source_kind": "check_output"},
+                "records": [],
+                "warnings": []
+            }),
+            &root,
+            &options,
+        );
+        match &no_warning {
+            Selection::Blocked { message, .. } => {
+                assert!(
+                    message.contains("if this PR changes Rust behavior")
+                        && !message.contains("Rust-only predicate findings are not projected"),
+                    "the no-warning fallback must stay conditional: {message}"
                 );
             }
             other => return Err(format!("expected a blocked recovery, got {other:?}")),
