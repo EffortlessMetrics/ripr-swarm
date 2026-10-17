@@ -2987,6 +2987,87 @@ mod tests {
         assert!(!rendered.contains("adequate") && !full.contains("adequate")); // ripr-allow: static-language: control enumerates the promotion term it rejects
     }
 
+    /// Snake_case identifiers on the bounded render that are data, not
+    /// renderer-controlled labels: producer prose, ids and CLI spellings
+    /// (RIPR-SPEC-0122 treats these as data).
+    fn wire_token_leaks(rendered: &str) -> Vec<String> {
+        let mut leaks = Vec::new();
+        for line in rendered.lines() {
+            let trimmed = line.trim_start();
+            if line.starts_with("root:")
+                || trimmed.starts_with("ripr ")
+                || trimmed.starts_with("Canonical gap:")
+                || trimmed.starts_with("Related test:")
+            {
+                continue;
+            }
+            for word in line.split(|c: char| !(c.is_ascii_lowercase() || c == '_')) {
+                if word.contains('_')
+                    && !word.starts_with('_')
+                    && !word.ends_with('_')
+                    && !leaks.iter().any(|seen: &String| seen == word)
+                {
+                    leaks.push(word.to_string());
+                }
+            }
+        }
+        leaks
+    }
+
+    #[test]
+    fn wire_token_scan_discriminates_a_leaked_token() {
+        assert!(wire_token_leaks("State: a gap to repair (top_gap)").contains(&"top_gap".into()));
+        assert!(
+            wire_token_leaks("Summary: 1 probe (1 weakly_exposed)")
+                .contains(&"weakly_exposed".into())
+        );
+        assert!(wire_token_leaks("  Static exposure: weak (severity: warning)").is_empty());
+        // Data lines are carved out, not the rest of the screen.
+        assert!(
+            wire_token_leaks("  Related test: tests/a.rs:2 test_name\n  ripr explain probe:a_b")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn bounded_render_carries_no_snake_case_wire_token_for_any_class() {
+        let classes = [
+            ExposureClass::Exposed,
+            ExposureClass::WeaklyExposed,
+            ExposureClass::ReachableUnrevealed,
+            ExposureClass::NoStaticPath,
+            ExposureClass::InfectionUnknown,
+            ExposureClass::PropagationUnknown,
+            ExposureClass::StaticUnknown,
+        ];
+        for class in classes {
+            // More findings than the digest shows, so the Hidden list renders.
+            let findings = (0..12)
+                .map(|n| {
+                    let mut finding = sample_finding();
+                    finding.class = class.clone();
+                    finding.id = format!("probe:sample.rs:{n}:predicate");
+                    finding.probe.location.line = n + 1;
+                    finding
+                })
+                .collect::<Vec<_>>();
+            let rendered = render(&bounded_output_with_findings(findings));
+            assert!(
+                wire_token_leaks(&rendered).is_empty(),
+                "{class:?}: bounded render leaked {:?}:\n{rendered}",
+                wire_token_leaks(&rendered)
+            );
+        }
+        for no_scope in [false, true] {
+            let rendered = render(&empty_live_output(no_scope));
+            assert!(
+                wire_token_leaks(&rendered).is_empty(),
+                "empty render (no_scope {no_scope}) leaked {:?}:\n{rendered}",
+                wire_token_leaks(&rendered)
+            );
+        }
+    }
+
     fn empty_live_output(no_scope_provided: bool) -> CheckOutput {
         CheckOutput {
             harness_projections: Vec::new(),
