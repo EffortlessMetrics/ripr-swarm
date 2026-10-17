@@ -672,3 +672,17 @@ the diff changes `None => 1` to `None => 0`.
   exact oracle confirms the arm.
 - Verdict-corpus false-actionable and false-silent counts on `match_arm`
   cases do not rise.
+
+## Named field-selector boundary (#8479)
+
+A plain parameter field in a statement-free tail match is outside the credited
+whole-parameter selector rules. A candidate-current weak finding with reach
+`yes`, discrimination `weak`, and a strong oracle in a directly calling test
+may name `rust_field_match_selector_unresolved`. The whole match header and
+unique direct-arm start lines qualify. Guarded, nested, computed, local or
+ambiguous same-line shapes do not. This metadata preserves every class, proof
+leg and missing discriminator; it proves neither Option identity nor that a
+particular invocation feeds the assertion. Guidance first asks to inspect that
+alignment and only then repair a demonstrated observation gap. Existing typed
+limitations take precedence. Cached classified findings must be invalidated;
+file facts and output wire versions do not change.

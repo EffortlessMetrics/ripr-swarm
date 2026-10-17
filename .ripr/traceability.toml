@@ -15162,6 +15162,11 @@ id = "RIPR-SPEC-0229"
 name = "Match-arm selection names the unselected arm"
 spec = "docs/specs/RIPR-SPEC-0229-match-arm-selection-discriminator.md"
 tests = [
+  "crates/ripr/tests/field_match_selector.rs::field_match_selector_names_all_three_rows_without_credit_or_wire_shape_change",
+  "crates/ripr/tests/field_match_selector.rs::field_match_selector_never_borrows_an_unrelated_or_overwritten_observation",
+  "crates/ripr/tests/field_match_selector.rs::a_direct_parameter_match_keeps_its_genuine_unselected_arm_gap",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::field_selector_limit_refuses_ambiguous_or_computed_subjects",
+  "crates/ripr/src/analysis/language/rust/probes.rs::tests::field_selector_metadata_preserves_facts_and_refuses_stale_or_prior_limits",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::sibling_variant_input_selects_other_arm",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::matching_input_selects_and_any_selecting_call_wins",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::opaque_or_unreadable_inputs_never_select_other",

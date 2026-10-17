@@ -34,7 +34,7 @@ pub(in crate::analysis) use activation::{
     comparison_operands, computed_input_parameters, literal_operand_value, local_boundary,
     signature_parameters,
 };
-pub(in crate::analysis) use arm_selection::ArmSelector;
+pub(in crate::analysis) use arm_selection::{ArmSelector, unresolved_parameter_field_selector};
 pub(in crate::analysis) use boundary_pairing::{
     WrapperEntryPairing, has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
 };

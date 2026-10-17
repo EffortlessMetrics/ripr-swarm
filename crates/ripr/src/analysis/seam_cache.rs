@@ -466,7 +466,8 @@ pub(crate) struct CachedSeamLimitInfo {
 /// RIPR-SPEC-0225 decision 9's returned-array-element field credit (#7858);
 /// no standalone `1.79` is reusable. Old entries keep that field's gap.
 /// `1.81`: direct test-required helpers no longer seed production seams (#3213).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.81";
+/// `1.82`: name unsupported parameter-field match selectors without changing proof (#8479).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.82";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -593,7 +594,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.81";
 /// `0.86`: same composed golden-file, early error-variant and
 /// returned-element field pins as full `1.80`.
 /// `0.87`: direct test-required helper source roles (#3213).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.87";
+/// `0.88`: same field-selector limitation metadata as full `1.82` (#8479).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.88";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -722,7 +724,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.87";
 /// `0.86`: same composed golden-file, early error-variant and
 /// returned-element field pins as full `1.80`.
 /// `0.87`: direct test-required helper source roles (#3213).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.87";
+/// `0.88`: same field-selector limitation metadata as full `1.82` (#8479).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.88";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only

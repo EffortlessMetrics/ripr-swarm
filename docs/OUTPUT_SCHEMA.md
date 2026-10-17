@@ -2215,16 +2215,18 @@ JSON fields:
   `rust_macro_wrapped_test_call_unresolved`, or
   `rust_macro_wrapped_assertion_unresolved`, or
   `rust_value_propagation_unresolved`, or
+  `rust_field_match_selector_unresolved`, or
   `wrapper_error_binding_unresolved`, or
   `python_transitive_reach_unresolved`, or
   `rust_assertion_context_unresolved`, or
   `rust_log_capture_unresolved`, or
   `rust_panic_outcome_unresolved`.
+- `rust_field_match_selector_unresolved`: a plain owner-parameter field selects a changed statement-free tail match. A strong oracle in a directly calling test exists, but the field value at that invocation and its returned-value assertion are not aligned statically. The match header and unique direct-arm lines may carry this metadata; computed selectors, local bindings, nested matches, guarded arms and ambiguous same-line subjects are excluded. This does not establish an `Option` type, same-invocation proof, coverage, or absence of a test gap. IDs, classes, RIPR stages, missing discriminators and gate counts are unchanged. Inspect the existing call/assertion before adding a test. The optional kind uses the existing wire shape/version; consumers still require their own producer compatibility qualification.
 - `static_limitation` is an additive optional per-finding object emitted only
   when a finding with `static_limit_kind` also carries a complete structured
   limitation detail. Current Rust transitive-reach, integration public-API path,
   macro-reach, direct test macro-call, macro-wrapped assertion,
-  value-propagation, wrapper-error-binding, and Python same-class transitive-reach
+  value-propagation, field-match-selector, wrapper-error-binding, and Python same-class transitive-reach
   limitations populate it from the same evidence lines rendered in human output. Fields are
   `kind`, `last_established_edge`, `first_unresolved_edge`, `analyzer_route`,
   and `non_claim`. The object is absent for static limits that do not have all
@@ -18023,7 +18025,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.81",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.82",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -18734,7 +18736,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.81",
+      "schema_version": "1.82",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

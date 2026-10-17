@@ -1317,6 +1317,7 @@ fn apply_probe_and_oracle_limits(
     oracles::apply_rust_macro_wrapped_assertion_limit(finding, index, owner_name.as_deref());
     probes::apply_rust_value_propagation_limit(finding, probe, index);
     oracles::apply_wrapper_error_binding_limit(finding, probe);
+    probes::apply_rust_field_match_selector_limit(finding, probe, index);
     probes::attach_changed_binding_predicate_evidence(finding, binding_relation);
     oracles::apply_cross_language_limit(finding, probe, index);
     // #7133: a captured log record the test asserts on is a named limit.
