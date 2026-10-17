@@ -627,11 +627,7 @@ pub(crate) fn first_run_to_input(value: &Value) -> Result<Value, String> {
         .ok_or("first_run.v1 receipt needs a cases array")?;
     let install_steps: Vec<&Value> = setup
         .iter()
-        .filter(|step| {
-            step["step"]
-                .as_str()
-                .is_some_and(|name| name.contains("install"))
-        })
+        .filter(|step| step["step"].as_str().is_some_and(is_source_install_step))
         .collect();
     let install_secs: Option<f64> = install_steps
         .iter()
@@ -717,6 +713,13 @@ pub(crate) fn first_run_to_input(value: &Value) -> Result<Value, String> {
         ),
         "metrics": rows,
     }))
+}
+
+/// The released-archive route (`install_archive`) is its own sample. Its
+/// seconds must not be added to, or gated against, the source-install baseline
+/// (#5311): a download and a compile are different routes.
+fn is_source_install_step(name: &str) -> bool {
+    name.contains("install") && name != "install_archive"
 }
 
 /// Convert `first_run_row.v1` rows (keyed by case, step and metric) into
@@ -862,16 +865,16 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
         .collect();
     let install: Option<f64> = steps
         .iter()
-        .filter(|s| s.case == "_setup" && s.step.contains("install"))
+        .filter(|s| s.case == "_setup" && is_source_install_step(&s.step))
         .map(|s| s.secs.unwrap_or(0.0))
         .reduce(|a, b| a + b);
     let install_timed = steps
         .iter()
-        .filter(|s| s.case == "_setup" && s.step.contains("install"))
+        .filter(|s| s.case == "_setup" && is_source_install_step(&s.step))
         .all(|s| s.secs.is_some());
     let install_ok = steps
         .iter()
-        .filter(|s| s.case == "_setup" && s.step.contains("install"))
+        .filter(|s| s.case == "_setup" && is_source_install_step(&s.step))
         .all(|s| s.exit == Some(0.0));
     // A walk whose install failed writes no case rows; its install timing and
     // failed step are still worth ingesting.

@@ -841,7 +841,7 @@ fn keyword_value<'a>(call: &'a ast::ExprCall, name: &str) -> Option<&'a Expr> {
 /// RIPR-SPEC-0238 rule 2: a literal message pattern that admits any message
 /// (`''`, `.*`, `.+`, `^`, `$`, `^.*$`, `(?s).*`), or an alternation that can
 /// admit both the old and the new message (`'empty|blank'`), pins only the
-/// exception class. A bare name reads as the string literal it is bound to
+/// exception class, as does a literal `None` (matching disabled). A bare name reads as the string literal it is bound to
 /// when the file assigns that name exactly once, to a literal (Decision 5).
 fn is_trivial_message_pattern(pattern: &Expr, source: &str) -> bool {
     let text = match pattern {
@@ -849,6 +849,12 @@ fn is_trivial_message_pattern(pattern: &Expr, source: &str) -> bool {
             value: ast::Constant::Str(text),
             ..
         }) => text.as_str(),
+        // `match=None` / `assertRaisesRegex(E, None)` disables message
+        // matching in pytest and unittest, so it pins only the class.
+        Expr::Constant(ast::ExprConstant {
+            value: ast::Constant::None,
+            ..
+        }) => return true,
         Expr::Constant(ast::ExprConstant {
             value: ast::Constant::Bytes(bytes),
             ..

@@ -5497,6 +5497,28 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
         "{stderr}"
     );
 
+    // The other ID `ripr check` prints, its canonical gap ID, gets the same
+    // family-named refusal instead of the generic hint (#8158).
+    let gap_packet = run_ripr(&[
+        "agent",
+        "packet",
+        "--root",
+        &root_path,
+        "--seam-id",
+        "gap:0123456789abcdef",
+        "--json",
+    ]);
+    assert!(!gap_packet.status.success());
+    let stderr = String::from_utf8_lossy(&gap_packet.stderr);
+    assert!(
+        stderr.contains("is a `ripr check` canonical gap ID, not a seam ID"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("ripr pilot --root ") && stderr.contains("agent-packet-unknown-seam"),
+        "{stderr}"
+    );
+
     let packet = run_ripr(&[
         "agent",
         "packet",
