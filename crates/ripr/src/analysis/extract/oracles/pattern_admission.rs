@@ -174,8 +174,9 @@ pub(super) fn pattern_assertion_classification(line: &str) -> Option<OracleClass
     pattern_assertion_classification_in(line, &LocalDecls::default())
 }
 
-/// Same as [`pattern_assertion_classification`], using the test file's own
-/// type declarations when they uniquely show a struct or single-variant enum.
+/// The classification a whole-pattern assertion earns from its pattern, using
+/// the test file's own type declarations when they uniquely show a struct or
+/// single-variant enum, or `None` when the pattern pins a value.
 pub(super) fn pattern_assertion_classification_in(
     line: &str,
     decls: &LocalDecls,
