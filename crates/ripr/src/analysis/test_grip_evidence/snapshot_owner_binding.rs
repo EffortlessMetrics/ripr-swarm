@@ -153,24 +153,41 @@ fn blank_literals_and_comments(text: &str) -> String {
         }
         if ch == '/' && next == Some('*') {
             at += 2;
-            while at < chars.len() && !(chars[at] == '*' && chars.get(at + 1) == Some(&'/')) {
+            let mut depth = 1usize;
+            while at < chars.len() && depth > 0 {
+                if chars[at] == '*' && chars.get(at + 1) == Some(&'/') {
+                    depth -= 1;
+                    at += 2;
+                    continue;
+                }
+                if chars[at] == '/' && chars.get(at + 1) == Some(&'*') {
+                    depth += 1;
+                    at += 2;
+                    continue;
+                }
                 if chars[at] == '\n' {
                     out.push('\n');
                 }
                 at += 1;
             }
-            at = (at + 2).min(chars.len());
             continue;
         }
         let word_start =
             at == 0 || !(chars[at - 1].is_ascii_alphanumeric() || chars[at - 1] == '_');
-        if ch == 'r' && word_start {
-            let mut quote = at + 1;
+        // `r"`, `br"` and `cr"` raw strings: a `b`/`c` prefix must not leave
+        // the raw content to the escape-aware plain-string branch.
+        let raw_at = if (ch == 'b' || ch == 'c') && next == Some('r') {
+            at + 1
+        } else {
+            at
+        };
+        if chars[raw_at] == 'r' && word_start {
+            let mut quote = raw_at + 1;
             while chars.get(quote) == Some(&'#') {
                 quote += 1;
             }
             if chars.get(quote) == Some(&'"') {
-                let hashes = quote - at - 1;
+                let hashes = quote - raw_at - 1;
                 at = quote + 1;
                 while at < chars.len() {
                     if chars[at] == '"' && (1..=hashes).all(|n| chars.get(at + n) == Some(&'#')) {
@@ -478,6 +495,28 @@ mod tests {
         );
         assert!(
             blanked.contains("let n =") && blanked.contains("let c =") && blanked.contains("b;")
+        );
+    }
+
+    #[test]
+    fn prefixed_raw_strings_and_nested_comments_are_blanked() {
+        for source in [
+            "let s = br\"\\\"; let count = other(); keep(); let t = br\"x\";",
+            "let s = cr\"\\\"; let count = other(); keep(); let t = cr\"x\";",
+            "let s = br#\"\\\"#; let count = other(); keep(); let t = br#\"x\"#;",
+        ] {
+            let blanked = blank_literals_and_comments(source);
+            assert!(
+                blanked.contains("let count = other();"),
+                "{source} -> {blanked}"
+            );
+            assert!(blanked.contains("keep();"), "{source} -> {blanked}");
+        }
+        let blanked = blank_literals_and_comments("a; /* x /* y */ let count = z; */ b;");
+        assert!(!blanked.contains("let count"), "{blanked}");
+        assert!(
+            blanked.contains("a;") && blanked.contains("b;"),
+            "{blanked}"
         );
     }
 }
