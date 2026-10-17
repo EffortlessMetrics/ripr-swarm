@@ -933,6 +933,61 @@ impl ClassifiedProbeEvidence {
             discriminate
         };
 
+        // An admitted exact error oracle exists, but reveal cannot connect it
+        // to this callee's fallible expression. The fallback sink is only an
+        // echo of that statement, not an identified error value. Do not turn
+        // identity with the echo into a claim that another error test is needed.
+        // Concrete missing variants/inputs and success-only tests keep their
+        // existing gaps; modeled error sinks and wrapper conversions keep their
+        // own evidence. This is an abstention, never oracle credit.
+        let unresolved_error_oracle = context.probe.family == ProbeFamily::ErrorPath
+            && discriminate.state == StageState::Weak
+            && discriminate.summary.contains("(observation_unverified)")
+            && activation.missing_discriminators.is_empty()
+            && !crate::analysis::classify::wrapper_error_seam_expression(&[&context
+                .probe
+                .expression])
+            && flow_sinks.iter().any(|sink| {
+                sink.kind == FlowSinkKind::ErrorVariant
+                    && sink.text == context.probe.expression.trim().trim_end_matches(';').trim()
+            })
+            && related_tests.iter().any(|test| {
+                !test.is_unmatched()
+                    && test
+                        .oracle
+                        .as_deref()
+                        .is_some_and(|text| !text.trim().is_empty())
+                    && test.oracle_kind == OracleKind::ExactErrorVariant
+                    && test.oracle_strength == OracleStrength::Strong
+                    && test
+                        .relation_reason
+                        .is_some_and(|reason| reason.establishes_reach(context.owner_fn.is_some()))
+            });
+        let (propagate, flow_sinks, propagation_witness) = if unresolved_error_oracle {
+            let sinks = flow_sinks
+                .into_iter()
+                .map(|mut sink| {
+                    sink.kind = FlowSinkKind::Unknown;
+                    sink.text = format!(
+                        "error variant of fallible expression unresolved: {}",
+                        sink.text
+                    );
+                    sink
+                })
+                .collect();
+            (
+                StageEvidence::new(
+                    StageState::Unknown,
+                    Confidence::Low,
+                    "An exact related error oracle exists; propagation from the changed fallible expression to that oracle is not statically established",
+                ),
+                sinks,
+                None,
+            )
+        } else {
+            (propagate, flow_sinks, propagation_witness)
+        };
+
         let ripr = RiprEvidence {
             reach: reach.clone(),
             infect: infect.clone(),

@@ -161,6 +161,14 @@ pub(in crate::analysis) fn missing_evidence(
                 "Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established"
                     .to_string(),
             );
+        } else if matches!(probe.family, ProbeFamily::ErrorPath)
+            && *class == ExposureClass::PropagationUnknown
+            && observe.state == StageState::Yes
+        {
+            missing.push(
+                "The existing oracle's connection to the changed error propagation is not statically established"
+                    .to_string(),
+            );
         } else if matches!(probe.family, ProbeFamily::ErrorPath) {
             missing.push("No exact error variant discriminator was detected".to_string());
         } else if discriminate.summary.contains(SAME_TEST_PAIRING_MISSING)
