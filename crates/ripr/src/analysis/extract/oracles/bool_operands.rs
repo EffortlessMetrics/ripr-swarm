@@ -581,6 +581,13 @@ fn conversion_call_argument(text: &str) -> Option<&str> {
 /// (`Some(r == Err(E::Bad))` against `Some(expected)` or `Some(true)`).
 /// Reading an unknown constructor as a wrapper only lowers a reading.
 fn value_wrapper_argument(text: &str) -> Option<&str> {
+    wrapper_contents(text).and_then(single_element)
+}
+
+/// What a value wrapper around `text` holds, however many elements:
+/// the contents of an array or `vec!` literal, or the arguments of a
+/// constructor call (`Wrapper(..)`, `Foo::new(..)`).
+fn wrapper_contents(text: &str) -> Option<&str> {
     let text = text.trim();
     let masked = mask_comments_and_strings(text);
     let masked = masked.as_str();
@@ -589,10 +596,7 @@ fn value_wrapper_argument(text: &str) -> Option<&str> {
         let whole = super::arguments::delimited_contents_at(list, 0)
             .is_some_and(|contents| contents.len() + 2 == list.len());
         let open = masked.len() - list.len();
-        return whole
-            .then(|| text.get(open + 1..text.len() - 1))
-            .flatten()
-            .and_then(single_element);
+        return whole.then(|| text.get(open + 1..text.len() - 1)).flatten();
     }
     let open = final_group_open(masked)?;
     let callee = masked.get(..open)?.trim_end();
@@ -605,7 +609,28 @@ fn value_wrapper_argument(text: &str) -> Option<&str> {
     if !(constructor || associated) {
         return None;
     }
-    text.get(open + 1..text.len() - 1).and_then(single_element)
+    text.get(open + 1..text.len() - 1)
+}
+
+/// Whether `side` is a value wrapper, or a passthrough method on one, that
+/// holds a test anywhere among its elements (`Wrapper(r == Err(E::Bad))`,
+/// `[matches!(r, Ok(3)); n]`, `vec![r == Err(E::Bad), x == 1]`). Unless the
+/// other side wraps `true` the same way, the wrapper's equality does not
+/// say the test held (review of ed1a892ca).
+fn holds_wrapped_test(side: &str) -> bool {
+    if let Some(receiver) = passthrough_receiver(side) {
+        return holds_wrapped_test(receiver);
+    }
+    let Some(contents) = wrapper_contents(side) else {
+        return false;
+    };
+    split_top_level_commas(contents).iter().any(|element| {
+        let masked = mask_comments_and_strings(element);
+        let value = top_level_semicolon(&masked)
+            .and_then(|at| element.get(..at))
+            .unwrap_or(element);
+        is_bool_test(value) || holds_wrapped_test(value)
+    })
 }
 
 /// The receiver of a method that returns what it holds (`.unwrap()`,
@@ -637,8 +662,12 @@ fn unwrapped_wrapper_argument(text: &str) -> Option<&str> {
     // Only the standard wrappers' `unwrap` is known to return what they
     // hold (review of 6b1c3c4).
     let callee = mask_comments_and_strings(receiver);
-    let callee = callee.trim_start();
-    if !(callee.starts_with("Some") || callee.starts_with("Ok")) {
+    let name = callee
+        .trim_start()
+        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .next()
+        .unwrap_or_default();
+    if !matches!(name, "Some" | "Ok") {
         return None;
     }
     value_wrapper_argument(receiver)
@@ -660,6 +689,12 @@ fn shaped_wrapper_argument(text: &str) -> Option<(&str, String)> {
             .collect::<String>()
     };
     let head = squeeze(&before);
+    // A turbofish names the wrapper's type, not another wrapper
+    // (`Ok::<bool, ()>(_)` against `Ok(_)`).
+    let head = match head.strip_suffix('(').and_then(without_turbofish) {
+        Some(callee) => format!("{callee}("),
+        None => head,
+    };
     let callee = head.trim_end_matches('(');
     let associated = callee.ends_with("::new") || callee.ends_with("::from");
     let standard = ["Box::new", "Rc::new", "Arc::new"]
@@ -786,6 +821,27 @@ fn sides_compare_test_with_non_literal<'a>(mut left: &'a str, mut right: &'a str
     // true)`; review of #8110).
     loop {
         (left, right) = (left.trim(), right.trim());
+        // `Some(..).unwrap()` and `Ok(..).expect(..)` return what they hold.
+        if let Some(inner) = unwrapped_wrapper_argument(left) {
+            left = inner;
+            continue;
+        }
+        if let Some(inner) = unwrapped_wrapper_argument(right) {
+            right = inner;
+            continue;
+        }
+        // The same wrapper shape around both sides compares what it holds
+        // (`Some(x == 3)` against `Some(true)`); any other wrapper around a
+        // test fails closed (`Wrapper(r == Err(E::Bad))` against `true`,
+        // `Foo::new(..)` against `Foo::new(true)`; review of ed1a892ca).
+        if let (Some((left_inner, left_shape)), Some((right_inner, right_shape))) = (
+            shaped_wrapper_argument(left),
+            shaped_wrapper_argument(right),
+        ) && left_shape == right_shape
+        {
+            (left, right) = (left_inner, right_inner);
+            continue;
+        }
         // The same constructor around both sides compares what it wraps
         // (`Some(r == Err(E::Bad))` against `Some(expected)`; #8101).
         if let Some(inner) = shared_constructor_arguments(left, right) {
@@ -805,10 +861,20 @@ fn sides_compare_test_with_non_literal<'a>(mut left: &'a str, mut right: &'a str
                     .chain(&right)
                     .any(|element| is_bool_test(element));
             }
-            return left
-                .iter()
-                .zip(&right)
-                .any(|(left, right)| sides_compare_test_with_non_literal(left, right));
+            // A test paired with anything but `true` may be asserted false
+            // (`[r == Err(E::Bad), x == 1]` against `[false, true]`).
+            let not_true =
+                |side: &str| literal_spelling_value(&mask_comments_and_strings(side)) != Some(true);
+            return left.iter().zip(&right).any(|(left, right)| {
+                (is_bool_test(left) && not_true(right))
+                    || (is_bool_test(right) && not_true(left))
+                    || sides_compare_test_with_non_literal(left, right)
+            });
+        }
+        // Any other wrapper around a test fails closed: its equality does
+        // not say the test held.
+        if holds_wrapped_test(left) || holds_wrapped_test(right) {
+            return true;
         }
         let other = match (literal(left), literal(right)) {
             (false, false) => {
@@ -845,6 +911,10 @@ fn sequence_elements(side: &str) -> Option<Vec<String>> {
     // side's repeated value.
     if let Some(value) = repeated_value(&contents) {
         return Some(vec![value.to_string()]);
+    }
+    // An empty or unknown-length repeat has no elements to pair.
+    if top_level_semicolon(&mask_comments_and_strings(&contents)).is_some() {
+        return None;
     }
     Some(super::arguments::split_top_level_commas(&contents))
 }

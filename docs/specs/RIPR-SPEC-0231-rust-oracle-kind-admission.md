@@ -334,10 +334,17 @@ Two pattern terms are used below.
    `.to_owned()` on one operand, so `assert_eq!(Some(r == Err(E::Bad)),
    Some(expected))` caps and `assert_eq!(Some(r == Err(E::Bad)),
    Some(true))` reads as the comparison asserted true (#8101); a wrapped
-   plain value still pins (`assert_eq!(Some(x), Some(3))`), a lowercase
-   call stays an opaque call (`wrap(r == Err(E::Bad))`), and a wrapper
-   compared with a bare literal stays an unread call over its pattern
-   (`assert_eq!(Wrapper(matches!(..)), true)`). Such a comparison asserted by a
+   plain value still pins (`assert_eq!(Some(x), Some(3))`) and a lowercase
+   call stays an opaque call (`wrap(r == Err(E::Bad))`). A wrapped test reads
+   through its wrapper only against the same wrapper around a literal (the
+   same constructor, a turbofish aside, or the same repeat count); otherwise
+   it caps (`assert_eq!(Wrapper(r == Err(E::Bad)), true)`,
+   `assert_eq!(Wrapper(matches!(..)), Other(true))`). Only `Some` and `Ok`
+   unwrap to what they hold, a `new` or `from` call other than `Box`, `Rc`
+   or `Arc` may discard its argument, an empty or unknown-length repeat
+   (`[..; 0]`, `[..; n]`) holds nothing, and a test paired with anything but
+   `true` in an equal-length sequence caps (`assert_eq!([r == Err(E::Bad),
+   x == 1], [false, true])`). Such a comparison asserted by a
    boolean literal caps the same way (`assert_eq!((r == Err(E::Bad)) as u8
    == 0, true)`, `assert_eq!((r == Err(E::Bad)) == flag, true)`), and a
    path call to `not` negates like `!` (`assert_eq!(Not::not(r ==
