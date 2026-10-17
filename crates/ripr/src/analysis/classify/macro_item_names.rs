@@ -14,8 +14,10 @@
 //!   `use .. as name`);
 //! - an invoked local `macro_rules!` declares an item through a fragment
 //!   binder (`fn $name`) and an invocation mentions the name; or
-//! - an item-position invocation of any macro mentions the name in its
-//!   arguments (`emit!(suit_color)`).
+//! - an item-position invocation of a non-local macro passes the name as a
+//!   bare top-level argument (`emit!(suit_color)`). A call, path or method
+//!   use, or a mention nested in a braced body (`proptest! { fn t() {
+//!   f(suit_color(1)); } }`), binds nothing.
 //!
 //! The answer rides the shared same-name gate: both
 //! `ProbeContext::test_file_imports_foreign_callee_name` (memoized) and
@@ -91,13 +93,13 @@ pub(in crate::analysis) fn macro_may_define_item_named(source: &str, name: &str)
             invocations.push((
                 macro_name,
                 contains_as_whole_word(&arguments, name),
-                item_position,
+                item_position && passes_name_as_bare_argument(&arguments, name),
             ));
         }
     }
     invocations
         .iter()
-        .any(|(macro_name, mentions_name, item_position)| {
+        .any(|(macro_name, mentions_name, bare_item_argument)| {
             let local = definitions
                 .iter()
                 .filter(|(defined, _)| defined == macro_name)
@@ -106,7 +108,11 @@ pub(in crate::analysis) fn macro_may_define_item_named(source: &str, name: &str)
                 // An unread expansion can only receive the name through its
                 // arguments, and only an item-position call defines items
                 // for the whole file.
-                return *item_position && *mentions_name;
+                // A std expression macro defines no item; a body fragment
+                // (the helper-hop fallback source) parses its statement
+                // macros at "item position".
+                return *bare_item_argument
+                    && !STD_EXPRESSION_MACROS.contains(&macro_name.as_str());
             }
             local.iter().any(|(_, definition)| {
                 declares_item_named(definition, name)
@@ -114,6 +120,74 @@ pub(in crate::analysis) fn macro_may_define_item_named(source: &str, name: &str)
             })
         })
 }
+
+/// Whether the invocation's top-level arguments pass `name` as a bare
+/// identifier (`emit!(name)`, `emit!(name, u8)`), not as a call, path
+/// segment or method receiver, and not nested inside a braced, bracketed or
+/// parenthesized group such as a `proptest! { .. }` body that merely calls it.
+fn passes_name_as_bare_argument(masked_arguments: &str, name: &str) -> bool {
+    let trimmed = masked_arguments.trim();
+    let inner = trimmed
+        .strip_prefix(['(', '[', '{'])
+        .and_then(|rest| rest.strip_suffix([')', ']', '}']))
+        .unwrap_or(trimmed);
+    // Keep depth-0 characters; a nested group collapses to one `(` marker.
+    let mut top_level = String::new();
+    let mut depth = 0usize;
+    for character in inner.chars() {
+        match character {
+            '(' | '[' | '{' => {
+                if depth == 0 {
+                    top_level.push('(');
+                }
+                depth += 1;
+            }
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            _ if depth == 0 => top_level.push(character),
+            _ => {}
+        }
+    }
+    let word_edge = |c: Option<char>| c.is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'));
+    top_level.match_indices(name).any(|(at, _)| {
+        let end = at + name.len();
+        let before = top_level[..at].trim_end();
+        let after = top_level[end..].trim_start();
+        word_edge(top_level[..at].chars().next_back())
+            && word_edge(top_level[end..].chars().next())
+            && !before.ends_with("::")
+            && !before.ends_with('.')
+            && !after.starts_with('(')
+            && !after.starts_with("::")
+            && !after.starts_with('.')
+    })
+}
+
+/// Standard-library macros that expand to expressions or statements and
+/// never define an item. A file-local `macro_rules!` of the same name is
+/// handled by the local-definition branch before this list is consulted.
+const STD_EXPRESSION_MACROS: &[&str] = &[
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "matches",
+    "format",
+    "format_args",
+    "print",
+    "println",
+    "eprint",
+    "eprintln",
+    "write",
+    "writeln",
+    "vec",
+    "dbg",
+    "panic",
+    "todo",
+    "unimplemented",
+    "unreachable",
+];
 
 /// Whether masked macro text spells an item declaration of `name`.
 fn declares_item_named(masked: &str, name: &str) -> bool {
@@ -191,6 +265,27 @@ mod tests {
         let source = "macro_rules! make {\n    ($n:ident) => { fn $n() -> u8 { 1 } };\n}\nmake!(suit_color);\n";
         assert!(macro_may_define_item_named(source, "suit_color"));
         assert!(!macro_may_define_item_named(source, "other_name"));
+    }
+
+    #[test]
+    fn a_std_expression_macro_mentioning_the_name_defines_nothing() {
+        // A body fragment parses its statement macros at item position.
+        assert!(!macro_may_define_item_named(
+            "assert!(entry(9));\n",
+            "entry"
+        ));
+        assert!(macro_may_define_item_named("emit!(entry);\n", "entry"));
+        assert!(macro_may_define_item_named("emit!(entry, u8);\n", "entry"));
+        // Item-position property macros that call the owner inside their
+        // body bind nothing.
+        for source in [
+            "proptest! {\n    #[test]\n    fn t(x in 0..9u32) { assert_eq!(entry(x), 1); }\n}\n",
+            "quickcheck! { fn t(x: u32) -> bool { entry(x) == 1 } }\n",
+            "thread_local! { static CACHE: u32 = entry(1); }\n",
+            "emit!(entry(1));\n",
+        ] {
+            assert!(!macro_may_define_item_named(source, "entry"), "{source}");
+        }
     }
 
     #[test]

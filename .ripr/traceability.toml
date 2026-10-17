@@ -14782,6 +14782,8 @@ tests = [
   "crates/ripr/tests/match_arm_helper_selection.rs::a_variable_helper_argument_does_not_expose_the_arm",
   "crates/ripr/tests/match_arm_helper_selection.rs::a_macro_defined_same_named_fn_does_not_expose_the_arm",
   "crates/ripr/tests/match_arm_helper_selection.rs::a_macro_defining_an_unrelated_fn_still_exposes_the_arm",
+  "crates/ripr/tests/match_arm_helper_selection.rs::the_macro_alone_defeats_the_helper_credit",
+  "crates/ripr/src/analysis/classify/macro_item_names.rs::tests::a_std_expression_macro_mentioning_the_name_defines_nothing",
   "crates/ripr/src/analysis/classify/macro_item_names.rs::tests",
   "crates/ripr/src/analysis/classify/helper_transfer.rs::tests::test_call_is_shadowed_by_a_macro_defined_same_named_fn",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::macro_defined_same_name_is_a_foreign_rebind_for_every_gate_caller",

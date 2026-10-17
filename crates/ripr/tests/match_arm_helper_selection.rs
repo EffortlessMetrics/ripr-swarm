@@ -109,6 +109,30 @@ fn spades_are_black() {
 }
 "#;
 
+// Discriminating pair for the macro rule alone: both sources carry the real
+// own-crate import (so no import-defeat gate fires) and the same check
+// helper; only the name the macro defines differs.
+const MACRO_ONLY_SHADOW_HELPER_TEST: &str = r#"use match_arm_helper_selection::suit_color;
+
+macro_rules! fake {
+    () => {
+        fn suit_color(_s: char) -> &'static str {
+            "black"
+        }
+    };
+}
+fake!();
+
+fn check_color(suit: char, want: &str) {
+    assert_eq!(suit_color(suit), want);
+}
+
+#[test]
+fn spades_are_black() {
+    check_color('S', "black");
+}
+"#;
+
 const UNRELATED_MACRO_TEST: &str = r#"use match_arm_helper_selection::suit_color;
 
 macro_rules! unrelated {
@@ -277,6 +301,38 @@ fn a_macro_defined_same_named_fn_does_not_expose_the_arm() -> Result<(), String>
                 finding.ripr.reveal.discriminate
             );
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn the_macro_alone_defeats_the_helper_credit() -> Result<(), String> {
+    // Control: the same source with the macro defining another name credits.
+    let control = MACRO_ONLY_SHADOW_HELPER_TEST.replace("fn suit_color", "fn other_name");
+    assert_ne!(
+        control, MACRO_ONLY_SHADOW_HELPER_TEST,
+        "control must differ"
+    );
+    let repo = TempRepo::create(&control)?;
+    let control_output = repo.check()?;
+    let arms = changed_arms(&control_output)?;
+    assert!(!arms.is_empty(), "the changed arm must be analyzed");
+    for finding in arms {
+        assert_eq!(
+            finding.class,
+            ripr::ExposureClass::Exposed,
+            "control: the real import reaches the owner: {:?}",
+            finding.ripr.reveal.discriminate
+        );
+    }
+    let repo = TempRepo::create(MACRO_ONLY_SHADOW_HELPER_TEST)?;
+    for finding in changed_arms(&repo.check()?)? {
+        assert_ne!(
+            finding.class,
+            ripr::ExposureClass::Exposed,
+            "the macro-defined `suit_color` must defeat the credit: {:?}",
+            finding.ripr.reveal.discriminate
+        );
     }
     Ok(())
 }
