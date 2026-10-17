@@ -1,0 +1,38 @@
+{
+  "evidence_commit": "df88d1349c742571830a63bad144490db4a66b5c",
+  "source_commit": "a1ea790e923ae6036efdd9457ffc16ea2ad93348",
+  "verified_at": "2026-10-17T01:11:00.043240+00:00",
+  "files": [
+    {
+      "path": "evidence/3161/unrelated-return-snapshot-a1ea790e/README.md",
+      "url": "https://raw.githubusercontent.com/EffortlessMetrics/ripr-swarm/df88d1349c742571830a63bad144490db4a66b5c/evidence/3161/unrelated-return-snapshot-a1ea790e/README.md",
+      "bytes": 5333,
+      "sha256": "bdcf04fb90604a32c1204549ef01002652b0eba06ae5f3d3a86dcadb56c4c419",
+      "matches_local": true
+    },
+    {
+      "path": "evidence/3161/unrelated-return-snapshot-a1ea790e/summary.json",
+      "url": "https://raw.githubusercontent.com/EffortlessMetrics/ripr-swarm/df88d1349c742571830a63bad144490db4a66b5c/evidence/3161/unrelated-return-snapshot-a1ea790e/summary.json",
+      "bytes": 9294,
+      "sha256": "a0da1851a704601fb002ededf379fd5ae474c1ecdeb3fd92cb46da1fe30940ce",
+      "matches_local": true
+    },
+    {
+      "path": "evidence/3161/unrelated-return-snapshot-a1ea790e/inventory.json",
+      "url": "https://raw.githubusercontent.com/EffortlessMetrics/ripr-swarm/df88d1349c742571830a63bad144490db4a66b5c/evidence/3161/unrelated-return-snapshot-a1ea790e/inventory.json",
+      "bytes": 28440,
+      "sha256": "a4d34e0d32787123101fac46d8173d0bf67708c4f47d9ed5d418efeadf6f9c70",
+      "matches_local": true
+    },
+    {
+      "path": "evidence/3161/unrelated-return-snapshot-a1ea790e/packet.tar.gz",
+      "url": "https://raw.githubusercontent.com/EffortlessMetrics/ripr-swarm/df88d1349c742571830a63bad144490db4a66b5c/evidence/3161/unrelated-return-snapshot-a1ea790e/packet.tar.gz",
+      "bytes": 44293,
+      "sha256": "354a40aefdcbe3f782258cdd285acaf8a39afef1c938300fb23097b14197f285",
+      "matches_local": true
+    }
+  ],
+  "archive_members_verified": 154,
+  "inventory_bytes_hash_mode_match": true,
+  "retrieval": "Fresh independent HTTPS reads of the new public source-evidence commit. No historical denied artifact URL or protection endpoint was retried."
+}
