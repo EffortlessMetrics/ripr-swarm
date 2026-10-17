@@ -2386,6 +2386,19 @@ assertions. This repair shares the existing callback without that larger migrati
   gains `exposed` through the pin unless its confirming assertion is a
   complete call that names the owner on the changed return path.
 
+### Shared boolean check-helper collection (#7788)
+
+The shared parser-backed helper execution admission collects bare `assert!`
+alongside `assert_eq!` under the same eager-call, no-return, unique helper and
+macro-binding gates. This preserves legitimate boolean assertions borrowed by
+MatchArm tests when RIPR-SPEC-0229 gates their execution. It does not admit
+fallible helper results, `ensure!`, qualified macros or arbitrary helper calls.
+The existing bool owner-return matcher may consume these admitted facts only
+under its separate whole-result operand and owner-call identity rules.
+
+The separate rule-7 source-role eligibility for top-level `Production` helpers
+in integration targets continues to require `assert_eq!`; this change does not
+expand integration-helper discovery or harness ownership.
 
 ## Literal JSON construction admission (#7776)
 
