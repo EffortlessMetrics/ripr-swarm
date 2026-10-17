@@ -7,6 +7,9 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[path = "windows_advisory_identity/owner_pin_capture.rs"]
+mod owner_pin_capture;
+
 const CONTROLS: &[(&str, &str, &str)] = &[
     (
         "unittests src/lib.rs",
@@ -339,6 +342,24 @@ fn an_orphan_completion_cannot_complete_a_run() -> Result<(), String> {
         clean,
         1,
         &["Run 1: `incomplete_evidence`", "provenance:"],
+        &["Run 1: `completed_clean`", "No test failed in either run."],
+    )
+}
+
+#[test]
+fn an_empty_orphan_completion_cannot_complete_a_run() -> Result<(), String> {
+    let clean = controls(None);
+    // Zero totals agree with reset counters: only real harness ownership can
+    // refuse this orphan, independently of the contradictory-count guard.
+    let orphan = "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n";
+    verify(
+        clean.clone() + orphan,
+        clean,
+        1,
+        &[
+            "Run 1: `incomplete_evidence`",
+            "completion summary without an announced owning harness",
+        ],
         &["Run 1: `completed_clean`", "No test failed in either run."],
     )
 }
@@ -857,6 +878,23 @@ fn native_empty_child_summary_preserves_the_parent_harness() -> Result<(), Strin
         0,
         &["observed 15 pass, 0 fail"],
         &["incomplete_evidence", "not_observed"],
+    )
+}
+
+#[test]
+fn nonempty_unowned_child_is_incomplete_with_all_controls_present() -> Result<(), String> {
+    let nested = "running 1 test\ntest captured_child ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n";
+    let log = controls(None)
+        + &alpha("ok").replace(
+            "test same_name ... ok",
+            &format!("{nested}test same_name ... ok"),
+        );
+    verify(
+        log.clone(),
+        log,
+        1,
+        &["incomplete_evidence", "unowned nested harness"],
+        &["No test failed in either run."],
     )
 }
 

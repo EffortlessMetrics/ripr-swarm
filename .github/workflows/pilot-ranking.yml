@@ -5,19 +5,18 @@ name: Pilot Ranking
 # scored share, function diversity, verdict counts and pick count on the
 # `ranking` scoreboard against metrics/dx-scoreboard/pilot-ranking-baseline.json.
 # Advisory and late: it runs nightly, on demand, and when a pull request that
-# touches pilot ranking, seam grading or this answer key is opened ready or
-# leaves draft. Like the required lanes, a push after that reruns it only
-# through a draft-to-ready toggle. It never runs cargo-mutants; the labels are
-# committed. The path filter lists the direct inputs to the ranking; the
-# nightly run covers changes further away. Network use (fetching the five
-# pinned crates) stays inside this workflow.
+# touches pilot ranking, seam grading or this answer key has the merge-ready
+# label applied. A later push does not rerun it; re-apply the label. It never
+# runs cargo-mutants; the labels are committed. The path filter lists the
+# direct inputs to the ranking; the nightly run covers changes further away.
+# Network use (fetching the five pinned crates) stays inside this workflow.
 
 on:
   workflow_dispatch:
   schedule:
     - cron: "29 6 * * *"
   pull_request:
-    types: [opened, ready_for_review]
+    types: [opened, synchronize, reopened, labeled]
     paths:
       - "crates/ripr/src/output/pilot/**"
       - "crates/ripr/src/output/path.rs"
@@ -46,13 +45,17 @@ on:
 permissions:
   contents: read
 
+# Only a `merge-ready` labeled request shares this group, so a re-applied label
+# supersedes the older run for the same PR. Every other pull_request event
+# (opened, synchronize, reopened, other labels) gets a unique group: its jobs
+# are skipped and it can neither cancel nor replace a pending merge-ready run.
 concurrency:
-  group: pilot-ranking-${{ github.ref }}
-  cancel-in-progress: true
+  group: pilot-ranking-${{ github.event.pull_request.number || github.ref }}-${{ (github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run' }}
+  cancel-in-progress: ${{ (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') || github.event_name != 'pull_request' }}
 
 jobs:
   ranking:
-    if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft)
+    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

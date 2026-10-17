@@ -164,6 +164,7 @@ fn doctor_json(
     {
         report.add_advisory_check("linker_temp_redirect", advisory);
     }
+    report.attach_canonical_next_action(root);
     println!("{}", report.render_json()?);
     output::doctor::doctor_report_result(&report)
 }
@@ -300,6 +301,7 @@ fn cache_status(root: &Path) -> output::doctor::DoctorCacheStatus {
         size_bytes,
         size_display: format_bytes(size_bytes),
         artifact_ignore: ripr_artifact_ignore(root),
+        artifact_tracking: ripr_artifact_tracking(root),
     }
 }
 
@@ -580,6 +582,10 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
         &environment.facts.detected_languages,
         &environment.facts.unanalyzed_source_languages,
     ));
+    lines.extend(perl_not_enabled_line(
+        &environment.facts.detected_languages,
+        environment.facts.perl_preview.as_ref(),
+    ));
     // Compact keeps the ignored-[perl].executable disclosure: the full
     // Perl preview dump is verbose-only, but this line is a safety
     // contract (`repo_config_perl_executable_runs_only_with_user_opt_in`).
@@ -617,6 +623,9 @@ Point RIPR_CACHE_DIR at a writable directory.",
     // repair signal, so it stays on the compact screen. The line renders the
     // typed verdict the JSON report carries (#8257 review).
     if let output::doctor::DoctorArtifactIgnore::Unignored { warning } = &cache.artifact_ignore {
+        lines.push(warning.clone());
+    }
+    if let output::doctor::DoctorArtifactTracking::Tracked { warning } = &cache.artifact_tracking {
         lines.push(warning.clone());
     }
 
@@ -660,27 +669,11 @@ Point RIPR_CACHE_DIR at a writable directory.",
                 lines.push(format!(
                     "- Safe next action: {error}; restore access or select a lossless root alias, then rerun doctor."
                 ));
-            } else if !passed && matches!(first, output::doctor::DoctorFirstCommand::MissingRoot) {
-                lines.push(
-                    "- Safe next action: fix the selected root first (see below); no check command can run until it exists"
-                        .to_string(),
-                );
-            } else if !passed && matches!(first, output::doctor::DoctorFirstCommand::InvalidConfig)
+            } else if let Some(line) =
+                output::doctor::safe_next_action_recovery_line(report, first, root)
+                    .filter(|_| !passed)
             {
-                lines.push(
-                    "- Safe next action: correct `ripr.toml` so it loads; no check command can run until it does"
-                        .to_string(),
-                );
-            } else if !passed
-                && matches!(
-                    first,
-                    output::doctor::DoctorFirstCommand::FailedPrerequisites
-                )
-            {
-                lines.push(
-                    "- Safe next action: fix the `!` checks above; no check command can run until they pass"
-                        .to_string(),
-                );
+                lines.push(line.to_string());
             }
             lines.extend(first.recommendation_lines_for(root));
             if matches!(first, output::doctor::DoctorFirstCommand::Worktree) {
@@ -755,6 +748,9 @@ fn cache_detail_lines(cache: &output::doctor::DoctorCacheStatus) -> Vec<String> 
     ));
     // Same typed verdict the compact screen renders (#7663, #8257 review).
     if let output::doctor::DoctorArtifactIgnore::Unignored { warning } = &cache.artifact_ignore {
+        lines.push(warning.clone());
+    }
+    if let output::doctor::DoctorArtifactTracking::Tracked { warning } = &cache.artifact_tracking {
         lines.push(warning.clone());
     }
     lines
@@ -926,27 +922,11 @@ fn doctor_start_here_lines(
                 // The missing-root recommendation is a recovery action, not a
                 // runnable command (#5252 item 3): sending the reader to "run"
                 // it would prescribe the failure doctor just diagnosed.
-                if matches!(first, output::doctor::DoctorFirstCommand::MissingRoot) {
-                    lines.push(
-                        "- Safe next action: fix the selected root first (see below); no check command can run until it exists"
-                            .to_string(),
-                    );
-                } else if matches!(first, output::doctor::DoctorFirstCommand::InvalidConfig) {
-                    lines.push(
-                        "- Safe next action: correct `ripr.toml` so it loads; no check command can run until it does"
-                            .to_string(),
-                    );
-                } else if matches!(first, output::doctor::DoctorFirstCommand::FailedPrerequisites) {
-                    lines.push(
-                        "- Safe next action: fix the `!` checks above; no check command can run until they pass"
-                            .to_string(),
-                    );
-                } else {
-                    lines.push(
-                        "- Safe next action: run the recommended first command below; it produces the evidence the packet is composed from"
-                            .to_string(),
-                    );
-                }
+                lines.push(
+                    output::doctor::safe_next_action_recovery_line(report, first, root)
+                        .unwrap_or(output::doctor::SAFE_NEXT_ACTION_RUN_FIRST_LINE)
+                        .to_string(),
+                );
             }
             Err(error) => lines.push(format!(
                 "- Safe next action: {error}; restore access or select a lossless root alias, then rerun doctor."
@@ -1917,6 +1897,12 @@ fn path_command_candidates(
         } else {
             format!(".{}", ext.to_ascii_lowercase())
         };
+        // `CreateProcessW` (what process spawning uses) launches only these
+        // suffixes directly; interpreter-only entries such as `.PS1`, `.VBS`
+        // or `.JS` would be chosen first and then fail to start (#5351).
+        if !matches!(ext.as_str(), ".com" | ".exe" | ".bat" | ".cmd") {
+            continue;
+        }
         let candidate = dir.join(format!("{name}{ext}"));
         if !candidates.contains(&candidate) {
             candidates.push(candidate);
@@ -1947,6 +1933,33 @@ fn ignored_perl_executable_disclosure(refused: &str) -> String {
         "ignoring [perl].executable `{}` from ripr.toml (not run)",
         display_text(refused)
     )
+}
+
+/// One line for a workspace where Perl is detected and its adapter is compiled
+/// in but `[languages] enabled` omits it: `ripr check` skips Perl until the
+/// config says otherwise. Names the managed-mode config and whether the
+/// canonical exporter is on PATH. Silent when Perl is enabled, not detected,
+/// not compiled (the detected-languages line already says so), or when
+/// enablement is unknown (config failed to load).
+fn perl_not_enabled_line(
+    detected: &[output::doctor::DoctorDetectedLanguage],
+    preview: Option<&output::doctor::DoctorPerlPreview>,
+) -> Option<String> {
+    let perl = detected
+        .iter()
+        .find(|language| language.language == LanguageId::Perl.as_str())?;
+    if !perl.adapter_available || perl.enabled != Some(false) {
+        return None;
+    }
+    let exporter = crate::domain::PERL_FACT_EXPORTER;
+    let on_path = match preview {
+        Some(p) if p.canonical_exporter_on_path => "is on PATH",
+        Some(_) => "is NOT on PATH",
+        None => "PATH state unknown",
+    };
+    Some(format!(
+        "~ Perl is detected but not enabled, so `ripr check` skips it. Add \"perl\" to `enabled` under `[languages]` and set `producer = \"{exporter}\"` under `[perl]` in ripr.toml; `{exporter}` {on_path}"
+    ))
 }
 
 fn ignored_perl_executable_compact_line(
@@ -2085,6 +2098,7 @@ fn probe_perl_preview(
         adapter_compiled,
         producer: producer_configured.clone(),
         ignored_configured_executable: refused_executable.map(|path| path.display().to_string()),
+        canonical_exporter_on_path: doctor_program(crate::domain::PERL_FACT_EXPORTER).is_some(),
         exporter: exporter_typed(&exporter),
         expected_schema: crate::app::PERL_FACT_PACKET_SCHEMA.to_string(),
         test_roots: detect_perl_test_roots(root),
@@ -2461,6 +2475,40 @@ fn ripr_artifact_ignore(root: &Path) -> output::doctor::DoctorArtifactIgnore {
                 .to_string(),
         },
         _ => DoctorArtifactIgnore::NotChecked,
+    }
+}
+
+/// The typed evidence on whether git's index tracks files under ripr's
+/// artifact root (#8276). An ignore rule never untracks files committed
+/// earlier, so a repository can cover `/target/ripr/` in `.gitignore` while
+/// `git add -A` keeps refreshing tracked reports and `ripr check` keeps
+/// diffing them. Only a positive non-empty `git ls-files --cached` answer
+/// warns; a missing repository, git failure, deadline, or output over the
+/// cap reports `NotChecked` rather than a fact doctor did not establish.
+fn ripr_artifact_tracking(root: &Path) -> output::doctor::DoctorArtifactTracking {
+    use output::doctor::DoctorArtifactTracking;
+    // The index can name tracked files whose directory was deleted from the
+    // worktree, so this probe does not depend on `target/ripr` existing.
+    let probe = match crate::git::run_git_output_with_deadline_and_limit(
+        root,
+        &["ls-files", "--cached", "-z", "--", "target/ripr"],
+        std::time::Duration::from_secs(5),
+        1024 * 1024,
+    ) {
+        Ok(probe) => probe,
+        Err(_) => return DoctorArtifactTracking::NotChecked,
+    };
+    if !probe.status.success() {
+        return DoctorArtifactTracking::NotChecked;
+    }
+    if probe.stdout.is_empty() {
+        return DoctorArtifactTracking::Untracked;
+    }
+    DoctorArtifactTracking::Tracked {
+        warning: "! ripr artifacts under target/ripr are tracked by git; `git add -A` keeps \
+                  refreshing them and `ripr check` diffs them. Untrack them with: \
+                  git rm --cached -r -- target/ripr"
+            .to_string(),
     }
 }
 
@@ -2904,6 +2952,7 @@ mod tests {
                     size_bytes: 0,
                     size_display: "0 B".to_string(),
                     artifact_ignore: output::doctor::DoctorArtifactIgnore::Ignored,
+                    artifact_tracking: output::doctor::DoctorArtifactTracking::Untracked,
                 },
                 test_surfaces: Vec::new(),
                 perl_preview: None,
@@ -3238,6 +3287,87 @@ mod tests {
         );
     }
 
+    fn perl_preview_with_exporter_on_path(on_path: bool) -> output::doctor::DoctorPerlPreview {
+        output::doctor::DoctorPerlPreview {
+            pm_files: 1,
+            pl_files: 0,
+            t_files: 0,
+            adapter_compiled: true,
+            producer: None,
+            ignored_configured_executable: None,
+            canonical_exporter_on_path: on_path,
+            exporter: output::doctor::DoctorPerlExporter {
+                state: output::doctor::DoctorPerlExporterState::NotFound,
+                executable: None,
+                version: None,
+            },
+            expected_schema: "1".to_string(),
+            test_roots: Vec::new(),
+            frameworks: Vec::new(),
+            runners: Vec::new(),
+            next_command: "next".to_string(),
+        }
+    }
+
+    #[test]
+    fn perl_detected_but_not_enabled_names_config_and_exporter_path_state() {
+        let mut perl = detected_entry(LanguageId::Perl, true);
+        perl.enabled = Some(false);
+        let detected = [perl];
+
+        let missing =
+            perl_not_enabled_line(&detected, Some(&perl_preview_with_exporter_on_path(false)))
+                .unwrap_or_default();
+        assert!(missing.contains("detected but not enabled"), "{missing}");
+        assert!(missing.contains("[languages]"), "{missing}");
+        assert!(
+            missing.contains("producer = \"perl-ripr-facts\""),
+            "{missing}"
+        );
+        assert!(missing.contains("[perl]"), "{missing}");
+        assert!(
+            missing.contains("`perl-ripr-facts` is NOT on PATH"),
+            "{missing}"
+        );
+
+        let found =
+            perl_not_enabled_line(&detected, Some(&perl_preview_with_exporter_on_path(true)))
+                .unwrap_or_default();
+        assert!(found.contains("`perl-ripr-facts` is on PATH"), "{found}");
+    }
+
+    #[test]
+    fn perl_not_enabled_line_stays_silent_when_it_would_mislead() {
+        let preview = perl_preview_with_exporter_on_path(true);
+        let mut enabled = detected_entry(LanguageId::Perl, true);
+        enabled.enabled = Some(true);
+        let mut unknown = detected_entry(LanguageId::Perl, true);
+        unknown.enabled = None;
+        let mut not_compiled = detected_entry(LanguageId::Perl, false);
+        not_compiled.enabled = Some(false);
+        let mut rust = detected_entry(LanguageId::Rust, true);
+        rust.enabled = Some(false);
+        for case in [enabled, unknown, not_compiled, rust] {
+            assert_eq!(
+                perl_not_enabled_line(std::slice::from_ref(&case), Some(&preview)),
+                None,
+                "{case:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn compact_screen_carries_perl_not_enabled_line() {
+        let report = passing_report();
+        let mut environment = empty_environment();
+        let mut perl = detected_entry(LanguageId::Perl, true);
+        perl.enabled = Some(false);
+        environment.facts.detected_languages = vec![perl];
+        environment.facts.perl_preview = Some(perl_preview_with_exporter_on_path(false));
+        let text = render_screen(&report, &environment, false, true).join("\n");
+        assert!(text.contains("Perl is detected but not enabled"), "{text}");
+    }
+
     #[test]
     fn compact_discloses_ignored_perl_executable() {
         let report = passing_report();
@@ -3249,6 +3379,7 @@ mod tests {
             adapter_compiled: false,
             producer: Some("perl-ripr-facts".to_string()),
             ignored_configured_executable: Some("sh".to_string()),
+            canonical_exporter_on_path: false,
             exporter: output::doctor::DoctorPerlExporter {
                 state: output::doctor::DoctorPerlExporterState::NotFound,
                 executable: None,
@@ -3293,6 +3424,7 @@ mod tests {
             adapter_compiled: false,
             producer: Some("perl-ripr-facts".to_string()),
             ignored_configured_executable: Some("sh\n! doctor checks passed\u{1b}[2J".to_string()),
+            canonical_exporter_on_path: false,
             exporter: output::doctor::DoctorPerlExporter {
                 state: output::doctor::DoctorPerlExporterState::NotFound,
                 executable: None,
@@ -3593,6 +3725,7 @@ mod tests {
             adapter_compiled: false,
             producer: Some("perl-ripr-facts".to_string()),
             ignored_configured_executable: Some("sh".to_string()),
+            canonical_exporter_on_path: false,
             exporter: output::doctor::DoctorPerlExporter {
                 state: output::doctor::DoctorPerlExporterState::NotFound,
                 executable: None,
@@ -3784,6 +3917,70 @@ mod tests {
             .map_err(|error| error.to_string())?;
         assert_eq!(ripr_artifact_ignore(&root), DoctorArtifactIgnore::Ignored);
         let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_artifact_tracking_names_the_untrack_command() -> Result<(), String> {
+        use output::doctor::{DoctorArtifactIgnore, DoctorArtifactTracking};
+        let root = unique_command_test_dir("artifact-tracked");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        // Outside a repository nothing is established.
+        let empty_excludes = root.join("empty-excludes");
+        std::fs::write(&empty_excludes, "").map_err(|error| error.to_string())?;
+        for args in [
+            ["init"].as_slice(),
+            ["config", "user.email", "ripr@example.invalid"].as_slice(),
+            ["config", "user.name", "ripr tests"].as_slice(),
+            [
+                "config",
+                "core.excludesFile",
+                empty_excludes.to_str().ok_or("non-utf8 excludes path")?,
+            ]
+            .as_slice(),
+        ] {
+            crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
+        }
+        // A repository with an empty index is positively untracked.
+        assert_eq!(
+            ripr_artifact_tracking(&root),
+            DoctorArtifactTracking::Untracked
+        );
+
+        let artifact = root.join("target").join("ripr").join("pilot");
+        std::fs::create_dir_all(&artifact).map_err(|error| error.to_string())?;
+        std::fs::write(artifact.join("report.json"), "{}").map_err(|error| error.to_string())?;
+        std::fs::write(root.join(".gitignore"), "/target/ripr/\n")
+            .map_err(|error| error.to_string())?;
+        // Ignored but never added: the ignore rule is not tracking.
+        assert_eq!(ripr_artifact_ignore(&root), DoctorArtifactIgnore::Ignored);
+        assert_eq!(
+            ripr_artifact_tracking(&root),
+            DoctorArtifactTracking::Untracked
+        );
+
+        // Force-add past the ignore rule: the exact state of an earlier
+        // commit that predates the rule. The ignore verdict stays Ignored.
+        crate::git::run_git(&root, &["add", "-f", "--", "target/ripr/pilot/report.json"])
+            .map_err(|error| error.to_string())?;
+        assert_eq!(ripr_artifact_ignore(&root), DoctorArtifactIgnore::Ignored);
+        match ripr_artifact_tracking(&root) {
+            DoctorArtifactTracking::Tracked { warning } => {
+                assert!(
+                    warning.contains("git rm --cached -r -- target/ripr"),
+                    "{warning}"
+                );
+            }
+            other => return Err(format!("expected Tracked, got {other:?}")),
+        }
+        let _ = std::fs::remove_dir_all(&root);
+
+        // A root git cannot even run in establishes nothing: the spawn
+        // fails and doctor reports NotChecked rather than a verdict.
+        assert_eq!(
+            ripr_artifact_tracking(&root),
+            DoctorArtifactTracking::NotChecked
+        );
         Ok(())
     }
 
@@ -4427,6 +4624,34 @@ mod tests {
             bare_only,
             Some(bare),
             "extensionless PATH prove remains a fallback: {bare_only:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn path_command_in_windows_skips_interpreter_only_pathext() -> Result<(), String> {
+        // Customized PATHEXT lists `.PS1` ahead of `.EXE`; `perllsp.ps1` cannot
+        // be spawned directly, so the working `perllsp.exe` must win (#5351).
+        let path_dir = PathBuf::from("bin");
+        let ps1 = path_dir.join("perllsp.ps1");
+        let exe = path_dir.join("perllsp.exe");
+        let path = joined_path(&[path_dir.to_str().ok_or("path dir utf-8")?])?;
+        let pathext = Some(".PS1;.VBS;.JS;.COM;.EXE;.BAT;.CMD");
+        let found = path_command_in("perllsp", &path, pathext, true, &|candidate| {
+            candidate == ps1.as_path() || candidate == exe.as_path()
+        });
+        assert_eq!(found, Some(exe), "perllsp.exe must beat .ps1: {found:?}");
+        let ps1_only = path_command_in("perllsp", &path, pathext, true, &|candidate| {
+            candidate == ps1.as_path()
+        });
+        assert_eq!(
+            ps1_only, None,
+            "interpreter-only script is not launchable: {ps1_only:?}"
+        );
+        let candidates = path_command_candidates(&path_dir, "perllsp", pathext, true);
+        assert!(
+            !candidates.contains(&ps1),
+            "candidates must exclude .ps1: {candidates:?}"
         );
         Ok(())
     }

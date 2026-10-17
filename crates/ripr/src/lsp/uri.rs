@@ -180,6 +180,17 @@ pub(super) fn file_uri_relative_to_root(root: &Path, uri: &Uri) -> Option<PathBu
 }
 
 pub(super) fn file_uris_match(left: &Uri, right: &Uri) -> bool {
+    file_uris_match_on(
+        left,
+        right,
+        crate::output::path::host_paths_case_insensitive(),
+    )
+}
+
+/// [`file_uris_match`] with host case-insensitivity explicit. Windows drive
+/// paths always fold case (the drive spelling is host-independent); other
+/// paths fold only on a case-insensitive host.
+pub(super) fn file_uris_match_on(left: &Uri, right: &Uri, case_insensitive_host: bool) -> bool {
     let Some(left_path) = normalized_file_uri_path(left) else {
         return false;
     };
@@ -194,6 +205,9 @@ pub(super) fn file_uris_match(left: &Uri, right: &Uri) -> bool {
     if windows_paths::is_windows_drive_path(&left_path)
         && windows_paths::is_windows_drive_path(&right_path)
     {
+        return left_path.eq_ignore_ascii_case(&right_path);
+    }
+    if case_insensitive_host {
         return left_path.eq_ignore_ascii_case(&right_path);
     }
     left_path == right_path
@@ -453,7 +467,15 @@ pub(super) fn normalize_path(path: &Path) -> PathBuf {
 }
 
 fn paths_equal_or_below(root: &Path, candidate: &Path) -> bool {
-    if cfg!(windows) {
+    paths_equal_or_below_on(
+        root,
+        candidate,
+        crate::output::path::host_paths_case_insensitive(),
+    )
+}
+
+fn paths_equal_or_below_on(root: &Path, candidate: &Path, case_insensitive: bool) -> bool {
+    if case_insensitive {
         let root_components = root
             .components()
             .map(|component| component.as_os_str().to_string_lossy().to_ascii_lowercase())
@@ -546,8 +568,37 @@ mod tests {
         let upper = parse_uri("file:///workspace/ripr/src/Lib.rs")?;
         let lower = parse_uri("file:///workspace/ripr/src/lib.rs")?;
 
-        assert!(!file_uris_match(&upper, &lower));
+        assert!(!file_uris_match_on(&upper, &lower, false));
         Ok(())
+    }
+
+    #[test]
+    fn file_uris_match_folds_posix_paths_on_case_insensitive_hosts() -> Result<(), String> {
+        let upper = parse_uri("file:///workspace/ripr/src/Lib.rs")?;
+        let lower = parse_uri("file:///workspace/ripr/src/lib.rs")?;
+        let other = parse_uri("file:///workspace/ripr/src/main.rs")?;
+
+        assert!(file_uris_match_on(&upper, &lower, true));
+        assert!(!file_uris_match_on(&upper, &other, true));
+        Ok(())
+    }
+
+    #[test]
+    fn root_containment_follows_explicit_host_case_rule() {
+        let root = Path::new("/Workspace/Ripr");
+        let candidate = Path::new("/workspace/ripr/src/lib.rs");
+        assert!(paths_equal_or_below_on(root, candidate, true));
+        assert!(!paths_equal_or_below_on(root, candidate, false));
+        assert!(!paths_equal_or_below_on(
+            root,
+            Path::new("/workspace/other/lib.rs"),
+            true
+        ));
+        assert!(paths_equal_or_below_on(
+            root,
+            Path::new("/Workspace/Ripr/a.rs"),
+            false
+        ));
     }
 
     #[test]

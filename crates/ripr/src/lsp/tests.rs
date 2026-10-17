@@ -9398,6 +9398,12 @@ async fn did_open_matching_disk_bytes_with_stale_committed_snapshot_keeps_refres
             "a clean open over matching committed snapshot bytes reached the scheduler".into(),
         );
     }
+    if backend.document_quarantine(&uri).is_some() {
+        return Err(
+            "a clean open of bytes the committed snapshot analyzed must not be quarantined as never analyzed"
+                .into(),
+        );
+    }
 
     // The file changed on disk while it was closed and no watch event
     // arrived. The reopened buffer matches the new persisted bytes, so the
@@ -11852,6 +11858,56 @@ fn workspace_folder_transitions_second_folder_becomes_ambiguous_without_fallback
             if status["repair_actions_available"].as_bool() != Some(false) {
                 return Err(format!(
                     "an ambiguous workspace must block repair authority: {status}"
+                ));
+            }
+            // #7461: the recovery route must name the end state the user can
+            // actually produce (one folder plus a restart), not a phantom
+            // root-selection step — no server command, setting, or request
+            // selects a root.
+            if status["root_recovery_route"].as_str()
+                != Some("use_single_workspace_root_and_restart")
+            {
+                return Err(format!(
+                    "an ambiguous workspace must route to a single-root restart: {status}"
+                ));
+            }
+            let full = client.run_command(COLLECT_WORKSPACE_STATUS_COMMAND).await?;
+            if full["top_limitation"]["recovery_route"].as_str()
+                != Some("use_single_workspace_root_and_restart")
+            {
+                return Err(format!(
+                    "the ambiguous top limitation must route to a single-root restart: {full}"
+                ));
+            }
+            // The hover carries the same actionable recovery: remove the
+            // extra folder (or give each repository its own window), then
+            // restart the server.
+            let hover_file = file_uri_for_path(&root_a.path().join("src").join("lib.rs"))?;
+            let id = client.request_id();
+            write_lsp_message(
+                &mut client.writer,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "method": "textDocument/hover",
+                    "params": {
+                        "textDocument": {"uri": hover_file.as_str()},
+                        "position": {"line": 0, "character": 0}
+                    }
+                }),
+            )
+            .await?;
+            let hover = read_lsp_response(&mut client.reader, id).await?;
+            let value = hover["result"]["contents"]["value"]
+                .as_str()
+                .unwrap_or_default();
+            if !value.contains("analysis is stopped (workspace_ambiguous)")
+                || !value.contains("Remove the extra folder")
+                || !value.contains("restart the language server")
+                || !value.contains("ripr: Select Workspace Root")
+            {
+                return Err(format!(
+                    "the ambiguous hover must name the real recovery: {hover}"
                 ));
             }
             client.finish().await

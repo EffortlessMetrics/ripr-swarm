@@ -3203,14 +3203,18 @@ fn tagged_template_tag_is_test_each(tag: &Expression<'_>) -> bool {
 
 /// Single-line, length-bounded source snippet for limitation details.
 pub(crate) fn snippet_for_span(source: &str, start: usize, end: usize) -> String {
-    let snippet: String = source
+    // Normalize before clipping: raw indentation can consume the display
+    // budget while hiding the rest of a short multiline registration.
+    // Only one character beyond the bound is needed to detect real overflow.
+    let collapsed: String = source
         .get(start..end)
         .unwrap_or_default()
-        .chars()
-        .take(80)
+        .split_whitespace()
+        .flat_map(|word| std::iter::once(' ').chain(word.chars()))
+        .skip(1)
+        .take(81)
         .collect();
-    let collapsed = snippet.split_whitespace().collect::<Vec<_>>().join(" ");
-    if collapsed.chars().count() > 77 {
+    if collapsed.chars().count() > 80 {
         format!("{}...", collapsed.chars().take(77).collect::<String>())
     } else {
         collapsed

@@ -587,3 +587,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_owner_kinds (18)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless typescript_owner_kinds --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
