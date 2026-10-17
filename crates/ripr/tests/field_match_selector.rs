@@ -250,3 +250,41 @@ fn a_direct_parameter_match_keeps_its_genuine_unselected_arm_gap()
     }
     Ok(())
 }
+
+#[test]
+fn ffi_binding_keeps_its_prior_limitation_without_field_selector_detail()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = SOURCE.replace("fn charge(", "#[unsafe(no_mangle)]\nfn charge(");
+    assert_ne!(source, SOURCE);
+    let diff = DIFF.replace("@@ -10 +10,4 @@", "@@ -11 +11,4 @@");
+    assert_ne!(diff, DIFF);
+    let fixture = Fixture::new(&source, &diff)?;
+    let output = fixture.check()?;
+    assert_eq!(output.findings.len(), 4);
+    let weak = output
+        .findings
+        .iter()
+        .filter(|finding| finding.class == ExposureClass::WeaklyExposed)
+        .collect::<Vec<_>>();
+    assert_eq!(weak.len(), 3);
+    for finding in weak {
+        assert_eq!(
+            finding.static_limit_kind.map(|kind| kind.as_str()),
+            Some("cross_language_oracle_visibility_unresolved")
+        );
+        assert!(finding.canonical_gap.is_none());
+        assert!(
+            !finding.evidence.iter().any(|line| line
+                .contains("limitation_analyzer_route: analysis/rust-field-match-selector")),
+            "FFI priority must not leave mismatched field-selector detail"
+        );
+        assert!(
+            !finding
+                .recommended_next_step
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Inspect `lease.settled_elapsed_ms` at the existing owner call")
+        );
+    }
+    Ok(())
+}

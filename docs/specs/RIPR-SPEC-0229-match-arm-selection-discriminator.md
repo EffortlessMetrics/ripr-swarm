@@ -684,7 +684,7 @@ ambiguous same-line shapes do not. This metadata preserves every class, proof
 leg and missing discriminator; it proves neither Option identity nor that a
 particular invocation feeds the assertion. Guidance first asks to inspect that
 alignment and only then repair a demonstrated observation gap. Existing typed
-limitations take precedence. Cached classified findings must be invalidated;
+limitations, including FFI/binding exposure, take precedence. Cached classified findings must be invalidated;
 file facts and output wire versions do not change.
 
 The preserved identities are finding/probe IDs; preserved counts are raw class
