@@ -7,6 +7,8 @@ mod discarded_matcher_honesty;
 mod fixture_cache;
 #[path = "precommit_source_oracle.rs"]
 mod precommit_source_oracle;
+#[cfg(windows)]
+mod review_conversations;
 mod rust_corpus_projection;
 
 /// Best-effort temp-dir teardown for tests. The `io::Result` is matched
@@ -89,18 +91,20 @@ use super::{
     StaticLanguageAllowEntry, StaticLanguageMatcher, TYPESCRIPT_BUN_UB_CALIBRATION_REQUIRED_CASES,
     TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_REQUIRED_CASES,
     TYPESCRIPT_PREVIEW_REPAIR_LOOP_REQUIRED_CASES, TestOracleClass,
-    USER_SURFACE_PROJECTION_REQUIRED_RUN_STATUSES, USER_SURFACE_PROJECTION_REQUIRED_SURFACES,
-    WorktreeDoctorFinding, WorktreeDoctorSeverity, actionable_gap_outcomes_json,
-    actionable_gap_outcomes_markdown, actionable_gap_outcomes_report_from_values,
-    actionable_gap_outcomes_report_impl, allow_attribute_budget_violations,
-    artifact_router_path_violation, badge_artifact_command_args, badge_artifact_command_label,
-    badge_artifact_jobs, badge_artifact_native_slot, badge_artifacts_impl_with_runners,
-    badge_artifacts_summary_markdown, badge_basis_canonical_projection,
-    badge_basis_derived_ripr_plus_snapshot, badge_basis_needs_repo_badge_plus_job,
-    badge_basis_report_json, badge_basis_report_markdown, badge_basis_seam_native_counts,
-    badge_diff_policy_violations, badge_native_audit_snapshot, build_lsp_cockpit_report,
-    build_repo_exposure_latency_report, build_targeted_test_outcome_report, check_allow_attributes,
-    check_badge_diff_policy_with_context, check_doc_artifacts, check_droid_review_config,
+    UNREGISTERED_SPEC_MESSAGE_LIMIT, USER_SURFACE_PROJECTION_REQUIRED_RUN_STATUSES,
+    USER_SURFACE_PROJECTION_REQUIRED_SURFACES, WorktreeDoctorFinding, WorktreeDoctorSeverity,
+    actionable_gap_outcomes_json, actionable_gap_outcomes_markdown,
+    actionable_gap_outcomes_report_from_values, actionable_gap_outcomes_report_impl,
+    allow_attribute_budget_violations, artifact_router_path_violation, badge_artifact_command_args,
+    badge_artifact_command_label, badge_artifact_jobs, badge_artifact_native_slot,
+    badge_artifacts_impl_with_runners, badge_artifacts_summary_markdown,
+    badge_basis_canonical_projection, badge_basis_derived_ripr_plus_snapshot,
+    badge_basis_needs_repo_badge_plus_job, badge_basis_report_json, badge_basis_report_markdown,
+    badge_basis_seam_native_counts, badge_diff_policy_violations, badge_native_audit_snapshot,
+    build_lsp_cockpit_report, build_repo_exposure_latency_report,
+    build_targeted_test_outcome_report, check_allow_attributes,
+    check_badge_diff_policy_with_context, check_doc_artifacts,
+    check_doc_artifacts_with_unregistered_baseline, check_droid_review_config,
     check_executable_files, check_file_policy, check_local_context, check_network_policy,
     check_no_panic_family, check_process_policy, check_static_language, check_support_tiers,
     check_workflows, ci_enforced_xtask_invocations, ci_full_evidence_gates, cockpit_json,
@@ -185,9 +189,9 @@ use super::{
     report_index_repo_ops_status, report_packet_index_case_id_violation,
     report_packet_index_generated_at_violation, report_packet_index_render_plan,
     report_status_from_text, repository_owned_review_thread_mutation_violations,
-    ripr_command_literals_in_text, ripr_debug_binary, ripr_plus_receipt_from_badge,
-    ripr_plus_receipt_from_options, ripr_plus_receipt_from_repo_badge_json,
-    ripr_plus_receipt_from_repo_exposure_summary_json,
+    reverse_direction_unregistered_violation, ripr_command_literals_in_text, ripr_debug_binary,
+    ripr_plus_receipt_from_badge, ripr_plus_receipt_from_options,
+    ripr_plus_receipt_from_repo_badge_json, ripr_plus_receipt_from_repo_exposure_summary_json,
     ripr_plus_receipt_from_repo_exposure_summary_json_with_source, ripr_plus_receipt_markdown,
     ripr_pre_commit_hook, ripr_swarm_attempt_allowed_file_line,
     ripr_swarm_attempt_dry_run_from_actionable_gaps_value, ripr_swarm_attempt_dry_run_markdown,
@@ -1467,6 +1471,7 @@ fn evidence_promotion_semantic_assertions_retain_related_test_identity() -> Resu
             kind: "relational_check".to_string(),
             strength: "weak".to_string(),
             relation_reason: None,
+            miss: None,
         },
     ];
     let original: serde_json::Value = serde_json::from_str(include_str!(
@@ -1530,6 +1535,7 @@ fn evidence_promotion_related_test_relation_pin_is_optional_and_exact() -> Resul
                 kind: "relational_check".to_string(),
                 strength: "weak".to_string(),
                 relation_reason: relation_reason.map(str::to_string),
+                miss: None,
             },
         ]
     };
@@ -8116,7 +8122,12 @@ fn create_zip_archive_writes_flat_package_contents() -> Result<(), String> {
             let entry = archive
                 .by_index(index)
                 .map_err(|err| format!("zip entry {index}: {err}"))?;
-            names.push(entry.name().to_string());
+            names.push(
+                entry
+                    .name()
+                    .map_err(|err| format!("zip entry {index} name: {err}"))?
+                    .into_owned(),
+            );
         }
         names.sort();
         assert_eq!(
@@ -12645,6 +12656,51 @@ fn report_status_parser_reads_markdown_and_json() {
 }
 
 #[test]
+fn report_index_preserves_test_efficiency_not_run_with_explanation() -> Result<(), String> {
+    with_temp_cwd("report-index-efficiency-not-run", |root| {
+        write(
+            &root.join("target/ripr/reports/test-efficiency.json"),
+            r#"{
+  "schema_version": "0.1",
+  "status": "not_run",
+  "advisory": true,
+  "explanation": "No tests were selected; test-efficiency evidence was not established for this report. Run the report from the workspace root containing the Rust test sources.",
+  "tests": [],
+  "metrics": {"tests_scanned": 0}
+}"#,
+        );
+        write(
+            &root.join("target/ripr/reports/test-efficiency.md"),
+            "# ripr test efficiency\n\nStatus: not_run\n\nTests scanned: 0\n\nExplanation: No tests were selected; test-efficiency evidence was not established for this report. Run the report from the workspace root containing the Rust test sources.\n",
+        );
+        let reports = super::report_index_entries()?;
+        assert_eq!(reports.len(), 2);
+        for entry in &reports {
+            assert_eq!(entry.status, "not_run", "{}", entry.file);
+        }
+        let json: Value =
+            serde_json::from_str(&super::report_index_json("pass", &reports, &[], &[], &[]))
+                .map_err(|err| err.to_string())?;
+        let indexed = json["reports"]
+            .as_array()
+            .ok_or("missing indexed reports")?;
+        assert_eq!(indexed.len(), 2);
+        for entry in indexed {
+            assert_eq!(entry["status"], "not_run");
+        }
+        let markdown = super::report_index_markdown("pass", &reports, &[], &[], &[]);
+        for file in ["test-efficiency.json", "test-efficiency.md"] {
+            assert!(
+                markdown
+                    .lines()
+                    .any(|line| line.contains(file) && line.contains("not_run"))
+            );
+        }
+        Ok(())
+    })
+}
+
+#[test]
 fn report_index_missing_expected_tracks_changed_surfaces() {
     let reports = vec![ReportIndexEntry {
         file: "pr-summary.md".to_string(),
@@ -13733,6 +13789,85 @@ fn creates_invoice_smoke() {
             .iter()
             .any(|limitation| limitation.contains("broad oracle"))
     );
+}
+
+#[test]
+fn test_efficiency_empty_selection_is_not_evidence_of_pass() -> Result<(), String> {
+    with_temp_cwd("efficiency-empty-selection", |root| {
+        for with_source in [false, true] {
+            if with_source {
+                let source_root = root.join("crates/ripr/src");
+                fs::create_dir_all(&source_root).map_err(|e| e.to_string())?;
+                fs::write(source_root.join("lib.rs"), "pub fn value() -> u32 { 1 }\n")
+                    .map_err(|e| e.to_string())?;
+            }
+            super::test_efficiency_report_impl()?;
+            let report_dir = root.join("target/ripr/reports");
+            let markdown = fs::read_to_string(report_dir.join("test-efficiency.md"))
+                .map_err(|e| e.to_string())?;
+            let json: Value = serde_json::from_str(
+                &fs::read_to_string(report_dir.join("test-efficiency.json"))
+                    .map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+            assert_eq!(json["status"], "not_run", "with_source={with_source}");
+            assert_eq!(json["metrics"]["tests_scanned"], 0);
+            assert_eq!(json["tests"], serde_json::json!([]));
+            assert_eq!(json["advisory"], true);
+            let explanation = json["explanation"].as_str().ok_or("missing explanation")?;
+            assert!(explanation.contains("No tests were selected"));
+            assert!(explanation.contains("evidence was not established"));
+            assert!(explanation.contains("workspace root"));
+            assert!(markdown.contains("Status: not_run"));
+            assert!(markdown.contains(explanation));
+            assert!(markdown.contains("Tests scanned: 0"));
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn test_efficiency_nonempty_selection_keeps_pass_and_warn() -> Result<(), String> {
+    with_temp_cwd("efficiency-selected-controls", |root| {
+        let source_root = root.join("crates/ripr/src");
+        fs::create_dir_all(&source_root).map_err(|e| e.to_string())?;
+        for (body, class, status) in [
+            (
+                "assert_eq!(create_invoice(100), expected_invoice);",
+                "strong_discriminator",
+                "pass",
+            ),
+            (
+                "let status = run_cli();\n    assert!(status.success());",
+                "smoke_only",
+                "warn",
+            ),
+        ] {
+            fs::write(
+                source_root.join("lib.rs"),
+                format!("#[test]\nfn selected() {{\n    {body}\n}}\n"),
+            )
+            .map_err(|e| e.to_string())?;
+            super::test_efficiency_report_impl()?;
+            let report_dir = root.join("target/ripr/reports");
+            let markdown = fs::read_to_string(report_dir.join("test-efficiency.md"))
+                .map_err(|e| e.to_string())?;
+            let json: Value = serde_json::from_str(
+                &fs::read_to_string(report_dir.join("test-efficiency.json"))
+                    .map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+            assert_eq!(json["metrics"]["tests_scanned"], 1);
+            assert_eq!(json["tests"].as_array().map(Vec::len), Some(1));
+            assert_eq!(json["tests"][0]["class"], class);
+            assert_eq!(json["status"], status);
+            assert_eq!(json["advisory"], true);
+            assert!(json.get("explanation").is_none());
+            assert!(markdown.contains(&format!("Status: {status}")));
+            assert!(!markdown.contains("Explanation:"));
+        }
+        Ok(())
+    })
 }
 
 #[test]
@@ -24991,6 +25126,131 @@ owner = "repo-infra"
 }
 
 #[test]
+fn reverse_direction_violation_names_unregistered_spec_ids_and_paths() -> Result<(), String> {
+    let unregistered = [
+        (
+            "RIPR-SPEC-1234".to_string(),
+            "docs/specs/RIPR-SPEC-1234-alpha.md".to_string(),
+        ),
+        (
+            "RIPR-SPEC-1235".to_string(),
+            "docs/specs/RIPR-SPEC-1235-beta.md".to_string(),
+        ),
+    ];
+    let message = reverse_direction_unregistered_violation(&unregistered, 1, DOC_ARTIFACT_LEDGER)
+        .ok_or_else(|| "two unregistered specs exceed baseline 1".to_string())?;
+    if !message.contains("RIPR-SPEC-1234 (docs/specs/RIPR-SPEC-1234-alpha.md)") {
+        return Err(format!(
+            "must name the first unregistered id and path, got {message}"
+        ));
+    }
+    if !message.contains("RIPR-SPEC-1235 (docs/specs/RIPR-SPEC-1235-beta.md)") {
+        return Err(format!(
+            "must name the second unregistered id and path, got {message}"
+        ));
+    }
+    if !message.contains("unregistered:") {
+        return Err(format!(
+            "must label the named ids, not only the excess count, got {message}"
+        ));
+    }
+    if !(message.contains("baseline: 1") && message.contains("current: 2")) {
+        return Err(format!("must retain the ratchet counts, got {message}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn reverse_direction_violation_is_silent_at_baseline() {
+    let unregistered = [(
+        "RIPR-SPEC-1234".to_string(),
+        "docs/specs/RIPR-SPEC-1234-alpha.md".to_string(),
+    )];
+    assert_eq!(
+        reverse_direction_unregistered_violation(&unregistered, 1, DOC_ARTIFACT_LEDGER),
+        None,
+        "the ratchet must not fire at the baseline count"
+    );
+}
+
+#[test]
+fn reverse_direction_violation_names_newest_ids_before_truncating() -> Result<(), String> {
+    let unregistered: Vec<(String, String)> = (1..=UNREGISTERED_SPEC_MESSAGE_LIMIT + 2)
+        .map(|n| {
+            let id = format!("RIPR-SPEC-{n:04}");
+            let path = format!("docs/specs/{id}-sample.md");
+            (id, path)
+        })
+        .collect();
+    let message = reverse_direction_unregistered_violation(&unregistered, 0, DOC_ARTIFACT_LEDGER)
+        .ok_or_else(|| "any unregistered spec exceeds baseline 0".to_string())?;
+    let newest = format!("RIPR-SPEC-{:04}", UNREGISTERED_SPEC_MESSAGE_LIMIT + 2);
+    if !message.contains(&newest) {
+        return Err(format!(
+            "truncation must keep the newest spec id visible, got {message}"
+        ));
+    }
+    if message.contains("RIPR-SPEC-0001 (") {
+        return Err(format!(
+            "oldest spec ids should fall into the truncation remainder, got {message}"
+        ));
+    }
+    let remaining = 2;
+    if !message.contains(&format!("and {remaining} more")) {
+        return Err(format!("must mark truncated remainder, got {message}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn doc_artifacts_command_names_unregistered_spec_ids() {
+    with_temp_cwd("doc-artifacts-reverse-direction-names-ids", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0001-alpha.md",
+            "RIPR-PROP-0001",
+        );
+        write_doc_artifact_fixture(
+            root,
+            "docs/specs/RIPR-SPEC-1234-widget.md",
+            "RIPR-SPEC-1234",
+        );
+        write_doc_artifact_fixture(
+            root,
+            "docs/specs/RIPR-SPEC-1235-gadget.md",
+            "RIPR-SPEC-1235",
+        );
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "accepted"
+owner = "repo-infra"
+"#,
+        );
+
+        let error = check_doc_artifacts_with_unregistered_baseline(1)
+            .expect_err("two unregistered specs exceed baseline 1");
+        assert!(
+            error.contains("RIPR-SPEC-1234 (docs/specs/RIPR-SPEC-1234-widget.md)"),
+            "command path must name the first unregistered spec, got {error}"
+        );
+        assert!(
+            error.contains("RIPR-SPEC-1235 (docs/specs/RIPR-SPEC-1235-gadget.md)"),
+            "command path must name the second unregistered spec, got {error}"
+        );
+        assert!(
+            error.contains("unregistered:"),
+            "command path must not keep the count-only reverse-direction message, got {error}"
+        );
+    });
+}
+
+#[test]
 fn doc_artifacts_command_rejects_invalid_fixture() {
     with_temp_cwd("doc-artifacts-command-invalid", |root| {
         write_doc_artifact_ledger_fixture(root, "schema_version = \"1.0\"\n");
@@ -29440,6 +29700,7 @@ fn gh_pr_status_pr(checks: Vec<PrTriageCheck>) -> GhPrStatusPullRequest {
             author: "droid".to_string(),
             state: "APPROVED".to_string(),
         }],
+        provider_review_observations: Default::default(),
     }
 }
 
@@ -31720,6 +31981,7 @@ fn known_commands_include_current_report_and_policy_commands() {
     assert!(commands.contains(&"check-proof-packs"));
     assert!(commands.contains(&"vscode-compile"));
     assert!(commands.contains(&"vscode-package"));
+    assert!(commands.contains(&"vscode-verify-vsix -- <vsix>"));
     assert!(commands.contains(&"vscode-test"));
     assert!(commands.contains(&"vscode-test-e2e"));
 }
@@ -48760,6 +49022,137 @@ fn write_packaging_test_vsix(
     Ok(())
 }
 
+fn write_symlink_license_txt_vsix(path: &std::path::Path, body: &str) -> Result<(), String> {
+    let file = fs::File::create(path)
+        .map_err(|err| format!("failed to create {}: {err}", path.display()))?;
+    let mut writer = zip::ZipWriter::new(file);
+    writer
+        .add_symlink(
+            "extension/LICENSE.txt",
+            body,
+            zip::write::SimpleFileOptions::default(),
+        )
+        .map_err(|err| format!("failed to stage symlink LICENSE.txt: {err}"))?;
+    writer
+        .finish()
+        .map_err(|err| format!("failed to seal {}: {err}", path.display()))?;
+    Ok(())
+}
+
+/// POSIX / APPNOTE constants used only to craft typed-entry fixtures. The
+/// zip crate's public writer cannot set Unix type bits or the DOS directory
+/// flag on a slash-less name, so tests write a regular LICENSE.txt member
+/// and patch the central-directory metadata.
+const UNIX_S_IFDIR: u32 = 0o040_000;
+const UNIX_S_IFIFO: u32 = 0o010_000;
+const UNIX_S_IFREG: u32 = 0o100_000;
+const DOS_DIRECTORY_ATTRIBUTE: u32 = 0x10;
+const DOS_ARCHIVE_ATTRIBUTE: u32 = 0x20;
+const ZIP_SYSTEM_DOS: u8 = 0;
+const ZIP_SYSTEM_UNIX: u8 = 3;
+const ZIP_CENTRAL_HEADER_SIGNATURE: [u8; 4] = [0x50, 0x4b, 0x01, 0x02];
+const ZIP_CENTRAL_VERSION_MADE_BY_OFFSET: usize = 4;
+const ZIP_CENTRAL_EXTERNAL_ATTRIBUTES_OFFSET: usize = 38;
+
+fn write_typed_license_txt_vsix(
+    path: &std::path::Path,
+    body: &str,
+    system: u8,
+    external_attributes: u32,
+) -> Result<(), String> {
+    write_packaging_test_vsix(path, &[("extension/LICENSE.txt", body)])?;
+    let central_header_start = {
+        let file = fs::File::open(path)
+            .map_err(|err| format!("failed to reopen {}: {err}", path.display()))?;
+        let mut archive = zip::ZipArchive::new(file)
+            .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+        archive
+            .by_name("extension/LICENSE.txt")
+            .map_err(|err| format!("typed LICENSE.txt fixture missing member: {err}"))?
+            .central_header_start()
+    };
+    let mut bytes =
+        fs::read(path).map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+    let start = usize::try_from(central_header_start).map_err(|err| {
+        format!("typed LICENSE.txt fixture central-directory offset overflow: {err}")
+    })?;
+    let version_end = start
+        .checked_add(ZIP_CENTRAL_VERSION_MADE_BY_OFFSET + 2)
+        .ok_or_else(|| "typed LICENSE.txt fixture central-directory offset overflow".to_string())?;
+    let attributes_end = start
+        .checked_add(ZIP_CENTRAL_EXTERNAL_ATTRIBUTES_OFFSET + 4)
+        .ok_or_else(|| "typed LICENSE.txt fixture central-directory offset overflow".to_string())?;
+    if bytes.get(start..start + 4) != Some(ZIP_CENTRAL_HEADER_SIGNATURE.as_slice()) {
+        return Err("typed LICENSE.txt fixture lost its central-directory header".to_string());
+    }
+    {
+        let Some(version_bytes) =
+            bytes.get_mut(start + ZIP_CENTRAL_VERSION_MADE_BY_OFFSET..version_end)
+        else {
+            return Err("typed LICENSE.txt fixture is shorter than version-made-by".to_string());
+        };
+        let [lo, hi] = *version_bytes else {
+            return Err("typed LICENSE.txt fixture version-made-by is truncated".to_string());
+        };
+        let patched = (u16::from(system) << 8) | (u16::from_le_bytes([lo, hi]) & 0x00ff);
+        version_bytes.copy_from_slice(&patched.to_le_bytes());
+    }
+    let Some(attribute_bytes) =
+        bytes.get_mut(start + ZIP_CENTRAL_EXTERNAL_ATTRIBUTES_OFFSET..attributes_end)
+    else {
+        return Err("typed LICENSE.txt fixture is shorter than external attributes".to_string());
+    };
+    attribute_bytes.copy_from_slice(&external_attributes.to_le_bytes());
+    fs::write(path, bytes).map_err(|err| format!("failed to patch {}: {err}", path.display()))?;
+    assert_typed_license_txt_fixture(path, system, external_attributes)
+}
+
+fn assert_typed_license_txt_fixture(
+    path: &std::path::Path,
+    system: u8,
+    external_attributes: u32,
+) -> Result<(), String> {
+    let file = fs::File::open(path)
+        .map_err(|err| format!("failed to inspect {}: {err}", path.display()))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|err| format!("failed to parse typed fixture {}: {err}", path.display()))?;
+    let member = archive
+        .by_name("extension/LICENSE.txt")
+        .map_err(|err| format!("typed LICENSE.txt fixture missing member: {err}"))?;
+    if !member.is_file() {
+        return Err(
+            "typed LICENSE.txt fixture must keep a slash-less name so zip::is_file stays true"
+                .to_string(),
+        );
+    }
+    let actual_attributes = {
+        use zip::HasZipMetadata;
+        member.get_metadata().external_attributes
+    };
+    if actual_attributes != external_attributes {
+        return Err(format!(
+            "typed LICENSE.txt fixture attributes {actual_attributes:#010x} != {external_attributes:#010x}"
+        ));
+    }
+    let Some(mode) = member.unix_mode() else {
+        if system == ZIP_SYSTEM_DOS && external_attributes == 0 {
+            return Ok(());
+        }
+        return Err(
+            "typed LICENSE.txt fixture lost unix_mode after the metadata patch".to_string(),
+        );
+    };
+    if system == ZIP_SYSTEM_UNIX {
+        let expected_mode = external_attributes >> 16;
+        if mode != expected_mode {
+            return Err(format!(
+                "typed Unix LICENSE.txt fixture unix_mode {mode:#o} != {expected_mode:#o}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn vsix_entry(name: &str, size: u64) -> super::VsixEntry {
     super::VsixEntry {
         name: name.to_string(),
@@ -48910,6 +49303,466 @@ fn vsix_inventory_bounds_entry_count_and_unpacked_size() -> Result<(), String> {
     Ok(())
 }
 
+const POINTER_LICENSE: &str = "\
+MIT OR Apache-2.0
+
+The ripr VS Code extension is distributed under the same license terms as the
+ripr repository. See the repository root for LICENSE-MIT and LICENSE-APACHE.
+";
+const COMPLETE_MIT_NOTICE: &str = "\
+MIT License
+
+Copyright (c) 2026 ripr contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the \"Software\"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+";
+const COMPLETE_APACHE_NOTICE: &str = "\
+Apache License
+Version 2.0, January 2004
+http://www.apache.org/licenses/
+
+TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+1. Definitions.
+
+\"License\" shall mean the terms and conditions for use, reproduction,
+and distribution as defined by Sections 1 through 9 of this document.
+";
+
+fn complete_license_notices() -> super::RepositoryLicenseNotices {
+    super::RepositoryLicenseNotices {
+        mit: COMPLETE_MIT_NOTICE.as_bytes().to_vec(),
+        apache: COMPLETE_APACHE_NOTICE.as_bytes().to_vec(),
+    }
+}
+
+fn write_license_fixture(root: &Path, name: &str, body: &str) -> Result<(), String> {
+    let path = root.join(name);
+    fs::write(&path, body).map_err(|err| format!("failed to write {}: {err}", path.display()))
+}
+
+fn packaged_license_txt(mit: &str, apache: &str) -> String {
+    format!("MIT OR Apache-2.0\n\n{mit}\n\n{apache}\n")
+}
+
+#[test]
+fn vsix_license_notices_accept_license_txt_containing_both_notices() -> Result<(), String> {
+    with_temp_cwd("vsix-license-accept", |root| {
+        let notices = complete_license_notices();
+        let vsix = root.join("licensed.vsix");
+        let license_txt = packaged_license_txt(COMPLETE_MIT_NOTICE, COMPLETE_APACHE_NOTICE);
+        write_packaging_test_vsix(
+            &vsix,
+            &[
+                ("[Content_Types].xml", "<Types/>"),
+                ("extension.vsixmanifest", "<PackageManifest/>"),
+                ("extension/package.json", "{}"),
+                ("extension/LICENSE.txt", &license_txt),
+            ],
+        )?;
+        let summary = super::verify_packaged_vsix(&vsix, &notices)?;
+        assert!(
+            summary.starts_with("VSIX inventory: 4 entries, "),
+            "{summary}"
+        );
+        super::verify_packaged_vsix_license_notices(&vsix, &notices)?;
+        Ok(())
+    })
+}
+
+#[test]
+fn vsix_license_notices_reject_pointer_only_license_txt() -> Result<(), String> {
+    with_temp_cwd("vsix-license-pointer", |root| {
+        let notices = complete_license_notices();
+        let vsix = root.join("pointer.vsix");
+        write_packaging_test_vsix(
+            &vsix,
+            &[
+                ("[Content_Types].xml", "<Types/>"),
+                ("extension.vsixmanifest", "<PackageManifest/>"),
+                ("extension/package.json", "{}"),
+                ("extension/LICENSE.txt", POINTER_LICENSE),
+            ],
+        )?;
+        // Inventory bounds still pass; the pointer LICENSE.txt is the defect.
+        super::verify_packaged_vsix_inventory(&vsix)?;
+        let Err(error) = super::verify_packaged_vsix(&vsix, &notices) else {
+            return Err(
+                "a VSIX that ships only the historic LICENSE pointer as LICENSE.txt must be rejected"
+                    .to_string(),
+            );
+        };
+        assert!(error.contains("extension/LICENSE.txt"), "{error}");
+        assert!(error.contains("editors/vscode/LICENSE pointer"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn vsix_license_notices_reject_pointer_license_txt_even_when_extra_notice_files_exist()
+-> Result<(), String> {
+    with_temp_cwd("vsix-license-pointer-with-extras", |root| {
+        let notices = complete_license_notices();
+        let vsix = root.join("pointer-plus-staged.vsix");
+        write_packaging_test_vsix(
+            &vsix,
+            &[
+                ("extension/LICENSE.txt", POINTER_LICENSE),
+                ("extension/LICENSE-MIT", COMPLETE_MIT_NOTICE),
+                ("extension/LICENSE-APACHE", COMPLETE_APACHE_NOTICE),
+            ],
+        )?;
+        let Err(error) = super::verify_packaged_vsix_license_notices(&vsix, &notices) else {
+            return Err(
+                "extra LICENSE-MIT/LICENSE-APACHE members must not satisfy a pointer LICENSE.txt"
+                    .to_string(),
+            );
+        };
+        assert!(error.contains("extension/LICENSE.txt"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn vsix_license_notices_reject_missing_license_txt() -> Result<(), String> {
+    with_temp_cwd("vsix-license-missing-txt", |root| {
+        let notices = complete_license_notices();
+        let vsix = root.join("no-license-txt.vsix");
+        write_packaging_test_vsix(
+            &vsix,
+            &[
+                ("extension/package.json", "{}"),
+                ("extension/LICENSE-MIT", COMPLETE_MIT_NOTICE),
+                ("extension/LICENSE-APACHE", COMPLETE_APACHE_NOTICE),
+            ],
+        )?;
+        let Err(error) = super::verify_packaged_vsix_license_notices(&vsix, &notices) else {
+            return Err("a VSIX missing extension/LICENSE.txt must be rejected".to_string());
+        };
+        assert!(error.contains("extension/LICENSE.txt"), "{error}");
+        assert!(error.contains("missing"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn vsix_license_notices_reject_license_txt_missing_apache() -> Result<(), String> {
+    with_temp_cwd("vsix-license-missing-apache", |root| {
+        let notices = complete_license_notices();
+        let vsix = root.join("mit-only.vsix");
+        write_packaging_test_vsix(&vsix, &[("extension/LICENSE.txt", COMPLETE_MIT_NOTICE)])?;
+        let Err(error) = super::verify_packaged_vsix_license_notices(&vsix, &notices) else {
+            return Err("a LICENSE.txt that omits the Apache notice must be rejected".to_string());
+        };
+        assert!(error.contains("extension/LICENSE.txt"), "{error}");
+        assert!(error.contains("LICENSE-APACHE"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn vsix_license_notices_reject_mutated_notice_bytes() -> Result<(), String> {
+    with_temp_cwd("vsix-license-mutated", |root| {
+        let notices = complete_license_notices();
+        let vsix = root.join("mutated.vsix");
+        let mutated_apache =
+            COMPLETE_APACHE_NOTICE.replace("TERMS AND CONDITIONS", "TERMS AND CONDITIONZ");
+        let mutated = packaged_license_txt(COMPLETE_MIT_NOTICE, &mutated_apache);
+        write_packaging_test_vsix(&vsix, &[("extension/LICENSE.txt", &mutated)])?;
+        let Err(error) = super::verify_packaged_vsix_license_notices(&vsix, &notices) else {
+            return Err("a VSIX with mutated Apache notice bytes must be rejected".to_string());
+        };
+        assert!(error.contains("extension/LICENSE.txt"), "{error}");
+        assert!(error.contains("LICENSE-APACHE"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn vsix_license_notices_reject_symlink_typed_license_txt() -> Result<(), String> {
+    with_temp_cwd("vsix-license-symlink", |root| {
+        let notices = complete_license_notices();
+        let vsix = root.join("symlink.vsix");
+        let license_txt = packaged_license_txt(COMPLETE_MIT_NOTICE, COMPLETE_APACHE_NOTICE);
+        // Unix symlink member (mode 0120777) whose stored bytes are the
+        // complete notices. Payload match is not a regular-file member.
+        write_symlink_license_txt_vsix(&vsix, &license_txt)?;
+        let Err(error) = super::verify_packaged_vsix_license_notices(&vsix, &notices) else {
+            return Err("a LICENSE.txt member marked Unix symlink must be rejected".to_string());
+        };
+        assert!(error.contains("extension/LICENSE.txt"), "{error}");
+        assert!(error.contains("not a regular file"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn vsix_license_notices_reject_unix_directory_typed_license_txt() -> Result<(), String> {
+    with_temp_cwd("vsix-license-unix-dir", |root| {
+        let notices = complete_license_notices();
+        let vsix = root.join("unix-dir.vsix");
+        let license_txt = packaged_license_txt(COMPLETE_MIT_NOTICE, COMPLETE_APACHE_NOTICE);
+        write_typed_license_txt_vsix(
+            &vsix,
+            &license_txt,
+            ZIP_SYSTEM_UNIX,
+            (UNIX_S_IFDIR | 0o755) << 16,
+        )?;
+        let Err(error) = super::verify_packaged_vsix_license_notices(&vsix, &notices) else {
+            return Err("a LICENSE.txt member marked Unix directory must be rejected".to_string());
+        };
+        assert!(error.contains("extension/LICENSE.txt"), "{error}");
+        assert!(error.contains("not a regular file"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn vsix_license_notices_reject_fifo_typed_license_txt() -> Result<(), String> {
+    with_temp_cwd("vsix-license-fifo", |root| {
+        let notices = complete_license_notices();
+        let vsix = root.join("fifo.vsix");
+        let license_txt = packaged_license_txt(COMPLETE_MIT_NOTICE, COMPLETE_APACHE_NOTICE);
+        write_typed_license_txt_vsix(
+            &vsix,
+            &license_txt,
+            ZIP_SYSTEM_UNIX,
+            (UNIX_S_IFIFO | 0o644) << 16,
+        )?;
+        let Err(error) = super::verify_packaged_vsix_license_notices(&vsix, &notices) else {
+            return Err("a LICENSE.txt member marked FIFO must be rejected".to_string());
+        };
+        assert!(error.contains("extension/LICENSE.txt"), "{error}");
+        assert!(error.contains("not a regular file"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn vsix_license_notices_reject_dos_directory_typed_license_txt() -> Result<(), String> {
+    with_temp_cwd("vsix-license-dos-dir", |root| {
+        let notices = complete_license_notices();
+        let vsix = root.join("dos-dir.vsix");
+        let license_txt = packaged_license_txt(COMPLETE_MIT_NOTICE, COMPLETE_APACHE_NOTICE);
+        write_typed_license_txt_vsix(&vsix, &license_txt, ZIP_SYSTEM_DOS, DOS_DIRECTORY_ATTRIBUTE)?;
+        let Err(error) = super::verify_packaged_vsix_license_notices(&vsix, &notices) else {
+            return Err("a LICENSE.txt member marked DOS directory must be rejected".to_string());
+        };
+        assert!(error.contains("extension/LICENSE.txt"), "{error}");
+        assert!(error.contains("not a regular file"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn vsix_license_notices_reject_dos_directory_bit_on_unix_regular_mode() -> Result<(), String> {
+    with_temp_cwd("vsix-license-dos-dir-on-reg", |root| {
+        let notices = complete_license_notices();
+        let vsix = root.join("dos-dir-on-reg.vsix");
+        let license_txt = packaged_license_txt(COMPLETE_MIT_NOTICE, COMPLETE_APACHE_NOTICE);
+        // High bits look like a regular Unix file; the DOS directory bit is
+        // still enough to reject. zip::unix_mode prefers the high bits.
+        write_typed_license_txt_vsix(
+            &vsix,
+            &license_txt,
+            ZIP_SYSTEM_DOS,
+            (UNIX_S_IFREG | 0o644) << 16 | DOS_DIRECTORY_ATTRIBUTE,
+        )?;
+        let Err(error) = super::verify_packaged_vsix_license_notices(&vsix, &notices) else {
+            return Err(
+                "a LICENSE.txt member with DOS directory metadata must be rejected".to_string(),
+            );
+        };
+        assert!(error.contains("extension/LICENSE.txt"), "{error}");
+        assert!(error.contains("not a regular file"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn vsix_license_notices_accept_non_unix_and_permission_only_license_txt() -> Result<(), String> {
+    with_temp_cwd("vsix-license-ordinary-types", |root| {
+        let notices = complete_license_notices();
+        let license_txt = packaged_license_txt(COMPLETE_MIT_NOTICE, COMPLETE_APACHE_NOTICE);
+        let cases = [
+            ("zero-attrs.vsix", ZIP_SYSTEM_DOS, 0),
+            ("perm-only.vsix", ZIP_SYSTEM_UNIX, 0o644 << 16),
+            ("dos-archive.vsix", ZIP_SYSTEM_DOS, DOS_ARCHIVE_ATTRIBUTE),
+            (
+                "unix-reg.vsix",
+                ZIP_SYSTEM_UNIX,
+                (UNIX_S_IFREG | 0o644) << 16,
+            ),
+        ];
+        for (name, system, attributes) in cases {
+            let vsix = root.join(name);
+            write_typed_license_txt_vsix(&vsix, &license_txt, system, attributes)?;
+            super::verify_packaged_vsix_license_notices(&vsix, &notices).map_err(|err| {
+                format!("{name} must stay accepted as a regular LICENSE.txt: {err}")
+            })?;
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn load_repository_license_notices_rejects_pointer_and_empty_files() -> Result<(), String> {
+    with_temp_cwd("load-license-notices", |root| {
+        write_license_fixture(root, "LICENSE-MIT", POINTER_LICENSE)?;
+        write_license_fixture(root, "LICENSE-APACHE", COMPLETE_APACHE_NOTICE)?;
+        let Err(pointer) = super::load_repository_license_notices(root) else {
+            return Err(
+                "the short VS Code LICENSE pointer must not load as LICENSE-MIT".to_string(),
+            );
+        };
+        assert!(pointer.contains("LICENSE-MIT"), "{pointer}");
+        assert!(
+            pointer.contains("complete repository notices must be at least"),
+            "{pointer}"
+        );
+
+        write_license_fixture(root, "LICENSE-MIT", COMPLETE_MIT_NOTICE)?;
+        write_license_fixture(root, "LICENSE-APACHE", "")?;
+        let Err(empty) = super::load_repository_license_notices(root) else {
+            return Err("an empty LICENSE-APACHE must not load as a complete notice".to_string());
+        };
+        assert!(empty.contains("LICENSE-APACHE"), "{empty}");
+
+        write_license_fixture(root, "LICENSE-APACHE", COMPLETE_APACHE_NOTICE)?;
+        let loaded = super::load_repository_license_notices(root)?;
+        assert_eq!(loaded, complete_license_notices());
+        Ok(())
+    })
+}
+
+#[test]
+fn verify_source_vscode_license_rejects_pointer_and_accepts_complete_texts() -> Result<(), String> {
+    with_temp_cwd("source-vscode-license", |root| {
+        let notices = complete_license_notices();
+        let path = root.join("LICENSE");
+        write_license_fixture(root, "LICENSE", POINTER_LICENSE)?;
+        let Err(pointer) = super::verify_source_vscode_license(&path, &notices) else {
+            return Err(
+                "the historic LICENSE pointer must not satisfy the source contract".to_string(),
+            );
+        };
+        assert!(
+            pointer.contains("editors/vscode/LICENSE pointer"),
+            "{pointer}"
+        );
+
+        write_license_fixture(
+            root,
+            "LICENSE",
+            &packaged_license_txt(COMPLETE_MIT_NOTICE, COMPLETE_APACHE_NOTICE),
+        )?;
+        super::verify_source_vscode_license(&path, &notices)?;
+        Ok(())
+    })
+}
+
+#[test]
+fn load_repository_license_notices_accepts_repo_root_files() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let notices = super::load_repository_license_notices(&super::repo_root()?)?;
+        if notices.mit.len() < super::COMPLETE_LICENSE_NOTICE_MIN_BYTES {
+            return Err("repository LICENSE-MIT is shorter than a complete notice".to_string());
+        }
+        if notices.apache.len() < super::COMPLETE_LICENSE_NOTICE_MIN_BYTES {
+            return Err("repository LICENSE-APACHE is shorter than a complete notice".to_string());
+        }
+        if notices.mit == notices.apache {
+            return Err("repository MIT and Apache notices must stay distinct".to_string());
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn verify_packaged_vsix_accepts_real_repository_notice_bytes() -> Result<(), String> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest_dir
+        .parent()
+        .ok_or_else(|| "failed to resolve repo root from CARGO_MANIFEST_DIR".to_string())?;
+    let notices = super::load_repository_license_notices(repo_root)?;
+    let mit = String::from_utf8(notices.mit.clone()).map_err(|err| err.to_string())?;
+    let apache = String::from_utf8(notices.apache.clone()).map_err(|err| err.to_string())?;
+    with_temp_cwd("vsix-real-notices", |root| {
+        let vsix = root.join("real.vsix");
+        let license_txt = packaged_license_txt(&mit, &apache);
+        write_packaging_test_vsix(
+            &vsix,
+            &[
+                ("extension/package.json", "{}"),
+                ("extension/LICENSE.txt", &license_txt),
+            ],
+        )?;
+        super::verify_packaged_vsix(&vsix, &notices)?;
+        Ok(())
+    })
+}
+
+#[test]
+fn editors_vscode_license_carries_both_complete_canonical_license_texts() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let root = super::repo_root()?;
+        let notices = super::load_repository_license_notices(&root)?;
+        super::verify_source_vscode_license(&root.join("editors/vscode/LICENSE"), &notices)
+    })
+}
+
+#[test]
+fn vscode_verify_vsix_path_requires_exactly_one_path() -> Result<(), String> {
+    let Err(missing) = super::vscode_verify_vsix_path(&[]) else {
+        return Err("vscode-verify-vsix must require a VSIX path".to_string());
+    };
+    assert!(missing.contains("requires a VSIX path"), "{missing}");
+    let Err(extra) = super::vscode_verify_vsix_path(&[
+        "--".to_string(),
+        "one.vsix".to_string(),
+        "two.vsix".to_string(),
+    ]) else {
+        return Err("vscode-verify-vsix must reject a second path".to_string());
+    };
+    assert!(extra.contains("exactly one VSIX path"), "{extra}");
+    assert_eq!(
+        super::vscode_verify_vsix_path(&["--".to_string(), "dist/ripr-0.11.0.vsix".to_string()])?,
+        PathBuf::from("dist/ripr-0.11.0.vsix")
+    );
+    Ok(())
+}
+
+#[test]
+fn vscode_verify_vsix_reuses_sealed_archive_license_check() -> Result<(), String> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest_dir
+        .parent()
+        .ok_or_else(|| "failed to resolve repo root from CARGO_MANIFEST_DIR".to_string())?;
+    let notices = super::load_repository_license_notices(repo_root)?;
+    let mit = String::from_utf8(notices.mit.clone()).map_err(|err| err.to_string())?;
+    let apache = String::from_utf8(notices.apache.clone()).map_err(|err| err.to_string())?;
+    with_temp_cwd("vscode-verify-vsix-reuse", |root| {
+        let good = root.join("good.vsix");
+        let license_txt = packaged_license_txt(&mit, &apache);
+        write_packaging_test_vsix(&good, &[("extension/LICENSE.txt", &license_txt)])?;
+        super::vscode_verify_vsix(&[good.to_string_lossy().into_owned()])?;
+
+        let pointer = root.join("pointer.vsix");
+        write_packaging_test_vsix(&pointer, &[("extension/LICENSE.txt", POINTER_LICENSE)])?;
+        let Err(error) = super::vscode_verify_vsix(&[pointer.to_string_lossy().into_owned()])
+        else {
+            return Err("vscode-verify-vsix must reject a pointer-only LICENSE.txt".to_string());
+        };
+        assert!(error.contains("extension/LICENSE.txt"), "{error}");
+        Ok(())
+    })
+}
+
 #[test]
 fn vscode_package_version_reads_extension_manifest() -> Result<(), String> {
     with_temp_cwd("vscode-package-version", |root| {
@@ -48981,6 +49834,188 @@ fn vscode_e2e_preserves_installed_server_selection() -> Result<(), String> {
     assert!(error.contains("installed server binary"));
 
     fs::remove_dir_all(&root).map_err(|err| format!("remove test directory: {err}"))?;
+    Ok(())
+}
+
+fn vscode_job_block(workflow: &str) -> Result<&str, String> {
+    const HEADER: &str = "\n  vscode:\n";
+    let start = workflow
+        .find(HEADER)
+        .ok_or_else(|| "ci.yml is missing the vscode job".to_string())?;
+    let mut offset = start + HEADER.len();
+    while offset < workflow.len() {
+        let rest = &workflow[offset..];
+        let (line, line_end) = match rest.find('\n') {
+            Some(idx) => (&rest[..idx], offset + idx + 1),
+            None => (rest, workflow.len()),
+        };
+        if let Some(key) = line.strip_prefix("  ")
+            && !key.starts_with([' ', '-', '#'])
+            && key.contains(':')
+            && key.starts_with(char::is_alphabetic)
+        {
+            return Ok(&workflow[start..offset]);
+        }
+        offset = line_end;
+    }
+    Ok(&workflow[start..])
+}
+
+fn vscode_diagnostics_upload_step(job: &str) -> Option<&str> {
+    const MARKER: &str = "- name: Upload VS Code test host diagnostics";
+    let start = job.find(MARKER)?;
+    let rest = &job[start..];
+    let end = rest.find("\n      - ").unwrap_or(rest.len());
+    Some(&rest[..end])
+}
+
+fn vscode_host_diagnostics_contract_violations(job: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    if !job.contains("xvfb-run -a npm run test:e2e") {
+        violations.push("vscode job is missing the e2e host step".to_string());
+    }
+    if job.contains("continue-on-error") {
+        violations.push(
+            "continue-on-error would launder the original VS Code test exit status".to_string(),
+        );
+    }
+    let Some(upload) = vscode_diagnostics_upload_step(job) else {
+        violations.push("vscode job is missing the failure-only diagnostics upload".to_string());
+        return violations;
+    };
+    let conditions: Vec<&str> = upload
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("if:"))
+        .collect();
+    if conditions.as_slice() != ["if: failure()"] {
+        violations.push(format!(
+            "diagnostics upload if must be exactly failure(), got {conditions:?}"
+        ));
+    }
+    if upload.contains("if: always()") || upload.contains("if: success()") {
+        violations.push("diagnostics upload must not run on success".to_string());
+    }
+    if !upload.contains("actions/upload-artifact@v7") {
+        violations.push("diagnostics upload must use actions/upload-artifact@v7".to_string());
+    }
+    if !upload.contains("target/ripr/vscode-test-host-diagnostics/") {
+        violations
+            .push("diagnostics upload must use the pinned host diagnostics folder".to_string());
+    }
+    if !upload.contains("retention-days: 5") {
+        violations.push("diagnostics upload must cap retention at 5 days".to_string());
+    }
+    if !upload.contains("if-no-files-found: ignore") {
+        violations
+            .push("missing diagnostics must not replace the original test failure".to_string());
+    }
+    violations
+}
+
+#[test]
+fn vscode_host_diagnostics_contract_rejects_success_uploads_and_exit_laundering() {
+    let success_upload = r#"
+  vscode:
+    steps:
+      - run: xvfb-run -a npm run test:e2e
+      - name: Upload VS Code test host diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          path: target/ripr/vscode-test-host-diagnostics/
+          retention-days: 5
+          if-no-files-found: ignore
+"#;
+    assert!(
+        vscode_host_diagnostics_contract_violations(success_upload)
+            .iter()
+            .any(|violation| violation.contains("must not run on success")),
+        "success uploads must fail the contract"
+    );
+
+    let laundered_exit = r#"
+  vscode:
+    steps:
+      - run: xvfb-run -a npm run test:e2e
+        continue-on-error: true
+      - name: Upload VS Code test host diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          path: target/ripr/vscode-test-host-diagnostics/
+          retention-days: 5
+          if-no-files-found: ignore
+"#;
+    assert!(
+        vscode_host_diagnostics_contract_violations(laundered_exit)
+            .iter()
+            .any(|violation| violation.contains("launder")),
+        "continue-on-error must fail the contract"
+    );
+
+    let success_upload_before_later_failure = r#"
+  vscode:
+    steps:
+      - run: xvfb-run -a npm run test:e2e
+      - name: Upload VS Code test host diagnostics
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          path: target/ripr/vscode-test-host-diagnostics/
+          retention-days: 5
+          if-no-files-found: ignore
+      - name: later summary
+        if: failure()
+        run: echo later
+"#;
+    let success_before_later =
+        vscode_host_diagnostics_contract_violations(success_upload_before_later_failure);
+    assert!(
+        success_before_later
+            .iter()
+            .any(|violation| violation.contains("exactly failure()")),
+        "a later failure() step must not credit a success() upload: {success_before_later:?}"
+    );
+}
+
+#[test]
+fn vscode_host_diagnostics_ci_job_retains_failure_only() -> Result<(), String> {
+    let root = repo_root()?;
+    let workflow = fs::read_to_string(root.join(".github/workflows/ci.yml"))
+        .map_err(|err| format!("read ci.yml: {err}"))?;
+    let job = vscode_job_block(&workflow)?;
+    let violations = vscode_host_diagnostics_contract_violations(job);
+    assert!(
+        violations.is_empty(),
+        "vscode host diagnostics contract: {violations:?}"
+    );
+
+    let runner = fs::read_to_string(root.join("editors/vscode/test/runTest.ts"))
+        .map_err(|err| format!("read runTest.ts: {err}"))?;
+    assert!(
+        runner.contains("resolveUserDataDir"),
+        "runTest.ts must pin user-data through resolveUserDataDir"
+    );
+    assert!(
+        runner.contains("finalizeHostRun"),
+        "runTest.ts must preserve the original host exit through finalizeHostRun"
+    );
+    assert!(
+        runner.contains("resetHostLogDir(userDataPath)"),
+        "runTest.ts must call resetHostLogDir(userDataPath) before setup"
+    );
+    assert!(
+        !runner.contains("vscode-test-user-data', runId"),
+        "user-data must be a known folder, not a pid-suffixed path"
+    );
+
+    let collector = fs::read_to_string(root.join("editors/vscode/test/hostDiagnostics.ts"))
+        .map_err(|err| format!("read hostDiagnostics.ts: {err}"))?;
+    assert!(collector.contains("HOST_DIAGNOSTICS_RETENTION_DAYS = 5"));
+    assert!(collector.contains("MAX_HOST_DIAGNOSTICS_BYTES = 5 * 1024 * 1024"));
+    assert!(collector.contains("USER_DATA_DIR_NAME = 'vscode-test-user-data'"));
+    assert!(collector.contains("HOST_DIAGNOSTICS_DIR_NAME = 'vscode-test-host-diagnostics'"));
     Ok(())
 }
 
@@ -51094,7 +52129,7 @@ fn mutation_calibration_imports_cargo_mutants_27_1_scenario_mutant_summaries() -
         .ok_or_else(|| "line 101 mutant should be imported".to_string())?;
     assert_eq!(caught.file.as_deref(), Some("src/lib.rs"));
     assert_eq!(caught.runtime_outcome, "caught");
-    assert_eq!(caught.mutation_operator, "None");
+    assert_eq!(caught.mutation_operator, "FnValue");
     assert_eq!(
         caught.mutant_id.as_deref(),
         Some("src/lib.rs:101:9: replace next -> Option<Self::Item> with None")
@@ -51105,7 +52140,7 @@ fn mutation_calibration_imports_cargo_mutants_27_1_scenario_mutant_summaries() -
         .find(|record| record.line == Some(104))
         .ok_or_else(|| "line 104 mutant should be imported".to_string())?;
     assert_eq!(missed.runtime_outcome, "missed");
-    assert_eq!(missed.mutation_operator, "<<");
+    assert_eq!(missed.mutation_operator, "BinaryOperator");
 
     let timeout = mutants
         .iter()
@@ -53755,4 +54790,205 @@ fn ci_policy_publication_preserves_local_report_and_local_io_failures() -> Resul
         assert!(super::publish_precommit_policy_report(false).is_err());
         Ok(())
     })
+}
+
+#[test]
+fn gh_pr_status_provider_quota_observations_preserve_evidence() -> Result<(), String> {
+    let sourcery = "Sorry @EffortlessSteven, you have reached your weekly rate limit of 500000 diff characters.\n\nRetry later.";
+    let gemini = "> [!WARNING]\r\n> You have reached your daily quota limit. Please wait up to 24 hours and I will start processing your requests again!";
+    let codex = "You have reached your Codex usage limits for code reviews.\nSee `settings` — no review ran.";
+    let rabbit = "<!-- This is an auto-generated comment: summarize by coderabbit.ai -->\n<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->\n\n> ## Review details\n> Commits: aaa to bbb\n> Files selected: 6";
+    let fixture = serde_json::json!({
+        "number": 42, "title": "provider notices", "isDraft": false,
+        "headRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "headRefName": "candidate", "baseRefName": "main",
+        "mergeStateStatus": "CLEAN", "reviewDecision": "APPROVED",
+        "latestReviews": [{"author": {"login": "sourcery-ai[bot]"}, "state": "COMMENTED", "body": sourcery,
+            "submittedAt": "2026-10-14T01:00:00Z"},
+            {"author": {"login": "independent-reviewer"}, "state": "APPROVED", "submittedAt": "2026-10-14T02:00:00Z", "body": "Reviewed exact candidate."}],
+        "reviews": [{"author": {"login": "independent-reviewer"}, "state": "APPROVED", "submittedAt": "2026-10-14T02:00:00Z", "commit": {"oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}],
+        "comments": [
+            {"author": {"login": "gemini-code-assist[bot]"}, "body": gemini, "url": "https://github.com/example/repo/pull/42#issuecomment-2", "createdAt": "2026-10-13T01:00:00Z"},
+            {"author": {"login": "chatgpt-codex-connector[bot]"}, "body": codex, "url": "https://github.com/example/repo/pull/42#issuecomment-3", "createdAt": "2026-10-14T01:00:00Z"},
+            {"author": {"login": "coderabbitai[bot]"}, "body": rabbit, "url": "https://github.com/example/repo/pull/42#issuecomment-4", "createdAt": "2026-10-14T01:00:00Z"},
+            {"author": {"login": "human"}, "body": "The provider hit quota. I reviewed the code."}
+        ],
+        "statusCheckRollup": [{"__typename":"CheckRun", "name":"rust", "status":"COMPLETED", "conclusion":"SUCCESS"}]
+    });
+    let pr = super::collect_gh_pr_status_with(42, |program, args| {
+        assert_eq!(program, "gh");
+        if args.first().is_some_and(|arg| arg == "api") {
+            return Ok(gh_pr_status_identity_response(&fixture));
+        }
+        assert_eq!(args.len(), 5);
+        assert_eq!(&args[..4], &["pr", "view", "42", "--json"]);
+        assert!(!args[4].split(',').any(|field| field == "baseRefOid"));
+        let fields: std::collections::BTreeSet<_> = args[4].split(',').collect();
+        for required in ["comments", "headRefOid", "latestReviews"] {
+            assert!(fields.contains(required), "collector omitted {required}");
+        }
+        Ok(fixture.to_string())
+    })?;
+    assert_eq!(pr.reviews.len(), 2);
+    let readiness = gh_pr_status_readiness(&pr, &["rust".to_string()], true, Vec::new());
+    let report: Value = serde_json::from_str(&gh_pr_status_json(&pr, &[], &readiness))
+        .map_err(|e| e.to_string())?;
+    let observations = &report["provider_review_observations"];
+    assert_eq!(
+        observations["snapshot_head"],
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    );
+    assert_eq!(observations["quota_notice_count"], 4);
+    let responses = observations["responses"]
+        .as_array()
+        .ok_or("missing response observations")?;
+    assert_eq!(
+        responses.len(),
+        4,
+        "three issue comments and one review must survive collection"
+    );
+    for (response, original) in responses.iter().zip([sourcery, gemini, codex, rabbit]) {
+        assert_eq!(response["disposition"], "quota_exhausted");
+        assert_eq!(response["body"], original);
+        assert_eq!(response["subject_attribution"], "not_established");
+    }
+    assert_eq!(responses[0]["source_kind"], "review");
+    assert_eq!(
+        responses[0]["url"], "",
+        "latestReviews does not supply a review URL"
+    );
+    assert_eq!(responses[0]["timestamp"], "2026-10-14T01:00:00Z");
+    assert_eq!(responses[1]["source_kind"], "issue_comment");
+    assert_eq!(responses[1]["timestamp"], "2026-10-13T01:00:00Z");
+    assert_eq!(
+        responses[1]["url"],
+        "https://github.com/example/repo/pull/42#issuecomment-2"
+    );
+    assert!(observations.get("completed_review_count").is_none());
+    let markdown = gh_pr_status_markdown(&pr, &[], &readiness);
+    assert!(markdown.contains("Quota notices: 4 of 4 observed provider responses"));
+    assert!(markdown.contains("not evidence of review completion"));
+    assert!(markdown.contains("not attributed to the current head"));
+    assert_eq!(
+        readiness.safe_next_action, "merge",
+        "advisory provider disclosure must not silently become a new gate"
+    );
+    Ok(())
+}
+
+#[test]
+fn gh_pr_status_final_snapshot_drives_the_real_readiness_and_renderers() -> Result<(), String> {
+    for (status, conclusion, review, expected) in [
+        ("COMPLETED", "SUCCESS", "APPROVED", "merge"),
+        ("IN_PROGRESS", "", "APPROVED", "wait"),
+        ("COMPLETED", "FAILURE", "APPROVED", "inspect failure"),
+        (
+            "COMPLETED",
+            "SUCCESS",
+            "CHANGES_REQUESTED",
+            "inspect failure",
+        ),
+    ] {
+        let first = serde_json::json!({
+            "number":42,"title":"final snapshot","headRefOid":"1111111111111111111111111111111111111111",
+            "baseRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefName":"main",
+            "headRefName":"candidate","isDraft":false,"mergeStateStatus":"CLEAN","reviewDecision":"APPROVED",
+            "latestReviews":[{"author":{"login":"fixture-reviewer"},"state":"APPROVED","submittedAt":"2026-10-15T01:00:00Z"}],
+            "reviews":[{"author":{"login":"fixture-reviewer"},"state":"APPROVED","submittedAt":"2026-10-15T01:00:00Z","commit":{"oid":"1111111111111111111111111111111111111111"}}],"comments":[],
+            "statusCheckRollup":[{"__typename":"CheckRun","name":"rust","status":"COMPLETED","conclusion":"SUCCESS"}]
+        });
+        let mut last = first.clone();
+        last["reviewDecision"] = serde_json::json!(review);
+        last["statusCheckRollup"][0]["status"] = serde_json::json!(status);
+        last["statusCheckRollup"][0]["conclusion"] = serde_json::json!(conclusion);
+        let mut reads = 0;
+        let observation = super::gh_pr_status_snapshot::collect_current(
+            42,
+            || {
+                reads += 1;
+                super::collect_gh_pr_status_json_with(42, |program, args| {
+                    assert_eq!(program, "gh");
+                    if args.first().is_some_and(|arg| arg == "api") {
+                        return Ok(gh_pr_status_identity_response(if reads == 1 {
+                            &first
+                        } else {
+                            &last
+                        }));
+                    }
+                    assert_eq!(&args[..4], ["pr", "view", "42", "--json"]);
+                    let fields = args[4].split(',').collect::<Vec<_>>();
+                    assert!(fields.contains(&"headRefOid") && !fields.contains(&"baseRefOid"));
+                    Ok(if reads == 1 {
+                        first.to_string()
+                    } else {
+                        last.to_string()
+                    })
+                })
+            },
+            |target| {
+                assert_eq!(target, "main");
+                Ok(vec!["rust".to_string()])
+            },
+        )?;
+        assert_eq!(reads, 2);
+        let pr = parse_gh_pr_status_pull_request(&observation.pr.to_string())?;
+        let readiness = gh_pr_status_readiness(
+            &pr,
+            &observation.contexts,
+            observation.contexts_available,
+            observation.warnings,
+        );
+        assert_eq!(readiness.safe_next_action, expected);
+        let json: Value =
+            serde_json::from_str(&gh_pr_status_json(&pr, &observation.contexts, &readiness))
+                .map_err(|error| error.to_string())?;
+        assert_eq!(json["safe_next_action"], expected);
+        let markdown = gh_pr_status_markdown(&pr, &observation.contexts, &readiness);
+        assert!(markdown.contains(&format!("safe next action: `{expected}`")));
+        assert!(markdown.contains("1111111111111111111111111111111111111111"));
+        assert!(markdown.contains("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+        assert!(markdown.contains("not atomic"));
+    }
+    Ok(())
+}
+
+fn gh_pr_status_identity_response(fixture: &Value) -> String {
+    let mut identity = fixture.clone();
+    if identity.get("baseRefOid").is_none() {
+        identity["baseRefOid"] = serde_json::json!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    }
+    serde_json::json!({"data":{"repository":{"pullRequest":identity}}}).to_string()
+}
+
+/// Use the existing approved runner to inspect real gh's offline field registry.
+#[test]
+#[ignore = "requires real gh; set RIPR_TEST_GH to the supported gh 2.46 binary and run --ignored"]
+fn gh_pr_status_real_cli_schema() -> Result<(), String> {
+    let gh = std::env::var_os("RIPR_TEST_GH").unwrap_or_else(|| "gh".into());
+    let Err(text) = super::run_output_owned(
+        &gh.to_string_lossy(),
+        &[
+            "pr".to_string(),
+            "view".to_string(),
+            "--json".to_string(),
+            "riprUnsupportedSchemaControl".to_string(),
+        ],
+    ) else {
+        return Err("unknown-field control unexpectedly succeeded".to_string());
+    };
+    assert!(
+        text.contains("Unknown JSON field: \"riprUnsupportedSchemaControl\""),
+        "{text}"
+    );
+    let (_, registry) = text
+        .split_once("Available fields:")
+        .ok_or("real gh did not expose its field registry")?;
+    let available: std::collections::BTreeSet<_> = registry.lines().map(str::trim).collect();
+    for field in super::gh_pr_status_snapshot::VIEW_FIELDS.split(',') {
+        assert!(
+            available.contains(field),
+            "real gh rejects production field {field}: {text}"
+        );
+    }
+    Ok(())
 }

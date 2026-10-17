@@ -2,7 +2,7 @@ use super::*;
 use crate::lsp::diagnostic_budget::{DiagnosticBudget, DiagnosticDeliverySelection};
 use tower_lsp_server::ls_types::PreviousResultId;
 
-fn drained_parity_backend() -> Result<ParityHarness, String> {
+pub(super) fn drained_parity_backend() -> Result<ParityHarness, String> {
     let mut harness = parity_backend()?;
     let (idle_service, idle_socket) =
         LspService::new(|client| Backend::new(client, PathBuf::from(".")));
@@ -20,7 +20,7 @@ fn drained_parity_backend() -> Result<ParityHarness, String> {
     Ok(harness)
 }
 
-fn document_report(
+pub(super) fn document_report(
     harness: &ParityHarness,
     uri: &Uri,
     previous: Option<String>,
@@ -43,7 +43,7 @@ fn document_report(
     serde_json::to_value(report).map_err(|error| error.to_string())
 }
 
-fn workspace_report(
+pub(super) fn workspace_report(
     harness: &ParityHarness,
     previous: Vec<PreviousResultId>,
 ) -> Result<serde_json::Value, String> {
@@ -64,7 +64,7 @@ fn workspace_report(
     serde_json::to_value(report).map_err(|error| error.to_string())
 }
 
-fn result_id(report: &serde_json::Value) -> Result<String, String> {
+pub(super) fn result_id(report: &serde_json::Value) -> Result<String, String> {
     report["resultId"]
         .as_str()
         .map(str::to_string)
@@ -180,7 +180,15 @@ fn omission_retracts_under_budget_and_quarantine_and_clears_previous_uri() -> Re
         });
     let quarantined = document_report(&harness, &uri, Some(previous.clone()))?;
     assert_eq!(quarantined["kind"], "full");
-    assert_eq!(quarantined["items"], serde_json::json!([]));
+    assert_eq!(
+        quarantined["items"][0]["code"],
+        "ripr-diagnostic-quarantine-withdrawn"
+    );
+    assert_eq!(quarantined["items"].as_array().map(Vec::len), Some(1));
+    assert_ne!(
+        quarantined["items"][0]["code"],
+        "ripr-diagnostic-budget-omitted"
+    );
     let quarantine_id = result_id(&quarantined)?;
     assert_ne!(quarantine_id, previous);
     assert_eq!(
@@ -188,7 +196,7 @@ fn omission_retracts_under_budget_and_quarantine_and_clears_previous_uri() -> Re
         "unchanged"
     );
     let workspace = workspace_report(&harness, Vec::new())?;
-    assert_eq!(workspace["items"][0]["items"], serde_json::json!([]));
+    assert_eq!(workspace["items"][0]["items"], quarantined["items"]);
     assert_eq!(workspace["items"][0]["version"], 7);
     assert_eq!(
         workspace_report(

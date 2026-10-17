@@ -1,0 +1,39 @@
+{
+  "case_id": "spec0231-pinning-chain-relation-kind",
+  "subject_id": "authored-pinning-chain-relation-kind",
+  "origin": "authored",
+  "anchor": "src/lib.rs:2",
+  "behavior_family": "scalar_return_value",
+  "test_shape": "assert_eq_pinning_chain_with_relation_conjunct",
+  "hard_case": true,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {},
+  "oracle": {
+    "expected": {
+      "kind": "exact_value",
+      "strength": "strong",
+      "spec": "RIPR-SPEC-0231#33"
+    },
+    "observed_kind": "exact_value",
+    "observed_strength": "strong",
+    "observed_all": [
+      {
+        "test": "score_pins_and_check_is_not_bad",
+        "kind": "exact_value",
+        "strength": "strong"
+      }
+    ],
+    "outcome": "match"
+  }
+}

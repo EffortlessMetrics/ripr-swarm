@@ -4,7 +4,9 @@ use super::owners_tests::{
     TestImportContext, collect_imports_from_statements, collect_owners_from_statements,
     collect_tests_from_statements, module_owner,
 };
-use super::source_utils::{SourceText, line_for_range_end, line_for_range_start, text_for_range};
+use super::source_utils::{
+    SourceText, is_test_file, line_for_range_end, line_for_range_start, text_for_range,
+};
 use super::{PythonOwner, PythonTest, expr_full_name};
 use crate::domain::{LanguageId as DomainLanguageId, StaticLimitKind};
 use rustpython_parser::{
@@ -14,6 +16,7 @@ use rustpython_parser::{
     text_size::{TextRange, TextSize},
 };
 use std::{
+    io::Read,
     ops::RangeInclusive,
     path::{Path, PathBuf},
 };
@@ -102,30 +105,43 @@ pub(super) struct PythonSourceLimitation {
     pub(super) missing: String,
 }
 
-/// Detect the Python test framework for a workspace root (#2106), using
-/// the marker set the adapter's code-level detection implies:
+/// Detect Python test frameworks for a workspace root (#2106 / #7664).
+///
+/// Marker set the adapter's code-level detection implies:
 ///
 /// - pytest: `pytest.ini`, `conftest.py`, or a pytest section in
 ///   `pyproject.toml` / `setup.cfg` / `tox.ini` (a bare pyproject.toml is
 ///   PEP 517 packaging, not pytest evidence — #2183 review);
+///   when those markers are absent, bounded code evidence of
+///   `import pytest` / `from pytest import ...` in a Python test file at
+///   the root or in `tests/` / `test/` also counts (#7662);
 /// - unittest: no config exists by design, so detection uses bounded code
-///   evidence (`import unittest` in a `test_*.py` file at the root or in
+///   evidence (`import unittest` in a Python test file at the root or in
 ///   `tests/` / `test/`), matching what the adapter detects from source.
 ///
-/// Fail-closed: `None` when no marker matches — callers must report
+/// Test-path admission reuses the shared [`is_test_file`] predicate (#7706):
+/// Django-conventional `tests.py` / `test.py` modules and `*_test.py`
+/// siblings enter the scan on the same terms the adapter's test index uses
+/// (#7385), and discovery descends one level into immediate app directories
+/// (the `django-admin startapp` layout keeps unittest tests in
+/// `<app>/tests.py`). Every scan stays bounded: 64 entries per directory,
+/// a 4096-byte prefix read per file.
+///
+/// Config-file pytest markers add pytest; they do not skip the unittest
+/// scan, so a mixed repo reports both frameworks (#7664). Pytest is listed
+/// first when both are present so primary-of-set consumers stay pytest-first.
+/// Fail-closed: empty when no marker matches — callers must report
 /// "not detected", never guess.
-pub(crate) fn detect_python_test_framework(root: &Path) -> Option<&'static str> {
-    if root.join("pytest.ini").exists()
+pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
+    let mut saw_pytest = root.join("pytest.ini").exists()
         || root.join("conftest.py").exists()
         // A bare pyproject.toml is PEP 517 packaging, not pytest evidence
         // (#2183 review); only an actual pytest section counts.
         || ini_section_present(&root.join("pyproject.toml"), "[tool.pytest.ini_options]")
         || ini_section_present(&root.join("setup.cfg"), "[tool:pytest]")
-        || ini_section_present(&root.join("tox.ini"), "[pytest]")
-    {
-        return Some("pytest");
-    }
-    for dir in [root.to_path_buf(), root.join("tests"), root.join("test")] {
+        || ini_section_present(&root.join("tox.ini"), "[pytest]");
+    let mut saw_unittest = false;
+    'dirs: for dir in python_framework_scan_dirs(root) {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
@@ -134,43 +150,255 @@ pub(crate) fn detect_python_test_framework(root: &Path) -> Option<&'static str> 
             let Some(name) = name.to_str() else {
                 continue;
             };
-            if !name.starts_with("test_") || !name.ends_with(".py") {
+            // #7706: admit the same Python test paths `is_test_file`
+            // recognizes (`tests.py` / `test.py` / `*_test.py` and files
+            // under a `tests`/`test` directory), still restricted to `.py`
+            // sources so foreign-language `test_*.rs` files never enter.
+            if !name.ends_with(".py") || !is_test_file(&entry.path()) {
                 continue;
             }
             // Bounded evidence read: the import line is at the top of the
-            // file, so a small prefix suffices.
-            let Ok(bytes) = std::fs::read(entry.path()) else {
+            // file, so a small prefix suffices. Read at most that prefix so a
+            // large test file cannot exhaust memory when config markers keep
+            // the unittest scan running (#7664 review).
+            let Some(text) = read_framework_evidence_prefix(&entry.path()) else {
                 continue;
             };
-            let prefix = &bytes[..bytes.len().min(4096)];
-            if String::from_utf8_lossy(prefix)
-                .lines()
-                .any(is_unittest_import_line)
-            {
-                return Some("unittest");
+            if !saw_pytest && text.lines().any(is_pytest_import_line) {
+                saw_pytest = true;
+            }
+            if !saw_unittest && text_has_unittest_framework_import(&text) {
+                saw_unittest = true;
+            }
+            if saw_pytest && saw_unittest {
+                break 'dirs;
             }
         }
     }
-    None
+    let mut frameworks = Vec::new();
+    if saw_pytest {
+        frameworks.push("pytest");
+    }
+    if saw_unittest {
+        frameworks.push("unittest");
+    }
+    frameworks
+}
+
+/// Directories scanned for Python framework import evidence: the workspace
+/// root, its `tests`/`test` directories, and each immediate app directory
+/// one level down (the Django `startapp` layout keeps tests in
+/// `<app>/tests.py` — #7706). `tests`/`test` stay listed even when they do
+/// not exist; a missing directory simply skips. App directories are sorted
+/// so the bounded scan order is deterministic across filesystems, and
+/// capped so a repo with hundreds of packages cannot expand the read.
+fn python_framework_scan_dirs(root: &Path) -> Vec<PathBuf> {
+    let mut dirs = vec![root.to_path_buf(), root.join("tests"), root.join("test")];
+    // Review (#8257): collect every immediate directory first, then sort,
+    // then cap. Capping the raw entry stream before filtering let 64
+    // non-directory entries starve the scan and made the surviving set
+    // depend on arbitrary filesystem order.
+    let mut app_dirs: Vec<PathBuf> = std::fs::read_dir(root)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| path.is_dir())
+                .filter(|path| {
+                    !matches!(
+                        path.file_name().and_then(|name| name.to_str()),
+                        Some("tests") | Some("test")
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    app_dirs.sort();
+    app_dirs.truncate(64);
+    dirs.extend(app_dirs);
+    dirs
+}
+
+/// Primary detected Python test framework: the first entry of
+/// [`detect_python_test_frameworks`] (pytest before unittest). Adapter
+/// repo-input still stores a single `Option`; doctor prints the full set.
+pub(crate) fn detect_python_test_framework(root: &Path) -> Option<&'static str> {
+    detect_python_test_frameworks(root).into_iter().next()
+}
+
+/// Bytes inspected for framework import evidence. The read consumes at most
+/// one extra byte so a cut final line can be dropped instead of classified.
+const PYTHON_FRAMEWORK_EVIDENCE_PREFIX_BYTES: u64 = 4096;
+
+fn read_framework_evidence_prefix(path: &Path) -> Option<String> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut buf = Vec::new();
+    file.take(PYTHON_FRAMEWORK_EVIDENCE_PREFIX_BYTES + 1)
+        .read_to_end(&mut buf)
+        .ok()?;
+    drop_truncated_final_line(&mut buf, PYTHON_FRAMEWORK_EVIDENCE_PREFIX_BYTES as usize);
+    Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// When the file continues past `prefix_bytes`, the last inspected line may
+/// be a cut identifier (`import unittest` vs `import unittest_extra`). Keep
+/// that line only when it is newline-terminated, including the case where
+/// the newline sits in the extra lookahead byte.
+fn drop_truncated_final_line(buf: &mut Vec<u8>, prefix_bytes: usize) {
+    let Some(&extra) = buf.get(prefix_bytes) else {
+        return;
+    };
+    buf.truncate(prefix_bytes);
+    if buf.last() == Some(&b'\n') || extra == b'\n' {
+        return;
+    }
+    match buf.iter().rposition(|&b| b == b'\n') {
+        Some(idx) => buf.truncate(idx + 1),
+        None => buf.clear(),
+    }
+}
+
+/// Whether a line is a real pytest import statement — `import pytest`,
+/// `import pytest as ...`, or `from pytest import ...` — at a token
+/// boundary. Comment lines and lookalike identifiers (`import pytesting`)
+/// do not count (#7662).
+fn is_pytest_import_line(line: &str) -> bool {
+    is_top_level_module_import_line(line, "pytest")
+}
+
+/// Whether prefix text contains unittest-framework import evidence.
+/// Parenthesized `from unittest import (...)` and explicit-backslash
+/// continuations are accumulated across lines before mock-only
+/// classification (#7664 review).
+fn text_has_unittest_framework_import(text: &str) -> bool {
+    let mut pending = String::new();
+    let mut pending_backslash = false;
+    for line in text.lines() {
+        let trimmed = strip_python_line_comment(line);
+        if trimmed.is_empty() {
+            continue;
+        }
+        if pending.is_empty() {
+            if unittest_from_import_is_open_paren(trimmed) {
+                pending.push_str(trimmed);
+                continue;
+            }
+            if unittest_from_import_is_backslash_continuation(trimmed) {
+                pending.push_str(without_trailing_backslash(trimmed));
+                pending_backslash = true;
+                continue;
+            }
+            if is_unittest_import_line(trimmed) {
+                return true;
+            }
+        } else {
+            pending.push(' ');
+            let continues = trimmed.ends_with('\\');
+            pending.push_str(without_trailing_backslash(trimmed));
+            let finished = if pending_backslash {
+                !continues
+            } else {
+                pending.contains(')')
+            };
+            if finished {
+                pending_backslash = false;
+                let complete = std::mem::take(&mut pending);
+                if is_unittest_import_line(&complete) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn strip_python_line_comment(line: &str) -> &str {
+    match line.split_once('#') {
+        Some((code, _)) => code.trim(),
+        None => line.trim(),
+    }
+}
+
+fn unittest_from_import_is_open_paren(trimmed: &str) -> bool {
+    let Some(imported) = unittest_from_import_names(trimmed) else {
+        return false;
+    };
+    imported.contains('(') && !imported.contains(')')
+}
+
+fn unittest_from_import_is_backslash_continuation(trimmed: &str) -> bool {
+    unittest_from_import_names(trimmed).is_some() && trimmed.ends_with('\\')
+}
+
+fn without_trailing_backslash(trimmed: &str) -> &str {
+    match trimmed.strip_suffix('\\') {
+        Some(rest) => rest.trim_end(),
+        None => trimmed,
+    }
 }
 
 /// Whether a line is a real unittest import statement — `import unittest`,
 /// `import unittest as ...`, or `from unittest import ...` — at a token
 /// boundary. Comment lines and lookalike identifiers (`import unittesting`)
-/// do not count (#2106 review).
+/// do not count (#2106 review). `from unittest import mock` is the mock
+/// library, not unittest-framework evidence (#7664 review).
 fn is_unittest_import_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.starts_with('#') {
+        return false;
+    }
+    if let Some(imported) = unittest_from_import_names(trimmed) {
+        return !unittest_from_import_is_mock_only(imported);
+    }
+    is_top_level_module_import_line(line, "unittest")
+}
+
+fn unittest_from_import_names(trimmed: &str) -> Option<&str> {
+    let rest = trimmed.strip_prefix("from ")?;
+    let after_module = rest.strip_prefix("unittest")?;
+    after_module.strip_prefix(" import")
+}
+
+/// `from unittest import mock` / `from unittest import mock as umock` is not
+/// a test runner. A mixed pytest repo that only mocks through unittest must
+/// not grow a `python: unittest` doctor surface. Parentheses are stripped so
+/// `from unittest import (mock)` stays mock-only.
+fn unittest_from_import_is_mock_only(imported: &str) -> bool {
+    let imported = imported.replace(['(', ')'], " ");
+    let mut saw_name = false;
+    for name in imported
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        saw_name = true;
+        let Some(ident) = name.split_whitespace().next() else {
+            return false;
+        };
+        if ident != "mock" {
+            return false;
+        }
+    }
+    saw_name
+}
+
+/// Token-boundary `import <module>` / `from <module> import ...` matcher.
+/// A following space after the module name admits aliases such as
+/// `import pytest as pt`; a glued lookalike (`import pytesting`) does not.
+fn is_top_level_module_import_line(line: &str, module: &str) -> bool {
     let trimmed = line.trim();
     if trimmed.starts_with('#') {
         return false;
     }
     if let Some(rest) = trimmed.strip_prefix("from ") {
         return rest
-            .strip_prefix("unittest")
+            .strip_prefix(module)
             .is_some_and(|rest| rest.starts_with(" import"));
     }
-    trimmed
-        .strip_prefix("import ")
-        .is_some_and(|rest| rest == "unittest" || rest.starts_with("unittest "))
+    trimmed.strip_prefix("import ").is_some_and(|rest| {
+        rest.strip_prefix(module)
+            .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with(' '))
+    })
 }
 
 /// Whether an INI-style file exists and contains the given section header.

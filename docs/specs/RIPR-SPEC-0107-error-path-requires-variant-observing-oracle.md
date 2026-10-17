@@ -367,8 +367,13 @@ or removed `?`: a result-side oracle (RIPR-SPEC-0227) confirms the
 input, and the path conditions of RIPR-SPEC-0227 rule 3b hold. RIPR-SPEC-0227
 decision 4 (2026-10-07) extends it to a changed line that keeps the same `?`
 operand when that `?` is the owner's only source of `Err`
-(`crates/ripr/src/analysis/classifier/evidence/side_flip.rs`). Every other
-`error_path` probe still needs a variant-observing oracle.
+(`crates/ripr/src/analysis/classifier/evidence/side_flip.rs`). RIPR-SPEC-0227
+rule 3 (2026-10-15) adds a second: the `error_path` probe of a
+`return Err(..)` on the same line as a changed guard condition is confirmed
+with that guard's side flip when the edit kept the returned payload, so the
+only changed behavior on the line is which inputs return `Err`
+(`side_flip/guard.rs`). Every other `error_path` probe still needs a
+variant-observing oracle.
 
 RIPR-SPEC-0238 (2026-10-04) states the Python error-path gate as rule 6:
 `exposed` needs one `exact_error_variant` assertion that itself credits a
@@ -381,3 +386,17 @@ sink-alignment branch. This spec's Rust rules do not apply to Python.
 - `error_path_variant_positive_unchanged`: existing `strong_error_oracle` /
   `weak_error_oracle_assert_matches` / `unwrap_err_variant_positive` fixtures
   still report `exposed` (no regression).
+
+Issue #7063 (2026-10-15) narrows Control B to a change the variant shows. When the
+changed construction carries a payload (`Err(ParseError::TooLong(len))`) and
+its old text builds the same variant, or there is no old text, the change may
+sit only in the payload, which `assert!(matches!(err, ParseError::TooLong(_)))`
+cannot see. Observation is then confirmed only by the owner-return pin, a
+whole-value equality tied to the owner call (RIPR-SPEC-0197 "Early
+error-variant pins", rule 7). The Control B unit tests pair their probes with
+an old text of another variant (`ParseError::Empty`);
+`error_path_exact_variant_oracle_keeps_discriminate_yes` and
+`error_path_parser_context_cannot_replace_emitted_probe_variant` also check
+that with no old text the same equality confirms with the owner pin and not
+without it, and `error_path_matches_variant_oracle_keeps_discriminate_yes`
+checks that the same `matches!` does not confirm a payload-only change.

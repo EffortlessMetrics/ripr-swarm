@@ -79,6 +79,7 @@ const FIXTURE_CARGO_TOML: &str = "[package]\nname = \"boundary_gap_fixture\"\nve
 const FIXTURE_LIB: &str = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
 const FIXTURE_WEAK_TEST: &str = "use boundary_gap_fixture::discounted_total;\n\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n\n#[test]\nfn far_above_threshold_discounts() {\n    assert_eq!(discounted_total(10_000, 100), 9_990);\n}\n";
 const FIXTURE_SEAM: &str = "67fc764ba37d77bd";
+const FIXTURE_GAP: &str = "gap:4b5fdc1a2a157b0d";
 const SECOND_SEAM: &str = "59fe960b7be4b8d6";
 const FIXTURE_BOUNDARY_TEST: &str = "\n#[test]\nfn at_threshold_discounts() {\n    assert_eq!(discounted_total(100, 100), 90);\n}\n";
 
@@ -375,6 +376,270 @@ fn repair_single_item_matches_advanced_card() -> Result<(), String> {
     Ok(())
 }
 
+fn assert_no_repair_attempt_side_effects(root: &Path) {
+    assert!(
+        attempt_ids(root).is_empty(),
+        "an ineligible explicit subject must create no repair attempt"
+    );
+    assert!(
+        !root
+            .join("target/ripr/repair-attempts/.before.lock")
+            .exists(),
+        "an ineligible explicit subject must not create the before-phase lock"
+    );
+    assert!(
+        !root.join("target/ripr/repair-attempts").exists(),
+        "an ineligible explicit subject must not create the repair-attempt store"
+    );
+}
+
+/// #8166 Slice A (positive control): an explicit eligible seam still
+/// starts exactly one before-phase attempt through the façade.
+#[test]
+fn repair_explicit_eligible_seam_starts_one_attempt() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-eligible-explicit")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let repair = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&repair, 0, "repair with an explicit eligible seam");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1, "exactly one attempt must be created");
+    assert_eq!(read_manifest(root, &ids[0])?["seam_id"], FIXTURE_SEAM);
+    Ok(())
+}
+
+/// #8166 Slice A: an explicit seam that is no longer repair-eligible
+/// (its boundary is already gripped, so it is not a headline repair
+/// target) must refuse as a Decision (exit 3) naming the ineligibility
+/// reason, before any attempt or before-phase lock side effect.
+#[test]
+fn repair_explicit_ineligible_seam_refuses_without_attempt_or_lock() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-ineligible-seam")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{FIXTURE_WEAK_TEST}{FIXTURE_BOUNDARY_TEST}"),
+    )
+    .map_err(|e| e.to_string())?;
+    run_git(root, &["add", "tests/pricing.rs"])?;
+    git_commit(root, "grip the boundary")?;
+    let repair = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&repair, 3, "repair with an explicit ineligible seam");
+    assert!(
+        stdout_text(&repair).is_empty(),
+        "ineligibility refusal must leave stdout empty:\n{}",
+        stdout_text(&repair)
+    );
+    let stderr = stderr_text(&repair);
+    assert!(
+        stderr.contains(FIXTURE_SEAM),
+        "refusal must name the seam:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("not a headline repair target"),
+        "refusal must name the ineligibility reason:\n{stderr}"
+    );
+    assert_no_repair_attempt_side_effects(root);
+    Ok(())
+}
+
+/// #8166 Slice A: a canonical gap ID (and its seam ID) whose class is
+/// configured off must refuse as a Decision (exit 3) naming the policy
+/// reason, before any attempt or before-phase lock side effect.
+#[test]
+fn repair_explicit_policy_omitted_gap_and_seam_refuse_without_attempt_or_lock() -> Result<(), String>
+{
+    let fixture = Fixture::boundary("facade-ineligible-gap")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[severity.seams]\nweakly_gripped = \"off\"\n",
+    )
+    .map_err(|e| e.to_string())?;
+    run_git(root, &["add", "ripr.toml"])?;
+    git_commit(root, "configure weakly_gripped off")?;
+    for item in [FIXTURE_GAP, FIXTURE_SEAM] {
+        let repair = run_ripr(root, &["repair", item, "--root", &root_arg])?;
+        assert_exit(&repair, 3, "repair with a policy-omitted explicit item");
+        assert!(
+            stdout_text(&repair).is_empty(),
+            "policy refusal must leave stdout empty:\n{}",
+            stdout_text(&repair)
+        );
+        let stderr = stderr_text(&repair);
+        assert!(
+            stderr.contains(item),
+            "refusal must name the item {item}:\n{stderr}"
+        );
+        assert!(
+            stderr.contains("configured off"),
+            "refusal must name the policy ineligibility reason:\n{stderr}"
+        );
+        assert_no_repair_attempt_side_effects(root);
+    }
+    Ok(())
+}
+
+/// #7882: display narration must never feed stable text back into identity.
+/// Both percent spellings exist, so an accidental codec substitution selects
+/// a real, wrong repository instead of merely producing a missing-path error.
+#[test]
+fn repair_human_paths_preserve_percent_root_identity() -> Result<(), String> {
+    repair_human_path_identity_journey("repo 100%", "repo 100%25")
+}
+
+#[cfg(unix)]
+#[test]
+fn repair_human_paths_preserve_literal_backslash_root_identity() -> Result<(), String> {
+    repair_human_path_identity_journey(r"repo\literal", "repo/literal")
+}
+
+fn repair_human_path_identity_journey(name: &str, sibling: &str) -> Result<(), String> {
+    let parent = Fixture::dir("facade-human-path")?;
+    let root = parent.root.join(name);
+    let other = parent.root.join(sibling);
+    populate_boundary_fixture(&root)?;
+    populate_boundary_fixture(&other)?;
+    let canonical = root.canonicalize().map_err(|error| error.to_string())?;
+    let other_canonical = other.canonicalize().map_err(|error| error.to_string())?;
+    assert_ne!(canonical, other_canonical);
+    let root_arg = root.to_string_lossy().into_owned();
+    let expected_display = if cfg!(windows) {
+        root_arg.replace('\\', "/")
+    } else {
+        root_arg.clone()
+    };
+    let before = run_ripr(&parent.root, &["repair", "--root", &root_arg])?;
+    assert_exit(&before, 0, "prepare attempt under literal root");
+    let ids = attempt_ids(&root);
+    assert_eq!(ids.len(), 1);
+    assert!(
+        attempt_ids(&other).is_empty(),
+        "the sibling must stay untouched"
+    );
+    let id = &ids[0];
+    let manifest = read_manifest(&root, id)?;
+    let persisted_root = manifest["root"].as_str().ok_or("missing root")?;
+    assert_eq!(
+        Path::new(persisted_root)
+            .canonicalize()
+            .map_err(|e| e.to_string())?,
+        canonical
+    );
+    let expected_persisted = if cfg!(windows) {
+        canonical.to_string_lossy().replace('\\', "/")
+    } else {
+        canonical.to_string_lossy().into_owned()
+    };
+    assert_eq!(
+        persisted_root, expected_persisted,
+        "canonical identity spelling must stay unchanged"
+    );
+    let command = manifest["next_command"].clone();
+    let command_text = command.as_str().ok_or("missing command")?;
+    let root_token = command_text
+        .strip_prefix("ripr agent repair --root ")
+        .and_then(|tail| tail.split_once(" --attempt ").map(|(root, _)| root))
+        .ok_or_else(|| format!("missing command root: {command_text}"))?;
+    // These fixture names contain neither quotes nor expansions. Accept either
+    // host's enclosing quote without duplicating the product's shell parser.
+    let command_root = root_token
+        .strip_prefix('\'')
+        .and_then(|s| s.strip_suffix('\''))
+        .or_else(|| {
+            root_token
+                .strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"'))
+        })
+        .unwrap_or(root_token);
+    assert_eq!(
+        command_root, expected_display,
+        "command must select the lexical root, not a display-codec sibling"
+    );
+    let stderr = stderr_text(&before);
+    for file in [
+        "workflow.json",
+        "commands.md",
+        "agent-brief.json",
+        "agent-packet.json",
+    ] {
+        assert!(
+            stderr.lines().any(|line| line
+                == format!("ripr: wrote {expected_display}/target/ripr/workflow/{file}")),
+            "missing literal artifact path for {file}: {stderr}"
+        );
+    }
+    let attempt_relative = format!("target/ripr/repair-attempts/{id}/attempt.json");
+    assert!(
+        stderr.contains(&format!(
+            "ripr: attempt manifest: {expected_display}/{attempt_relative}"
+        )),
+        "{stderr}"
+    );
+    let attempt_dir = root.join("target/ripr/repair-attempts").join(id);
+    let commitment =
+        std::fs::read(attempt_dir.join("before-commitment.sha256")).map_err(|e| e.to_string())?;
+    let manifest_before = manifest_bytes(&root, id)?;
+    let missing_id = "repair-attempt-000000000000000000000000";
+    let missing = run_ripr(
+        &parent.root,
+        &["continue", "--root", &root_arg, "--attempt", missing_id],
+    )?;
+    assert_exit(&missing, 2, "unknown attempt");
+    let missing_stderr = stderr_text(&missing);
+    assert!(missing_stderr.contains(&format!("repair attempt manifest not found for {missing_id} at {expected_display}/target/ripr/repair-attempts/{missing_id}/attempt.json")), "{missing_stderr}");
+    assert_eq!(manifest_bytes(&root, id)?, manifest_before);
+    let wrong_root = run_ripr(
+        &parent.root,
+        &[
+            "continue",
+            "--root",
+            &other.to_string_lossy(),
+            "--attempt",
+            id,
+        ],
+    )?;
+    assert_exit(
+        &wrong_root,
+        2,
+        "the same attempt cannot select a sibling repository",
+    );
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{FIXTURE_WEAK_TEST}{FIXTURE_BOUNDARY_TEST}"),
+    )
+    .map_err(|e| e.to_string())?;
+    let after = run_ripr(
+        &parent.root,
+        &["continue", "--root", &root_arg, "--attempt", id],
+    )?;
+    assert_exit(&after, 0, "consume the exact attempt after a focused edit");
+    let after_stderr = stderr_text(&after);
+    assert!(
+        after_stderr.contains(&format!(
+            "ripr: consuming attempt manifest {expected_display}/{attempt_relative}"
+        )),
+        "{after_stderr}"
+    );
+    let finished = read_manifest(&root, id)?;
+    assert_eq!(finished["state"], "ready_to_finish");
+    assert_eq!(finished["root"], manifest["root"]);
+    assert_eq!(finished["next_command"], command);
+    assert_eq!(finished["repair_attempt_id"], manifest["repair_attempt_id"]);
+    assert_eq!(
+        std::fs::read(attempt_dir.join("before-commitment.sha256")).map_err(|e| e.to_string())?,
+        commitment
+    );
+    assert!(
+        root.join("target/ripr/reports/agent-receipt.json")
+            .is_file()
+    );
+    assert!(attempt_ids(&other).is_empty());
+    Ok(())
+}
+
 /// Control 3: two actionable items — no attempt is created until the user
 /// selects one; never an implicit first/newest pick.
 #[test]
@@ -484,6 +749,185 @@ fn continue_single_attempt_advances_it() -> Result<(), String> {
         report["attempt"]["receipt"].is_object(),
         "a finished attempt must carry its receipt:\n{report:#}"
     );
+    Ok(())
+}
+
+fn compatibility_packet_target(root: &Path) -> Result<String, String> {
+    let bytes = std::fs::read(root.join("target/ripr/workflow/agent-packet.json"))
+        .map_err(|error| format!("read prepared packet: {error}"))?;
+    let packet: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("decode prepared packet: {error}"))?;
+    packet["packets"]
+        .as_array()
+        .and_then(|packets| {
+            packets
+                .iter()
+                .find(|packet| packet["seam_id"] == FIXTURE_SEAM)
+        })
+        .and_then(|packet| packet["allowed_edit_surface"][0].as_str())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            format!("prepared packet has no focused target for {FIXTURE_SEAM}: {packet}")
+        })
+}
+
+/// #7881: recovery belongs to the selected retained attempt, even when a
+/// genuine later packet replaces the repository-global compatibility file.
+#[test]
+fn continue_no_movement_uses_retained_target_and_recovers_after_edit() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-no-movement")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let before = run_ripr(root, &["repair", "--root", &root_arg])?;
+    assert_exit(&before, 0, "prepare pricing attempt");
+    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    assert_eq!(compatibility_packet_target(root)?, "tests/pricing.rs");
+
+    // Independently prepare a valid packet with the same production seam
+    // but a different test target. Only the compatibility projection in the
+    // original root is replaced; its source and retained artifacts stay put.
+    let decoy = Fixture::boundary("facade-decoy")?;
+    std::fs::rename(
+        decoy.root.join("tests/pricing.rs"),
+        decoy.root.join("tests/decoy.rs"),
+    )
+    .map_err(|error| format!("rename decoy test: {error}"))?;
+    run_git(&decoy.root, &["add", "tests"])?;
+    git_commit(&decoy.root, "decoy test target")?;
+    let decoy_before = run_ripr(&decoy.root, &["repair"])?;
+    assert_exit(&decoy_before, 0, "prepare genuine decoy packet");
+    assert_eq!(compatibility_packet_target(&decoy.root)?, "tests/decoy.rs");
+    std::fs::copy(
+        decoy.root.join("target/ripr/workflow/agent-packet.json"),
+        root.join("target/ripr/workflow/agent-packet.json"),
+    )
+    .map_err(|error| format!("replace compatibility packet: {error}"))?;
+    assert_eq!(compatibility_packet_target(root)?, "tests/decoy.rs");
+    assert!(run_git(root, &["status", "--porcelain"])?.is_empty());
+
+    let refused = run_ripr(
+        root,
+        &["continue", "--root", &root_arg, "--attempt", &attempt_id],
+    )?;
+    assert_exit(&refused, 3, "continue before focused edit");
+    assert!(
+        refused.stdout.is_empty(),
+        "facade refusal stdout must stay empty"
+    );
+    let stderr = stderr_text(&refused);
+    assert!(stderr.contains("no repository movement"), "{stderr}");
+    assert!(stderr.contains("awaiting_edit"), "{stderr}");
+    assert!(stderr.contains("tests/pricing.rs"), "{stderr}");
+    assert!(!stderr.contains("tests/decoy.rs"), "{stderr}");
+    assert!(stderr.contains("then rerun"), "{stderr}");
+    let inspection = stderr
+        .lines()
+        .find(|line| line.contains("ripr agent status --root"))
+        .ok_or_else(|| format!("missing bound status command: {stderr}"))?;
+    let expected_root = if cfg!(windows) {
+        root_arg.replace('\\', "/")
+    } else {
+        root_arg.clone()
+    };
+    assert!(inspection.contains(&expected_root), "{inspection}");
+    assert!(
+        inspection.contains(&format!("--attempt {attempt_id}")),
+        "{inspection}"
+    );
+    assert!(
+        stderr.contains(&format!("--attempt {attempt_id}")),
+        "{stderr}"
+    );
+    let manifest = read_manifest(root, &attempt_id)?;
+    assert_eq!(manifest["state"], "awaiting_edit");
+    let reason = manifest["last_after_refusal"]["reason"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        reason.starts_with("agent verify no repository movement"),
+        "{reason}"
+    );
+    assert!(reason.contains("tests/pricing.rs"), "{reason}");
+    assert!(!reason.contains("tests/decoy.rs"), "{reason}");
+    assert!(!root.join("target/ripr/reports/agent-receipt.json").exists());
+
+    // Copy the named inspection route's arguments independently; it must
+    // select the same awaiting attempt and expose no receipt.
+    let status = run_ripr(
+        root,
+        &[
+            "agent",
+            "status",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &attempt_id,
+            "--json",
+        ],
+    )?;
+    assert_exit(&status, 0, "inspect refused attempt");
+    let report: serde_json::Value = serde_json::from_slice(&status.stdout)
+        .map_err(|error| format!("refused status JSON: {error}"))?;
+    assert_eq!(report["attempt"]["attempt_id"], attempt_id);
+    assert_eq!(report["attempt"]["status_class"], "awaiting_edit");
+    assert!(report["attempt"]["receipt"].is_null(), "{report}");
+
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{FIXTURE_WEAK_TEST}{FIXTURE_BOUNDARY_TEST}"),
+    )
+    .map_err(|error| format!("write focused edit: {error}"))?;
+    let continued = run_ripr(
+        root,
+        &["continue", "--root", &root_arg, "--attempt", &attempt_id],
+    )?;
+    assert_exit(
+        &continued,
+        0,
+        "retry after focused edit with decoy projection still present",
+    );
+    let manifest = read_manifest(root, &attempt_id)?;
+    assert_eq!(manifest["state"], "ready_to_finish");
+    assert!(manifest.get("last_after_refusal").is_none(), "{manifest}");
+    assert!(
+        root.join("target/ripr/reports/agent-receipt.json")
+            .is_file()
+    );
+    Ok(())
+}
+
+#[test]
+fn continue_no_movement_keeps_inline_test_module_restrictions() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-inline-no-movement")?;
+    let root = &fixture.root;
+    std::fs::remove_file(root.join("tests/pricing.rs")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        format!("{FIXTURE_LIB}\n#[cfg(test)]\nmod tests {{\n    use super::discounted_total;\n    #[test]\n    fn below() {{ assert_eq!(discounted_total(50, 100), 50); }}\n}}\n"),
+    ).map_err(|error| error.to_string())?;
+    run_git(root, &["add", "src", "tests"])?;
+    git_commit(root, "inline test target")?;
+    let before = run_ripr(root, &["repair"])?;
+    assert_exit(&before, 0, "prepare inline attempt");
+    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    assert_eq!(compatibility_packet_target(root)?, "src/lib.rs");
+    let refused = run_ripr(root, &["continue", "--attempt", &attempt_id])?;
+    assert_exit(&refused, 3, "continue before inline edit");
+    assert!(refused.stdout.is_empty());
+    let stderr = stderr_text(&refused);
+    for expected in [
+        "awaiting_edit",
+        "src/lib.rs",
+        "existing `#[cfg(test)]` module",
+        "new test functions",
+        "production code",
+        "module declaration",
+        "existing tests",
+    ] {
+        assert!(stderr.contains(expected), "missing {expected}: {stderr}");
+    }
+    assert_eq!(read_manifest(root, &attempt_id)?["state"], "awaiting_edit");
+    assert!(!root.join("target/ripr/reports/agent-receipt.json").exists());
     Ok(())
 }
 
@@ -1445,6 +1889,14 @@ fn repair_skips_severity_off_seams_with_named_omission() -> Result<(), String> {
     assert!(
         stderr.contains("configured off"),
         "must name the policy omission:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("ripr check --root") && stderr.contains("ripr pilot --root"),
+        "an ineligible repair must keep both the check and pilot routes:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("when this branch has changed code"),
+        "the check route must stay conditional on a diff, since repair lists saved seams:\n{stderr}"
     );
     assert!(
         attempt_ids(root).is_empty(),

@@ -8,7 +8,6 @@
 # Network behavior must stay in explicit adapter or release surfaces. Unit tests
 # and domain logic should not acquire hidden network dependencies.
 
-.github/workflows/droid-review.yml|curl|1|ci/droid|Droid action bootstrap downloads a pinned GitHub CLI archive when the self-hosted runner does not provide gh.
 .github/workflows/droid-security-scan.yml|curl|1|ci/droid|Droid action bootstrap downloads a pinned GitHub CLI archive when the self-hosted runner does not provide gh.
 .github/workflows/droid.yml|curl|1|ci/droid|Droid action bootstrap downloads a pinned GitHub CLI archive when the self-hosted runner does not provide gh.
 .github/workflows/publish-extension.yml|curl|1|release/ci|Release workflow polls GitHub Releases for the server manifest before publishing extension packages.
@@ -24,5 +23,6 @@ xtask/src/policy/distribution/npm_launcher.rs|curl|1|distribution/npm-launcher|T
 xtask/src/policy/distribution/npm_launcher.rs|https.get|1|distribution/npm-launcher|Token list member used to reject network-fetching npm lifecycle install scripts; the validator forbids it, it performs no network behavior.
 xtask/src/policy/distribution/npm_launcher.rs|wget|1|distribution/npm-launcher|Token list member used to reject network-fetching npm lifecycle install scripts; the validator forbids it, it performs no network behavior.
 xtask/src/policy/distribution/tests.rs|curl|1|distribution/npm-launcher|Negative control proving an npm install script that invokes curl is rejected before publication.
+xtask/src/reports/fixtures/preparation/tests.rs|std::net::Tcp|1|xtask/fixture-preparation-controls|#8174/#7920: test-only listener binds 127.0.0.1:0 and returns empty HTTP 503; both Rustup endpoints are redirected here for absent-pin controls, never to a public distribution server. No production listener or remote client is introduced.
 xtask/src/reports/pilot_ranking.rs|fetch(|2|eval-corpus|`cargo xtask pilot-ranking fetch` is the opt-in network surface (requires --allow-network, never on the default CI path): it runs `git fetch --depth 1 <pinned revision>` from the github.com URLs in benchmarks/pilot_ranking/manifest.json through the shared crate::run timeout helper and verifies HEAD against the pin. The two matches are the dispatch call and the function definition.
 xtask/src/reports/rust_corpus.rs|fetch(|2|eval-corpus|`cargo xtask rust-corpus fetch` is the opt-in network surface (requires --allow-network, never on the default CI path): it runs `git fetch --depth 2 <pinned sha>` from the github.com URLs in benchmarks/rust_corpus/manifest.json through the shared crate::run timeout helper and verifies HEAD and HEAD^1 against the pins. The two matches are the dispatch call and the function definition.

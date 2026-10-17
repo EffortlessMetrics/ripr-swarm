@@ -1,0 +1,65 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/collection_argument_raw_rebound/input
+
+Summary: 2 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+
+Shared evidence and guidance
+  E1 [findings 1, 2]: reach yes: Related tests appear to reach add: records_into_the_bag
+  E2 [findings 1, 2]: infection yes: Reachable tests can plausibly activate this changed behavior
+  E3 [findings 1, 2]: propagation yes: Complete propagation witness reaches state write: v.push(x * 1)
+  E4 [findings 1, 2]: observation yes: A related test observes a value or effect near the changed behavior
+  E5 [findings 1, 2]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  E6 [findings 1, 2]: local flow reaches state write: v.push(x * 1) (line 3)
+  E7 [findings 1, 2]: related test src/lib.rs:10 records_into_the_bag uses strong exact value oracle: assert_eq!(b.0, vec![11]); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  E8 [findings 1, 2]: source function argument value v = 0 at line 12
+  E9 [findings 1, 2]: source function argument value x = 11 at line 12
+  E10 [findings 1, 2]: source assertion argument value 0 at line 14
+  E11 [findings 1, 2]: source assertion argument value 11 at line 14
+
+Finding 1: WARNING ./src/lib.rs:3
+  id: probe:src_lib.rs:call_deletion:1f64eda5
+Changed
+  before: v.push(x)
+  after:  v.push(x * 1)
+Probe
+  family: call_deletion
+  delta:  effect
+  owner:  src/lib.rs::add
+  canonical gap: gap:rust:src/lib.rs:add:call_deletion:call_deletion:v.push_x*1
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+Evidence
+  shared evidence: E1, E2, E3, E4, E5, E6, E7, E8, E9, E10, E11
+Weakness
+  - No strong discriminator was detected
+Next step
+  - Strengthen the related assertion so it discriminates the changed behavior
+Drill in:
+  ripr explain --root <cwd>/fixtures/collection_argument_raw_rebound/input --diff <cwd>/fixtures/collection_argument_raw_rebound/diff.patch --mode fast probe:src_lib.rs:call_deletion:1f64eda5
+  ripr context --root <cwd>/fixtures/collection_argument_raw_rebound/input --diff <cwd>/fixtures/collection_argument_raw_rebound/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:1f64eda5
+
+Finding 2: WARNING ./src/lib.rs:3
+  id: probe:src_lib.rs:side_effect:3ceb2918
+Changed
+  before: v.push(x)
+  after:  v.push(x * 1)
+Probe
+  family: side_effect
+  delta:  effect
+  owner:  src/lib.rs::add
+  canonical gap: gap:rust:src/lib.rs:add:side_effect:side_effect:v.push_x*1
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+Evidence
+  shared evidence: E1, E2, E3, E4, E5, E6, E7, E8, E9, E10, E11
+Weakness
+  - No strong discriminator was detected
+Next step
+  - Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect
+Drill in:
+  ripr explain --root <cwd>/fixtures/collection_argument_raw_rebound/input --diff <cwd>/fixtures/collection_argument_raw_rebound/diff.patch --mode fast probe:src_lib.rs:side_effect:3ceb2918
+  ripr context --root <cwd>/fixtures/collection_argument_raw_rebound/input --diff <cwd>/fixtures/collection_argument_raw_rebound/diff.patch --mode fast --at probe:src_lib.rs:side_effect:3ceb2918

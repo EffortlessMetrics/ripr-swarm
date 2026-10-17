@@ -4,12 +4,12 @@ root: fixtures/owner_return_pin_json_unrelated_equality/input
 
 Summary: 3 probe(s), 0 exposed, 3 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 3 of 3 finding(s) unsuppressed
 
-Analysis outcome: findings below (analysis complete; complete_with_findings).
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 3 probe(s), 3 finding(s).
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 3 probe(s), 3 finding(s)
 
 Start here:
   State: a test gap to inspect or repair (top_gap)
-  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:5
   Static exposure: weak (weakly_exposed, warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
@@ -17,7 +17,7 @@ Start here:
   Changed behavior: Ok(())
   Missing discriminator: No strong discriminator was detected
   Related test: tests/save.rs:4 checks (assertion too weak to tell the old behavior from the new)
-  Next step: Replace broad assertions with exact equality or a property that constrains the changed returned value.
+  Next step: Replace broad assertions with exact equality or a property that constrains the changed returned value
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     - reach yes: Related tests appear to reach did_save_params: checks
     - infection yes: Reachable tests can plausibly activate this changed behavior
@@ -31,7 +31,7 @@ Write a test for it:
 
 Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - fixtures/owner_return_pin_json_unrelated_equality/input/src/lib.rs:5 (weakly_exposed)
-    - fixtures/owner_return_pin_json_unrelated_equality/input/src/lib.rs:5 (weakly_exposed)
+    - ./src/lib.rs:5 (weakly_exposed)
+    - ./src/lib.rs:5 (weakly_exposed)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

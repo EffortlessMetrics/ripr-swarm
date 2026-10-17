@@ -4,9 +4,11 @@ use super::arguments::{
     equality_assertion_arguments, is_complete_macro_invocation,
 };
 use super::pattern_admission::{is_unpinned_pattern, some_matches_pins_a_value};
-use super::scan::balanced_group_end;
 use crate::analysis::classify::{error_constructor_call_paths, rust_string_literals};
-use crate::analysis::extract::mask_comments_and_strings;
+use crate::analysis::extract::{
+    group_end, mask_comments_and_strings, mask_with_char_literals,
+    mask_with_string_delimiter_quotes,
+};
 
 /// Structural assertion-text shapes that supplement the parsed
 /// [`OracleKind`](crate::domain::OracleKind)
@@ -524,7 +526,7 @@ fn is_negated_pattern_condition(condition: &str) -> bool {
         || is_complete_macro_invocation(inner, "assert_matches!")
 }
 
-fn unwrap_parentheses(mut text: &str) -> &str {
+pub(super) fn unwrap_parentheses(mut text: &str) -> &str {
     while let Some(inner) = super::arguments::parenthesized_contents(text) {
         text = inner.trim();
     }
@@ -634,7 +636,7 @@ pub(super) fn deciding_disjunction_conjunct_rest(line: &str) -> Option<String> {
 }
 
 /// Splits on `&&` outside any delimiter, string or comment.
-fn split_top_level_conjuncts(condition: &str) -> Vec<&str> {
+pub(super) fn split_top_level_conjuncts(condition: &str) -> Vec<&str> {
     let masked = mask_comments_and_strings(condition);
     let bytes = masked.as_bytes();
     let mut depth = 0usize;
@@ -752,7 +754,7 @@ fn resolve_pattern_comparison(left: &str, right: &str, not_equal: bool) -> Patte
 /// How many negations (`!` prefixes and `.not()` calls) wrap one complete
 /// `matches!` or `assert_matches!` operand, or `None` when the operand is not
 /// such a pattern.
-fn pattern_operand_negations(operand: &str) -> Option<usize> {
+pub(super) fn pattern_operand_negations(operand: &str) -> Option<usize> {
     let mut text = unwrap_parentheses(operand.trim());
     let mut negations = 0;
     loop {
@@ -768,7 +770,7 @@ fn pattern_operand_negations(operand: &str) -> Option<usize> {
 }
 
 /// The receiver of a trailing `.not()` call (`std::ops::Not`).
-fn strip_not_call(text: &str) -> Option<&str> {
+pub(super) fn strip_not_call(text: &str) -> Option<&str> {
     text.trim_end()
         .strip_suffix(')')?
         .trim_end()
@@ -781,7 +783,7 @@ fn strip_not_call(text: &str) -> Option<&str> {
 
 /// The value of a boolean literal operand, through parentheses and any
 /// number of `!` negations (`!true` is `false`).
-fn boolean_literal_value(operand: &str) -> Option<bool> {
+pub(super) fn boolean_literal_value(operand: &str) -> Option<bool> {
     let mut text = unwrap_parentheses(operand.trim());
     let mut negated = false;
     loop {
@@ -797,7 +799,7 @@ fn boolean_literal_value(operand: &str) -> Option<bool> {
 
 /// One `matches!` invocation in a masked condition: where its (possibly
 /// path-qualified) name starts and where its closing delimiter ends.
-fn pattern_invocation_spans(text: &str) -> Vec<(usize, usize)> {
+pub(super) fn pattern_invocation_spans(text: &str) -> Vec<(usize, usize)> {
     let masked = mask_comments_and_strings(text);
     let bytes = masked.as_bytes();
     let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
@@ -1166,7 +1168,7 @@ fn comparison_operators(condition: &str) -> (bool, bool) {
     (equal, not_equal)
 }
 
-fn top_level_comparison_operator(condition: &str) -> Option<(usize, usize)> {
+pub(super) fn top_level_comparison_operator(condition: &str) -> Option<(usize, usize)> {
     // Comments and literals are not delimiters. Mask them before counting
     // brackets so an unmatched `}` inside a nested comment cannot hide a
     // real `==` (`matches!(r, /* } */ Ok(3)) == true`, #7822). Offsets stay
@@ -1204,6 +1206,17 @@ fn top_level_comparison_operator(condition: &str) -> Option<(usize, usize)> {
 /// `expect_err()` is a mock's expectation for a method named `err`
 /// (mockall's `expect_<method>`), so it stays. A message left open at the
 /// end of the line is dropped with the rest of the line.
+/// Whether a call's argument text holds any token: a comment is not an
+/// argument, so `expect_err(/* setup */)` is still mockall's zero-argument
+/// expectation, while a string or character literal is one even though
+/// masking blanks it.
+pub(super) fn has_argument_tokens(arguments: &str) -> bool {
+    let (masked, string_quotes) = mask_with_string_delimiter_quotes(arguments);
+    string_quotes > 0
+        || !masked.trim().is_empty()
+        || !mask_with_char_literals(arguments).1.is_empty()
+}
+
 pub(super) fn without_expect_err(line: &str) -> String {
     const CALL: &str = ".expect_err(";
     // Masking keeps byte length, so offsets found on it index `line`.
@@ -1214,8 +1227,8 @@ pub(super) fn without_expect_err(line: &str) -> String {
     while let Some(found) = masked[search..].find(CALL) {
         let start = search + found;
         let open = start + CALL.len() - 1;
-        match balanced_group_end(&masked, open) {
-            Some(close) if line[open + 1..close].trim().is_empty() => search = open + 1,
+        match group_end(&masked, open) {
+            Some(close) if !has_argument_tokens(&line[open + 1..close]) => search = open + 1,
             Some(close) => {
                 out.push_str(&line[copied..start]);
                 out.push_str(".()");

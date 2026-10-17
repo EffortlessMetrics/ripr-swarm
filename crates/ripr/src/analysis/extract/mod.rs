@@ -1,4 +1,5 @@
 mod calls;
+mod groups;
 mod literals;
 mod mask;
 mod oracles;
@@ -10,6 +11,7 @@ mod text;
 pub(crate) use calls::{
     attribute_ranges, call_name_bounds_before_paren, extract_call_facts, runs_its_arguments,
 };
+pub(crate) use groups::{delimiters_balance, group_end};
 pub(crate) use literals::{extract_literal_facts, extract_literals};
 // `string_literal_spans` offsets index the unmasked text: a literal's
 // contents are `text[open + 1..close]`, escapes unprocessed (#7133).

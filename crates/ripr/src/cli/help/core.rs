@@ -45,7 +45,7 @@ defaults into a file.
 "#;
 pub(super) const PILOT_HELP: &str = r#"Find the top test gap in this repo and write a packet you can act on.
 
-Usage: ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N] [--timeout-ms MS] [--quiet]
+Usage: ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N] [--timeout-ms MS] [--format json] [--quiet]
 
 Options:
   --root PATH       Workspace root to analyze. Defaults to current directory.
@@ -55,6 +55,9 @@ Options:
   --timeout-ms MS   Maximum analysis budget before writing a partial summary. Defaults to
                     30000; when the default passes, the same run continues for up to
                     240000 more. An explicit value is a hard limit.
+  --format FORMAT   human or json. Defaults to human. json writes the same
+                    pilot-summary.json document to stdout and suppresses the
+                    human terminal; packet files are still written.
   --quiet           Suppress analysis progress and heartbeats on stderr. Does not
                     change the pilot packet, exit codes, or error reporting.
 
@@ -118,6 +121,44 @@ snapshots name the same head. A snapshot written without that identity,
 including the `repo-exposure.json` that `ripr pilot` writes, carries no head;
 ripr then says so and cannot verify the pair came from the same repository or
 adjacent commits. Matching heads still do not mean matching working trees.
+"#;
+/// The one-screen default for `ripr check --help` (#8158 item 2). The
+/// exhaustive reference stays in [`CHECK_HELP`], reachable with `--help --all`;
+/// flag mining for typo suggestions and the help tests read the full text.
+pub(super) const CHECK_HELP_SHORT: &str = r#"Analyze the current diff and name the changed behavior your tests may not catch.
+
+Usage: ripr check [OPTIONS]
+
+Common options:
+  --base REV        Compare against this revision. When omitted, ripr uses the
+                    local origin/HEAD ref, then origin/main, origin/master,
+                    main, and master in order.
+  --diff PATH       Read a diff file instead of running git diff (`-` = stdin).
+  --worktree        Include staged and unstaged tracked edits (already the
+                    default when the tree has them).
+  --committed       Compare committed history only (base...HEAD).
+  --format FORMAT   human (default); human-full lists every finding with
+                    drill-in commands; json (or --json) for scripts and CI;
+                    github for Actions annotations; sarif for code scanning.
+  --mode MODE       instant, draft (default), or deep: how much of the
+                    workspace is indexed (never changes what a class means).
+  --root PATH       Workspace root. Defaults to the current directory, then
+                    walks up to the enclosing workspace or package, or the git
+                    top level (never past the repository); `--root .` pins
+                    this directory.
+  --quiet           Suppress stderr progress. Unknown totals show no
+                    percentage or ETA, and progress makes no speed claim.
+
+Exit status: 0 for a completed run, including `exposed` and `weakly_exposed`
+findings. `unsupported_input` reports exit 2, as do usage errors. Do not build
+a CI gate on check's exit code; run `ripr gate evaluate` (exit 3 on `blocked`).
+
+Examples:
+  ripr check
+  ripr check --base origin/main --json
+
+More:
+  ripr check --help --all   Every option, format, and environment variable.
 "#;
 pub(super) const CHECK_HELP: &str = r#"Analyze a diff or workspace and emit findings in human, JSON, SARIF, or badge form.
 
@@ -225,6 +266,14 @@ Options:
                            unsuppressed findings only. Relative PATH
                            resolves against --root; a missing or malformed
                            policy fails the run.
+  --output-dir DIR         With a named --diff file, write native badge.json,
+                           detail.json and human.txt from one analysis. DIR must
+                           be new (parent exists). Verify manifest.json and member
+                           hashes before consuming the set. Does not combine with
+                           --format/--json, scope switches, --gap-ledger,
+                           --write-artifact or --suppression-policy. Bounded input
+                           inventory refuses drift, nonregular files and external
+                           module reads. See docs/OUTPUT_SCHEMA.md.
   --write-artifact PATH    Write a full-fidelity check artifact (schema
                            ripr-check-artifact-v1) for later
                            `ripr explain --from PATH` /
@@ -252,14 +301,21 @@ Options:
   --quiet                  Suppress analysis progress and heartbeats on
                            stderr. Does not change machine stdout, exit
                            codes, or error reporting.
+  --all                    With --help: print this exhaustive reference
+                           instead of the one-screen summary.
 
 Exit status:
-  Complete and partial_with_limitations reports exit 0, regardless of findings.
+  Complete and partial_with_limitations reports exit 0, including `exposed`
+  and `weakly_exposed` findings. A non-zero exit means the analysis did not
+  complete, not that it disapproved of the diff.
   `unsupported_input` reports exit 2 after the original report is written;
   limitations and recovery routes remain available in that report. Usage and
-  operational errors also exit 2. Empty input is complete no_scope (exit 0).
-  Read the typed outcome to distinguish partial analysis from complete analysis;
-  a successful exit alone does not establish complete scope or a clean gate.
+  operational errors also exit 2.
+  Empty input is complete no_scope (exit 0). Read the typed outcome to
+  distinguish partial analysis from complete analysis; a successful exit
+  alone does not establish complete scope or a clean gate. Blocking belongs
+  to `ripr gate evaluate` (exit 3 on `blocked`). Do not build a CI gate on
+  check's exit code; read its output, or run the gate.
 
 Progress:
   Long-running check analysis writes producer stages to stderr as
@@ -450,6 +506,11 @@ Options:
   --profile    Check installed-binary analysis (default) or prerequisites for
                building RIPR from source.
 
+Default human output fits one 80x24 screen: failures first, each with a Fix
+line, then compact passing groups. `-v`/`--verbose` prints binary identity,
+config defaults, test surfaces, Perl preview, known limitations, and start-here
+detail. `--json` is unchanged and remains the complete typed report.
+
 The JSON report is machine-readable advisory setup evidence. A `fail` status or
 non-zero exit means at least one core check failed; it is not a release or gate
 decision.
@@ -484,11 +545,11 @@ First-run diagnosis:
     no overclaiming. Printed for every profile.
   - Detected test surfaces: per detected language, the first recognizable
     framework marker (cargo test, pytest, jest, vitest, bun). Prints
-    "test framework not detected" rather than guessing. Printed for every
-    profile.
+    "test framework not detected" rather than guessing. Printed with
+    `-v`/`--verbose`.
   - Known limitations: static notes on preview coverage, cross-language
     oracle visibility (fail-closed), large-repo scan bounds, and advisory
-    nature of preview-language evidence. Printed for every profile.
+    nature of preview-language evidence. Printed with `-v`/`--verbose`.
   - Recommended first command (analysis profile; not printed for --profile
     source-build): ripr check (no base: the loader resolves this
     repository's own default branch). When git is not on PATH, the `!` git line

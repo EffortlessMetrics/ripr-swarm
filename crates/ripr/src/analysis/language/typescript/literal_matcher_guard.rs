@@ -168,6 +168,19 @@ pub(crate) struct LooseLiteralConst {
     name: String,
     text: String,
     declared_end: u32,
+    /// Whether the literal is also a one-line RIPR-SPEC-0243 rule 11 table
+    /// cell, so a `forEach` row may hold the name in its place
+    /// (RIPR-SPEC-0246 rule 2).
+    cell: bool,
+}
+
+impl LooseLiteralConst {
+    /// The literal a `forEach` row element naming this `const` stands for,
+    /// when the element sits after the declaration and the literal is a
+    /// one-line table cell.
+    pub(crate) fn row_cell(&self, name: &str, at: u32) -> Option<&str> {
+        (self.cell && self.name == name && self.declared_end <= at).then_some(self.text.as_str())
+    }
 }
 
 /// The test body's top-level `const <name> = <literal>;` bindings whose name
@@ -213,6 +226,8 @@ pub(crate) fn loose_literal_consts(
                         name: id.name.to_string(),
                         text: text.to_string(),
                         declared_end: declaration.span.end,
+                        cell: super::table_rows::is_literal_cell(init.get_inner_expression())
+                            && !text.contains(['\n', '\r']),
                     });
                 }
             }

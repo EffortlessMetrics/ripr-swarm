@@ -17,7 +17,9 @@
 //! Both contracts are pinned by tests in this file.
 
 use super::classify::changed_error_variant;
-use super::generated_rust_corpus::{AnalyzableRustCorpus, discover_analyzable_rust_corpus};
+use super::generated_rust_corpus::{
+    AnalyzableRustCorpus, absent_changed_rust_file_limitations, discover_analyzable_rust_corpus,
+};
 use super::rust_index::{self, ProbeShapeFact, ProbeShapeKind, RustIndex};
 #[cfg(test)]
 use super::seam_cache::CLASSIFIED_SEAM_CACHE_STORE_LIMIT;
@@ -1459,12 +1461,22 @@ pub(crate) struct ClassifiedChangeReport {
 /// the change is classified on its own. The no-impact fast path is skipped:
 /// pilot asks only after the limit fired on a change with Rust files, where
 /// it would decline anyway.
+/// `changed_paths` retains the full diff context, including absent changed
+/// vendor markers; `changed_files` remains the Rust classification scope.
 pub(crate) fn classify_seams_in_files_at_with_config(
     root: &Path,
     config: &RiprConfig,
     changed_files: &[PathBuf],
+    changed_paths: &[PathBuf],
     on_change: &dyn Fn(&RepoSeam) -> bool,
 ) -> Result<ClassifiedChangeReport, String> {
+    cancellation::checkpoint()?;
+    // Observe admission at entry, before classification: a file restored later
+    // must not clear an absence caveat for this classification's earlier scope.
+    // The shared owner also retains bounded path-less disclosure on refusal.
+    let absent_file_limitations =
+        absent_changed_rust_file_limitations(root, config, changed_paths)?;
+    cancellation::checkpoint()?;
     let stages = DiffScopeEvidenceStages {
         first: on_change,
         sufficient: &|_| true,
@@ -1478,17 +1490,9 @@ pub(crate) fn classify_seams_in_files_at_with_config(
         Some(&stages),
         None,
     )
-    .and_then(|inventory| {
-        // The supplement keeps its classified seams: an absent-file name the
-        // portable limitation path refuses (a drive-like name on Unix, say)
-        // degrades to the bounded path-less disclosure instead of failing
-        // the whole report (#6976).
-        let absent_file_limitations =
-            workspace::supplement_absent_file_limitations(&inventory.absent_changed_files)?;
-        Ok(ClassifiedChangeReport {
-            classified: inventory.classified,
-            absent_file_limitations,
-        })
+    .map(|inventory| ClassifiedChangeReport {
+        classified: inventory.classified,
+        absent_file_limitations,
     })
 }
 
@@ -2895,6 +2899,14 @@ fn build_seam_from_shape(
     crlf_pairs: &CrlfPairPositions,
 ) -> Option<RepoSeam> {
     let kind = seam_kind_from_probe_shape(shape.kind)?;
+    // RIPR-SPEC-0228 field assignments are diff-scope probes only: repo-scope
+    // seam grading does not know their read rule, so it would grade a
+    // well-tested write as weakly gripped.
+    if kind == SeamKind::FieldConstruction
+        && crate::analysis::classify::field_assignment_target(&shape.text).is_some()
+    {
+        return None;
+    }
     // A call whose value feeds a consumer cannot be deleted without breaking
     // the build, so no mutant asks whether tests notice it is gone. The
     // consumer's predicate, return or error seam carries that behavior
@@ -2932,7 +2944,8 @@ fn build_seam_from_shape(
         expected_sink,
         crlf_pairs,
     )
-    .with_owner_call(owner_call);
+    .with_owner_call(owner_call)
+    .with_source_lines(shape.source_lines);
     // Span geometry is additional precision: when derivation fails (stale or
     // mismatched source), the seam keeps line-only behavior rather than
     // carrying wrong coordinates. Match-arm shapes are line-only by policy:
@@ -5595,6 +5608,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
                     kind: ProbeShapeKind::UnsafeBoundary,
                     text: "owner_body".into(),
                     value_consumed: false,
+                    source_lines: None,
                 }],
                 ..FileFacts::default()
             },
@@ -5649,6 +5663,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
                     kind: ProbeShapeKind::Predicate,
                     text: "x >= 0".into(),
                     value_consumed: false,
+                    source_lines: None,
                 }],
                 ..FileFacts::default()
             },

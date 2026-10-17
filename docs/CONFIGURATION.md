@@ -123,6 +123,14 @@ If neither spelling represents the selected root losslessly in a portable comman
 and names the UTF-8-parent/alias remedy. A lossless absolute UTF-8 alias to a physical root
 with non-UTF-8 bytes still provides a usable command spelling.
 
+Existing-file refusals also print complete retry commands bound to the selected
+root. The config overwrite resets customizations; its dry-run preview writes
+nothing, and the `--ci github --force` alternative keeps the config while
+refreshing the workflow. These commands can be pasted from another directory.
+If the root cannot be represented losslessly, the refusal omits executable
+retries and names the UTF-8-parent/alias remedy; existing files remain intact.
+Where quoting differs, a labeled PowerShell form accompanies the command.
+
 | Flag | Default | Notes |
 | --- | --- | --- |
 | `--root PATH` | current directory | Workspace root where `ripr.toml` should be written. |
@@ -189,7 +197,7 @@ Runs the static exposure analysis and renders findings.
 
 | Flag | Default | Notes |
 | --- | --- | --- |
-| `--root PATH` | current directory | Workspace root used for diff and source discovery. Without `--root`, walks up to a `Cargo.toml` containing `[workspace]`; when there is none, to the nearest `Cargo.toml`, `pnpm-workspace.yaml`, `package.json` with a `workspaces` field, or `pyproject.toml` with `[tool.uv.workspace]`, else a verified git top level. An unverified `.git` entry bounds the walk without selecting that directory; absent a local manifest, the current directory stays selected. A moved root and its reason are printed on stderr. When that move skips a closer `ripr.toml` from the invocation directory (the file `ripr doctor` and `ripr pilot` would load from that cwd), stderr names the skipped directory entry and which file governed. Pass `--root .` (cwd is still that directory) to analyze with the closer file. |
+| `--root PATH` | current directory | Workspace root used for diff and source discovery. Without `--root`, walks up to a `Cargo.toml` containing `[workspace]`; when there is none, to the nearest `Cargo.toml`, `pnpm-workspace.yaml`, `package.json` with an array or object `workspaces` field, or `pyproject.toml` with `[tool.uv.workspace]`, else a verified git top level. Scalar `workspaces` values (string, number, Boolean, or `null`) do not mark a workspace. Arrays and objects, including Yarn object forms, are structural markers without member/glob/schema validation or package-manager execution. An unverified `.git` entry bounds the walk without selecting that directory; absent a local manifest, the current directory stays selected. A moved root and its reason are printed on stderr. When that move skips a closer `ripr.toml` from the invocation directory (the file `ripr doctor` and `ripr pilot` would load from that cwd), stderr names the skipped directory entry and which file governed. Pass `--root .` (cwd is still that directory) to analyze with the closer file. |
 | `--base REV` | resolved per repository | Git revision used as the diff base when `--diff` is not given. With no `--base`, ripr resolves the first of `origin/HEAD`, `origin/main`, `origin/master`, `main`, `master` that exists; when none does, it says so rather than analyzing nothing. An explicit `--base` is used as given and is never substituted. |
 | `--diff PATH` | _(unset)_ | Path to a unified diff file. Overrides `--base`. `--diff -` reads from stdin. |
 | `--candidate-tree TREE` | _(unset)_ | Analyze exactly this immutable Git tree object, deriving the diff from Git objects alone. Mutually exclusive with `--diff` and `--base`. |
@@ -200,7 +208,7 @@ Runs the static exposure analysis and renders findings.
 | `--gap-ledger PATH` | _(unset)_ | For `repo-badge-*` formats only: render badge counts from explicit gap-decision-ledger projection targets. |
 | `--json` | _(off)_ | Shortcut for `--format json`. |
 | `--no-unchanged-tests` | `ripr.toml` `analysis.include_unchanged_tests`, otherwise tests included | Limits the source index to changed Rust files. By default unchanged tests are part of the index so `Reach` evidence can find them. |
-| `--suppression-policy PATH` | _(unset)_ | Apply a suppressions TOML (same schema as `.ripr/suppressions.toml`) to the findings-based formats. Relative paths resolve against `--root`; a missing or malformed policy fails the run. |
+| `--suppression-policy PATH` | _(unset)_ | Apply a suppressions TOML (same schema as `.ripr/suppressions.toml`) to the findings-based formats. Relative paths resolve against `--root`; a missing or malformed policy fails the run. Without this flag, findings-based human, human-full, JSON and GitHub formats leave the default file unapplied and disclose a detected `.ripr/suppressions.toml` on stderr. An unused malformed file stays nonfatal; stdout and exit semantics are unchanged. |
 | `--write-artifact PATH` | _(unset)_ | Write a full-fidelity check artifact (`ripr-check-artifact-v1`) for later `ripr explain --from PATH` / `ripr context --from PATH` reuse. Diff-scoped findings runs only. A local, disposable derivative: never a gate, badge, or proof input. |
 | `--perl-facts PATH` | _(unset)_ | Use this explicit Perl facts packet as the analysis input for Perl files. |
 | `--git-timeout SECS` | `300` | Cooperative deadline in seconds for each git invocation in the diff-load path. `0` disables it. Also settable via `RIPR_GIT_TIMEOUT`. |
@@ -589,7 +597,7 @@ The extension contributes these command IDs and palette titles:
 | `ripr.openReport` | ripr: Open Report |
 | `ripr.showTopLimitation` | ripr: Show Top Limitation |
 | `ripr.showReceiptStatus` | ripr: Show Receipt Status |
-| `ripr.copyReceiptCommand` | ripr: Copy Receipt Command |
+| `ripr.copyReceiptCommand` | ripr: Copy Receipt Command (Receipt Status) |
 | `ripr.openAttemptLedger` | ripr: Open Attempt Ledger |
 | `ripr.showRouteQuality` | ripr: Show Route Quality |
 

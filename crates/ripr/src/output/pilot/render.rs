@@ -16,7 +16,7 @@ pub(crate) use timeout::{
 /// (`output::markdown::COMMAND_SHELL_DISCLOSURE`) so every generated-command
 /// surface shares one disclosure; the pilot re-exports it for its render
 /// modules (#2628).
-pub(super) use crate::output::markdown::COMMAND_SHELL_DISCLOSURE;
+pub(super) use crate::output::markdown::command_shell_disclosure;
 
 pub(super) fn why_line(entry: &crate::analysis::ClassifiedSeam) -> String {
     render_helpers::why_line(entry)

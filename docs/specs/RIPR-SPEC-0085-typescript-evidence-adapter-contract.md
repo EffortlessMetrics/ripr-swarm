@@ -293,6 +293,17 @@ Cross-language states stay honest: `typescript_oracle_established`,
 not an observation; `bridge_unknown` is a *feature* (a named limitation),
 not a guess.
 
+### Package workspace markers
+
+Structural-marker hardening (#8126) narrows the former field-presence rule for
+package-discovery evidence: a top-level `package.json` `workspaces` field marks
+a workspace only when its value is an array or object, including Yarn object
+forms. Scalars (string, number, Boolean, or `null`) do not mark a workspace.
+The same predicate governs implicit CLI roots (RIPR-SPEC-0009). The existing
+pnpm marker, selected-root traversal boundary, nearest package root, and
+package-root fallback remain unchanged. This is structural recognition without
+member/glob/schema validation or package-manager execution.
+
 ## Required Evidence
 
 - The `oxc`-parsed AST node (`Statement` / `CallExpression`) and its span

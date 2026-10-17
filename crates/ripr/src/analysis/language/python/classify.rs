@@ -31,7 +31,7 @@ use crate::analysis::diff::lines_look_alike;
 use crate::domain::{
     Confidence, ExposureClass, Finding, LanguageId as DomainLanguageId, LanguageStatus,
     MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily, RevealEvidence,
-    RiprEvidence, SourceLocation, StageEvidence, StageState,
+    RiprEvidence, SourceLocation, StageEvidence, StageState, indefinite_article,
 };
 use std::path::Path;
 
@@ -515,8 +515,10 @@ pub(super) fn classify_change_for_owner(
             StageState::Yes,
             StageState::Yes,
             vec![format!(
-                "Related Python test reaches `{}` with a `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator.",
+                // #7752: the article follows the oracle-kind label ("an `exact_value`").
+                "Related Python test reaches `{}` with {} `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator.",
                 owner.name,
+                indefinite_article(strongest_kind.as_str()),
                 strongest_kind.as_str()
             )],
         )
@@ -837,14 +839,18 @@ pub(super) fn classify_change_for_owner(
         )
     } else if matches!(class, ExposureClass::Exposed) {
         format!(
-            "Related Python test uses a `{}` oracle; static evidence suggests the changed behavior is discriminated.",
+            // #7752: the article follows the oracle-kind label ("an `exact_value`").
+            "Related Python test uses {} `{}` oracle; static evidence suggests the changed behavior is discriminated.",
+            indefinite_article(strongest_kind.as_str()),
             strongest_kind.as_str()
         )
     } else if strongest_strength >= OracleStrength::Strong.rank() {
         // Strength alone cannot override the classifier's alignment, error-path,
         // or default-activation decision. Keep the narrative at that verdict.
         format!(
-            "Related Python test uses a `{}` oracle, but static evidence does not establish discrimination of the changed behavior.",
+            // #7752: the article follows the oracle-kind label ("an `exact_value`").
+            "Related Python test uses {} `{}` oracle, but static evidence does not establish discrimination of the changed behavior.",
+            indefinite_article(strongest_kind.as_str()),
             strongest_kind.as_str()
         )
     } else {

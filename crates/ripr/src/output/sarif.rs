@@ -37,13 +37,16 @@ const RIPR_SARIF_SCHEMA_VERSION: &str = "0.1";
 /// Match the producers' Unicode scalar-value columns. SARIF 2.1.0 §3.14.27
 /// requires this declaration for nonempty text results; empty runs may carry it.
 const SARIF_COLUMN_KIND: &str = "unicodeCodePoints";
-/// Per-class rule help anchors (#7371). Finding rules point at the exposure
-/// class table a maintainer landing on a code-scanning rule page needs; seam
-/// rules point at the seam inventory spec's classification contract. The
-/// SARIF policy spec (RIPR-SPEC-0008) documents severity mapping, not
-/// per-class meaning, so it no longer backs every rule's helpUri.
-const STATIC_EXPOSURE_MODEL_URI: &str = "https://github.com/EffortlessMetrics/ripr/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes";
-const SEAM_GRIP_SPEC_URI: &str = "https://github.com/EffortlessMetrics/ripr/blob/main/docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md";
+/// Per-class rule help anchors (#7371, #7397). Finding rules point at the
+/// exposure class table a maintainer landing on a code-scanning rule page
+/// needs; seam rules point at the seam inventory spec's classification
+/// contract. The SARIF policy spec (RIPR-SPEC-0008) documents severity
+/// mapping, `--root` stability, and RFC 3986 URI encoding, not per-class
+/// meaning, so it no longer backs every rule's helpUri. Cited docs use the
+/// current `ripr-swarm` blob so code-scanning help tracks the emitting
+/// development trunk instead of a stale `EffortlessMetrics/ripr` snapshot.
+const STATIC_EXPOSURE_MODEL_URI: &str = "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes";
+const SEAM_GRIP_SPEC_URI: &str = "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md";
 const PYTHON_PREVIEW_AUTHORITY_BOUNDARY: &str = "preview_advisory_only";
 
 /// Render diff-scoped Findings as SARIF.
@@ -54,6 +57,14 @@ pub(crate) fn render_findings_sarif(
 ) -> String {
     let today = current_iso_date();
     let rules = finding_rules();
+    // #5091: count what the candidate-actionable filter drops so an
+    // all-omitted complete run is not indistinguishable from a clean run.
+    // This is the SARIF sibling of the GitHub annotation denominator (#4393).
+    let omitted_not_current = output
+        .findings
+        .iter()
+        .filter(|finding| !finding.is_candidate_actionable())
+        .count();
     let results = output
         .findings
         .iter()
@@ -70,6 +81,7 @@ pub(crate) fn render_findings_sarif(
         results,
         output.analysis_outcome.as_ref(),
         output.analyzed_revisions.as_ref(),
+        omitted_not_current,
     )
 }
 
@@ -143,6 +155,7 @@ fn sarif_document(
     results: Vec<Value>,
     analysis_outcome: Option<&AnalysisOutcome>,
     revisions: Option<&crate::analysis::AnalyzedRevisions>,
+    omitted_not_current: usize,
 ) -> String {
     let mut properties = Map::new();
     properties.insert("tool".to_string(), json!("ripr"));
@@ -190,6 +203,15 @@ fn sarif_document(
             serde_json::to_value(outcome).unwrap_or_else(
                 |error| json!({"serialization_error": escape_message(&error.to_string())}),
             ),
+        );
+    }
+    // Additive and absent when nothing was omitted, so ordinary clean runs
+    // do not grow a zero-valued property. The omitted findings stay out of
+    // `results`; this count only discloses the filter (#5091).
+    if omitted_not_current > 0 {
+        properties.insert(
+            "omitted_not_current".to_string(),
+            json!(omitted_not_current),
         );
     }
     let document = json!({
@@ -2193,6 +2215,16 @@ weakly_gripped = "note"
                     "rule {id} keeps the severity-policy helpUri instead of a class anchor"
                 ));
             }
+            if !help_uri.starts_with(SWARM_BLOB_MAIN) {
+                return Err(format!(
+                    "rule {id} helpUri is not a current swarm blob: {help_uri}"
+                ));
+            }
+            if help_uri.contains("https://github.com/EffortlessMetrics/ripr/blob/") {
+                return Err(format!(
+                    "rule {id} helpUri still cites the release-repo snapshot: {help_uri}"
+                ));
+            }
         }
         // Spot anchors: the finding rules point at the exposure class table,
         // the seam rules at the seam inventory spec.
@@ -2206,6 +2238,37 @@ weakly_gripped = "note"
                 .as_str()
                 .is_some_and(|uri| uri.contains("RIPR-SPEC-0005-repo-seam-inventory.md"))
         );
+        Ok(())
+    }
+
+    const SWARM_BLOB_MAIN: &str = "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/";
+
+    /// #7397: the cited swarm docs exist in this checkout and cover the
+    /// class-meaning (helpUri) plus SARIF URI-encoding / `--root` stability
+    /// invariants the emitter implements. RIPR-SPEC-0008 is not the per-rule
+    /// helpUri (#7371) but remains the SARIF contract for those invariants.
+    #[test]
+    fn cited_swarm_docs_cover_class_meaning_and_sarif_uri_invariants() -> Result<(), String> {
+        let exposure = include_str!("../../../../docs/STATIC_EXPOSURE_MODEL.md");
+        let seam_spec =
+            include_str!("../../../../docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md");
+        let sarif_spec = include_str!("../../../../docs/specs/RIPR-SPEC-0008-sarif-ci-policy.md");
+        if !exposure.contains("## Exposure Classes") {
+            return Err(
+                "cited STATIC_EXPOSURE_MODEL.md is missing ## Exposure Classes".to_string(),
+            );
+        }
+        if !seam_spec.contains("SeamGripClass") {
+            return Err("cited RIPR-SPEC-0005 is missing SeamGripClass".to_string());
+        }
+        if !sarif_spec.contains("do not depend on how")
+            || !sarif_spec.contains("`--root` is spelled")
+        {
+            return Err("RIPR-SPEC-0008 lost the --root spelling stability invariant".to_string());
+        }
+        if !sarif_spec.contains("percent-encoded as an RFC 3986") {
+            return Err("RIPR-SPEC-0008 lost the RFC 3986 percent-encoding invariant".to_string());
+        }
         Ok(())
     }
 
@@ -2362,6 +2425,36 @@ weakly_gripped = "note"
             Default::default(),
             AnalysisOutcomeCounts::default(),
             vec![limitation],
+        )
+    }
+
+    fn complete_with_findings_outcome(finding_count: u64) -> Result<AnalysisOutcome, String> {
+        AnalysisOutcome::new(
+            AnalysisOutcomeKind::CompleteWithFindings,
+            Default::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 1,
+                candidate_line_count: 1,
+                probe_count: 1,
+                finding_count,
+            },
+            Vec::new(),
+        )
+    }
+
+    fn complete_no_findings_outcome() -> Result<AnalysisOutcome, String> {
+        AnalysisOutcome::new(
+            AnalysisOutcomeKind::CompleteNoFindings,
+            Default::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 1,
+                candidate_line_count: 1,
+                probe_count: 1,
+                finding_count: 0,
+            },
+            Vec::new(),
         )
     }
 
@@ -2600,6 +2693,10 @@ weakly_gripped = "note"
             Some(0),
             "base-deleted finding must not become a SARIF result"
         );
+        assert_eq!(
+            parsed["runs"][0]["properties"]["omitted_not_current"], 1,
+            "the omitted finding must still be counted (#5091): {parsed}"
+        );
 
         let mut current = sample_finding();
         current.source_currentness = crate::domain::SourceCurrentness::CandidateCurrent;
@@ -2615,5 +2712,97 @@ weakly_gripped = "note"
             Some(1),
             "candidate-current twin keeps its SARIF result"
         );
+        assert!(
+            parsed["runs"][0]["properties"]
+                .get("omitted_not_current")
+                .is_none(),
+            "a fully current run must not grow omitted_not_current: {parsed}"
+        );
+    }
+
+    /// #5091: an all-not-current complete run still looks finished, but the
+    /// run properties must say how many findings the filter withheld.
+    #[test]
+    fn sarif_run_with_only_not_current_findings_records_omitted_property() -> Result<(), String> {
+        let kinds = [
+            crate::domain::SourceCurrentness::BaseDeleted,
+            crate::domain::SourceCurrentness::MovedOrRenamed,
+            crate::domain::SourceCurrentness::UnresolvedSubject,
+        ];
+        let mut findings = Vec::new();
+        for (index, currentness) in kinds.into_iter().enumerate() {
+            let mut finding = sample_finding();
+            finding.id = format!("finding:not-current-{index}");
+            finding.source_currentness = currentness;
+            findings.push(finding);
+        }
+        let mut output = sample_output();
+        output.findings = findings;
+        output.analysis_outcome = Some(complete_with_findings_outcome(3)?);
+        let sarif = parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))?;
+        let props = &sarif["runs"][0]["properties"];
+        assert_eq!(
+            sarif["runs"][0]["results"].as_array().map(Vec::len),
+            Some(0),
+            "not-current findings stay out of results: {sarif}"
+        );
+        assert_eq!(props["run_status"], "complete");
+        assert_eq!(
+            props["omitted_not_current"], 3,
+            "every not-current kind must count: {props}"
+        );
+        Ok(())
+    }
+
+    /// Empty analysis is not "N omitted". A zero-finding complete run must
+    /// not grow the property, or code-scanning consumers cannot tell a
+    /// clean run from an all-dropped run.
+    #[test]
+    fn sarif_empty_findings_run_omits_omitted_not_current_property() -> Result<(), String> {
+        let mut output = sample_output();
+        output.findings.clear();
+        output.analysis_outcome = Some(complete_no_findings_outcome()?);
+        let sarif = parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))?;
+        let props = &sarif["runs"][0]["properties"];
+        assert_eq!(
+            sarif["runs"][0]["results"].as_array().map(Vec::len),
+            Some(0)
+        );
+        assert_eq!(props["run_status"], "complete");
+        assert!(
+            props.get("omitted_not_current").is_none(),
+            "empty findings must not emit omitted_not_current: {props}"
+        );
+        Ok(())
+    }
+
+    /// A mixed run must keep current results *and* count the omitted ones.
+    /// Emitting the property only when `results` is empty would hide the
+    /// same filter on ordinary PRs.
+    #[test]
+    fn sarif_mixed_current_and_not_current_records_omitted_count_beside_results()
+    -> Result<(), String> {
+        let mut current = sample_finding();
+        current.id = "finding:current".to_string();
+        current.source_currentness = crate::domain::SourceCurrentness::CandidateCurrent;
+        let mut omitted = sample_finding();
+        omitted.id = "finding:base-deleted".to_string();
+        omitted.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        let mut output = sample_output();
+        output.findings = vec![current, omitted];
+        output.analysis_outcome = Some(complete_with_findings_outcome(2)?);
+        let sarif = parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))?;
+        let props = &sarif["runs"][0]["properties"];
+        assert_eq!(
+            sarif["runs"][0]["results"].as_array().map(Vec::len),
+            Some(1),
+            "the current finding remains a result: {sarif}"
+        );
+        assert_eq!(props["run_status"], "complete");
+        assert_eq!(
+            props["omitted_not_current"], 1,
+            "the not-current sibling still counts: {props}"
+        );
+        Ok(())
     }
 }

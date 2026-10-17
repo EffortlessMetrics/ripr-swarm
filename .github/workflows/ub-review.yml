@@ -43,6 +43,11 @@ jobs:
           workspaces: ". -> target/ub-review-build"
           key: ub-review-55e4fbab879b3a83c31f35cdc9f7e5cd99f0a6c8
 
+      # Sensors resolve the locked anyhow fixture offline. Prepare the runner's
+      # default Cargo home, also used by the action's sanitized sensor process.
+      - name: Prepare locked owner-return fixture dependencies
+        run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
+
       - name: ub-review
         env:
           CARGO_TARGET_DIR: target/ub-review-build
@@ -75,6 +80,21 @@ jobs:
           # Bun-only verifier not applicable. It is not a pass, and the
           # other planned sensors stay in the review.
           except-tools: artifact-verifier
+
+      - name: Verify advisory receipt reporter
+        if: always()
+        continue-on-error: true
+        run: cargo test --locked -p xtask --example ub_review_evidence_report
+
+      - name: Report advisory evidence dimensions
+        if: always()
+        continue-on-error: true
+        run: |
+          cargo run --locked -p xtask --example ub_review_evidence_report -- target/ub-review || {
+            status=$?
+            printf '%s\n' '## UB Review advisory evidence' '' 'MISSING EVIDENCE: consumer reporter did not complete; inspect this step log. No report pass is established.' >> "$GITHUB_STEP_SUMMARY"
+            exit "$status"
+          }
 
       - name: Upload ub-review artifacts
         if: always()
