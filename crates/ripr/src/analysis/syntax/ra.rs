@@ -125,6 +125,20 @@ pub(crate) fn parser_oracles_for_function(
     function_text: &str,
     function_start_line: usize,
 ) -> Option<Vec<OracleFact>> {
+    // Pure in the text and start line; overlapping indexes of one diff run
+    // re-extract the same helpers (#5363).
+    super::run_memo::memoize(
+        super::run_memo::Product::FunctionOracles,
+        function_start_line,
+        function_text,
+        || parser_oracles_for_function_uncached(function_text, function_start_line),
+    )
+}
+
+fn parser_oracles_for_function_uncached(
+    function_text: &str,
+    function_start_line: usize,
+) -> Option<Vec<OracleFact>> {
     let parse = parse_clean_source_file(function_text)?;
     let function = parse
         .tree()
@@ -563,7 +577,7 @@ fn summarize_file_with_collectors(
         let returns = extract_return_facts(&body, start_line);
         let literals = extract_literal_facts(&body, start_line);
         let probe_shapes = extract_probe_shapes(&function, text, &shared_source, &line_index);
-        // A plain helper inside an inline `#[cfg(test)]` module is test
+        // A helper gated directly on test or inside a test-required module is test
         // infrastructure even when it has no `#[test]` attribute. Classify
         // that role at the producer boundary so diff probes, seam inventory,
         // evidence relation, and every downstream renderer consume the same
@@ -573,7 +587,12 @@ fn summarize_file_with_collectors(
         let has_test_attribute = has_test_attribute(&function);
         let source_role = if has_test_attribute {
             FunctionSourceRole::TestAttribute
-        } else if is_cfg_test_module_member(&function) {
+        } else if cfg_predicates::attributes_require_test(
+            function
+                .attrs()
+                .map(|attr| attr.syntax().text().to_string()),
+        ) || is_cfg_test_module_member(&function)
+        {
             FunctionSourceRole::CfgTestModule
         } else {
             FunctionSourceRole::Production
@@ -3049,6 +3068,38 @@ mod tests {
                 .is_some_and(|function| function.source_role == FunctionSourceRole::Production),
             "production control must remain production role"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn ra_adapter_marks_direct_cfg_helpers_without_registering_tests() -> Result<(), Box<dyn Error>>
+    {
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/data/source-role-corpus/cases/direct_cfg_helpers/src/lib.rs"
+        ));
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
+        assert_eq!(facts.tests.len(), 1);
+        for name in [
+            "production_lease",
+            "alternative_control",
+            "nontest_control",
+            "lookalike_control",
+        ] {
+            assert!(
+                facts.functions.iter().any(|function| function.name == name
+                    && function.source_role == FunctionSourceRole::Production),
+                "production control: {name}"
+            );
+        }
+        for name in ["standalone_helper", "conjunct_helper", "inline_helper"] {
+            assert!(
+                facts.functions.iter().any(|function| function.name == name
+                    && function.source_role == FunctionSourceRole::CfgTestModule),
+                "evidence-only helper: {name}"
+            );
+            assert!(facts.tests.iter().all(|test| test.name != name));
+        }
         Ok(())
     }
 

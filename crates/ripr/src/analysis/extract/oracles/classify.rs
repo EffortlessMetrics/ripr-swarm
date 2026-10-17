@@ -591,6 +591,68 @@ mod tests {
     }
 
     #[test]
+    fn closure_body_equality_that_pins_the_matched_item_is_exact() -> Result<(), String> {
+        // Top-level equivalent already pins (#7726 residual is the wrapper).
+        require_classification(
+            "assert!(matches!(r, Ok(_)) && *r == Ok(3));",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        )?;
+        // Nested matches! field-guard from the landed #8433 half.
+        require_classification(
+            "assert!(xs.iter().any(|x| matches!(x, Some(v) if v.id == 3)));",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        )?;
+        for text in [
+            "assert!(xs.iter().all(|r| matches!(r, Ok(_)) && *r == Ok(3)));",
+            "assert!(xs.iter().any(|r| matches!(r, Ok(_)) && *r == Ok(3)));",
+            "assert!(xs.iter().all(|r| *r == Ok(3) && matches!(r, Ok(_))));",
+            "assert!(xs.iter().all(|r| matches!(r, Ok(_)) && Ok(3) == *r));",
+            "debug_assert!(xs.iter_mut().all(|r| matches!(r, Ok(_)) && *r == Ok(3)));",
+            "assert!(xs.into_iter().all(|r| matches!(r, Ok(_)) && *r == Ok(3)));",
+            "assert!(xs.iter().all(|v| matches!(v, Some(_)) && v.id == 3));",
+            "assert!(xs.iter().all(|v| matches!(v, Some(_)) && (*v).id == 3));",
+            "assert!(xs.iter().all(|v| matches!(v, Some(_)) && v.0 == 3));",
+            "ensure!(xs.iter().all(|r| matches!(r, Ok(_)) && *r == Ok(3)));",
+            "assert!((xs.iter().all(|r| matches!(r, Ok(_)) && *r == Ok(3))));",
+            "assert!(xs.iter().all(|r: &i32| matches!(r, Ok(_)) && *r == Ok(3)));",
+            "assert!(xs.iter().all(|r| matches!(r, Ok(_)) && *r == /* pin */ Ok(3)));",
+        ] {
+            require_classification(text, OracleKind::ExactValue, OracleStrength::Strong)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn closure_body_equality_rejects_shapes_that_do_not_pin_the_item() -> Result<(), String> {
+        for text in [
+            // SPEC-0231 example 29: `.all()` membership without matches! stays weak.
+            "assert!(xs.iter().all(|x| x == 1));",
+            "assert!(xs.iter().all(|r| matches!(r, Ok(_))));",
+            "assert!(xs.iter().all(|r| matches!(r, Ok(_)) && *r == *r));",
+            "assert!(xs.iter().all(|r| matches!(r, Ok(_)) || *r == Ok(3)));",
+            "assert!(f(|r| matches!(r, Ok(_)) && *r == Ok(3)));",
+            "assert!(xs.iter().position(|r| matches!(r, Ok(_)) && *r == Ok(3)) != None);",
+            "assert!(ready && xs.iter().all(|r| matches!(r, Ok(_)) && *r == Ok(3)));",
+            "assert!(!xs.iter().all(|r| matches!(r, Ok(_)) && *r == Ok(3)));",
+            "assert!(xs.iter().all(move |r| matches!(r, Ok(_)) && *r == Ok(3)));",
+            "assert!(xs.iter().all(|r| { matches!(r, Ok(_)) && *r == Ok(3) }));",
+            "assert!(xs.iter().all(|r| matches!(r, Ok(_)) && other == Ok(3)));",
+            "assert!(xs.iter().all(|r| matches!(r, Ok(_)) && r.len() == 3));",
+            "assert!(xs.iter().all(|r| matches!(r, Ok(_)) && r.a == r.b));",
+            "assert!(xs.iter().all(|w| matches!(r, Ok(_)) && *r == Ok(3)));",
+            // Angle-nested commas stay rejected, matching rule 7.
+            "assert!(xs.iter().all(|r: &Result<i32, ()>| matches!(r, Ok(_)) && *r == Ok(3)));",
+            // A `matches!` named only in the message is not an invocation.
+            r#"assert!(xs.iter().all(|r| *r == Ok(3)), "matches!");"#,
+        ] {
+            require_classification(text, OracleKind::RelationalCheck, OracleStrength::Weak)?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn exact_fallible_oracle_requires_an_explicit_value_comparison() -> Result<(), String> {
         let exact = classify_assertion(
             "ensure!(state == TerminalState::Pass, \"message mentions is_err\");",
@@ -1508,6 +1570,64 @@ mod tests {
         Ok(())
     }
 
+    /// #7900: `x.m() || !x.m()` on one receiver is a tautology for any
+    /// method, including through a snapshot wrapper that would otherwise
+    /// grade medium. Different receivers, different methods, and `&&`
+    /// keep the snapshot reading.
+    #[test]
+    fn same_receiver_method_or_negation_is_a_tautology() -> Result<(), String> {
+        use OracleKind::{RelationalCheck, Snapshot};
+        use OracleStrength::{Medium, Weak};
+        let mut mismatches = Vec::new();
+        for (text, expected_kind, expected_strength) in [
+            (
+                "assert!(r.is_empty() || !r.is_empty());",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(!r.is_empty() || r.is_empty());",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(r.is_empty() || !(r.is_empty()));",
+                RelationalCheck,
+                Weak,
+            ),
+            ("assert!(r.is_ok() || !r.is_ok());", RelationalCheck, Weak),
+            (
+                r#"expect![["true"]].assert_eq(&(r.is_empty() || !r.is_empty()).to_string());"#,
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                r#"expect![["true"]].assert_eq(&(a.is_empty() || !b.is_empty()).to_string());"#,
+                Snapshot,
+                Medium,
+            ),
+            (
+                r#"expect![["true"]].assert_eq(&(r.is_empty() || !r.is_ok()).to_string());"#,
+                Snapshot,
+                Medium,
+            ),
+            (
+                r#"expect![["true"]].assert_eq(&(r.is_empty() && !r.is_empty()).to_string());"#,
+                Snapshot,
+                Medium,
+            ),
+        ] {
+            if let Err(mismatch) = require_classification(text, expected_kind, expected_strength) {
+                mismatches.push(mismatch);
+            }
+        }
+        if mismatches.is_empty() {
+            Ok(())
+        } else {
+            Err(mismatches.join("\n"))
+        }
+    }
+
     /// Rules 2 and 3 through the classifier and the scanner that feed
     /// related tests, not only through the pattern reader.
     #[test]
@@ -1837,6 +1957,17 @@ fn ok_literal() {
             (
                 "expect_err_ufcs_fallback_error",
                 "Result::expect_err(check(300).and(Err(E::Other)), \"too long\");",
+                vec![],
+            ),
+            // A returned or operand UFCS value is used, not discarded.
+            (
+                "expect_err_ufcs_returned",
+                "return Result::expect_err(check(300), \"too long\");",
+                vec![],
+            ),
+            (
+                "expect_err_ufcs_negated",
+                "!Result::expect_err(check(300), \"too long\");",
                 vec![],
             ),
             (

@@ -16,7 +16,7 @@ const TEST_RS: &str =
 const MANIFEST: &str = "[package]\nname = \"fx\"\nversion = \"0.0.0\"\nedition = \"2021\"\n";
 const DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn discount(price: u32, qty: u32) -> u32 {\n-    if qty >= 10 { price * qty * 9 / 10 } else { price * qty }\n+    if qty >= 12 { price * qty * 9 / 10 } else { price * qty }\n }\n";
 
-fn run_check(root: &Path, diff: &Path, cache: &Path) -> Result<(), String> {
+fn run_check(root: &Path, diff: &Path, cache: &Path) -> Result<serde_json::Value, String> {
     let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
         .args(["check", "--root"])
         .arg(root)
@@ -27,7 +27,14 @@ fn run_check(root: &Path, diff: &Path, cache: &Path) -> Result<(), String> {
         .output()
         .map_err(|error| format!("run ripr check: {error}"))?;
     if output.status.success() {
-        return Ok(());
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("decode check report: {error}"))?;
+        assert!(
+            report["summary"]["probes"]
+                .as_u64()
+                .is_some_and(|count| count > 0)
+        );
+        return Ok(report);
     }
     Err(format!(
         "ripr check failed: {}\n{}",
@@ -100,7 +107,6 @@ fn next_run_removes_an_old_stranded_temp_file_and_keeps_a_young_one() -> Result<
 
     let old_survived = old.exists();
     let young_survived = young.exists();
-    let _ = fs::remove_dir_all(&base);
     assert!(
         !old_survived,
         "an hour-old stranded temp file must be swept"
@@ -109,5 +115,65 @@ fn next_run_removes_an_old_stranded_temp_file_and_keeps_a_young_one() -> Result<
         young_survived,
         "a young temp file may belong to a live writer and must be kept"
     );
+    // A warm run must also recover interruption residue. Pin every entry's
+    // bytes and modification time so rewriting the cache cannot fake cleanup.
+    let expected = run_check(&root, &diff, &cache)?;
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(&entry_dir).map_err(|error| error.to_string())? {
+        let path = entry.map_err(|error| error.to_string())?.path();
+        if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+            entries.push((
+                path.clone(),
+                fs::read(&path).map_err(|error| error.to_string())?,
+                fs::metadata(&path)
+                    .and_then(|meta| meta.modified())
+                    .map_err(|error| error.to_string())?,
+            ));
+        }
+    }
+    assert!(!entries.is_empty(), "a warm run needs real cache entries");
+    let unrelated = plant(
+        &entry_dir,
+        ".ripr-atomic-unowned.tmp",
+        Duration::from_hours(1),
+    )?;
+    for cycle in 0..3 {
+        let stranded = plant(
+            &entry_dir,
+            &format!(".ripr-atomic-111-444-{cycle}.tmp"),
+            Duration::from_hours(1),
+        )?;
+        assert_eq!(run_check(&root, &diff, &cache)?, expected);
+        assert!(
+            !stranded.exists(),
+            "warm run {cycle} must sweep aged residue"
+        );
+        assert!(
+            young.exists(),
+            "warm run {cycle} must preserve a young writer"
+        );
+        assert!(
+            unrelated.exists(),
+            "warm run {cycle} must preserve unrelated files"
+        );
+        for (path, bytes, modified) in &entries {
+            assert_eq!(fs::read(path).map_err(|error| error.to_string())?, *bytes);
+            assert_eq!(
+                fs::metadata(path)
+                    .and_then(|meta| meta.modified())
+                    .map_err(|error| error.to_string())?,
+                *modified,
+                "warm run {cycle} must not rewrite a valid cache entry",
+            );
+        }
+        assert_eq!(
+            fs::read_dir(&entry_dir)
+                .map_err(|error| error.to_string())?
+                .count(),
+            entries.len() + 2,
+            "warm run {cycle} must not accumulate files",
+        );
+    }
+    let _ = fs::remove_dir_all(&base);
     Ok(())
 }

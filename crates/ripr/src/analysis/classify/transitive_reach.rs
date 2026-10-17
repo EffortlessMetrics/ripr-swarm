@@ -311,8 +311,15 @@ struct MacroInvocations<'a> {
     invokers: HashMap<String, Vec<&'a str>>,
 }
 
+#[cfg(test)]
+thread_local! {
+    static GRAPH_BUILD_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl<'a> ReachGraph<'a> {
     fn build(index: &'a RustIndex) -> Self {
+        #[cfg(test)]
+        GRAPH_BUILD_COUNT.with(|count| count.set(count.get() + 1));
         let all_tests = collect_all_tests(index);
         let mut by_name: HashMap<&'a str, Vec<&'a FunctionSummary>> = HashMap::new();
         let mut callers: HashMap<&'a str, Vec<&'a str>> = HashMap::new();
@@ -914,6 +921,11 @@ impl OwnerReach<'_, '_> {
 }
 
 impl<'a> TransitiveReachIndex<'a> {
+    #[cfg(test)]
+    pub(in crate::analysis) fn graph_build_count() -> usize {
+        GRAPH_BUILD_COUNT.with(std::cell::Cell::get)
+    }
+
     pub(in crate::analysis) fn new(index: &'a RustIndex) -> Self {
         Self {
             index,

@@ -65,11 +65,22 @@ mod next_action;
 #[path = "cli_smoke/output_leaf_identity.rs"]
 mod output_leaf_identity;
 #[cfg(all(
+    unix,
+    feature = "lang-rust",
+    feature = "lang-python",
+    feature = "lang-typescript"
+))]
+#[path = "cli_smoke/parse_failure_path_outcome.rs"]
+mod parse_failure_path_outcome;
+#[cfg(all(
     feature = "lang-rust",
     any(feature = "lang-python", feature = "lang-typescript")
 ))]
 #[path = "cli_smoke/partial_preview_disclosure.rs"]
 mod partial_preview_disclosure;
+#[cfg(all(unix, feature = "lang-rust"))]
+#[path = "cli_smoke/pilot_timeout_retry.rs"]
+mod pilot_timeout_retry;
 #[cfg(all(feature = "lang-rust", feature = "lang-python"))]
 #[path = "cli_smoke/portable_diff_paths.rs"]
 mod portable_diff_paths;
@@ -5348,13 +5359,27 @@ fn first_pr_check_recovery_write_resolves_the_default_base() -> Result<(), Strin
 fn first_pr_check_exits_2_for_a_blocked_packet_but_write_mode_exits_0() -> Result<(), String> {
     let root = unique_temp_workspace("first-pr-blocked-exit");
     std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+    // The temp root can sit inside the checkout (a redirected TMPDIR). Stop git
+    // discovery at its parent so the root is never resolved against the
+    // checkout's shallow history, which has no default base on a PR runner.
+    let ceiling = root
+        .parent()
+        .ok_or("temp root has no parent")?
+        .to_path_buf();
+    let ceiling = ceiling.to_string_lossy().into_owned();
     let run = |extra: &[&str]| -> Result<Output, String> {
         // Select the base explicitly so this gate test works beneath a
         // detached CI checkout with no default-base refs. The tests above
         // cover default-base discovery with isolated Git repositories.
         let mut args = vec!["first-pr", "--root", ".", "--base", "HEAD"];
         args.extend_from_slice(extra);
-        run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &args).map_err(|err| err.to_string())
+        run_command_with_env(
+            env!("CARGO_BIN_EXE_ripr"),
+            &root,
+            &args,
+            &[("GIT_CEILING_DIRECTORIES", ceiling.as_str())],
+        )
+        .map_err(|err| err.to_string())
     };
 
     let write = run(&[])?;
@@ -13923,8 +13948,8 @@ fn doctor_missing_root_recommends_recovery_and_outside_git_recommends_runnable_c
     // resolve. `first_command_at` reproduces the same quoting.
     let physical = root.strip_prefix(r"\\?\").unwrap_or(&root).to_string();
     let result = if !stdout.contains(&format!(
-        "- Recommended first command: fix the Git check above, or scan without Git history: `{}`",
-        first_command_at(&physical, " --format repo-exposure-md")
+        "- Recommended first command: fix the Git check above, or explore the repository without Git history: `{}`",
+        first_pilot_command_at(&physical)
     )) || stdout.contains("- Recommended first command: ripr check\n")
         || stderr.contains("working-tree change probe failed")
     {
@@ -14168,22 +14193,29 @@ fn recommended_first_command_line(stdout: &str) -> Option<&str> {
 /// directory: `ripr check` defaults to `.`, so the root is named, quoted the
 /// way `agent::loop_commands::shell_arg` quotes it. `root` is absolute; on
 /// Windows command paths render with `/` separators.
-fn first_command_at(root: &str, flags: &str) -> String {
+fn quoted_first_root(root: &str) -> String {
     let root = if cfg!(windows) {
         root.replace('\\', "/")
     } else {
         root.to_string()
     };
-    let quoted = if !root.is_empty()
+    if !root.is_empty()
         && root
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '/' | '_' | '-' | ':'))
     {
-        root.to_string()
+        root
     } else {
         format!("'{}'", root.replace('\'', r"'\''"))
-    };
-    format!("ripr check --root {quoted}{flags}")
+    }
+}
+
+fn first_command_at(root: &str, flags: &str) -> String {
+    format!("ripr check --root {}{flags}", quoted_first_root(root))
+}
+
+fn first_pilot_command_at(root: &str) -> String {
+    format!("ripr pilot --root {}", quoted_first_root(root))
 }
 
 #[test]

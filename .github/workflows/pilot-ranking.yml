@@ -5,11 +5,11 @@ name: Pilot Ranking
 # scored share, function diversity, verdict counts and pick count on the
 # `ranking` scoreboard against metrics/dx-scoreboard/pilot-ranking-baseline.json.
 # Advisory and late: it runs nightly, on demand, and when a pull request that
-# touches pilot ranking, seam grading or this answer key carries the
-# merge-ready label is applied. A later push does not rerun it; re-apply the
-# label. It never runs cargo-mutants; the labels are committed. The path filter lists the direct inputs to the ranking; the
-# nightly run covers changes further away. Network use (fetching the five
-# pinned crates) stays inside this workflow.
+# touches pilot ranking, seam grading or this answer key has the merge-ready
+# label applied. A later push does not rerun it; re-apply the label. It never
+# runs cargo-mutants; the labels are committed. The path filter lists the
+# direct inputs to the ranking; the nightly run covers changes further away.
+# Network use (fetching the five pinned crates) stays inside this workflow.
 
 on:
   workflow_dispatch:

@@ -39,6 +39,9 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// Run-scoped #5830 caller-walk memo, shared across all probes;
     /// `None` (unit-test contexts) walks per probe.
     pub owner_caller_names: Option<&'a super::super::classifier::OwnerCallerNames>,
+    /// Tests the diff adds or changes (#8387); ranking only. `None`
+    /// (unit-test contexts) ranks nothing first.
+    pub diff_touched: Option<&'a super::DiffTouchedTests>,
 }
 
 impl<'a> ProbeContext<'a> {
@@ -64,6 +67,7 @@ impl<'a> ProbeContext<'a> {
             owner_pin_syntax: None,
             unseen_reach_names: None,
             owner_caller_names: None,
+            diff_touched: None,
         }
     }
 
@@ -108,6 +112,16 @@ impl<'a> ProbeContext<'a> {
         self
     }
 
+    /// Share the run's diff-touched test set so the finalized related-test
+    /// list leads with tests the diff adds or changes (#8387).
+    pub(in crate::analysis) fn with_diff_touched(
+        mut self,
+        diff_touched: &'a super::DiffTouchedTests,
+    ) -> Self {
+        self.diff_touched = Some(diff_touched);
+        self
+    }
+
     /// Share one classification run's caller-walk memo across probes.
     pub(in crate::analysis) fn with_owner_caller_names(
         mut self,
@@ -138,11 +152,12 @@ impl<'a> ProbeContext<'a> {
         callee: &str,
     ) -> bool {
         let names = self.own_crate_names(file, callee);
-        match self.file_use_statements {
-            Some(memo) => memo.imports_foreign_callee_name(file, source, callee, &names),
-            None => FileUseStatements::default()
-                .imports_foreign_callee_name(file, source, callee, &names),
-        }
+        let local = FileUseStatements::default();
+        let memo = self.file_use_statements.unwrap_or(&local);
+        // #7985: a macro in the test file that may define an item of the
+        // name rebinds it just as a foreign import does.
+        memo.imports_foreign_callee_name(file, source, callee, &names)
+            || memo.macro_may_define_callee_name(file, source, callee)
     }
 
     /// Crate names whose imports bind the owner for a test in `file`: the

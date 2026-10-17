@@ -723,6 +723,15 @@ reason = "Pinned crates for the pilot ranking answer key; pins exact upstream co
 covered_by = ["cargo xtask pilot-ranking check", "cargo test -p xtask --bin xtask pilot_ranking", "cargo xtask check-file-policy"]
 
 [[allow]]
+glob = "benchmarks/real_crate_dogfood/manifest.json"
+kind = "benchmark_fixture"
+owner = "eval-corpus"
+surface = "fixtures"
+classification = "fixture"
+reason = "Pinned recent commits of popular open-source Rust crates for the real-crate dogfood measurement; pins exact upstream commits and never vendors their source."
+covered_by = ["cargo xtask real-crate-dogfood check", "cargo test -p xtask --bin xtask real_crate_dogfood", "cargo xtask check-file-policy"]
+
+[[allow]]
 glob = "benchmarks/pilot_ranking/labels/*.json"
 kind = "benchmark_fixture"
 owner = "eval-corpus"
@@ -757,6 +766,15 @@ surface = "fixtures"
 classification = "fixture"
 reason = "Fixture-backed base/head attribution rules for canonical evidence comparison."
 covered_by = ["cargo test -p ripr --test causal_delta_fixture", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "crates/ripr/tests/data/uncertain-delivery/receipt.json"
+kind = "assertion_helper_fixture"
+owner = "analysis/test-helpers"
+surface = "fixtures"
+classification = "fixture"
+reason = "Version-pinned #4478/#7818 comparison receipt and exact diff consumed by the public API helper witness."
+covered_by = ["cargo test -p ripr --test uncertain_delivery_helper", "cargo xtask check-file-policy"]
 
 # ---------------------------------------------------------------------------
 # Portable consumer (Python stdlib packet transport)
