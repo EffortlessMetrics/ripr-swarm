@@ -13020,6 +13020,7 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_single_file_rename_of_the_receiver_refuses_the_pin_in_both_spellings",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_single_file_plain_import_of_the_receiver_keeps_its_pin",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_non_plain_drop_on_the_returned_type_lends_no_pin",
+  "crates/ripr/src/analysis/classifier/evidence.rs::a_non_plain_drop_on_the_returned_type_keeps_return_value_weakly",
 ]
 fixtures = [
   "fixtures/rust_trait_default_import",
