@@ -13,6 +13,13 @@ pub(in crate::analysis::test_grip_evidence) fn snapshot_observes_owner(
     context: &CompactGripContext<'_>,
     syntax: &crate::analysis::classify::OwnerPinSyntax,
 ) -> bool {
+    if !context
+        .index
+        .drop_in_manifests
+        .verified(&test.file, "insta")
+    {
+        return false;
+    }
     if context
         .unique_evidence_function(&test.file, &test.name, test.start_line)
         .is_none()
@@ -111,40 +118,53 @@ pub(in crate::analysis::test_grip_evidence) fn snapshot_macro_is_unambiguous(
             return false;
         };
         let tree = parsed.parse.tree();
-        let allowed_imports: std::collections::BTreeSet<_> = tree
-            .syntax()
-            .descendants()
-            .filter_map(ast::Use::cast)
-            .filter(|item| {
-                item.syntax()
-                    .descendants()
+        let mut allowed_imports = std::collections::BTreeSet::new();
+        for import in tree.syntax().descendants().filter_map(ast::Use::cast) {
+            for item in import.syntax().descendants().filter_map(ast::UseTree::cast) {
+                if item.rename().is_some()
+                    || item.use_tree_list().is_some()
+                    || item.star_token().is_some()
+                {
+                    continue;
+                }
+                let Some(path) = item.path() else { continue };
+                let path: String = path
+                    .syntax()
+                    .text()
+                    .to_string()
+                    .split_whitespace()
+                    .collect();
+                if path
+                    .rsplit("::")
+                    .next()
+                    .unwrap_or_default()
+                    .trim_start_matches("r#")
+                    != leaf
+                {
+                    continue;
+                }
+                let mut paths: Vec<_> = item
+                    .syntax()
+                    .ancestors()
                     .filter_map(ast::UseTree::cast)
-                    .any(|item| {
-                        if item.rename().is_some()
-                            || item.use_tree_list().is_some()
-                            || item.star_token().is_some()
-                        {
-                            return false;
-                        }
-                        let mut paths: Vec<_> = item
-                            .syntax()
-                            .ancestors()
-                            .filter_map(ast::UseTree::cast)
-                            .filter_map(|item| item.path())
-                            .map(|path| {
-                                path.syntax()
-                                    .text()
-                                    .to_string()
-                                    .split_whitespace()
-                                    .collect::<String>()
-                            })
-                            .collect();
-                        paths.reverse();
-                        paths.join("::").trim_start_matches("::") == format!("insta::{leaf}")
+                    .filter_map(|item| item.path())
+                    .map(|path| {
+                        path.syntax()
+                            .text()
+                            .to_string()
+                            .split_whitespace()
+                            .collect::<String>()
                     })
-            })
-            .map(|item| parsed.lines.line(item.syntax().text_range().start()))
-            .collect();
+                    .collect();
+                paths.reverse();
+                // Every leaf import must be valid in its own syntax. Another
+                // module's genuine import on the same line supplies no waiver.
+                if paths.join("::").trim_start_matches("::") != format!("insta::{leaf}") {
+                    return false;
+                }
+                allowed_imports.insert(parsed.lines.line(import.syntax().text_range().start()));
+            }
+        }
         let sites = crate::analysis::syntax::trusted_macro_binding_sites(
             &facts.source,
             &context.index.package_names,

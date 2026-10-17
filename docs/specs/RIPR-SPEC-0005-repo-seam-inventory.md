@@ -279,7 +279,11 @@ bindings (including immutable aliases to interior-mutable results) remain weak.
 Inline owner calls refuse control transfer and opaque macro arguments. Their
 shared identity check excludes only the exact admitted snapshot wrapper from
 macro-binding ambiguity, using an isolated memoization view; nested opaque
-macros and visible local snapshot lookalikes still refuse. Raw snapshot observations remain
+macros and visible local snapshot lookalikes still refuse. Snapshot credit also
+requires the existing manifest authority to bind the test file's `insta`
+dependency to its ordinary registry package. Each bare
+macro import must independently name the Insta leaf; another module's import
+on the same line cannot establish it. Raw snapshot observations remain
 visible, and an independent exact equality or existing expect-test equality
 can still supply strong discrimination. This subject-only gate reuses the
 run-scoped parser and binding invalidation owner; it does not read expected

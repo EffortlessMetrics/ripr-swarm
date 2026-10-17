@@ -247,3 +247,31 @@ fn local_snapshot_lookalikes_cannot_borrow_the_operand_exception() -> Result<(),
         "macro_rules! ignored { ($($tt:tt)*) => {} }\n        mod insta { pub(crate) use ignored as assert_snapshot; }\n        let actual = make_count(2);\n        insta::assert_snapshot!(make_count(2), @\"2\");",
     )
 }
+
+#[test]
+fn snapshot_imports_cannot_borrow_another_modules_same_line() -> Result<(), String> {
+    let source = SOURCE.replace("mod tests {\n    use super::*;", "mod unused { use insta::assert_snapshot; } mod tests { use opaque_snapshots::assert_snapshot;\n    use super::*;");
+    assert_weak(
+        Fixture::with_source(
+            &source,
+            "let actual = make_count(2);\n        assert_snapshot!(make_count(2), @\"2\");",
+        )?
+        .seam()?,
+    )
+}
+
+#[test]
+fn snapshot_dependency_substitution_cannot_supply_eager_oracle_credit() -> Result<(), String> {
+    let fixture = Fixture::new(
+        "let actual = make_count(2);\n        insta::assert_snapshot!(make_count(2), @\"2\");",
+    )?;
+    let manifest = fixture.0.join("Cargo.toml");
+    let contents = std::fs::read_to_string(&manifest).map_err(|error| error.to_string())?;
+    let wrong = contents.replace(
+        "insta={version=\"=1.49.0\",features=[\"json\"]}",
+        "insta={package=\"opaque_snapshots\",path=\"../opaque-snapshot-dependency\"}",
+    );
+    assert_ne!(contents, wrong);
+    std::fs::write(manifest, wrong).map_err(|error| error.to_string())?;
+    assert_weak(fixture.seam()?)
+}
