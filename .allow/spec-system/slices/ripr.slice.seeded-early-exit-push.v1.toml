@@ -1,0 +1,63 @@
+schema_version = "2.0"
+id = "ripr.slice.seeded-early-exit-push.v1"
+generation = 1
+
+source_issue = "issue:8205"
+design_reference = "RIPR-SPEC-0228#collection-writes-on-a-field-path"
+change_class = "behavior_change"
+
+claim_boundary = """
+When the owner may exit before its push, an assertion that expects
+exactly the collection state the test seeded before the owner call no
+longer confirms that push in the classify owner, because the skipped
+push leaves the seeded state untouched; the finding stays
+weakly_exposed, pinned by push-after-early-return-seeded-assert in
+fixtures/rust-verdict-corpus and the honesty-corpus pin
+rust_seeded_expectation_cannot_confirm_guarded_push. An expectation
+that differs from the seeded state (including the seeded state plus
+the pushed element) or an owner that cannot exit early still confirms
+and stays exposed. The seeded state is read only from the binding's
+own construction (a struct-literal field entry or a bare assignment).
+This extends the #8051 empty-expectation cap. No new classification
+vocabulary, probe family, schema, or runtime execution.
+"""
+
+non_goals = [
+  "weakening the #8051 empty-collection behavior",
+  "new classification vocabulary or probe families",
+  "runtime execution, coverage, or mutation-score framing",
+  "seeded-state evidence from helper calls or constructors whose bodies are not spelled out in the test",
+]
+
+return_conditions = [
+  "Return to root if an expectation differing from the seeded state loses credit because of this rule.",
+  "Return to root if the #8051 empty-expectation cases change class because of this rule.",
+]
+
+owned_seams = [
+  "seam:ripr:analysis:seeded-collection-expectation",
+  "seam:ripr:fixtures:push-after-early-return-seeded",
+]
+
+shared_seams = [
+  "seam:ripr:fixtures:rust-verdict-corpus",
+  "seam:ripr:xtask:verdict-corpus",
+]
+
+forbidden_seams = [
+  "seam:ripr:domain:classification-vocabulary",
+  "seam:ripr:output:schema",
+]
+
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0228#collection-writes-on-a-field-path"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+
+[evidence]
+state = "outstanding"
+
+[support_claim]
+state = "unchanged"

@@ -609,18 +609,115 @@ fn compares_test_with_non_literal(line: &str) -> bool {
     // true)`; review of #8110).
     loop {
         (left, right) = (left.trim(), right.trim());
+        // The same constructor around both sides compares what it wraps
+        // (`Some(r == Err(E::Bad))` against `Some(expected)`; #8101).
+        if let Some(inner) = shared_constructor_arguments(left, right) {
+            (left, right) = inner;
+            continue;
+        }
         let other = match (literal(left), literal(right)) {
-            (false, false) => return is_bool_test(left) || is_bool_test(right),
+            (false, false) => {
+                return is_bool_test(left)
+                    || is_bool_test(right)
+                    || arithmetic_over_test(left)
+                    || arithmetic_over_test(right);
+            }
             (true, false) => right,
             (false, true) => left,
             (true, true) => return false,
         };
+        if arithmetic_over_test(other) {
+            return true;
+        }
         let (core, _, _) = strip_negations(other);
         let Some(sides) = whole_comparison_sides(core) else {
             return false;
         };
         (left, right) = sides;
     }
+}
+
+/// Whether `side` is arithmetic over an integer-cast test and another
+/// non-literal term (`k * (r == Err(E::Bad)) as u32`; #8101). The other term
+/// may be zero, so the sum or product no longer says whether the test held,
+/// whatever it is compared with.
+fn arithmetic_over_test(side: &str) -> bool {
+    let masked = mask_comments_and_strings(side);
+    let terms = arithmetic_terms(&masked);
+    if terms.len() < 2 {
+        return false;
+    }
+    let literal = |term: &str| {
+        let term = unwrap_parentheses(term.trim());
+        literal_spelling_value(term).is_some()
+            || (term.starts_with(|c: char| c.is_ascii_digit())
+                && term
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.')))
+    };
+    let Some(test) = terms
+        .iter()
+        .position(|term| bool_preserving_operand(term).is_some_and(is_bool_test))
+    else {
+        return false;
+    };
+    terms
+        .iter()
+        .enumerate()
+        .any(|(index, term)| index != test && !literal(term))
+}
+
+/// The terms of `text` split at its binary `+ - * / %` operators outside any
+/// group. An operator with no operand before it (a deref or a negation) and
+/// the `->` arrow do not split.
+fn arithmetic_terms(text: &str) -> Vec<&str> {
+    let mut terms = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    let mut previous: Option<char> = None;
+    let mut chars = text.char_indices().peekable();
+    while let Some((index, ch)) = chars.next() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            '+' | '-' | '*' | '/' | '%' if depth == 0 => {
+                let after_operand = previous
+                    .is_some_and(|p| p.is_alphanumeric() || matches!(p, '_' | ')' | ']' | '}'));
+                let arrow = ch == '-' && chars.peek().is_some_and(|&(_, next)| next == '>');
+                if after_operand && !arrow {
+                    if let Some(term) = text.get(start..index) {
+                        terms.push(term.trim());
+                    }
+                    start = index + ch.len_utf8();
+                    previous = None;
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        if !ch.is_whitespace() {
+            previous = Some(ch);
+        }
+    }
+    if let Some(term) = text.get(start..) {
+        terms.push(term.trim());
+    }
+    terms
+}
+
+/// The arguments of `left` and `right` when both are one call of the same
+/// value constructor with one argument (`Some(a)` and `Some(b)`). Equal
+/// wrappers are equal exactly when what they wrap is, so a comparison of the
+/// wrappers is a comparison of the arguments.
+fn shared_constructor_arguments<'a>(left: &'a str, right: &'a str) -> Option<(&'a str, &'a str)> {
+    let argument = |side: &'a str, constructor: &str| {
+        let rest = side.strip_prefix(constructor)?.trim_start();
+        let contents = super::arguments::parenthesized_contents(rest)?;
+        (super::arguments::split_top_level_commas(contents).len() == 1).then_some(contents)
+    };
+    ["Some", "Ok", "Err"]
+        .iter()
+        .find_map(|constructor| Some((argument(left, constructor)?, argument(right, constructor)?)))
 }
 
 /// The two sides of `condition` when its whole is one `==` or `!=`

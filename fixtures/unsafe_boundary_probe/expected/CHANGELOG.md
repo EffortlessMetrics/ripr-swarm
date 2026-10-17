@@ -245,3 +245,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — unsafe_boundary_probe (21)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless unsafe_boundary_probe --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

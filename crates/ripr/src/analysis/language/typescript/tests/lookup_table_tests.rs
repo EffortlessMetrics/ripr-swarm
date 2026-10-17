@@ -606,3 +606,47 @@ fn lookup_table_entry_stays_weak_without_a_changed_key_lookup() -> Result<(), St
     }
     Ok(())
 }
+
+/// A body-local `cart` shadows the namespace import, so
+/// `cart.fetchUnitPrice("pear")` is not an owner call. A real
+/// `fetchUnitPrice(...)` smoke call keeps the test related; the lookup
+/// pin must not credit the changed key.
+#[test]
+fn lookup_table_entry_stays_weak_through_a_shadowed_namespace() -> Result<(), String> {
+    let source = vitest(
+        "import * as cart from \"../src/cart\";\nimport { fetchUnitPrice } from \"../src/cart\";",
+        "  const cart = fakeCart();\n  fetchUnitPrice(\"apple\");\n  await expect(cart.fetchUnitPrice(\"pear\")).resolves.toBe(95);",
+    );
+    let tests = extract_tests(Path::new("test/cart.test.ts"), &source);
+    assert_eq!(
+        tests
+            .iter()
+            .flat_map(|test| test.assertions.iter())
+            .map(|assertion| (
+                assertion.observed_expression.clone(),
+                assertion.oracle_kind.clone(),
+                assertion.oracle_strength.clone()
+            ))
+            .collect::<Vec<_>>(),
+        vec![(
+            Some("cart.fetchUnitPrice(\"pear\")".to_string()),
+            OracleKind::ExactValue,
+            OracleStrength::Strong
+        )]
+    );
+    if !local_identifier_declared_in_test_body(&tests[0].body_text, "cart") {
+        return Err("body-local `cart` must read as a shadow".to_string());
+    }
+    let finding = unit_price_finding(
+        "lookup-shadowed-namespace",
+        &source,
+        "  return table[sku] ?? 0;",
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "{:?}",
+        finding.missing
+    );
+    Ok(())
+}

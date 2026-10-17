@@ -3518,7 +3518,7 @@ mod tests {
             let unconsumed = [
                 (
                     "typescript.resolve_tsconfig_paths",
-                    "[typescript]\nresolve_tsconfig_paths = true\n",
+                    "[typescript]\nresolve_tsconfig_paths = false\n",
                 ),
                 ("perl.timeout_ms", "[perl]\ntimeout_ms = 1234\n"),
             ];
