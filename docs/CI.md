@@ -1490,6 +1490,13 @@ Steps:
   comments into `ripr pr-comments summary`, which renders the digest and writes
   one POST (or a PATCH of the bot's earlier comment); the step sends it with
   `gh api`. It is `continue-on-error` and skips fork and Dependabot heads.
+  Two known limits: it runs only when `Run RIPR` left
+  `target/ripr/review/comments.json`, so if that step fails before writing it,
+  an earlier push's comment stays as it was (stale) rather than being marked
+  incomplete; and two overlapping runs can each find no earlier comment and
+  post two, after which the later runs update only the first. Concurrency
+  groups on the workflow narrow the race; neither is a correctness claim about
+  the code under review.
 - **Publish RIPR inline comments** runs `ripr pr-comments requests`, which turns
   the publish plan into an ordered list of GitHub API requests (updates first,
   then one review for new cards), and the step sends each one with `gh api`.

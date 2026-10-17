@@ -780,6 +780,39 @@ mod tests {
     }
 
     #[test]
+    fn summary_refuses_a_malformed_raw_page_file() -> Result<(), String> {
+        use std::fs;
+        let root = scratch("summary-malformed");
+        fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+        fs::write(
+            root.join("g.json"),
+            r#"{"comments": [], "summary": {"summary_only": 0}, "analysis_outcome": {"analysis_complete": true}}"#,
+        )
+        .map_err(|err| err.to_string())?;
+        fs::write(root.join("pages.json"), "not json").map_err(|err| err.to_string())?;
+        let result = super::pr_comments_summary(&strings(&[
+            "--root",
+            &root.display().to_string(),
+            "--pr-guidance",
+            "g.json",
+            "--raw",
+            "pages.json",
+            "--pull-request",
+            "7",
+            "--head-sha",
+            "abc",
+        ]));
+        let wrote = root.join("target/ripr/review/summary/summary.tsv").exists();
+        let _ = fs::remove_dir_all(&root);
+        assert!(
+            result.err().is_some_and(|err| err.contains("pages.json")),
+            "a malformed page file was accepted"
+        );
+        assert!(!wrote, "a request was written after a malformed page file");
+        Ok(())
+    }
+
+    #[test]
     fn existing_parses_its_flags_and_refuses_unknown_ones() {
         let parsed = parse_pr_comments_existing_options(&strings(&[
             "--root", "r", "--raw", "-", "--out", "o.json",

