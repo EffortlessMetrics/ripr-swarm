@@ -2314,7 +2314,7 @@ mod tests {
 
     #[test]
     fn scaffolded_fixture_with_placeholder_spec_fails_the_contract() -> Result<(), String> {
-        let dir = std::env::temp_dir().join(format!("ripr-7399-{}", std::process::id()));
+        let dir = unique_temp_path("7399-spec-placeholder");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("expected")).map_err(|e| e.to_string())?;
         std::fs::write(dir.join("diff.patch"), "").map_err(|e| e.to_string())?;
