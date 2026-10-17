@@ -96,9 +96,62 @@ runs:
         packet_meta="$tmp/cut-packet-meta.json"
         result="$tmp/result.json"
         cut_result="$tmp/cut-result.json"
+        rc_candidate=0
+        rc_cut=0
+        candidate_allowed="admitted,refused,self_test_pass,not_applicable"
 
         python3 "$action_root/candidate_admission.py" --self-test
         python3 "$action_root/release_cut_admission.py" --self-test
+
+        validate_candidate_result() {
+          local file="$1" rc="$2" allowed="$3"
+          if ! jq -e --arg allowed "$allowed" '
+            type == "object"
+            and (.status | type == "string")
+            and (.reason | type == "string" and length > 0)
+            and (.claim | type == "string")
+            and (.acceptance_delta | type == "string")
+            and (.competing_prs | type == "array")
+            and (.changed_files | type == "number")
+            and (.changed_lines | type == "number")
+            and (.max_changed_files | type == "number")
+            and (.max_changed_lines | type == "number")
+            and (.status as $status | ($allowed | split(",") | index($status)) != null)
+          ' "$file" >/dev/null; then
+            echo "::error::candidate admission produced no valid result"
+            exit 1
+          fi
+          local status
+          status="$(jq -r '.status' "$file")"
+          case "$status:$rc" in
+            admitted:0|refused:1|self_test_pass:0|not_applicable:0) ;;
+            *)
+              echo "::error::candidate admission status/exit mismatch ($status/$rc)"
+              exit 1
+              ;;
+          esac
+        }
+
+        validate_cut_result() {
+          local file="$1" rc="$2"
+          if ! jq -e '
+            type == "object"
+            and (.status == "admitted" or .status == "refused")
+            and (.reason | type == "string" and length > 0)
+          ' "$file" >/dev/null; then
+            echo "::error::hard-cut admission produced no valid result"
+            exit 1
+          fi
+          local status
+          status="$(jq -r '.status' "$file")"
+          case "$status:$rc" in
+            admitted:0|refused:1) ;;
+            *)
+              echo "::error::hard-cut admission status/exit mismatch ($status/$rc)"
+              exit 1
+              ;;
+          esac
+        }
 
         if [ "${ADMISSION_MODE:-admit}" != "admit" ]; then
           printf '%s\n' '{"status":"self_test_pass","reason":"candidate_and_cut_controls_passed","claim":"","acceptance_delta":"","competing_prs":[],"changed_files":0,"changed_lines":0,"max_changed_files":160,"max_changed_lines":3000}' > "$result"
@@ -112,13 +165,16 @@ runs:
           gh api "repos/${ADMISSION_REPOSITORY}/pulls/${ADMISSION_PR_NUMBER}" > "$current"
           gh api --paginate "repos/${ADMISSION_REPOSITORY}/pulls?state=open&per_page=100" | jq -s 'add' > "$open_prs"
           gh api --paginate "repos/${ADMISSION_REPOSITORY}/pulls/${ADMISSION_PR_NUMBER}/files?per_page=100" | jq -s 'add' > "$pr_files"
-          base_sha="$(jq -r '.base.sha // empty' "$current")"
-          [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::candidate admission received no exact base SHA'; exit 1; }
+
+          base_ref="$(jq -r '.base.ref // empty' "$current")"
+          [ -n "$base_ref" ] || { echo '::error::candidate admission received no base ref'; exit 1; }
+          base_sha="$(gh api "repos/${ADMISSION_REPOSITORY}/git/ref/heads/${base_ref}" --jq '.object.sha // empty')"
+          [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::candidate admission could not resolve exact live base SHA'; exit 1; }
           gh api "repos/${ADMISSION_REPOSITORY}/git/commits/${base_sha}" > "$base_commit"
 
-          # The enforcement packet comes from the exact base commit, never the
-          # candidate checkout. The local inactive template is used only while
-          # the machinery PR is being introduced on a base that has no packet.
+          # The enforcement packet comes from the exact live base commit, never
+          # the candidate checkout. The local inactive template is used only
+          # while the machinery PR is introduced on a base that has no packet.
           if gh api "repos/${ADMISSION_REPOSITORY}/contents/${packet_path}?ref=${base_sha}" > "$packet_meta" 2>/dev/null; then
             jq -r '.content' "$packet_meta" | tr -d '\n' | base64 --decode > "$packet"
           else
@@ -134,6 +190,7 @@ runs:
 
           docs_flag=()
           [ "${ADMISSION_DOCS_ONLY:-false}" = "true" ] && docs_flag=(--docs-only)
+          candidate_allowed="admitted,refused"
           set +e
           python3 "$action_root/candidate_admission.py" \
             --current "$current" \
@@ -142,6 +199,7 @@ runs:
             --max-changed-files "${ADMISSION_MAX_CHANGED_FILES}" \
             --max-changed-lines "${ADMISSION_MAX_CHANGED_LINES}" \
             "${docs_flag[@]}" > "$result"
+          rc_candidate=$?
           python3 "$action_root/release_cut_admission.py" \
             --packet "$packet" \
             --current "$current" \
@@ -149,8 +207,18 @@ runs:
             --pr-files "$pr_files" \
             --expected-head "${ADMISSION_EXPECTED_HEAD:-}" \
             "${cut_args[@]}" > "$cut_result"
+          rc_cut=$?
           set -e
+
+          base_sha_after="$(gh api "repos/${ADMISSION_REPOSITORY}/git/ref/heads/${base_ref}" --jq '.object.sha // empty')"
+          if [ "$base_sha_after" != "$base_sha" ]; then
+            echo "::error::candidate admission base moved during evaluation ($base_sha -> $base_sha_after)"
+            exit 1
+          fi
         fi
+
+        validate_candidate_result "$result" "$rc_candidate" "$candidate_allowed"
+        validate_cut_result "$cut_result" "$rc_cut"
 
         status="$(jq -r '.status' "$result")"
         reason="$(jq -r '.reason' "$result")"
