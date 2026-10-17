@@ -1766,9 +1766,9 @@ mod tests {
         );
         let report =
             build_cache_report_from_env(&base, Ok(alias.join("ripr/cache").display().to_string()));
-        let survived = victim.exists();
+        let persisted = victim.exists();
         cleanup(base)?;
-        assert!(survived);
+        assert!(persisted);
         match (result, report) {
             (Err(gc), Err(rep)) if gc.contains("is a symlink") && rep.contains("is a symlink") => {
                 Ok(())
