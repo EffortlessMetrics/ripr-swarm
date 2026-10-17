@@ -1,6 +1,8 @@
 //! RIPR-SPEC-0099 amendment: tsconfig `paths` aliases resolve by default, and
 //! an explicit `resolve_tsconfig_paths = false` restores the fail-closed read.
 
+#![cfg(feature = "lang-typescript")]
+
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
