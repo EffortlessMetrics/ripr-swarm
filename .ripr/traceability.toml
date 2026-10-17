@@ -1611,6 +1611,9 @@ tests = [
   "crates/ripr/tests/task_first_facade.rs::repair_explicit_eligible_seam_starts_one_attempt",
   "crates/ripr/tests/task_first_facade.rs::repair_explicit_ineligible_seam_refuses_without_attempt_or_lock",
   "crates/ripr/tests/task_first_facade.rs::repair_explicit_policy_omitted_gap_and_seam_refuse_without_attempt_or_lock",
+  "crates/ripr/tests/task_first_facade.rs::repair_accepts_the_producer_gap_id_check_prints",
+  "crates/ripr/src/analysis/language/rust/probe_shape.rs::tests::producer_gap_id_names_only_the_seam_it_was_minted_from",
+  "crates/ripr/src/analysis/language/rust/probe_shape.rs::tests::producer_gap_id_rejects_other_languages_and_hash_ids",
   "crates/ripr/tests/task_first_facade.rs::check_drill_down_prints_repair_identity_that_starts_the_same_seam",
   "crates/ripr/tests/task_first_facade.rs::check_drill_down_omits_repair_when_top_seam_is_not_eligible",
   "crates/ripr/tests/task_first_facade.rs::check_drill_down_omits_repair_when_seam_inventory_is_truncated",
@@ -3050,6 +3053,11 @@ id = "RIPR-SPEC-0027"
 name = "TypeScript preview static facts"
 spec = "docs/specs/RIPR-SPEC-0027-typescript-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::report_snippet_collapses_complete_multiline_spans_before_bounding",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::report_snippet_keeps_selected_file_boundaries_and_refuses_invalid_spans",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::report_snippet_marks_only_display_overflow_and_counts_unicode_scalars",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::report_snippet_partial_test_disclosure_preserves_file_line_and_closing_tokens",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::report_snippet_partial_owner_disclosure_preserves_selected_source_identity",
   "crates/ripr/src/analysis/language/typescript/tests/table_case_tests.rs::empty_parameter_tables_register_no_test_evidence",
   "crates/ripr/src/analysis/language/typescript/tests/table_case_tests.rs::empty_tables_preserve_partial_disclosure_for_evaluated_title_expressions",
   "crates/ripr/src/analysis/language/typescript/tests/table_case_tests.rs::empty_tables_preserve_partial_disclosure_for_evaluated_sequence_titles",
@@ -7454,6 +7462,8 @@ id = "RIPR-SPEC-0094"
 name = "observation_unverified guard generalization"
 spec = "docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md"
 tests = [
+  "crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_graph_is_shared_across_changed_arms_cold_and_warm",
+  "crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_graph_rebuilds_after_a_same_path_helper_edit",
   "crates/ripr/src/analysis/facts/cfg_predicates/tests.rs::plain_test_gate_excludes_conditional_attribute_expansion",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::field_projected_collection_repo_seam_retains_indexed_target",
   "crates/ripr/src/analysis/classify/propagation_witness/collection_argument.rs::tests::field_argument_observer_retains_withheld_macro_authority",
@@ -16378,3 +16388,33 @@ outputs = [
   "docs/specs/RIPR-SPEC-0268-flow-sink-row-collapse.md",
 ]
 metrics = ["unit_test_pass_rate"]
+
+[[behavior]]
+id = "RIPR-SPEC-0278"
+name = "Issue lifecycle real closeout rows pilot over two captured journeys"
+spec = "docs/specs/RIPR-SPEC-0278-issue-lifecycle-real-closeout-rows.md"
+tests = [
+  "xtask/src/issue_lifecycle_real_rows.rs::tests::both_real_rows_load_with_intact_provenance_bindings",
+  "xtask/src/issue_lifecycle_real_rows.rs::tests::row_a_dispositions_through_to_completed_closeout",
+  "xtask/src/issue_lifecycle_real_rows.rs::tests::row_b_stays_merged_pending_closeout",
+  "xtask/src/issue_lifecycle_real_rows.rs::tests::wrong_head_or_merge_identity_variant_rejects",
+  "xtask/src/issue_lifecycle_real_rows.rs::tests::zero_subject_verification_cannot_close",
+  "xtask/src/issue_lifecycle_real_rows.rs::tests::missing_or_stale_current_head_proof_blocks_closeout",
+  "xtask/src/issue_lifecycle_real_rows.rs::tests::uncovered_acceptance_row_keeps_a_merge_partial",
+  "xtask/src/issue_lifecycle_real_rows.rs::tests::duplicate_import_deduplicates_by_observation_key",
+  "xtask/src/issue_lifecycle_real_rows.rs::tests::synthetic_fixtures_stay_outside_the_real_count",
+]
+fixtures = [
+  "fixtures/issue_lifecycle_real_rows",
+]
+code = [
+  "xtask/src/issue_lifecycle_real_rows.rs",
+  "xtask/src/fixture_contracts/general_validators.rs",
+  "xtask/src/reports/fixtures.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0278-issue-lifecycle-real-closeout-rows.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

@@ -1,0 +1,74 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_direct_collection_count_payload/input
+
+Summary: 2 probe(s), 1 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+
+INFO ./src/lib.rs:3
+  id: probe:src_lib.rs:call_deletion:b78eb0d6
+
+Changed
+  before: events_sent.push(id)
+  after:  events_sent.push(0 + id)
+
+Probe
+  family: call_deletion
+  delta:  effect
+  owner:  src/lib.rs::send
+  canonical gap: gap:rust:src/lib.rs:send:call_deletion:call_deletion:events_sent.push_0+id
+
+Static exposure
+  exposed (info, confidence 1.00)
+
+Evidence
+  - reach yes: Related tests appear to reach send: send_records_one_event
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches state write: events_sent.push(0 + id)
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator yes: Strong oracle found: exact value or pattern assertion
+  - local flow reaches state write: events_sent.push(0 + id) (line 3)
+  - related test src/lib.rs:12 send_records_one_event uses strong exact value oracle: assert_eq!(events_sent.len(), 1);
+  - source function argument value id = 7 at line 14
+  - source assertion argument value 1 at line 15
+Drill in:
+  ripr explain --root <cwd>/fixtures/rust_direct_collection_count_payload/input --diff <cwd>/fixtures/rust_direct_collection_count_payload/diff.patch --mode fast probe:src_lib.rs:call_deletion:b78eb0d6
+  ripr context --root <cwd>/fixtures/rust_direct_collection_count_payload/input --diff <cwd>/fixtures/rust_direct_collection_count_payload/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:b78eb0d6
+
+WARNING ./src/lib.rs:3
+  id: probe:src_lib.rs:side_effect:110476f2
+
+Changed
+  before: events_sent.push(id)
+  after:  events_sent.push(0 + id)
+
+Probe
+  family: side_effect
+  delta:  effect
+  owner:  src/lib.rs::send
+  canonical gap: gap:rust:src/lib.rs:send:side_effect:side_effect:events_sent.push_0+id
+
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+
+Evidence
+  - reach yes: Related tests appear to reach send: send_records_one_event
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches state write: events_sent.push(0 + id)
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - local flow reaches state write: events_sent.push(0 + id) (line 3)
+  - related test src/lib.rs:12 send_records_one_event uses strong exact value oracle: assert_eq!(events_sent.len(), 1); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - source function argument value id = 7 at line 14
+  - source assertion argument value 1 at line 15
+
+Weakness
+  - No strong discriminator was detected
+
+Next step
+  Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect
+Drill in:
+  ripr explain --root <cwd>/fixtures/rust_direct_collection_count_payload/input --diff <cwd>/fixtures/rust_direct_collection_count_payload/diff.patch --mode fast probe:src_lib.rs:side_effect:110476f2
+  ripr context --root <cwd>/fixtures/rust_direct_collection_count_payload/input --diff <cwd>/fixtures/rust_direct_collection_count_payload/diff.patch --mode fast --at probe:src_lib.rs:side_effect:110476f2

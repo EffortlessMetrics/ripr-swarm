@@ -98,7 +98,7 @@ struct GlobEntry {
 /// out-of-root/unresolved candidate) instead of a generic message.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TsAliasUnresolveCause {
-    /// No alias map was even attempted: the opt-in flag is off. Every
+    /// No alias map was even attempted: the flag was explicitly set false (default is on). Every
     /// flag-ON unavailability carries a typed `TsAliasMapLoadGap` instead,
     /// so this cause never masks a parse failure behind "enable the flag"
     /// advice (#4106-B).
@@ -146,7 +146,7 @@ impl TsAliasUnresolveCause {
     }
 }
 
-/// Why no alias map exists even though the opt-in flag is ON (#4106-B).
+/// Why no alias map exists even though the flag is ON (#4106-B).
 ///
 /// The flag-ON fail-closed paths used to collapse into the generic
 /// "no alias map was available — enable the flag" advice, which told the
@@ -229,7 +229,7 @@ impl TsAliasMapLoadGap {
 
 impl TsAliasMap {
     /// A map that resolves only in-workspace package names: the tsconfig
-    /// alias flag is off or its config did not load (#4554).
+    /// alias flag is explicitly false or its config did not load (#4554).
     pub(crate) fn workspace_packages_only(
         root: &Path,
         packages: super::workspace_packages::WorkspacePackages,
@@ -583,7 +583,7 @@ fn parse_alias_map(root: &Path, text: &str) -> Result<TsAliasMap, TsAliasMapBloc
 /// from the workspace walk, so without this mapping the import names an
 /// unindexed module and a change to `lib/x.ts` reads as `no_static_path`.
 ///
-/// Independent of `[typescript] resolve_tsconfig_paths`: that opt-in governs
+/// Independent of `[typescript] resolve_tsconfig_paths`: that default-on, opt-out flag governs
 /// non-relative `paths` aliases, whose templates can redirect arbitrary
 /// specifiers. This mapping only rewrites a RELATIVE import whose target
 /// does not exist, and only onto a source file that does exist, following

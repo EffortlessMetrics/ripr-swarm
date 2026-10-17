@@ -731,6 +731,18 @@ export class RiprClientController {
       // with any live update that already ran.
       this.setTraceFromConfig();
     } catch (error) {
+      if (startGeneration === this.startGeneration) {
+        // Without this the status bar keeps spinning on "starting" for a
+        // server that already died at the handshake.
+        const reason = error instanceof Error ? error.message : String(error);
+        this.updateStatus({
+          kind: 'serverUnavailable',
+          summary: 'ripr server failed to start.',
+          detail: `Server: ${server.source} (${server.detail})\n${reason}`,
+          nextStep: 'Run ripr: Show Output to see the server error, fix it, then run ripr: Restart Server.'
+        });
+        this.warnWithOutput(`ripr server failed to start: ${reason}`);
+      }
       // A rejected start must not strand a half-initialized client: clear the
       // reference and detach listeners so a later start() re-initializes
       // instead of returning early against stale state. Only clear this.client

@@ -12,7 +12,7 @@ use std::path::Path;
 use crate::agent::artifact::current_git_head;
 use crate::agent::command_specs::repair_start_command_spec;
 use crate::agent::loop_commands::{bound_root, shell_arg};
-use crate::analysis::canonical_gap::canonical_gap_identity;
+use crate::analysis::canonical_gap::{canonical_gap_identity, producer_gap_id_names_seam};
 use crate::analysis::repair_route::{RepairPacketIneligibility, repair_packet_eligibility};
 use crate::app::agent_brief::AgentBriefPolicy;
 use crate::app::agent_status::{AgentAttemptStatusReport, build_agent_attempt_status};
@@ -235,7 +235,9 @@ pub(crate) enum RepairSubject {
 }
 
 /// Resolve an explicit `ripr repair` item to its seam: an exact seam ID, or
-/// a canonical gap ID naming exactly one seam. The resolved seam must pass
+/// a canonical gap ID naming exactly one seam. The gap ID may be the
+/// seam-derived `gap:<hash>` or the Rust producer gap ID `ripr check` prints
+/// as `Canonical gap:` (joined on file, owner, kind and discriminator). The resolved seam must pass
 /// the same repair-admission gate as the auto selector
 /// ([`repair_refusal_reason`]); an ineligible subject is a deliberate
 /// no-selection decision naming the reason, never a start. Anything else
@@ -266,7 +268,10 @@ pub(crate) fn resolve_repair_subject(root: &Path, item: &str) -> Result<RepairSu
     }
     let matches: Vec<&crate::analysis::ClassifiedSeam> = classified
         .iter()
-        .filter(|entry| canonical_gap_identity(entry).is_some_and(|identity| identity.id == item))
+        .filter(|entry| {
+            canonical_gap_identity(entry).is_some_and(|identity| identity.id == item)
+                || producer_gap_id_names_seam(item, entry)
+        })
         .collect();
     match matches.len() {
         1 => {
