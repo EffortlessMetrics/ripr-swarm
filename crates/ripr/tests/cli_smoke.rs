@@ -5349,7 +5349,10 @@ fn first_pr_check_exits_2_for_a_blocked_packet_but_write_mode_exits_0() -> Resul
     let root = unique_temp_workspace("first-pr-blocked-exit");
     std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
     let run = |extra: &[&str]| -> Result<Output, String> {
-        let mut args = vec!["first-pr", "--root", "."];
+        // Select the base explicitly so this gate test works beneath a
+        // detached CI checkout with no default-base refs. The tests above
+        // cover default-base discovery with isolated Git repositories.
+        let mut args = vec!["first-pr", "--root", ".", "--base", "HEAD"];
         args.extend_from_slice(extra);
         run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &args).map_err(|err| err.to_string())
     };
