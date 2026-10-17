@@ -104,12 +104,18 @@ mod repair_orderfile;
 #[path = "cli_smoke/rerun_ledger_recovery.rs"]
 mod rerun_ledger_recovery;
 #[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/retained_evidence_guidance.rs"]
+mod retained_evidence_guidance;
+#[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/same_line_owner_tail.rs"]
 mod same_line_owner_tail;
 #[path = "cli_smoke/sample_output.rs"]
 mod sample_output;
 #[path = "cli_smoke/shell_words.rs"]
 mod shell_words;
+#[cfg(all(unix, feature = "lang-rust"))]
+#[path = "cli_smoke/snapshot_recovery.rs"]
+mod snapshot_recovery;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/source_unicode.rs"]
 mod source_unicode;
@@ -22932,8 +22938,144 @@ fn check_untracked_files_keep_committed_default_and_working_tree_reads_name_them
     Ok(())
 }
 
-/// `--committed` names a diff source, so it refuses the inputs that have none
-/// or that already chose one.
+/// #7467: gitignored untracked `.rs` files are excluded from every diff
+/// source exactly like non-ignored untracked files, but — unlike them — were
+/// dropped from the report with no line at all: no count, no path, not even
+/// in human-full or JSON. The ignored variant of the untracked-note machinery
+/// must name them in human, human-full, and JSON (an
+/// `ignored_working_tree_source_paths` field beside the untracked one) with
+/// the force intent-to-add repair (`git add -N` refuses ignored paths).
+/// Default exclusion is unchanged: `target/` stays excluded, only disclosed.
+#[test]
+fn check_gitignored_files_are_disclosed_not_silent() -> Result<(), String> {
+    let root = unique_temp_workspace("ignored-disclosure");
+    std::fs::create_dir_all(root.join("crates/alpha/src"))
+        .map_err(|err| format!("create alpha src: {err}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/alpha\"]\nresolver = \"2\"\n",
+    )
+    .map_err(|err| format!("write workspace manifest: {err}"))?;
+    std::fs::write(
+        root.join("crates/alpha/Cargo.toml"),
+        "[package]\nname = \"alpha\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write alpha manifest: {err}"))?;
+    std::fs::write(
+        root.join("crates/alpha/src/lib.rs"),
+        "pub fn kept() -> u8 { 1 }\n",
+    )
+    .map_err(|err| format!("write alpha lib.rs: {err}"))?;
+    std::fs::write(
+        root.join(".gitignore"),
+        "target/\ncrates/alpha/src/ignored_gen.rs\n",
+    )
+    .map_err(|err| format!("write .gitignore: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    std::fs::create_dir_all(root.join("crates/alpha/target"))
+        .map_err(|err| format!("create alpha target: {err}"))?;
+    std::fs::write(
+        root.join("crates/alpha/src/ignored_gen.rs"),
+        "pub fn generated() -> u8 { 2 }\n",
+    )
+    .map_err(|err| format!("write ignored_gen.rs: {err}"))?;
+    std::fs::write(
+        root.join("crates/alpha/target/bgen.rs"),
+        "pub fn built() -> u8 { 3 }\n",
+    )
+    .map_err(|err| format!("write bgen.rs: {err}"))?;
+    // Fixture precondition: git's own default status hides both files — the
+    // silence this test pins the disclosure for.
+    let status = common::fixture_git::fixture_git_output(&root, &["status", "--porcelain"])?;
+    if !status.trim().is_empty() {
+        return Err(format!(
+            "fixture precondition: default status must hide ignored files; got {status:?}"
+        ));
+    }
+    let root_str = root.to_string_lossy().into_owned();
+    let parse = |output: &std::process::Output| -> Result<serde_json::Value, String> {
+        assert_success(output);
+        serde_json::from_slice(&output.stdout).map_err(|err| {
+            format!(
+                "parse check JSON: {err}\n{}",
+                String::from_utf8_lossy(&output.stdout)
+            )
+        })
+    };
+    let human = |args: &[&str]| -> String {
+        let output = run_ripr(args);
+        assert_success(&output);
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+
+    // JSON names both ignored files beside the (absent) untracked list.
+    let report = parse(&run_ripr(&["check", "--root", &root_str, "--json"]))?;
+    let ignored = report["ignored_working_tree_source_paths"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    for expected in [
+        "crates/alpha/src/ignored_gen.rs",
+        "crates/alpha/target/bgen.rs",
+    ] {
+        if !ignored.iter().any(|path| path == expected) {
+            return Err(format!(
+                "JSON must name the ignored file {expected}; got:\n{report}"
+            ));
+        }
+    }
+
+    // Human and human-full name the files and the force intent-to-add repair
+    // (`git add -N` refuses ignored paths, verified against real git).
+    for (label, args) in [
+        ("human", vec!["check", "--root", &root_str]),
+        (
+            "human-full",
+            vec!["check", "--root", &root_str, "--format", "human-full"],
+        ),
+    ] {
+        let rendered = human(&args);
+        for expected in [
+            "Gitignored files (crates/alpha/src/ignored_gen.rs",
+            "crates/alpha/target/bgen.rs",
+            "git add -f -N <path>",
+        ] {
+            if !rendered.contains(expected) {
+                return Err(format!(
+                    "{label} must disclose {expected:?}; got:\n{rendered}"
+                ));
+            }
+        }
+    }
+
+    // Working-tree reads disclose through their own arm: dirty the tree so
+    // the run reads the working tree, then the note must name the
+    // working-tree diff rather than the committed-history one.
+    std::fs::write(
+        root.join("crates/alpha/src/lib.rs"),
+        "pub fn kept() -> u8 { 2 }\n",
+    )
+    .map_err(|err| format!("dirty alpha lib.rs: {err}"))?;
+    let dirty = human(&["check", "--root", &root_str, "--worktree"]);
+    for expected in [
+        "are not in the working-tree diff",
+        "crates/alpha/src/ignored_gen.rs",
+        "git add -f -N <path>",
+    ] {
+        if !dirty.contains(expected) {
+            return Err(format!(
+                "worktree read must disclose {expected:?}; got:\n{dirty}"
+            ));
+        }
+    }
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
 #[test]
 fn check_committed_rejects_conflicting_diff_sources() {
     for (extra, expected) in [

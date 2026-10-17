@@ -21585,6 +21585,16 @@ pub(crate) fn is_non_rust_programming_candidate(path: &str) -> bool {
 }
 
 pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'static str> {
+    if path == ".ci/contabo-result.sh" {
+        return Some(
+            "Pinned EM CI requires a Bash result script; this lightweight jq consumer accepts only centrally authenticated exact-subject product imports without compiling or executing product code (#4988).",
+        );
+    }
+    if path == ".ci/contabo-product.sh" {
+        return Some(
+            "Pinned EM CI requires a Bash entrypoint; this shim only prepares Cargo temp and invokes the Rust-owned product adapter (#4988).",
+        );
+    }
     if matches!(
         path,
         "packaging/npm/launcher/bin/ripr.cjs" | "packaging/npm/launcher/lib/launcher.cjs"
