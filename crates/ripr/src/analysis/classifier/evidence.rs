@@ -9,9 +9,9 @@ use crate::analysis::classify::{
     direct_call_name, direct_collection_mutation_receiver, expected_operand_value,
     fallible_check_receipt, fallible_literal_witness, function_returns_value, getter_plainly_reads,
     getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
-    helper_pins_owner_call, infection_evidence_with_boundary_input, local_flow_sinks,
-    method_cannot_store, observes_returned_element_field, operand_only_pin,
-    oracle_crediting_relations, owner_touches_field_only_at, package_prefix, parameter_rebound,
+    helper_pins_owner_call, infection_evidence_for_owner, local_flow_sinks, method_cannot_store,
+    observes_returned_element_field, operand_only_pin, oracle_crediting_relations,
+    owner_touches_field_only_at, package_prefix, parameter_rebound,
     propagation_evidence_with_witness, reach_evidence, reveal_outcome,
     same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
     unconditional_owner_insert_field,
@@ -267,11 +267,24 @@ impl ClassifiedProbeEvidence {
                 .missing_discriminators
                 .retain(|fact| !is_unselected_input_reason(&fact.reason));
         }
-        let infect = infection_evidence_with_boundary_input(
+        let infect = infection_evidence_for_owner(
             context.probe,
             &test_summaries,
             &activation,
             gathered.unresolved_boundary.as_deref(),
+            context.owner_fn,
+            // #7970: a function that is not one of the related tests and
+            // calls the owner by name (a wrapper, a helper, a production
+            // caller) may feed it inputs the literal call lines do not show.
+            context.owner_fn.is_none_or(|owner| {
+                context.index.functions().iter().any(|function| {
+                    function.id != owner.id
+                        && !test_summaries
+                            .iter()
+                            .any(|test| test.file == function.file && test.name == function.name)
+                        && function.calls.iter().any(|call| call.name == owner.name)
+                })
+            }),
         );
         // #6796's computed-argument discipline, wrapper edition (#6672,
         // #6694): when the tests reach the owner only through the helper

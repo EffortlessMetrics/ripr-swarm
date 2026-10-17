@@ -81,6 +81,17 @@ impl ShortCircuitTail {
         Self::from_chain(parameters, changed)
     }
 
+    /// The owner's parameters in declaration order.
+    pub(in crate::analysis::classify) fn parameters(&self) -> &[String] {
+        &self.parameters
+    }
+
+    /// `chain` over the same parameters: the pre-edit chain of an edit that
+    /// `self` is the post-edit chain of.
+    pub(in crate::analysis::classify) fn with_chain(&self, chain: &str) -> Option<Self> {
+        Self::from_chain(self.parameters.clone(), chain)
+    }
+
     /// The chain `changed` over the named `parameters`, with no claim about
     /// where the chain sits in an owner's body.
     pub(in crate::analysis::classify) fn from_chain(

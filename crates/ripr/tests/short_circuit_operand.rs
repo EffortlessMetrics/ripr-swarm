@@ -172,7 +172,7 @@ fn an_and_whose_first_operand_always_short_circuits_is_not_exposed() -> Result<(
         "&&",
         "y == 1",
         "y == 0",
-        &[("3, 1", false), ("5, 0", false)],
+        &[("1, 3", false), ("2, 1", false)],
     )?;
     assert!(none_exposed(&findings), "{findings:?}");
     Ok(())
@@ -216,6 +216,57 @@ fn an_unreadable_argument_keeps_the_ordinary_reading() -> Result<(), String> {
             .all(|finding| !finding.ripr.infect.summary.contains("short-circuits")),
         "{findings:?}"
     );
+    Ok(())
+}
+
+fn assert_no_skipped_operand_claim(findings: &[Finding]) {
+    assert!(!findings.is_empty());
+    assert!(
+        findings
+            .iter()
+            .all(|finding| !finding.ripr.infect.summary.contains("short-circuits")),
+        "{findings:?}"
+    );
+}
+
+#[test]
+fn a_wrapper_test_may_evaluate_the_changed_operand() -> Result<(), String> {
+    // Control: `wrap(1, 1)` reaches `either` with `x != 0`, so the direct
+    // `either(0, _)` calls are not every input.
+    let findings = findings_on_changed_line(
+        &lib("||", "y == 1"),
+        "    x == 0 || y == 1",
+        "    x == 0 || y == 0",
+        "use short_circuit::either;\n\nfn wrap(x: i32, y: i32) -> bool {\n    either(x, y)\n}\n\n#[test]\nfn direct() {\n    assert_eq!(either(0, 3), true);\n}\n\n#[test]\nfn wrapped() {\n    assert_eq!(wrap(1, 1), true);\n}\n",
+    )?;
+    assert_no_skipped_operand_claim(&findings);
+    Ok(())
+}
+
+#[test]
+fn a_helper_test_may_evaluate_the_changed_operand() -> Result<(), String> {
+    let findings = findings_on_changed_line(
+        &lib("||", "y == 1"),
+        "    x == 0 || y == 1",
+        "    x == 0 || y == 0",
+        "use short_circuit::either;\n\nfn check(x: i32, y: i32) {\n    assert!(either(x, y));\n}\n\n#[test]\nfn direct() {\n    assert_eq!(either(0, 3), true);\n}\n\n#[test]\nfn helped() {\n    check(1, 1);\n}\n",
+    )?;
+    assert_no_skipped_operand_claim(&findings);
+    Ok(())
+}
+
+#[test]
+fn a_shadowed_parameter_is_not_the_called_value() -> Result<(), String> {
+    // Control: `let x = x + 1;` makes `x == 0` false for `either(0, _)`, so
+    // the call does evaluate `y == 1`.
+    let source = "/// Either operand.\n///\n/// Zero on either side.\npub fn either(x: i32, y: i32) -> bool {\n    let x = x + 1;\n    x == 0 || y == 1\n}\n\npub fn tail() {}\n";
+    let findings = findings_on_changed_line(
+        source,
+        "    x == 0 || y == 1",
+        "    x == 0 || y == 0",
+        &test(&[("0, 1", false), ("0, 2", false)]),
+    )?;
+    assert_no_skipped_operand_claim(&findings);
     Ok(())
 }
 

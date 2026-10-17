@@ -1,4 +1,4 @@
-use super::super::rust_index::{TestSummary, extract_literals};
+use super::super::rust_index::{FunctionSummary, TestSummary, extract_literals};
 use super::activation::{
     boundary_constant_operand_name, comparison_operands, has_observed_boundary_equality,
     is_computed_value_expression, owner_input_values,
@@ -6,7 +6,7 @@ use super::activation::{
 use super::owner_pin::short_circuit::ShortCircuitTail;
 use crate::analysis::probes::same_connectives;
 use crate::domain::*;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 /// #7970: whether ripr can show that no related test input evaluates the
 /// changed operands of a pure `&&`/`||` predicate. Each run is the literal
@@ -15,11 +15,35 @@ use std::collections::{BTreeMap, BTreeSet};
 /// source ripr cannot place on a call line, an unreadable argument, an
 /// operand outside the pure-chain grammar, or a changed operator or operand
 /// count all decline.
-fn changed_operands_are_never_evaluated(probe: &Probe, activation: &ActivationEvidence) -> bool {
+///
+/// The owner's body must be exactly the chain (an earlier statement could
+/// rebind a parameter), and every related test must reach the owner only by
+/// direct calls whose arguments were read: a test that calls the owner
+/// through a wrapper or a helper, or at all differently, may evaluate the
+/// operand on an input this reading never saw.
+fn changed_operands_are_never_evaluated(
+    probe: &Probe,
+    activation: &ActivationEvidence,
+    related_tests: &[&TestSummary],
+    owner: &FunctionSummary,
+) -> bool {
     let Some(before) = probe.before.as_deref() else {
         return false;
     };
     if !same_connectives(&probe.expression, before) {
+        return false;
+    }
+    let Some(after) = ShortCircuitTail::parse(&owner.body, &probe.expression) else {
+        return false;
+    };
+    let Some(prior) = after.with_chain(before) else {
+        return false;
+    };
+    if related_tests.is_empty()
+        || !related_tests
+            .iter()
+            .all(|test| test_reaches_owner_only_directly(test, &owner.name))
+    {
         return false;
     }
     let mut lines: BTreeMap<usize, BTreeMap<String, Option<String>>> = BTreeMap::new();
@@ -51,28 +75,43 @@ fn changed_operands_are_never_evaluated(probe: &Probe, activation: &ActivationEv
         };
         line.insert(name.to_string(), read);
     }
-    let parameters = lines
-        .values()
-        .flat_map(|line| line.keys().cloned())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    let runs = lines
-        .values()
-        .map(|line| {
+    let parameters = after.parameters();
+    // One run per owner call written in a related test; a call line with no
+    // readable arguments is a run that cannot be shown to short-circuit.
+    let empty = BTreeMap::new();
+    let runs = related_tests
+        .iter()
+        .flat_map(|test| test.body_calls())
+        .filter(|call| call.name == owner.name)
+        .map(|call| {
+            let line = lines.get(&call.line).unwrap_or(&empty);
             parameters
                 .iter()
                 .map(|name| line.get(name).cloned().flatten())
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
-    match (
-        ShortCircuitTail::from_chain(parameters.clone(), &probe.expression),
-        ShortCircuitTail::from_chain(parameters, before),
-    ) {
-        (Some(after), Some(before)) => after.changed_operands_never_evaluated(&before, &runs),
-        _ => false,
-    }
+    after.changed_operands_never_evaluated(&prior, &runs)
+}
+
+/// Whether `test` calls the owner directly and routes nowhere else that
+/// could reach it: it has an owner call in its own body, no call lifted
+/// from a helper outside its body, and no body call other than assertion
+/// macros and plain constructors.
+fn test_reaches_owner_only_directly(test: &TestSummary, owner: &str) -> bool {
+    const INERT: &[&str] = &["vec", "Some", "Ok", "Err", "format", "matches"];
+    let inert = |name: &str| {
+        name.starts_with("assert") || name.starts_with("debug_assert") || INERT.contains(&name)
+    };
+    test.body_calls().any(|call| call.name == owner)
+        && test.calls.iter().all(|call| {
+            if (test.start_line..=test.end_line).contains(&call.line) {
+                // The facts list the test's own declaration as a call.
+                call.name == owner || call.name == test.name || inert(&call.name)
+            } else {
+                false
+            }
+        })
 }
 
 #[cfg(test)]
@@ -88,11 +127,36 @@ pub(in crate::analysis) fn infection_evidence(
 /// why the changed boundary's inputs cannot be read (#6674, #6693,
 /// #6672). Such a boundary is unknown, not a missing input: it never
 /// reads `weak` from a literal mismatch it cannot interpret.
+#[cfg(test)]
 pub(in crate::analysis) fn infection_evidence_with_boundary_input(
     probe: &Probe,
     related_tests: &[&TestSummary],
     activation: &ActivationEvidence,
     unresolved_boundary: Option<&str>,
+) -> StageEvidence {
+    infection_evidence_for_owner(
+        probe,
+        related_tests,
+        activation,
+        unresolved_boundary,
+        None,
+        true,
+    )
+}
+
+/// [`infection_evidence_with_boundary_input`] given the changed owner, which
+/// the `&&`/`||` skipped-operand reading (#7970) needs to know the owner's
+/// parameters and that its body is the whole chain. Without an owner, or when
+/// any function other than the related tests calls the owner by name
+/// (`owner_has_other_callers`: a wrapper or helper may feed it other inputs),
+/// that reading declines.
+pub(in crate::analysis) fn infection_evidence_for_owner(
+    probe: &Probe,
+    related_tests: &[&TestSummary],
+    activation: &ActivationEvidence,
+    unresolved_boundary: Option<&str>,
+    owner: Option<&FunctionSummary>,
+    owner_has_other_callers: bool,
 ) -> StageEvidence {
     match probe.family {
         ProbeFamily::Predicate => {
@@ -152,7 +216,11 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
                     Confidence::Medium,
                     "Related tests contain input values, but the equality-boundary discriminator is missing",
                 )
-            } else if changed_operands_are_never_evaluated(probe, activation) {
+            } else if !owner_has_other_callers
+                && owner.is_some_and(|owner| {
+                    changed_operands_are_never_evaluated(probe, activation, related_tests, owner)
+                })
+            {
                 // #7970: the edit keeps the `&&`/`||` operand count and
                 // changes some operands, but every test input short-circuits
                 // before reaching them (`x == 0 || y == 1` called only with
