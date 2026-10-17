@@ -642,7 +642,7 @@ pub(crate) fn same_package_root(
 /// to disable re-export tracing (backward-compatible default for unit tests).
 ///
 /// `alias_map` enables tsconfig.json path alias resolution for non-relative
-/// specifiers.  Pass `None` when `resolve_tsconfig_paths` is `false` (default).
+/// specifiers.  Pass `None` when `resolve_tsconfig_paths` is `false` (explicit opt-out).
 pub(crate) fn related_test_candidates<'a>(
     owner: &TypeScriptOwner,
     all_tests: &'a [TypeScriptTest],
@@ -2056,7 +2056,7 @@ fn heuristic_owner_supported(owner: &TypeScriptOwner) -> bool {
 /// Pass `&ReExportIndex::empty()` to disable (backward-compatible default).
 ///
 /// `alias_map` enables tsconfig.json path alias resolution for non-relative
-/// specifiers.  Pass `None` when `resolve_tsconfig_paths` is `false` (default).
+/// specifiers.  Pass `None` when `resolve_tsconfig_paths` is `false` (explicit opt-out).
 #[cfg(test)]
 pub(crate) fn find_related_tests(
     owner: &TypeScriptOwner,
