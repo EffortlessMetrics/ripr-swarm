@@ -822,6 +822,15 @@ impl ArmSelector {
         &self.scrutinee
     }
 
+    /// The direct-record extension must use shared execution admission before
+    /// pairing an assertion with a selected field input. Unsupported legacy
+    /// field inputs retain their existing limitation evidence.
+    pub(in crate::analysis) fn field_oracle_needs_admission(&self) -> bool {
+        self.field_selector
+            .as_ref()
+            .is_some_and(FieldSelector::source_is_admitted)
+    }
+
     /// The arm pattern as written, without the `=>`.
     pub(in crate::analysis) fn pattern_text(&self) -> &str {
         &self.pattern_text

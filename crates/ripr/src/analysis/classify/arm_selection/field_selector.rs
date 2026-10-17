@@ -271,6 +271,10 @@ impl FieldSelector {
     #[cfg(not(feature = "lang-rust"))]
     pub(super) fn admit_source(&mut self, _source: &str) {}
 
+    pub(super) fn source_is_admitted(&self) -> bool {
+        self.admitted
+    }
+
     /// Return a slice of this exact call's field initializer, preserving its
     /// constructor. Other fields and expected/diagnostic values cannot supply
     /// the selector.

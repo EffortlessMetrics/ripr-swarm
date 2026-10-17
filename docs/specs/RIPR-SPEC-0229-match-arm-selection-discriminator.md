@@ -674,6 +674,23 @@ the diff changes `None => 1` to `None => 0`.
 - Verdict-corpus false-actionable and false-silent counts on `match_arm`
   cases do not rise.
 
+### Plain boolean assertion execution admission (#7788)
+
+A MatchArm oracle spelled as an outer bare `assert!` must pass the existing
+parser-backed assertion execution admission independently of token overlap.
+A local macro with that spelling that merely evaluates its operand cannot lend
+observation or a strong oracle. Assertions inside a skipped branch or an uncalled
+closure are also refused. Direct standard assertions and supported eagerly called
+local check helpers retain their credit. Admission filters assertion facts while
+preserving the original test summary and assertion cardinality.
+
+The public API controls in `crates/ripr/tests/match_arm_assert_admission.rs` bind a
+changed unknown-option parser arm to out-of-line tests. The adversarial fixture
+`fixtures/match_arm_shadowed_assert` additionally pins this false-promotion in
+the evidence-promotion honesty corpus. Qualified assertion macros, fallible
+`ensure!`, dependency identity and helper-result propagation remain outside this
+bounded change.
+
 ## Named field-selector boundary (#8479)
 
 A plain parameter field in a statement-free tail match is outside the credited
@@ -757,3 +774,9 @@ When supported direct record inputs all select sibling arms, the existing
 missing-arm fact remains actionable. The legacy field-selector limitation must
 not overwrite that established input boundary or withhold its repair identity.
 Unsupported helper/mutable inputs still retain their limitation unchanged.
+
+Direct-record same-invocation credit additionally requires the existing full
+assertion execution admission. A parsed equality under `if false`, or another
+unestablished execution path, is not an admitted oracle. This bounded producer
+consumes the shared authority rather than adding a second path evaluator.
+`fixtures/field_match_unexecuted_assertion` and the native API regression pin it.

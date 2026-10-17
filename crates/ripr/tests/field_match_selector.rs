@@ -449,3 +449,30 @@ fn an_imported_statement_macro_cannot_supply_an_unread_option_binding()
     }
     Ok(())
 }
+
+#[test]
+fn a_field_selector_cannot_credit_an_assertion_that_does_not_execute()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source =
+        include_str!("../../../fixtures/field_match_unexecuted_assertion/input/src/lib.rs");
+    let diff = include_str!("../../../fixtures/field_match_unexecuted_assertion/diff.patch");
+    let fixture = Fixture::new(source, diff)?;
+    let output = fixture.check()?;
+    let arms = output
+        .findings
+        .iter()
+        .filter(|finding| {
+            finding.probe.family == ripr::ProbeFamily::MatchArm && finding.probe.location.line == 4
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(arms.len(), 2, "current and deleted subjects must survive");
+    for arm in arms {
+        assert_ne!(
+            arm.class,
+            ExposureClass::Exposed,
+            "an unreachable assertion is not same-invocation proof: {}",
+            arm.id
+        );
+    }
+    Ok(())
+}
