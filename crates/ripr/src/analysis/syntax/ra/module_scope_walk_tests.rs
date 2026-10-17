@@ -345,5 +345,27 @@ fn module_scope_walk_combined_injection_reaches_both_collectors() -> Result<(), 
         actual,
         summarize_file_with_parser(Path::new("src/fixture.rs"), text)?
     );
+    // Compiled wrong-collector controls: the complete-facts comparison must
+    // observe each injection's result, not merely call both closures.
+    let missing_scopes = summarize_file_with_collectors(
+        Path::new("src/fixture.rs"),
+        text,
+        |_, _| ModuleItemScopes::default(),
+        super::probe_shape_walk_tests::reference_probe_shapes,
+    )?;
+    assert_ne!(
+        actual, missing_scopes,
+        "scope removal must change FileFacts"
+    );
+    let missing_shapes = summarize_file_with_collectors(
+        Path::new("src/fixture.rs"),
+        text,
+        original_module_item_scopes_in,
+        |_, _, _, _| Vec::new(),
+    )?;
+    assert_ne!(
+        actual, missing_shapes,
+        "shape removal must change FileFacts"
+    );
     Ok(())
 }
