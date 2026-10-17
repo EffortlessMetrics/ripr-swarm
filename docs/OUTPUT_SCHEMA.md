@@ -16448,7 +16448,7 @@ If analysis exceeds the pilot budget, `pilot-summary.json` is still written with
   "withheld_static_limitations_total": null,
   "top_actionable_seams": [],
   "next": {
-    "retry_command": "ripr pilot --root . --out target/ripr/pilot --mode draft --max-seams 5 --timeout-ms 120000"
+    "retry_command": "ripr pilot --root . --out target/ripr/pilot --mode draft --max-seams 5 --timeout-ms 120000 --format json"
   }
 }
 ```
@@ -16487,6 +16487,10 @@ Field contract:
 - `outputs` — paths to the generated pilot packet files.
 - `outputs_written` — names of output files actually written. Partial timeout
   summaries write only `pilot_summary_json` and `pilot_summary_md`.
+- `next.retry_command` — timeout JSON recovery explicitly requests `--format json`,
+  so following the command keeps stdout machine-readable. It retains the bound
+  root, output directory, mode, seam count and suggested retry budget. The human
+  Markdown and terminal retry commands retain their default human format.
 - `max_seams` — cap requested by `--max-seams`.
 - `actionable_seams_total` — number of seams considered actionable by the pilot
   ranking policy (the gap classes below), or `null` for partial summaries where

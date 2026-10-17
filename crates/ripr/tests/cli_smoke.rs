@@ -70,6 +70,9 @@ mod output_leaf_identity;
 ))]
 #[path = "cli_smoke/partial_preview_disclosure.rs"]
 mod partial_preview_disclosure;
+#[cfg(all(unix, feature = "lang-rust"))]
+#[path = "cli_smoke/pilot_timeout_retry.rs"]
+mod pilot_timeout_retry;
 #[cfg(all(feature = "lang-rust", feature = "lang-python"))]
 #[path = "cli_smoke/portable_diff_paths.rs"]
 mod portable_diff_paths;
