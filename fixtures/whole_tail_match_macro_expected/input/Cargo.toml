@@ -1,8 +1,5 @@
 [package]
-name="expected_identity"
-version="0.0.0"
-edition="2024"
+name = "whole_tail_match_macro_expected"
+version = "0.0.0"
+edition = "2024"
 [workspace]
-
-[dependencies]
-opaque = { path = "opaque" }

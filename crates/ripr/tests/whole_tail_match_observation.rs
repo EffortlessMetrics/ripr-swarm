@@ -534,25 +534,33 @@ fn external_item_macro_cannot_supply_primitive_expected_identity()
             fixture.0.join("Cargo.toml"),
             include_str!("../../../fixtures/whole_tail_match_macro_expected/input/Cargo.toml"),
         )?;
-        std::fs::create_dir_all(fixture.0.join("opaque/src"))?;
-        std::fs::write(
-            fixture.0.join("opaque/Cargo.toml"),
-            include_str!(
-                "../../../fixtures/whole_tail_match_macro_expected/input/opaque/Cargo.toml"
-            ),
-        )?;
-        std::fs::write(
-            fixture.0.join("opaque/src/lib.rs"),
-            include_str!(
-                "../../../fixtures/whole_tail_match_macro_expected/input/opaque/src/lib.rs"
-            ),
-        )?;
+        if case == "local attribute expected" {
+            let manifest = std::fs::read_to_string(fixture.0.join("Cargo.toml"))?;
+            std::fs::write(
+                fixture.0.join("Cargo.toml"),
+                format!("{manifest}\n[dependencies]\nopaque = {{ path = \"opaque\" }}\n"),
+            )?;
+            std::fs::create_dir_all(fixture.0.join("opaque/src"))?;
+            std::fs::write(
+                fixture.0.join("opaque/Cargo.toml"),
+                include_str!(
+                    "../../../fixtures/whole_tail_match_macro_expected/proc-control/Cargo.toml"
+                ),
+            )?;
+            std::fs::write(
+                fixture.0.join("opaque/src/lib.rs"),
+                include_str!(
+                    "../../../fixtures/whole_tail_match_macro_expected/proc-control/src/lib.rs"
+                ),
+            )?;
+        }
         let output = fixture.check()?;
         let headers = output
             .findings
             .iter()
             .filter(|f| {
-                f.probe.family == ripr::ProbeFamily::MatchArm && f.probe.expression == "match input"
+                f.probe.family == ripr::ProbeFamily::MatchArm
+                    && f.probe.expression == "match input.flag"
             })
             .collect::<Vec<_>>();
         assert_eq!(headers.len(), 1, "retained header: {case}");

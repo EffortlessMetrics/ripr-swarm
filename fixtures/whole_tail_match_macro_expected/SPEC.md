@@ -6,7 +6,7 @@ Spec: RIPR-SPEC-0229
 
 A primitive scalar helper returns a whole-tail match. An external macro invoked
 inside the test module supplies a custom u64::MAX and always-true equality with
-the real primitive. An opaque helper keeps individual-arm selection separate.
+the real primitive. An opaque boolean-field input keeps individual-arm selection separate.
 
 ## When
 
