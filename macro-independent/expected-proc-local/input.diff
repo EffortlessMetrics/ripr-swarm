@@ -1,0 +1,18 @@
+--- /dev/null
++++ b/src/lib.rs
+@@ -0,0 +1,15 @@
++fn charge(input: bool) -> u64 {
++    match input {
++        true => 600,
++        false => 2,
++    }
++}
++#[cfg(test)]
++mod tests {
++    #[test]
++    fn observed() {
++        #[opaque::make_expected]
++        fn marker() {}
++        assert_eq!(crate::charge(true), u64::MAX);
++    }
++}

@@ -1,0 +1,32 @@
+{
+  "file_fact_cache_schema_version": "1.43",
+  "analyzer_version": "0.11.0+14554b025d6b2024bbf1c21ec73d91a1cfbb5b6a",
+  "file_path": "src/lib.rs",
+  "content_hash": "1cad22d673f8447b",
+  "file_facts": {
+    "path": "src/lib.rs",
+    "functions": [],
+    "tests": [],
+    "returns": [],
+    "literals": [],
+    "probe_shapes": [],
+    "used_lexical_fallback": false,
+    "module_declarations": [
+      {
+        "name": "owned",
+        "line": 2,
+        "path_target": {
+          "kind": "default"
+        },
+        "requires_test": false
+      }
+    ],
+    "unresolved_property_macros": [],
+    "source": "#[macro_use] extern crate opaque;\nmod owned;\n",
+    "item_scopes": {
+      "fns": []
+    },
+    "macro_candidates": "Any"
+  },
+  "payload_digest": "sha256:f73492471c13253d489ab42035a4857bbd22fd08461cdeae910f7dfe095ad3cc"
+}

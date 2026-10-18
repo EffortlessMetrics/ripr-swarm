@@ -1,0 +1,5 @@
+[package]
+name = "whole_tail_match_macro_scalar"
+version = "0.0.0"
+edition = "2024"
+[workspace]

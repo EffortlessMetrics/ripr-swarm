@@ -1,0 +1,19 @@
+--- /dev/null
++++ b/src/lib.rs
+@@ -0,0 +1,16 @@
++mod foreign;
++fn charge(input: bool) -> u64 {
++    match input {
++        true => 600,
++        false => 2,
++    }
++}
++fn input() -> bool { true }
++#[cfg(test)]
++mod tests {
++    use super::charge;
++    use super::input;
++    crate::define_expected!();
++    #[test]
++    fn observed() { assert_eq!(charge(input()), u64::MAX); }
++}

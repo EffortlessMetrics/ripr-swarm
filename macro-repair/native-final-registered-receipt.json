@@ -1,0 +1,72 @@
+[
+  {
+    "fixture": "whole_tail_match_macro_scalar",
+    "case": "original",
+    "source_sha256": "469f7c4004354c7f4becc5c515e6dfe85420fbf7b869438ed5fd2fbc653f8a0b",
+    "compile_exit": 0,
+    "test_exit": 0
+  },
+  {
+    "fixture": "whole_tail_match_macro_scalar",
+    "case": "selected-zero",
+    "source_sha256": "5c315fbb431fe6c3e7270d2cf4c18cb250242b7e48cef811e051d298a56fff86",
+    "compile_exit": 0,
+    "test_exit": 0
+  },
+  {
+    "fixture": "whole_tail_match_macro_scalar",
+    "case": "other-zero",
+    "source_sha256": "f66e1b1067283707a74991b8e7950e01e605fcf5922f2dccfd58cbfcad96276c",
+    "compile_exit": 0,
+    "test_exit": 0
+  },
+  {
+    "fixture": "whole_tail_match_macro_scalar",
+    "case": "both-zero",
+    "source_sha256": "dcd4e1416077b7abd32c310cfb76d7e0006b9766b485cd0284ddcd9205621484",
+    "compile_exit": 0,
+    "test_exit": 0
+  },
+  {
+    "fixture": "whole_tail_match_macro_expected",
+    "case": "original",
+    "source_sha256": "a53a1ff92d00ef4dd0c19acf9cde310ea0290d6342934c32b5fcafa5057b78cd",
+    "compile_exit": 0,
+    "test_exit": 0
+  },
+  {
+    "fixture": "whole_tail_match_macro_expected",
+    "case": "selected-zero",
+    "source_sha256": "1c3cfe122bfd54824d4db5844e9e78bd05b8f7265cca14ceba32c4fea55d4946",
+    "compile_exit": 0,
+    "test_exit": 0
+  },
+  {
+    "fixture": "whole_tail_match_macro_expected",
+    "case": "other-zero",
+    "source_sha256": "8b29cc065f79b7d9024b71d06ab332bbc63c1589f60abf3148e2f0c592214b3d",
+    "compile_exit": 0,
+    "test_exit": 0
+  },
+  {
+    "fixture": "whole_tail_match_macro_expected",
+    "case": "both-zero",
+    "source_sha256": "5383511db2b9dafe5ab7a08956c2e1e8f7306639e9651899ac83a48f2fc0cfd6",
+    "compile_exit": 0,
+    "test_exit": 0
+  },
+  {
+    "fixture": "whole_tail_match_macro_expected",
+    "case": "local-proc",
+    "source_sha256": "c5beb371639340601e3ab9f2b972a426919aadd5961584beb4b574a5d3da1fd8",
+    "compile_exit": 0,
+    "test_exit": 0
+  },
+  {
+    "fixture": "whole_tail_match_macro_expected",
+    "case": "local-proc-selected-zero",
+    "source_sha256": "74540f359aa569462523646deb1f2df606e5cd0b165afd541e3a6077ab49bc07",
+    "compile_exit": 0,
+    "test_exit": 0
+  }
+]

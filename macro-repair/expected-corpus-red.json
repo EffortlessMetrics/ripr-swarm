@@ -1,0 +1,348 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/whole_tail_match_macro_expected/input",
+  "summary": {"changed_rust_files":1,"probes":4,"findings":4,"exposed":0,"weakly_exposed":3,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":1,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:2b880ae08a01561aa46f192dd89025732c9b78f6fc7a7a3d306fe44a9952f712","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":15,"candidate_line_count":4,"probe_count":4,"finding_count":4},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:match_arm:54eaf025",
+      "canonical_gap_id": "gap:rust:src/lib.rs:charge:match_arm:match_arm:match_input",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:charge:match_arm:match_arm:match_input",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "charge",
+        "behavior_kind": "match_arm",
+        "probe_kind": "match_arm",
+        "normalized_discriminator": "match_input"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:match_arm:54eaf025",
+        "family": "match_arm",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 3,
+        "expression": "match input"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach charge: observed"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: match input"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach charge: observed", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: match input", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: match input (line 3)", "related test src/lib.rs:14 observed uses strong exact value oracle: assert_eq!(charge(input()), u64::MAX);", "source constant value u64::MAX at line 14"],
+      "flow_sinks": [
+        {"kind":"match_arm","text":"match input","line":3}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: match input", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach charge: observed"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "14": "assert_eq!(charge(input()), u64::MAX);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 14,
+            "value": "u64::MAX",
+            "context": "constant"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 14,
+          "value": "u64::MAX",
+          "context": "constant"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "observed",
+          "file": "src/lib.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(charge(input()), u64::MAX);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:match_arm:4c5c074c",
+      "canonical_gap_id": "gap:rust:src/lib.rs:charge:match_arm:match_arm:true",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:charge:match_arm:match_arm:true",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "charge",
+        "behavior_kind": "match_arm",
+        "probe_kind": "match_arm",
+        "normalized_discriminator": "true"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:match_arm:4c5c074c",
+        "family": "match_arm",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 4,
+        "expression": "true =>"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach charge: observed"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: true =>"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach charge: observed", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: true =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: true => (line 4)", "related test src/lib.rs:14 observed uses strong exact value oracle: assert_eq!(charge(input()), u64::MAX);", "source constant value u64::MAX at line 14"],
+      "flow_sinks": [
+        {"kind":"match_arm","text":"true =>","line":4}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: true =>", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach charge: observed"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "14": "assert_eq!(charge(input()), u64::MAX);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 14,
+            "value": "u64::MAX",
+            "context": "constant"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 14,
+          "value": "u64::MAX",
+          "context": "constant"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "observed",
+          "file": "src/lib.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(charge(input()), u64::MAX);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:match_arm:eeeda15b",
+      "canonical_gap_id": "gap:rust:src/lib.rs:charge:match_arm:match_arm:false",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:charge:match_arm:match_arm:false",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "charge",
+        "behavior_kind": "match_arm",
+        "probe_kind": "match_arm",
+        "normalized_discriminator": "false"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:match_arm:eeeda15b",
+        "family": "match_arm",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 5,
+        "expression": "false =>"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach charge: observed"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: false =>"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach charge: observed", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: false =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: false => (line 5)", "related test src/lib.rs:14 observed uses strong exact value oracle: assert_eq!(charge(input()), u64::MAX);", "source constant value u64::MAX at line 14"],
+      "flow_sinks": [
+        {"kind":"match_arm","text":"false =>","line":5}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: false =>", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach charge: observed"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "14": "assert_eq!(charge(input()), u64::MAX);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 14,
+            "value": "u64::MAX",
+            "context": "constant"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 14,
+          "value": "u64::MAX",
+          "context": "constant"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "observed",
+          "file": "src/lib.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(charge(input()), u64::MAX);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:d23983fd",
+      "canonical_gap_id": "gap:rust:src/lib.rs:input:return_value:return_value:true",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:input:return_value:return_value:true",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "input",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "true"
+
+      },
+      "classification": "propagation_unknown",
+      "severity": "note",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:d23983fd",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 8,
+        "expression": "true"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach input: observed"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach input: observed", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches unknown sink (line 8)", "related test src/lib.rs:14 observed uses strong exact value oracle: assert_eq!(charge(input()), u64::MAX);", "source constant value u64::MAX at line 14"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"unknown sink","line":8}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Propagation is not statically obvious from syntax-first analysis", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach input: observed"],
+      "missing": ["No clear propagation path from changed behavior to an observable sink", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "14": "assert_eq!(charge(input()), u64::MAX);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 14,
+            "value": "u64::MAX",
+            "context": "constant"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 14,
+          "value": "u64::MAX",
+          "context": "constant"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "observed",
+          "file": "src/lib.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(charge(input()), u64::MAX);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["propagation_evidence_unknown"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "suggested_next_action": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "canonical_next_action": {"schema_version":"canonical_next_action.v1","producer":"check_top_result","subject":{"root":"fixtures/whole_tail_match_macro_expected/input","diff_source":{"committed":{"base":null,"head":null}},"item":"probe:src_lib.rs:match_arm:54eaf025"},"currentness":{"head_expected":null,"head_observed":null,"config_expected":null,"config_observed":null},"action_class":"inspect_details","stop":{"kind":"check_triage","case":"top_gap","detail_route":"ripr explain --root /workspace/ripr-swarm/fixtures/whole_tail_match_macro_expected/input --diff /workspace/ripr-swarm/fixtures/whole_tail_match_macro_expected/diff.patch --mode fast probe:src_lib.rs:match_arm:54eaf025"},"alternatives":[{"label":"considered finding probe:src_lib.rs:match_arm:4c5c074c","route":"ripr explain --root /workspace/ripr-swarm/fixtures/whole_tail_match_macro_expected/input --diff /workspace/ripr-swarm/fixtures/whole_tail_match_macro_expected/diff.patch --mode fast probe:src_lib.rs:match_arm:4c5c074c"},{"label":"considered finding probe:src_lib.rs:match_arm:eeeda15b","route":"ripr explain --root /workspace/ripr-swarm/fixtures/whole_tail_match_macro_expected/input --diff /workspace/ripr-swarm/fixtures/whole_tail_match_macro_expected/diff.patch --mode fast probe:src_lib.rs:match_arm:eeeda15b"}],"non_claim":"Advisory selection from producer-bound state; it does not execute, complete, or prove the repair, and the display string is never execution authority."}
+}

@@ -1,0 +1,54 @@
+{
+  "producer_head": "656d6d7effb51a888c4b627e2a0cd44c3bbd37ef",
+  "producer_tree": "998fd59f62e93a71cd8e20d3b1080f48bd1257a7",
+  "baseline_producer_head": "f4be8084a1cbc7cd9d66c7e10ec4b9eb46b7a5bc",
+  "baseline_scope": "Prior exact f4be replay at same consumer root; preserves prior sixteen-ff production-equivalent reference equality. No equality claimed to independently different-root outputs.",
+  "consumer_head": "278253a03b00d1aa777eeba7633954122163890f",
+  "consumer_base": "715a36434a56be3a9abeb5545012d56e2cb9cb60",
+  "native_exit": 0,
+  "analysis_complete": true,
+  "diff_sha256": "6af0470bd2c7a8648325402af4d5294c94f35304403ef2c3952ffe986adc8b02",
+  "old_output_sha256": "e67563d1ec9aad34b8c54d5f341a13114b93469c73bb6b97f55f6ccbe66db96b",
+  "new_output_sha256": "e67563d1ec9aad34b8c54d5f341a13114b93469c73bb6b97f55f6ccbe66db96b",
+  "inventory": {
+    "unchanged": 52
+  },
+  "target": {
+    "id": "probe:src_proof_budget.rs:match_arm:67654dc6",
+    "status": "unchanged",
+    "before": "weakly_exposed",
+    "after": "weakly_exposed",
+    "changed_fields": [],
+    "probe": {
+      "id": "probe:src_proof_budget.rs:match_arm:67654dc6",
+      "family": "match_arm",
+      "delta": "control",
+      "file": "./src/proof/budget.rs",
+      "line": 96,
+      "expression": "match lease.settled_elapsed_ms"
+    },
+    "source_currentness": "candidate_current"
+  },
+  "all_classes": {
+    "weakly_exposed": 20,
+    "exposed": 6,
+    "static_unknown": 21,
+    "infection_unknown": 3,
+    "propagation_unknown": 2
+  },
+  "current_classes": {
+    "weakly_exposed": 18,
+    "exposed": 6,
+    "static_unknown": 17,
+    "infection_unknown": 3,
+    "propagation_unknown": 2
+  },
+  "deleted_classes": {
+    "static_unknown": 4,
+    "weakly_exposed": 2
+  },
+  "other_top_level_changes": [],
+  "hypothesis_18_to_17": "NOT_ESTABLISHED",
+  "remaining_gates": "Existing macro binding refuses direct600/601 assertions; saturation expected independence separately refuses use crate::* glob. No bypass or broad serde expansion.",
+  "claim_boundary": "Exact local comparison/nonregression only. No consumer clearance/installed qualification/hosted CI/Ready/merge/release."
+}

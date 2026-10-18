@@ -1,0 +1,7 @@
+[package]
+name="ancestor_cargo"
+version="0.0.0"
+edition="2024"
+[workspace]
+[dependencies]
+opaque={path="opaque"}

@@ -1,0 +1,896 @@
+{
+  "producer_head": "656d6d7effb51a888c4b627e2a0cd44c3bbd37ef",
+  "producer_tree": "998fd59f62e93a71cd8e20d3b1080f48bd1257a7",
+  "baseline_producer_head": "f4be8084a1cbc7cd9d66c7e10ec4b9eb46b7a5bc",
+  "baseline_scope": "Prior exact f4be replay at same consumer root; preserves prior sixteen-ff production-equivalent reference equality. No equality claimed to independently different-root outputs.",
+  "consumer_head": "278253a03b00d1aa777eeba7633954122163890f",
+  "consumer_base": "715a36434a56be3a9abeb5545012d56e2cb9cb60",
+  "native_exit": 0,
+  "analysis_complete": true,
+  "binary": {
+    "head": "656d6d7effb51a888c4b627e2a0cd44c3bbd37ef",
+    "tree": "998fd59f62e93a71cd8e20d3b1080f48bd1257a7",
+    "path": "/workspace/5500-macro-repair/ripr-final-656d6d7ef",
+    "version": "ripr 0.11.0 (656d6d7effb51a888c4b627e2a0cd44c3bbd37ef)",
+    "sha256": "c654c80a2f2f21da25b46a7368726d7376e89dd3884c91b9b88c9ed96da7682a",
+    "bytes": 125850320
+  },
+  "diff_sha256": "6af0470bd2c7a8648325402af4d5294c94f35304403ef2c3952ffe986adc8b02",
+  "old_output_sha256": "e67563d1ec9aad34b8c54d5f341a13114b93469c73bb6b97f55f6ccbe66db96b",
+  "new_output_sha256": "e67563d1ec9aad34b8c54d5f341a13114b93469c73bb6b97f55f6ccbe66db96b",
+  "inventory": {
+    "unchanged": 52
+  },
+  "target": {
+    "id": "probe:src_proof_budget.rs:match_arm:67654dc6",
+    "status": "unchanged",
+    "before": "weakly_exposed",
+    "after": "weakly_exposed",
+    "changed_fields": [],
+    "probe": {
+      "id": "probe:src_proof_budget.rs:match_arm:67654dc6",
+      "family": "match_arm",
+      "delta": "control",
+      "file": "./src/proof/budget.rs",
+      "line": 96,
+      "expression": "match lease.settled_elapsed_ms"
+    },
+    "source_currentness": "candidate_current"
+  },
+  "all_classes": {
+    "weakly_exposed": 20,
+    "exposed": 6,
+    "static_unknown": 21,
+    "infection_unknown": 3,
+    "propagation_unknown": 2
+  },
+  "current_classes": {
+    "weakly_exposed": 18,
+    "exposed": 6,
+    "static_unknown": 17,
+    "infection_unknown": 3,
+    "propagation_unknown": 2
+  },
+  "deleted_classes": {
+    "static_unknown": 4,
+    "weakly_exposed": 2
+  },
+  "other_top_level_changes": [],
+  "all_rows": [
+    {
+      "id": "probe:src_main.rs:field_construction:2306990b",
+      "status": "unchanged",
+      "before": "weakly_exposed",
+      "after": "weakly_exposed",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_main.rs:field_construction:2306990b",
+        "family": "field_construction",
+        "delta": "value",
+        "file": "./src/main.rs",
+        "line": 586,
+        "expression": "settled_elapsed_ms: None"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_broker.rs:field_construction:188a422b",
+      "status": "unchanged",
+      "before": "weakly_exposed",
+      "after": "weakly_exposed",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_broker.rs:field_construction:188a422b",
+        "family": "field_construction",
+        "delta": "value",
+        "file": "./src/proof/broker.rs",
+        "line": 1479,
+        "expression": "settled_elapsed_ms: None"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_broker.rs:field_construction:69aa322d",
+      "status": "unchanged",
+      "before": "weakly_exposed",
+      "after": "weakly_exposed",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_broker.rs:field_construction:69aa322d",
+        "family": "field_construction",
+        "delta": "value",
+        "file": "./src/proof/broker.rs",
+        "line": 1521,
+        "expression": "settled_elapsed_ms: None"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_budget.rs:call_deletion:0eec3785",
+      "status": "unchanged",
+      "before": "exposed",
+      "after": "exposed",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_budget.rs:call_deletion:0eec3785",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/proof/budget.rs",
+        "line": 143,
+        "expression": ".map(|command| command.duration_ms)"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_budget.rs:call_deletion:6990fff7",
+      "status": "unchanged",
+      "before": "exposed",
+      "after": "exposed",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_budget.rs:call_deletion:6990fff7",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/proof/budget.rs",
+        "line": 85,
+        "expression": ".map(|lease| focused_proof_lease_charged_seconds(lease))"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_budget.rs:call_deletion:78f374cc",
+      "status": "unchanged",
+      "before": "exposed",
+      "after": "exposed",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_budget.rs:call_deletion:78f374cc",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/proof/budget.rs",
+        "line": 98,
+        "expression": ".unwrap_or(u64::MAX)"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_budget.rs:call_deletion:9dc5965c",
+      "status": "unchanged",
+      "before": "exposed",
+      "after": "exposed",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_budget.rs:call_deletion:9dc5965c",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/proof/budget.rs",
+        "line": 86,
+        "expression": ".fold(0_u64, u64::saturating_add);"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_budget.rs:call_deletion:b5713742",
+      "status": "unchanged",
+      "before": "exposed",
+      "after": "exposed",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_budget.rs:call_deletion:b5713742",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/proof/budget.rs",
+        "line": 144,
+        "expression": ".fold(0_u128, u128::saturating_add);"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_budget.rs:call_deletion:c6665ff7",
+      "status": "unchanged",
+      "before": "exposed",
+      "after": "exposed",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_budget.rs:call_deletion:c6665ff7",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/proof/budget.rs",
+        "line": 142,
+        "expression": ".iter()"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_budget.rs:match_arm:0e8cee91",
+      "status": "unchanged",
+      "before": "weakly_exposed",
+      "after": "weakly_exposed",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_budget.rs:match_arm:0e8cee91",
+        "family": "match_arm",
+        "delta": "control",
+        "file": "./src/proof/budget.rs",
+        "line": 97,
+        "expression": "Some(millis) =>"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_budget.rs:match_arm:1d471a88",
+      "status": "unchanged",
+      "before": "weakly_exposed",
+      "after": "weakly_exposed",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_budget.rs:match_arm:1d471a88",
+        "family": "match_arm",
+        "delta": "control",
+        "file": "./src/proof/budget.rs",
+        "line": 131,
+        "expression": "\"failed\" =>"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_budget.rs:match_arm:34e117a9",
+      "status": "unchanged",
+      "before": "weakly_exposed",
+      "after": "weakly_exposed",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_budget.rs:match_arm:34e117a9",
+        "family": "match_arm",
+        "delta": "control",
+        "file": "./src/proof/budget.rs",
+        "line": 129,
+        "expression": "match command.status.as_str()"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_budget.rs:match_arm:388528e9",
+      "status": "unchanged",
+      "before": "weakly_exposed",
+      "after": "weakly_exposed",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_budget.rs:match_arm:388528e9",
+        "family": "match_arm",
+        "delta": "control",
+        "file": "./src/proof/budget.rs",
+        "line": 133,
+        "expression": "_ =>"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_budget.rs:match_arm:496dd6f2",
+      "status": "unchanged",
+      "before": "weakly_exposed",
+      "after": "weakly_exposed",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_budget.rs:match_arm:496dd6f2",
+        "family": "match_arm",
+        "delta": "control",
+        "file": "./src/proof/budget.rs",
+        "line": 130,
+        "expression": "\"passed\" =>"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_budget.rs:match_arm:67654dc6",
+      "status": "unchanged",
+      "before": "weakly_exposed",
+      "after": "weakly_exposed",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_budget.rs:match_arm:67654dc6",
+        "family": "match_arm",
+        "delta": "control",
+        "file": "./src/proof/budget.rs",
+        "line": 96,
+        "expression": "match lease.settled_elapsed_ms"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_budget.rs:match_arm:853cf817",
+      "status": "unchanged",
+      "before": "weakly_exposed",
+      "after": "weakly_exposed",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_budget.rs:match_arm:853cf817",
+        "family": "match_arm",
+        "delta": "control",
+        "file": "./src/proof/budget.rs",
+        "line": 100,
+        "expression": "None =>"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_budget.rs:match_arm:b44424aa",
+      "status": "unchanged",
+      "before": "weakly_exposed",
+      "after": "weakly_exposed",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_budget.rs:match_arm:b44424aa",
+        "family": "match_arm",
+        "delta": "control",
+        "file": "./src/proof/budget.rs",
+        "line": 132,
+        "expression": "\"timed_out\" =>"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_budget.rs:predicate:4b5a906e",
+      "status": "unchanged",
+      "before": "infection_unknown",
+      "after": "infection_unknown",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_budget.rs:predicate:4b5a906e",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/proof/budget.rs",
+        "line": 112,
+        "expression": "lease.status != \"granted\""
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_budget.rs:return_value:3eb0b2d2",
+      "status": "unchanged",
+      "before": "weakly_exposed",
+      "after": "weakly_exposed",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_budget.rs:return_value:3eb0b2d2",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/proof/budget.rs",
+        "line": 130,
+        "expression": "Some(0)"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_budget.rs:return_value:42a7edc8",
+      "status": "unchanged",
+      "before": "weakly_exposed",
+      "after": "weakly_exposed",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_budget.rs:return_value:42a7edc8",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/proof/budget.rs",
+        "line": 145,
+        "expression": "Some(task_elapsed_ms.max(command_ms))"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_budget.rs:return_value:ff35fc7f",
+      "status": "unchanged",
+      "before": "weakly_exposed",
+      "after": "weakly_exposed",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_budget.rs:return_value:ff35fc7f",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/proof/budget.rs",
+        "line": 136,
+        "expression": "return"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_budget.rs:static_unknown:2cb89e3a",
+      "status": "unchanged",
+      "before": "static_unknown",
+      "after": "static_unknown",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_budget.rs:static_unknown:2cb89e3a",
+        "family": "static_unknown",
+        "delta": "unknown",
+        "file": "./src/proof/budget.rs",
+        "line": 99,
+        "expression": ".max(1),"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_budget.rs:static_unknown:323539c0",
+      "status": "unchanged",
+      "before": "static_unknown",
+      "after": "static_unknown",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_budget.rs:static_unknown:323539c0",
+        "family": "static_unknown",
+        "delta": "unknown",
+        "file": "./src/proof/budget.rs",
+        "line": 141,
+        "expression": ".commands"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_budget.rs:static_unknown:600135d5",
+      "status": "unchanged",
+      "before": "static_unknown",
+      "after": "static_unknown",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_budget.rs:static_unknown:600135d5",
+        "family": "static_unknown",
+        "delta": "unknown",
+        "file": "./src/proof/budget.rs",
+        "line": 110,
+        "expression": "task_elapsed_ms: u128,"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_budget.rs:static_unknown:751eb4ca",
+      "status": "unchanged",
+      "before": "static_unknown",
+      "after": "static_unknown",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_budget.rs:static_unknown:751eb4ca",
+        "family": "static_unknown",
+        "delta": "unknown",
+        "file": "./src/proof/budget.rs",
+        "line": 85,
+        "expression": ".sum::<u64>();"
+      },
+      "source_currentness": "base_deleted"
+    },
+    {
+      "id": "probe:src_proof_budget.rs:static_unknown:a6d968ad",
+      "status": "unchanged",
+      "before": "static_unknown",
+      "after": "static_unknown",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_budget.rs:static_unknown:a6d968ad",
+        "family": "static_unknown",
+        "delta": "unknown",
+        "file": "./src/proof/budget.rs",
+        "line": 107,
+        "expression": "pub(crate) fn settle_focused_proof_lease("
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_budget.rs:static_unknown:b3d35848",
+      "status": "unchanged",
+      "before": "static_unknown",
+      "after": "static_unknown",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_budget.rs:static_unknown:b3d35848",
+        "family": "static_unknown",
+        "delta": "unknown",
+        "file": "./src/proof/budget.rs",
+        "line": 140,
+        "expression": "let command_ms = receipt"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_budget.rs:static_unknown:d0c7cad2",
+      "status": "unchanged",
+      "before": "static_unknown",
+      "after": "static_unknown",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_budget.rs:static_unknown:d0c7cad2",
+        "family": "static_unknown",
+        "delta": "unknown",
+        "file": "./src/proof/budget.rs",
+        "line": 108,
+        "expression": "lease: &mut ResourceLease,"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_budget.rs:static_unknown:d34e7cdc",
+      "status": "unchanged",
+      "before": "static_unknown",
+      "after": "static_unknown",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_budget.rs:static_unknown:d34e7cdc",
+        "family": "static_unknown",
+        "delta": "unknown",
+        "file": "./src/proof/budget.rs",
+        "line": 109,
+        "expression": "receipt: &ProofReceipt,"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_build.rs:call_deletion:1af29cdf",
+      "status": "unchanged",
+      "before": "propagation_unknown",
+      "after": "propagation_unknown",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_build.rs:call_deletion:1af29cdf",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/proof/build.rs",
+        "line": 153,
+        "expression": "receipts.push(receipt)"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_build.rs:call_deletion:90a08fae",
+      "status": "unchanged",
+      "before": "weakly_exposed",
+      "after": "weakly_exposed",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_build.rs:call_deletion:90a08fae",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/proof/build.rs",
+        "line": 156,
+        "expression": "estimated_seconds = estimated_seconds.saturating_add(task_timeout_sec);"
+      },
+      "source_currentness": "base_deleted"
+    },
+    {
+      "id": "probe:src_proof_build.rs:call_deletion:960ed207",
+      "status": "unchanged",
+      "before": "weakly_exposed",
+      "after": "weakly_exposed",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_build.rs:call_deletion:960ed207",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/proof/build.rs",
+        "line": 152,
+        "expression": "consumed_seconds.saturating_add(focused_proof_lease_charged_seconds(&lease))"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_build.rs:call_deletion:f1d8cf82",
+      "status": "unchanged",
+      "before": "weakly_exposed",
+      "after": "weakly_exposed",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_build.rs:call_deletion:f1d8cf82",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/proof/build.rs",
+        "line": 150,
+        "expression": "settle_focused_proof_lease(&mut lease, &receipt, task_started.elapsed().as_millis())"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_build.rs:predicate:9fd79113",
+      "status": "unchanged",
+      "before": "infection_unknown",
+      "after": "infection_unknown",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_build.rs:predicate:9fd79113",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/proof/build.rs",
+        "line": 95,
+        "expression": "consumed_seconds,"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_build.rs:side_effect:bc66e99e",
+      "status": "unchanged",
+      "before": "propagation_unknown",
+      "after": "propagation_unknown",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_build.rs:side_effect:bc66e99e",
+        "family": "side_effect",
+        "delta": "effect",
+        "file": "./src/proof/build.rs",
+        "line": 153,
+        "expression": "receipts.push(receipt)"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_build.rs:static_unknown:074eb3c4",
+      "status": "unchanged",
+      "before": "static_unknown",
+      "after": "static_unknown",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_build.rs:static_unknown:074eb3c4",
+        "family": "static_unknown",
+        "delta": "unknown",
+        "file": "./src/proof/build.rs",
+        "line": 122,
+        "expression": "let task_started = std::time::Instant::now();"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_build.rs:static_unknown:2f173b0f",
+      "status": "unchanged",
+      "before": "static_unknown",
+      "after": "static_unknown",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_build.rs:static_unknown:2f173b0f",
+        "family": "static_unknown",
+        "delta": "unknown",
+        "file": "./src/proof/build.rs",
+        "line": 123,
+        "expression": "let mut lease = focused_build_resource_lease("
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_build.rs:static_unknown:478cc714",
+      "status": "unchanged",
+      "before": "static_unknown",
+      "after": "static_unknown",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_build.rs:static_unknown:478cc714",
+        "family": "static_unknown",
+        "delta": "unknown",
+        "file": "./src/proof/build.rs",
+        "line": 149,
+        "expression": "let receipt = focused_build_receipt(diff, &task, vec![head], result.to_owned(), reason);"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_build.rs:static_unknown:495af177",
+      "status": "unchanged",
+      "before": "static_unknown",
+      "after": "static_unknown",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_build.rs:static_unknown:495af177",
+        "family": "static_unknown",
+        "delta": "unknown",
+        "file": "./src/proof/build.rs",
+        "line": 151,
+        "expression": "consumed_seconds ="
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_build.rs:static_unknown:9e264c1c",
+      "status": "unchanged",
+      "before": "static_unknown",
+      "after": "static_unknown",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_build.rs:static_unknown:9e264c1c",
+        "family": "static_unknown",
+        "delta": "unknown",
+        "file": "./src/proof/build.rs",
+        "line": 41,
+        "expression": "let mut consumed_seconds = 0_u64;"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_build.rs:static_unknown:a5ea475b",
+      "status": "unchanged",
+      "before": "static_unknown",
+      "after": "static_unknown",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_build.rs:static_unknown:a5ea475b",
+        "family": "static_unknown",
+        "delta": "unknown",
+        "file": "./src/proof/build.rs",
+        "line": 95,
+        "expression": "estimated_seconds,"
+      },
+      "source_currentness": "base_deleted"
+    },
+    {
+      "id": "probe:src_proof_mod.rs:static_unknown:728a1885",
+      "status": "unchanged",
+      "before": "static_unknown",
+      "after": "static_unknown",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_mod.rs:static_unknown:728a1885",
+        "family": "static_unknown",
+        "delta": "unknown",
+        "file": "./src/proof/mod.rs",
+        "line": 504,
+        "expression": "pub(crate) settled_elapsed_ms: Option<u128>,"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_red_green.rs:call_deletion:89084678",
+      "status": "unchanged",
+      "before": "weakly_exposed",
+      "after": "weakly_exposed",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_red_green.rs:call_deletion:89084678",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/proof/red_green.rs",
+        "line": 192,
+        "expression": "consumed_seconds.saturating_add(focused_proof_lease_charged_seconds(&lease))"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_red_green.rs:call_deletion:89c039f0",
+      "status": "unchanged",
+      "before": "weakly_exposed",
+      "after": "weakly_exposed",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_red_green.rs:call_deletion:89c039f0",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/proof/red_green.rs",
+        "line": 196,
+        "expression": ".saturating_add(task_timeout_sec.saturating_mul(task.mode.command_count()));"
+      },
+      "source_currentness": "base_deleted"
+    },
+    {
+      "id": "probe:src_proof_red_green.rs:call_deletion:ed0196db",
+      "status": "unchanged",
+      "before": "weakly_exposed",
+      "after": "weakly_exposed",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_red_green.rs:call_deletion:ed0196db",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/proof/red_green.rs",
+        "line": 190,
+        "expression": "settle_focused_proof_lease(&mut lease, &receipt, task_started.elapsed().as_millis())"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_red_green.rs:predicate:e4cac396",
+      "status": "unchanged",
+      "before": "infection_unknown",
+      "after": "infection_unknown",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_red_green.rs:predicate:e4cac396",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/proof/red_green.rs",
+        "line": 111,
+        "expression": "consumed_seconds,"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_red_green.rs:static_unknown:3d048342",
+      "status": "unchanged",
+      "before": "static_unknown",
+      "after": "static_unknown",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_red_green.rs:static_unknown:3d048342",
+        "family": "static_unknown",
+        "delta": "unknown",
+        "file": "./src/proof/red_green.rs",
+        "line": 145,
+        "expression": "let task_started = std::time::Instant::now();"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_red_green.rs:static_unknown:3e1b9771",
+      "status": "unchanged",
+      "before": "static_unknown",
+      "after": "static_unknown",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_red_green.rs:static_unknown:3e1b9771",
+        "family": "static_unknown",
+        "delta": "unknown",
+        "file": "./src/proof/red_green.rs",
+        "line": 196,
+        "expression": "estimated_seconds = estimated_seconds"
+      },
+      "source_currentness": "base_deleted"
+    },
+    {
+      "id": "probe:src_proof_red_green.rs:static_unknown:b66692c9",
+      "status": "unchanged",
+      "before": "static_unknown",
+      "after": "static_unknown",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_red_green.rs:static_unknown:b66692c9",
+        "family": "static_unknown",
+        "delta": "unknown",
+        "file": "./src/proof/red_green.rs",
+        "line": 191,
+        "expression": "consumed_seconds ="
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_red_green.rs:static_unknown:bdebb155",
+      "status": "unchanged",
+      "before": "static_unknown",
+      "after": "static_unknown",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_red_green.rs:static_unknown:bdebb155",
+        "family": "static_unknown",
+        "delta": "unknown",
+        "file": "./src/proof/red_green.rs",
+        "line": 45,
+        "expression": "let mut consumed_seconds = 0_u64;"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_red_green.rs:static_unknown:caa6883f",
+      "status": "unchanged",
+      "before": "static_unknown",
+      "after": "static_unknown",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_red_green.rs:static_unknown:caa6883f",
+        "family": "static_unknown",
+        "delta": "unknown",
+        "file": "./src/proof/red_green.rs",
+        "line": 146,
+        "expression": "let mut lease = focused_test_resource_lease("
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof_red_green.rs:static_unknown:d42f467e",
+      "status": "unchanged",
+      "before": "static_unknown",
+      "after": "static_unknown",
+      "changed_fields": [],
+      "probe": {
+        "id": "probe:src_proof_red_green.rs:static_unknown:d42f467e",
+        "family": "static_unknown",
+        "delta": "unknown",
+        "file": "./src/proof/red_green.rs",
+        "line": 111,
+        "expression": "estimated_seconds,"
+      },
+      "source_currentness": "base_deleted"
+    }
+  ],
+  "hypothesis_18_to_17": "NOT_ESTABLISHED",
+  "remaining_gates": "Existing macro binding refuses direct600/601 assertions; saturation expected independence separately refuses use crate::* glob. No bypass or broad serde expansion.",
+  "claim_boundary": "Exact local comparison/nonregression only. No consumer clearance/installed qualification/hosted CI/Ready/merge/release."
+}

@@ -1,0 +1,14 @@
+error[E0425]: cannot find function `input` in this scope
+  --> src/lib.rs:14:39
+   |
+14 |     fn observed() { assert_eq!(charge(input()), u64::MAX); }
+   |                                       ^^^^^ not found in this scope
+   |
+help: consider importing this function
+   |
+11 +     use crate::input;
+   |
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0425`.

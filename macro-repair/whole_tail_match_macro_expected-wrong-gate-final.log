@@ -1,0 +1,2 @@
+xtask: check-evidence-promotion-honesty failed; see target/ripr/reports/evidence-promotion-honesty.md
+evidence promotion honesty case `rust_whole_tail_match_macro_expected_identity` (fixture `fixtures/whole_tail_match_macro_expected`): finding `probe:src_lib.rs:match_arm:d59d892c` promoted to exposed (classification `exposed`) but `must_not_promote` is asserted

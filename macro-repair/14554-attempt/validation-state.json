@@ -1,0 +1,20 @@
+{
+  "head": "14554b025d6b2024bbf1c21ec73d91a1cfbb5b6a",
+  "tree": "4230a821477b8b5a1fbbd66f2af7be431766bc1c",
+  "active": "check-fast-final",
+  "completed": [
+    {
+      "stage": "focused-final",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "ripr",
+        "--test",
+        "whole_tail_match_observation"
+      ],
+      "native_exit": 0
+    }
+  ]
+}

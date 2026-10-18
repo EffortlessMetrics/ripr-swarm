@@ -1,0 +1,281 @@
+{
+  "file_fact_cache_schema_version": "1.43",
+  "analyzer_version": "0.11.0+14554b025d6b2024bbf1c21ec73d91a1cfbb5b6a",
+  "file_path": "src/owned.rs",
+  "content_hash": "1e9bce801e477b65",
+  "file_facts": {
+    "path": "src/owned.rs",
+    "functions": [
+      {
+        "id": "src/owned.rs::charge",
+        "name": "charge",
+        "file": "src/owned.rs",
+        "start_line": 3,
+        "end_line": 8,
+        "body": {
+          "start": 35,
+          "len": 108
+        },
+        "calls": [
+          {
+            "line": 3,
+            "name": "charge",
+            "text": "fn charge(input: bool) -> u64 {"
+          },
+          {
+            "line": 5,
+            "name": "u64",
+            "text": "true => u64(600),"
+          },
+          {
+            "line": 6,
+            "name": "u64",
+            "text": "false => u64(2),"
+          }
+        ],
+        "returns": [],
+        "literals": [
+          {
+            "line": 5,
+            "value": "600"
+          },
+          {
+            "line": 6,
+            "value": "2"
+          }
+        ],
+        "source_role": "production",
+        "attrs": [],
+        "impl_attrs": [],
+        "nested_fn_names": [],
+        "let_bindings": [],
+        "item": {
+          "container": {
+            "kind": "free"
+          },
+          "has_self_param": false,
+          "has_body": true
+        },
+        "impl_context": "Free"
+      },
+      {
+        "id": "src/owned.rs::tests::observed",
+        "name": "observed",
+        "file": "src/owned.rs",
+        "start_line": 12,
+        "end_line": 12,
+        "body": {
+          "start": 185,
+          "len": 60
+        },
+        "calls": [
+          {
+            "line": 12,
+            "name": "charge",
+            "text": "fn observed() { std::assert_eq!(super::charge(true), 600); }"
+          },
+          {
+            "line": 12,
+            "name": "observed",
+            "text": "fn observed() { std::assert_eq!(super::charge(true), 600); }"
+          }
+        ],
+        "returns": [],
+        "literals": [
+          {
+            "line": 12,
+            "value": "600"
+          }
+        ],
+        "source_role": "test_attribute",
+        "attrs": [
+          "#[test]"
+        ],
+        "impl_attrs": [],
+        "nested_fn_names": [],
+        "let_bindings": [],
+        "item": {
+          "container": {
+            "kind": "free"
+          },
+          "has_self_param": false,
+          "has_body": true
+        },
+        "impl_context": "Free"
+      }
+    ],
+    "tests": [
+      {
+        "name": "observed",
+        "file": "src/owned.rs",
+        "start_line": 12,
+        "end_line": 12,
+        "body": {
+          "start": 185,
+          "len": 60
+        },
+        "calls": [
+          {
+            "line": 12,
+            "name": "charge",
+            "text": "fn observed() { std::assert_eq!(super::charge(true), 600); }"
+          },
+          {
+            "line": 12,
+            "name": "observed",
+            "text": "fn observed() { std::assert_eq!(super::charge(true), 600); }"
+          }
+        ],
+        "assertions": [
+          {
+            "line": 12,
+            "text": "std::assert_eq!(super::charge(true), 600);",
+            "kind": "ExactValue",
+            "strength": "Strong",
+            "observed_tokens": [
+              "600",
+              "charge",
+              "std",
+              "super"
+            ],
+            "ok_value_observed": null
+          }
+        ],
+        "literals": [
+          {
+            "line": 12,
+            "value": "600"
+          }
+        ],
+        "attrs": [
+          "#[test]"
+        ],
+        "nested_fn_names": [],
+        "let_bindings": []
+      }
+    ],
+    "returns": [],
+    "literals": [
+      {
+        "line": 5,
+        "value": "600"
+      },
+      {
+        "line": 6,
+        "value": "2"
+      },
+      {
+        "line": 12,
+        "value": "600"
+      }
+    ],
+    "probe_shapes": [
+      {
+        "start_line": 4,
+        "end_line": 4,
+        "start_byte": 71,
+        "end_byte": 76,
+        "kind": "match_arm",
+        "text": {
+          "start": 71,
+          "len": 11
+        },
+        "source_lines": [
+          4,
+          4
+        ]
+      },
+      {
+        "start_line": 5,
+        "end_line": 5,
+        "start_byte": 101,
+        "end_byte": 109,
+        "kind": "call_deletion",
+        "text": {
+          "start": 101,
+          "len": 8
+        },
+        "value_consumed": true
+      },
+      {
+        "start_line": 5,
+        "end_line": 5,
+        "start_byte": 98,
+        "end_byte": 100,
+        "kind": "match_arm",
+        "text": {
+          "text": "true =>"
+        },
+        "source_lines": [
+          5,
+          5
+        ]
+      },
+      {
+        "start_line": 6,
+        "end_line": 6,
+        "start_byte": 128,
+        "end_byte": 134,
+        "kind": "call_deletion",
+        "text": {
+          "start": 128,
+          "len": 6
+        },
+        "value_consumed": true
+      },
+      {
+        "start_line": 6,
+        "end_line": 6,
+        "start_byte": 125,
+        "end_byte": 127,
+        "kind": "match_arm",
+        "text": {
+          "text": "false =>"
+        },
+        "source_lines": [
+          6,
+          6
+        ]
+      }
+    ],
+    "used_lexical_fallback": false,
+    "module_declarations": [],
+    "unresolved_property_macros": [],
+    "source": "#[derive(Debug)]\nstruct Dummy;\npub fn charge(input: bool) -> u64 {\n    match input {\n        true => u64(600),\n        false => u64(2),\n    }\n}\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn observed() { std::assert_eq!(super::charge(true), 600); }\n}\n",
+    "item_scopes": {
+      "fns": [
+        {
+          "line": 3,
+          "name": "charge",
+          "item": "TopLevel",
+          "local_use": false,
+          "deferred_code": false,
+          "cfg": false,
+          "direct_calls": [
+            "u64"
+          ],
+          "bound_names": []
+        },
+        {
+          "line": 12,
+          "name": "observed",
+          "item": {
+            "Module": {
+              "start": 9,
+              "end": 13
+            }
+          },
+          "local_use": false,
+          "deferred_code": false,
+          "cfg": false,
+          "direct_calls": [],
+          "bound_names": []
+        }
+      ]
+    },
+    "macro_candidates": {
+      "Names": []
+    }
+  },
+  "payload_digest": "sha256:8cfb6e289782c93671e2442e6551d1b3d676cbabfe884705cbf5b278c8f207ad"
+}

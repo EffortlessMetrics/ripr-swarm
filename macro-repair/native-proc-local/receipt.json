@@ -1,0 +1,12 @@
+[
+  {
+    "case": "original",
+    "compile_exit": 0,
+    "test_exit": 0
+  },
+  {
+    "case": "selected-zero",
+    "compile_exit": 0,
+    "test_exit": 0
+  }
+]

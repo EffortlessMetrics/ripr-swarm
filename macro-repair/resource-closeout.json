@@ -1,0 +1,9 @@
+{
+  "source_head": "656d6d7effb51a888c4b627e2a0cd44c3bbd37ef",
+  "source_tree": "998fd59f62e93a71cd8e20d3b1080f48bd1257a7",
+  "source_clean": true,
+  "df": "Filesystem      Size  Used Avail Use% Mounted on\noverlay          32G  5.4G   25G  18% /workspace",
+  "retention": "All distinct executables, cache/target directories, native/reviewer labs retained; no destructive cleanup.",
+  "limits": "jobs2/incremental0/dev-testdebug0/testthreads2/rayon2; serialized Cargo",
+  "terminal": "All owned validation stages native0, original16290 session terminal0. Prior14554 canceled143 retained separately."
+}

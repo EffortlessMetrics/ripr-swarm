@@ -1,0 +1,14 @@
+[
+  {
+    "case": "original",
+    "source_sha256": "fcd579b7b0e047db300bef6b5b1887295b105557e5c145e1c87c75b35df1bd93",
+    "compile_exit": 0,
+    "test_exit": 0
+  },
+  {
+    "case": "selected-zero",
+    "source_sha256": "c6631a4d8666060760edc4ef4ee9fb0f2a90026a53dfaa9abfb5c7be8e2e748e",
+    "compile_exit": 0,
+    "test_exit": 0
+  }
+]

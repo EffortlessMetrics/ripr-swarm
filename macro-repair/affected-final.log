@@ -1,0 +1,34 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-swarm/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 1.43s
+     Running tests/field_match_selector.rs (/workspace/5500-target/debug/deps/field_match_selector-592b990fc609014b)
+
+running 15 tests
+test a_direct_parameter_match_keeps_its_genuine_unselected_arm_gap ... ok
+test a_callable_module_binding_cannot_borrow_a_root_helpers_record ... ok
+test a_direct_record_selector_is_paired_with_its_own_asserted_call ... ok
+test a_field_selector_cannot_credit_an_assertion_that_does_not_execute ... ok
+test a_foreign_option_constant_cannot_name_the_selected_field_arm ... ok
+test a_direct_record_sibling_names_the_missing_arm_and_wrong_calls_never_credit_it ... ok
+test a_helper_returned_none_is_a_real_sibling_gap_not_an_unsupported_selector ... ok
+test a_helper_returned_mutable_record_selects_its_exact_asserted_call ... ok
+test an_imported_statement_macro_cannot_supply_an_unread_option_binding ... ok
+test ffi_binding_keeps_its_prior_limitation_without_field_selector_detail ... ok
+test field_match_selector_names_all_three_rows_without_credit_or_wire_shape_change ... ok
+test field_match_selector_never_borrows_an_unrelated_or_overwritten_observation ... ok
+test owner_doc_comments_preserve_the_asserted_field_selector ... ok
+test raw_identifier_option_shadows_cannot_borrow_prelude_identity ... ok
+test helper_mutable_field_projection_refuses_unrelated_or_invalidated_values ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.83s
+
+     Running tests/native_path_roots.rs (/workspace/5500-target/debug/deps/native_path_roots-55b00665eec56961)
+
+running 5 tests
+test common::fixture_git::tests::resolves_the_subcommand_past_global_options ... ok
+test common::fixture_git::tests::zero_deadline_reports_timeouts_without_retrying_state ... ok
+test spaced_root_check_and_file_fact_cache_round_trip ... ok
+test long_root_check_round_trips_or_names_the_windows_path_limit ... ok
+test unicode_root_check_and_file_fact_cache_round_trip ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+

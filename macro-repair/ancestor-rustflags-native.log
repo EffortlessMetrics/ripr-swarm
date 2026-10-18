@@ -1,0 +1,40 @@
+   Compiling ancestor_control v0.0.0 (/workspace/5500-macro-review/ancestor-macro-use-local-tests)
+warning: struct `Dummy` is never constructed
+ --> src/owned.rs:2:8
+  |
+2 | struct Dummy;
+  |        ^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `charge` is never used
+ --> src/owned.rs:3:8
+  |
+3 | pub fn charge(input: bool) -> u64 {
+  |        ^^^^^^
+
+warning: `ancestor_control` (lib) generated 2 warnings
+warning: `ancestor_control` (lib test) generated 1 warning (1 duplicate)
+    Finished `test` profile [unoptimized] target(s) in 0.16s
+     Running unittests src/lib.rs (5500-macro-repair/ancestor-rustflags-target/debug/deps/ancestor_control-d03884bc0e6f7544)
+
+running 1 test
+test owned::tests::observed ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests ancestor_control
+error[E0463]: can't find crate for `opaque`
+ --> src/lib.rs:1:14
+  |
+1 | #[macro_use] extern crate opaque;
+  |              ^^^^^^^^^^^^^^^^^^^^ can't find crate
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0463`.
+error: doctest failed, to rerun pass `--doc`
+
+Caused by:
+  process didn't exit successfully: `/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/rustdoc --edition=2024 --crate-type lib --color auto --crate-name ancestor_control --test src/lib.rs --test-run-directory /workspace/5500-macro-review/ancestor-macro-use-local-tests --extern ancestor_control=/workspace/5500-macro-repair/ancestor-rustflags-target/debug/deps/libancestor_control-ff11cdfdb7329ce3.rlib -L dependency=/workspace/5500-macro-repair/ancestor-rustflags-target/debug/deps -C embed-bitcode=no --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' --error-format human` (exit status: 1)
+note: test exited abnormally; to see the full output pass --no-capture to the harness.

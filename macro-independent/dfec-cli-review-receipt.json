@@ -1,0 +1,37 @@
+{
+  "head": "dfecaa9e21bca8beffbeac99879fb26c807195ee",
+  "binary_sha256": "829654c3034dc8a549b1370054e59f87e48643986e6729b022426a3c781df855",
+  "all_commands_exit": 0,
+  "cases": [
+    {
+      "case": "rootmacro",
+      "id": "probe:src_lib.rs:match_arm:54eaf025",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "moduleMAX",
+      "id": "probe:src_lib.rs:match_arm:54eaf025",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "localproc",
+      "id": "probe:src_lib.rs:match_arm:54eaf025",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "localmacro",
+      "id": "probe:src_lib.rs:match_arm:54eaf025",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "positive",
+      "id": "probe:src_lib.rs:match_arm:8e7ef68c",
+      "classification": "exposed",
+      "whole_tail_receipt": true
+    }
+  ]
+}

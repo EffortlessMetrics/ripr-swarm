@@ -1,0 +1,5 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-swarm/crates/ripr)
+   Compiling xtask v0.1.0 (/workspace/ripr-swarm/xtask)
+    Finished `dev` profile [unoptimized] target(s) in 2m 22s
+     Running `/workspace/5500-target/debug/xtask goldens bless whole_tail_match_macro_scalar --reason 'Refuse external macro-defined apparent primitive return identity; original and all arm-zero native controls pass'`
+xtask: --reason must cite a spec id (e.g. RIPR-SPEC-0001: output contract changed); got: "Refuse external macro-defined apparent primitive return identity; original and all arm-zero native controls pass"

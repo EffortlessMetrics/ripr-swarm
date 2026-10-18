@@ -1,0 +1,20 @@
+[
+  {
+    "fixture": "whole_tail_match_macro_scalar",
+    "wrong_native_exit": 1,
+    "case_in_log": true,
+    "must_not_promote_in_log": true,
+    "restored_native_exit": 0,
+    "before_sha256": "c5b004e10012fa2cec1312e66591134d4854afc188533a2388e294e83f6dc6a4",
+    "after_sha256": "c5b004e10012fa2cec1312e66591134d4854afc188533a2388e294e83f6dc6a4"
+  },
+  {
+    "fixture": "whole_tail_match_macro_expected",
+    "wrong_native_exit": 0,
+    "case_in_log": false,
+    "must_not_promote_in_log": false,
+    "restored_native_exit": 0,
+    "before_sha256": "28521ccdb36730735e3a1af6c4eb8563bea0398652cfdf462dd76aef59f95077",
+    "after_sha256": "28521ccdb36730735e3a1af6c4eb8563bea0398652cfdf462dd76aef59f95077"
+  }
+]

@@ -1,0 +1,58 @@
+[
+  {
+    "fixture": "whole_tail_match_macro_scalar",
+    "case": "original",
+    "source_sha256": "469f7c4004354c7f4becc5c515e6dfe85420fbf7b869438ed5fd2fbc653f8a0b",
+    "compile_exit": 0,
+    "test_exit": 0
+  },
+  {
+    "fixture": "whole_tail_match_macro_scalar",
+    "case": "selected-zero",
+    "source_sha256": "5c315fbb431fe6c3e7270d2cf4c18cb250242b7e48cef811e051d298a56fff86",
+    "compile_exit": 0,
+    "test_exit": 0
+  },
+  {
+    "fixture": "whole_tail_match_macro_scalar",
+    "case": "other-zero",
+    "source_sha256": "f66e1b1067283707a74991b8e7950e01e605fcf5922f2dccfd58cbfcad96276c",
+    "compile_exit": 0,
+    "test_exit": 0
+  },
+  {
+    "fixture": "whole_tail_match_macro_scalar",
+    "case": "both-zero",
+    "source_sha256": "dcd4e1416077b7abd32c310cfb76d7e0006b9766b485cd0284ddcd9205621484",
+    "compile_exit": 0,
+    "test_exit": 0
+  },
+  {
+    "fixture": "whole_tail_match_macro_expected",
+    "case": "original",
+    "source_sha256": "d6dce8b03c0a3e9d434933d27cb7a361ec6d8ff722e8a40441665862979b16de",
+    "compile_exit": 0,
+    "test_exit": 0
+  },
+  {
+    "fixture": "whole_tail_match_macro_expected",
+    "case": "selected-zero",
+    "source_sha256": "51541f61f6f94f3ccce395150ea39e8b77e58655b803108e961638e2b20671e4",
+    "compile_exit": 0,
+    "test_exit": 0
+  },
+  {
+    "fixture": "whole_tail_match_macro_expected",
+    "case": "local-proc",
+    "source_sha256": "2c803dfc13530463dd3ba39c31a72140ca1d186810ed62703de41dee4b3411cc",
+    "compile_exit": 0,
+    "test_exit": 0
+  },
+  {
+    "fixture": "whole_tail_match_macro_expected",
+    "case": "local-proc-selected-zero",
+    "source_sha256": "475e2ccb1e4eec459e33b083d39a43b66439cb6872844655f7bc32d71a7f30e8",
+    "compile_exit": 0,
+    "test_exit": 0
+  }
+]

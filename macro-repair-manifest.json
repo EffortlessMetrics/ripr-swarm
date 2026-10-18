@@ -1,0 +1,2093 @@
+{
+  "schema": "ripr-5500-macro-repair-evidence-1",
+  "source_head": "656d6d7effb51a888c4b627e2a0cd44c3bbd37ef",
+  "source_tree": "998fd59f62e93a71cd8e20d3b1080f48bd1257a7",
+  "consumer_head": "278253a03b00d1aa777eeba7633954122163890f",
+  "consumer_base": "715a36434a56be3a9abeb5545012d56e2cb9cb60",
+  "historical_evidence_commit": "690975cff31ae56c7d8e28f93aa308c85d497bc4",
+  "historical_manifest_sha256": "f6030e39be1687d22ea8a9736c3818b408fbb12c7707a83b1c2809ed8d301dd8",
+  "entries": [
+    {
+      "path": "macro-repair/14554-attempt/REPAIR-SUMMARY.md",
+      "bytes": 5337,
+      "sha256": "9a286affa398801f354671b81255c5f43ec9b8fe90f5d85b71479cfb4d7306a8"
+    },
+    {
+      "path": "macro-repair/14554-attempt/check-fast-final.log",
+      "bytes": 38671,
+      "sha256": "45b764ac757710cff93aea60fc58b8c003c3eef166d6d5eadd2f30e657a80bef"
+    },
+    {
+      "path": "macro-repair/14554-attempt/consumer-comparison-summary.txt",
+      "bytes": 2162,
+      "sha256": "d2dcf5424843a5a0f82de7633fafc8754f1866a394ec804b236df165a2365c93"
+    },
+    {
+      "path": "macro-repair/14554-attempt/consumer-comparison.json",
+      "bytes": 29844,
+      "sha256": "b7a93bb83d0b7b08cab037c4dfd70d179a5c7b99e8ac89a9f86c3830877cd972"
+    },
+    {
+      "path": "macro-repair/14554-attempt/consumer-final.json",
+      "bytes": 996234,
+      "sha256": "e67563d1ec9aad34b8c54d5f341a13114b93469c73bb6b97f55f6ccbe66db96b"
+    },
+    {
+      "path": "macro-repair/14554-attempt/consumer-final.stderr",
+      "bytes": 1157,
+      "sha256": "5f5f0b96008291a6e12902f492b906bb8996fc411eb63d88b9b9ccb94baf9915"
+    },
+    {
+      "path": "macro-repair/14554-attempt/final-cli-receipt.json",
+      "bytes": 554,
+      "sha256": "a12d5bd8bbeca49e07ce58473850da087ba1aebd1e0470979c348d2958fc1339"
+    },
+    {
+      "path": "macro-repair/14554-attempt/focused-final.log",
+      "bytes": 1162,
+      "sha256": "9e6e738f17fba24cef674b21dd5292448af88eef02578c2c1253f1fd26811d15"
+    },
+    {
+      "path": "macro-repair/14554-attempt/validate_final.py",
+      "bytes": 2589,
+      "sha256": "910dffeebccea2055393707dc259c5e02c1e86ed35b4356dcc32ef5bfd374762"
+    },
+    {
+      "path": "macro-repair/14554-attempt/validation-state.json",
+      "bytes": 400,
+      "sha256": "9b024776bd0492b15f7ff79d400acfe2ad56a4b38f35d58372fc7616ac3dbe95"
+    },
+    {
+      "path": "macro-repair/14554-validation-cancellation.json",
+      "bytes": 836,
+      "sha256": "7ed7c539a2605a885dd955d8e4ca19ad93604f3f8d2c369aac4f9608613b51e0"
+    },
+    {
+      "path": "macro-repair/REPAIR-SUMMARY.md",
+      "bytes": 5692,
+      "sha256": "689879da0a5ceb59bd53a4405b63f743d8edba653cec679a7246af70e4a03108"
+    },
+    {
+      "path": "macro-repair/affected-final.log",
+      "bytes": 2139,
+      "sha256": "848dc6aecc29d4bd0b0ee2efafb112ef25e43813821212ca57ca332fc612ddcd"
+    },
+    {
+      "path": "macro-repair/ancestor-cargo/Cargo.toml",
+      "bytes": 113,
+      "sha256": "096b14c8a53e1f9b5fb9ae4d1cae84d996a7c03d951709d334341931a0d4b1c2"
+    },
+    {
+      "path": "macro-repair/ancestor-cargo/input.diff",
+      "bytes": 311,
+      "sha256": "396e7e528f51a9568dd38c43fdf81738c3f5de9d818cca59385a33d3ef4aaff7"
+    },
+    {
+      "path": "macro-repair/ancestor-cargo/opaque/Cargo.toml",
+      "bytes": 77,
+      "sha256": "3933941cd75edcbbde25e53e895b8b81c7b4c74435a5f221ec3465bb6c006fb0"
+    },
+    {
+      "path": "macro-repair/ancestor-cargo/opaque/src/lib.rs",
+      "bytes": 463,
+      "sha256": "78fca7367f94d0cb7630469c8883957081c6428d21abfb441dcda7e040e55905"
+    },
+    {
+      "path": "macro-repair/ancestor-cargo/red.json",
+      "bytes": 22027,
+      "sha256": "d8fabced8c1269c08c483a41549eb7e395ba12796dfff79f074b3339307f9394"
+    },
+    {
+      "path": "macro-repair/ancestor-cargo/red.stderr",
+      "bytes": 308,
+      "sha256": "1db2700e8b7a583a4fc5b6644263bc5773594b8943e22a1e5aed1dbdb0af169d"
+    },
+    {
+      "path": "macro-repair/ancestor-cargo/src/lib.rs",
+      "bytes": 45,
+      "sha256": "aad199b2d47b8e17e4089c260a99773b9c8439b925ef473b7a8c0bde391fec69"
+    },
+    {
+      "path": "macro-repair/ancestor-cargo/src/owned.rs",
+      "bytes": 248,
+      "sha256": "fcd579b7b0e047db300bef6b5b1887295b105557e5c145e1c87c75b35df1bd93"
+    },
+    {
+      "path": "macro-repair/ancestor-cargo-native.log",
+      "bytes": 1063,
+      "sha256": "0faee9b6fe405a833ceb5edf772f9a73681e38fcef4e609c2e2fd3c2fa4ace6b"
+    },
+    {
+      "path": "macro-repair/ancestor-rustflags-cache/repo-file-facts/1.43/825c8170357a8797.json",
+      "bytes": 6452,
+      "sha256": "264e688c42a95533b12d591691ce66156c6cb7ec9e9edaa795f84e1fe499f1da"
+    },
+    {
+      "path": "macro-repair/ancestor-rustflags-cache/repo-file-facts/1.43/86e74bcf070ffae5.json",
+      "bytes": 3831,
+      "sha256": "612e1946830381dd044219d012a9670b4431ab8fc6c0af128de7e76e72084fb7"
+    },
+    {
+      "path": "macro-repair/ancestor-rustflags-cache/repo-file-facts/1.43/d41e0472e4c1f3d5.json",
+      "bytes": 835,
+      "sha256": "5a341d68f03b5a7ee005e0bd09b88f68fe5a04cf3364864f94e334bb86cc4915"
+    },
+    {
+      "path": "macro-repair/ancestor-rustflags-native-complete.log",
+      "bytes": 914,
+      "sha256": "89b7e7a95769a6f76be04a6a9048724d5ed8fcf503c592b5e2f28436fafd5efc"
+    },
+    {
+      "path": "macro-repair/ancestor-rustflags-native.log",
+      "bytes": 1942,
+      "sha256": "6d1007c3fe9da41196da146976f21c5a2d9c22ff2ca9e1c7395d240307dc697e"
+    },
+    {
+      "path": "macro-repair/ancestor-rustflags-red.json",
+      "bytes": 21958,
+      "sha256": "f618c6fe2b917ba8651416596093df496824a7bfd176ba579d16cda8c29bf2f9"
+    },
+    {
+      "path": "macro-repair/ancestor-rustflags-red.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-repair/check-fast-final.log",
+      "bytes": 39279,
+      "sha256": "20a2c9556ac8abd483587b3af7cbd192979cb4974e109d88911404d98edb1ebf"
+    },
+    {
+      "path": "macro-repair/compare_consumer.py",
+      "bytes": 3222,
+      "sha256": "b1813333f9a7efd6314b3b595695e92bcbf213194940eb6a09475317baf87b14"
+    },
+    {
+      "path": "macro-repair/consumer-comparison-summary.txt",
+      "bytes": 2162,
+      "sha256": "b6feef6501f129fda23428703f7f1e4622fc81af6b4e85c4dc6a6d48085e9494"
+    },
+    {
+      "path": "macro-repair/consumer-comparison.json",
+      "bytes": 29621,
+      "sha256": "36e626c1b9e81fce378731da77ff39b36840eb29e95643e75e0fbb36e6282334"
+    },
+    {
+      "path": "macro-repair/consumer-final.json",
+      "bytes": 996234,
+      "sha256": "e67563d1ec9aad34b8c54d5f341a13114b93469c73bb6b97f55f6ccbe66db96b"
+    },
+    {
+      "path": "macro-repair/consumer-final.stderr",
+      "bytes": 1109,
+      "sha256": "87cc90799ae77bdee1a924510f91d4d1e1fb2875c5b014b26c284701427e9643"
+    },
+    {
+      "path": "macro-repair/corpus-red.json",
+      "bytes": 23099,
+      "sha256": "f2ac5f81456d378a4125e4d499abf3e075f9b00b252ef3f537e2829ddc99c74b"
+    },
+    {
+      "path": "macro-repair/corpus-red.stderr",
+      "bytes": 308,
+      "sha256": "1db2700e8b7a583a4fc5b6644263bc5773594b8943e22a1e5aed1dbdb0af169d"
+    },
+    {
+      "path": "macro-repair/dogfood-final.log",
+      "bytes": 366,
+      "sha256": "d8159dd7a4226b337bb182ae5a26ad70d05a75845e7362a2186200cc7de78019"
+    },
+    {
+      "path": "macro-repair/expected-corpus-discriminating-red.json",
+      "bytes": 22617,
+      "sha256": "123c030857152c829068edb37615b706791b873da5ad4f34c9dd722549a86fb6"
+    },
+    {
+      "path": "macro-repair/expected-corpus-discriminating-red.stderr",
+      "bytes": 308,
+      "sha256": "1db2700e8b7a583a4fc5b6644263bc5773594b8943e22a1e5aed1dbdb0af169d"
+    },
+    {
+      "path": "macro-repair/expected-corpus-probes/direct/Cargo.toml",
+      "bytes": 79,
+      "sha256": "ac302e3d29017a5f9cb45e62a04b042ac5002824c4ae8ed7081bdbf603eb8c77"
+    },
+    {
+      "path": "macro-repair/expected-corpus-probes/direct/input.diff",
+      "bytes": 363,
+      "sha256": "84de5c713793f7acbb3b4efdee9023b86b584f234686ec7d474b54d005b14f1c"
+    },
+    {
+      "path": "macro-repair/expected-corpus-probes/direct/opaque/Cargo.toml",
+      "bytes": 85,
+      "sha256": "15264cd80fbe62883d312973a3e78236d32839ef4e53fde769829c10f7e02c97"
+    },
+    {
+      "path": "macro-repair/expected-corpus-probes/direct/opaque/src/lib.rs",
+      "bytes": 431,
+      "sha256": "cd67da91d54a117174a698804175da51681703e032acee5c884aa5618aecb1e9"
+    },
+    {
+      "path": "macro-repair/expected-corpus-probes/direct/red-nodep.json",
+      "bytes": 21886,
+      "sha256": "75b938799be7ea08258dc7801665a9a2fd5fa4226f54d2ef0f2e1ab53a6c231a"
+    },
+    {
+      "path": "macro-repair/expected-corpus-probes/direct/red.json",
+      "bytes": 21886,
+      "sha256": "75b938799be7ea08258dc7801665a9a2fd5fa4226f54d2ef0f2e1ab53a6c231a"
+    },
+    {
+      "path": "macro-repair/expected-corpus-probes/direct/src/foreign.rs",
+      "bytes": 375,
+      "sha256": "7128c66ea8c0b3b098cf4810e9a121feab3999f6a76022c435c9d08f6a1ed898"
+    },
+    {
+      "path": "macro-repair/expected-corpus-probes/direct/src/lib.rs",
+      "bytes": 300,
+      "sha256": "4450297c9e79d327eb1bf463865866a10521fedf59607dda68f4c4e0986bd303"
+    },
+    {
+      "path": "macro-repair/expected-corpus-probes/glob/Cargo.toml",
+      "bytes": 79,
+      "sha256": "ac302e3d29017a5f9cb45e62a04b042ac5002824c4ae8ed7081bdbf603eb8c77"
+    },
+    {
+      "path": "macro-repair/expected-corpus-probes/glob/input.diff",
+      "bytes": 352,
+      "sha256": "3d5daf31ac4fc4139272fb9af38572a70cc296b9caf920047ece812d45423304"
+    },
+    {
+      "path": "macro-repair/expected-corpus-probes/glob/opaque/Cargo.toml",
+      "bytes": 85,
+      "sha256": "15264cd80fbe62883d312973a3e78236d32839ef4e53fde769829c10f7e02c97"
+    },
+    {
+      "path": "macro-repair/expected-corpus-probes/glob/opaque/src/lib.rs",
+      "bytes": 431,
+      "sha256": "cd67da91d54a117174a698804175da51681703e032acee5c884aa5618aecb1e9"
+    },
+    {
+      "path": "macro-repair/expected-corpus-probes/glob/red-nodep.json",
+      "bytes": 19984,
+      "sha256": "a5ec758703452ea1a1ec09830f2b9fe8a7d7ac6e38f30c627f21273723913360"
+    },
+    {
+      "path": "macro-repair/expected-corpus-probes/glob/red.json",
+      "bytes": 19984,
+      "sha256": "a5ec758703452ea1a1ec09830f2b9fe8a7d7ac6e38f30c627f21273723913360"
+    },
+    {
+      "path": "macro-repair/expected-corpus-probes/glob/src/foreign.rs",
+      "bytes": 375,
+      "sha256": "7128c66ea8c0b3b098cf4810e9a121feab3999f6a76022c435c9d08f6a1ed898"
+    },
+    {
+      "path": "macro-repair/expected-corpus-probes/glob/src/lib.rs",
+      "bytes": 289,
+      "sha256": "d0a1a73668d36793e56035524f701d5ad4d11e7d59e878a3fe477f7c6cbdcd71"
+    },
+    {
+      "path": "macro-repair/expected-corpus-probes/separate/Cargo.toml",
+      "bytes": 79,
+      "sha256": "ac302e3d29017a5f9cb45e62a04b042ac5002824c4ae8ed7081bdbf603eb8c77"
+    },
+    {
+      "path": "macro-repair/expected-corpus-probes/separate/input.diff",
+      "bytes": 380,
+      "sha256": "2c7c0514f1e8ee5565d6f03169317909d3869cb0f13eee73ededda13b8e2ac92"
+    },
+    {
+      "path": "macro-repair/expected-corpus-probes/separate/opaque/Cargo.toml",
+      "bytes": 85,
+      "sha256": "15264cd80fbe62883d312973a3e78236d32839ef4e53fde769829c10f7e02c97"
+    },
+    {
+      "path": "macro-repair/expected-corpus-probes/separate/opaque/src/lib.rs",
+      "bytes": 431,
+      "sha256": "cd67da91d54a117174a698804175da51681703e032acee5c884aa5618aecb1e9"
+    },
+    {
+      "path": "macro-repair/expected-corpus-probes/separate/red-nodep.json",
+      "bytes": 20016,
+      "sha256": "c074ef2485b676333a95e3b02f6c63608cb1553e1e44d6c9c56e9d6745b7c2bd"
+    },
+    {
+      "path": "macro-repair/expected-corpus-probes/separate/red.json",
+      "bytes": 20016,
+      "sha256": "c074ef2485b676333a95e3b02f6c63608cb1553e1e44d6c9c56e9d6745b7c2bd"
+    },
+    {
+      "path": "macro-repair/expected-corpus-probes/separate/src/foreign.rs",
+      "bytes": 375,
+      "sha256": "7128c66ea8c0b3b098cf4810e9a121feab3999f6a76022c435c9d08f6a1ed898"
+    },
+    {
+      "path": "macro-repair/expected-corpus-probes/separate/src/lib.rs",
+      "bytes": 316,
+      "sha256": "1f7d94f3fae6f4105080c42270839d71a98f656a6fb40f774fdf8172d0b2e57d"
+    },
+    {
+      "path": "macro-repair/expected-corpus-red.json",
+      "bytes": 20018,
+      "sha256": "4b62e6d81c601259ece0706ffa32d13cec13e291c9585b118bf9b109e627dea7"
+    },
+    {
+      "path": "macro-repair/expected-corpus-red.stderr",
+      "bytes": 308,
+      "sha256": "1db2700e8b7a583a4fc5b6644263bc5773594b8943e22a1e5aed1dbdb0af169d"
+    },
+    {
+      "path": "macro-repair/expected-field/Cargo.toml",
+      "bytes": 75,
+      "sha256": "c8f871a282e41bd0d79ee118a7e2e3a9043c67f7e3ab76f28d693ae0557d2d1b"
+    },
+    {
+      "path": "macro-repair/expected-field/input.diff",
+      "bytes": 387,
+      "sha256": "2dfb105ff4fcd58539c013b0bb67818028f4189c787c5cf1c1f1862c7421a49c"
+    },
+    {
+      "path": "macro-repair/expected-field/red.json",
+      "bytes": 23758,
+      "sha256": "99d44a48321ad66673993dfe5baf273d2bc5be15b499d76f84b08a84be9137b7"
+    },
+    {
+      "path": "macro-repair/expected-field/red.stderr",
+      "bytes": 308,
+      "sha256": "1db2700e8b7a583a4fc5b6644263bc5773594b8943e22a1e5aed1dbdb0af169d"
+    },
+    {
+      "path": "macro-repair/expected-field/src/foreign.rs",
+      "bytes": 375,
+      "sha256": "7128c66ea8c0b3b098cf4810e9a121feab3999f6a76022c435c9d08f6a1ed898"
+    },
+    {
+      "path": "macro-repair/expected-field/src/lib.rs",
+      "bytes": 324,
+      "sha256": "a53a1ff92d00ef4dd0c19acf9cde310ea0290d6342934c32b5fcafa5057b78cd"
+    },
+    {
+      "path": "macro-repair/expected-local/Cargo.toml",
+      "bytes": 78,
+      "sha256": "781828ed9d93ec195df4b4cf54b599b9b8c80bb762186e2f6acf78824fadcddf"
+    },
+    {
+      "path": "macro-repair/expected-local/input.diff",
+      "bytes": 320,
+      "sha256": "1ab1a821368cc17fe40e986751d7b0c3de7e7beb24e60b4d6df4fcbc07545b2a"
+    },
+    {
+      "path": "macro-repair/expected-local/src/foreign.rs",
+      "bytes": 375,
+      "sha256": "7128c66ea8c0b3b098cf4810e9a121feab3999f6a76022c435c9d08f6a1ed898"
+    },
+    {
+      "path": "macro-repair/expected-local/src/lib.rs",
+      "bytes": 259,
+      "sha256": "a9c79ca42689ecce80e0b3d35dc40fb4828bd8dafb8119fd931ee3f1c79457a7"
+    },
+    {
+      "path": "macro-repair/expected-local-red.json",
+      "bytes": 16041,
+      "sha256": "e77b5870bc31f98e0a131e81c781af931b5adb21145d412519bc4e615840ada2"
+    },
+    {
+      "path": "macro-repair/expected-local-red.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-repair/expected-red.json",
+      "bytes": 16215,
+      "sha256": "b2d8f56e568004281c7e4090367fed446147763d23f05f5d2c84b2900a20bd20"
+    },
+    {
+      "path": "macro-repair/expected-red.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-repair/final-check-fast-selector.md",
+      "bytes": 145,
+      "sha256": "6e120cfa1a5229f107ca3e046c80235899c51c493e84f80c3b1645264677149c"
+    },
+    {
+      "path": "macro-repair/final-check-fast.md",
+      "bytes": 1556,
+      "sha256": "d74673d8fc1165f9f6da469774ef3ede7911b64b1da665f7f2104762f49ea6b1"
+    },
+    {
+      "path": "macro-repair/final-cli-receipt.json",
+      "bytes": 347,
+      "sha256": "6526ceaefd8521d8c7617a3c4dbbda1a2defa70c75a9816b7b2f31ddc58d07f7"
+    },
+    {
+      "path": "macro-repair/final-dogfood.json",
+      "bytes": 538726,
+      "sha256": "c4af31cea6e5311bdf9e935d8df226053f13fee934a984d1fce7e60cd1a81e85"
+    },
+    {
+      "path": "macro-repair/final-dogfood.md",
+      "bytes": 467350,
+      "sha256": "81af8a4f56bea3b18a5d14a08382d96dbefe16493a0f3ba1fb9f4351c2ca26be"
+    },
+    {
+      "path": "macro-repair/final-evidence-promotion-honesty.md",
+      "bytes": 758,
+      "sha256": "4d371079e78da3af1d23db65b0d000be01226c38c591689607258d0d42ffddb6"
+    },
+    {
+      "path": "macro-repair/final-golden-drift.json",
+      "bytes": 322,
+      "sha256": "94ad26f2ead994cc67eb0b1645e68e04bc2ebff1b876fff11fe5d998b0c26db1"
+    },
+    {
+      "path": "macro-repair/final-golden-drift.md",
+      "bytes": 407,
+      "sha256": "cfd763d388a30f641cd73a57ee2f0138f386bab299222f2cb87f8b1ac7c8e3f8"
+    },
+    {
+      "path": "macro-repair/final-goldens.md",
+      "bytes": 414603,
+      "sha256": "e3855c66f6c9674b27c79e2d38981d78d12b814d865f610b48fb923550b95223"
+    },
+    {
+      "path": "macro-repair/final-precommit-v2.json",
+      "bytes": 18530,
+      "sha256": "471bb4e11a026b2beacb28c496712ef488dfaeb10d7d383772943850ba3197c2"
+    },
+    {
+      "path": "macro-repair/final-precommit-v2.md",
+      "bytes": 9557,
+      "sha256": "8397024f9bfa76e282c1ddfa3c5a2650d5f9659717001fe117c36bb6dad5b69d"
+    },
+    {
+      "path": "macro-repair/final-remote-state.json",
+      "bytes": 869,
+      "sha256": "0b8fd8ea232e22634faf2cbeda775f6240ad9a948fe72d7668b05f5b1acd61a1"
+    },
+    {
+      "path": "macro-repair/final-selected-paths.txt",
+      "bytes": 4030,
+      "sha256": "0fe8345a2c38e0e79350d2e5d5ab3a37416c0c71e29e734694c9b8964edd0003"
+    },
+    {
+      "path": "macro-repair/final-traceability.md",
+      "bytes": 1994500,
+      "sha256": "4e26bd514af8d375006f8ac45f36a21cc5a758460da1c31af98a399451941cc7"
+    },
+    {
+      "path": "macro-repair/focused-656-final.log",
+      "bytes": 1237,
+      "sha256": "503811d6ceccf95b958d67018e5ba02772802aad4bb7339af8cf055afdf00d78"
+    },
+    {
+      "path": "macro-repair/focused-attempt1-api-compile-failure.log",
+      "bytes": 606,
+      "sha256": "eb008bee638e6812bbe3517d407ea8997ab721f6b502b659936375c36f0d62b9"
+    },
+    {
+      "path": "macro-repair/focused-d94-before-valid-fixture-fix.log",
+      "bytes": 3178,
+      "sha256": "fb7a635e209799febd5d5d91192f14dfc15b74b4bb0c39e595e8e42c45b6407e"
+    },
+    {
+      "path": "macro-repair/focused-dfec.log",
+      "bytes": 3178,
+      "sha256": "bccf4b45a4964e16133a0b97caf113c7b83e3784d36abe2424c57dc92dd12ef6"
+    },
+    {
+      "path": "macro-repair/focused-final.log",
+      "bytes": 1162,
+      "sha256": "9e6e738f17fba24cef674b21dd5292448af88eef02578c2c1253f1fd26811d15"
+    },
+    {
+      "path": "macro-repair/focused.log",
+      "bytes": 606,
+      "sha256": "eb008bee638e6812bbe3517d407ea8997ab721f6b502b659936375c36f0d62b9"
+    },
+    {
+      "path": "macro-repair/fresh-independent-review.txt",
+      "bytes": 32368,
+      "sha256": "eabe8baddff36f9de06b7de0f7eef2d719958a1e6e98cc0146b0e4a4c715df0e"
+    },
+    {
+      "path": "macro-repair/golden-counts.json",
+      "bytes": 153,
+      "sha256": "14b06552d984d506cfd1cb6d35e74923401694d0998b59ec0425d9d51aa40453"
+    },
+    {
+      "path": "macro-repair/goldens-bless-invalid-reason.log",
+      "bytes": 601,
+      "sha256": "38649bbbc5338298ce9b4900a393d8be762cf543d651864efeea107203ebae00"
+    },
+    {
+      "path": "macro-repair/goldens-expected-bless.log",
+      "bytes": 395,
+      "sha256": "271447c5e560a51574b6509916be170bdcebfb01c31428c54dc030a8a15d580d"
+    },
+    {
+      "path": "macro-repair/goldens-expected-discriminating-bless.log",
+      "bytes": 418,
+      "sha256": "64b5feb7fdc714fb51958457f0a099fc43b86d90c46b5c2af0a3f3047086f8d2"
+    },
+    {
+      "path": "macro-repair/goldens-scalar-bless.log",
+      "bytes": 474,
+      "sha256": "d5b9df0fccbb6d5f7d83964d5e52cc019b9d2c11ec446dd9f4051b071a095429"
+    },
+    {
+      "path": "macro-repair/honesty-final.log",
+      "bytes": 354,
+      "sha256": "259f5f31b0fd41b80bfd8b3719e89e4bd9942abd35fe312dd0bb552b0be81adf"
+    },
+    {
+      "path": "macro-repair/honesty-initial.log",
+      "bytes": 211,
+      "sha256": "022c304765dca9ee1162bb57da151e213b7b90f14f1ae0d5e7df6ec6d2f4bae5"
+    },
+    {
+      "path": "macro-repair/honesty-masked-expected-oracle-attempt.json",
+      "bytes": 715,
+      "sha256": "304bbc9345bd2a31da25e16c40308e602d6b8f5f88fa8414e450459df0a1e019"
+    },
+    {
+      "path": "macro-repair/honesty-negative-controls-final.json",
+      "bytes": 713,
+      "sha256": "4028df46dc855409dbedbe54c24fc22b942e57b1187e78436dfbbd8fcb5a5f43"
+    },
+    {
+      "path": "macro-repair/honesty-negative-controls.json",
+      "bytes": 715,
+      "sha256": "304bbc9345bd2a31da25e16c40308e602d6b8f5f88fa8414e450459df0a1e019"
+    },
+    {
+      "path": "macro-repair/native/both-zero/compile.log",
+      "bytes": 624,
+      "sha256": "2eede41b425e2c28da7ed26ad40ac2e89472469d17366512f3f9e89eb8b7635d"
+    },
+    {
+      "path": "macro-repair/native/both-zero/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native/both-zero/src/foreign.rs",
+      "bytes": 247,
+      "sha256": "30a6c7388cc5bc4dd4dc464503e2c7756f177d36cd3113eabc6eaeca58b242c7"
+    },
+    {
+      "path": "macro-repair/native/both-zero/src/lib.rs",
+      "bytes": 255,
+      "sha256": "a78efbba32862dc6fd6351f0a83a3ccbf247c20a9af86934cdefbe4dad664593"
+    },
+    {
+      "path": "macro-repair/native/original/compile.log",
+      "bytes": 624,
+      "sha256": "2eede41b425e2c28da7ed26ad40ac2e89472469d17366512f3f9e89eb8b7635d"
+    },
+    {
+      "path": "macro-repair/native/original/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native/original/src/foreign.rs",
+      "bytes": 247,
+      "sha256": "30a6c7388cc5bc4dd4dc464503e2c7756f177d36cd3113eabc6eaeca58b242c7"
+    },
+    {
+      "path": "macro-repair/native/original/src/lib.rs",
+      "bytes": 257,
+      "sha256": "84da46ed7a6a7cd4aeed9a96f65200dadad28d8bd200c38fa96369f4061f5f57"
+    },
+    {
+      "path": "macro-repair/native/other-zero/compile.log",
+      "bytes": 624,
+      "sha256": "2eede41b425e2c28da7ed26ad40ac2e89472469d17366512f3f9e89eb8b7635d"
+    },
+    {
+      "path": "macro-repair/native/other-zero/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native/other-zero/src/foreign.rs",
+      "bytes": 247,
+      "sha256": "30a6c7388cc5bc4dd4dc464503e2c7756f177d36cd3113eabc6eaeca58b242c7"
+    },
+    {
+      "path": "macro-repair/native/other-zero/src/lib.rs",
+      "bytes": 257,
+      "sha256": "6ae7bd533e087c53cd3796b432bd63f4c0cd11fbf841090997e3bb66bbce4a4d"
+    },
+    {
+      "path": "macro-repair/native/selected-zero/compile.log",
+      "bytes": 624,
+      "sha256": "2eede41b425e2c28da7ed26ad40ac2e89472469d17366512f3f9e89eb8b7635d"
+    },
+    {
+      "path": "macro-repair/native/selected-zero/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native/selected-zero/src/foreign.rs",
+      "bytes": 247,
+      "sha256": "30a6c7388cc5bc4dd4dc464503e2c7756f177d36cd3113eabc6eaeca58b242c7"
+    },
+    {
+      "path": "macro-repair/native/selected-zero/src/lib.rs",
+      "bytes": 255,
+      "sha256": "4f5034e3fed95cc10e4f9c3e16ffd5c9b9d70158c89bc9583662deeb13cad0ef"
+    },
+    {
+      "path": "macro-repair/native-ancestor/original/compile.log",
+      "bytes": 212,
+      "sha256": "4a33858ea872151723fe4c4e125015e1a733f7fe696cfdeb544d922728fd9715"
+    },
+    {
+      "path": "macro-repair/native-ancestor/original/run.log",
+      "bytes": 147,
+      "sha256": "29b2a4ed9e0747f9e057512b6b9a196c42942429189a265cc30eb2ec8305deab"
+    },
+    {
+      "path": "macro-repair/native-ancestor/original/src/lib.rs",
+      "bytes": 45,
+      "sha256": "aad199b2d47b8e17e4089c260a99773b9c8439b925ef473b7a8c0bde391fec69"
+    },
+    {
+      "path": "macro-repair/native-ancestor/original/src/owned.rs",
+      "bytes": 248,
+      "sha256": "fcd579b7b0e047db300bef6b5b1887295b105557e5c145e1c87c75b35df1bd93"
+    },
+    {
+      "path": "macro-repair/native-ancestor/provider-compile.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "macro-repair/native-ancestor/receipt.json",
+      "bytes": 336,
+      "sha256": "0531ce8bd38e573ca528f0e18505bfe406d400ff7b5ae17971f94b3e30008e40"
+    },
+    {
+      "path": "macro-repair/native-ancestor/selected-zero/compile.log",
+      "bytes": 212,
+      "sha256": "4a33858ea872151723fe4c4e125015e1a733f7fe696cfdeb544d922728fd9715"
+    },
+    {
+      "path": "macro-repair/native-ancestor/selected-zero/run.log",
+      "bytes": 147,
+      "sha256": "29b2a4ed9e0747f9e057512b6b9a196c42942429189a265cc30eb2ec8305deab"
+    },
+    {
+      "path": "macro-repair/native-ancestor/selected-zero/src/lib.rs",
+      "bytes": 45,
+      "sha256": "aad199b2d47b8e17e4089c260a99773b9c8439b925ef473b7a8c0bde391fec69"
+    },
+    {
+      "path": "macro-repair/native-ancestor/selected-zero/src/owned.rs",
+      "bytes": 246,
+      "sha256": "c6631a4d8666060760edc4ef4ee9fb0f2a90026a53dfaa9abfb5c7be8e2e748e"
+    },
+    {
+      "path": "macro-repair/native-ancestor-import-control/compile.log",
+      "bytes": 811,
+      "sha256": "6c1d85c8db5f6dc12a952ffc8668ca6ea810b3fe127e8305c912867f9df12c1a"
+    },
+    {
+      "path": "macro-repair/native-ancestor-import-control/receipt.json",
+      "bytes": 106,
+      "sha256": "1d8d7a1d787bb6b1db472069fcaab311bdf39ea28466bab9979e99f2fe8a3260"
+    },
+    {
+      "path": "macro-repair/native-ancestor-import-control/setup-error.log",
+      "bytes": 99,
+      "sha256": "ff4d4f6fe753fcbc5e86a231ea2e8eb2ab546a884d5aa7c3b545dfae4f45d6fd"
+    },
+    {
+      "path": "macro-repair/native-ancestor-import-control/src/lib.rs",
+      "bytes": 51,
+      "sha256": "8b2a1b2477c2ea7496252a5492e7400a1304f96e07b55f3f3eb738af4de6fea1"
+    },
+    {
+      "path": "macro-repair/native-ancestor-import-control/src/owned.rs",
+      "bytes": 248,
+      "sha256": "fcd579b7b0e047db300bef6b5b1887295b105557e5c145e1c87c75b35df1bd93"
+    },
+    {
+      "path": "macro-repair/native-expected/original/compile.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "macro-repair/native-expected/original/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native-expected/original/src/foreign.rs",
+      "bytes": 375,
+      "sha256": "7128c66ea8c0b3b098cf4810e9a121feab3999f6a76022c435c9d08f6a1ed898"
+    },
+    {
+      "path": "macro-repair/native-expected/original/src/lib.rs",
+      "bytes": 263,
+      "sha256": "d25eb90adb2b607143d05aadb76c32ddc420bdc666ebabd50a15013618e6683a"
+    },
+    {
+      "path": "macro-repair/native-expected/selected-zero/compile.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "macro-repair/native-expected/selected-zero/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native-expected/selected-zero/src/foreign.rs",
+      "bytes": 375,
+      "sha256": "7128c66ea8c0b3b098cf4810e9a121feab3999f6a76022c435c9d08f6a1ed898"
+    },
+    {
+      "path": "macro-repair/native-expected/selected-zero/src/lib.rs",
+      "bytes": 261,
+      "sha256": "5669333effe0fb471428ed93e4ca65650113e88a940aa208c94664682aaa00e2"
+    },
+    {
+      "path": "macro-repair/native-expected-fixture/fixed-original/compile.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "macro-repair/native-expected-fixture/fixed-original/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native-expected-fixture/fixed-original/src/foreign.rs",
+      "bytes": 375,
+      "sha256": "7128c66ea8c0b3b098cf4810e9a121feab3999f6a76022c435c9d08f6a1ed898"
+    },
+    {
+      "path": "macro-repair/native-expected-fixture/fixed-original/src/lib.rs",
+      "bytes": 303,
+      "sha256": "d6dce8b03c0a3e9d434933d27cb7a361ec6d8ff722e8a40441665862979b16de"
+    },
+    {
+      "path": "macro-repair/native-expected-fixture/fixed-selected-zero/compile.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "macro-repair/native-expected-fixture/fixed-selected-zero/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native-expected-fixture/fixed-selected-zero/src/foreign.rs",
+      "bytes": 375,
+      "sha256": "7128c66ea8c0b3b098cf4810e9a121feab3999f6a76022c435c9d08f6a1ed898"
+    },
+    {
+      "path": "macro-repair/native-expected-fixture/fixed-selected-zero/src/lib.rs",
+      "bytes": 301,
+      "sha256": "51541f61f6f94f3ccce395150ea39e8b77e58655b803108e961638e2b20671e4"
+    },
+    {
+      "path": "macro-repair/native-expected-fixture/unfixed-fixture/compile.log",
+      "bytes": 415,
+      "sha256": "ed111be5908e050ea08c10b438b251148862c003af313f59650df1bddd5c0f96"
+    },
+    {
+      "path": "macro-repair/native-expected-fixture/unfixed-fixture/src/foreign.rs",
+      "bytes": 375,
+      "sha256": "7128c66ea8c0b3b098cf4810e9a121feab3999f6a76022c435c9d08f6a1ed898"
+    },
+    {
+      "path": "macro-repair/native-expected-fixture/unfixed-fixture/src/lib.rs",
+      "bytes": 294,
+      "sha256": "db2c38ec26e253fe413e8be866957350d70adf9964f3bbde36d0a6fd957b2a0f"
+    },
+    {
+      "path": "macro-repair/native-expected-fixture-receipt.json",
+      "bytes": 379,
+      "sha256": "5356e99d65875dd194d19876c8195006dd1a63e1c19898633baddb6bcab51fbb"
+    },
+    {
+      "path": "macro-repair/native-expected-receipt.json",
+      "bytes": 336,
+      "sha256": "23bef4a83eeb4fa10a9cb6b6a731d142d818057a66cc825fbb833a1d61bb34f0"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_expected/both-zero/compile.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_expected/both-zero/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_expected/both-zero/src/foreign.rs",
+      "bytes": 375,
+      "sha256": "7128c66ea8c0b3b098cf4810e9a121feab3999f6a76022c435c9d08f6a1ed898"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_expected/both-zero/src/lib.rs",
+      "bytes": 322,
+      "sha256": "5383511db2b9dafe5ab7a08956c2e1e8f7306639e9651899ac83a48f2fc0cfd6"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_expected/local-proc/compile.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_expected/local-proc/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_expected/local-proc/src/foreign.rs",
+      "bytes": 375,
+      "sha256": "7128c66ea8c0b3b098cf4810e9a121feab3999f6a76022c435c9d08f6a1ed898"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_expected/local-proc/src/lib.rs",
+      "bytes": 333,
+      "sha256": "c5beb371639340601e3ab9f2b972a426919aadd5961584beb4b574a5d3da1fd8"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_expected/local-proc-selected-zero/compile.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_expected/local-proc-selected-zero/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_expected/local-proc-selected-zero/src/foreign.rs",
+      "bytes": 375,
+      "sha256": "7128c66ea8c0b3b098cf4810e9a121feab3999f6a76022c435c9d08f6a1ed898"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_expected/local-proc-selected-zero/src/lib.rs",
+      "bytes": 331,
+      "sha256": "74540f359aa569462523646deb1f2df606e5cd0b165afd541e3a6077ab49bc07"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_expected/original/compile.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_expected/original/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_expected/original/src/foreign.rs",
+      "bytes": 375,
+      "sha256": "7128c66ea8c0b3b098cf4810e9a121feab3999f6a76022c435c9d08f6a1ed898"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_expected/original/src/lib.rs",
+      "bytes": 324,
+      "sha256": "a53a1ff92d00ef4dd0c19acf9cde310ea0290d6342934c32b5fcafa5057b78cd"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_expected/other-zero/compile.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_expected/other-zero/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_expected/other-zero/src/foreign.rs",
+      "bytes": 375,
+      "sha256": "7128c66ea8c0b3b098cf4810e9a121feab3999f6a76022c435c9d08f6a1ed898"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_expected/other-zero/src/lib.rs",
+      "bytes": 324,
+      "sha256": "8b29cc065f79b7d9024b71d06ab332bbc63c1589f60abf3148e2f0c592214b3d"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_expected/selected-zero/compile.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_expected/selected-zero/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_expected/selected-zero/src/foreign.rs",
+      "bytes": 375,
+      "sha256": "7128c66ea8c0b3b098cf4810e9a121feab3999f6a76022c435c9d08f6a1ed898"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_expected/selected-zero/src/lib.rs",
+      "bytes": 322,
+      "sha256": "1c3cfe122bfd54824d4db5844e9e78bd05b8f7265cca14ceba32c4fea55d4946"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_scalar/both-zero/compile.log",
+      "bytes": 624,
+      "sha256": "2eede41b425e2c28da7ed26ad40ac2e89472469d17366512f3f9e89eb8b7635d"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_scalar/both-zero/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_scalar/both-zero/src/foreign.rs",
+      "bytes": 247,
+      "sha256": "30a6c7388cc5bc4dd4dc464503e2c7756f177d36cd3113eabc6eaeca58b242c7"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_scalar/both-zero/src/lib.rs",
+      "bytes": 286,
+      "sha256": "dcd4e1416077b7abd32c310cfb76d7e0006b9766b485cd0284ddcd9205621484"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_scalar/original/compile.log",
+      "bytes": 624,
+      "sha256": "2eede41b425e2c28da7ed26ad40ac2e89472469d17366512f3f9e89eb8b7635d"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_scalar/original/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_scalar/original/src/foreign.rs",
+      "bytes": 247,
+      "sha256": "30a6c7388cc5bc4dd4dc464503e2c7756f177d36cd3113eabc6eaeca58b242c7"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_scalar/original/src/lib.rs",
+      "bytes": 288,
+      "sha256": "469f7c4004354c7f4becc5c515e6dfe85420fbf7b869438ed5fd2fbc653f8a0b"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_scalar/other-zero/compile.log",
+      "bytes": 624,
+      "sha256": "2eede41b425e2c28da7ed26ad40ac2e89472469d17366512f3f9e89eb8b7635d"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_scalar/other-zero/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_scalar/other-zero/src/foreign.rs",
+      "bytes": 247,
+      "sha256": "30a6c7388cc5bc4dd4dc464503e2c7756f177d36cd3113eabc6eaeca58b242c7"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_scalar/other-zero/src/lib.rs",
+      "bytes": 288,
+      "sha256": "f66e1b1067283707a74991b8e7950e01e605fcf5922f2dccfd58cbfcad96276c"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_scalar/selected-zero/compile.log",
+      "bytes": 624,
+      "sha256": "2eede41b425e2c28da7ed26ad40ac2e89472469d17366512f3f9e89eb8b7635d"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_scalar/selected-zero/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_scalar/selected-zero/src/foreign.rs",
+      "bytes": 247,
+      "sha256": "30a6c7388cc5bc4dd4dc464503e2c7756f177d36cd3113eabc6eaeca58b242c7"
+    },
+    {
+      "path": "macro-repair/native-final-registered/whole_tail_match_macro_scalar/selected-zero/src/lib.rs",
+      "bytes": 286,
+      "sha256": "5c315fbb431fe6c3e7270d2cf4c18cb250242b7e48cef811e051d298a56fff86"
+    },
+    {
+      "path": "macro-repair/native-final-registered-receipt.json",
+      "bytes": 2169,
+      "sha256": "fe3cb328969b9fd10178e560a4ad129911c0b0685389fe788f554a9f2d1d0de0"
+    },
+    {
+      "path": "macro-repair/native-proc-local/original/compile.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "macro-repair/native-proc-local/original/lib.rs",
+      "bytes": 271,
+      "sha256": "0592c3c440d1b8a54fbbf7ca935bde02f794c386910b4ebd18b15c5eb8779193"
+    },
+    {
+      "path": "macro-repair/native-proc-local/original/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native-proc-local/provider-compile.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "macro-repair/native-proc-local/receipt.json",
+      "bytes": 158,
+      "sha256": "25de0f371c9ba4b3318c1bb7b8b97f35d3f28d1ba673c7ebd241fc1c66780893"
+    },
+    {
+      "path": "macro-repair/native-proc-local/selected-zero/compile.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "macro-repair/native-proc-local/selected-zero/lib.rs",
+      "bytes": 269,
+      "sha256": "980d48d214c895e26c6344b5fcc451a21106bdc602acd2ac40d75b00e6461ff5"
+    },
+    {
+      "path": "macro-repair/native-proc-local/selected-zero/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native-receipt.json",
+      "bytes": 667,
+      "sha256": "eef6b22569010a9dcf245b0bb55bf1a24bd447feb06fa9f60997d5ae2f73f666"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_expected/local-proc/compile.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_expected/local-proc/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_expected/local-proc/src/foreign.rs",
+      "bytes": 375,
+      "sha256": "7128c66ea8c0b3b098cf4810e9a121feab3999f6a76022c435c9d08f6a1ed898"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_expected/local-proc/src/lib.rs",
+      "bytes": 312,
+      "sha256": "2c803dfc13530463dd3ba39c31a72140ca1d186810ed62703de41dee4b3411cc"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_expected/local-proc-selected-zero/compile.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_expected/local-proc-selected-zero/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_expected/local-proc-selected-zero/src/foreign.rs",
+      "bytes": 375,
+      "sha256": "7128c66ea8c0b3b098cf4810e9a121feab3999f6a76022c435c9d08f6a1ed898"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_expected/local-proc-selected-zero/src/lib.rs",
+      "bytes": 310,
+      "sha256": "475e2ccb1e4eec459e33b083d39a43b66439cb6872844655f7bc32d71a7f30e8"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_expected/original/compile.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_expected/original/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_expected/original/src/foreign.rs",
+      "bytes": 375,
+      "sha256": "7128c66ea8c0b3b098cf4810e9a121feab3999f6a76022c435c9d08f6a1ed898"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_expected/original/src/lib.rs",
+      "bytes": 303,
+      "sha256": "d6dce8b03c0a3e9d434933d27cb7a361ec6d8ff722e8a40441665862979b16de"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_expected/selected-zero/compile.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_expected/selected-zero/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_expected/selected-zero/src/foreign.rs",
+      "bytes": 375,
+      "sha256": "7128c66ea8c0b3b098cf4810e9a121feab3999f6a76022c435c9d08f6a1ed898"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_expected/selected-zero/src/lib.rs",
+      "bytes": 301,
+      "sha256": "51541f61f6f94f3ccce395150ea39e8b77e58655b803108e961638e2b20671e4"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_scalar/both-zero/compile.log",
+      "bytes": 624,
+      "sha256": "2eede41b425e2c28da7ed26ad40ac2e89472469d17366512f3f9e89eb8b7635d"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_scalar/both-zero/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_scalar/both-zero/src/foreign.rs",
+      "bytes": 247,
+      "sha256": "30a6c7388cc5bc4dd4dc464503e2c7756f177d36cd3113eabc6eaeca58b242c7"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_scalar/both-zero/src/lib.rs",
+      "bytes": 286,
+      "sha256": "dcd4e1416077b7abd32c310cfb76d7e0006b9766b485cd0284ddcd9205621484"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_scalar/original/compile.log",
+      "bytes": 624,
+      "sha256": "2eede41b425e2c28da7ed26ad40ac2e89472469d17366512f3f9e89eb8b7635d"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_scalar/original/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_scalar/original/src/foreign.rs",
+      "bytes": 247,
+      "sha256": "30a6c7388cc5bc4dd4dc464503e2c7756f177d36cd3113eabc6eaeca58b242c7"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_scalar/original/src/lib.rs",
+      "bytes": 288,
+      "sha256": "469f7c4004354c7f4becc5c515e6dfe85420fbf7b869438ed5fd2fbc653f8a0b"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_scalar/other-zero/compile.log",
+      "bytes": 624,
+      "sha256": "2eede41b425e2c28da7ed26ad40ac2e89472469d17366512f3f9e89eb8b7635d"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_scalar/other-zero/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_scalar/other-zero/src/foreign.rs",
+      "bytes": 247,
+      "sha256": "30a6c7388cc5bc4dd4dc464503e2c7756f177d36cd3113eabc6eaeca58b242c7"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_scalar/other-zero/src/lib.rs",
+      "bytes": 288,
+      "sha256": "f66e1b1067283707a74991b8e7950e01e605fcf5922f2dccfd58cbfcad96276c"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_scalar/selected-zero/compile.log",
+      "bytes": 624,
+      "sha256": "2eede41b425e2c28da7ed26ad40ac2e89472469d17366512f3f9e89eb8b7635d"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_scalar/selected-zero/run.log",
+      "bytes": 140,
+      "sha256": "933cd4da3232c6e7cacd8f9489e5992c0e9252235a7558e953bc511df0c1bf6e"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_scalar/selected-zero/src/foreign.rs",
+      "bytes": 247,
+      "sha256": "30a6c7388cc5bc4dd4dc464503e2c7756f177d36cd3113eabc6eaeca58b242c7"
+    },
+    {
+      "path": "macro-repair/native-registered/whole_tail_match_macro_scalar/selected-zero/src/lib.rs",
+      "bytes": 286,
+      "sha256": "5c315fbb431fe6c3e7270d2cf4c18cb250242b7e48cef811e051d298a56fff86"
+    },
+    {
+      "path": "macro-repair/native-registered-receipt.json",
+      "bytes": 1738,
+      "sha256": "2cbffaf71ec6cf019cef2c2c56e7bd5db5685584aa19360232a6dbdc75ba9596"
+    },
+    {
+      "path": "macro-repair/precommit-final.log",
+      "bytes": 42510,
+      "sha256": "5814b6e8be547051bdb5db8e9a8775998f02f038421db7b23a269cc63d110235"
+    },
+    {
+      "path": "macro-repair/publish_repair_evidence.py",
+      "bytes": 2268,
+      "sha256": "3f7f62524f0c5101ae602d9a82ec3664dac90d50f24ebda8741ed2983fb58b0d"
+    },
+    {
+      "path": "macro-repair/red.json",
+      "bytes": 21205,
+      "sha256": "9d606d952eb5e8523e8485b2d8453302b9450fdbf953d52802fee72f156407f0"
+    },
+    {
+      "path": "macro-repair/red.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-repair/repro/Cargo.toml",
+      "bytes": 96,
+      "sha256": "8b84726530139bbe7bb1b4bd1fe5ffbc5b97546d5356bccbe3d774b5da388dc1"
+    },
+    {
+      "path": "macro-repair/repro/input.diff",
+      "bytes": 319,
+      "sha256": "08a067048cf603f230bd508449c8360aea685c82fb586d935f06c8175d7a7cba"
+    },
+    {
+      "path": "macro-repair/repro/src/foreign.rs",
+      "bytes": 247,
+      "sha256": "30a6c7388cc5bc4dd4dc464503e2c7756f177d36cd3113eabc6eaeca58b242c7"
+    },
+    {
+      "path": "macro-repair/repro/src/lib.rs",
+      "bytes": 257,
+      "sha256": "84da46ed7a6a7cd4aeed9a96f65200dadad28d8bd200c38fa96369f4061f5f57"
+    },
+    {
+      "path": "macro-repair/resource-admission.txt",
+      "bytes": 800,
+      "sha256": "8383c5cfe0df08411faf84453e79360d6c9fcf6a27df20ceec8876c345cf974b"
+    },
+    {
+      "path": "macro-repair/resource-closeout.json",
+      "bytes": 602,
+      "sha256": "3209b0d652e0430342ad67a58c23a41dcd31b19b42dc458356b57750d12df1d5"
+    },
+    {
+      "path": "macro-repair/review-request.md",
+      "bytes": 9680,
+      "sha256": "afd17ee8c945056cab2a0a9e061dd6e21ec569f769f89b9b7fef57de5726938e"
+    },
+    {
+      "path": "macro-repair/transport-recovery.json",
+      "bytes": 471,
+      "sha256": "9fab83a205b77761d8fac200b427aa687cd37b6c147095baeb436943b5a57419"
+    },
+    {
+      "path": "macro-repair/validate_656.py",
+      "bytes": 2611,
+      "sha256": "ce5b0dcc7c1987513db1224d503181ac8583b3e3cec9b44d3f785b07612e823a"
+    },
+    {
+      "path": "macro-repair/validate_final.py",
+      "bytes": 2589,
+      "sha256": "910dffeebccea2055393707dc259c5e02c1e86ed35b4356dcc32ef5bfd374762"
+    },
+    {
+      "path": "macro-repair/validation-state.json",
+      "bytes": 1053,
+      "sha256": "efc2b6b518551a263b14d17a42fa24b84862f987952d749d2142e5fbcb56ce01"
+    },
+    {
+      "path": "macro-repair/validation-terminal.json",
+      "bytes": 1162,
+      "sha256": "f0ccdcd4626432f97d9295b819a3ddf861b8afe29a2a87adc8b38e8256adde32"
+    },
+    {
+      "path": "macro-repair/whole_tail_match_macro_expected-restored-gate-final.log",
+      "bytes": 211,
+      "sha256": "022c304765dca9ee1162bb57da151e213b7b90f14f1ae0d5e7df6ec6d2f4bae5"
+    },
+    {
+      "path": "macro-repair/whole_tail_match_macro_expected-restored-gate.log",
+      "bytes": 211,
+      "sha256": "022c304765dca9ee1162bb57da151e213b7b90f14f1ae0d5e7df6ec6d2f4bae5"
+    },
+    {
+      "path": "macro-repair/whole_tail_match_macro_expected-wrong-gate-final.log",
+      "bytes": 364,
+      "sha256": "4e35500eabd0d1b8b6ce4317c7854c09b9d69e7c87f07da473e821a7a6a7d46c"
+    },
+    {
+      "path": "macro-repair/whole_tail_match_macro_expected-wrong-gate.log",
+      "bytes": 211,
+      "sha256": "022c304765dca9ee1162bb57da151e213b7b90f14f1ae0d5e7df6ec6d2f4bae5"
+    },
+    {
+      "path": "macro-repair/whole_tail_match_macro_scalar-restored-gate-final.log",
+      "bytes": 211,
+      "sha256": "022c304765dca9ee1162bb57da151e213b7b90f14f1ae0d5e7df6ec6d2f4bae5"
+    },
+    {
+      "path": "macro-repair/whole_tail_match_macro_scalar-restored-gate.log",
+      "bytes": 211,
+      "sha256": "022c304765dca9ee1162bb57da151e213b7b90f14f1ae0d5e7df6ec6d2f4bae5"
+    },
+    {
+      "path": "macro-repair/whole_tail_match_macro_scalar-wrong-gate-final.log",
+      "bytes": 360,
+      "sha256": "744680d9ef03b2671757e4237432d99dbf0a76ae69009e5addacda4f5f02ff3e"
+    },
+    {
+      "path": "macro-repair/whole_tail_match_macro_scalar-wrong-gate.log",
+      "bytes": 360,
+      "sha256": "744680d9ef03b2671757e4237432d99dbf0a76ae69009e5addacda4f5f02ff3e"
+    },
+    {
+      "path": "macro-independent/14554-arm_return.json",
+      "bytes": 25655,
+      "sha256": "a21cdd69c35a39e368332764ded0954950b5e7d12a7a782b37a137ac9b81f525"
+    },
+    {
+      "path": "macro-independent/14554-arm_return.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/14554-binding_multiline.json",
+      "bytes": 21623,
+      "sha256": "0d8c3f3e2b0f47cbe9dc25c1a386dd8f80628156ff98df5a1179d3c92b9904af"
+    },
+    {
+      "path": "macro-independent/14554-binding_multiline.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/14554-binding_same_line.json",
+      "bytes": 22788,
+      "sha256": "1a23b3d3a6f71d052258f0290b978f2872cf636204aa941afbb33f0d801fc2e0"
+    },
+    {
+      "path": "macro-independent/14554-binding_same_line.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/14554-comment_string_words.json",
+      "bytes": 20343,
+      "sha256": "a9fd159bf53e418e6091b101596fb11211c0ab9a9c31167e8de706268ff60e80"
+    },
+    {
+      "path": "macro-independent/14554-comment_string_words.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/14554-literal_expected_wrong.json",
+      "bytes": 20359,
+      "sha256": "d6b735dd58feed06308c5fbd37bd8cb5148788b35a92d984135528a4c84df2b0"
+    },
+    {
+      "path": "macro-independent/14554-literal_expected_wrong.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/14554-localmacro.json",
+      "bytes": 16041,
+      "sha256": "e77b5870bc31f98e0a131e81c781af931b5adb21145d412519bc4e615840ada2"
+    },
+    {
+      "path": "macro-independent/14554-localmacro.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/14554-localproc.json",
+      "bytes": 16089,
+      "sha256": "18d2f1af2d79bfc2d319911a1afc7bd8f57247719a1041c1c080297561e84009"
+    },
+    {
+      "path": "macro-independent/14554-localproc.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/14554-macro_max.json",
+      "bytes": 23309,
+      "sha256": "03b01dc3787be3de7dee05760069381b647e99f3ccbac3a3a3b3d3207c2148f8"
+    },
+    {
+      "path": "macro-independent/14554-macro_max.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/14554-macro_max_wrong.json",
+      "bytes": 23357,
+      "sha256": "74850ceabf7685d33fbcd7491b2db339df410efadd1c5a43d9165dc265cb3dd1"
+    },
+    {
+      "path": "macro-independent/14554-macro_max_wrong.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/14554-macro_scrutinee.json",
+      "bytes": 35309,
+      "sha256": "315568b0c4d855ccdd7392272d0c347ce1eae9ece6aa829490967eea82b15918"
+    },
+    {
+      "path": "macro-independent/14554-macro_scrutinee.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/14554-moduleMAX.json",
+      "bytes": 16502,
+      "sha256": "cda66e9f095547b127fa4cc92c4661fce9812aaf23723ccd15c64ff069fec7fa"
+    },
+    {
+      "path": "macro-independent/14554-moduleMAX.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/14554-non_tail.json",
+      "bytes": 24976,
+      "sha256": "a61d47c80ee3c001fda90a989e83094d5b7aca598ea22a32402455177f7261c0"
+    },
+    {
+      "path": "macro-independent/14554-non_tail.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/14554-positive.json",
+      "bytes": 20247,
+      "sha256": "7c4c344bb9302b4edbfc53ae26fbc8cd4d70e605a7fbc09aefe46197589643a6"
+    },
+    {
+      "path": "macro-independent/14554-positive.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/14554-registered_MAX.json",
+      "bytes": 25094,
+      "sha256": "2f8380fbeb0f216dbcd17850689e95c32ed212fd13e6d4e916e05ec9b892138e"
+    },
+    {
+      "path": "macro-independent/14554-registered_MAX.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/14554-registered_scalar.json",
+      "bytes": 24454,
+      "sha256": "ef47720142196bb1b901070697eebdb571495defd0f4233bbd770b13998d8389"
+    },
+    {
+      "path": "macro-independent/14554-registered_scalar.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/14554-rootmacro.json",
+      "bytes": 21492,
+      "sha256": "9020271c1739c4a66d82c2fb145ee7523fd062734863af8e8f9287947f8dd6a2"
+    },
+    {
+      "path": "macro-independent/14554-rootmacro.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/14554-scrutinee_both-zero.json",
+      "bytes": 24930,
+      "sha256": "b606d571ec0263db52796ceccab244e3a8ef2188a95b1587977d0e9875820c7c"
+    },
+    {
+      "path": "macro-independent/14554-scrutinee_both-zero.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/14554-scrutinee_none-zero.json",
+      "bytes": 24930,
+      "sha256": "26bd2cd9d7e0f680376573502d1c998390b52f60e7da425879f9791ccc619238"
+    },
+    {
+      "path": "macro-independent/14554-scrutinee_none-zero.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/14554-scrutinee_return.json",
+      "bytes": 24906,
+      "sha256": "dac0577095883879b0d5c0a7475c815b29cbbb3f10e43b82a4fc7201d94a68f1"
+    },
+    {
+      "path": "macro-independent/14554-scrutinee_return.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/14554-scrutinee_some-zero.json",
+      "bytes": 24930,
+      "sha256": "75cb602bcde3bad91980bfca244e80a77aa12897ae27cf1b4db5d1c85605c842"
+    },
+    {
+      "path": "macro-independent/14554-scrutinee_some-zero.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/656final-ancestor_original.json",
+      "bytes": 22245,
+      "sha256": "edd21c8c93389b4645ea278e9039a2c3b336c73144bb931ac6707695ab23e727"
+    },
+    {
+      "path": "macro-independent/656final-ancestor_original.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/656final-ancestor_primitive_positive.json",
+      "bytes": 21950,
+      "sha256": "54cef89632fa8131cbd2deb8c8b7d179223ab9b33418b31384e65dc2dc2e3455"
+    },
+    {
+      "path": "macro-independent/656final-ancestor_primitive_positive.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/656final-ancestor_root_tests.json",
+      "bytes": 20615,
+      "sha256": "e6dcb774347aa366bce109873efef101f770d26f9bbd78739c2798fdcb9cd528"
+    },
+    {
+      "path": "macro-independent/656final-ancestor_root_tests.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/656final-arm_return.json",
+      "bytes": 25655,
+      "sha256": "a21cdd69c35a39e368332764ded0954950b5e7d12a7a782b37a137ac9b81f525"
+    },
+    {
+      "path": "macro-independent/656final-arm_return.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/656final-binding_multiline.json",
+      "bytes": 21623,
+      "sha256": "0d8c3f3e2b0f47cbe9dc25c1a386dd8f80628156ff98df5a1179d3c92b9904af"
+    },
+    {
+      "path": "macro-independent/656final-binding_multiline.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/656final-binding_same_line.json",
+      "bytes": 22788,
+      "sha256": "1a23b3d3a6f71d052258f0290b978f2872cf636204aa941afbb33f0d801fc2e0"
+    },
+    {
+      "path": "macro-independent/656final-binding_same_line.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/656final-comment_string_words.json",
+      "bytes": 20343,
+      "sha256": "a9fd159bf53e418e6091b101596fb11211c0ab9a9c31167e8de706268ff60e80"
+    },
+    {
+      "path": "macro-independent/656final-comment_string_words.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/656final-literal_expected_wrong.json",
+      "bytes": 20359,
+      "sha256": "d6b735dd58feed06308c5fbd37bd8cb5148788b35a92d984135528a4c84df2b0"
+    },
+    {
+      "path": "macro-independent/656final-literal_expected_wrong.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/656final-localmacro.json",
+      "bytes": 16041,
+      "sha256": "e77b5870bc31f98e0a131e81c781af931b5adb21145d412519bc4e615840ada2"
+    },
+    {
+      "path": "macro-independent/656final-localmacro.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/656final-localproc.json",
+      "bytes": 16089,
+      "sha256": "18d2f1af2d79bfc2d319911a1afc7bd8f57247719a1041c1c080297561e84009"
+    },
+    {
+      "path": "macro-independent/656final-localproc.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/656final-macro_max.json",
+      "bytes": 23309,
+      "sha256": "03b01dc3787be3de7dee05760069381b647e99f3ccbac3a3a3b3d3207c2148f8"
+    },
+    {
+      "path": "macro-independent/656final-macro_max.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/656final-macro_max_wrong.json",
+      "bytes": 23357,
+      "sha256": "74850ceabf7685d33fbcd7491b2db339df410efadd1c5a43d9165dc265cb3dd1"
+    },
+    {
+      "path": "macro-independent/656final-macro_max_wrong.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/656final-macro_scrutinee.json",
+      "bytes": 35309,
+      "sha256": "315568b0c4d855ccdd7392272d0c347ce1eae9ece6aa829490967eea82b15918"
+    },
+    {
+      "path": "macro-independent/656final-macro_scrutinee.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/656final-moduleMAX.json",
+      "bytes": 16502,
+      "sha256": "cda66e9f095547b127fa4cc92c4661fce9812aaf23723ccd15c64ff069fec7fa"
+    },
+    {
+      "path": "macro-independent/656final-moduleMAX.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/656final-non_tail.json",
+      "bytes": 24976,
+      "sha256": "a61d47c80ee3c001fda90a989e83094d5b7aca598ea22a32402455177f7261c0"
+    },
+    {
+      "path": "macro-independent/656final-non_tail.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/656final-positive.json",
+      "bytes": 20247,
+      "sha256": "7c4c344bb9302b4edbfc53ae26fbc8cd4d70e605a7fbc09aefe46197589643a6"
+    },
+    {
+      "path": "macro-independent/656final-positive.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/656final-registered_MAX.json",
+      "bytes": 25094,
+      "sha256": "2f8380fbeb0f216dbcd17850689e95c32ed212fd13e6d4e916e05ec9b892138e"
+    },
+    {
+      "path": "macro-independent/656final-registered_MAX.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/656final-registered_scalar.json",
+      "bytes": 24454,
+      "sha256": "ef47720142196bb1b901070697eebdb571495defd0f4233bbd770b13998d8389"
+    },
+    {
+      "path": "macro-independent/656final-registered_scalar.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/656final-rootmacro.json",
+      "bytes": 21492,
+      "sha256": "9020271c1739c4a66d82c2fb145ee7523fd062734863af8e8f9287947f8dd6a2"
+    },
+    {
+      "path": "macro-independent/656final-rootmacro.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/656final-scrutinee_both-zero.json",
+      "bytes": 24930,
+      "sha256": "b606d571ec0263db52796ceccab244e3a8ef2188a95b1587977d0e9875820c7c"
+    },
+    {
+      "path": "macro-independent/656final-scrutinee_both-zero.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/656final-scrutinee_none-zero.json",
+      "bytes": 24930,
+      "sha256": "26bd2cd9d7e0f680376573502d1c998390b52f60e7da425879f9791ccc619238"
+    },
+    {
+      "path": "macro-independent/656final-scrutinee_none-zero.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/656final-scrutinee_return.json",
+      "bytes": 24906,
+      "sha256": "dac0577095883879b0d5c0a7475c815b29cbbb3f10e43b82a4fc7201d94a68f1"
+    },
+    {
+      "path": "macro-independent/656final-scrutinee_return.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/656final-scrutinee_some-zero.json",
+      "bytes": 24930,
+      "sha256": "75cb602bcde3bad91980bfca244e80a77aa12897ae27cf1b4db5d1c85605c842"
+    },
+    {
+      "path": "macro-independent/656final-scrutinee_some-zero.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/ancestor-macro-use/Cargo.toml",
+      "bytes": 79,
+      "sha256": "01d50f3e5ffc9d305113746d60db296ca272d0ef650d3887d41d3357ca7a06d2"
+    },
+    {
+      "path": "macro-independent/ancestor-macro-use/input.diff",
+      "bytes": 201,
+      "sha256": "76e42a4fb3a1a8019b92ba9be5241d3591a6978fc5b1f3670dbcc282ccdaa25c"
+    },
+    {
+      "path": "macro-independent/ancestor-macro-use/src/lib.rs",
+      "bytes": 156,
+      "sha256": "0154882e0bb8db8744bd4073a683a372540c9dd0eb4781278a1c0155e9404dcb"
+    },
+    {
+      "path": "macro-independent/ancestor-macro-use/src/owned.rs",
+      "bytes": 144,
+      "sha256": "63ce5b81f2f19abfebc5039874a56c1cabda23c2ef66c3ecdf9db9c017b53950"
+    },
+    {
+      "path": "macro-independent/ancestor-macro-use-local-tests/Cargo.toml",
+      "bytes": 77,
+      "sha256": "30739caa7cdeb76811ffdf1edf43a27ce43d977186cc812496091d03dd5d1c83"
+    },
+    {
+      "path": "macro-independent/ancestor-macro-use-local-tests/input.diff",
+      "bytes": 311,
+      "sha256": "396e7e528f51a9568dd38c43fdf81738c3f5de9d818cca59385a33d3ef4aaff7"
+    },
+    {
+      "path": "macro-independent/ancestor-macro-use-local-tests/opaque.rs",
+      "bytes": 463,
+      "sha256": "78fca7367f94d0cb7630469c8883957081c6428d21abfb441dcda7e040e55905"
+    },
+    {
+      "path": "macro-independent/ancestor-macro-use-local-tests/src/lib.rs",
+      "bytes": 45,
+      "sha256": "aad199b2d47b8e17e4089c260a99773b9c8439b925ef473b7a8c0bde391fec69"
+    },
+    {
+      "path": "macro-independent/ancestor-macro-use-local-tests/src/owned.rs",
+      "bytes": 248,
+      "sha256": "fcd579b7b0e047db300bef6b5b1887295b105557e5c145e1c87c75b35df1bd93"
+    },
+    {
+      "path": "macro-independent/ancestor-macro-use-local-tests.json",
+      "bytes": 21958,
+      "sha256": "f618c6fe2b917ba8651416596093df496824a7bfd176ba579d16cda8c29bf2f9"
+    },
+    {
+      "path": "macro-independent/ancestor-macro-use-local-tests.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/ancestor-macro-use.json",
+      "bytes": 20615,
+      "sha256": "e6dcb774347aa366bce109873efef101f770d26f9bbd78739c2798fdcb9cd528"
+    },
+    {
+      "path": "macro-independent/ancestor-macro-use.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/ancestor-positive/Cargo.toml",
+      "bytes": 77,
+      "sha256": "30739caa7cdeb76811ffdf1edf43a27ce43d977186cc812496091d03dd5d1c83"
+    },
+    {
+      "path": "macro-independent/ancestor-positive/input.diff",
+      "bytes": 191,
+      "sha256": "31e0608c96604a86f6770ba5f6b1d77944c18b630e203591966cb7ee65358d42"
+    },
+    {
+      "path": "macro-independent/ancestor-positive/src/lib.rs",
+      "bytes": 122,
+      "sha256": "d87ace4621a8c1b018a080d88daf1079216ed75404f7b2de189e7188df190a01"
+    },
+    {
+      "path": "macro-independent/ancestor-positive/src/owned.rs",
+      "bytes": 134,
+      "sha256": "ecd22a477e3b17492b6fb7672bfe527332fbaf8f557d90198c79d11c243db0a0"
+    },
+    {
+      "path": "macro-independent/ancestor-positive-local-tests/Cargo.toml",
+      "bytes": 77,
+      "sha256": "30739caa7cdeb76811ffdf1edf43a27ce43d977186cc812496091d03dd5d1c83"
+    },
+    {
+      "path": "macro-independent/ancestor-positive-local-tests/input.diff",
+      "bytes": 301,
+      "sha256": "2c3d7c416ed608422378fae0bce4709af7cadd72aec30fad03d063c1fe9e1979"
+    },
+    {
+      "path": "macro-independent/ancestor-positive-local-tests/src/lib.rs",
+      "bytes": 11,
+      "sha256": "dcfc6ef2f9ff5a8c952a3c6e7a2a20c1ce3e22cf854afaeab35481eb20ee1b51"
+    },
+    {
+      "path": "macro-independent/ancestor-positive-local-tests/src/owned.rs",
+      "bytes": 238,
+      "sha256": "0b606632585dc47bfa66b5a66f7be2089aa2977cb5ee5e1a1e1511d832a04e09"
+    },
+    {
+      "path": "macro-independent/ancestor-positive-local-tests.json",
+      "bytes": 21950,
+      "sha256": "54cef89632fa8131cbd2deb8c8b7d179223ab9b33418b31384e65dc2dc2e3455"
+    },
+    {
+      "path": "macro-independent/ancestor-positive-local-tests.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/ancestor-positive.json",
+      "bytes": 20607,
+      "sha256": "60277472a1e2011282be346f843e1b33f9278161d16d6c549412306b25218e01"
+    },
+    {
+      "path": "macro-independent/ancestor-positive.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/check-final-controls.py",
+      "bytes": 2800,
+      "sha256": "7ba42193cd14d70b8e06e54814cff54ab3e1faf91daffa5060cae4d93c60e1ed"
+    },
+    {
+      "path": "macro-independent/check-successor-controls.py",
+      "bytes": 3176,
+      "sha256": "d83afe78799391755a360190e0a582896e4c2156c88df42139ef1b53a75606a1"
+    },
+    {
+      "path": "macro-independent/dfec-cli-review-receipt.json",
+      "bytes": 1014,
+      "sha256": "a74d973771eee7cfac68d86dc765a0e2eb21aeddb6e48df7bde2189418bd1119"
+    },
+    {
+      "path": "macro-independent/dfec-localmacro.json",
+      "bytes": 16041,
+      "sha256": "e77b5870bc31f98e0a131e81c781af931b5adb21145d412519bc4e615840ada2"
+    },
+    {
+      "path": "macro-independent/dfec-localmacro.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/dfec-localproc.json",
+      "bytes": 16089,
+      "sha256": "18d2f1af2d79bfc2d319911a1afc7bd8f57247719a1041c1c080297561e84009"
+    },
+    {
+      "path": "macro-independent/dfec-localproc.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/dfec-moduleMAX.json",
+      "bytes": 16502,
+      "sha256": "cda66e9f095547b127fa4cc92c4661fce9812aaf23723ccd15c64ff069fec7fa"
+    },
+    {
+      "path": "macro-independent/dfec-moduleMAX.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/dfec-positive.json",
+      "bytes": 20247,
+      "sha256": "7c4c344bb9302b4edbfc53ae26fbc8cd4d70e605a7fbc09aefe46197589643a6"
+    },
+    {
+      "path": "macro-independent/dfec-positive.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/dfec-rootmacro.json",
+      "bytes": 21492,
+      "sha256": "9020271c1739c4a66d82c2fb145ee7523fd062734863af8e8f9287947f8dd6a2"
+    },
+    {
+      "path": "macro-independent/dfec-rootmacro.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/expected-identity/Cargo.toml",
+      "bytes": 78,
+      "sha256": "781828ed9d93ec195df4b4cf54b599b9b8c80bb762186e2f6acf78824fadcddf"
+    },
+    {
+      "path": "macro-independent/expected-identity/input.diff",
+      "bytes": 325,
+      "sha256": "9bce5e8319a81e958889fdb774538e8c4b1defe21fc101d161a168d893542f82"
+    },
+    {
+      "path": "macro-independent/expected-identity/src/foreign.rs",
+      "bytes": 375,
+      "sha256": "7128c66ea8c0b3b098cf4810e9a121feab3999f6a76022c435c9d08f6a1ed898"
+    },
+    {
+      "path": "macro-independent/expected-identity/src/lib.rs",
+      "bytes": 263,
+      "sha256": "d25eb90adb2b607143d05aadb76c32ddc420bdc666ebabd50a15013618e6683a"
+    },
+    {
+      "path": "macro-independent/expected-identity-predecessor.json",
+      "bytes": 16215,
+      "sha256": "b2d8f56e568004281c7e4090367fed446147763d23f05f5d2c84b2900a20bd20"
+    },
+    {
+      "path": "macro-independent/expected-identity-predecessor.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/expected-proc-local/Cargo.toml",
+      "bytes": 80,
+      "sha256": "49c46a88e9c35439c4cd62a5c7d96c5631b082500b756e1701cc8d26a820421e"
+    },
+    {
+      "path": "macro-independent/expected-proc-local/input.diff",
+      "bytes": 334,
+      "sha256": "130af01f526441b412a43dfe7a4f1367825ac1571021666522665b649ce7ded3"
+    },
+    {
+      "path": "macro-independent/expected-proc-local/opaque.rs",
+      "bytes": 420,
+      "sha256": "4fff7b8c00f4e5b15a7c0df7383c346bd161e01b635f11dacf3f63af3bc0428a"
+    },
+    {
+      "path": "macro-independent/expected-proc-local/src/lib.rs",
+      "bytes": 271,
+      "sha256": "0592c3c440d1b8a54fbbf7ca935bde02f794c386910b4ebd18b15c5eb8779193"
+    },
+    {
+      "path": "macro-independent/expected-proc-local-predecessor.json",
+      "bytes": 15802,
+      "sha256": "c13143e57aea5eb034996dc45da8b542490af576f3ebee7a57318a547a79be99"
+    },
+    {
+      "path": "macro-independent/expected-proc-local-predecessor.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/final-MAX-dfec.json",
+      "bytes": 25094,
+      "sha256": "2f8380fbeb0f216dbcd17850689e95c32ed212fd13e6d4e916e05ec9b892138e"
+    },
+    {
+      "path": "macro-independent/final-MAX-dfec.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/final-MAX-predecessor.json",
+      "bytes": 23944,
+      "sha256": "4ab1626e31def536c7c65fbed05000fc5221d5c544037b08c078228011ee1baa"
+    },
+    {
+      "path": "macro-independent/final-MAX-predecessor.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/final-scalar-dfec.json",
+      "bytes": 24454,
+      "sha256": "ef47720142196bb1b901070697eebdb571495defd0f4233bbd770b13998d8389"
+    },
+    {
+      "path": "macro-independent/final-scalar-dfec.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/final-scalar-predecessor.json",
+      "bytes": 24167,
+      "sha256": "f9e26c0c91167a2ff92b996c4635a7d1dd6ee641fdab50b5e8b994e6aa63293c"
+    },
+    {
+      "path": "macro-independent/final-scalar-predecessor.stderr",
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    {
+      "path": "macro-independent/final14554-cli-review-receipt.json",
+      "bytes": 10775,
+      "sha256": "b0ec14f54aab89b062bb69de71063384cb534ed791200465d72aabb23f58052c"
+    },
+    {
+      "path": "macro-independent/final656final-cli-review-receipt.json",
+      "bytes": 12451,
+      "sha256": "04f4c12fd2bf21eaacc35ae7690fa08f7f2a5eda94d13451fca00729325e70b8"
+    }
+  ],
+  "retention": "All text copied; binaries and mutable caches/targets/labs retained locally. No destructive cleanup.",
+  "claim_boundary": "Exact local source proof and unchanged consumer inventory. No installed/hosted/Ready/merge/release claim."
+}

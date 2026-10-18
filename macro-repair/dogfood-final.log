@@ -1,0 +1,6 @@
+    Finished `dev` profile [unoptimized] target(s) in 0.18s
+     Running `/workspace/5500-target/debug/xtask dogfood`
+$ cargo build -p ripr
+    Finished `dev` profile [unoptimized] target(s) in 0.14s
+$ CARGO_HOME=/workspace/.cargo RUSTUP_TOOLCHAIN=1.95.0 RUSTUP_HOME=/workspace/.rustup cargo build -p ripr
+    Finished `dev` profile [unoptimized] target(s) in 0.12s

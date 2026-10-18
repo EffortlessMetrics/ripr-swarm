@@ -1,0 +1,750 @@
+{
+  "schema_version": "0.2",
+  "composition": "local_precommit",
+  "status": "pass",
+  "failure_kind": null,
+  "repository_root": "$REPO",
+  "head_sha": "656d6d7effb51a888c4b627e2a0cd44c3bbd37ef",
+  "merge_base_ref": "origin/main",
+  "merge_base_sha": "ddfa2a138ae816cdd46e639c532900d2abe60b27",
+  "change_set": {
+    "changes": [
+      {
+        "kind": "added",
+        "path": "changelog.d/5500-helper-mutable-field-selector.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "changelog.d/5500-whole-tail-match-observation.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "crates/ripr/src/analysis/classify/owner_pin/whole_tail_match.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "crates/ripr/src/analysis/value_resolution/option_field.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "crates/ripr/tests/whole_tail_match_observation.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_mutable/SPEC.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_mutable/diff.patch",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_mutable/expected/CHANGELOG.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_mutable/expected/check.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_mutable/expected/human-full.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_mutable/expected/human.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_mutable/input/Cargo.toml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_mutable/input/src/lib.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_taken/SPEC.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_taken/diff.patch",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_taken/expected/CHANGELOG.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_taken/expected/check.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_taken/expected/human-full.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_taken/expected/human.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_taken/input/Cargo.toml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_taken/input/src/lib.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_macro_expected/SPEC.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_macro_expected/diff.patch",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_macro_expected/expected/CHANGELOG.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_macro_expected/expected/check.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_macro_expected/expected/human.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_macro_expected/input/Cargo.toml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_macro_expected/input/src/foreign.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_macro_expected/input/src/lib.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_macro_expected/proc-control/Cargo.toml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_macro_expected/proc-control/src/lib.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_macro_scalar/SPEC.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_macro_scalar/ancestor-control/opaque.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_macro_scalar/ancestor-control/src/lib.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_macro_scalar/ancestor-control/src/owned.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_macro_scalar/diff.patch",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_macro_scalar/expected/CHANGELOG.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_macro_scalar/expected/check.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_macro_scalar/expected/human.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_macro_scalar/input/Cargo.toml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_macro_scalar/input/src/foreign.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_macro_scalar/input/src/lib.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_scrutinee_return/SPEC.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_scrutinee_return/diff.patch",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_scrutinee_return/expected/CHANGELOG.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_scrutinee_return/expected/check.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_scrutinee_return/expected/human.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_scrutinee_return/input/Cargo.toml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_scrutinee_return/input/src/lib.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": ".ripr/traceability.toml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/classifier.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/classifier/evidence.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/classify/arm_selection.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/classify/arm_selection/field_selector.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/classify/context.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/classify/mod.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/classify/owner_pin.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/classify/related_tests.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/classify/reveal.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/language/rust/mod.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/probes/propagation_boundary_tests.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/seam_cache.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/syntax/mod.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/syntax/owner_pin.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/value_resolution.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/value_resolution/tests.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/tests/field_match_selector.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "docs/OUTPUT_SCHEMA.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "docs/specs/RIPR-SPEC-0229-match-arm-selection-discriminator.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "fixtures/evidence-promotion-honesty-corpus/corpus.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "xtask/src/tests/rust_corpus_projection.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      }
+    ],
+    "complete": true,
+    "limitations": []
+  },
+  "impact_plan": {
+    "impacted_packages": [
+      "ripr",
+      "xtask"
+    ],
+    "workspace_clippy": false,
+    "workspace_widening_reason": null,
+    "skipped_reason": null
+  },
+  "commands": [
+    {
+      "command": "cargo metadata --format-version 1 --no-deps --manifest-path $REPO/Cargo.toml",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": null
+    },
+    {
+      "command": "existing repository policy precommit",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": null
+    },
+    {
+      "command": "git diff --check ddfa2a138ae816cdd46e639c532900d2abe60b27...HEAD",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": {
+        "program": "git",
+        "argv": [
+          "-C",
+          "$REPO",
+          "diff",
+          "--check",
+          "ddfa2a138ae816cdd46e639c532900d2abe60b27...HEAD"
+        ],
+        "outcome": "pass",
+        "status": "exit status: 0",
+        "exit_code": 0,
+        "elapsed_ms": 100,
+        "elapsed_scope": "runner_start_to_observed_exit_excluding_pipe_drain",
+        "cargo_progress": null
+      }
+    },
+    {
+      "command": "git diff --cached --check",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": {
+        "program": "git",
+        "argv": [
+          "-C",
+          "$REPO",
+          "diff",
+          "--cached",
+          "--check"
+        ],
+        "outcome": "pass",
+        "status": "exit status: 0",
+        "exit_code": 0,
+        "elapsed_ms": 100,
+        "elapsed_scope": "runner_start_to_observed_exit_excluding_pipe_drain",
+        "cargo_progress": null
+      }
+    },
+    {
+      "command": "git diff --check",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": {
+        "program": "git",
+        "argv": [
+          "-C",
+          "$REPO",
+          "diff",
+          "--check"
+        ],
+        "outcome": "pass",
+        "status": "exit status: 0",
+        "exit_code": 0,
+        "elapsed_ms": 100,
+        "elapsed_scope": "runner_start_to_observed_exit_excluding_pipe_drain",
+        "cargo_progress": null
+      }
+    },
+    {
+      "command": "cargo clippy --manifest-path $REPO/Cargo.toml -p ripr --all-targets -- -D warnings",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": {
+        "program": "cargo",
+        "argv": [
+          "clippy",
+          "--manifest-path",
+          "$REPO/Cargo.toml",
+          "-p",
+          "ripr",
+          "--all-targets",
+          "--",
+          "-D",
+          "warnings"
+        ],
+        "outcome": "pass",
+        "status": "exit status: 0",
+        "exit_code": 0,
+        "elapsed_ms": 403,
+        "elapsed_scope": "runner_start_to_observed_exit_excluding_pipe_drain",
+        "cargo_progress": null
+      }
+    },
+    {
+      "command": "cargo clippy --manifest-path $REPO/Cargo.toml -p xtask --all-targets -- -D warnings",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": {
+        "program": "cargo",
+        "argv": [
+          "clippy",
+          "--manifest-path",
+          "$REPO/Cargo.toml",
+          "-p",
+          "xtask",
+          "--all-targets",
+          "--",
+          "-D",
+          "warnings"
+        ],
+        "outcome": "pass",
+        "status": "exit status: 0",
+        "exit_code": 0,
+        "elapsed_ms": 143398,
+        "elapsed_scope": "runner_start_to_observed_exit_excluding_pipe_drain",
+        "cargo_progress": {
+          "compiling_lines": null,
+          "checking_lines": 2,
+          "fresh_lines": null
+        }
+      }
+    }
+  ],
+  "skipped": [],
+  "limitations": [],
+  "report_digest": "sha256:0852b5b9cb76698022b0b30066491a85ffce9906b987ab47187bcdd4024abf9d"
+}

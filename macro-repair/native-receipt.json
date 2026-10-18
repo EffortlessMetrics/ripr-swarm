@@ -1,0 +1,26 @@
+[
+  {
+    "case": "original",
+    "source_sha256": "84da46ed7a6a7cd4aeed9a96f65200dadad28d8bd200c38fa96369f4061f5f57",
+    "compile_exit": 0,
+    "test_exit": 0
+  },
+  {
+    "case": "selected-zero",
+    "source_sha256": "4f5034e3fed95cc10e4f9c3e16ffd5c9b9d70158c89bc9583662deeb13cad0ef",
+    "compile_exit": 0,
+    "test_exit": 0
+  },
+  {
+    "case": "other-zero",
+    "source_sha256": "6ae7bd533e087c53cd3796b432bd63f4c0cd11fbf841090997e3bb66bbce4a4d",
+    "compile_exit": 0,
+    "test_exit": 0
+  },
+  {
+    "case": "both-zero",
+    "source_sha256": "a78efbba32862dc6fd6351f0a83a3ccbf247c20a9af86934cdefbe4dad664593",
+    "compile_exit": 0,
+    "test_exit": 0
+  }
+]

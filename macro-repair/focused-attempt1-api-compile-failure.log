@@ -1,0 +1,12 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-swarm/crates/ripr)
+error[E0609]: no field `evidence_path` on type `&Finding`
+   --> crates/ripr/tests/whole_tail_match_observation.rs:490:18
+    |
+490 |                 .evidence_path
+    |                  ^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `id`, `canonical_gap`, `probe`, `class`, `ripr` ... and 18 others
+
+For more information about this error, try `rustc --explain E0609`.
+error: could not compile `ripr` (test "whole_tail_match_observation") due to 1 previous error
+warning: build failed, waiting for other jobs to finish...

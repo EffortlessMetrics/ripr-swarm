@@ -1,0 +1,4 @@
+    Finished `dev` profile [unoptimized] target(s) in 0.13s
+     Running `/workspace/5500-target/debug/xtask goldens bless whole_tail_match_macro_expected --reason 'RIPR-SPEC-0229: refuse opaque expected MAX namespace identity'`
+$ CARGO_HOME=/workspace/.cargo RUSTUP_TOOLCHAIN=1.95.0 RUSTUP_HOME=/workspace/.rustup cargo build -p ripr
+    Finished `dev` profile [unoptimized] target(s) in 0.13s

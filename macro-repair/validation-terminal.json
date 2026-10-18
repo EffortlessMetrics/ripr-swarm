@@ -1,0 +1,59 @@
+{
+  "head": "656d6d7effb51a888c4b627e2a0cd44c3bbd37ef",
+  "tree": "998fd59f62e93a71cd8e20d3b1080f48bd1257a7",
+  "all_native_exit_zero": true,
+  "stages": [
+    {
+      "stage": "affected-final",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "ripr",
+        "--test",
+        "field_match_selector",
+        "--test",
+        "native_path_roots"
+      ],
+      "native_exit": 0
+    },
+    {
+      "stage": "check-fast-final",
+      "command": [
+        "cargo",
+        "xtask",
+        "check-fast"
+      ],
+      "native_exit": 0
+    },
+    {
+      "stage": "precommit-final",
+      "command": [
+        "cargo",
+        "xtask",
+        "precommit"
+      ],
+      "native_exit": 0
+    },
+    {
+      "stage": "dogfood-final",
+      "command": [
+        "cargo",
+        "xtask",
+        "dogfood"
+      ],
+      "native_exit": 0
+    },
+    {
+      "stage": "honesty-final",
+      "command": [
+        "cargo",
+        "xtask",
+        "check-evidence-promotion-honesty"
+      ],
+      "native_exit": 0
+    }
+  ],
+  "claim": "Local bounded proof only; no hosted qualification or consumer improvement inferred."
+}

@@ -1,0 +1,27 @@
+{
+  "head": "14554b025d6b2024bbf1c21ec73d91a1cfbb5b6a",
+  "action": "SIGTERM exact owned validation process group",
+  "driver_pid": 50619,
+  "pgid": 50618,
+  "members": [
+    50618,
+    50619,
+    50764,
+    51660,
+    51669,
+    52259
+  ],
+  "reason": "Fresh independently rendered ancestor macro_use custom derive false promotion, natively confirmed original+selectedzero compile0/test0. Stop known-bad-head dependent validation; no unrelated process killed.",
+  "status": "native session31766 terminal143; owned group canceled. No source mutation while owned Cargo active.",
+  "completed": [
+    "focused-final native0",
+    "final CLI frozen",
+    "consumer replay native0 unchanged52"
+  ],
+  "interrupted": "check-fast strict Clippy; not reported pass",
+  "not_started": [
+    "precommit",
+    "dogfood",
+    "final honesty"
+  ]
+}

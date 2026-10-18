@@ -1,0 +1,20 @@
+[
+  {
+    "case": "unfixed-fixture",
+    "compile_exit": 1,
+    "test_exit": null,
+    "kind": "setup_defect"
+  },
+  {
+    "case": "fixed-original",
+    "compile_exit": 0,
+    "test_exit": 0,
+    "kind": "valid_non_discriminating_control"
+  },
+  {
+    "case": "fixed-selected-zero",
+    "compile_exit": 0,
+    "test_exit": 0,
+    "kind": "valid_non_discriminating_control"
+  }
+]

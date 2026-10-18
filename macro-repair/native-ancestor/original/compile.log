@@ -1,0 +1,10 @@
+warning: struct `Dummy` is never constructed
+ --> src/owned.rs:2:8
+  |
+2 | struct Dummy;
+  |        ^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: 1 warning emitted
+

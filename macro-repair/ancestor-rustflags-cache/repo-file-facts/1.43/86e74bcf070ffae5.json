@@ -1,0 +1,118 @@
+{
+  "file_fact_cache_schema_version": "1.43",
+  "analyzer_version": "0.11.0+14554b025d6b2024bbf1c21ec73d91a1cfbb5b6a",
+  "file_path": "opaque.rs",
+  "content_hash": "510b18d3f7697e65",
+  "file_facts": {
+    "path": "opaque.rs",
+    "functions": [
+      {
+        "id": "opaque.rs::derive_debug",
+        "name": "derive_debug",
+        "file": "opaque.rs",
+        "start_line": 4,
+        "end_line": 6,
+        "body": {
+          "start": 86,
+          "len": 376
+        },
+        "calls": [
+          {
+            "line": 4,
+            "name": "derive_debug",
+            "text": "fn derive_debug(_item: TokenStream) -> TokenStream {"
+          },
+          {
+            "line": 5,
+            "name": "parse",
+            "text": "\"#[allow(non_camel_case_types)] pub struct u64(pub ::core::primitive::u64); impl ::core::fmt::Debug for u64 { fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result { f.write_str(\\\"opaque\\\") } } impl PartialEq<i32> for u64 { fn eq(&self, _other: &i32) -> bool { true } }\".parse().unwrap_or_default()"
+          },
+          {
+            "line": 5,
+            "name": "unwrap_or_default",
+            "text": "\"#[allow(non_camel_case_types)] pub struct u64(pub ::core::primitive::u64); impl ::core::fmt::Debug for u64 { fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result { f.write_str(\\\"opaque\\\") } } impl PartialEq<i32> for u64 { fn eq(&self, _other: &i32) -> bool { true } }\".parse().unwrap_or_default()"
+          }
+        ],
+        "returns": [],
+        "literals": [],
+        "source_role": "production",
+        "attrs": [
+          "#[proc_macro_derive(Debug)]"
+        ],
+        "impl_attrs": [],
+        "nested_fn_names": [],
+        "let_bindings": [],
+        "item": {
+          "container": {
+            "kind": "free"
+          },
+          "has_self_param": false,
+          "has_body": true
+        },
+        "impl_context": "Free"
+      }
+    ],
+    "tests": [],
+    "returns": [],
+    "literals": [],
+    "probe_shapes": [
+      {
+        "start_line": 5,
+        "end_line": 5,
+        "start_byte": 143,
+        "end_byte": 440,
+        "kind": "call_deletion",
+        "text": {
+          "start": 143,
+          "len": 297
+        },
+        "value_consumed": true
+      },
+      {
+        "start_line": 5,
+        "end_line": 5,
+        "start_byte": 143,
+        "end_byte": 460,
+        "kind": "call_deletion",
+        "text": {
+          "start": 143,
+          "len": 317
+        },
+        "value_consumed": true
+      },
+      {
+        "start_line": 5,
+        "end_line": 5,
+        "start_byte": 143,
+        "end_byte": 460,
+        "kind": "return_value",
+        "text": {
+          "start": 143,
+          "len": 317
+        }
+      }
+    ],
+    "used_lexical_fallback": false,
+    "module_declarations": [],
+    "unresolved_property_macros": [],
+    "source": "extern crate proc_macro;\nuse proc_macro::TokenStream;\n#[proc_macro_derive(Debug)]\npub fn derive_debug(_item: TokenStream) -> TokenStream {\n    \"#[allow(non_camel_case_types)] pub struct u64(pub ::core::primitive::u64); impl ::core::fmt::Debug for u64 { fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result { f.write_str(\\\"opaque\\\") } } impl PartialEq<i32> for u64 { fn eq(&self, _other: &i32) -> bool { true } }\".parse().unwrap_or_default()\n}\n",
+    "item_scopes": {
+      "fns": [
+        {
+          "line": 4,
+          "name": "derive_debug",
+          "item": "TopLevel",
+          "local_use": false,
+          "deferred_code": false,
+          "cfg": false,
+          "direct_calls": [],
+          "bound_names": []
+        }
+      ]
+    },
+    "macro_candidates": {
+      "Names": []
+    }
+  },
+  "payload_digest": "sha256:e8592b64b3a27dabcde3676d8bc849d5cead465b039cdc187652e5f4b05ac0ae"
+}
