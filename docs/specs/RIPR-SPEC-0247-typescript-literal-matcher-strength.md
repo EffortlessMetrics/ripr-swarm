@@ -565,7 +565,9 @@ and the rejected alternative. Recorded on #6654.
 - `fixtures/typescript-verdict-corpus` pins the amended example 4:
   `jest-spec0243-ex30-factory-db` reads `credited`.
 - `crates/ripr/src/analysis/language/typescript/tests/spy_module_object_tests.rs`
-  pins example 12, and
+  pins example 12; `spy_file_checks_read_the_committed_test_file` pins that
+  the spy file checks read HEAD's test file, not the working tree's, under
+  committed-history analysis; and
   `crates/ripr/src/analysis/language/typescript/mock_payload_guard/spy.rs`
   `module_object_call_needs_an_owner_at_the_module_top_level` pins the
   top-level owner condition, which the owner extractor cannot reach today.

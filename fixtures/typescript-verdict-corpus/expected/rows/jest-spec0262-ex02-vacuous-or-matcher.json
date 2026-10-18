@@ -1,0 +1,22 @@
+{
+  "case_id": "jest-spec0262-ex02-vacuous-or-matcher",
+  "subject_id": "authored-ts-jest-mined",
+  "origin": "authored",
+  "anchor": "src/feeVacuous.ts:2",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "jest_registered_matcher_passes_on_zero",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}
