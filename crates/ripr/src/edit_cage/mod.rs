@@ -1187,9 +1187,9 @@ fn canonical_repository_root(root: &Path) -> Result<PathBuf, String> {
     Ok(requested)
 }
 
-/// Refuses a root that is not the exact Git top-level, before a caller
-/// writes any artifact under it. Same authority as the baseline capture, so
-/// the before phase cannot leave files in a subdirectory it then refuses.
+/// Thin wrapper over `canonical_repository_root`: it inherits that check
+/// (and its error text) unchanged and adds no validation of its own, so a
+/// caller can refuse a non-top-level root before writing under it.
 pub(crate) fn require_repository_top_level(root: &Path) -> Result<(), String> {
     canonical_repository_root(root).map(|_| ())
 }
