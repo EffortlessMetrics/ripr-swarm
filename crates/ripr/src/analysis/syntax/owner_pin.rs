@@ -369,7 +369,7 @@ fn resolved_direct_local_glob(
         || import
             .use_tree()
             .and_then(|tree| tree.path())
-            .is_none_or(|path| path.syntax().text().to_string() != root)
+            .is_none_or(|path| path.syntax().text() != root)
         || import
             .use_tree()
             .is_none_or(|tree| tree.star_token().is_none() || tree.use_tree_list().is_some())
