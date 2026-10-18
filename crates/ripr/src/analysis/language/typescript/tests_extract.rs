@@ -1291,7 +1291,10 @@ fn mock_spread_sources(statements: &[Statement<'_>], code: &str) -> Vec<(String,
     // so offsets into `code` only index `masked` when the lengths agree;
     // otherwise nothing is recorded.
     let masked = ts_mask_literals_and_comments(code);
-    if file_is_opaque(code) || masked.len() != code.len() {
+    if file_is_opaque(code)
+        || masked.len() != code.len()
+        || masked.chars().count() != code.chars().count()
+    {
         return Vec::new();
     }
     statements
@@ -1319,9 +1322,9 @@ fn mock_spread_sources(statements: &[Statement<'_>], code: &str) -> Vec<(String,
         .filter(|(name, declared_at, _)| {
             word_occurrences(code, name).all(|at| {
                 at == *declared_at
-                    || (masked[at + name.len()..]
-                        .trim_start()
-                        .starts_with([',', '}'])
+                    || (masked
+                        .get(at + name.len()..)
+                        .is_some_and(|after| after.trim_start().starts_with([',', '}']))
                         && masked.get(..at).is_some_and(|before| {
                             before.trim_end().strip_suffix("...").is_some_and(|before| {
                                 !before.ends_with('.') && inside_expression_literal(before)
