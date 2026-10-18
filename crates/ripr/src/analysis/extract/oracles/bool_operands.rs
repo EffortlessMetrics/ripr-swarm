@@ -808,10 +808,10 @@ fn unwrapped_wrapper_argument(text: &str) -> Option<&str> {
     let path = callee.get(..final_group_open(callee)?)?;
     let path = strip_path_generics(path.trim());
     let mut segments = path.rsplit("::").map(str::trim);
-    let standard = match (segments.next(), segments.next()) {
-        (Some("Some"), None | Some("Option")) | (Some("Ok"), None | Some("Result")) => true,
-        _ => false,
-    };
+    let standard = matches!(
+        (segments.next(), segments.next()),
+        (Some("Some"), None | Some("Option")) | (Some("Ok"), None | Some("Result"))
+    );
     if !standard {
         return None;
     }
