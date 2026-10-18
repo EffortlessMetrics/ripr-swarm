@@ -44,6 +44,9 @@ Support-tier impact:
     location. A real-producer packet (`owner:` ids, `partial` status) keeps
     its suggested location when such a relation exists. It still gets no
     canonical gap, as today.
+  - rule 16: a `reachable_unrevealed` finding whose only bound oracle is
+    `weak_broad` on a strong-eligible kind becomes `static_unknown` and loses
+    its gap and suggested location.
 - Every other rule, including rules 1, 10 and 14, changes no output.
   Claim boundaries remain governed by
   [support tiers](../status/SUPPORT_TIERS.md).
@@ -197,7 +200,7 @@ For each change, the first match wins:
    never strong, whatever their label. `weak_smoke`, `weak_broad`,
    `mention_only` and `unknown` strengths are never strong. A relation
    with a bound strong oracle reads `weakly_exposed`; with any other bound
-   oracle, `reachable_unrevealed`.
+   oracle, `reachable_unrevealed` (except rule 16).
 7. **Relation-kind cap, per relation.** Only `direct_owner_call` supports
    positive reachability (sink-aligned `exposed`, suggested location, row
    miss). A reachable `method_receiver` or `helper_call` relation whose own
@@ -450,8 +453,8 @@ cases.
    `stdout_is(sub { Pricing::show(100) }, "90\n")` as `output_observer` /
    `strong_exact`: `weakly_exposed`, `unknown` / strong (unchanged).
 7. `like(Pricing::discount(100), qr/9/)` as `exact_return_assertion` /
-   `weak_broad`: `reachable_unrevealed`, `exact_value` / weak
-   (unchanged).
+   `weak_broad`: `static_unknown` (rule 16), `exact_value` / weak. Was
+   `reachable_unrevealed`.
 8. A test that only names `Pricing::discount`, as `mention_only` /
    `mention_only`: `reachable_unrevealed`, `unknown` / unknown
    (unchanged).

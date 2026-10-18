@@ -5423,6 +5423,20 @@ fn perl_broad_oracle_explains_why_it_is_unknown() -> Result<(), String> {
         "{:?}",
         finding.recommended_next_step
     );
+    // A concrete discriminator must not turn the unknown into repair output.
+    let with_discriminator = broad.replace("sha256:return", "discriminator:$amount == $threshold");
+    let findings = findings_from_packet(&with_discriminator)?;
+    let finding = findings.first().ok_or("expected one finding")?;
+    assert_eq!(finding.class, crate::domain::ExposureClass::StaticUnknown);
+    assert!(finding.canonical_gap.is_none());
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("perl_suggested_")),
+        "{:?}",
+        finding.evidence
+    );
     // A smoke label is a known gap and keeps the ordinary next step.
     let smoke = EXACT_RETURN_PACKET.replace("\"strong_exact\"", "\"weak_smoke\"");
     let findings = findings_from_packet(&smoke)?;
