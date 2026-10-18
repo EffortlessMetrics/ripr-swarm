@@ -810,7 +810,7 @@ are `field_match_helper_mutable` and `field_match_helper_taken`.
 Owner doc comments preserve admission only when the source AST root declaration
 has the exact indexed name, `fn` token line and function-body span. Ordinary
 `pub` and `pub(crate)` visibility is inert; synchronous, nongeneric owners with
-no executable attributes retain the same proof. Async, unsafe, const, ABI,
+no explicit attributes retain the same proof. Async, unsafe, const, ABI,
 conditional/custom attributes, duplicate owners and nested or mismatched source
 occurrences remain unsupported. Explicit `#[doc = ...]` attributes remain outside
 this comment-only slice. Both added-owner Some/None arms can be exposed by their
