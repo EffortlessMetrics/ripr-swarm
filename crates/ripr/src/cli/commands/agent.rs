@@ -394,9 +394,13 @@ pub(super) fn unknown_seam_id_hint(root: &Path, seam_id: &str) -> String {
         "`ripr pilot --root {root}` to list current seam IDs with their exact `ripr agent repair` commands."
     );
     if seam_id.starts_with("probe:") {
-        format!("`probe:...` is a `ripr check` finding ID, not a seam ID; `ripr repair <finding-id> --root {root}` resolves it to its repair seam, or run {pilot}")
+        format!(
+            "`probe:...` is a `ripr check` finding ID, not a seam ID; `ripr repair <finding-id> --root {root}` resolves it to its repair seam, or run {pilot}"
+        )
     } else if seam_id.starts_with("repo-probe:") {
-        format!("`repo-probe:...` is a `ripr check` finding ID, not a seam ID; `ripr repair <finding-id> --root {root}` resolves it to its repair seam, or run {pilot}")
+        format!(
+            "`repo-probe:...` is a `ripr check` finding ID, not a seam ID; `ripr repair <finding-id> --root {root}` resolves it to its repair seam, or run {pilot}"
+        )
     } else if seam_id.starts_with("gap:") {
         format!(
             "`gap:...` is a `ripr check` canonical gap ID, not a seam ID; `ripr repair <gap-id> --root {root}` resolves it to its repair seam, or run {pilot}"
