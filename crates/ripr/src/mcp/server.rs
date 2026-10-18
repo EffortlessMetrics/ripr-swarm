@@ -184,6 +184,22 @@ impl McpServer {
         let limit = optional_positive_argument(&arguments, "limit")?;
         let file = optional_nonempty_string_argument(&arguments, "file")?;
         let class = optional_nonempty_string_argument(&arguments, "class")?;
+        // An unknown class token would narrow to an empty page that reads like
+        // "no such gaps"; name the vocabulary instead (a typo like `weak`).
+        if let Some(token) = class.as_deref()
+            && !crate::domain::ExposureClass::ALL
+                .iter()
+                .any(|known| known.as_str() == token)
+        {
+            let allowed = crate::domain::ExposureClass::ALL
+                .iter()
+                .map(crate::domain::ExposureClass::as_str)
+                .collect::<Vec<_>>();
+            return Err(ErrorData::invalid_params(
+                format!("unknown class \"{token}\"; allowed: {allowed:?}"),
+                None,
+            ));
+        }
         let language = optional_nonempty_string_argument(&arguments, "language")?;
         let repair_ready = optional_bool_argument(&arguments, "repair_ready")?;
         let session = self.session.lock().await;

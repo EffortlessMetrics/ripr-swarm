@@ -3082,6 +3082,47 @@ fn read_resource_document(
         .map_err(|error| format!("resource {uri} text is not JSON: {error}: {text}"))
 }
 
+/// An unknown `class` token used to narrow to an empty page that read like
+/// "no such gaps". It is now invalid params naming the vocabulary, while every
+/// real wire token still passes validation (before or after a refresh).
+#[test]
+fn list_gaps_rejects_unknown_class_tokens_with_the_vocabulary() -> Result<(), String> {
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let root = install_b4_repair_ready_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    for bad in ["weak", "Exposed", "bogus"] {
+        let reply = session.call_tool(
+            "bad-class",
+            "ripr_list_gaps",
+            json!({ "class": bad }),
+            REPLY_TIMEOUT,
+        )?;
+        let message = reply
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
+            || !message.contains("weakly_exposed")
+        {
+            return Err(format!("class {bad:?} must be invalid params: {reply}"));
+        }
+    }
+    for good in ["exposed", "weakly_exposed", "static_unknown"] {
+        let reply = session.call_tool(
+            "good-class",
+            "ripr_list_gaps",
+            json!({ "class": good }),
+            REPLY_TIMEOUT,
+        )?;
+        if reply.get("error").is_some() {
+            return Err(format!("class {good:?} must pass validation: {reply}"));
+        }
+    }
+    Ok(())
+}
+
 /// After refresh on the B4 repair-ready fixture, every tool/resource pair
 /// returns the same document: `ripr_get_gap` with `ripr://gap/{id}`,
 /// `ripr_get_repair_attempt` with `ripr://repair-attempt/{id}`,
