@@ -4664,10 +4664,15 @@ fn perl_rows_without_an_established_defect_keep_no_miss() -> Result<(), String> 
     )?;
     assert_ne!(class, ExposureClass::Exposed);
     assert_eq!(misses, vec![None]);
-    // Direct relation with a weak oracle: no miss.
+    // Direct relation with a smoke oracle: no miss.
+    let (class, misses) =
+        first_finding_misses(&EXACT_RETURN_PACKET.replace("\"strong_exact\"", "\"weak_smoke\""))?;
+    assert_eq!(class, ExposureClass::ReachableUnrevealed);
+    assert_eq!(misses, vec![None]);
+    // Direct relation with a broad oracle: unknown (rule 16), no miss.
     let (class, misses) =
         first_finding_misses(&EXACT_RETURN_PACKET.replace("\"strong_exact\"", "\"weak_broad\""))?;
-    assert_eq!(class, ExposureClass::ReachableUnrevealed);
+    assert_eq!(class, ExposureClass::StaticUnknown);
     assert_eq!(misses, vec![None]);
     // A partial packet keeps its class but explains no row.
     let (class, misses) = first_finding_misses(&EXACT_RETURN_PACKET.replace(
@@ -5220,9 +5225,10 @@ fn perl_method_receiver_and_helper_call_bound_strong_oracle_earns_weak_credit() 
             set_first(packet, "relations", "relation_kind", kind.into())?;
             set_first(packet, "oracles", "strength", "weak_broad".into())
         })?;
+        // A broad oracle is unknown (rule 16), never credited.
         assert_eq!(
             first_finding_misses(&weak)?.0,
-            ExposureClass::ReachableUnrevealed,
+            ExposureClass::StaticUnknown,
             "{kind} with a weak oracle must not be credited"
         );
         // Wrong receiver: the oracle targets another owner.
@@ -5338,7 +5344,7 @@ fn perl_direct_row_without_a_strong_owner_oracle_keeps_no_miss() -> Result<(), S
             set_first(packet, "relations", "oracle_id", serde_json::Value::Null)
         })?,
     )];
-    for strength in ["weak_smoke", "weak_broad", "mention_only", "unknown"] {
+    for strength in ["weak_smoke", "mention_only", "unknown"] {
         packets.push((
             format!("strength {strength}"),
             edited_packet(EXACT_RETURN_PACKET, |packet| {
@@ -5381,6 +5387,52 @@ fn perl_direct_row_without_a_strong_owner_oracle_keeps_no_miss() -> Result<(), S
             "{case}"
         );
     }
+    // RIPR-SPEC-0235 rule 16: a broad label on a kind that can pin the change
+    // is unknown, not a gap. A broad label on a kind that cannot pin it is
+    // still a gap.
+    let broad = edited_packet(EXACT_RETURN_PACKET, |packet| {
+        set_first(packet, "oracles", "strength", "weak_broad".into())
+    })?;
+    assert_eq!(
+        first_finding_misses(&broad)?,
+        (ExposureClass::StaticUnknown, vec![None])
+    );
+    let broad_smoke = edited_packet(EXACT_RETURN_PACKET, |packet| {
+        set_first(packet, "oracles", "strength", "weak_broad".into())?;
+        set_first(packet, "oracles", "kind", "smoke_ok".into())
+    })?;
+    assert_eq!(
+        first_finding_misses(&broad_smoke)?,
+        (ExposureClass::ReachableUnrevealed, vec![None])
+    );
+    Ok(())
+}
+
+#[test]
+fn perl_broad_oracle_explains_why_it_is_unknown() -> Result<(), String> {
+    let broad = EXACT_RETURN_PACKET.replace("\"strong_exact\"", "\"weak_broad\"");
+    let findings = findings_from_packet(&broad)?;
+    let finding = findings.first().ok_or("expected one finding")?;
+    assert_eq!(finding.class, crate::domain::ExposureClass::StaticUnknown);
+    assert!(finding.canonical_gap.is_none());
+    assert!(
+        finding
+            .recommended_next_step
+            .as_deref()
+            .is_some_and(|step| step.contains("grades broad")),
+        "{:?}",
+        finding.recommended_next_step
+    );
+    // A smoke label is a known gap and keeps the ordinary next step.
+    let smoke = EXACT_RETURN_PACKET.replace("\"strong_exact\"", "\"weak_smoke\"");
+    let findings = findings_from_packet(&smoke)?;
+    let step = findings
+        .first()
+        .and_then(|finding| finding.recommended_next_step.as_deref());
+    assert!(
+        step.is_some_and(|step| !step.contains("grades broad")),
+        "{step:?}"
+    );
     Ok(())
 }
 
