@@ -9711,7 +9711,12 @@ fn written_by_test(masked: &str, name: &str) -> bool {
         if before.ends_with(':') && !before.ends_with("::") && in_let_annotation(before) {
             return false;
         }
-        borrowed_into_path_call(before, name)
+        // `write!(name, ..)` / `writeln!(name, ..)` write into their first
+        // argument; the trusted-macro list keeps `bound_by_macro` from
+        // seeing them.
+        before.ends_with("write!(")
+            || before.ends_with("writeln!(")
+            || borrowed_into_path_call(before, name)
             || place_is_written(&masked[offset + name.len()..])
             || destructured_into(&masked[offset + name.len()..])
     })
@@ -9750,6 +9755,10 @@ fn borrowed_into_path_call(before: &str, name: &str) -> bool {
     let callee = head[..open].trim_end();
     if callee.ends_with('!') {
         return false;
+    }
+    // A turbofish callee (`store::<u32>(&X, ..)`) is unreadable: refuse.
+    if callee.ends_with('>') {
+        return true;
     }
     let path: String = callee
         .chars()
@@ -9905,7 +9914,12 @@ fn is_mutating_method(method: &str) -> bool {
         "truncate",
         "get_or_init",
         "update",
-        "compare_exchange",
+        "next",
+        "next_back",
+        "next_chunk",
+        "try_lock",
+        "try_write",
+        "as_mut_ptr",
         "reverse",
         "split_off",
         "rotate_left",
@@ -9930,9 +9944,9 @@ fn is_mutating_method(method: &str) -> bool {
             "get_or_insert",
             "dedup",
             "swap_",
-            "next",
             "write_",
             "make_ascii_",
+            "compare_exchange",
             "fetch_",
             "set_",
         ]

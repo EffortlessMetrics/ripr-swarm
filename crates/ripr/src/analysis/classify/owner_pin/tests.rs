@@ -8497,6 +8497,8 @@ fn written_by_test_reads_operators_and_let_boundaries() {
         "assert_eq!(f(4), &EXPECTED);",
         "AtomicU32::load(&EXPECTED, o);",
         "let t = (EXPECTED, 1);",
+        "EXPECTED.next_power_of_two();",
+        "EXPECTED.next_multiple_of(4);",
         "if (EXPECTED, 1) == t {}",
     ] {
         assert!(!super::written_by_test(read, "EXPECTED"), "{read}");
@@ -8513,6 +8515,14 @@ fn written_by_test_reads_operators_and_let_boundaries() {
         "EXPECTED.v?.bump();",
         "EXPECTED.widen::<u8>();",
         "write(&EXPECTED, 1);",
+        "write!(EXPECTED, \"{}\", 1);",
+        "writeln!(EXPECTED, \"{}\", 1);",
+        "store::<u32>(&EXPECTED, 1);",
+        "EXPECTED.compare_exchange_weak(1, 2, o, o);",
+        "EXPECTED.try_lock();",
+        "EXPECTED.try_write();",
+        "EXPECTED.as_mut_ptr();",
+        "EXPECTED.next_back();",
         "(EXPECTED, _) = p;",
         "[EXPECTED, ..] = p;",
         "S { f: EXPECTED, .. } = p;",
