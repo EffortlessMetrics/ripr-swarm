@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "`saveSpread(db, v)` calls `db.write(v + 1)`. The test declares `const db = { write: jest.fn(), ...defaults }`, calls `saveSpread(db, 1)` and pins `expect(db.write).toHaveBeenCalledWith(2)`; the edit `v + 2` calls `write(3)` and the test fails. RIPR-SPEC-0247 example 4 reads the spread object as `weakly_exposed`. ripr reports `weakly_exposed` with mock_expectation / medium, as the spec states; against the discriminated truth that is a false actionable gap the spec accepts.",
+  "reasoning": "`saveSpread(db, v)` calls `db.write(v + 1)`. The test declares `const defaults = { flush: jest.fn() }`, then `const db = { write: jest.fn(), ...defaults }`, calls `saveSpread(db, 1)` and pins `expect(db.write).toHaveBeenCalledWith(2)`; the edit `v + 2` calls `write(3)` and the test fails. `defaults` is a top-level const object literal the file names only in its declaration and after the spread, with no `write` key, so the copy cannot replace the mock (RIPR-SPEC-0247 example 4, amended 2026-10-18): ripr reports exposed.",
   "labeling_observation": {
     "ripr_commit": "9073928",
     "full_checkout_verdict": "gap",

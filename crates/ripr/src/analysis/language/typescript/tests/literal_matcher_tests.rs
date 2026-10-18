@@ -168,6 +168,7 @@ fn mock_payload_on_a_test_file_factory_mock_is_credited() {
             &called_with("db.write", "2"),
             &test.body_text,
             &test.mock_factories_in_file,
+            &[],
         ))
     };
     for factory in [

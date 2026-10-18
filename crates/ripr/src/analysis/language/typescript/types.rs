@@ -139,6 +139,14 @@ pub(crate) struct TypeScriptTest {
     /// test-body `const p = f();` is read as that literal. Empty when
     /// anything could rebind or replace the name.
     pub(crate) mock_factories_in_file: Vec<(String, String)>,
+    /// Test-file spread sources (RIPR-SPEC-0247 rule 1, amended 2026-10-18):
+    /// top-level `const defaults = { key: value, ... };` declarations whose
+    /// name appears nowhere else in the file except after a `...` spread,
+    /// each paired with the source of its object literal. Nothing can write
+    /// the object before a spread copies it, so `{ m: jest.fn(), ...defaults }`
+    /// keeps its mock when the literal has no `m` key. Empty when anything
+    /// could rebind or replace the name.
+    pub(crate) mock_spread_sources_in_file: Vec<(String, String)>,
     /// Whether the test's assertion state is established: a recognized
     /// assertion, an established absence of anything assertion-like, or
     /// something assertion-like RIPR cannot resolve (#5524). An empty

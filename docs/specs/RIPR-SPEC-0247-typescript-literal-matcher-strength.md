@@ -85,7 +85,10 @@ all of these hold:
   shadow an outer `p`) with `const|let|var p = jest.fn(...)` or
   `vi.fn(...)`, or to a flat object literal whose `m` is such a call,
   whose keys are plain identifiers, which keys `m` once and which has no
-  spread that could replace it; amended 2026-10-15 (#8138), the mock
+  spread that could replace it (amended 2026-10-18: a `...name` entry
+  does not, when `name` is a test-file `const` object literal the file names
+  only there and after spreads, with plain `key: value` entries and no `m`
+  key; see example 4); amended 2026-10-15 (#8138), the mock
   call takes no argument or an arrow implementation that names neither
   `function` nor `this` (optionally after `<T>` type arguments), the
   literal's `m` value is that call and nothing more, and the call (or the
@@ -364,7 +367,17 @@ and the rejected alternative. Recorded on #6654.
    `send.call(null, "order 7")`, or `announce(send, 7)`; or with the
    mock declared in a nested block (`if (ready) { const send = jest.fn() }`)
    or, for example 2, `{ write: jest.fn(), ...defaults }` or a second
-   `write` key: `weakly_exposed`. Amended 2026-10-15: example 2 with
+   `write` key: `weakly_exposed`. Amended 2026-10-18: `...defaults` is
+   `exposed` when `const defaults = { flush: jest.fn() };` is a top-level
+   test-file `const` object literal with plain `key: value` entries, no
+   `write` key, no spread and no `__proto__`, and the file names `defaults`
+   only in that declaration and after `...` spreads; a source with a `write`
+   key (quoted, computed or a method included), a nested spread, a shorthand
+   entry, a `let`/`var` binding, a call or other initializer, a member
+   access or `Object.assign(defaults, ...)`, an import, a body-local
+   `defaults`, a spread of an expression or call, or a file that calls
+   `eval` stays `weakly_exposed`, and a spread inside a test-file factory
+   literal stays refused. Amended 2026-10-15: example 2 with
    `function makeDb() { return { write: jest.fn() }; }` in the test file
    and `const db = makeDb();` is `exposed`; a factory with a parameter, a
    spread, a second statement, an `export`, `async`, a generator, a
@@ -445,6 +458,9 @@ and the rejected alternative. Recorded on #6654.
   decision 9.
 - `fixtures/typescript-verdict-corpus` pins the amended example 4:
   `jest-spec0243-ex30-factory-db` reads `credited`.
+- `crates/ripr/src/analysis/language/typescript/tests/mock_spread_source_tests.rs`
+  pins the 2026-10-18 spread-source amendment of example 4;
+  `jest-mock-fn-spread-object` reads `credited`.
 - `crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs`
   keeps the loose-equality grading with coercion-reachable literals, and
   `loose_equality_reads_a_test_local_literal_const` pins example 10.

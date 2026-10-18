@@ -120,6 +120,12 @@ pub(crate) fn extract_tests(file: &Path, source: &str) -> Vec<TypeScriptTest> {
                 test.mock_factories_in_file = factories.clone();
             }
         }
+        let spread_sources = mock_spread_sources(&ret.program.body, &code);
+        if !spread_sources.is_empty() {
+            for test in &mut tests {
+                test.mock_spread_sources_in_file = spread_sources.clone();
+            }
+        }
         tests
     }) else {
         return Vec::new();
@@ -1276,6 +1282,49 @@ fn mock_factories(statements: &[Statement<'_>], code: &str) -> Vec<(String, Stri
         .collect()
 }
 
+/// Top-level `const name = { ... };` object literals the file mentions only
+/// in the declaration and after a `...` spread, each with its literal
+/// source. A plain `const` object nobody else names cannot change before a
+/// spread copies it (RIPR-SPEC-0247 rule 1, amended 2026-10-18).
+fn mock_spread_sources(statements: &[Statement<'_>], code: &str) -> Vec<(String, String)> {
+    if file_is_opaque(code) {
+        return Vec::new();
+    }
+    statements
+        .iter()
+        .filter_map(|stmt| {
+            let Statement::VariableDeclaration(declaration) = stmt else {
+                return None;
+            };
+            if declaration.declare
+                || declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const
+                || declaration.declarations.len() != 1
+            {
+                return None;
+            }
+            let declarator = declaration.declarations.first()?;
+            let BindingPattern::BindingIdentifier(id) = &declarator.id else {
+                return None;
+            };
+            let object = object_expression(declarator.init.as_ref()?)?;
+            let literal = code
+                .get(object.span.start as usize..object.span.end as usize)?
+                .to_string();
+            Some((id.name.to_string(), id.span.start as usize, literal))
+        })
+        .filter(|(name, declared_at, _)| {
+            word_occurrences(code, name).all(|at| {
+                at == *declared_at
+                    || code[..at]
+                        .trim_end()
+                        .strip_suffix("...")
+                        .is_some_and(|before| !before.ends_with('.'))
+            })
+        })
+        .map(|(name, _, literal)| (name, literal))
+        .collect()
+}
+
 /// The name, name offset and returned literal source of one top-level
 /// parameterless factory that returns an object literal and does nothing
 /// else.
@@ -2092,6 +2141,7 @@ pub(crate) fn test_from_statement(
         scope_bindings: Vec::new(),
         identity_helpers_in_file: Vec::new(),
         mock_factories_in_file: Vec::new(),
+        mock_spread_sources_in_file: Vec::new(),
         // Replaced by `collect_tests_from_statements`, which has the file's
         // admission context; fail-closed until then.
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,

@@ -258,6 +258,7 @@ pub(crate) fn ts_changed_value_is_observed(
                         payload,
                         &candidate.test.body_text,
                         &candidate.test.mock_factories_in_file,
+                        &candidate.test.mock_spread_sources_in_file,
                     )
                 });
             // RIPR-SPEC-0250: a credited `toMatchObject` pin lists the changed
@@ -4545,6 +4546,7 @@ pub(crate) fn strongest_family_matching_oracle(
                             payload,
                             &candidate.test.body_text,
                             &candidate.test.mock_factories_in_file,
+                            &candidate.test.mock_spread_sources_in_file,
                         ) =>
                 {
                     (OracleKind::MockExpectation, OracleStrength::Strong)
@@ -4595,6 +4597,7 @@ fn project_credited_mock_rows(
                         payload,
                         &candidate.test.body_text,
                         &candidate.test.mock_factories_in_file,
+                        &candidate.test.mock_spread_sources_in_file,
                     )
                 })
         });
