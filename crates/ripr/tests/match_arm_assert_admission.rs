@@ -153,6 +153,15 @@ fn plain_import_binding_the_std_root_keeps_the_glob_foreign() -> Result<(), Stri
     check("use other::std;\nuse std::prelude::v1::*;", body, false)
 }
 #[test]
+fn self_import_binding_the_std_root_keeps_the_glob_foreign() -> Result<(), String> {
+    let body = "assert!(matches!(actual, super::SelectionRequest::Unresolved(_)));";
+    check(
+        "use other::std::{self};\nuse std::prelude::v1::*;",
+        body,
+        false,
+    )
+}
+#[test]
 fn unrelated_assertion_remains_unconfirmed() -> Result<(), String> {
     let finding = analyze("", "assert!(true);")?;
     assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");

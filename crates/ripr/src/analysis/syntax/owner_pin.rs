@@ -891,7 +891,14 @@ fn macro_binding_ambiguities(
                     .syntax()
                     .descendants()
                     .filter_map(ast::UseTree::cast)
-                    .filter(|item| item.use_tree_list().is_none() && item.star_token().is_none())
+                    .filter(|item| {
+                        item.star_token().is_none()
+                            && item.use_tree_list().is_none_or(|list| {
+                                // `use other::std::{self}` binds `std` too.
+                                list.use_trees()
+                                    .any(|leaf| leaf.syntax().text().to_string().trim() == "self")
+                            })
+                    })
                     .any(|item| {
                         item.path()
                             .and_then(|path| path.segment())
