@@ -7525,6 +7525,20 @@ id = "RIPR-SPEC-0094"
 name = "observation_unverified guard generalization"
 spec = "docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md"
 tests = [
+  "crates/ripr/tests/sibling_effect_oracle.rs::independent_token_observer_survives_implicit_refusal",
+  "crates/ripr/tests/sibling_effect_oracle.rs::competing_production_writes_cannot_supply_implicit_discrimination",
+  "crates/ripr/tests/sibling_effect_oracle.rs::receiver_construction_cannot_seed_the_observed_effect",
+  "crates/ripr/tests/sibling_effect_oracle.rs::same_test_dispatch_cannot_credit_disconnected_assertions",
+  "crates/ripr/tests/sibling_effect_oracle.rs::implicit_credit_belongs_to_the_ordered_shared_sink_assertion",
+  "crates/ripr/tests/sibling_effect_oracle.rs::implicit_binding_refuses_self_comparison_and_opaque_observers",
+  "crates/ripr/tests/sibling_effect_oracle.rs::unused_reverse_trait_does_not_authorize_parser_oracle",
+  "crates/ripr/tests/sibling_effect_oracle.rs::paired_implicit_dispatch_matrix_binds_both_effect_families",
+  "crates/ripr/tests/sibling_effect_oracle.rs::free_inherent_and_wrong_receiver_push_matrix_stays_weak",
+  "crates/ripr/tests/sibling_effect_oracle.rs::parser_only_decoys_cannot_supply_aggregation_discrimination",
+  "crates/ripr/tests/sibling_effect_oracle.rs::direct_effect_observer_retains_strong_credit",
+  "crates/ripr/tests/sibling_effect_oracle.rs::implicit_trait_effect_observers_retain_strong_credit",
+  "crates/ripr/tests/sibling_effect_oracle.rs::free_and_inherent_trait_method_names_do_not_admit_decoys",
+  "crates/ripr/tests/sibling_effect_oracle.rs::lone_proximity_retains_discrimination_with_weak_reach",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::refused_implicit_kind_preserves_independent_token_confirmation",
   "crates/ripr/src/analysis/classify/implicit_effect.rs::tests::workspace_expansion_scan_is_once_per_immutable_run",
   "crates/ripr/src/analysis/classify/implicit_effect.rs::tests::crate_level_inner_attributes_do_not_veto_the_bounded_exception",
@@ -7589,6 +7603,7 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::a_refused_effect_carrier_withholds_only_the_whole_object_observer"
 ]
 fixtures = [
+  "fixtures/rust_sibling_effect_oracle",
   "fixtures/rust_unused_trait_effect_oracle",
   "fixtures/rust_competing_direct_effect_oracle",
   "fixtures/rust_competing_reverse_effect_oracle",
@@ -7650,6 +7665,9 @@ code = [
   "crates/ripr/src/analysis/classify/propagation_witness.rs"
 ]
 outputs = [
+  "fixtures/rust_sibling_effect_oracle/expected/check.json",
+  "fixtures/rust_sibling_effect_oracle/expected/human.txt",
+  "fixtures/rust_sibling_effect_oracle/expected/human-full.txt",
   "docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md",
   "fixtures/oracle_confirmation_mixed/expected/check.json",
   "fixtures/oracle_confirmation_mixed/expected/human.txt",
