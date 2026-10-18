@@ -668,8 +668,14 @@ impl ArmSelector {
     }
 
     fn demote_constant_bindings(&mut self, owner_source: Option<&str>) {
-        let resolves =
-            |name: &str| owner_source.is_none_or(|source| may_name_constant(source, name));
+        // An item macro (`def_const!(p);`) may declare a constant the
+        // pattern name then resolves to (#7863), so a file with one reads
+        // every bare binding as unreadable.
+        let macro_may_declare = owner_source
+            .is_some_and(|source| may_declare_items_in_owner_scope(source, &self.owner));
+        let resolves = |name: &str| {
+            macro_may_declare || owner_source.is_none_or(|source| may_name_constant(source, name))
+        };
         let demote = |heads: &mut Vec<PatternHead>| {
             for head in heads.iter_mut() {
                 if let PatternHead::Binding(name) = head
@@ -3509,6 +3515,18 @@ mod tests {
             judged(Some(&format!("use Rule::*;\n{body}"))),
             Some(ArmSelection::Selects)
         );
+        // An item macro may declare the constant (#7863).
+        for macro_item in [
+            "macro_rules! def_const { ($n:ident) => { const $n: u8 = 0; }; }\ndef_const!(target);\n",
+            "def_const!(target);\n",
+        ] {
+            let source = format!("{macro_item}{body}");
+            assert_eq!(
+                judged(Some(&source)),
+                Some(ArmSelection::Unknown),
+                "{macro_item}"
+            );
+        }
         // An owner file that was not read may declare anything.
         assert_eq!(judged(None), Some(ArmSelection::Unknown));
         Ok(())

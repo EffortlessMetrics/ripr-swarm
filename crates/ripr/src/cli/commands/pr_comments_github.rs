@@ -6,6 +6,7 @@
 use crate::cli::parse::expect_value;
 use crate::cli::suggest::unknown_argument;
 use crate::output::pr_inline_comment_github::{existing_comments, publish_requests};
+use crate::output::pr_summary_comment::summary_request;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,6 +15,11 @@ use super::non_empty_string_arg;
 
 const EXISTING: &str = "pr-comments existing";
 const REQUESTS: &str = "pr-comments requests";
+const SUMMARY: &str = "pr-comments summary";
+const DEFAULT_GUIDANCE: &str = "target/ripr/review/comments.json";
+const DEFAULT_SUMMARY_DIR: &str = "target/ripr/review/summary";
+/// Same line shape as [`REQUESTS_MANIFEST`], for the one summary call.
+pub(crate) const SUMMARY_MANIFEST: &str = "summary.tsv";
 const DEFAULT_RAW: &str = "target/ripr/review/existing-comments.raw.json";
 const DEFAULT_EXISTING_OUT: &str = "target/ripr/review/existing-comments.json";
 const DEFAULT_PLAN: &str = "target/ripr/review/comment-publish-plan.json";
@@ -149,6 +155,10 @@ pub(super) fn parse_pr_comments_requests_options(
 /// path inside `--root`: no absolute path, no `..`, not the root itself, and
 /// no tab or line break, since the request manifest is tab-separated.
 fn validate_out_dir(out_dir: &Path) -> Result<(), String> {
+    validate_out_dir_for(REQUESTS, out_dir)
+}
+
+fn validate_out_dir_for(command: &str, out_dir: &Path) -> Result<(), String> {
     if !out_dir.components().all(|part| {
         matches!(
             part,
@@ -159,13 +169,13 @@ fn validate_out_dir(out_dir: &Path) -> Result<(), String> {
         .all(|part| part == std::path::Component::CurDir)
     {
         return Err(format!(
-            "{REQUESTS} --out-dir must be a relative directory inside --root (got {}); the run replaces its request files",
+            "{command} --out-dir must be a relative directory inside --root (got {}); the run replaces its request files",
             out_dir.display()
         ));
     }
     if out_dir.to_string_lossy().contains(['\t', '\r', '\n']) {
         return Err(format!(
-            "{REQUESTS} --out-dir cannot contain a tab or line break: the request manifest is tab-separated"
+            "{command} --out-dir cannot contain a tab or line break: the request manifest is tab-separated"
         ));
     }
     Ok(())
@@ -234,6 +244,128 @@ pub(super) fn pr_comments_requests(args: &[String]) -> Result<(), String> {
         println!("{note}");
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct SummaryOptions {
+    pub(super) root: PathBuf,
+    pub(super) pr_guidance: PathBuf,
+    pub(super) raw: Option<PathBuf>,
+    pub(super) out_dir: PathBuf,
+    pub(super) pull_request: String,
+    pub(super) head_sha: String,
+    pub(super) run_url: String,
+}
+
+pub(super) fn parse_pr_comments_summary_options(args: &[String]) -> Result<SummaryOptions, String> {
+    let mut options = SummaryOptions {
+        root: PathBuf::from("."),
+        pr_guidance: PathBuf::from(DEFAULT_GUIDANCE),
+        raw: None,
+        out_dir: PathBuf::from(DEFAULT_SUMMARY_DIR),
+        pull_request: String::new(),
+        head_sha: String::new(),
+        run_url: String::new(),
+    };
+    let mut i = 0usize;
+    while i < args.len() {
+        let flag = args[i].as_str();
+        i += 1;
+        match flag {
+            "--root" => options.root = PathBuf::from(non_empty_string_arg(args, i, flag, SUMMARY)?),
+            "--pr-guidance" => {
+                options.pr_guidance = PathBuf::from(non_empty_string_arg(args, i, flag, SUMMARY)?)
+            }
+            "--raw" => {
+                options.raw = Some(PathBuf::from(non_empty_string_arg(args, i, flag, SUMMARY)?))
+            }
+            "--out-dir" => {
+                options.out_dir = PathBuf::from(non_empty_string_arg(args, i, flag, SUMMARY)?)
+            }
+            "--pull-request" => options.pull_request = expect_value(args, i, flag)?.to_string(),
+            "--head-sha" => options.head_sha = expect_value(args, i, flag)?.to_string(),
+            "--run-url" => options.run_url = expect_value(args, i, flag)?.to_string(),
+            other => return Err(unknown_argument(SUMMARY, other)),
+        }
+        i += 1;
+    }
+    validate_out_dir_for(SUMMARY, &options.out_dir)?;
+    if options.pull_request.is_empty() || !options.pull_request.bytes().all(|b| b.is_ascii_digit())
+    {
+        return Err(format!(
+            "{SUMMARY} needs --pull-request N with the pull request number (got {:?})",
+            options.pull_request
+        ));
+    }
+    if options.head_sha.is_empty() || !options.head_sha.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(format!(
+            "{SUMMARY} needs --head-sha SHA with the pull request head commit (got {:?})",
+            options.head_sha
+        ));
+    }
+    Ok(options)
+}
+
+pub(super) fn pr_comments_summary(args: &[String]) -> Result<(), String> {
+    let options = parse_pr_comments_summary_options(args)?;
+    let guidance = read_json(&options.root.join(&options.pr_guidance), SUMMARY)?;
+    let pages = match options.raw.as_deref() {
+        None => Value::Array(Vec::new()),
+        Some(raw) if raw.as_os_str() == "-" => {
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut std::io::stdin(), &mut bytes)
+                .map_err(|err| format!("{SUMMARY} could not read standard input: {err}"))?;
+            serde_json::from_slice(&bytes)
+                .map_err(|err| format!("{SUMMARY}: standard input is not JSON: {err}"))?
+        }
+        Some(raw) => read_json(&options.root.join(raw), SUMMARY)?,
+    };
+    let request = summary_request(
+        &guidance,
+        &pages,
+        &options.pull_request,
+        &options.head_sha,
+        &options.run_url,
+    );
+
+    refuse_linked_out_dir(&options.root, &options.out_dir)?;
+    let out_dir = options.root.join(&options.out_dir);
+    fs::create_dir_all(&out_dir)
+        .map_err(|err| format!("{SUMMARY} could not create {}: {err}", out_dir.display()))?;
+    // An earlier run's request must never be replayed.
+    for name in [SUMMARY_MANIFEST, "summary-request.json"] {
+        let path = out_dir.join(name);
+        if fs::symlink_metadata(&path).is_ok_and(|metadata| !metadata.file_type().is_dir()) {
+            fs::remove_file(&path)
+                .map_err(|err| format!("{SUMMARY} could not remove {}: {err}", path.display()))?;
+        }
+    }
+    let manifest_path = out_dir.join(SUMMARY_MANIFEST);
+    let Some(request) = request else {
+        fs::write(&manifest_path, "").map_err(|err| {
+            format!(
+                "{SUMMARY} could not write {}: {err}",
+                manifest_path.display()
+            )
+        })?;
+        println!("No findings and no earlier RIPR summary comment: nothing to post.");
+        return Ok(());
+    };
+    let file = options.out_dir.join("summary-request.json");
+    write_json(&options.root.join(&file), &request.payload, SUMMARY)?;
+    let line = format!(
+        "{}\t{}\t{}\t{}\n",
+        request.method,
+        manifest_field(&request.endpoint),
+        manifest_field(&file.display().to_string()),
+        manifest_field(&request.message)
+    );
+    fs::write(&manifest_path, line).map_err(|err| {
+        format!(
+            "{SUMMARY} could not write {}: {err}",
+            manifest_path.display()
+        )
+    })
 }
 
 /// The lexical check in the parser keeps `--out-dir` under `--root` only if
@@ -644,6 +776,39 @@ mod tests {
                 .err()
                 .is_some_and(|err| err.contains("could not read") && err.contains("absent.json"))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn summary_refuses_a_malformed_raw_page_file() -> Result<(), String> {
+        use std::fs;
+        let root = scratch("summary-malformed");
+        fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+        fs::write(
+            root.join("g.json"),
+            r#"{"comments": [], "summary": {"summary_only": 0}, "analysis_outcome": {"analysis_complete": true}}"#,
+        )
+        .map_err(|err| err.to_string())?;
+        fs::write(root.join("pages.json"), "not json").map_err(|err| err.to_string())?;
+        let result = super::pr_comments_summary(&strings(&[
+            "--root",
+            &root.display().to_string(),
+            "--pr-guidance",
+            "g.json",
+            "--raw",
+            "pages.json",
+            "--pull-request",
+            "7",
+            "--head-sha",
+            "abc",
+        ]));
+        let wrote = root.join("target/ripr/review/summary/summary.tsv").exists();
+        let _ = fs::remove_dir_all(&root);
+        assert!(
+            result.err().is_some_and(|err| err.contains("pages.json")),
+            "a malformed page file was accepted"
+        );
+        assert!(!wrote, "a request was written after a malformed page file");
         Ok(())
     }
 
