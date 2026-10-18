@@ -1,0 +1,21 @@
+{
+  "utc": "2026-10-18T07:58:01.337149+00:00",
+  "argv": [
+    "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/rustc",
+    "--edition=2024",
+    "--crate-type=lib",
+    "--crate-name=iterator_coercion_control",
+    "--emit=metadata",
+    "-o",
+    "/workspace/scratch/8265-independent-review/iterator-coercion-control.rmeta",
+    "/workspace/scratch/8265-independent-review/iterator-coercion-control.rs"
+  ],
+  "rustc": "rustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.95.0\nLLVM version: 22.1.2\n",
+  "source_sha256": "1463554d0c8d118fa1dd35c9bcfbabe339c454394eeb8ca4defda81b8a45b539",
+  "exit": 0,
+  "stdout": "",
+  "stderr": "",
+  "metadata_bytes": 4269,
+  "free_after": 25977749504,
+  "reviewed_head": "9fc6a47f29b5ad581a527244681d4c4bf0d4714b"
+}

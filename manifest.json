@@ -4,7 +4,7 @@
   "basis": "006eaf853fce5713a2e9044ba9c8d6a9a873f3d0",
   "reconstruction": true,
   "old_candidate_lost": "fc18360e9a50eb94b194fa38ba2f89e34d19fa82",
-  "utc": "2026-10-18T07:55:19.169521+00:00",
+  "utc": "2026-10-18T07:59:55.254200+00:00",
   "native_binaries_and_archives": "locally retained, excluded from this packet; sources/raw receipts/inputs recoverable",
   "payloads": {
     "README.md": {
@@ -950,6 +950,37 @@
     "wrong-human.txt": {
       "bytes": 2328,
       "sha256": "2516aeabeda690758a67235f164207854598bf5479dc145d8aa0ae844d9726a5"
+    },
+    "review-dispositions/remote-review-inventory.json": {
+      "bytes": 1287,
+      "sha256": "12b6ea466cd3c4563cb7b7e8099811fb55a6833f093553b2b3b6c55c07c16373"
+    },
+    "review-dispositions/iterator-coercion-control.json": {
+      "bytes": 897,
+      "sha256": "a35ca9f05b503655ce5352d573131e0d6405a1ef3fe428de12211214add4d80c"
+    },
+    "review-dispositions/iterator-coercion-control.stdout": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "review-dispositions/bot-coercion-disposition.txt": {
+      "bytes": 5193,
+      "sha256": "1553273eca2cdf483591a6b6330786d1b14f78175f95db24024f6d495b98772d"
+    },
+    "review-dispositions/iterator-coercion-control.rs": {
+      "bytes": 890,
+      "sha256": "1463554d0c8d118fa1dd35c9bcfbabe339c454394eeb8ca4defda81b8a45b539"
+    },
+    "review-dispositions/completed-proof-readback.json": {
+      "bytes": 450,
+      "sha256": "80f3ba50f19b12ade9362b435f1fcc9619ce0fde6de407bab98bd789dd021b2e"
+    },
+    "review-dispositions/iterator-coercion-control.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     }
-  }
+  },
+  "stage": "completed local proof plus post-publication finding dispositions; Draft remains REVIEW_INCOMPLETE for hosted/integration proof",
+  "previous_evidence_commit": "b7fc8c5fb2c8de6fdc485e4a9b658585f536b92a",
+  "review_addendum": "review-dispositions/bot-coercion-disposition.txt"
 }

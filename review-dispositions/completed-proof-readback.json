@@ -1,0 +1,9 @@
+{
+  "commit": "b7fc8c5fb2c8de6fdc485e4a9b658585f536b92a",
+  "tree": "fcdf762b405fc18280cca0201dffcc3abbaea0d6",
+  "manifest_sha256": "f0b63d766316c6721d10f3736f464caa827490f1982f4be6f5f390b75bd89e2d",
+  "payloads_verified": 236,
+  "complete_inventory": true,
+  "method": "fresh isolated bare Git repository fetched remote evidence branch; every blob byte/size/digest and entire tree inventory verified",
+  "utc": "2026-10-18T07:56:39.754130+00:00"
+}

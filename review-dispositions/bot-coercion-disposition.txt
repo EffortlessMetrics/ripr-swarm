@@ -1,0 +1,34 @@
+Bot coercion finding disposition: REFUTED; no source repair requested.
+
+reviewed_head_sha: 9fc6a47f29b5ad581a527244681d4c4bf0d4714b
+reviewed_tree: 78bb14ec667570f0877f7c369e98bf0be1967f96
+integration_basis: 006eaf853fce5713a2e9044ba9c8d6a9a873f3d0
+review_timestamp: 2026-10-18T07:58:42.708306+00:00
+subject: published Draft #8772; parent-reported gemini-code-assist review 5562004501, inline comments 4306237493 and 4306237502. This pass evaluates the supplied concrete claims, not the authenticity/completeness of remote review retrieval.
+source_locations: crates/ripr/src/analysis/syntax/owner_pin.rs:630 and :652 (filter); :653 (flat_map).
+
+Claim: flattening Option<&[&str]> produces references that make &[name] incompatible with the required &[&str], causing a critical compilation failure unless .copied() is added.
+
+Independent source/type judgment:
+Option<&[&str]>::into_iter().flatten() yields &&str items. Iterator::filter passes &Item to its predicate, hence name is &&&str there; flat_map passes Item by value, hence name is &&str there. Those intermediate types are real but do not establish the claimed error. macro_binding_scan_needed(source, trusted: &[&str]) and the explicitly typed scan closure (names: &[&str]) supply an expected argument type. The borrowed array literal &[name] is checked in that context: its element is coerced to &str through reference dereference coercions, and the array reference coerces to the expected slice reference. Rust does not freeze an incompatible &[&&str] or &[&&&str] argument type and then require .copied(). Adding .copied() could make item types more explicit but is not required for compilation or correction of an observed defect.
+
+Independent tiny compiler control:
+- Source: /workspace/scratch/8265-independent-review/iterator-coercion-control.rs
+- Receipt: /workspace/scratch/8265-independent-review/iterator-coercion-control.json
+- Reproduces Option<&[&str]>, into_iter().flatten(), both original filter argument expressions, the unparsed branch's to_string map, the typed scan closure, and the exact flat_map argument expression. No .copied(), explicit dereference repair, Cargo, repository edits or shared target involved.
+- Absolute rustc: /workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/rustc; rustc 1.95.0 (59807616e 2026-04-14), edition 2024, --emit=metadata --crate-type=lib.
+- Native exit 0, empty stdout/stderr, 4269-byte metadata artifact. This establishes type checking, not runtime execution. Driver imposed 10-second timeout and <1MiB output bounds, checked >10GiB free reserve; free bytes after 25977753600. All control artifacts stay under reviewer scratch.
+
+New exact-head validation inspected:
+- final-cli-build.json: cargo build --locked -p ripr --bin ripr --message-format=json, exact reviewed head/tree, native 0, no abort. Actual product crate compilation contradicts the claimed compilation failure independently of the small control.
+- precommit-r2.json: exact reviewed head/tree, native 0. precommit-final-reports/precommit-v2.md binds merge basis 006eaf... and 18 changed records, records ripr and xtask all-target selected Clippy with -D warnings passing. dependencies.md now passes; golden-drift.md names the exact candidate CLI version and has drift entries 0 and fixture errors 0; evidence-promotion-honesty.md passes. These close the policy/dependency/golden-availability gaps retained in the prior source review; they are local precommit evidence, not hosted CI-equivalent completeness.
+- Independently hashed frozen final-ripr: ce52bc536ab50d9bd52b8215dac4291ec7f803315eed3655458321fb589b1aaf. All five final-controls receipts bind that binary, native exit 0, uncensored complete and nonempty two-finding output. Independently verified all five output hashes. Recomputed whole-JSON equality against frozen baseline for clean/same-path-rank/scoped-rest. Inspected scoped-public-only two unknowns/no canonical gaps/typed macro-binding limit/unscoped foreign-glob disclosure; trusted-subset two unknowns and src/a.rs stringify MacroArgument disclosure.
+
+Findings classification:
+- Reported Gemini inline claims: refuted compiler/type claims, no blocking source defect and no cosmetic source fix requested.
+- CodeRabbit quota/unavailable status: missing provider review, not a clean provider review and not a source correctness finding. No bot, billing, reply or thread-resolution action taken.
+- Missing hosted exact-head and actual merge/integration execution remains missing proof. Parent-reported integration object 4c4bba7406236cc47eec1c64d19560c6149080e6/tree 6675f441ac26ded8c6765357707d27cd0110215b was not executed or accepted by this pass.
+
+Disposition: REVIEW_INCOMPLETE. Source/oracle judgment remains no actionable findings; local final-head policy/build/CLI proof is now observed. Hosted/current published-head review completeness and actual integration proof are still outstanding. No merge/release/acceptance clearance.
+
+Author checkout: final read still 9fc6a47f29b5ad581a527244681d4c4bf0d4714b / 78bb14ec667570f0877f7c369e98bf0be1967f96, clean. No source mutations, HEAD moves, shared-target writes, CI requests, external messages or thread resolutions performed.

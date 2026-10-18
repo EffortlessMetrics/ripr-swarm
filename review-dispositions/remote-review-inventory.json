@@ -1,0 +1,33 @@
+{
+  "pr": 8772,
+  "head": "9fc6a47f29b5ad581a527244681d4c4bf0d4714b",
+  "source": "connected github_fetch_pr_comments after publication",
+  "records": [
+    {
+      "id": 6247302852,
+      "actor": "coderabbitai[bot]",
+      "disposition": "provider quota unavailable; missing provider review, no paid request or billing change"
+    },
+    {
+      "id": 5562004501,
+      "actor": "gemini-code-assist[bot]",
+      "kind": "review summary",
+      "disposition": "two alleged compilation failures; refuted by actual compiler/type control and full product receipts"
+    },
+    {
+      "id": 4306237493,
+      "path": "crates/ripr/src/analysis/syntax/owner_pin.rs",
+      "line": 630,
+      "claim": "nested references allegedly prevent singleton fallback filter from compiling",
+      "disposition": "refuted expected-type dereference coercion; no source change"
+    },
+    {
+      "id": 4306237502,
+      "path": "crates/ripr/src/analysis/syntax/owner_pin.rs",
+      "line": 652,
+      "claim": "nested references allegedly prevent filter/flat_map from compiling",
+      "disposition": "refuted expected-type dereference coercion; no source change"
+    }
+  ],
+  "actions": "No bot reply, billing action or thread resolution performed; thread resolution state not independently queried."
+}
