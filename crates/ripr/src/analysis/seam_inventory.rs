@@ -5421,7 +5421,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         )?;
         write_file(
             &root.join("src/lib.rs"),
-            "pub mod other;\n\npub fn discount(total: i32) -> i32 {\n    if total >= 100 { total / 10 } else { 0 }\n}\n\nfn check_discount() -> bool {\n    discount(200) == 20\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    fn check_discount_helper(total: i32) {\n        assert_eq!(discount(total), 20);\n    }\n\n    #[test]\n    fn high_total_gets_discount() {\n        assert_eq!(discount(200), 20);\n    }\n\n    #[test]\n    fn high_total_uses_helper() {\n        check_discount_helper(200);\n    }\n}\n",
+            "pub mod other;\n\n/// ```\n/// assert_eq!(200 / 10, 20);\n/// ```\npub fn discount(total: i32) -> i32 {\n    if total >= 100 { total / 10 } else { 0 }\n}\n\nfn check_discount() -> bool {\n    discount(200) == 20\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    fn check_discount_helper(total: i32) {\n        assert_eq!(discount(total), 20);\n    }\n\n    #[test]\n    fn high_total_gets_discount() {\n        assert_eq!(discount(200), 20);\n    }\n\n    #[test]\n    fn high_total_uses_helper() {\n        check_discount_helper(200);\n    }\n}\n",
         )?;
         write_file(
             &root.join("src/other.rs"),

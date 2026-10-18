@@ -12,7 +12,7 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 131
+floor = 134
 
 # Oracle-accuracy gate. Cases with `expected_oracle` label the related-test
 # oracle kind and strength a spec adopts; `verdict-corpus check` fails when
@@ -569,6 +569,11 @@ reason = "non-Rust language or packaging surface"
 # Rust closures in iterator adaptors
 [[spec]]
 id = "RIPR-SPEC-0265"
+scope = "in"
+
+# Rust doc examples as tests
+[[spec]]
+id = "RIPR-SPEC-0279"
 scope = "in"
 
 # TypeScript strict custom matcher

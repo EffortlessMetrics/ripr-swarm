@@ -41,7 +41,9 @@ mod swarm_command;
 #[path = "commands/task_first.rs"]
 mod task_first;
 
-pub(super) use agent::{agent, before_phase_stdout, run_before_repair_with_identity};
+pub(super) use agent::{
+    agent, before_phase_stdout, run_before_repair_with_identity, translate_agent_repair_seam_id,
+};
 pub(super) use context::context;
 // Flag-documenting help bodies live beside their parsers so `cli::help`
 // suggestions mine the same text `--help` prints.
@@ -124,9 +126,13 @@ mod pr_comments_github;
 
 #[path = "commands/check.rs"]
 mod check;
+#[path = "commands/check_budget.rs"]
+mod check_budget;
 #[path = "commands/check_fanout.rs"]
 mod check_fanout;
 pub(super) use check::check;
+#[cfg(unix)]
+pub(super) use check::check_with_interrupt_flags;
 
 #[path = "commands/review_comments.rs"]
 mod review_comments;

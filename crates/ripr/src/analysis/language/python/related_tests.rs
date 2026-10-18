@@ -26,6 +26,9 @@ pub(super) enum PythonRelationKind {
     /// The test calls a same-module caller of the owner, and no test calls the
     /// owner itself (#4568). Reach evidence only; never an oracle.
     HelperOwnerCall,
+    /// The test names a pytest fixture whose body calls the owner (#4563).
+    /// Reach evidence only; the fixture value is not an oracle.
+    FixtureOwnerCall,
     ActivationLimited,
 }
 
@@ -42,6 +45,7 @@ impl PythonRelationKind {
             Self::SameStem => 3,
             Self::TestNameSimilarity => 2,
             Self::FixtureName => 1,
+            Self::FixtureOwnerCall => 2,
             Self::HelperOwnerCall => 2,
             Self::ActivationLimited => 0,
         }
@@ -75,6 +79,7 @@ impl PythonRelationKind {
             Self::SameStem => "same_stem",
             Self::TestNameSimilarity => "test_name_similarity",
             Self::FixtureName => "fixture_name",
+            Self::FixtureOwnerCall => "fixture_owner_call",
             Self::HelperOwnerCall => "helper_owner_call",
             Self::ActivationLimited => "test_activation_unestablished",
         }
@@ -432,6 +437,9 @@ pub(super) fn related_test_relation(
     if local_binding_calls_owner(test, owner) {
         return Some(PythonRelationKind::LocalBinding);
     }
+    if fixture_owner_call(test, owner) {
+        return Some(PythonRelationKind::FixtureOwnerCall);
+    }
     // A test is related to an owner only when it references the owner
     // (RIPR-SPEC-0028). File-stem, test-name and fixture-name proximity are
     // ranking labels for a test that already references the owner without a
@@ -452,6 +460,26 @@ pub(super) fn related_test_relation(
         return Some(PythonRelationKind::FixtureName);
     }
     None
+}
+
+/// Whether a fixture the test names calls the owner by the rules a test body
+/// uses (#4563). A test that rebinds the parameter name in its body no longer
+/// holds the fixture value. One hop only: a fixture's own fixtures are not
+/// followed.
+fn fixture_owner_call(test: &PythonTest, owner: &PythonOwner) -> bool {
+    test.fixture_defs.iter().any(|def| {
+        if test_body_binds_local(test, &def.name) {
+            return false;
+        }
+        let mut view = test.clone();
+        view.file = def.file.clone();
+        view.body_text = def.body_text.clone();
+        view.imports = def.imports.clone();
+        view.assertions.clear();
+        view.fixtures.clear();
+        view.fixture_defs.clear();
+        related_test_relation(&view, owner).is_some_and(PythonRelationKind::uses_oracle)
+    })
 }
 
 /// The class of a dunder method owner (`LowerBound` for

@@ -288,3 +288,191 @@ fn ffi_binding_keeps_its_prior_limitation_without_field_selector_detail()
     }
     Ok(())
 }
+
+#[test]
+fn a_direct_record_selector_is_paired_with_its_own_asserted_call()
+-> Result<(), Box<dyn std::error::Error>> {
+    let original = concat!(
+        "        let mut lease = fixture();\n",
+        "        assert_eq!(charge(&lease), 600);\n",
+        "        lease.settled_elapsed_ms = Some(1001);\n",
+        "        assert_eq!(charge(&lease), 2);",
+    );
+    assert!(SOURCE.contains(original));
+    let source = SOURCE.replace(original,
+        "        assert_eq!(charge(&Lease { timeout_sec: 600, settled_elapsed_ms: Some(1001) }), 2);");
+    let diff = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -11 +11 @@\n-        Some(ms) => 1,\n+        Some(ms) => u64::try_from(ms.div_ceil(1000)).unwrap_or(u64::MAX).max(1),\n";
+    let fixture = Fixture::new(&source, diff)?;
+    let output = fixture.check()?;
+    let arms = output
+        .findings
+        .iter()
+        .filter(|finding| {
+            finding.probe.family == ripr::ProbeFamily::MatchArm && finding.probe.location.line == 11
+        })
+        .collect::<Vec<_>>();
+    assert!(!arms.is_empty(), "the changed arm must be analyzed");
+    for arm in arms {
+        assert_eq!(arm.class, ExposureClass::Exposed, "{}", arm.id);
+        assert!(arm.static_limit_kind.is_none());
+    }
+    Ok(())
+}
+
+#[test]
+fn a_direct_record_sibling_names_the_missing_arm_and_wrong_calls_never_credit_it()
+-> Result<(), Box<dyn std::error::Error>> {
+    let original = concat!(
+        "        let mut lease = fixture();\n",
+        "        assert_eq!(charge(&lease), 600);\n",
+        "        lease.settled_elapsed_ms = Some(1001);\n",
+        "        assert_eq!(charge(&lease), 2);",
+    );
+    let diff = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -11 +11 @@\n-        Some(ms) => 1,\n+        Some(ms) => u64::try_from(ms.div_ceil(1000)).unwrap_or(u64::MAX).max(1),\n";
+    for (case, body) in [
+        "        assert_eq!(charge(&Lease { timeout_sec: 1001, settled_elapsed_ms: None }), 1001);",
+        "        let _ = charge(&Lease { timeout_sec: 600, settled_elapsed_ms: Some(1001) });\n        assert_eq!(charge(&Lease { timeout_sec: 600, settled_elapsed_ms: None }), 600);",
+        "        let lease = Lease { timeout_sec: 600, settled_elapsed_ms: Some(1001) };\n        assert_eq!(charge(&lease), 2);",
+        "        assert_eq!(charge(&Lease { timeout_sec: 600, settled_elapsed_ms: Some(1000 + 1) }), 2);",
+    ].into_iter().enumerate() {
+        let source = SOURCE.replace(original, body);
+        let end = source.find("    #[test]\n    fn unrelated_owner_with_same_none_literal()")
+            .ok_or("fixture unrelated test boundary")?;
+        let source = format!("{}}}\n", &source[..end]);
+        let fixture = Fixture::new(&source, diff)?;
+        let output = fixture.check()?;
+        let arms = output.findings.iter().filter(|finding|
+            finding.probe.family == ripr::ProbeFamily::MatchArm && finding.probe.location.line == 11
+        ).collect::<Vec<_>>();
+        assert!(!arms.is_empty(), "the changed arm must be analyzed");
+        for arm in arms {
+            assert_ne!(arm.class, ExposureClass::Exposed, "case {case}: {}", arm.id);
+            if case == 0 {
+                assert!(arm.activation.missing_discriminators.iter().any(|missing| missing.value == "Some(ms)"), "{}", arm.id);
+                assert!(arm.static_limit_kind.is_none(),
+                    "an established sibling input is a real gap, not an unresolved field value");
+                assert!(arm.canonical_gap.is_some(),
+                    "the supported missing-arm discriminator must retain its repair identity");
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_foreign_option_constant_cannot_name_the_selected_field_arm()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = "mod foreign;\nstruct Lease { settled_elapsed_ms: Option<u128>, timeout_sec: u64 }\nfn charge(lease: &Lease) -> u64 {\n    match lease.settled_elapsed_ms {\n        foreign::None => 1,\n        Some(ms) => ms as u64,\n        None => lease.timeout_sec,\n    }\n}\n#[cfg(test)] mod tests {\n    use super::*;\n    #[test] fn legacy_only() {\n        assert_eq!(charge(&Lease { settled_elapsed_ms: None, timeout_sec: 600 }), 600);\n    }\n}\n";
+    let diff = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -5 +5 @@\n-        foreign::None => 0,\n+        foreign::None => 1,\n";
+    let fixture = Fixture::new(source, diff)?;
+    std::fs::write(
+        fixture.0.join("src/foreign.rs"),
+        "#[allow(non_upper_case_globals)]\npub const None: Option<u128> = Some(1001);\n",
+    )?;
+    let output = fixture.check()?;
+    let arms = output
+        .findings
+        .iter()
+        .filter(|finding| {
+            finding.probe.family == ripr::ProbeFamily::MatchArm && finding.probe.location.line == 5
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !arms.is_empty(),
+        "the qualified changed arm must be analyzed"
+    );
+    for arm in arms {
+        assert_ne!(
+            arm.class,
+            ExposureClass::Exposed,
+            "a constant is not the prelude variant: {}",
+            arm.id
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn raw_identifier_option_shadows_cannot_borrow_prelude_identity()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!("../../../fixtures/field_match_raw_option_shadow/input/src/lib.rs");
+    let diff = include_str!("../../../fixtures/field_match_raw_option_shadow/diff.patch");
+    let fixture = Fixture::new(source, diff)?;
+    let output = fixture.check()?;
+    let arms = output
+        .findings
+        .iter()
+        .filter(|finding| finding.probe.family == ripr::ProbeFamily::MatchArm)
+        .collect::<Vec<_>>();
+    assert_eq!(arms.len(), 2, "both changed-arm subjects must be analyzed");
+    for arm in arms {
+        assert_ne!(
+            arm.class,
+            ExposureClass::Exposed,
+            "raw identifiers retain their binding identity: {}",
+            arm.id
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_imported_statement_macro_cannot_supply_an_unread_option_binding()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!("../../../fixtures/field_match_macro_option_shadow/input/src/lib.rs");
+    let diff = include_str!("../../../fixtures/field_match_macro_option_shadow/diff.patch");
+    let fixture = Fixture::new(source, diff)?;
+    std::fs::write(
+        fixture.0.join("src/foreign.rs"),
+        include_str!("../../../fixtures/field_match_macro_option_shadow/input/src/foreign.rs"),
+    )?;
+    let output = fixture.check()?;
+    let arms = output
+        .findings
+        .iter()
+        .filter(|finding| {
+            finding.probe.family == ripr::ProbeFamily::MatchArm && finding.probe.location.line == 5
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        arms.len(),
+        2,
+        "current and deleted arm subjects must be analyzed"
+    );
+    for arm in arms {
+        assert_ne!(
+            arm.class,
+            ExposureClass::Exposed,
+            "an unread statement expansion can shadow None: {}",
+            arm.id
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_field_selector_cannot_credit_an_assertion_that_does_not_execute()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source =
+        include_str!("../../../fixtures/field_match_unexecuted_assertion/input/src/lib.rs");
+    let diff = include_str!("../../../fixtures/field_match_unexecuted_assertion/diff.patch");
+    let fixture = Fixture::new(source, diff)?;
+    let output = fixture.check()?;
+    let arms = output
+        .findings
+        .iter()
+        .filter(|finding| {
+            finding.probe.family == ripr::ProbeFamily::MatchArm && finding.probe.location.line == 4
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(arms.len(), 2, "current and deleted subjects must survive");
+    for arm in arms {
+        assert_ne!(
+            arm.class,
+            ExposureClass::Exposed,
+            "an unreachable assertion is not same-invocation proof: {}",
+            arm.id
+        );
+    }
+    Ok(())
+}

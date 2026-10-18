@@ -520,6 +520,20 @@ pub(super) struct NarrowedScope {
     consumed: ConsumedRustSources,
     /// `false` only for the test-only core-only control.
     widen: bool,
+    /// The main index's files tokenized like [`Self::tokens`], built on the
+    /// first closure search: every owner's seed scan reads the whole main
+    /// index, and scanning it once per owner dominated large diffs (#8629).
+    /// Like [`Self::closures`], it assumes one scope serves one main index,
+    /// which its only caller holds borrowed for the scope's run; the file
+    /// count is a cheap guard, not an identity.
+    main_tokens: Option<MainTokens>,
+}
+
+/// [`WithheldTokens`] over the main index's files, with the file count it
+/// was built from.
+struct MainTokens {
+    files: usize,
+    tokens: WithheldTokens,
 }
 
 /// Which withheld files spell each identifier, and the `macro_rules!`
@@ -788,6 +802,7 @@ pub(super) fn admit_dependents(
             test_harnesses: test_harnesses.to_vec(),
             consumed: ConsumedRustSources::default(),
             widen: !core_only,
+            main_tokens: None,
         }),
         withheld_macro_bindings,
     })
@@ -920,13 +935,7 @@ impl NarrowedScope {
         let mut names = HashSet::from([owner.to_string()]);
         // Seeds: the owner, then every macro defined in a file that spells
         // it (a superset of the macros whose definition mentions it).
-        let owner_bytes = byte_names(&BTreeSet::from([owner.to_string()]));
-        let mut seed_macros = BTreeSet::new();
-        for facts in main_index.files().values() {
-            if spells_any(facts.source.as_bytes(), &owner_bytes) {
-                seed_macros.extend(macro_rules_names(facts.source.as_bytes()));
-            }
-        }
+        let mut seed_macros = self.main_macros_spelling(owner, main_index)?;
         let Some((index, macros)) = self.admit_spelling(
             &BTreeSet::from([owner.to_string()]),
             &mut admitted_now,
@@ -977,6 +986,56 @@ impl NarrowedScope {
             admitted.extend(index);
         }
         Ok(Closure::Files(admitted_now))
+    }
+
+    /// The `macro_rules!` names defined in main-index files that spell
+    /// `owner` as a whole identifier.
+    fn main_macros_spelling(
+        &mut self,
+        owner: &str,
+        main_index: &RustIndex,
+    ) -> Result<BTreeSet<String>, String> {
+        let files = main_index.files();
+        if self
+            .main_tokens
+            .as_ref()
+            .is_none_or(|main| main.files != files.len())
+        {
+            #[cfg(test)]
+            MAIN_TOKEN_BUILDS.with(|builds| builds.set(builds.get() + 1));
+            let mut tokens = WithheldTokens::default();
+            for (id, facts) in files.values().enumerate() {
+                cancellation::checkpoint()?;
+                let id = u32::try_from(id)
+                    .map_err(|err| format!("dependent scope: too many main files: {err}"))?;
+                tokens.insert_scanned(id, FileTokens::scan(facts.source.as_bytes()));
+            }
+            self.main_tokens = Some(MainTokens {
+                files: files.len(),
+                tokens,
+            });
+        }
+        let Some(main) = self.main_tokens.as_ref() else {
+            return Ok(BTreeSet::new());
+        };
+        // The postings are exact for an ASCII name; for a non-ASCII one they
+        // are a superset, so confirm each candidate against its source.
+        let owner_bytes = byte_names(&BTreeSet::from([owner.to_string()]));
+        let sources = files.values().collect::<Vec<_>>();
+        Ok(main
+            .tokens
+            .spelling(&BTreeSet::from([owner.to_string()]))
+            .into_iter()
+            .filter(|id| {
+                owner.is_ascii()
+                    || sources
+                        .get(*id as usize)
+                        .is_some_and(|facts| spells_any(facts.source.as_bytes(), &owner_bytes))
+            })
+            .filter_map(|id| main.tokens.macros.get(id as usize))
+            .flatten()
+            .cloned()
+            .collect())
     }
 
     fn over(&self, reached: &BTreeSet<PathBuf>) -> Closure {
@@ -1161,6 +1220,40 @@ fn identifier_runs(bytes: &[u8]) -> impl Iterator<Item = &[u8]> {
 /// strings included (a superset of every parser fact). A non-ASCII name is
 /// also matched at ASCII word boundaries, which the runs do not split at.
 fn spells_any(bytes: &[u8], names: &HashSet<Vec<u8>>) -> bool {
+    if names.is_empty() {
+        return false;
+    }
+    if names.iter().all(|name| is_plain_ascii_identifier(name)) {
+        return ascii_word_runs(bytes).any(|run| names.contains(run));
+    }
+    identifier_runs(bytes).any(|run| names.contains(run))
+        || names
+            .iter()
+            .filter(|name| !name.is_ascii())
+            .any(|name| spells_at_ascii_boundary(bytes, name))
+}
+
+/// A non-empty ASCII identifier that does not start with a digit.
+fn is_plain_ascii_identifier(name: &[u8]) -> bool {
+    name.first().is_some_and(|first| !first.is_ascii_digit())
+        && name
+            .iter()
+            .all(|byte| *byte == b'_' || byte.is_ascii_alphanumeric())
+}
+
+/// Maximal runs of ASCII word bytes. For a plain ASCII name, being one of
+/// these runs is the same as being one of [`identifier_runs`]: a run
+/// bounded by non-identifier bytes, or the ASCII part of a Unicode run.
+/// This is the hot loop of every reach-closure scan, so it skips the
+/// Unicode bookkeeping.
+fn ascii_word_runs(bytes: &[u8]) -> impl Iterator<Item = &[u8]> {
+    bytes
+        .split(|byte| !(*byte == b'_' || byte.is_ascii_alphanumeric()))
+        .filter(|run| !run.is_empty())
+}
+
+#[cfg(test)]
+fn spells_any_slow(bytes: &[u8], names: &HashSet<Vec<u8>>) -> bool {
     !names.is_empty()
         && (identifier_runs(bytes).any(|run| names.contains(run))
             || names
@@ -1278,8 +1371,87 @@ fn macro_rules_names(bytes: &[u8]) -> Vec<String> {
 }
 
 #[cfg(test)]
+thread_local! {
+    static MAIN_TOKEN_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The seed scan reads the main index once per scope, and for every
+    /// owner (ASCII, Unicode, absent) it finds the macros the old per-owner
+    /// scan of every file found.
+    #[test]
+    fn seed_macros_index_main_files_once_and_match_the_full_scan() -> Result<(), String> {
+        use crate::analysis::facts::{FileFacts, OwnedRustIndex};
+        let sources = [
+            (
+                "src/a.rs",
+                "macro_rules! call_owner { () => { owner() } }\npub fn owner() {}\n",
+            ),
+            (
+                "src/b.rs",
+                "macro_rules! unrelated { () => {} }\nfn owner_x() {}\n",
+            ),
+            ("src/c.rs", "/// “größe”\nmacro_rules! sized { () => {} }\n"),
+            ("src/d.rs", "macro_rules! digit { () => { 1größe } }\n"),
+            ("src/e.rs", "macro_rules! late { () => {} }\n// see owner\n"),
+        ];
+        let index = RustIndex::from_owned(OwnedRustIndex {
+            files: sources
+                .iter()
+                .map(|(path, source)| {
+                    let path = PathBuf::from(path);
+                    let facts = FileFacts {
+                        path: path.clone(),
+                        source: (*source).to_string().into(),
+                        ..FileFacts::default()
+                    };
+                    (path, facts)
+                })
+                .collect(),
+            ..Default::default()
+        });
+        let mut scope = NarrowedScope {
+            root: PathBuf::new(),
+            all_files: Vec::new(),
+            main_files: Vec::new(),
+            withheld: Vec::new(),
+            tokens: WithheldTokens::default(),
+            closures: std::collections::BTreeMap::new(),
+            reach_index: Vec::new(),
+            test_harnesses: Vec::new(),
+            consumed: ConsumedRustSources::default(),
+            widen: true,
+            main_tokens: None,
+        };
+        let before = MAIN_TOKEN_BUILDS.with(std::cell::Cell::get);
+        for owner in ["owner", "größe", "owner_x", "missing", "sized"] {
+            let full_scan = index
+                .files()
+                .values()
+                .filter(|facts| {
+                    spells_any_slow(
+                        facts.source.as_bytes(),
+                        &byte_names(&BTreeSet::from([owner.to_string()])),
+                    )
+                })
+                .flat_map(|facts| macro_rules_names(facts.source.as_bytes()))
+                .collect::<BTreeSet<_>>();
+            assert_eq!(
+                scope.main_macros_spelling(owner, &index)?,
+                full_scan,
+                "{owner}"
+            );
+        }
+        assert_eq!(
+            scope.main_macros_spelling("owner", &index)?,
+            BTreeSet::from(["call_owner".to_string(), "late".to_string()])
+        );
+        assert_eq!(MAIN_TOKEN_BUILDS.with(std::cell::Cell::get) - before, 1);
+        Ok(())
+    }
 
     fn names(list: &[&str]) -> HashSet<Vec<u8>> {
         list.iter().map(|name| name.as_bytes().to_vec()).collect()
@@ -1359,6 +1531,46 @@ mod tests {
         assert!(!spells_any(b"fn parser() {}", &set));
         assert!(!spells_any(b"fn reparse() {}", &set));
         assert!(!spells_any(b"let parse_x = 1;", &set));
+    }
+
+    /// The plain-ASCII fast path answers exactly as the identifier-run scan
+    /// on every boundary the runs treat specially: Unicode neighbours, a
+    /// leading digit, raw identifiers, paths and macro bangs.
+    #[test]
+    fn ascii_fast_path_matches_the_identifier_run_scan() {
+        let haystacks: [&[u8]; 14] = [
+            b"parse",
+            b"x.parse()",
+            b"1parse",
+            b"parse1",
+            b"_parse",
+            b"r#parse",
+            b"parse!(x)",
+            b"crate::parse::go",
+            "éparse".as_bytes(),
+            "parseé".as_bytes(),
+            "é1parse".as_bytes(),
+            "“parse”".as_bytes(),
+            "größe_parse".as_bytes(),
+            b"",
+        ];
+        for wanted in [
+            &["parse"][..],
+            &["parse", "go"][..],
+            &["_parse"][..],
+            &["parse1"][..],
+            &["x"][..],
+        ] {
+            let set = names(wanted);
+            for haystack in haystacks {
+                assert_eq!(
+                    spells_any(haystack, &set),
+                    spells_any_slow(haystack, &set),
+                    "{wanted:?} in {:?}",
+                    String::from_utf8_lossy(haystack)
+                );
+            }
+        }
     }
 
     #[test]

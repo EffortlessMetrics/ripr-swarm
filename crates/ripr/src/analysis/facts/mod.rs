@@ -25,11 +25,13 @@ pub(crate) mod index_build_probe {
         (result, BUILDS.with(Cell::get))
     }
 }
+mod doctests;
 pub(crate) use build::CachedRustIndex;
 use build::MissAttribution;
 #[cfg(test)]
 pub(crate) use build::streamed_source_bytes;
 pub(crate) use build::{RUST_SOURCE_NOT_UTF8_REASON, rust_source_text};
+pub(crate) use doctests::SYNTHETIC_NAME as DOCTEST_FUNCTION_NAME;
 pub(crate) mod cfg_predicates;
 pub(crate) mod drop_in;
 mod harness_registry;
@@ -116,6 +118,12 @@ pub fn build_index_with_test_harnesses(
     index_phase("index_harness_registry", || {
         harness_registry::apply_registrations(&mut index, root, registrations);
         Ok(())
+    })?;
+    // #6648: doc examples rustdoc runs. After composition, whose module
+    // edges decide which files belong to the library.
+    index_phase("index_doctests", || {
+        doctests::register_doctests(&mut index);
+        index.refresh_memberships()
     })?;
     // Helper crediting reads final roles, so it runs after every role
     // authority.
@@ -278,6 +286,12 @@ fn post_process_cached_index(
         harness_registry::apply_registrations(&mut cached.index, root, registrations);
         Ok(())
     })?;
+    // #6648: doc examples rustdoc runs. After composition, whose module
+    // edges decide which files belong to the library.
+    index_phase("index_doctests", || {
+        doctests::register_doctests(&mut cached.index);
+        cached.index.refresh_memberships()
+    })?;
     // Helper crediting reads final roles, so it runs after every role
     // authority.
     index_phase("index_test_helper_credit", || {
@@ -316,12 +330,13 @@ pub use index::{FactSlice, FileData, FileFactsView};
 #[cfg(test)]
 pub(crate) use model::OwnedRustIndex;
 pub use model::{
-    CallFact, FileFacts, FunctionContainer, FunctionFact, FunctionImplContext, FunctionItemFact,
-    FunctionSourceRole, FunctionSummary, HarnessLimitationFact, HarnessSelectorCapability,
-    HarnessSubjectClaim, HarnessSubjectFact, LetBindingFact, LiteralFact, ModuleDeclarationFact,
-    ModulePathTarget, OracleFact, ProbeShapeFact, ProbeShapeKind, ResolvedIncludeParent,
-    ReturnFact, RustIncludeLimitation, RustIndex, SourceRoleProvenance, SourceRoleProvenanceEdge,
-    SourceRoleProvenanceEdgeKind, SourceText, TestFact, TestSummary, UnresolvedPropertyMacroFact,
+    CallFact, CallText, FileFacts, FunctionContainer, FunctionFact, FunctionImplContext,
+    FunctionItemFact, FunctionSourceRole, FunctionSummary, HarnessLimitationFact,
+    HarnessSelectorCapability, HarnessSubjectClaim, HarnessSubjectFact, LetBindingFact,
+    LiteralFact, ModuleDeclarationFact, ModulePathTarget, OracleFact, ProbeShapeFact,
+    ProbeShapeKind, ResolvedIncludeParent, ReturnFact, RustIncludeLimitation, RustIndex,
+    SourceRoleProvenance, SourceRoleProvenanceEdge, SourceRoleProvenanceEdgeKind, SourceText,
+    TestFact, TestSummary, UnresolvedPropertyMacroFact,
 };
 // Hot evidence loops hash each indexed file once and validate by digest.
 pub(crate) use model::WorkspaceFileAuthority;
