@@ -43,16 +43,46 @@ const NEW: &str = "        let d = c.to_digit(10).ok_or(ParseError::BadDigit { p
 /// as the body of the one test, `items` after `parse_num` and `test_items`
 /// in the test module.
 fn pos_finding(assertions: &str, items: &str, test_items: &str) -> Result<Value, String> {
+    pos_finding_at(assertions, items, test_items, None, &[])
+}
+
+/// Same crate as [`pos_finding`], with an optional `tests/it.rs` (no inline
+/// `mod tests`) and extra files so a `#[path]` remap can live in the
+/// scratch crate.
+fn pos_finding_at(
+    assertions: &str,
+    items: &str,
+    test_items: &str,
+    integration: Option<&str>,
+    extra_files: &[(&str, &str)],
+) -> Result<Value, String> {
     let scratch = Scratch::create()?;
     let manifest = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\npublish = false\n\n[dev-dependencies]\nassert_matches = \"1.5\"\n";
+    let tests = match integration {
+        Some(_) => String::new(),
+        None => format!(
+            "#[cfg(test)]\nmod tests {{\n    use super::*;\n    use assert_matches::assert_matches;\n{test_items}\n    #[test]\n    fn bad_digit_reports_position() {{\n        {assertions}\n    }}\n}}\n"
+        ),
+    };
     let lib = format!(
-        "#[derive(Debug, PartialEq)]\npub enum ParseError {{\n    Empty,\n    BadDigit {{ pos: usize }},\n}}\n\npub fn parse_num(s: &str) -> Result<u32, ParseError> {{\n    if s.is_empty() {{\n        return Err(ParseError::Empty);\n    }}\n    let mut acc: u32 = 0;\n    for (i, c) in s.chars().enumerate() {{\n{NEW}\n        acc = acc * 10 + d;\n    }}\n    Ok(acc)\n}}\n{items}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    use assert_matches::assert_matches;\n{test_items}\n    #[test]\n    fn bad_digit_reports_position() {{\n        {assertions}\n    }}\n}}\n"
+        "#[derive(Debug, PartialEq)]\npub enum ParseError {{\n    Empty,\n    BadDigit {{ pos: usize }},\n}}\n\npub fn parse_num(s: &str) -> Result<u32, ParseError> {{\n    if s.is_empty() {{\n        return Err(ParseError::Empty);\n    }}\n    let mut acc: u32 = 0;\n    for (i, c) in s.chars().enumerate() {{\n{NEW}\n        acc = acc * 10 + d;\n    }}\n    Ok(acc)\n}}\n{items}\n{tests}"
     );
     let diff = format!(
         "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -13,1 +13,1 @@\n-{OLD}\n+{NEW}\n"
     );
     std::fs::write(scratch.0.join("Cargo.toml"), manifest).map_err(|error| error.to_string())?;
     std::fs::write(scratch.0.join("src/lib.rs"), lib).map_err(|error| error.to_string())?;
+    if let Some(source) = integration {
+        std::fs::create_dir(scratch.0.join("tests")).map_err(|error| error.to_string())?;
+        std::fs::write(scratch.0.join("tests/it.rs"), source).map_err(|error| error.to_string())?;
+    }
+    for (path, source) in extra_files {
+        let path = scratch.0.join(path);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        std::fs::write(&path, source).map_err(|error| error.to_string())?;
+    }
     let diff_file = scratch.0.join("change.diff");
     std::fs::write(&diff_file, diff).map_err(|error| error.to_string())?;
     let report = check_workspace(CheckInput {
@@ -168,5 +198,42 @@ fn a_test_side_build_or_input_stays_unconfirmed() -> Result<(), String> {
             "{assertions}{test_items}: {finding}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn a_production_namesake_under_a_path_remap_stays_unconfirmed() -> Result<(), String> {
+    // `#[path]` makes `shared_owner_call_identity` return `None` even when
+    // a same-package namesake exists; the fallback then requires exactly
+    // one production function of the owner's name. The remapped module
+    // holds that namesake and does not spell `BadDigit {`, so uniqueness
+    // of variant heads is not the refusal.
+    let finding = pos_finding_at(
+        "assert_matches!(parse_num(\"x1\"), Err(ParseError::BadDigit { pos: 0 }));",
+        "\n#[path = \"elsewhere.rs\"]\nmod moved;\n",
+        "",
+        None,
+        &[(
+            "src/elsewhere.rs",
+            "pub fn parse_num(_s: &str) -> u32 {\n    0\n}\n",
+        )],
+    )?;
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn an_own_package_integration_test_import_is_exposed() -> Result<(), String> {
+    let finding = pos_finding_at(
+        "",
+        "",
+        "",
+        Some(
+            "use assert_matches::assert_matches;\nuse demo::parse_num;\n\n#[test]\nfn bad_digit_reports_position() {\n    assert_matches!(parse_num(\"x1\"), Err(demo::ParseError::BadDigit { pos: 0 }));\n}\n",
+        ),
+        &[],
+    )?;
+    assert_eq!(finding["oracle_kind"], "exact_error_variant", "{finding}");
+    assert_eq!(finding["classification"], "exposed", "{finding}");
     Ok(())
 }

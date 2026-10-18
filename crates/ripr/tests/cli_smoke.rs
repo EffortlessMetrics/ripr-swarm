@@ -5560,6 +5560,10 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
         "{stderr}"
     );
 
+    // The repair transaction accepts the finding-ID namespace too (#8166
+    // residual): an unmapped probe ID refuses through the packet surface's
+    // family-named hint, which now names the equivalent `ripr repair`
+    // command, and starts no attempt.
     let repair = run_ripr(&[
         "agent",
         "repair",
@@ -5574,6 +5578,11 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     assert!(!repair.status.success());
     let stderr = String::from_utf8_lossy(&repair.stderr);
     assert!(stderr.contains("not a seam ID"), "{stderr}");
+    assert!(
+        stderr.contains("`ripr repair <finding-id> --root ")
+            && stderr.contains("agent-packet-unknown-seam"),
+        "the hint must name the equivalent command for the failing root:\n{stderr}"
+    );
     assert!(
         stderr.contains("ripr pilot --root ") && stderr.contains("agent-packet-unknown-seam"),
         "{stderr}"
