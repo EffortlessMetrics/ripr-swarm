@@ -15286,6 +15286,8 @@ tests = [
   "crates/ripr/tests/whole_tail_match_observation.rs::whole_tail_receipt_never_selects_an_unobserved_sibling_arm",
   "crates/ripr/tests/whole_tail_match_observation.rs::existing_nested_and_mismatched_owners_never_receive_the_receipt",
   "crates/ripr/tests/whole_tail_match_observation.rs::immutable_whole_result_binding_preserves_observation",
+  "crates/ripr/tests/whole_tail_match_observation.rs::neighboring_old_text_does_not_replace_validated_new_owner_custody",
+  "crates/ripr/tests/whole_tail_match_observation.rs::nonlocal_or_macro_exit_in_the_tail_cannot_bypass_header_observation",
   "crates/ripr/tests/whole_tail_match_observation.rs::opaque_or_rebound_expected_values_never_gain_new_credit",
   "crates/ripr/src/analysis/classify/owner_pin/whole_tail_match.rs::tests::receipt_refuses_incomplete_wrong_owner_ast_source_and_diff",
   "crates/ripr/tests/field_match_selector.rs::owner_doc_comments_preserve_the_asserted_field_selector",

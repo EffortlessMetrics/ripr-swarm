@@ -853,10 +853,15 @@ A match header is not an individual arm. A separate internal
 2. The validated diff reconstructs parseable old source, every owner body line
    is newly added, no removed line maps into it, and no old function has that
    name. Existing changed owners, mismatched source/diff and missing parser
-   custody refuse the receipt.
+   custody refuse the receipt. Nearby `probe.before` text can describe a
+   different changed owner in the same added run; it neither admits nor refuses
+   this receipt. Validated old-source/declaration custody is the authority.
 3. The synchronous function returns an unshadowed primitive scalar and its
    statement-free body has exactly this `MatchExpr` as its tail. A nested match,
-   discarded match or match following a statement receives no receipt.
+   discarded match or match following a statement receives no receipt. Explicit
+   exits (`return`, `?`, `break`, `continue`, `yield`) and macro invocations
+   anywhere in the match refuse this slice: the scrutinee must not bypass
+   selection through a non-local exit or conceal one in an expansion.
 4. The existing owner-return admission establishes assertion execution, standard
    macro and callee identity, whole-result binding, expected-side independence
    and overwrite guards for the exact invocation. This adapter further limits

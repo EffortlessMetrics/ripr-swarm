@@ -24,7 +24,6 @@ impl WholeTailMatchObservation {
     ) -> Option<Self> {
         if !workspace_complete
             || probe.family != ProbeFamily::MatchArm
-            || probe.before.is_some()
             || probe.owner.as_ref() != Some(&owner.id)
             || !probe.location.file.ends_with(&owner.file)
             || changed.path != owner.file
@@ -81,6 +80,22 @@ impl WholeTailMatchObservation {
         let ast::Expr::MatchExpr(matched) = body.tail_expr()? else {
             return None;
         };
+        // The match must supply the returned value. A return or `?` in
+        // its scrutinee can leave the function before selection; an opaque
+        // macro can conceal the same bypass. Refuse these throughout this
+        // narrow tail slice, including otherwise local nested exits.
+        let masked = mask_comments_and_strings(&matched.syntax().text().to_string());
+        if masked.contains('?')
+            || ["return", "break", "continue", "yield"]
+                .iter()
+                .any(|word| contains_as_whole_word(&masked, word))
+            || matched
+                .syntax()
+                .descendants()
+                .any(|node| ast::MacroCall::can_cast(node.kind()))
+        {
+            return None;
+        }
         let token = matched.match_token()?;
         let token_start = usize::from(token.text_range().start());
         let scrutinee = matched.expr()?;
@@ -93,6 +108,8 @@ impl WholeTailMatchObservation {
         {
             return None;
         }
+        // `probe.before` is deliberately not authority here: nearby old text
+        // may belong to a changed preceding owner in this same added run.
         // Every owner line is an exact addition, not a changed/renamed owner
         // borrowing a current tail that was already present on the old side.
         let end_line = line(end.saturating_sub(1));
@@ -291,20 +308,27 @@ mod tests {
                 "{case}"
             );
         }
-        for case in ["owner", "line", "expression", "after", "before", "file"] {
+        for case in ["owner", "line", "expression", "after", "file"] {
             let mut other = seeded.probe.clone();
             match case {
                 "owner" => other.owner = None,
                 "line" => other.location.line += 1,
                 "expression" => other.expression = "match other.elapsed".to_string(),
                 "after" => other.after = Some("match other.elapsed".to_string()),
-                "before" => other.before = Some(other.expression.clone()),
                 "file" => other.location.file = PathBuf::from("src/other.rs"),
                 _ => return Err("unknown probe case".to_string()),
             }
             assert!(!establish(&other, owner, &changed, span, true), "{case}");
         }
-        for case in ["path", "text", "missing", "duplicate", "old"] {
+        for case in [
+            "path",
+            "text",
+            "missing",
+            "duplicate",
+            "old",
+            "moved",
+            "old-unread",
+        ] {
             let mut other = changed.clone();
             match case {
                 "path" => other.path = PathBuf::from("src/other.rs"),
@@ -317,6 +341,16 @@ mod tests {
                     line: 2,
                     new_side_line: 3,
                     text: "fn charge(_: &Lease) -> u64 { 0 }".to_string(),
+                }),
+                "moved" => other.removed_lines.push(ChangedLine {
+                    line: 2,
+                    new_side_line: 1,
+                    text: "fn charge(_: &Lease) -> u64 { 0 }".to_string(),
+                }),
+                "old-unread" => other.removed_lines.push(ChangedLine {
+                    line: 2,
+                    new_side_line: 1,
+                    text: "fn broken(".to_string(),
                 }),
                 _ => return Err("unknown diff case".to_string()),
             }

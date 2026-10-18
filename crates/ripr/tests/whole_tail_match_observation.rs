@@ -282,7 +282,7 @@ fn existing_nested_and_mismatched_owners_never_receive_the_receipt()
 fn immutable_whole_result_binding_preserves_observation() -> Result<(), Box<dyn std::error::Error>>
 {
     let source = with_test(
-        "let lease = new_lease(600); let value = charge(&lease); assert_eq!(value, 600);",
+        "let lease = new_lease(600);\nlet value = charge(&lease);\nassert_eq!(value, 600);",
     );
     assert_eq!(
         header_class(&source, &added_diff(&source))?,
@@ -327,5 +327,97 @@ fn opaque_or_rebound_expected_values_never_gain_new_credit()
             "{case}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn nonlocal_or_macro_exit_in_the_tail_cannot_bypass_header_observation()
+-> Result<(), Box<dyn std::error::Error>> {
+    for (case, source) in [
+        (
+            "scrutinee return",
+            SOURCE.replace(
+                "match lease.settled_elapsed_ms",
+                "match { return 600; lease.settled_elapsed_ms }",
+            ),
+        ),
+        (
+            "arm return",
+            SOURCE.replace(
+                "None => lease.timeout_sec",
+                "None => return lease.timeout_sec",
+            ),
+        ),
+        (
+            "macro scrutinee",
+            SOURCE
+                .replace(
+                    "    match lease.settled_elapsed_ms",
+                    "    match early!(lease.settled_elapsed_ms)",
+                )
+                .replace(
+                    "fn charge(",
+                    "macro_rules! early { ($e:expr) => {{ return 600; $e }} }\nfn charge(",
+                ),
+        ),
+        (
+            "shadowed bounded macro",
+            SOURCE
+                .replace(
+                    "    match lease.settled_elapsed_ms",
+                    "    match assert!(lease.settled_elapsed_ms)",
+                )
+                .replace(
+                    "fn charge(",
+                    "macro_rules! assert { ($e:expr) => {{ return 600; $e }} }\nfn charge(",
+                ),
+        ),
+    ] {
+        let output = Fixture::new(&source, &added_diff(&source))?.check()?;
+        let headers = output
+            .findings
+            .iter()
+            .filter(|f| {
+                f.probe.family == ripr::ProbeFamily::MatchArm
+                    && f.probe.expression.starts_with("match ")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(headers.len(), 1, "{case} header must survive analysis");
+        assert_ne!(headers[0].class, ExposureClass::Exposed, "{case}");
+    }
+    Ok(())
+}
+
+#[test]
+fn neighboring_old_text_does_not_replace_validated_new_owner_custody()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = SOURCE.replace(
+        "fn charge(",
+        "fn prior(lease: &Lease) -> u64 { lease.timeout_sec }\nfn charge(",
+    );
+    let diff = format!(
+        "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -9 +9,{} @@\n-fn prior(lease: &Lease) -> u64 {{ 0 }}\n{}",
+        source.lines().count() - 8,
+        source
+            .lines()
+            .skip(8)
+            .map(|line| format!("+{line}\n"))
+            .collect::<String>()
+    );
+    let output = Fixture::new(&source, &diff)?.check()?;
+    let header = output
+        .findings
+        .iter()
+        .find(|f| f.probe.expression == "match lease.settled_elapsed_ms")
+        .ok_or("header subject")?;
+    assert!(
+        header.probe.before.is_some(),
+        "the fixture must exercise neighboring removed-before text"
+    );
+    assert_eq!(
+        header.class,
+        ExposureClass::Exposed,
+        "validated old source has no charge owner despite heuristic before text"
+    );
     Ok(())
 }
