@@ -269,7 +269,7 @@ mod tests {
                 calls: vec![CallFact {
                     line: 1,
                     name: "token_label".to_string(),
-                    text: "token_label(\"discount_threshold\")".to_string(),
+                    text: "token_label(\"discount_threshold\")".to_string().into(),
                 }],
                 assertions: vec![oracle_fact(
                     "assert_eq!(token_label(\"discount_threshold\"), \"token:discount_threshold\");",
@@ -313,7 +313,7 @@ mod tests {
             .map(|(callee, text)| CallFact {
                 line: 2,
                 name: callee.to_string(),
-                text: text.to_string(),
+                text: text.to_string().into(),
             })
             .collect();
         owner
@@ -329,7 +329,7 @@ mod tests {
             calls: vec![CallFact {
                 line: 1,
                 name: callee.to_string(),
-                text: text.to_string(),
+                text: text.to_string().into(),
             }],
             assertions: Vec::new(),
             literals: Vec::new(),
@@ -1182,7 +1182,7 @@ mod tests {
                 calls: vec![CallFact {
                     line: 1,
                     name: "macro_tax_case".to_string(),
-                    text: "macro_tax_case!(100)".to_string(),
+                    text: "macro_tax_case!(100)".to_string().into(),
                 }],
                 assertions: vec![oracle_fact(
                     "assert_eq!(macro_tax_case!(100), 120);",
@@ -2738,7 +2738,7 @@ fn far_above_threshold_discounts() {
         production_caller.calls = vec![CallFact {
             line: 2,
             name: "check_invariants".to_string(),
-            text: "check_invariants(value);".to_string(),
+            text: "check_invariants(value);".to_string().into(),
         }];
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner, production_caller],
@@ -3265,7 +3265,7 @@ fn far_above_threshold_discounts() {
             calls: vec![CallFact {
                 line: 1,
                 name: "score".to_string(),
-                text: call.to_string(),
+                text: call.to_string().into(),
             }],
             assertions: vec![oracle],
             literals: vec![LiteralFact {

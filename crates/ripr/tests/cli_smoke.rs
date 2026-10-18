@@ -5560,6 +5560,10 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
         "{stderr}"
     );
 
+    // The repair transaction accepts the finding-ID namespace too (#8166
+    // residual): an unmapped probe ID refuses through the packet surface's
+    // family-named hint, which now names the equivalent `ripr repair`
+    // command, and starts no attempt.
     let repair = run_ripr(&[
         "agent",
         "repair",
@@ -5574,6 +5578,11 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     assert!(!repair.status.success());
     let stderr = String::from_utf8_lossy(&repair.stderr);
     assert!(stderr.contains("not a seam ID"), "{stderr}");
+    assert!(
+        stderr.contains("`ripr repair <finding-id> --root ")
+            && stderr.contains("agent-packet-unknown-seam"),
+        "the hint must name the equivalent command for the failing root:\n{stderr}"
+    );
     assert!(
         stderr.contains("ripr pilot --root ") && stderr.contains("agent-packet-unknown-seam"),
         "{stderr}"
@@ -5594,6 +5603,28 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     let stderr = String::from_utf8_lossy(&gap_packet.stderr);
     assert!(
         stderr.contains("is a `ripr check` canonical gap ID, not a seam ID"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("ripr pilot --root ") && stderr.contains("agent-packet-unknown-seam"),
+        "{stderr}"
+    );
+
+    // A whole-repo `repo-probe:...` finding ID gets the same family-named
+    // refusal as `probe:...` (#8166 review).
+    let repo_probe_packet = run_ripr(&[
+        "agent",
+        "packet",
+        "--root",
+        &root_path,
+        "--seam-id",
+        "repo-probe:src_lib.rs:predicate:566edf6b",
+        "--json",
+    ]);
+    assert!(!repo_probe_packet.status.success());
+    let stderr = String::from_utf8_lossy(&repo_probe_packet.stderr);
+    assert!(
+        stderr.contains("`repo-probe:...` is a `ripr check` finding ID, not a seam ID"),
         "{stderr}"
     );
     assert!(
@@ -18784,7 +18815,15 @@ fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
         true
     );
     assert!(
-        stdout.contains("Top recommendation:\n  current change: part of it (this seam is on a line changed since origin/main)"),
+        stdout.contains(
+            "Top recommendation:\n  Exploratory seams, not ranked by expected mutant yield:"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(
+            "  current change: part of it (this seam is on a line changed since origin/main)"
+        ),
         "{stdout}"
     );
     assert!(md.contains("- Current change: part of it"), "{md}");
@@ -29039,6 +29078,54 @@ fn check_rejects_invalid_ripr_git_timeout_env() -> Result<(), String> {
                 non_utf8.status.code()
             ));
         }
+    }
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+/// #5369: the `ripr check` wall-clock budget fails closed on a malformed
+/// value, naming the flag or variable, and an explicit `--timeout` wins over
+/// the environment so the bad env value is not read.
+#[test]
+fn check_rejects_invalid_check_timeout_flag_and_env() -> Result<(), String> {
+    let workspace = unique_external_workspace("check-timeout-env")?;
+    std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
+    let root = workspace
+        .to_str()
+        .ok_or("workspace path is not valid UTF-8")?;
+
+    let flag = run_ripr(&["check", "--root", root, "--timeout", "soon"]);
+    let stderr = String::from_utf8_lossy(&flag.stderr);
+    if flag.status.code() != Some(2)
+        || !stderr.contains("--timeout requires a non-negative integer (seconds); got \"soon\"")
+    {
+        return Err(format!(
+            "bad --timeout should exit 2 naming the flag, got {:?}; stderr: {stderr}",
+            flag.status.code()
+        ));
+    }
+
+    let env = run_ripr_with_env(&["check", "--root", root], &[("RIPR_CHECK_TIMEOUT", "abc")]);
+    let stderr = String::from_utf8_lossy(&env.stderr);
+    if env.status.code() != Some(2)
+        || !stderr
+            .contains("RIPR_CHECK_TIMEOUT requires a non-negative integer (seconds); got \"abc\"")
+    {
+        return Err(format!(
+            "bad RIPR_CHECK_TIMEOUT should exit 2 naming the variable, got {:?}; stderr: {stderr}",
+            env.status.code()
+        ));
+    }
+
+    let explicit = run_ripr_with_env(
+        &["check", "--root", root, "--timeout", "5"],
+        &[("RIPR_CHECK_TIMEOUT", "abc")],
+    );
+    let stderr = String::from_utf8_lossy(&explicit.stderr);
+    if stderr.contains("RIPR_CHECK_TIMEOUT") {
+        return Err(format!(
+            "--timeout should take precedence over the env var: {stderr}"
+        ));
     }
     ignore_remove_dir_all(&workspace);
     Ok(())

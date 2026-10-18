@@ -842,6 +842,20 @@ pub(crate) struct DoctorRuntimeProbe {
     pub(crate) elapsed_ms: Option<u64>,
 }
 
+/// One named segment of doctor work that is not a check or a runtime probe
+/// (#8540 follow-up). The report total covers computations such as language
+/// detection and the environment probe; naming their segments lets the
+/// slowest attribution explain the total instead of only checks and probes
+/// competing for it. Segments never change a check status or the exit code.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct DoctorSegmentTiming {
+    /// The computation name, in `snake_case` after the computation it times.
+    pub(crate) name: String,
+    /// How long that computation took, in milliseconds, measured at its
+    /// production site.
+    pub(crate) elapsed_ms: u64,
+}
+
 /// Every environment fact both doctor surfaces report, computed once per run.
 ///
 /// The human printers and the JSON document read these same values, so a fact
@@ -864,6 +878,10 @@ pub(crate) struct DoctorEnvironmentFacts {
     pub(crate) test_surfaces: Vec<DoctorTestSurface>,
     /// The Perl preview state, `None` when no Perl project was detected.
     pub(crate) perl_preview: Option<DoctorPerlPreview>,
+    /// Named segment timings measured where each computation runs
+    /// (#8540 follow-up), carried here so `apply_environment` moves them
+    /// onto the report both surfaces render.
+    pub(crate) segments: Vec<DoctorSegmentTiming>,
 }
 
 /// The full doctor report.
@@ -936,6 +954,12 @@ pub(crate) struct DoctorReport {
     /// report one number. Core evaluation leaves it unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) elapsed_ms: Option<u64>,
+    /// Named segment timings for work the total covers that is neither a
+    /// check nor a runtime probe (additive, #8540 follow-up). Omitted when
+    /// no segment was measured, so an un-timed report serializes exactly as
+    /// before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) segments: Vec<DoctorSegmentTiming>,
 }
 
 impl DoctorReport {
@@ -963,6 +987,7 @@ impl DoctorReport {
             perl_preview: None,
             canonical_next_action: None,
             elapsed_ms: None,
+            segments: Vec::new(),
         }
     }
 
@@ -993,6 +1018,7 @@ impl DoctorReport {
         self.cache = Some(facts.cache);
         self.test_surfaces = facts.test_surfaces;
         self.perl_preview = facts.perl_preview;
+        self.segments = facts.segments;
     }
 
     /// Add a typed check and update the overall status.
@@ -1022,8 +1048,8 @@ impl DoctorReport {
         }
     }
 
-    /// The slowest measured check or runtime probe, by name and elapsed
-    /// milliseconds. `None` when nothing was timed.
+    /// The slowest measured check, runtime probe, or named segment, by name
+    /// and elapsed milliseconds. `None` when nothing was timed.
     pub(crate) fn slowest_measured(&self) -> Option<(String, u64)> {
         let from_checks = self
             .checks
@@ -1033,7 +1059,14 @@ impl DoctorReport {
             .runtime_probes
             .iter()
             .filter_map(|probe| probe.elapsed_ms.map(|ms| (probe.tool.clone(), ms)));
-        from_checks.chain(from_probes).max_by_key(|(_, ms)| *ms)
+        let from_segments = self
+            .segments
+            .iter()
+            .map(|segment| (segment.name.clone(), segment.elapsed_ms));
+        from_checks
+            .chain(from_probes)
+            .chain(from_segments)
+            .max_by_key(|(_, ms)| *ms)
     }
 
     /// Record a check that does not apply to this root. It never changes the
@@ -2719,6 +2752,63 @@ mod tests {
             .find(|check| check.name == "tool_rustc")
             .ok_or("skipped check must exist")?;
         assert_eq!(skipped.elapsed_ms, None);
+        Ok(())
+    }
+
+    #[test]
+    fn segments_serialize_when_present_and_are_absent_when_empty() -> Result<(), String> {
+        // #8540 follow-up: injected durations only. An empty segment list
+        // serializes as absent, never as an empty array.
+        let mut report = DoctorReport::new("/workspace");
+        let json = report.render_json()?;
+        assert!(!json.contains("\"segments\""), "{json}");
+
+        report.apply_environment(DoctorEnvironmentFacts {
+            detected_languages: Vec::new(),
+            unanalyzed_source_languages: Vec::new(),
+            preview_language_gaps: Vec::new(),
+            config_defaults: None,
+            cache: DoctorCacheStatus {
+                cache_dir: "target/ripr/cache".to_string(),
+                relocated_by_env: false,
+                size_bytes: 0,
+                size_display: "0 B".to_string(),
+                artifact_ignore: DoctorArtifactIgnore::NoArtifacts,
+                artifact_tracking: DoctorArtifactTracking::Untracked,
+            },
+            test_surfaces: Vec::new(),
+            perl_preview: None,
+            segments: vec![
+                DoctorSegmentTiming {
+                    name: "language_detection".to_string(),
+                    elapsed_ms: 120,
+                },
+                DoctorSegmentTiming {
+                    name: "unanalyzed_source_scan".to_string(),
+                    elapsed_ms: 2_500,
+                },
+            ],
+        });
+        let json = report.render_json()?;
+        assert!(json.contains("\"segments\""), "{json}");
+        assert!(json.contains("\"name\": \"language_detection\""), "{json}");
+        assert!(json.contains("\"elapsed_ms\": 120"), "{json}");
+        assert!(
+            json.contains("\"name\": \"unanalyzed_source_scan\""),
+            "{json}"
+        );
+        assert!(json.contains("\"elapsed_ms\": 2500"), "{json}");
+        // Segments compete for slowest alongside checks and probes.
+        report.add_check(
+            "tool_cargo",
+            DoctorStatus::Pass,
+            Some("cargo 1.0".to_string()),
+        );
+        report.mark_check_elapsed("tool_cargo", std::time::Duration::from_millis(300));
+        assert_eq!(
+            report.slowest_measured(),
+            Some(("unanalyzed_source_scan".to_string(), 2_500))
+        );
         Ok(())
     }
 
@@ -4528,6 +4618,7 @@ mod tests {
             },
             test_surfaces: Vec::new(),
             perl_preview: None,
+            segments: Vec::new(),
         });
         let json = report.render_json()?;
         let parsed: serde_json::Value =
@@ -4594,6 +4685,7 @@ mod tests {
                 evidence: "python: pytest".to_string(),
             }],
             perl_preview: None,
+            segments: Vec::new(),
         });
         let parsed: serde_json::Value = serde_json::from_str(&report.render_json()?)
             .map_err(|e| format!("invalid JSON: {e}"))?;
