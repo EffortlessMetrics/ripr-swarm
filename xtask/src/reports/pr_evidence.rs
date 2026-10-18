@@ -1786,7 +1786,7 @@ mod tests {
             ".".to_string(),
             "origin/main".to_string(),
             "target/ripr/pr/pr.diff".to_string(),
-            Duration::from_secs(3600),
+            Duration::from_hours(1),
         );
         let timeout = args
             .windows(2)
