@@ -12431,6 +12431,15 @@ fn spec_0027_ambiguous_fallback_is_never_exposed_and_punctuation_is_ignored() ->
         !limitation.contains("predicate boundary"),
         "an unrecognised shape has no predicate claim: {limitation}"
     );
+    let call_operand = "  if (this.total() > limit) {";
+    let call_shape = classify_probe_shape_detail(call_operand);
+    assert!(call_shape.specific, "a comparison is a recognised shape");
+    let specific_limitation =
+        ts_predicate_boundary_limitation(&call_shape, call_operand, "parseLimit");
+    assert!(
+        specific_limitation.contains("no statically comparable predicate boundary"),
+        "a recognised shape without a boundary keeps the predicate wording: {specific_limitation}"
+    );
 
     for ignored in ["  }", "  });", ")", "  ],", "", "  // note", "  /* note */"] {
         assert!(
