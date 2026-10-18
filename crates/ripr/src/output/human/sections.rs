@@ -1228,7 +1228,9 @@ fn classification_hint(
             }
         }
         ExposureClass::ReachableUnrevealed => {
-            if reveal.observe.summary == crate::domain::ASSERTION_CONTEXT_UNESTABLISHED {
+            if reveal.observe.summary == crate::domain::ASSERTION_CONTEXT_UNESTABLISHED
+                && !callee_only
+            {
                 let macro_name = if *family == ProbeFamily::MatchArm {
                     "assert"
                 } else {
@@ -1309,8 +1311,8 @@ mod classification_hint_tests {
         super::classification_hint(class, ripr, &crate::domain::ProbeFamily::ReturnValue)
     }
     use crate::domain::{
-        CALLEE_ONLY_REACH_PREFIX, Confidence, ExposureClass, RevealEvidence, RiprEvidence,
-        StageEvidence, StageState,
+        ASSERTION_CONTEXT_UNESTABLISHED, CALLEE_ONLY_REACH_PREFIX, Confidence, ExposureClass,
+        RevealEvidence, RiprEvidence, StageEvidence, StageState,
     };
 
     fn ripr(reach: StageState, observe: StageState) -> RiprEvidence {
@@ -1473,6 +1475,43 @@ mod classification_hint_tests {
         unrevealed.reveal.observe = StageEvidence::new(StageState::Weak, Confidence::Low, "x");
         let hint = classification_hint(&ExposureClass::ReachableUnrevealed, &unrevealed);
         assert_eq!(hint.as_deref(), Some("no test is seen calling this change"));
+    }
+
+    // #7055 A2: the unestablished-assertion arm is a reach claim ("a related
+    // test asserts here") and must fall back for callee-only evidence the
+    // same way the sibling `observe == No` arm does.
+    #[test]
+    fn callee_only_unestablished_assertion_falls_back_to_no_calling_test_hint() {
+        let mut unrevealed = ripr(StageState::Weak, StageState::No);
+        unrevealed.reach = callee_only_reach();
+        unrevealed.reveal.observe = StageEvidence::new(
+            StageState::No,
+            Confidence::Low,
+            ASSERTION_CONTEXT_UNESTABLISHED,
+        );
+        let hint = classification_hint(&ExposureClass::ReachableUnrevealed, &unrevealed);
+        assert_eq!(hint.as_deref(), Some("no test is seen calling this change"));
+        assert!(
+            hint.as_deref()
+                .is_some_and(|hint| !hint.contains("a related test asserts here")),
+            "callee-only must not imply a reaching test: {hint:?}"
+        );
+
+        // Negative: owner-reaching unestablished assertion keeps the
+        // established sentence (ReturnValue uses `assert_eq!`).
+        let mut reaching = ripr(StageState::Yes, StageState::No);
+        reaching.reveal.observe = StageEvidence::new(
+            StageState::No,
+            Confidence::Low,
+            ASSERTION_CONTEXT_UNESTABLISHED,
+        );
+        let hint = classification_hint(&ExposureClass::ReachableUnrevealed, &reaching);
+        assert_eq!(
+            hint.as_deref(),
+            Some(
+                "a related test asserts here, but ripr could not establish that the assertion runs and is the standard `assert_eq!`"
+            )
+        );
     }
 
     // #7003 negative: the no-calling-test fallback is scoped to callee-only
