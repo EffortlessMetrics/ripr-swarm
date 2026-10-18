@@ -305,7 +305,7 @@ fn copy_for_identity_change_needs_an_identity_matcher() -> Result<(), String> {
     // returned object's identity for a copy-for-identity change either. Only
     // the unconditional structural assertion grants credit here, and rule 1
     // demotes the copy-for-identity change.
-    let negated = "import { ready } from \"../src/settings\";\ntest(\"ready\", () => {\n  const other = { ok: true };\n  expect(ready(cfg)).not.toBe(other);\n  expect(ready(cfg)).toEqual(cfg);\n});\n";
+    let negated = "import { ready } from \"../src/settings\";\ntest(\"ready\", () => {\n  const cfg = { ok: true };\n  const other = { ok: true };\n  expect(ready(cfg)).not.toBe(other);\n  expect(ready(cfg)).toEqual(cfg);\n});\n";
     let finding = settings_finding("identity-copy-negated-pin", negated, "  return cfg;")?;
     assert_eq!(
         finding.class,
