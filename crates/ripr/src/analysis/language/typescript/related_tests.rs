@@ -976,6 +976,9 @@ fn module_value_use_relation(
         if !import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root) {
             return false;
         }
+        if enclosing_scope_shadows(test, &import.local) {
+            return false;
+        }
         if import.namespace {
             return contains_member_reference(body, &import.local, &owner.name)
                 && !local_identifier_declared_in_test_body(body, &import.local);

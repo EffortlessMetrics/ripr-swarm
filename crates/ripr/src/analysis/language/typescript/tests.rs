@@ -2913,6 +2913,82 @@ test("multi-line template literal", () => {
 }
 
 #[test]
+fn find_related_tests_module_value_use_enclosing_scope_shadow_negatives() {
+    let owner = module_value_owner("stop");
+    let tests = extract_tests(
+        Path::new("tests/scope.test.ts"),
+        r#"import { run, stop } from "../src/owners";
+
+describe("suite with a describe-level local", () => {
+    const stop = Symbol("local");
+
+    test("uses the describe-level stop", () => {
+        expect(run([stop])).toEqual([stop]);
+    });
+});
+
+it.each([1, 2])("parameter named stop", (stop) => {
+    expect(run([stop])).toEqual([stop]);
+});
+"#,
+    );
+    assert_eq!(tests.len(), 2);
+    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    assert!(candidates.is_empty(), "{candidates:?}");
+
+    let namespace = extract_tests(
+        Path::new("tests/scope_ns.test.ts"),
+        r#"import * as ns from "../src/owners";
+
+describe("suite with a describe-level ns", () => {
+    const ns = { run: (v: unknown[]) => v, stop: 1 };
+
+    test("uses the local ns", () => {
+        expect(ns.run([ns.stop])).toEqual([1]);
+    });
+});
+"#,
+    );
+    assert_eq!(namespace.len(), 1);
+    let candidates =
+        related_test_candidates(&owner, &namespace, None, &ReExportIndex::empty(), None);
+    assert!(candidates.is_empty(), "{candidates:?}");
+}
+
+#[test]
+fn find_related_tests_module_value_use_masking_only_negatives() {
+    let owner = module_value_owner("stop");
+    let tests = extract_tests(
+        Path::new("tests/masking.test.ts"),
+        r#"import { run, stop } from "../src/owners";
+
+test("trailing comment after code", () => {
+    expect(run([1])).toEqual([1]); // stop is unused
+});
+
+test("block comment between statements", () => {
+    run([1]); /* stop */ run([2]);
+    const it = "it's";
+    expect(it).toBe("it's");
+});
+
+test("regex literal", () => {
+    expect(/stop/.test("go")).toBe(false);
+});
+
+test("template second line", () => {
+    const text = `first
+    stop here`;
+    expect(run([text])).toEqual([text]);
+});
+"#,
+    );
+    assert_eq!(tests.len(), 4);
+    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    assert!(candidates.is_empty(), "{candidates:?}");
+}
+
+#[test]
 fn find_related_tests_matches_named_import_alias_calls() {
     let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
