@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn coverage_failure_capture_preserves_original_command_and_failure() -> Result<(), String> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = crate::test_support::workspace_root()?;
     let text = fs::read_to_string(root.join(".github/workflows/coverage.yml"))
         .map_err(|error| error.to_string())?;
     assert!(text.contains("id: generate-coverage\n        run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info"));
@@ -15,7 +15,7 @@ fn coverage_failure_capture_preserves_original_command_and_failure() -> Result<(
 
 #[test]
 fn linux_llvm_proof_routes_prepare_the_pinned_component_before_tests() -> Result<(), String> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = crate::test_support::workspace_root()?;
     let routes = [
         (
             "rust-gates.yml",
@@ -90,7 +90,7 @@ fn linux_llvm_proof_routes_prepare_the_pinned_component_before_tests() -> Result
 
 #[test]
 fn automatic_pr_plan_placeholder_is_retired() -> Result<(), String> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = crate::test_support::workspace_root()?;
     let workflow = ".github/workflows/pr-plan.yml";
     assert!(
         !root
@@ -1212,7 +1212,7 @@ jobs:
 
 #[test]
 fn advisory_review_prepares_locked_fixture_before_sensors() -> Result<(), String> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = crate::test_support::workspace_root()?;
     let text = fs::read_to_string(root.join(".github/workflows/ub-review.yml"))
         .map_err(|error| error.to_string())?;
     let header = "name: Prepare locked owner-return fixture dependencies";

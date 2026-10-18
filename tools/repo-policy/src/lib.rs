@@ -1843,3 +1843,7 @@ pub struct PolicyReportSpec<'a> {
 
 #[cfg(test)]
 mod workflow_tests;
+
+#[cfg(test)]
+#[path = "../test_support.rs"]
+mod test_support;

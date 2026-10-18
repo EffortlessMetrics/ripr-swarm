@@ -3,11 +3,14 @@
 //! for concurrent writers or arbitrary source changes with preserved mtimes.
 #![cfg(target_os = "linux")]
 
+#[path = "../test_support.rs"]
+mod test_support;
+
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Output;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, UNIX_EPOCH};
 
 #[path = "../source_identity.rs"]
 mod source_identity;
@@ -45,17 +48,7 @@ fn cargo_selected_executable_matches_current_source() -> Result<(), String> {
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Result<Self, String> {
-        let parent = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
-        fs::create_dir_all(&parent).map_err(|e| e.to_string())?;
-        let root = parent.join(format!(
-            "policy-worktree-binding-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|e| e.to_string())?
-                .as_nanos()
-        ));
-        fs::create_dir(&root).map_err(|e| e.to_string())?;
+        let root = test_support::scratch("policy-worktree-binding")?;
         Ok(Self(root.canonicalize().map_err(|e| e.to_string())?))
     }
 
