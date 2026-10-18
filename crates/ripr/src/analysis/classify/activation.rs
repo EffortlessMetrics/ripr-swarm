@@ -2012,7 +2012,7 @@ fn read_macro_name_rebound(index: &crate::analysis::rust_index::RustIndex) -> bo
             index.macro_scope_crates(),
             READ_MACROS,
             &|_, _| false,
-            &|krate| index.drop_in_manifests.verified(path, krate),
+            &|krate| index.drop_in_manifests.verified_root(path, krate),
         )
         .is_empty()
     })
