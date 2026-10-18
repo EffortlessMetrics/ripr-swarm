@@ -2379,6 +2379,78 @@ fn a_non_plain_drop_on_the_returned_type_lends_no_pin() {
 }
 
 #[test]
+fn a_local_non_plain_drop_guard_lends_a_pin() {
+    // #8480 exit-position narrowing: a non-plain Drop record built only
+    // in a local, non-returned position drops inside the owner, so it
+    // must not refuse the pin for the plain record the owner returns.
+    let lib = "#[derive(Debug, PartialEq)]\npub struct Cfg {\n    pub n: u32,\n}\n\nimpl Drop for Cfg {\n    fn drop(&mut self) {\n    }\n}\n\npub struct Guard {\n    pub n: u32,\n}\n\nimpl Drop for Guard {\n    fn drop(&mut self) {\n        self.n = self.n.wrapping_add(1);\n    }\n}\n\npub fn make(x: u32) -> Cfg { let _guard = Guard { n: 0 };\n    Cfg { n: x * 3 }\n}\n";
+    let tests = "use demo::make;\nuse demo::Cfg;\n\n#[test]\nfn makes() {\n    assert_eq!(make(4), Cfg { n: 12 });\n}\n";
+    let index = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = establish(&index, "make", "Cfg { n: x * 3 }");
+    assert!(pin.is_some(), "the struct owner must establish a pin");
+    let Some(pin) = pin else { return };
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec!["assert_eq!(make(4), Cfg { n: 12 });".to_string()]
+    );
+}
+
+#[test]
+fn returned_types_drop_plain_scans_only_exit_positions() {
+    // #8480 exit-position narrowing, direct owner-level table.
+    let header = "#[derive(Debug, PartialEq)]\npub struct Cfg {\n    pub n: u32,\n}\n\nimpl Drop for Cfg {\n    fn drop(&mut self) {\n        std::process::exit(0);\n    }\n}\n\n";
+    let verdict = |lib: &str| -> bool {
+        let index = index(&[(LIB, lib)]);
+        let owner = owner(&index, "make");
+        OwnerReturnPin::returned_types_drop_plain(owner, &index)
+    };
+    // Local-only constructions: not exit positions.
+    assert!(verdict(&format!(
+        "{header}pub fn make(x: u32) -> u32 {{\n    let _guard = Cfg {{ n: 0 }};\n    x * 3\n}}\n"
+    )));
+    assert!(verdict(&format!(
+        "{header}pub fn make(x: u32) -> u32 {{\n    let _ = Cfg {{ n: 0 }};\n    x * 3\n}}\n"
+    )));
+    assert!(verdict(&format!(
+        "{header}fn sink(_c: Cfg) {{}}\npub fn make(x: u32) -> u32 {{\n    sink(Cfg {{ n: 0 }});\n    x * 3\n}}\n"
+    )));
+    assert!(verdict(&format!(
+        "{header}pub fn make(x: u32) -> u32 {{\n    if (Cfg {{ n: 0 }}).n == 0 {{ x * 3 }} else {{ 0 }}\n}}\n"
+    )));
+    assert!(verdict(&format!(
+        "{header}pub fn make(x: u32) -> u32 {{\n    loop {{ let _g = Cfg {{ n: 0 }}; break; }}\n    x * 3\n}}\n"
+    )));
+    // Exit positions: still demote.
+    assert!(!verdict(&format!(
+        "{header}pub fn make(x: u32) -> Cfg {{\n    Cfg {{ n: x * 3 }}\n}}\n"
+    )));
+    assert!(!verdict(&format!(
+        "{header}pub fn make(x: u32) -> Cfg {{\n    return Cfg {{ n: x * 3 }};\n}}\n"
+    )));
+    assert!(!verdict(&format!(
+        "{header}pub fn make(x: u32) -> Cfg {{\n    if x > 0 {{ Cfg {{ n: x * 3 }} }} else {{ Cfg {{ n: 0 }} }}\n}}\n"
+    )));
+    assert!(!verdict(&format!(
+        "{header}pub fn make(x: u32) -> Result<Cfg, ()> {{\n    Ok(Cfg {{ n: x * 3 }})\n}}\n"
+    )));
+    assert!(!verdict(&format!(
+        "{header}pub fn make(x: u32) -> Cfg {{\n    match x {{ _ => Cfg {{ n: x * 3 }} }}\n}}\n"
+    )));
+    assert!(!verdict(&format!(
+        "{header}pub fn make(x: u32) -> (Cfg, u32) {{\n    (Cfg {{ n: x * 3 }}, 1)\n}}\n"
+    )));
+    assert!(!verdict(&format!(
+        "{header}pub fn make(x: u32) -> Cfg {{\n    (Cfg {{ n: x * 3 }})\n}}\n"
+    )));
+    assert!(!verdict(&format!(
+        "{header}pub fn make(x: u32) -> Cfg {{\n    let c = Cfg {{ n: x * 3 }};\n    c\n}}\n"
+    )));
+    assert!(!verdict(&format!(
+        "{header}pub fn make(x: u32) -> Cfg {{\n    match x {{ _ => {{ Cfg {{ n: x * 3 }} }} }}\n}}\n"
+    )));
+}
+
+#[test]
 fn a_test_written_expected_file_lends_no_weight_pin() {
     // #8097: the test rewrites its expected file from the owner before
     // comparing, inline or through a plain (annotated) binding.
@@ -4906,6 +4978,46 @@ fn any_mention_in_another_macros_arguments_stays_ambiguous() {
 }
 
 #[test]
+fn a_bound_trusted_call_hides_attributes_and_nested_calls_from_the_pin() {
+    // #8446: the second pass over a bound trusted name's calls must read an
+    // attribute in its arguments like the first pass does, and must reach a
+    // bound call nested inside another trusted call's token tree.
+    let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    let refused = |other: &str| {
+        matches!(
+            weight_refusal(tests, &[("src/other.rs", other)]),
+            Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::MacroBinding(_)
+            ))
+        )
+    };
+    for hidden in [
+        // Finding 1: an attribute in the arguments of a bound trusted call.
+        "use ext::vec;\nvec!(#[no_implicit_prelude] mod tests;);\n",
+        "use ext::vec;\nvec!(#[macro_use] mod tests;);\n",
+        // Finding 2: a bound call nested in another trusted call.
+        "use ext::vec;\nfn f() { dbg!(vec!(assert_eq!(#[cfg(test)] mod tests;))); }\n",
+        "use ext::vec;\nfn f() { dbg!(vec!(#[no_implicit_prelude] mod tests;)); }\n",
+        "use ext::vec;\nfn f() { dbg!(dbg!(vec![assert_eq!(1, 1)])); }\n",
+    ] {
+        assert!(refused(hidden), "{hidden}");
+    }
+    // Discriminating negatives: an inert attribute, an unbound nested name
+    // and a bound call that names no trusted macro keep the pin.
+    for kept in [
+        "use ext::vec;\nvec!(#[derive(Debug)] struct S;);\n",
+        "fn f() { dbg!(vec!(assert_eq!(1, 1))); }\n",
+        "use ext::vec;\nfn f() { dbg!(vec!(1, 2)); }\n",
+    ] {
+        assert_eq!(
+            weight_refusal(tests, &[("src/other.rs", kept)]),
+            None,
+            "{kept}"
+        );
+    }
+}
+
+#[test]
 fn a_bound_trusted_macros_arguments_are_opaque_to_other_trusted_names() {
     // #5941: a user-defined `vec!` is no longer std's, so `assert_eq!` named
     // only inside its arguments can be defined by the expansion together with
@@ -6343,6 +6455,13 @@ fn a_cast_or_qualified_path_is_not_a_rename_of_the_field_type() {
         (with(""), true),
         (
             with("pub fn width(letters: usize) -> u32 {\n    letters as u32\n}\n"),
+            true,
+        ),
+        // A raw identifier `r#use` is not the `use` keyword (#7936).
+        (
+            with(
+                "pub fn width(letters: usize) -> u32 {\n    let r#use = letters as u32;\n    r#use\n}\n",
+            ),
             true,
         ),
         // Both used to read as renames of `Clone` and `PartialEq`.

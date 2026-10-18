@@ -51,7 +51,41 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
 /// single-variant `enum Only { Value }` shows `Cfg { .. }` and `Only::Value`
 /// as `relational_check` / weak; unresolved paths keep today's exact reading.
 pub(crate) fn classify_assertion_in(line: &str, decl_source: &str) -> OracleClassification {
-    classify_assertion_against(line, &LocalDecls::from_source(decl_source))
+    with_local_decls(decl_source, |decls| classify_assertion_against(line, decls))
+}
+
+thread_local! {
+    /// The declaration table of the last source classified on this thread.
+    static LAST_DECLS: std::cell::RefCell<Option<(String, std::rc::Rc<LocalDecls>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+thread_local! {
+    static DECL_TABLE_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Callers pass the whole file for every assertion in it, and building the
+/// table masks the whole file, so building it per call is quadratic in the
+/// file's size: a test file with thousands of assertions spent most of a
+/// `ripr check` there. Reuse the table while the source is unchanged.
+fn with_local_decls<T>(decl_source: &str, use_decls: impl FnOnce(&LocalDecls) -> T) -> T {
+    let cached = LAST_DECLS.with(|last| {
+        last.borrow()
+            .as_ref()
+            .filter(|(source, _)| source == decl_source)
+            .map(|(_, decls)| std::rc::Rc::clone(decls))
+    });
+    let decls = cached.unwrap_or_else(|| {
+        #[cfg(test)]
+        DECL_TABLE_BUILDS.with(|count| count.set(count.get() + 1));
+        let decls = std::rc::Rc::new(LocalDecls::from_source(decl_source));
+        LAST_DECLS.with(|last| {
+            *last.borrow_mut() = Some((decl_source.to_string(), std::rc::Rc::clone(&decls)));
+        });
+        decls
+    });
+    use_decls(&decls)
 }
 
 fn classify_assertion_against(line: &str, decls: &LocalDecls) -> OracleClassification {
@@ -1692,6 +1726,36 @@ fn single_variant() {
             if scanned != vec![(OracleKind::RelationalCheck, OracleStrength::Weak)] {
                 return Err(format!("{text}: scanner {scanned:?}"));
             }
+        }
+        Ok(())
+    }
+
+    /// The declaration table is built once per source, not once per
+    /// assertion, and a changed source never reads a stale table.
+    #[test]
+    fn local_decls_are_built_once_per_source() -> Result<(), String> {
+        let builds = || super::DECL_TABLE_BUILDS.with(std::cell::Cell::get);
+        let weak_source = "enum Only { Value }\n";
+        let exact_source = "enum Only { Value, Other }\n";
+        let text = "assert!(matches!(make(), Only::Value));";
+        let before = builds();
+        for _ in 0..50 {
+            let actual = super::classify_assertion_in(text, weak_source);
+            if actual.kind != OracleKind::RelationalCheck {
+                return Err(format!("single-variant source read {actual:?}"));
+            }
+        }
+        if builds() - before != 1 {
+            return Err(format!("50 calls built {} tables", builds() - before));
+        }
+        let actual = super::classify_assertion_in(text, exact_source);
+        if actual.kind == OracleKind::RelationalCheck {
+            return Err(format!(
+                "two-variant source reused the stale table: {actual:?}"
+            ));
+        }
+        if builds() - before != 2 {
+            return Err(format!("changed source built {} tables", builds() - before));
         }
         Ok(())
     }

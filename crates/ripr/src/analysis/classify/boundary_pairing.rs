@@ -345,7 +345,7 @@ fn loan_pairs_boundary_call(
             fact.line == *line
                 && matches!(fact.context, ValueContext::FunctionArgument)
                 && !fact.text.is_empty()
-                && fact.text.contains(&helper_call.text)
+                && fact.text.contains(&*helper_call.text)
                 && fact_matches_fed_literals(&fact.value, &fed)
         })
     })
@@ -629,7 +629,7 @@ fn assertion_observes_boundary_owner_call(
             &CallFact {
                 line: assertion.line,
                 name: owner.name.clone(),
-                text: assertion.text.clone(),
+                text: assertion.text.clone().into(),
             },
         )
 }
@@ -690,7 +690,7 @@ fn boundary_bound_locals(
             let call = CallFact {
                 line: line_number,
                 name: owner.name.clone(),
-                text: original_line.trim().to_string(),
+                text: original_line.trim().to_string().into(),
             };
             let is_boundary = owner_call_activates_boundary(probe, owner, test, &call, activation);
             if let Some(existing) = last.iter_mut().find(|(tracked, _)| tracked == name) {
@@ -1233,7 +1233,7 @@ fn activation_marks_boundary_call(activation: &ActivationEvidence, call: &CallFa
     activation.observed_values.iter().any(|fact| {
         fact.line == call.line
             && fact.value.contains(" == ")
-            && (fact.text.is_empty() || fact.text.contains(&call.text))
+            && (fact.text.is_empty() || fact.text.contains(&*call.text))
     })
 }
 
@@ -3670,7 +3670,7 @@ mod tests {
         CallFact {
             line: 1,
             name: name.to_string(),
-            text: text.to_string(),
+            text: text.to_string().into(),
         }
     }
 

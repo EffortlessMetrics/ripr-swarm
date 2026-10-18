@@ -846,15 +846,22 @@ fn runs_changed_line_once(owner_source: &str, owner_name: &str, line_text: &str)
 /// `run(): { n: number } {`) or a class body. Only an allowlist of shapes
 /// reads as a plain block or object literal: a `{` at the start of the body,
 /// after `= ( , [ : ? & | ! ; {`, after a control keyword's `(...)` where
-/// the keyword stands in statement position (see [`control_keyword_at`]),
+/// the keyword stands in statement position (see [`brace_context_at`]),
 /// after `else`, `try`, `finally`, `do` or `return`, or opening a template
 /// literal's `${`. Any other `{` counts, so an unfamiliar shape refuses, and
 /// so does an object method named like a keyword (`{ catch(e) {...} }`).
+///
+/// Matching `()` pairs are indexed in one forward pass, and each brace
+/// prefix is classified once, so nested control blocks are near-linear in
+/// depth instead of walking every enclosing `{` again for every nested `{`.
 fn has_method_like_block(body: &str) -> bool {
     const BLOCK_WORDS: [&str; 5] = ["else", "try", "finally", "do", "return"];
+    let open_of = matching_parens(body);
+    let mut memo = BraceMemo::new(body.len());
     body.char_indices()
         .filter(|(_, c)| *c == '{')
         .any(|(at, _)| {
+            count_brace_work(1);
             // A template literal's `${` opens an expression, not a block.
             if body[..at].ends_with('$') {
                 return false;
@@ -864,10 +871,16 @@ fn has_method_like_block(body: &str) -> bool {
                 return false;
             };
             if last == ')' {
-                let Some(open) = matching_open_paren(before) else {
+                let Some(open) = open_paren_ending(before, &open_of) else {
                     return true;
                 };
-                return !control_keyword_at(before[..open].trim_end());
+                return !brace_context_at(
+                    body,
+                    before[..open].trim_end().len(),
+                    false,
+                    &open_of,
+                    &mut memo,
+                );
             }
             if is_identifier_part(last) {
                 // `cfg.try {` ends a property access (a return type such as
@@ -882,75 +895,166 @@ fn has_method_like_block(body: &str) -> bool {
         })
 }
 
-/// `true` when `head` ends with a control keyword that stands in statement
-/// position, so the `(...)` after it is a condition and not a method's
-/// parameters. `catch` must follow a `}`; the other keywords must follow the
-/// start of the body, `;`, `}`, `)`, `else`, or a `{` that itself opens a
-/// block (see [`brace_context`]). After `,`, `:`, `.` or an object literal's
-/// `{` the word names a method or property, so it is not control.
-fn control_keyword_at(head: &str) -> bool {
-    brace_context(head, false)
+/// `open_of[close] = Some(open)` when `body[close]` is a `)` whose matching
+/// `(` sits at `open`. Unmatched closers stay `None`.
+fn matching_parens(body: &str) -> Vec<Option<usize>> {
+    let mut open_of = vec![None; body.len()];
+    let mut stack = Vec::new();
+    for (at, c) in body.char_indices() {
+        count_brace_work(1);
+        match c {
+            '(' => stack.push(at),
+            ')' => {
+                if let Some(open) = stack.pop()
+                    && let Some(slot) = open_of.get_mut(at)
+                {
+                    *slot = Some(open);
+                }
+            }
+            _ => {}
+        }
+    }
+    open_of
 }
 
-/// Walk for [`control_keyword_at`]. With `block == false`, `text` ends with
-/// the word before a `(...)`; with `block == true`, `text` precedes a `{`
-/// that must open a statement block, not an object literal: one at the start
-/// of the body, after `;`, `}`, a control keyword's `(...)`, `else`, `try`,
-/// `finally` or `do`, or after a `{` that itself opens a block (`return {`,
-/// `= {` and `({` open object literals). It walks back through enclosing `{` and control
-/// headers iteratively, so deep nesting cannot overflow the stack.
-fn brace_context(text: &str, block: bool) -> bool {
+/// The byte offset of the `(` matching the `)` that ends `prefix`, using a
+/// [`matching_parens`] index of the whole body `prefix` belongs to.
+fn open_paren_ending(prefix: &str, open_of: &[Option<usize>]) -> Option<usize> {
+    let close = prefix.len().checked_sub(')'.len_utf8())?;
+    open_of.get(close).copied().flatten()
+}
+
+/// Cached [`brace_context_at`] answers: 0 unknown, 1 false, 2 true.
+struct BraceMemo {
+    keyword: Vec<u8>,
+    block: Vec<u8>,
+}
+
+impl BraceMemo {
+    fn new(len: usize) -> Self {
+        Self {
+            keyword: vec![0; len.saturating_add(1)],
+            block: vec![0; len.saturating_add(1)],
+        }
+    }
+
+    fn get(&self, end: usize, block: bool) -> Option<bool> {
+        let slot = if block { &self.block } else { &self.keyword };
+        match slot.get(end).copied() {
+            Some(1) => Some(false),
+            Some(2) => Some(true),
+            _ => None,
+        }
+    }
+
+    fn set(&mut self, end: usize, block: bool, value: bool) {
+        let slot = if block {
+            &mut self.block
+        } else {
+            &mut self.keyword
+        };
+        if let Some(cell) = slot.get_mut(end) {
+            *cell = if value { 2 } else { 1 };
+        }
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static BRACE_WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn count_brace_work(amount: usize) {
+    #[cfg(test)]
+    BRACE_WORK.with(|work| work.set(work.get().saturating_add(amount)));
+    #[cfg(not(test))]
+    let _ = amount;
+}
+
+#[cfg(test)]
+fn take_brace_work() -> usize {
+    BRACE_WORK.with(|work| work.replace(0))
+}
+
+/// Walk for a control keyword before `(...)`. With `block == false`,
+/// `body[..end]` ends with the word before a `(...)`; with `block == true`,
+/// that prefix precedes a `{` that must open a statement block, not an
+/// object literal: one at the start of the body, after `;`, `}`, a control
+/// keyword's `(...)`, `else`, `try`, `finally` or `do`, or after a `{` that
+/// itself opens a block (`return {`, `= {` and `({` open object literals).
+/// `catch` must follow a `}`; after `,`, `:`, `.` or an object literal's `{`
+/// the word names a method or property, so it is not control.
+///
+/// The walk is iterative and memoizes each `(end, block)` prefix, so deep
+/// nesting cannot overflow the stack and does not rescan every enclosing
+/// brace for every nested `{`.
+fn brace_context_at(
+    body: &str,
+    mut end: usize,
+    mut block: bool,
+    open_of: &[Option<usize>],
+    memo: &mut BraceMemo,
+) -> bool {
     const CONTROL: [&str; 5] = ["if", "for", "while", "switch", "with"];
     const BLOCK_WORDS: [&str; 4] = ["else", "try", "finally", "do"];
-    let mut text = text;
-    let mut block = block;
-    loop {
+    let mut path = Vec::new();
+    let result = loop {
+        count_brace_work(1);
+        if let Some(hit) = memo.get(end, block) {
+            break hit;
+        }
+        path.push((end, block));
+        let text = if end <= body.len() { &body[..end] } else { "" };
         if !block {
             // `text` ends with the word before a `(...)`.
             let word = trailing_identifier(text);
             if is_property_name(text, word) {
-                return false;
+                break false;
             }
             let before = text[..text.len() - word.len()].trim_end();
             if word == "catch" {
-                return before.ends_with('}');
+                break before.ends_with('}');
             }
             if !CONTROL.contains(&word) {
-                return false;
+                break false;
             }
             // The keyword must start a statement.
             match before.chars().next_back() {
-                None | Some(';' | '}' | ')') => return true,
+                None | Some(';' | '}' | ')') => break true,
                 Some('{') => {
-                    text = &before[..before.len() - 1];
+                    end = before.len().saturating_sub('{'.len_utf8());
                     block = true;
-                    continue;
                 }
                 Some(_) => {
                     let word = trailing_identifier(before);
-                    return word == "else" && !is_property_name(before, word);
+                    break word == "else" && !is_property_name(before, word);
                 }
             }
-        }
-        // `text` precedes a `{` that must open a block.
-        let before = text.trim_end();
-        match before.chars().next_back() {
-            None | Some(';' | '}') => return true,
-            Some('{') => text = &before[..before.len() - 1],
-            Some(')') => {
-                let Some(open) = matching_open_paren(before) else {
-                    return false;
-                };
-                text = before[..open].trim_end();
-                block = false;
+        } else {
+            // `text` precedes a `{` that must open a block.
+            let before = text.trim_end();
+            match before.chars().next_back() {
+                None | Some(';' | '}') => break true,
+                Some('{') => end = before.len().saturating_sub('{'.len_utf8()),
+                Some(')') => {
+                    let Some(open) = open_paren_ending(before, open_of) else {
+                        break false;
+                    };
+                    end = before[..open].trim_end().len();
+                    block = false;
+                }
+                Some(c) if is_identifier_part(c) => {
+                    let word = trailing_identifier(before);
+                    break BLOCK_WORDS.contains(&word) && !is_property_name(before, word);
+                }
+                Some(_) => break false,
             }
-            Some(c) if is_identifier_part(c) => {
-                let word = trailing_identifier(before);
-                return BLOCK_WORDS.contains(&word) && !is_property_name(before, word);
-            }
-            Some(_) => return false,
         }
+    };
+    for (cached_end, cached_block) in path {
+        memo.set(cached_end, cached_block, result);
     }
+    result
 }
 
 /// `true` when `word`, the identifier `text` ends with, is a property name
@@ -1132,4 +1236,132 @@ fn literal_body(text: &str) -> Option<&str> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn called_with(target: &str, expected: &str) -> TypeScriptMockPayload {
+        TypeScriptMockPayload {
+            target: target.to_string(),
+            expected: expected.to_string(),
+            kind: TypeScriptMockPayloadKind::CalledWith,
+        }
+    }
+
+    fn params(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| (*name).to_string()).collect()
+    }
+
+    fn nested_if_owner(depth: usize, inner: &str) -> String {
+        let mut src = String::from("function announce(id, send) {\n");
+        for _ in 0..depth {
+            src.push_str("  if (a) {\n");
+        }
+        src.push_str(inner);
+        src.push('\n');
+        for _ in 0..depth {
+            src.push_str("  }\n");
+        }
+        src.push('}');
+        src
+    }
+
+    fn announce_facts(owner: &str, line: &str) -> MockCallFacts {
+        MockCallFacts::read(line, Some(owner), "announce", &params(&["id", "send"]))
+    }
+
+    const SEND_LINE: &str = "  send(\"order \" + id);";
+    const SEND_TEST: &str = "const send = jest.fn(); announce(7, send); expect(send).toHaveBeenCalledWith(\"order 7\");";
+
+    fn measure_nested_if(depth: usize) -> Result<(bool, bool, usize), String> {
+        let owner = nested_if_owner(depth, SEND_LINE);
+        let body = masked_owner_body(&owner)
+            .ok_or_else(|| format!("nested-if owner of depth {depth} must open a body"))?;
+        let _ = take_brace_work();
+        let facts = announce_facts(&owner, SEND_LINE);
+        let work = take_brace_work();
+        let credits = facts.credits(&called_with("send", "\"order 7\""), SEND_TEST);
+        Ok((credits, has_method_like_block(&body), work))
+    }
+
+    #[test]
+    fn method_like_block_allowlist_matches_known_shapes() {
+        assert!(!has_method_like_block("  if (a) {\n  send(id);\n  }"));
+        assert!(!has_method_like_block("  else {\n  send(id);\n  }"));
+        assert!(!has_method_like_block(
+            "  try {\n  send(id);\n  } finally {\n  }"
+        ));
+        assert!(!has_method_like_block("  const o = { a: 1, b: [2] };"));
+        assert!(!has_method_like_block("  return { a: 1 };"));
+        assert!(!has_method_like_block("  log(`${id}`);"));
+        assert!(has_method_like_block(
+            "  const h = { run(x) {\n  send(id);\n  } };"
+        ));
+        assert!(has_method_like_block(
+            "  const h = { catch(e) {\n  send(id);\n  } };"
+        ));
+        assert!(has_method_like_block(
+            "  const h = { run(x): typeof cfg.try {\n  send(id);\n  } };"
+        ));
+        assert!(!has_method_like_block(
+            &("  if (a) {\n".repeat(8) + "  send(id);\n" + &"  }\n".repeat(8))
+        ));
+    }
+
+    #[test]
+    fn nested_if_owner_still_credits_a_literal_mock_payload() -> Result<(), String> {
+        let (credits, method_like, _) = measure_nested_if(8)?;
+        if method_like {
+            return Err("nested if blocks must not read as methods".into());
+        }
+        if !credits {
+            return Err("a once-run nested if owner must still credit".into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn nested_method_shorthand_still_refuses_credit() -> Result<(), String> {
+        let owner = nested_if_owner(
+            8,
+            "  const h = { run(x) {\n  send(\"order \" + id);\n  } };",
+        );
+        let body = masked_owner_body(&owner).ok_or("method-shorthand owner must open a body")?;
+        let facts = announce_facts(&owner, SEND_LINE);
+        if !has_method_like_block(&body) {
+            return Err("method shorthand inside nested ifs must stay method-like".into());
+        }
+        if facts.credits(&called_with("send", "\"order 7\""), SEND_TEST) {
+            return Err("a method shorthand that may rerun the call must not credit".into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn nested_if_method_like_scan_is_near_linear_in_depth() -> Result<(), String> {
+        let (credits_small, method_like_small, work_small) = measure_nested_if(500)?;
+        let (credits_large, method_like_large, work_large) = measure_nested_if(2000)?;
+        if method_like_small || method_like_large {
+            return Err("nested if blocks at large depth must not read as methods".into());
+        }
+        if !credits_small || !credits_large {
+            return Err("a once-run nested if owner must still credit at large depth".into());
+        }
+        if work_small == 0 || work_large <= work_small {
+            return Err(format!(
+                "the scan must record work at both depths (small={work_small}, large={work_large})"
+            ));
+        }
+        // 4× depth would be ~16× work if each `{` still walked every
+        // enclosing brace. A 6× cap leaves room for linear scan of a
+        // longer body without accepting the quadratic walk.
+        if work_large > work_small.saturating_mul(6) {
+            return Err(format!(
+                "work must stay near-linear: 500-deep={work_small}, 2000-deep={work_large}"
+            ));
+        }
+        Ok(())
+    }
 }
