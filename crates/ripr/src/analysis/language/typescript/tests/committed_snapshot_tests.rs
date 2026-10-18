@@ -50,6 +50,28 @@ fn jest_snap(entries: &[(&str, &str)]) -> String {
     format!("{JEST_HEADER}{body}")
 }
 
+#[test]
+fn generic_or_bracket_snapshot_calls_are_counted_and_refuse() -> Result<(), String> {
+    // #8031: a second call the counter sees must not hide behind its spelling.
+    let snap = jest_snap(&[("price 1", "140")]);
+    for second in [
+        "expect(price(90)).toMatchSnapshot<number>();",
+        "expect(price(90))[\"toMatchSnapshot\"]();",
+        "expect(price(90)).toMatchSnapshot.call(this);",
+    ] {
+        let source = format!(
+            "import {{ price }} from \"../src/price\";\n\ntest(\"price\", () => {{\n  expect(price(150)).toMatchSnapshot();\n  {second}\n}});\n"
+        );
+        let got = strengths("snap-generic", &source, &[(SNAP_PATH, &snap)])?;
+        assert!(
+            got.iter()
+                .all(|strength| *strength != OracleStrength::Strong),
+            "{second}: {got:?}"
+        );
+    }
+    Ok(())
+}
+
 const SNAP_PATH: &str = "test/__snapshots__/price.test.ts.snap";
 
 #[test]

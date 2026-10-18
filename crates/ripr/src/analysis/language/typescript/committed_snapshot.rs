@@ -14,14 +14,21 @@
 use super::*;
 
 /// Snapshot matcher calls in `text`: `Snapshot` followed, after optional
-/// whitespace, by `(`. Each such call advances the runner's per-title
-/// counter, so it is counted whether or not it writes to the committed file;
-/// comments and strings only over-count, which refuses.
+/// whitespace, by `(`, by a type-argument list (`<`), by a bracket-access
+/// close (`"]`, `']`, `` `] ``) or by `.call` / `.apply` / `.bind` (#8031).
+/// Each such call advances the runner's per-title counter, so it is counted
+/// whether or not it writes to the committed file; comments and strings only
+/// over-count, which refuses.
 fn snapshot_calls(text: &str) -> usize {
     text.match_indices("Snapshot")
         .filter(|(index, matched)| {
-            text.get(index + matched.len()..)
-                .is_some_and(|rest| rest.trim_start().starts_with('('))
+            text.get(index + matched.len()..).is_some_and(|rest| {
+                let rest = rest.trim_start();
+                rest.starts_with(['(', '<'])
+                    || ["\"]", "']", "`]", ".call", ".apply", ".bind"]
+                        .iter()
+                        .any(|tail| rest.starts_with(tail))
+            })
         })
         .count()
 }

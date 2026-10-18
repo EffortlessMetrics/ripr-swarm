@@ -2,7 +2,8 @@
 
 use super::*;
 
-const TEST_FILE_STEM_SUFFIXES: &[&str] = &[".test", "-test", "_test", ".spec"];
+const TEST_FILE_STEM_SUFFIXES: &[&str] =
+    &[".test", "-test", "_test", ".spec", ".test-d", ".spec-d"];
 const TEST_DIRECTORY_NAMES: &[&str] = &["test", "tests", "__tests__"];
 // Every source extension routed to this adapter (router.rs), so Cypress
 // `*.cy.<ext>` classification stays bounded to real adapter source surface.
@@ -13,9 +14,12 @@ const JASMINE_SPEC_DIRECTORY_NAMES: &[&str] = &["spec"];
 ///
 /// The adapter recognizes four bounded convention families:
 ///
-/// 1. Jest/Vitest-style `*.test.*` and `*.spec.*` files across every
+/// 1. Jest/Vitest-style `*.test.*` and `*.spec.*` files, plus tsd/vitest
+///    type-test `*.test-d.*` and `*.spec-d.*` stems, across every
 ///    TypeScript/JavaScript source extension routed to this adapter
-///    (.ts/.tsx/.js/.jsx/.mts/.cts/.mjs/.cjs).
+///    (.ts/.tsx/.js/.jsx/.mts/.cts/.mjs/.cjs). Exact suffixes only: a plain
+///    `*.d.ts` declaration and a production name like `foo.test-data.ts`
+///    stay non-test.
 /// 2. Node-style names: `test.*`, `test-*`, `*-test.*`, and `*_test.*`.
 /// 3. Cypress `*.cy.{ts,tsx,js,jsx,mts,cts,mjs,cjs}` files.
 /// 4. Source files under exact `test`, `tests`, or `__tests__` directory
@@ -359,6 +363,52 @@ mod tests {
         ] {
             assert!(is_test_file(Path::new(path)), "expected test path: {path}");
         }
+    }
+
+    /// tsd/vitest type-test files use `*.test-d.*` / `*.spec-d.*` stems.
+    /// Exact suffix only: a plain `*.d.ts` declaration and a production name
+    /// like `foo.test-data.ts` stay non-test (#8536). `index.test-d.ts` does
+    /// not end with `.d.ts`, so the declaration skip cannot cover it.
+    #[test]
+    fn type_test_stem_suffixes_match_exact_test_d_and_spec_d_only() {
+        for path in [
+            "index.test-d.ts",
+            "src/index.spec-d.ts",
+            "src/cart.test-d.tsx",
+            "src/cart.spec-d.mts",
+            "src/cart.test-d.js",
+            "src/cart.spec-d.cts",
+            "src/cart.test-d.mjs",
+            "src/cart.spec-d.cjs",
+        ] {
+            assert!(
+                is_test_file(Path::new(path)),
+                "expected type-test path: {path}"
+            );
+            assert!(
+                !is_typescript_declaration_file(Path::new(path)),
+                "type-test `{path}` ends with -d.ts, not .d.ts, so it is not a declaration skip"
+            );
+        }
+        for path in [
+            "index.d.ts",
+            "src/types.d.ts",
+            "src/types.d.mts",
+            "src/types.d.cts",
+            "src/foo.test-data.ts",
+            "src/foo.test-d-extra.ts",
+            "src/foo.spec-data.ts",
+            "src/request.spec.d.ts",
+        ] {
+            assert!(
+                !is_test_file(Path::new(path)),
+                "unexpected type-test path: {path}"
+            );
+        }
+        assert!(is_typescript_declaration_file(Path::new("index.d.ts")));
+        assert!(is_typescript_declaration_file(Path::new(
+            "src/request.spec.d.ts"
+        )));
     }
 
     #[test]

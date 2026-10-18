@@ -32,7 +32,7 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write # inline comments only (RIPR_COMMENT_MODE=inline)
+  pull-requests: write # the summary comment and inline comments (RIPR_SUMMARY_COMMENT, RIPR_COMMENT_MODE=inline)
   security-events: write # SARIF upload only (RIPR_UPLOAD_SARIF=true)
 
 env:
@@ -43,6 +43,8 @@ env:
   RIPR_GATE_BASELINE: ${{ vars.RIPR_GATE_BASELINE || '' }}
   # RIPR_COMMENT_MODE: off, plan or inline.
   RIPR_COMMENT_MODE: ${{ vars.RIPR_COMMENT_MODE || 'off' }}
+  # RIPR_SUMMARY_COMMENT: "false" turns off the one summary comment on the pull request.
+  RIPR_SUMMARY_COMMENT: ${{ vars.RIPR_SUMMARY_COMMENT || 'true' }}
 
 defaults:
   run:
@@ -120,6 +122,19 @@ jobs:
 
       - name: Run RIPR
         run: ripr reports ci-packet --root .
+
+      - name: Publish RIPR summary comment
+        if: always() && github.event_name == 'pull_request' && env.RIPR_SUMMARY_COMMENT != 'false' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && hashFiles('target/ripr/review/comments.json') != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate --slurp "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+            | ripr pr-comments summary --root . --raw - --pull-request "${{ github.event.pull_request.number }}" --head-sha "${{ github.event.pull_request.head.sha }}" --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          while IFS=$'\t' read -r method endpoint request message; do
+            gh api --method "$method" "repos/${{ github.repository }}/$endpoint" --input "$request" </dev/null >/dev/null
+            echo "$message"
+          done < target/ripr/review/summary/summary.tsv
 
       - name: Publish RIPR inline comments
         if: always() && github.event_name == 'pull_request' && env.RIPR_COMMENT_MODE == 'inline' && hashFiles('target/ripr/review/comment-publish-plan.json') != ''
@@ -347,7 +362,7 @@ mod template_pin_tests {
     /// first line, and artifact paths, which the `generated_workflow_*` and
     /// `install_version_*` tests pin at the rendered level.
     const TEMPLATE_SHA256: &str =
-        "99aa7d203404ac34e93b7a55eead9882a1e04328bc7efa88786bdcf2522ea331";
+        "123125428b54a3467bf169579fe028842d3b9b7434cf1821e2f2e7fee2d52d24";
 
     #[test]
     fn template_matches_the_pinned_bytes() {
