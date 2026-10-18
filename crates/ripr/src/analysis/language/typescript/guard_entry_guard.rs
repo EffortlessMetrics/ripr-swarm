@@ -419,10 +419,11 @@ fn has_top_level_comparison(text: &str) -> bool {
 }
 
 /// Whether every call-shaped identifier in the (masked) test text is one of
-/// `allowed`. A member call (`.toBe(`) is not an identifier call. Any other
+/// `allowed`, and every member call hangs off an owner namespace receiver,
+/// a test-framework object, or an already-checked call result. Any other
 /// call could be a file-local helper that reaches the owner with an input
 /// the test text does not show.
-pub(crate) fn calls_only_allowed(test_text: &str, allowed: &[&str]) -> bool {
+pub(crate) fn calls_only_allowed(test_text: &str, allowed: &[&str], receivers: &[String]) -> bool {
     let masked = ts_mask_literals_and_comments(test_text);
     let chars: Vec<char> = masked.chars().collect();
     let mut at = 0usize;
@@ -437,9 +438,12 @@ pub(crate) fn calls_only_allowed(test_text: &str, allowed: &[&str]) -> bool {
             while next < chars.len() && chars[next].is_whitespace() {
                 next += 1;
             }
+            let calls = chars.get(next) == Some(&'(');
             let before = chars[..at].iter().rev().find(|c| !c.is_whitespace());
             let is_member = before == Some(&'.');
-            let calls = chars.get(next) == Some(&'(');
+            if calls && is_member && !member_receiver_is_readable(&chars, at, receivers) {
+                return false;
+            }
             let keyword = matches!(
                 word.as_str(),
                 "if" | "for"
@@ -465,6 +469,55 @@ pub(crate) fn calls_only_allowed(test_text: &str, allowed: &[&str]) -> bool {
         }
     }
     true
+}
+
+/// Whether the member call whose name starts at `at` is on a receiver whose
+/// root is a test-framework object or an owner namespace, or on the result of
+/// a call/index the scan checks separately (`expect(x).toBe(`).
+fn member_receiver_is_readable(chars: &[char], at: usize, receivers: &[String]) -> bool {
+    const FRAMEWORK: [&str; 7] = ["expect", "assert", "jest", "vi", "test", "it", "describe"];
+    let mut end = at;
+    loop {
+        // `end` is just after a `.`; step to the receiver's last token.
+        let mut i = end;
+        while i > 0 && chars[i - 1].is_whitespace() {
+            i -= 1;
+        }
+        if i == 0 || chars[i - 1] != '.' {
+            return false;
+        }
+        i -= 1;
+        // Optional chaining `?.`.
+        if i > 0 && chars[i - 1] == '?' {
+            i -= 1;
+        }
+        while i > 0 && chars[i - 1].is_whitespace() {
+            i -= 1;
+        }
+        if i == 0 {
+            return false;
+        }
+        if matches!(chars[i - 1], ')' | ']') {
+            return true;
+        }
+        let stop = i;
+        while i > 0 && is_identifier_char(chars[i - 1]) {
+            i -= 1;
+        }
+        if i == stop {
+            return false;
+        }
+        let word: String = chars[i..stop].iter().collect();
+        let mut j = i;
+        while j > 0 && chars[j - 1].is_whitespace() {
+            j -= 1;
+        }
+        if j > 0 && chars[j - 1] == '.' {
+            end = i;
+            continue;
+        }
+        return FRAMEWORK.contains(&word.as_str()) || receivers.iter().any(|r| *r == word);
+    }
 }
 
 fn or_of(values: impl Iterator<Item = Option<bool>>) -> Option<bool> {
@@ -880,14 +933,20 @@ mod tests {
     #[test]
     fn only_framework_and_owner_calls_are_readable() {
         let allowed = ["price", "expect"];
+        let ns = vec!["pricing".to_string()];
         assert!(calls_only_allowed(
-            "expect(price(2)).toBe(20); await price(3, 'A');",
-            &allowed
+            "expect(price(2)).not.toBe(20); await price(3, 'A'); pricing.price(1);",
+            &allowed,
+            &ns
         ));
-        assert!(!calls_only_allowed(
+        for refused in [
             "expect(price(2)).toBe(20); expect(check('HALF')).toBe(1);",
-            &allowed
-        ));
-        assert!(!calls_only_allowed("run(price);", &allowed));
+            "run(price);",
+            "expect(price(2)).toBe(20); h.check('HALF');",
+            "cart.checkout('HALF');",
+            "a.b.checkout('HALF');",
+        ] {
+            assert!(!calls_only_allowed(refused, &allowed, &ns), "{refused}");
+        }
     }
 }

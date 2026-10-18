@@ -167,6 +167,16 @@ fn unreadable_entries_keep_exposed() -> Result<(), String> {
         finding.missing
     );
 
+    // A member call on a helper object may enter the arm too.
+    let member = "import { price } from \"../src/price\";\nconst h = { check: (c: string) => price(3, c) };\ntest(\"price\", () => {\n  expect(price(2)).toBe(20);\n  expect(h.check('HALF')).toBe(10);\n});\n";
+    let finding = then_arm("guard-member-helper", member)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+
     // An explicit `undefined` applies the parameter default.
     let source = PRICE
         .replace("coupon?: string", "coupon = 'HALF'")
