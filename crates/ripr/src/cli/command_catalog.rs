@@ -1025,16 +1025,34 @@ fn backtick_tokens(text: &str) -> Vec<String> {
 }
 
 /// Parse the expected-subcommand list from a parser unknown-subcommand error.
+///
+/// Nested family errors still use two wordings: inline `expected \`a\`, \`b\``
+/// lists, and the shared `unknown_value` `Accepted: a, b.` list. The catalog
+/// parity probe has to read both so a group can move to `unknown_value`
+/// without dropping out of the child-set check.
 #[cfg(test)]
 pub(crate) fn expected_subcommands_from_unknown_error(
     message: &str,
 ) -> Result<Vec<String>, String> {
-    let Some(idx) = message.find("expected `") else {
-        return Err(format!(
-            "unknown-subcommand error did not list expected tokens: {message}"
-        ));
-    };
-    Ok(backtick_tokens(&message[idx..]))
+    if let Some(idx) = message.find("expected `") {
+        return Ok(backtick_tokens(&message[idx..]));
+    }
+    if let Some((_, rest)) = message.split_once("Accepted: ") {
+        let tokens: Vec<String> = rest
+            .trim()
+            .trim_end_matches('.')
+            .split(',')
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
+            .map(ToString::to_string)
+            .collect();
+        if !tokens.is_empty() {
+            return Ok(tokens);
+        }
+    }
+    Err(format!(
+        "unknown-subcommand error did not list expected tokens: {message}"
+    ))
 }
 
 #[cfg(test)]
@@ -1066,6 +1084,42 @@ mod tests {
             discovery,
             relation,
         }
+    }
+
+    #[test]
+    fn expected_subcommands_mine_backtick_expected_lists() -> Result<(), String> {
+        let message =
+            "unknown policy subcommand \"x\"; expected `readiness`, `operations`, or `history`";
+        assert_eq!(
+            expected_subcommands_from_unknown_error(message)?,
+            vec!["readiness", "operations", "history"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn expected_subcommands_mine_unknown_value_accepted_lists() -> Result<(), String> {
+        let far =
+            "unknown cache subcommand \"__catalog_probe__\". Accepted: status, export, clear.";
+        assert_eq!(
+            expected_subcommands_from_unknown_error(far)?,
+            vec!["status", "export", "clear"]
+        );
+        let near = "unknown cache subcommand \"stat\". Did you mean `status`? Accepted: status, export, clear.";
+        assert_eq!(
+            expected_subcommands_from_unknown_error(near)?,
+            vec!["status", "export", "clear"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn expected_subcommands_reject_a_message_without_a_list() {
+        let result = expected_subcommands_from_unknown_error("unknown cache subcommand \"x\"");
+        assert!(
+            matches!(result, Err(ref error) if error.contains("did not list expected tokens")),
+            "missing list must fail, got {result:?}"
+        );
     }
 
     #[test]
