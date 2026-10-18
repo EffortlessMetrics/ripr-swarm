@@ -264,7 +264,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
                     .unwrap_or(value);
                 facts.push(ValueFact {
                     line: call.line,
-                    text: call.text.clone(),
+                    text: call.text.to_string(),
                     value,
                     context: ValueContext::FunctionArgument,
                 });
@@ -272,7 +272,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
             for value in enum_variant_values(argument) {
                 facts.push(ValueFact {
                     line: call.line,
-                    text: call.text.clone(),
+                    text: call.text.to_string(),
                     context: path_value_context(&value),
                     value,
                 });
@@ -1372,7 +1372,7 @@ fn sequence_runs(
             )? {
                 runs.push(ElementRun {
                     line: call.line,
-                    text: call.text.clone(),
+                    text: call.text.to_string(),
                     elements,
                 });
             }
@@ -2905,7 +2905,7 @@ fn owner_call_parameter_values_where(
                             parameter: (*parameter).clone(),
                             value: value.clone(),
                             line: call.line,
-                            text: call.text.clone(),
+                            text: call.text.to_string(),
                         })
                     })
                     .collect::<Vec<_>>();
@@ -3788,7 +3788,7 @@ fn owner_calls_passing_constant(
             let arguments = call_arguments(text, &call.name)?;
             let argument = arguments.get(position)?;
             crate::analysis::value_resolution::argument_names_constant(argument, &constant.name)
-                .then(|| (call.line, call.text.clone()))
+                .then(|| (call.line, call.text.to_string()))
         })
         .collect()
 }
@@ -4826,7 +4826,7 @@ mod tests {
             calls: vec![CallFact {
                 name: "split_after".to_string(),
                 line: 5,
-                text: "split_after(\"ab\", 'x');".to_string(),
+                text: "split_after(\"ab\", 'x');".to_string().into(),
             }],
             assertions: Vec::new(),
             literals: Vec::new(),
@@ -5070,7 +5070,7 @@ mod tests {
             calls: vec![CallFact {
                 name: "score".to_string(),
                 line: call_line,
-                text: call.to_string(),
+                text: call.to_string().into(),
             }],
             assertions: Vec::new(),
             literals: Vec::new(),
@@ -5684,17 +5684,17 @@ assert_eq!(input.amount, 100);"#
                 CallFact {
                     line: 11,
                     name: "other".to_string(),
-                    text: "other(AuthError::Ignored);".to_string(),
+                    text: "other(AuthError::Ignored);".to_string().into(),
                 },
                 CallFact {
                     line: 12,
                     name: "score".to_string(),
-                    text: "score(AuthError::RevokedToken);".to_string(),
+                    text: "score(AuthError::RevokedToken);".to_string().into(),
                 },
                 CallFact {
                     line: 13,
                     name: "score".to_string(),
-                    text: "score;".to_string(),
+                    text: "score;".to_string().into(),
                 },
             ],
             assertions: Vec::new(),
@@ -5724,7 +5724,7 @@ assert_eq!(input.amount, 100);"#
         let call = |line: usize, text: &str| CallFact {
             line,
             name: "score".to_string(),
-            text: text.to_string(),
+            text: text.to_string().into(),
         };
         let test = |name: &str, body: &str, calls: Vec<CallFact>| TestSummary {
             name: name.to_string(),
@@ -6116,17 +6116,17 @@ assert_eq!(input.amount, 100);"#
                 CallFact {
                     line: 11,
                     name: "other".to_string(),
-                    text: "other(1);".to_string(),
+                    text: "other(1);".to_string().into(),
                 },
                 CallFact {
                     line: 12,
                     name: "score".to_string(),
-                    text: "score(2);".to_string(),
+                    text: "score(2);".to_string().into(),
                 },
                 CallFact {
                     line: 13,
                     name: "score".to_string(),
-                    text: "score;".to_string(),
+                    text: "score;".to_string().into(),
                 },
             ],
             assertions: Vec::new(),
@@ -6287,7 +6287,7 @@ assert_eq!(input.amount, 100);"#
             calls: vec![CallFact {
                 name: "score".to_string(),
                 line: 11,
-                text: call.to_string(),
+                text: call.to_string().into(),
             }],
             assertions: Vec::new(),
             literals: Vec::new(),
@@ -6362,7 +6362,7 @@ assert_eq!(input.amount, 100);"#
                 .map(|(line, text)| CallFact {
                     name: "score".to_string(),
                     line: *line,
-                    text: (*text).to_string(),
+                    text: (*text).to_string().into(),
                 })
                 .collect(),
             assertions: Vec::new(),

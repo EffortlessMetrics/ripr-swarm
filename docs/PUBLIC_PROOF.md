@@ -23,7 +23,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 
 ## Scoreboard
 
-46 bars. ripr meets 17, is below the bar on 24, and has not measured 5. Bold values miss their bar. A comparable trend shows the baseline revision and prior value it compares. A cross-class trend shows the earlier runner class and, when available, its prior value; it does not compare measurements. A measured row with no earlier measurement is a first measurement. Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them.
+54 bars. ripr meets 24, is below the bar on 25, and has not measured 5. Bold values miss their bar. A comparable trend shows the baseline revision and prior value it compares. A cross-class trend shows the earlier runner class and, when available, its prior value; it does not compare measurements. A measured row with no earlier measurement is a first measurement. Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them.
 
 By board, so the weak areas show before the full table:
 
@@ -31,9 +31,9 @@ By board, so the weak areas show before the full table:
 | --- | --- | --- | --- | --- |
 | Speed and memory | 0 | 4 | 0 | 0 |
 | CI adoption | 1 | 1 | 1 | 0 |
-| Trust | 9 | 8 | 2 | 0 |
+| Trust | 15 | 9 | 2 | 0 |
 | Pasted commands | 2 | 0 | 0 | 0 |
-| First run | 2 | 3 | 2 | 0 |
+| First run | 3 | 3 | 2 | 0 |
 | corpus | 2 | 0 | 0 | 0 |
 | ranking | 1 | 8 | 0 | 0 |
 
@@ -56,12 +56,19 @@ By board, so the weak areas show before the full table:
 | Trust | Hand-checked edits the crate's tests miss that ripr credits as caught (false confidence; few credited cases so far, so read with its denominator) | **1.2%** | <= 0.0% | below the bar | no earlier measurement (observed at 2af3f38) |
 | Trust | When ripr says a test discriminates, real mutants are caught | 96.8% | >= 95.0% | meets the bar | first receipt (mutation spot check, 63 of 63 canonical-precise `strongly_gripped` mutants scored; 0 unscored) |
 | Trust | When ripr reports a gap, real mutants survive | 100.0% | >= 80.0% | meets the bar | first receipt (mutation spot check, 12 of 12 canonical-precise `ungripped` mutants scored; 0 unscored) |
-| Trust | Authored TypeScript edits the project's tests fully catch that ripr still flags as a gap | **14.5%** | <= 5.0% | below the bar | no earlier measurement |
-| Trust | Authored TypeScript edits the project's tests miss that ripr credits as caught | 0.0% | <= 0.0% | meets the bar | no earlier measurement |
-| Trust | Authored TypeScript edits the project's tests miss that ripr reports as fine | 0.0% | <= 0.0% | meets the bar | no earlier measurement |
-| Trust | Authored Python edits the project's tests fully catch that ripr still flags as a gap | **46.9%** | <= 5.0% | below the bar | no earlier measurement |
-| Trust | Authored Python edits the project's tests miss that ripr credits as caught | **20.7%** | <= 0.0% | below the bar | no earlier measurement |
-| Trust | Authored Python edits the project's tests miss that ripr reports as fine | 0.0% | <= 0.0% | meets the bar | no earlier measurement |
+| Trust | Authored TypeScript edits the project's tests fully catch that ripr still flags as a gap | 5.0% | <= 5.0% | meets the bar | no earlier measurement (observed at 76651d1) |
+| Trust | Authored TypeScript edits the project's tests miss that ripr credits as caught | 0.0% | <= 0.0% | meets the bar | no earlier measurement (observed at 76651d1) |
+| Trust | Authored TypeScript edits the project's tests miss that ripr reports as fine | 0.0% | <= 0.0% | meets the bar | no earlier measurement (observed at 76651d1) |
+| Trust | Authored Python edits the project's tests fully catch that ripr still flags as a gap | 0.0% | <= 5.0% | meets the bar | no earlier measurement (observed at 76651d1) |
+| Trust | Authored Python edits the project's tests miss that ripr credits as caught | 0.0% | <= 0.0% | meets the bar | no earlier measurement (observed at 76651d1) |
+| Trust | Authored Python edits the project's tests miss that ripr reports as fine | 0.0% | <= 0.0% | meets the bar | no earlier measurement (observed at 76651d1) |
+| Trust | Wrong Perl verdicts on the hand-checked Perl verdict corpus (producer packets) | **29.6%** | <= 5.0% | below the bar | no earlier measurement (observed at 76651d1) |
+| Trust | Hand-checked Perl edits the tests fully catch that ripr still flags as a gap (producer packets) | **33.3%** | <= 5.0% | below the bar | no earlier measurement (observed at 76651d1) |
+| Trust | Hand-checked Perl edits the tests miss that ripr credits as caught (producer packets) | **25.0%** | <= 0.0% | below the bar | no earlier measurement (observed at 76651d1) |
+| Trust | Hand-checked Perl edits the tests miss that ripr reports as fine (producer packets) | 0.0% | <= 0.0% | meets the bar | no earlier measurement (observed at 76651d1) |
+| Trust | Hand-checked Perl edits where ripr gives no specific verdict (producer packets) | **29.6%** | <= 20.0% | below the bar | no earlier measurement (observed at 76651d1) |
+| Trust | Verdict-corpus cases with a spec-adopted related-test oracle where ripr reports the same oracle kind and strength | 100.0% | >= 100.0% | meets the bar | no earlier measurement (observed at 76651d1) |
+| Trust | Verdict-corpus cases with a spec-adopted related-test oracle where ripr reports a stronger oracle than the spec adopts | 0.0% | <= 0.0% | meets the bar | no earlier measurement (observed at 76651d1) |
 | Trust | When ripr pilot ranks a seam in its top ten, a real mutant there is missed | not measured | >= 60.0% | not measured | no earlier measurement |
 | Trust | Real mutants that join a ripr seam precisely (join coverage; 75 of 1745 enter an agreement rate) | **28.3%** | >= 50.0% | below the bar | first receipt (mutation spot check) |
 | Trust | False actionable rate on the Rust judged behavior panel | not measured | <= 0.0% | not measured | no earlier measurement |
@@ -72,7 +79,7 @@ By board, so the weak areas show before the full table:
 | First run | Simple boundary edits on unfamiliar crates that get an `*_unknown` verdict | **3 cases** | <= 0 cases | below the bar | was 1 in ripr 0.10.0 |
 | First run | Friction events logged during the scripted first run | **4 events** | <= 0 events | below the bar | was 6 in ripr 0.10.0 |
 | First run | First-run steps that exit nonzero | 0 steps | <= 0 steps | meets the bar | unchanged from ripr 0.10.0 (0) |
-| First run | First-run steps over their own time, output-length or workflow-size budget | **3 steps** | <= 0 steps | below the bar | unchanged from ripr 0.10.0 (3) |
+| First run | First-run steps over their own time or output-length budget | 0 steps | <= 0 steps | meets the bar | unchanged from ripr 0.10.0 (0) |
 | First run | Seconds for the scripted walk on one crate, setup excluded | 3.56 s | <= 10 s | meets the bar | was 0.58 in ripr 0.10.0 |
 | corpus | Pinned repository whose diff-scoped `ripr check` did not reach `analyzed` | 0 repos | <= 0 repos | meets the bar | -1 repo since adf4e63 (was 1 repo) |
 | corpus | Diff-scoped `ripr check` on a pinned real change | 3.5 s | <= 5.0 s | meets the bar | earlier receipt on another runner class `local-linux-x86_64-4cpu` (was 13.2 s) |
@@ -85,6 +92,7 @@ By board, so the weak areas show before the full table:
 | ranking | Pilot's top 5 picks per crate where every judging mutant was caught (pooled count) | **11 picks** | <= 8 picks | below the bar | no earlier measurement |
 | ranking | Pilot's top 10 picks per crate a missed mutant confirms (pooled count) | **1 pick** | >= 24 picks | below the bar | no earlier measurement |
 | ranking | Pilot's top 10 picks per crate where every judging mutant was caught (pooled count) | 16 picks | <= 16 picks | meets the bar | no earlier measurement |
+| First run | Generated CI workflows over their line budget | **3 workflows** | <= 0 workflows | below the bar | unchanged from ripr 0.10.0 (3) |
 
 Not measured, and why:
 

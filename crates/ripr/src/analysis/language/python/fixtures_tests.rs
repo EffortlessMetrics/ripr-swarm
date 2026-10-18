@@ -1,0 +1,163 @@
+//! Tests for the weak `fixture_owner_call` relation (#4563): a test that
+//! names a pytest fixture whose body calls the owner is related with
+//! reach-only evidence and never earns an oracle or `exposed`.
+
+use super::fixtures::attach_fixture_defs;
+use super::source_facts::extract_source_facts;
+use super::source_utils::is_test_file;
+use super::*;
+use std::collections::BTreeMap;
+use std::path::Path;
+
+const UTILS_PY: &str = "def _short(text, limit):\n    if limit > 3:\n        return text[:limit]\n    return text[:3]\n";
+
+/// Owners from production files and tests (with fixtures attached) from test
+/// files, the way the workspace pass builds them.
+fn workspace(files: &[(&str, &str)]) -> (Vec<PythonOwner>, Vec<PythonTest>) {
+    let mut owners = Vec::new();
+    let mut tests = Vec::new();
+    let mut defs: BTreeMap<PathBuf, Vec<PythonFixtureDef>> = BTreeMap::new();
+    for (path, source) in files {
+        let facts = extract_source_facts(Path::new(path), source);
+        if !facts.fixtures.is_empty() {
+            defs.insert(PathBuf::from(path), facts.fixtures.clone());
+        }
+        if is_test_file(Path::new(path)) {
+            tests.extend(facts.tests);
+        } else {
+            owners.extend(facts.owners);
+        }
+    }
+    attach_fixture_defs(&mut tests, &defs);
+    (owners, tests)
+}
+
+fn relations(files: &[(&str, &str)]) -> Result<Vec<(String, &'static str)>, String> {
+    let (owners, tests) = workspace(files);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.name == "_short")
+        .ok_or_else(|| "fixture must parse owner `_short`".to_string())?;
+    Ok(related_tests::related_test_candidates(owner, &tests)
+        .iter()
+        .map(|candidate| (candidate.test.name.clone(), candidate.relation.as_str()))
+        .collect())
+}
+
+fn classify(files: &[(&str, &str)]) -> Result<Finding, String> {
+    let (owners, tests) = workspace(files);
+    classify_change(
+        Path::new("src/utils.py"),
+        2,
+        "    if limit > 3:",
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "expected a finding".to_string())
+}
+
+const SAME_MODULE: &str = "import pytest\nfrom src.utils import _short\n\n\n@pytest.fixture\ndef out():\n    return _short('abcd', 3)\n\n\ndef test_short(out):\n    assert out == 'abc'\n";
+
+#[test]
+fn given_a_same_module_fixture_that_calls_the_owner_then_the_test_is_related_weakly()
+-> Result<(), String> {
+    let files = [
+        ("src/utils.py", UTILS_PY),
+        ("tests/test_utils.py", SAME_MODULE),
+    ];
+    assert_eq!(
+        relations(&files)?,
+        vec![("test_short".to_string(), "fixture_owner_call")]
+    );
+    let finding = classify(&files)?;
+    assert_ne!(finding.class, ExposureClass::NoStaticPath);
+    assert_ne!(finding.class, ExposureClass::Exposed);
+    assert_eq!(finding.related_tests.len(), 1);
+    assert_eq!(finding.related_tests[0].oracle, None);
+    Ok(())
+}
+
+#[test]
+fn given_a_module_attribute_call_in_the_fixture_then_the_test_is_related_weakly()
+-> Result<(), String> {
+    let test = "import pytest\nfrom src import utils\n\n\n@pytest.fixture\ndef out():\n    return utils._short('abcd', 3)\n\n\ndef test_short(out):\n    assert out == 'abc'\n";
+    assert_eq!(
+        relations(&[("src/utils.py", UTILS_PY), ("tests/test_utils.py", test)])?,
+        vec![("test_short".to_string(), "fixture_owner_call")]
+    );
+    Ok(())
+}
+
+#[test]
+fn given_a_conftest_fixture_that_calls_the_owner_then_the_test_is_related_weakly()
+-> Result<(), String> {
+    let conftest = "import pytest\nfrom src.utils import _short\n\n\n@pytest.fixture\ndef out():\n    return _short('abcd', 3)\n";
+    let test = "def test_short(out):\n    assert out == 'abc'\n";
+    assert_eq!(
+        relations(&[
+            ("src/utils.py", UTILS_PY),
+            ("tests/conftest.py", conftest),
+            ("tests/test_utils.py", test),
+        ])?,
+        vec![("test_short".to_string(), "fixture_owner_call")]
+    );
+    Ok(())
+}
+
+#[test]
+fn given_a_fixture_that_does_not_call_the_owner_then_the_test_stays_unrelated() -> Result<(), String>
+{
+    let test = "import pytest\n\n\n@pytest.fixture\ndef out():\n    return 'abc'\n\n\ndef test_short(out):\n    assert out == 'abc'\n";
+    let files = [("src/utils.py", UTILS_PY), ("tests/test_utils.py", test)];
+    assert!(relations(&files)?.is_empty());
+    assert_eq!(classify(&files)?.class, ExposureClass::NoStaticPath);
+    Ok(())
+}
+
+#[test]
+fn given_a_test_that_rebinds_the_fixture_name_then_the_test_stays_unrelated() -> Result<(), String>
+{
+    let test = SAME_MODULE.replace(
+        "    assert out == 'abc'",
+        "    out = 'abc'\n    assert out == 'abc'",
+    );
+    assert!(relations(&[("src/utils.py", UTILS_PY), ("tests/test_utils.py", &test)])?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn given_a_module_fixture_that_overrides_the_conftest_fixture_then_the_nearest_wins()
+-> Result<(), String> {
+    let conftest = "import pytest\nfrom src.utils import _short\n\n\n@pytest.fixture\ndef out():\n    return _short('abcd', 3)\n";
+    let test = "import pytest\n\n\n@pytest.fixture\ndef out():\n    return 'abc'\n\n\ndef test_short(out):\n    assert out == 'abc'\n";
+    assert!(
+        relations(&[
+            ("src/utils.py", UTILS_PY),
+            ("tests/conftest.py", conftest),
+            ("tests/test_utils.py", test),
+        ])?
+        .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
+fn given_a_renamed_fixture_then_no_fixture_definition_is_recorded() -> Result<(), String> {
+    let test = SAME_MODULE.replace("@pytest.fixture", "@pytest.fixture(name='out')");
+    assert!(relations(&[("src/utils.py", UTILS_PY), ("tests/test_utils.py", &test)])?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn given_a_test_that_calls_the_owner_directly_then_the_direct_relation_wins() -> Result<(), String>
+{
+    let test = SAME_MODULE.replace(
+        "    assert out == 'abc'",
+        "    assert _short('abcd', 3) == 'abc'",
+    );
+    assert_eq!(
+        relations(&[("src/utils.py", UTILS_PY), ("tests/test_utils.py", &test)])?,
+        vec![("test_short".to_string(), "syntactic_call")]
+    );
+    Ok(())
+}

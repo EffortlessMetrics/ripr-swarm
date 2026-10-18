@@ -262,7 +262,18 @@ fn check_with_progress_and_origins_with_open_rust_paths(
         // language_runs[] entry and a `producer_failure` typed limitation
         // carrying the real cause, and the other languages' findings still
         // emit. The stderr warnings remain for the human stdout path.
-        match invoke_perl_lsp_producer(perl_config, &input, scope) {
+        let producer_result = invoke_perl_lsp_producer(perl_config, &input, scope);
+        // Settlement and staging disposition happen in the existing owner.
+        // Cancellation must not become fail-soft producer degradation.
+        if crate::analysis::cancellation::cli_interrupted()
+            && let Err(cancelled) = crate::analysis::cancellation::checkpoint_typed()
+        {
+            if let Err(reason) = &producer_result {
+                eprintln!("{}", terminal_safe(format!("check interrupted; {reason}")));
+            }
+            return Err(cancelled.into());
+        }
+        match producer_result {
             Ok(packet_path) => input.perl_facts_path = Some(packet_path),
             Err(reason) => {
                 eprintln!(
@@ -442,6 +453,7 @@ pub fn repo_seam_inventory_input(input: CheckInput) -> CheckOutput {
             uncommitted_source_paths: Vec::new(),
             analyzed_revisions: None,
             untracked_source_paths: Vec::new(),
+            ignored_source_paths: Vec::new(),
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
         },
@@ -864,6 +876,11 @@ fn invoke_perl_lsp_producer(
     );
     match wait_result {
         crate::git::ChildWait::Exited(status) => {
+            if crate::analysis::cancellation::cli_interrupted()
+                && let Err(cancelled) = crate::analysis::cancellation::checkpoint()
+            {
+                return Err(staging.settled_failure(cancelled));
+            }
             // Item 4b: non-zero exit must NEVER be accepted even if a tmp
             // packet exists. Only accept the packet if the producer exited
             // successfully AND the file exists.
@@ -1283,6 +1300,7 @@ mod tests {
             uncommitted_source_paths: Vec::new(),
             analyzed_revisions: None,
             untracked_source_paths: Vec::new(),
+            ignored_source_paths: Vec::new(),
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
         }

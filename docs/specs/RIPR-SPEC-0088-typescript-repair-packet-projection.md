@@ -76,6 +76,13 @@ For a **blocked** (non-actionable) finding the human output names the
 limitation and why the packet is not emitted — no partial packet, no implied
 readiness.
 
+When the bounded check report renders a named TypeScript/JavaScript limitation's
+producer rationale, its safe next action explains that automated
+repair does not route this finding. Missing packet fields are diagnostic facts,
+not operator inputs. Ask the operator to check by hand whether a test observes
+the change, then rerun `ripr check`; do not infer test debt from the limitation
+or ask the operator to complete internal packet fields (#8630).
+
 ## Non-Goals
 
 - No new language promotion. Preview stays `preview_advisory_only`.
