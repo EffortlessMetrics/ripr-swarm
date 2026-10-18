@@ -219,7 +219,8 @@ fn verdict_in(
 /// tests make (#8659): each test is a plain `#[test]` whose assertions are all
 /// equality assertions over one bare call of `owner` with literal arguments,
 /// and the owner folds to the same value at each call whether it holds
-/// `after` (the current text) or `before`. Such a test passes on the baseline
+/// `after` (the current text) or `before`, while a small input grid does find
+/// a call where the two differ (an equivalent rewrite is not reported). Such a test passes on the baseline
 /// and on the change, so it cannot reveal the difference even though its
 /// exact assertion shares the owner. Every other shape (a call outside an
 /// assertion, a case table, a value that does not fold, a body where `after`
@@ -235,6 +236,13 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
         return false;
     }
     let baseline = current.replacen(after, before, 1);
+    // An equivalent rewrite (`x * 3` to `3 * x`) is invisible to every test
+    // too, but "no input reaches a difference" would send the reader after a
+    // test that cannot exist. The change must differ somewhere: a small input
+    // grid has to find a call at which the two bodies fold to different values.
+    if !versions_differ_on_small_inputs(owner, current, &baseline) {
+        return false;
+    }
     // A related test that never names the owner exercises it through no call
     // the fold could miss (a helper that calls it makes the owner have other
     // callers, which the caller checks), so it neither blocks nor supports
@@ -282,6 +290,58 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
             }
         })
     })
+}
+
+/// Whether `current` and `baseline` fold to different values at some call
+/// over a small grid of integer arguments (every parameter takes each of
+/// [`SEPARATION_GRID`]). More than [`SEPARATION_MAX_PARAMETERS`] parameters
+/// are not searched.
+fn versions_differ_on_small_inputs(owner: &FunctionSummary, current: &str, baseline: &str) -> bool {
+    const SEPARATION_GRID: [i128; 8] = [0, 1, 2, 3, 5, 6, 7, 10];
+    const SEPARATION_MAX_PARAMETERS: usize = 3;
+    let Some(parameters) = parse_clean_source_file(owner.body.as_str())
+        .and_then(|parse| {
+            parse
+                .tree()
+                .syntax()
+                .descendants()
+                .find_map(ast::Fn::cast)
+                .and_then(|function| function.param_list())
+        })
+        .map(|list| list.params().count())
+    else {
+        return false;
+    };
+    if parameters == 0 || parameters > SEPARATION_MAX_PARAMETERS {
+        return false;
+    }
+    let mut arguments = vec![SEPARATION_GRID[0]; parameters];
+    let mut counters = vec![0usize; parameters];
+    loop {
+        for (argument, counter) in arguments.iter_mut().zip(&counters) {
+            *argument = SEPARATION_GRID[*counter];
+        }
+        if let (Some(changed), Some(unchanged)) = (
+            fold_function_text(current, &arguments),
+            fold_function_text(baseline, &arguments),
+        ) && changed != unchanged
+        {
+            return true;
+        }
+        // Advance the odometer.
+        let mut position = 0;
+        loop {
+            let Some(counter) = counters.get_mut(position) else {
+                return false;
+            };
+            *counter += 1;
+            if *counter < SEPARATION_GRID.len() {
+                break;
+            }
+            *counter = 0;
+            position += 1;
+        }
+    }
 }
 
 /// The one-line disclosure a receipt carries when the oracle is downgraded.
@@ -1606,6 +1666,14 @@ mod tests {
     fn an_assertion_below_the_cap_cannot_see_the_raised_cap() -> Result<(), String> {
         let test = "#[test]\nfn low() {\n    assert_eq!(owner(3), 3);\n}";
         assert!(invisible(CAP, "n.min(5)", "n.min(6)", test)?);
+        Ok(())
+    }
+
+    #[test]
+    fn an_equivalent_rewrite_is_not_reported_as_invisible() -> Result<(), String> {
+        let owner = "pub fn owner(n: u32) -> u32 {\n    3 * n\n}";
+        let test = "#[test]\nfn a() {\n    assert_eq!(owner(4), 12);\n}";
+        assert!(!invisible(owner, "n * 3", "3 * n", test)?);
         Ok(())
     }
 

@@ -2462,7 +2462,11 @@ unmet condition keeps today's reading:
    assertions are all equality assertions whose first operand is one bare
    owner call with literal arguments that fold.
 4. At every such call the owner folds to the same value under the current and
-   the baseline body.
+   the baseline body, while a small grid of integer arguments (each parameter
+   over `0, 1, 2, 3, 5, 6, 7, 10`, at most three parameters) finds a call at
+   which the two bodies fold to different values. An equivalent rewrite
+   (`x * 3` to `3 * x`) has no such call and keeps today's reading: asking for
+   a test that tells the versions apart would name one that cannot exist.
 
 A related test that never names the owner is ignored: a helper that calls the
 owner would already make condition 2 fail. The reading only downgrades; a
