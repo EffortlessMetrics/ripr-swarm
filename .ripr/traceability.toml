@@ -15280,6 +15280,7 @@ id = "RIPR-SPEC-0229"
 name = "Match-arm selection names the unselected arm"
 spec = "docs/specs/RIPR-SPEC-0229-match-arm-selection-discriminator.md"
 tests = [
+  "crates/ripr/tests/whole_tail_match_observation.rs::external_item_macro_cannot_supply_primitive_expected_identity",
   "crates/ripr/tests/whole_tail_match_observation.rs::external_item_macro_cannot_supply_primitive_return_identity",
   "crates/ripr/tests/whole_tail_match_observation.rs::added_documented_owner_header_observes_its_whole_return",
   "crates/ripr/tests/whole_tail_match_observation.rs::saturated_opaque_imported_input_observes_the_whole_result",
@@ -15431,6 +15432,7 @@ tests = [
   "crates/ripr/tests/match_guard_edit.rs::an_added_guard_conjunct_keeps_the_arm_head",
 ]
 fixtures = [
+  "fixtures/whole_tail_match_macro_expected",
   "fixtures/whole_tail_match_macro_scalar",
   "fixtures/whole_tail_match_scrutinee_return",
   "fixtures/field_match_helper_mutable",
@@ -15465,6 +15467,8 @@ code = [
   "crates/ripr/src/output/human/explain.rs",
 ]
 outputs = [
+  "fixtures/whole_tail_match_macro_expected/expected/check.json",
+  "fixtures/whole_tail_match_macro_expected/expected/human.txt",
   "fixtures/whole_tail_match_macro_scalar/expected/check.json",
   "fixtures/whole_tail_match_macro_scalar/expected/human.txt",
   "fixtures/whole_tail_match_scrutinee_return/expected/check.json",

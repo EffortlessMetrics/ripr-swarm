@@ -871,6 +871,8 @@ A match header is not an individual arm. A separate internal
    macro and callee identity, whole-result binding, expected-side independence
    and overwrite guards for the exact invocation. This adapter further limits
    expected operands to literals or unrebound primitive integer `MAX` paths;
+   MAX additionally requires closed parser-backed module namespaces in the
+   assertion file, including nested test modules, under the same authority.
    opaque expected bindings, static values and computed expectations remain
    refused. A same-file parent/self glob is readable only when the complete
    source contains no primitive-name binding or opaque competing glob.
@@ -896,3 +898,7 @@ uncredited; the whole-result receipt cannot claim their result was observed.
 `fixtures/whole_tail_match_macro_scalar` retains the external macro-defined `u64`
 with always-true equality. Its original and all arm-zero variants pass natively;
 its whole-tail header must remain uncredited despite the apparent scalar name.
+
+`fixtures/whole_tail_match_macro_expected` retains the analogous test-module
+expansion of a custom MAX with always-true primitive equality. A closed owner
+namespace does not prove the expected operand namespace; both remain required.

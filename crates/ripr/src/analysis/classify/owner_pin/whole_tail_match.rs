@@ -213,12 +213,25 @@ fn independent_expected(
         let Some(parsed) = parse_clean_source_file(&facts.source) else {
             return false;
         };
-        !parsed
+        // A nested test module can expand a custom primitive::MAX even
+        // while the owner's root return namespace remains closed. Require
+        // the same provenance in every visible module scope of this file.
+        parsed
             .tree()
             .syntax()
             .descendants()
-            .filter_map(ast::Name::cast)
-            .any(|name| name.text().trim_start_matches("r#") == primitive)
+            .filter(|node| {
+                ast::SourceFile::can_cast(node.kind()) || ast::ItemList::can_cast(node.kind())
+            })
+            .all(|module| {
+                crate::analysis::syntax::primitive_namespace_is_closed(&module, primitive)
+            })
+            && !parsed
+                .tree()
+                .syntax()
+                .descendants()
+                .filter_map(ast::Name::cast)
+                .any(|name| name.text().trim_start_matches("r#") == primitive)
             && !flattened_use_paths(&facts.source).iter().any(|import| {
                 ((import.path.ends_with("::*") || import.path == "*")
                     && !(test.file == owner_file

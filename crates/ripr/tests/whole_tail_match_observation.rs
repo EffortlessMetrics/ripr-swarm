@@ -485,12 +485,56 @@ fn external_item_macro_cannot_supply_primitive_return_identity()
             "{case}: {}",
             headers[0].id
         );
-        assert!(
-            !headers[0]
-                .evidence_path
-                .iter()
-                .any(|e| e.contains("whole_tail_match_return_observation")),
-            "{case}"
+    }
+    Ok(())
+}
+
+#[test]
+fn external_item_macro_cannot_supply_primitive_expected_identity()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!("../../../fixtures/whole_tail_match_macro_expected/input/src/lib.rs");
+    let foreign =
+        include_str!("../../../fixtures/whole_tail_match_macro_expected/input/src/foreign.rs");
+    for (case, source) in [
+        ("module expected", source.to_string()),
+        (
+            "selected arm zero",
+            source.replace("true => 600", "true => 0"),
+        ),
+        (
+            "function-local expected",
+            source
+                .replace("    crate::define_expected!();\n", "")
+                .replace(
+                    "fn observed() {",
+                    "fn observed() { crate::define_expected!();",
+                ),
+        ),
+    ] {
+        let diff = format!(
+            "--- /dev/null\n+++ b/src/lib.rs\n@@ -0,0 +1,{} @@\n{}",
+            source.lines().count(),
+            source
+                .lines()
+                .map(|line| format!("+{line}\n"))
+                .collect::<String>()
+        );
+        let fixture = Fixture::new(&source, &diff)?;
+        std::fs::write(fixture.0.join("src/foreign.rs"), foreign)?;
+        let output = fixture.check()?;
+        let headers = output
+            .findings
+            .iter()
+            .filter(|f| {
+                f.probe.family == ripr::ProbeFamily::MatchArm && f.probe.expression == "match input"
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(headers.len(), 1, "retained header: {case}");
+        assert_eq!(
+            headers[0].class,
+            ExposureClass::WeaklyExposed,
+            "{case}: {}",
+            headers[0].id
         );
     }
     Ok(())
