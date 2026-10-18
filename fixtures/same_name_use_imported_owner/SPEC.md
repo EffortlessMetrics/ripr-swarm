@@ -10,8 +10,8 @@ Issue: #6544
 
 `celsius::snap` and `fahrenheit::snap` share a name. The test module
 imports `use super::celsius::snap;` and pins `assert_eq!(snap(17), 20)`. The
-diff rewrites the return of `celsius::snap` (`(v + 5) / 10 * 10` becomes
-`(5 + v) / 10 * 10`). Mutants `(v + 2) / 10 * 10`, `(v - 5) / 10 * 10` and
+diff rewrites the return of `celsius::snap` (`(v + 2) / 10 * 10` becomes
+`(v + 5) / 10 * 10`). Mutants `(v + 2) / 10 * 10`, `(v - 5) / 10 * 10` and
 `(v + 5) * 10 * 10` all fail the test (rustc 1.95).
 
 ## When

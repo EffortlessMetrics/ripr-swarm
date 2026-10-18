@@ -249,6 +249,7 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
         unresolved_boundary,
         None,
         true,
+        None,
     )
 }
 
@@ -265,6 +266,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
     unresolved_boundary: Option<&str>,
     owner: Option<&FunctionSummary>,
     owner_has_other_callers: bool,
+    direct_owner_tests: Option<&[&TestSummary]>,
 ) -> StageEvidence {
     match probe.family {
         ProbeFamily::Predicate => {
@@ -472,6 +474,31 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                     StageState::Unknown,
                     Confidence::Low,
                     "Changed value is bound to a discard pattern; it cannot infect a sink",
+                )
+            } else if probe.family == ProbeFamily::ReturnValue
+                && owner
+                    .zip(probe.before.as_deref())
+                    .zip(direct_owner_tests)
+                    .is_some_and(|((owner, before), direct)| {
+                        crate::analysis::test_grip_evidence::tests_cannot_tell_versions_apart(
+                            owner,
+                            &probe.expression,
+                            before,
+                            direct,
+                        )
+                    })
+            {
+                // #8659: every related test calls the owner at literal inputs
+                // for which the changed expression and its previous text
+                // fold to the same value, so no test input separates them.
+                StageEvidence::new(
+                    StageState::Weak,
+                    Confidence::Medium,
+                    format!(
+                        "Every related test calls the owner at literal inputs where `{}` and its previous text `{}` evaluate to the same value, so no test input separates the changed behavior",
+                        probe.expression.trim(),
+                        probe.before.as_deref().unwrap_or_default().trim()
+                    ),
                 )
             } else {
                 StageEvidence::new(

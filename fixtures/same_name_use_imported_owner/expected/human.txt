@@ -2,18 +2,18 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/same_name_use_imported_owner/input
 
-Summary: 1 probe (1 exposed, 0 weak, 0 unrevealed, 0 no path); 1 of 1 finding unsuppressed
+Summary: 2 probes (1 exposed, 0 weak, 0 unrevealed, 0 no path, 1 unknown); 2 of 2 findings unsuppressed (1 base-side evidence, not candidate edit targets)
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
 
 Start here:
   State: no gap selected for repair
   Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation
   File: ./src/lib.rs:3
   Static exposure: exposed (severity: info, confidence 1.00)
-  Canonical gap: gap:rust:src/lib.rs:celsius::snap:return_value:return_value:5+v/10*10
-  Changed behavior: (5 + v) / 10 * 10
+  Canonical gap: gap:rust:src/lib.rs:celsius::snap:return_value:return_value:v+5/10*10
+  Changed behavior: (v + 5) / 10 * 10
   Related test: src/lib.rs:18 snap_seventeen_to_twenty
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
     - reach yes: Related tests appear to reach snap: snap_seventeen_to_twenty
@@ -21,9 +21,11 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/same_name_use_imported_owner/input --diff <cwd>/fixtures/same_name_use_imported_owner/diff.patch --mode fast probe:src_lib.rs:return_value:7408a668
-  ripr context --root <cwd>/fixtures/same_name_use_imported_owner/input --diff <cwd>/fixtures/same_name_use_imported_owner/diff.patch --mode fast --at probe:src_lib.rs:return_value:7408a668
+  ripr explain --root <cwd>/fixtures/same_name_use_imported_owner/input --diff <cwd>/fixtures/same_name_use_imported_owner/diff.patch --mode fast probe:src_lib.rs:return_value:b6669449
+  ripr context --root <cwd>/fixtures/same_name_use_imported_owner/input --diff <cwd>/fixtures/same_name_use_imported_owner/diff.patch --mode fast --at probe:src_lib.rs:return_value:b6669449
 
-More:
+Hidden:
+  All 1 omitted finding(s) are base-side evidence, not candidate edit targets.
+    - ./src/lib.rs:3 (unknown)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

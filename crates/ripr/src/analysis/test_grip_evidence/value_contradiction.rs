@@ -215,6 +215,80 @@ fn verdict_in(
     }
 }
 
+/// Whether no related test can tell the changed expression from its previous
+/// text (#8659): every related test calls the owner only through bare-name
+/// equality assertions with literal arguments, and at every such call the
+/// owner folds to the same value with `expression` as with `before`.
+///
+/// `a * 2u64.pow(attempt)` changed to `3u64.pow(attempt)` is invisible to a
+/// test that only calls `attempt = 0`, however exact its oracle is. Declines
+/// (`false`, today's behavior) for anything it cannot fully establish: an
+/// owner body that does not hold `expression` exactly once, a test with a
+/// case table, a shadowed owner name, an owner call outside the folded
+/// assertions, an assertion or argument that does not fold, or no folded call.
+pub(crate) fn tests_cannot_tell_versions_apart(
+    owner: &FunctionSummary,
+    expression: &str,
+    before: &str,
+    tests: &[&TestSummary],
+) -> bool {
+    let body = owner.body.as_str();
+    let (expression, before) = (expression.trim(), before.trim());
+    if expression.is_empty() || before.is_empty() || expression == before {
+        return false;
+    }
+    if body.matches(expression).count() != 1 {
+        return false;
+    }
+    let previous = body.replacen(expression, before, 1);
+    if tests.is_empty() {
+        return false;
+    }
+    tests.iter().all(|test| {
+        if test
+            .attrs
+            .iter()
+            .any(|attr| attr.trim_start().starts_with("#[case"))
+            || bare_owner_call_is_shadowed(test, &owner.name)
+        {
+            return false;
+        }
+        let mut folded = 0usize;
+        for oracle in &test.assertions {
+            let Some((_, arguments)) = equality_assertion_shape(&oracle.text) else {
+                continue;
+            };
+            let Some(actual) = arguments.first() else {
+                continue;
+            };
+            let Some(call_arguments) = owner_call_arguments(actual, &owner.name) else {
+                continue;
+            };
+            let mut values = Vec::with_capacity(call_arguments.len());
+            for argument in &call_arguments {
+                let Some(value) = fold_expression(argument, &BTreeMap::new()) else {
+                    return false;
+                };
+                values.push(value);
+            }
+            match (
+                fold_owner_body(body, &values),
+                fold_owner_body(&previous, &values),
+            ) {
+                (Some(after), Some(old)) if after == old => folded += 1,
+                _ => return false,
+            }
+        }
+        // Every call of the owner in the test body must be one of the folded
+        // assertions: a `let` or a nested call may feed other inputs.
+        let owner_calls = test
+            .body_calls()
+            .filter(|call| call.name == owner.name)
+            .count();
+        folded > 0 && owner_calls == folded
+    })
+}
+
 /// The one-line disclosure a receipt carries when the oracle is downgraded.
 pub(super) fn contradiction_summary(expected: &str, evaluated: i128) -> String {
     format!("{CONTRADICTION_DISCLOSURE} (asserts {expected}, owner folds to {evaluated})")
@@ -299,7 +373,13 @@ fn owner_call_arguments(operand: &str, owner_name: &str) -> Option<Vec<String>> 
 /// Free functions only: a method or nested fn is reached through a receiver
 /// or closure that the bare-path assertion does not name.
 fn fold_owner_call(owner: &FunctionSummary, arguments: &[i128]) -> Option<i128> {
-    let parse = parse_clean_source_file(owner.body.as_str())?;
+    fold_owner_body(owner.body.as_str(), arguments)
+}
+
+/// [`fold_owner_call`] over a function's source text, so a changed body and
+/// its previous text fold through one evaluator.
+fn fold_owner_body(body: &str, arguments: &[i128]) -> Option<i128> {
+    let parse = parse_clean_source_file(body)?;
     let function = parse
         .tree()
         .syntax()
@@ -1574,6 +1654,77 @@ mod tests {
             verdict("    #[case(4, 12)]\n    #[case(5, LIMIT)]")?,
             ExactValueVerdict::NotEvaluable
         );
+        Ok(())
+    }
+
+    fn versions_indistinguishable(
+        source: &str,
+        owner: &str,
+        expression: &str,
+        before: &str,
+    ) -> Result<bool, String> {
+        let adapter = RaRustSyntaxAdapter;
+        let facts = adapter
+            .summarize_file(std::path::Path::new("src/lib.rs"), source)
+            .map_err(|error| format!("source summarizes: {error}"))?;
+        let owner = facts
+            .functions
+            .iter()
+            .find(|function| function.name == owner)
+            .ok_or("owner function is indexed")?;
+        let tests: Vec<&TestSummary> = facts.tests.iter().collect();
+        Ok(tests_cannot_tell_versions_apart(
+            owner, expression, before, &tests,
+        ))
+    }
+
+    const CAPPED_SOURCE: &str = r#"
+pub fn capped(attempt: u32) -> u32 {
+    attempt.min(6)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::capped;
+    #[test]
+    fn small_attempt() {
+        assert_eq!(capped(2), 2);
+    }
+}
+"#;
+
+    #[test]
+    fn tests_that_give_both_versions_the_same_value_cannot_tell_them_apart() -> Result<(), String> {
+        assert!(versions_indistinguishable(
+            CAPPED_SOURCE,
+            "capped",
+            "attempt.min(6)",
+            "attempt.min(7)"
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn an_input_that_separates_the_versions_is_not_hidden() -> Result<(), String> {
+        let source = CAPPED_SOURCE.replace("capped(2), 2", "capped(6), 6");
+        assert!(!versions_indistinguishable(
+            &source,
+            "capped",
+            "attempt.min(6)",
+            "attempt.min(5)"
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn an_unevaluable_argument_never_claims_indistinguishable() -> Result<(), String> {
+        let source = CAPPED_SOURCE.replace("capped(2), 2", "capped(input()), 2");
+        assert!(!versions_indistinguishable(
+            &source,
+            "capped",
+            "attempt.min(6)",
+            "attempt.min(7)"
+        )?);
         Ok(())
     }
 }

@@ -1,6 +1,6 @@
 pub mod celsius {
     pub fn snap(v: u32) -> u32 {
-        (5 + v) / 10 * 10
+        (v + 5) / 10 * 10
     }
 }
 

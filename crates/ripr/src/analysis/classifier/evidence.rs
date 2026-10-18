@@ -271,6 +271,7 @@ impl ClassifiedProbeEvidence {
                 .missing_discriminators
                 .retain(|fact| !is_unselected_input_reason(&fact.reason));
         }
+        let direct_owner_tests = context.direct_owner_tests();
         let infect = infection_evidence_for_owner(
             context.probe,
             &test_summaries,
@@ -303,6 +304,7 @@ impl ClassifiedProbeEvidence {
                                 .any(|body| mentions_identifier(body, &owner.name))
                         }))
             }),
+            direct_owner_tests.as_deref(),
         );
         // #6796's computed-argument discipline, wrapper edition (#6672,
         // #6694): when the tests reach the owner only through the helper

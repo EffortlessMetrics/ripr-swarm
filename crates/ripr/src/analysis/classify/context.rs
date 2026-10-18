@@ -202,6 +202,28 @@ impl<'a> ProbeContext<'a> {
     pub(in crate::analysis) fn related_test_summaries(&self) -> Vec<&TestSummary> {
         self.related_tests.iter().map(|(t, _)| *t).collect()
     }
+
+    /// The related tests that call the owner directly, when every other
+    /// related test is only nearby (same file or module, a name or path
+    /// affinity) and so reaches the owner through no call. `None` when some
+    /// test reaches it another way (a helper, a fixture, a re-export, a
+    /// converted callee): the inputs it feeds are not read from call lines.
+    pub(in crate::analysis) fn direct_owner_tests(&self) -> Option<Vec<&TestSummary>> {
+        use crate::domain::RelationReason;
+        let mut direct = Vec::new();
+        for (test, reason) in &self.related_tests {
+            match reason {
+                RelationReason::DirectOwnerCall => direct.push(*test),
+                RelationReason::SameTestFile
+                | RelationReason::SameModule
+                | RelationReason::OwnerNamedTest
+                | RelationReason::ImportPathAffinity
+                | RelationReason::WeakTokenSubstring => {}
+                _ => return None,
+            }
+        }
+        Some(direct)
+    }
 }
 
 #[cfg(test)]

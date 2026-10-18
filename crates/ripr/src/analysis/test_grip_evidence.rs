@@ -18,7 +18,7 @@ pub(crate) mod shared_grips;
 mod snapshot_owner_binding;
 mod value_contradiction;
 
-pub(crate) use value_contradiction::CONTRADICTION_DISCLOSURE;
+pub(crate) use value_contradiction::{CONTRADICTION_DISCLOSURE, tests_cannot_tell_versions_apart};
 use value_contradiction::{
     ExactValueVerdict, contradiction_summary, exact_value_assertion_verdict_for_test,
 };
