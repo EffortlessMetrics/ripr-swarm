@@ -390,12 +390,16 @@ pub(crate) fn resolve_repair_subject_outcome(
 /// finding. Fail-closed throughout: a seam-limit-truncated candidate
 /// set, zero or several binding seams, an ineligible or policy-omitted
 /// seam, and any unreadable authority refuse with a named reason rather
-/// than a guessed or silent route. `Silent` is deliberate only: a
-/// static-limited finding already carries its limitation guidance on the
-/// same screen, and a run with no selected finding has nothing to name.
-/// When bounded evidence cannot decide eligibility the refusal names the
-/// state; `ripr repair` itself re-checks admission against the full
-/// inventory before starting any attempt.
+/// than a guessed or silent route. `Silent` is deliberate only: the
+/// renderer never prints a runnable line for a static-limited finding
+/// (F3 — its limitation guidance on the same screen is authoritative), so
+/// an eligible seam under a static-limited finding still yields no route,
+/// and a run with no selected finding has nothing to name. A refusal the
+/// pipeline did compute is named even for a static-limited finding (#8729):
+/// "the gate refused this seam" must not read as "analysis could not
+/// decide". When bounded evidence cannot decide eligibility the refusal
+/// names the state; `ripr repair` itself re-checks admission against the
+/// full inventory before starting any attempt.
 pub(crate) fn check_repair_route(
     root: &Path,
     check_config: &crate::config::RiprConfig,
@@ -405,23 +409,24 @@ pub(crate) fn check_repair_route(
     let Some(finding) = crate::output::human::selected_triage_finding(output, check_config) else {
         return CheckRepairRoute::Silent;
     };
-    // #8166 residual (F3): a static-limited finding keeps its limitation
-    // guidance and gets no runnable repair line — the same static-limited
-    // definition the human triage state uses (a named static limitation, or
-    // a class static analysis could not establish a path for). Offering a
-    // repair start beside "inspect the static limitation before treating
-    // this as repair-ready" contradicts that guidance on one screen.
-    if finding.static_limit_kind.is_some()
+    // #8166 residual (F3): a static-limited finding never gets a runnable
+    // repair line — the same static-limited definition the human triage
+    // state uses (a named static limitation, or a class static analysis
+    // could not establish a path for). Offering a repair start beside
+    // "inspect the static limitation before treating this as repair-ready"
+    // contradicts that guidance on one screen. The renderer enforces F3 on
+    // the `Route` arm; here the eligibility pipeline still runs so that a
+    // computed refusal is named instead of silent (#8729): a static-limited
+    // finding whose seam the gate refused must not read as "analysis could
+    // not decide" either.
+    let static_limited = finding.static_limit_kind.is_some()
         || matches!(
             finding.class,
             crate::domain::ExposureClass::NoStaticPath
                 | crate::domain::ExposureClass::InfectionUnknown
                 | crate::domain::ExposureClass::PropagationUnknown
                 | crate::domain::ExposureClass::StaticUnknown
-        )
-    {
-        return CheckRepairRoute::Silent;
-    }
+        );
     let Some(gap) = finding.canonical_gap.as_ref() else {
         return CheckRepairRoute::Refused(RepairRouteRefusal::NoCanonicalGap);
     };
@@ -475,6 +480,13 @@ pub(crate) fn check_repair_route(
     }
     if let Some(reason) = repair_refusal_reason(entry, policy) {
         return CheckRepairRoute::Refused(RepairRouteRefusal::Ineligible { reason });
+    }
+    if static_limited {
+        // F3: no runnable line for a static-limited finding. The refusal
+        // arms above still named any concrete ineligibility; reaching here
+        // means the seam was eligible, so the limitation guidance on the
+        // same screen is the whole story and no advisory is added.
+        return CheckRepairRoute::Silent;
     }
     CheckRepairRoute::Route(crate::app::RepairRoute {
         finding_id: finding.id.clone(),
