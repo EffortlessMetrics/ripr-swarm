@@ -404,6 +404,7 @@ where
 }
 
 #[test]
+#[serial]
 fn watched_diagnostics_inputs_register_root_anchored_and_refresh_over_the_wire()
 -> Result<(), String> {
     work_done_progress_runtime()?.block_on(async {
@@ -20513,6 +20514,7 @@ async fn run_wire_refresh_with_progress_capability(
 }
 
 #[test]
+#[serial]
 fn work_done_progress_failed_end_through_real_refresh_on_broken_workspace() -> Result<(), String> {
     work_done_progress_runtime()?.block_on(async {
         let root = unique_lsp_test_root("progress-analysis-error")?;
@@ -20622,6 +20624,7 @@ fn work_done_progress_failed_end_through_real_refresh_on_broken_workspace() -> R
 }
 
 #[test]
+#[serial]
 fn work_done_progress_capability_absent_refresh_emits_no_traffic() -> Result<(), String> {
     work_done_progress_runtime()?.block_on(async {
         let root = unique_lsp_test_root("progress-capability-absent")?;

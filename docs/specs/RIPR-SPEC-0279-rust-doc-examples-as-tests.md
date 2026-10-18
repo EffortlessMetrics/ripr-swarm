@@ -223,7 +223,8 @@ package (`[lib] name`, else the package name with `-` read as `_`):
 - `crates/ripr/src/analysis/facts/doctests/tests.rs`: rule 1.
 - `crates/ripr/tests/doctest_owner_pins.rs`: rules 2 and 3, examples 1 to 6.
 - `fixtures/rust-verdict-corpus`: `mined-doctest-only-read-u16`,
-  `mined-doctest-ignored-read-u16-le` and `strsim-sorensen-dice-equal`.
+  `mined-doctest-ignored-read-u16-le`, `spec0279-doc-use-bare-call` and
+  `strsim-sorensen-dice-equal`.
 
 ## Implementation Mapping
 

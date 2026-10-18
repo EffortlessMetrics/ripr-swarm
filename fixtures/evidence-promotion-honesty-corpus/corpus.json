@@ -9864,6 +9864,45 @@
       ]
     },
     {
+      "id": "rust_returned_type_drop_local_guard",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_returned_type_drop_local_guard",
+      "vector": "local_non_plain_drop_guard_never_becomes_returned_value",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
+      "id": "rust_returned_type_drop_if_arm",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_returned_type_drop_if_arm",
+      "vector": "returned_type_non_plain_drop_in_if_arm_tail_exits_during_unwind",
+      "probe_family": "field_construction",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_returned_type_drop_wrapped_ok",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_returned_type_drop_wrapped_ok",
+      "vector": "returned_type_non_plain_drop_wrapped_in_ok_exits_during_unwind",
+      "probe_family": "field_construction",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
       "id": "rust_test_written_expected_file",
       "language": "rust",
       "tier": "pure",
