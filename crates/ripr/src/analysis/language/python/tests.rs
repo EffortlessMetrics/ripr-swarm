@@ -7095,3 +7095,128 @@ fn every_materializing_wrapper_is_transparent_to_sink_alignment() -> Result<(), 
     }
     Ok(())
 }
+
+const REVERSED_OWNER: &str = "class numeric_range:\n    def __init__(self, stop):\n        self.stop = stop\n\n    def __reversed__(self):\n        if not self.stop:\n            return iter(())\n        return iter(range(self.stop - 1, -1, -1))\n\n    def __len__(self):\n        return self.stop\n";
+
+type ReversedGuard = (crate::domain::Finding, Vec<(String, &'static str)>);
+
+/// Classify the `if not self.stop:` guard of `numeric_range.__reversed__`.
+fn classify_reversed_guard(test_src: &str) -> Result<ReversedGuard, String> {
+    let file = Path::new("src/nr.py");
+    let owners = extract_owners(file, REVERSED_OWNER);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.name == "__reversed__")
+        .ok_or_else(|| "the __reversed__ owner must be extracted".to_string())?;
+    let tests = extract_tests(Path::new("tests/test_nr.py"), test_src);
+    assert_eq!(tests.len(), 1, "the fixture must parse exactly one test");
+    let relations = candidate_relations(owner, &tests);
+    let finding = classify_change_with_old(
+        file,
+        6,
+        "        if not self.stop:",
+        Some("        if self.stop:"),
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "the reversed guard change must yield a finding".to_string())?;
+    Ok((finding, relations))
+}
+
+#[test]
+fn builtin_protocol_entry_credits_the_dunder_owner() -> Result<(), String> {
+    for test_src in [
+        "import src.nr as mi\n\n\ndef test_empty_reversed():\n    assert list(reversed(mi.numeric_range(0))) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_empty_reversed():\n    assert list(reversed(numeric_range(0))) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_empty_reversed():\n    r = numeric_range(0)\n    assert list(reversed(r)) == []\n",
+    ] {
+        let (finding, relations) = classify_reversed_guard(test_src)?;
+        assert_eq!(
+            relations,
+            vec![("test_empty_reversed".to_string(), "protocol_entry_call")],
+            "{test_src}"
+        );
+        assert_eq!(finding.class, ExposureClass::Exposed, "{test_src}");
+        assert_eq!(finding.oracle_alignment.as_deref(), Some("direct"));
+        assert_eq!(
+            finding.alignment_reason.as_deref(),
+            Some("strong_oracle_observes_owner_protocol_entry")
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn protocol_entry_stays_uncredited_without_a_bound_owner_receiver() -> Result<(), String> {
+    for test_src in [
+        // Another dunder's entry point does not reach `__reversed__`.
+        "from src.nr import numeric_range\n\n\ndef test_len():\n    assert len(numeric_range(0)) == 0\n",
+        // An unrelated receiver.
+        "from src.nr import numeric_range\n\n\ndef test_other():\n    assert list(reversed([1, 2])) == [2, 1]\n    numeric_range(0)\n",
+        // The receiver is rebound before the entry.
+        "from src.nr import numeric_range\n\n\ndef test_rebound():\n    r = numeric_range(0)\n    r = [1]\n    assert list(reversed(r)) == [1]\n",
+        // The class is not imported from the owner's module.
+        "def test_unimported():\n    assert list(reversed(numeric_range(0))) == []\n",
+        // Extra, keyword, starred and trailing-comma arguments are not the sole-argument entry.
+        "from src.nr import numeric_range\n\n\ndef test_extra():\n    assert list(reversed(numeric_range(0), 1)) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_kw():\n    assert list(reversed(seq=numeric_range(0))) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_star():\n    assert list(reversed(*numeric_range(0))) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_comma():\n    assert list(reversed(numeric_range(0),)) == []\n",
+        // Attribute-chained or suffixed names are not the builtin.
+        "from src.nr import numeric_range\n\n\ndef test_attr():\n    assert list(helpers.reversed(numeric_range(0))) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_suffix():\n    assert list(my_reversed(numeric_range(0))) == []\n",
+        // The entry sits in a comment or a string.
+        "from src.nr import numeric_range\n\n\ndef test_comment():\n    # reversed(numeric_range(0))\n    assert True\n",
+        "from src.nr import numeric_range\n\n\ndef test_string():\n    assert \"reversed(numeric_range(0))\"\n",
+    ] {
+        let (finding, relations) = classify_reversed_guard(test_src)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{test_src}");
+        assert!(
+            relations
+                .iter()
+                .all(|(_, kind)| *kind != "protocol_entry_call"),
+            "{test_src}: {relations:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn protocol_entry_outside_the_assertion_or_under_an_unordered_wrapper_is_not_credited()
+-> Result<(), String> {
+    for test_src in [
+        // The entry is bound outside the assertion.
+        "from src.nr import numeric_range\n\n\ndef test_outside():\n    x = reversed(numeric_range(0))\n    assert always_true(x)\n",
+        // Ordering-erasing wrappers hide what `__reversed__` determines.
+        "from src.nr import numeric_range\n\n\ndef test_sorted():\n    assert sorted(reversed(numeric_range(0))) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_set():\n    assert set(reversed(numeric_range(0))) == set()\n",
+        "from src.nr import numeric_range\n\n\ndef test_frozenset():\n    assert frozenset(reversed(numeric_range(0))) == frozenset()\n",
+    ] {
+        let (finding, _) = classify_reversed_guard(test_src)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{test_src}");
+        assert_ne!(
+            finding.oracle_alignment.as_deref(),
+            Some("direct"),
+            "{test_src}"
+        );
+    }
+    let (finding, _) = classify_reversed_guard(
+        "from src.nr import numeric_range\n\n\ndef test_tuple():\n    assert tuple(reversed(numeric_range(0))) == ()\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn protocol_entry_inside_an_opaque_wrapper_relates_but_is_not_credited() -> Result<(), String> {
+    let (finding, relations) = classify_reversed_guard(
+        "from src.nr import numeric_range\n\n\ndef test_wrapped():\n    assert always_true(reversed(numeric_range(0))) == True\n",
+    )?;
+    assert_eq!(
+        relations,
+        vec![("test_wrapped".to_string(), "protocol_entry_call")]
+    );
+    assert_ne!(finding.class, ExposureClass::Exposed);
+    assert_eq!(finding.oracle_alignment.as_deref(), Some("orthogonal"));
+    Ok(())
+}

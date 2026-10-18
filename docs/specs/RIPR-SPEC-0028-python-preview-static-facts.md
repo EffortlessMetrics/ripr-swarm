@@ -322,7 +322,12 @@ comments, strings, and docstrings:
   `module.Class(...)`) relates `__init__`, `__new__`, and `__post_init__` as
   `constructor_call`, an oracle-eligible relation; for any other dunder it
   relates as `dunder_protocol`, which stays uncertain because syntax cannot
-  bind `obj[key] = value` or `a == b` to the constructed instance. A dunder
+  bind `obj[key] = value` or `a == b` to the constructed instance. The one
+  exception is a builtin protocol entry applied to a sole argument bound to the
+  owner class (`reversed(Class(0))` for `__reversed__`, likewise `len`, `bool`,
+  `iter`, `next`, `hash`, `str`, `repr`): it relates as `protocol_entry_call`,
+  an oracle-eligible relation. Extra, keyword, starred or trailing-comma
+  arguments are not the entry and fall back to `dunder_protocol`. A dunder
   owner with no related test, in a workspace whose tests import its class,
   its module, or anything from a package above it, reads `static_unknown`
   with the `dynamic_dispatch` limit instead of `no_static_path`: the adapter
@@ -571,6 +576,13 @@ read-out: the boolean the classifier uses is derived from the surfaced
   of the same name inside the test replaces the earlier binding, and the
   test's own `import pkg.mod as alias` is not a rebinding of `alias`. Those calls also bind boundary activation, so the
   relational-boundary gate still applies to them.
+  `strong_oracle_observes_owner_protocol_entry` (`direct`) credits a dunder
+  method owner whose strong oracle takes the builtin protocol entry on a
+  receiver bound to its class as an asserted operand
+  (`list(reversed(Range(0))) == []`), directly or under `list`/`tuple` only.
+  `sorted`, `set` and `frozenset` erase the ordering the dunder determines and
+  are not transparent here; any other wrapper may ignore the entry
+  (`always_true(reversed(Range(0)))` stays `orthogonal`) (#8563).
   `strong_oracle_observes_changed_effect_channel` (`direct`) credits a
   changed write (`print`, a file write, a call on a passed collaborator, or
   a `self` field) whose strong oracle compares the channel that write

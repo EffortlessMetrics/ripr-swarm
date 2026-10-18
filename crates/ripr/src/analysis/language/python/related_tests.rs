@@ -20,6 +20,7 @@ pub(super) enum PythonRelationKind {
     ConstructorCall,
     LocalBinding,
     DunderProtocol,
+    ProtocolEntryCall,
     SameStem,
     TestNameSimilarity,
     FixtureName,
@@ -42,6 +43,7 @@ impl PythonRelationKind {
             Self::ConstructorCall => 4,
             Self::LocalBinding => 4,
             Self::DunderProtocol => 3,
+            Self::ProtocolEntryCall => 4,
             Self::SameStem => 3,
             Self::TestNameSimilarity => 2,
             Self::FixtureName => 1,
@@ -60,6 +62,7 @@ impl PythonRelationKind {
                 | Self::ConstructCall
                 | Self::ConstructorCall
                 | Self::LocalBinding
+                | Self::ProtocolEntryCall
         )
     }
 
@@ -76,6 +79,7 @@ impl PythonRelationKind {
             Self::ConstructorCall => "constructor_call",
             Self::LocalBinding => "local_binding",
             Self::DunderProtocol => "dunder_protocol",
+            Self::ProtocolEntryCall => "protocol_entry_call",
             Self::SameStem => "same_stem",
             Self::TestNameSimilarity => "test_name_similarity",
             Self::FixtureName => "fixture_name",
@@ -507,6 +511,119 @@ pub(super) fn is_dunder_name(name: &str) -> bool {
     name.len() > 4 && name.starts_with("__") && name.ends_with("__")
 }
 
+/// Builtins through which Python invokes a dunder method on their sole
+/// argument: `reversed(x)` runs `type(x).__reversed__`, `len(x)` runs
+/// `__len__`. Operator syntax (`x[i]`, `a == b`) is deliberately absent: it
+/// cannot be bound to a receiver by call shape.
+const PROTOCOL_ENTRIES: [(&str, &str); 8] = [
+    ("reversed", "__reversed__"),
+    ("len", "__len__"),
+    ("bool", "__bool__"),
+    ("iter", "__iter__"),
+    ("next", "__next__"),
+    ("hash", "__hash__"),
+    ("str", "__str__"),
+    ("repr", "__repr__"),
+];
+
+/// `(builtin start, builtin's open paren)` of each `builtin(<receiver>)` call
+/// in `text` whose sole argument is a receiver statically bound to the owner
+/// class known as `local`: an inline construction `Local(...)`, or the one
+/// local that `body` binds once to `Local(...)`. Mirrors the bound-receiver
+/// shapes of [`body_calls_method_on_owner_bound_receiver`].
+fn protocol_entry_calls(text: &str, body: &str, local: &str, builtin: &str) -> Vec<(usize, usize)> {
+    let construct = format!("{local}(");
+    let constructions: Vec<usize> = body
+        .match_indices(&construct)
+        .filter(|(idx, _)| {
+            python_callee_start_has_boundary(body, *idx)
+                && !line_prefix_looks_like_comment_or_string(body, *idx)
+        })
+        .map(|(idx, _)| idx)
+        .collect();
+    let bound = match constructions.as_slice() {
+        [only] => binding_target_for_construction(body, *only)
+            .filter(|var| assignment_count(body, var) == 1),
+        _ => None,
+    };
+    let needle = format!("{builtin}(");
+    text.match_indices(&needle)
+        .filter(|(idx, _)| {
+            python_callee_start_has_boundary(text, *idx)
+                && !line_prefix_looks_like_comment_or_string(text, *idx)
+        })
+        .filter(|(idx, _)| {
+            let argument = text[idx + needle.len()..].trim_start();
+            let inline = argument.starts_with(&construct) && {
+                let open = text.len() - argument.len() + construct.len() - 1;
+                super::no_behavior::matching_call_paren(text, open)
+                    .is_some_and(|close| text[close + 1..].trim_start().starts_with(')'))
+            };
+            inline
+                || bound.as_ref().is_some_and(|var| {
+                    argument
+                        .strip_prefix(var.as_str())
+                        .is_some_and(|rest| rest.trim_start().starts_with(')'))
+                })
+        })
+        .map(|(idx, _)| (idx, idx + needle.len() - 1))
+        .collect()
+}
+
+/// Protocol-entry calls of the owner dunder in `text` on a receiver bound to
+/// the owner class, each as `(builtin start, open paren)`; `body` is the
+/// test body that fixes the receiver binding.
+fn owner_protocol_entry_calls(
+    text: &str,
+    test: &PythonTest,
+    owner: &PythonOwner,
+) -> Vec<(usize, usize)> {
+    let builtins: Vec<&str> = PROTOCOL_ENTRIES
+        .iter()
+        .filter(|(_, dunder)| *dunder == owner.name)
+        .map(|(builtin, _)| *builtin)
+        .collect();
+    if builtins.is_empty() {
+        return Vec::new();
+    }
+    let Some(class) = dunder_method_class(owner) else {
+        return Vec::new();
+    };
+    let mut calls = Vec::new();
+    for local in owner_class_locals(test, owner, class) {
+        for builtin in &builtins {
+            calls.extend(protocol_entry_calls(text, &test.body_text, &local, builtin));
+        }
+    }
+    calls
+}
+
+/// Whether the test body applies a builtin protocol entry of the owner dunder
+/// to a receiver built from the owner class (`reversed(Range(0))`).
+fn protocol_entry_in_body(test: &PythonTest, owner: &PythonOwner) -> bool {
+    super::test_activation::activation_control(test).is_none()
+        && !owner_protocol_entry_calls(&test.body_text, test, owner).is_empty()
+}
+
+/// Whether an assertion's text takes a protocol entry of the owner dunder on a
+/// bound owner-class receiver as an asserted operand (`list(reversed(Range(0)))
+/// == []`), not nested in a wrapper that may ignore it.
+pub(super) fn oracle_operand_protocol_entry(
+    text: &str,
+    test: &PythonTest,
+    owner: &PythonOwner,
+) -> bool {
+    let Some(depth) = oracle_operand_depth(text) else {
+        return false;
+    };
+    super::test_activation::activation_control(test).is_none()
+        && owner_protocol_entry_calls(text, test, owner)
+            .into_iter()
+            .any(|(start, open)| {
+                reaches_operand_depth(text, start, open, depth, &ORDER_PRESERVING_WRAPPERS)
+            })
+}
+
 /// Relation for a dunder method owner (`__init__`, `__setitem__`, ...).
 ///
 /// Every class defines the same dunder names, so the bare name says nothing
@@ -541,6 +658,9 @@ fn dunder_method_relation(
     }
     if local_binding_calls_owner(test, owner) {
         return Some(PythonRelationKind::LocalBinding);
+    }
+    if protocol_entry_in_body(test, owner) {
+        return Some(PythonRelationKind::ProtocolEntryCall);
     }
     if test_constructs_class(test, owner, class) {
         return Some(
@@ -1117,7 +1237,13 @@ pub(super) fn oracle_operand_calls(text: &str, callee: &str) -> bool {
     text.match_indices(&needle).any(|(idx, _)| {
         python_callee_start_has_boundary(text, idx)
             && !line_prefix_looks_like_comment_or_string(text, idx)
-            && reaches_operand_depth(text, idx, idx + needle.len() - 1, depth)
+            && reaches_operand_depth(
+                text,
+                idx,
+                idx + needle.len() - 1,
+                depth,
+                &MATERIALIZING_WRAPPERS,
+            )
     })
 }
 
@@ -1129,7 +1255,18 @@ const MATERIALIZING_WRAPPERS: [&str; 5] = ["list", "tuple", "set", "frozenset", 
 /// Whether the call starting at `start` (its `(` at `open`) sits at the
 /// asserted operand `depth`, directly or only inside materializing wrappers
 /// that take it as their sole argument.
-fn reaches_operand_depth(text: &str, start: usize, open: usize, depth: usize) -> bool {
+/// Wrappers that keep the entry's element order. `sorted`/`set`/`frozenset`
+/// erase the ordering `__reversed__` determines, so a protocol entry under them
+/// asserts nothing about the owner.
+const ORDER_PRESERVING_WRAPPERS: [&str; 2] = ["list", "tuple"];
+
+fn reaches_operand_depth(
+    text: &str,
+    start: usize,
+    open: usize,
+    depth: usize,
+    wrappers: &[&str],
+) -> bool {
     let (mut start, mut open) = (start, open);
     loop {
         let here = bracket_depth_at(text, start);
@@ -1153,9 +1290,7 @@ fn reaches_operand_depth(text: &str, start: usize, open: usize, depth: usize) ->
             .rev()
             .find(|(_, ch)| !is_python_identifier_char(*ch))
             .map_or(0, |(at, ch)| at + ch.len_utf8());
-        if !MATERIALIZING_WRAPPERS.contains(&&before[name_start..])
-            || before[..name_start].ends_with('.')
-        {
+        if !wrappers.contains(&&before[name_start..]) || before[..name_start].ends_with('.') {
             return false;
         }
         (start, open) = (name_start, before.len());
