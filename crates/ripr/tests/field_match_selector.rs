@@ -86,6 +86,23 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn a_helper_returned_mutable_record_selects_its_exact_asserted_call()
+-> Result<(), Box<dyn std::error::Error>> {
+    let diff = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -11 +11 @@\n-        Some(ms) => 1,\n+        Some(ms) => u64::try_from(ms.div_ceil(1000)).unwrap_or(u64::MAX).max(1),\n";
+    let fixture = Fixture::new(SOURCE, diff)?;
+    let output = fixture.check()?;
+    let arms = output.findings.iter().filter(|finding|
+        finding.probe.family == ripr::ProbeFamily::MatchArm && finding.probe.location.line == 11
+    ).collect::<Vec<_>>();
+    assert!(!arms.is_empty(), "the changed Some arm must be analyzed");
+    for arm in arms {
+        assert_eq!(arm.class, ExposureClass::Exposed, "{}", arm.id);
+        assert!(arm.static_limit_kind.is_none());
+    }
+    Ok(())
+}
+
+#[test]
 fn field_match_selector_names_all_three_rows_without_credit_or_wire_shape_change()
 -> Result<(), Box<dyn std::error::Error>> {
     let fixture = Fixture::new(SOURCE, DIFF)?;
