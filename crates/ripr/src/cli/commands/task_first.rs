@@ -424,7 +424,7 @@ fn run_facade_continue(options: ContinueFacadeOptions) -> Result<(), CommandErro
                 &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
             );
             Err(CommandError::Decision(format!(
-                "ripr: repair attempt `{}` ended {} without a receipt; no completion is claimed. Inspect: `ripr status --attempt {} --root {root}`; start fresh: `ripr repair --root {root}`",
+                "repair attempt `{}` ended {} without a receipt; no completion is claimed. Inspect: `ripr status --attempt {} --root {root}`; start fresh: `ripr repair --root {root}`",
                 report.attempt.attempt_id, report.attempt.status_class, report.attempt.attempt_id
             )))
         }
@@ -444,7 +444,7 @@ fn run_facade_continue(options: ContinueFacadeOptions) -> Result<(), CommandErro
                 &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
             );
             Err(CommandError::Decision(format!(
-                "ripr: repair attempt `{}` ended `{}` without confirming completion; no completion is claimed. Inspect: `ripr status --attempt {} --root {root}`; start fresh when appropriate: `ripr repair --root {root}`",
+                "repair attempt `{}` ended `{}` without confirming completion; no completion is claimed. Inspect: `ripr status --attempt {} --root {root}`; start fresh when appropriate: `ripr repair --root {root}`",
                 report.attempt.attempt_id, report.attempt.status_class, report.attempt.attempt_id
             )))
         }
