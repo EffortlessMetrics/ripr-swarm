@@ -1,0 +1,38 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/macro_site_scoped_rest_limit/input
+
+Summary: 2 probes (0 exposed, 0 weak, 0 unrevealed, 0 no path, 2 unknown); 2 of 2 findings unsuppressed
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+
+Start here:
+  State: limited by static analysis
+  Safe next action: inspect the named static limitation before treating this as repair-ready
+  File: ./src/lib.rs:3
+  Static exposure: unknown (severity: note, confidence 0.64)
+  Why unknown: the analysis could not determine a static exposure state
+  Not credited: `assert_eq!` in pins at tests/buf_tests.rs:11: `pub use std::io::prelude::*;` at
+    src/globs.rs:1 glob-imports from outside the workspace, which may bring in a different
+    `assert_eq!`
+  Changed behavior: 10 <= value
+  Analyzer limit: A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse,…
+  Related test: tests/buf_tests.rs:10 pins (assertion not credited: ripr could not establish that it runs as the standard macro)
+  Next step: ripr could not read whether the assertions in `pins` (tests/buf_tests.rs:10) run as the
+    standard `assert_eq!`, so it does not report a gap. Check that one of them compares the changed
+    value; add a test only if none does
+  Evidence: reach yes · infection yes · propagation yes · observation no · discriminator no
+    - reach yes: Related tests appear to reach gate: pins
+    - infection yes: Detected related test input at the changed boundary
+    - 8 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/macro_site_scoped_rest_limit/input --diff <cwd>/fixtures/macro_site_scoped_rest_limit/diff.patch --mode fast probe:src_lib.rs:predicate:d545be08
+  ripr context --root <cwd>/fixtures/macro_site_scoped_rest_limit/input --diff <cwd>/fixtures/macro_site_scoped_rest_limit/diff.patch --mode fast --at probe:src_lib.rs:predicate:d545be08
+
+Hidden:
+  1 lower-priority finding(s) omitted from default human output.
+    - ./src/lib.rs:3 (unknown)
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

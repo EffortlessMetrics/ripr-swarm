@@ -16214,6 +16214,14 @@ id = "RIPR-SPEC-0240"
 name = "Unknown, not a gap"
 spec = "docs/specs/RIPR-SPEC-0240-unknown-not-a-gap.md"
 tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests/retention_parity.rs::reconstructed_parity_inline_scope",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/retention_parity.rs::reconstructed_parity_function_scope",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/retention_parity.rs::reconstructed_parity_singleton_arguments",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/retention_parity.rs::reconstructed_parity_unparsed_prefilter",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/retention_parity.rs::reconstructed_parity_newline_private_first",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/retention_parity.rs::reconstructed_parity_same_line_private_first",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/retention_parity.rs::reconstructed_parity_same_line_public_first",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/retention_parity.rs::reconstructed_parity_rebinding_and_root_control",
   "crates/ripr/tests/parser_assertion_provenance.rs::unrelated_reason_literal_cannot_supply_parser_discrimination",
   "crates/ripr/tests/parser_assertion_provenance.rs::direct_reason_oracle_keeps_credit_beside_the_decoy",
   "crates/ripr/src/analysis/classify/gap_admission.rs::tests::analyzer_limit_refusals_withhold_the_gap_and_name_the_test",
@@ -16247,6 +16255,7 @@ tests = [
   "crates/ripr/tests/owner_pin_execution.rs::macro_use_module_admission_matches_runtime",
 ]
 fixtures = [
+  "fixtures/macro_site_scoped_rest_limit",
   "fixtures/parser_formatted_input_provenance",
   "fixtures/gap_withheld_feature_gated_test",
   "fixtures/gap_kept_ignored_test",
@@ -16260,6 +16269,7 @@ code = [
   "crates/ripr/src/analysis/language/rust/mod.rs",
 ]
 outputs = [
+  "fixtures/macro_site_scoped_rest_limit/expected/check.json",
   "fixtures/gap_withheld_feature_gated_test/expected/check.json",
   "fixtures/gap_kept_ignored_test/expected/check.json",
 ]
