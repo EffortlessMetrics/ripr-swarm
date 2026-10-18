@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex20-method-receiver-aligned-sinks.json",
-    "sha256": "7604f0085bb22f56b4cb6112feae33c02007fedaf00bbca9f343496b8c108eb8",
+    "sha256": "b6c93ad55f97a346275e7f445cbc532b2764e1802ab8bc950c36f944760c5030",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-test2-fee-isnt-zero, then in relations where {\"change_id\": \"$CHANGE_ID\"} set {\"relation_kind\": \"method_receiver\"}; the packet fingerprint was recomputed."
   },

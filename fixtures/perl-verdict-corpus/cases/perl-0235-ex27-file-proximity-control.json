@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex27-file-proximity-control.json",
-    "sha256": "bea7d6e34a8482c5dd5765f5e40903ace7d52b8fcf9f964c6be5b7e113dd5da0",
+    "sha256": "9bfe7df320041d2d891d88ceab40b6d23b35be2d162baa8009635c4cb4908442",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-testmore-tier-far-from-boundary, then in relations where {\"change_id\": \"$CHANGE_ID\"} set {\"relation_kind\": \"file_proximity\"}; in oracles where {\"oracle_id\": \"oracle:t/bulk.t:is:133-168\"} set {\"target_owner_id\": \"$CHANGE_OWNER\"}; append to relations: {\"change_id\": \"$CHANGE_ID\", \"confidence\": \"medium\", \"oracle_id\": \"oracle:t/bulk.t:is:133-168\", \"owner_id\": \"$CHANGE_OWNER\", \"provenance_refs\": [], \"reachability_hint\": \"reachable\", \"relation_id\": \"relation:file:t/bulk.t:package_reference:$CHANGE_ID\", \"relation_kind\": \"package_reference\", \"test_id\": \"test:t/bulk.t\"}; the packet fingerprint was recomputed."
   },

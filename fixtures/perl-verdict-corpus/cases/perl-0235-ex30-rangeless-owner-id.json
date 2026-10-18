@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex30-rangeless-owner-id.json",
-    "sha256": "663839416b3a3de277b18dc57c80950eae80d33e009bc67e2607b725b90a8e90",
+    "sha256": "2b684505ee6071c5e077429ae3b561dfd70102b04a78d475ef604e8f92aff0bc",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-test2-fee-isnt-zero, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"observed_sink\": null}; replace the text `owner:lib/Ledger.pm:sub:Ledger::fee:644-705` with `owner:lib/Ledger.pm:sub:Ledger::fee` in every fact; the packet fingerprint was recomputed."
   },

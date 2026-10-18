@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex27-weakly-reachable-and-package-reference.json",
-    "sha256": "f0d8cee762a7ba02fe8546923e54da6c45c59a6a2186c70e76506571d6efac6a",
+    "sha256": "9b6ad34ead20360b3bd6c3bebb065003916cae4c27e30f38b224d55f81cc1e5b",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-testmore-tier-far-from-boundary, then in relations where {\"change_id\": \"$CHANGE_ID\"} set {\"reachability_hint\": \"weakly_reachable\"}; in oracles where {\"oracle_id\": \"oracle:t/bulk.t:is:133-168\"} set {\"target_owner_id\": \"$CHANGE_OWNER\"}; append to relations: {\"change_id\": \"$CHANGE_ID\", \"confidence\": \"medium\", \"oracle_id\": \"oracle:t/bulk.t:is:133-168\", \"owner_id\": \"$CHANGE_OWNER\", \"provenance_refs\": [], \"reachability_hint\": \"reachable\", \"relation_id\": \"relation:file:t/bulk.t:package_reference:$CHANGE_ID\", \"relation_kind\": \"package_reference\", \"test_id\": \"test:t/bulk.t\"}; the packet fingerprint was recomputed."
   },

@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex10-relation-without-oracle.json",
-    "sha256": "e8fd25dea04e24f628d584b077663f027d7960b3fbc7ab021f916c9c6e1998e1",
+    "sha256": "3be68b7c65c6172078dceaf3d7305104dc6684a25608dd7de5eff168d1fb8324",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-test2-fee-isnt-zero, then in relations where {\"change_id\": \"$CHANGE_ID\"} set {\"oracle_id\": null}; the packet fingerprint was recomputed."
   },

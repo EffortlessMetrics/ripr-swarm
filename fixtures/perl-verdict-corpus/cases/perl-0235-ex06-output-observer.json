@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex06-output-observer.json",
-    "sha256": "9bb604127ef6afe7d3849b2993510e07e9e97c870c608a0ee5cdd5f3273a64f7",
+    "sha256": "069229a45428fa181cfeadcd8968493bd5541bee8152a7967feca2535e3e0732",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-test2-fee-isnt-zero, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"kind\": \"output_observer\", \"observed_sink\": null}; the packet fingerprint was recomputed."
   },

@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex21-weakly-reachable-aligned-sinks.json",
-    "sha256": "500f27683e1ab7055b288aeae892178e0d4517cdc142214fb8954b7c5cd4a43b",
+    "sha256": "63c477ba11143c7b01ef270367d25fd8f400f1486fabd747757b535e0690b861",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-test2-fee-isnt-zero, then in relations where {\"change_id\": \"$CHANGE_ID\"} set {\"reachability_hint\": \"weakly_reachable\"}; the packet fingerprint was recomputed."
   },

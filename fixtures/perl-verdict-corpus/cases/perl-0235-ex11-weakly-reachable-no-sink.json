@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex11-weakly-reachable-no-sink.json",
-    "sha256": "53a9d0bd6004d8c3302ce9401463d4790382ee7eb2479659e0d6d0141144c968",
+    "sha256": "ca31434bcb99ee593f1ab0a768c89b73a3d0ddd4e7d7ed75120af4493e6578d6",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-test2-fee-isnt-zero, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"observed_sink\": null}; in relations where {\"change_id\": \"$CHANGE_ID\"} set {\"reachability_hint\": \"weakly_reachable\"}; the packet fingerprint was recomputed."
   },

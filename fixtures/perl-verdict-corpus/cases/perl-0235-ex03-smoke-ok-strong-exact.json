@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex03-smoke-ok-strong-exact.json",
-    "sha256": "ac0b70326f8f421f3faedbdb26bee63d9a0c5a51635d6eeb8bc94ee7cfb28776",
+    "sha256": "5370af61e4b232b571074ac6c9cd1310c9a30990d45bc17d179f297a51b9917a",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-test2-deposit-lives-only, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"strength\": \"strong_exact\"}; the packet fingerprint was recomputed."
   },

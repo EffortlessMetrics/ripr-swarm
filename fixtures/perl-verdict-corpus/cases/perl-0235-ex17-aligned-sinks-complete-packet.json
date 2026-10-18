@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex17-aligned-sinks-complete-packet.json",
-    "sha256": "3b0696b42f23567fe74973bf84a1cd56a02c90da4ac539c0d3fb9f4f3fd29485",
+    "sha256": "206804f66f184037fa7fa1ed5906ebb114b2a627a244ce19c8840fd2de94258c",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-test2-summary-deep-is-count, then in changes where {\"change_id\": \"$CHANGE_ID\"} set {\"changed_observable\": \"return { count => scalar @amounts, total => $total }\"}; set top-level {\"packet_status\": \"complete\"}; the packet fingerprint was recomputed."
   },

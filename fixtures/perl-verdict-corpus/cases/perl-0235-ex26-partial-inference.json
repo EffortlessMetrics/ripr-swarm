@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex26-partial-inference.json",
-    "sha256": "a6640d9c982807483abd1f7e69507919803683d25ac93251af6e11f4c6f6f22e",
+    "sha256": "641ff403e6617153f2e065011bab35684aa7bbabae9e6a8f7e174c395d6538e3",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-test2-fee-isnt-zero, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"observed_sink\": null}; the packet fingerprint was recomputed."
   },

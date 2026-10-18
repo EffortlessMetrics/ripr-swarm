@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex15-package-reference.json",
-    "sha256": "9ec63faaf022e3cedb12c27aa90aa8fb18ea0ff4955f691dff1204447fe3dd83",
+    "sha256": "b2ecb1df77adca8006fbd646d0ae1941110dd430014d50242ef39eeaaf0a7fc8",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-test2-fee-isnt-zero, then in relations where {\"change_id\": \"$CHANGE_ID\"} set {\"relation_kind\": \"package_reference\"}; the packet fingerprint was recomputed."
   },

@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex09-oracle-without-owner.json",
-    "sha256": "87270ceab955fe0c686cc0bda2f9fc787f3b7dd1a2d706c3794bcfecae2b186d",
+    "sha256": "51f4a6585676dd6b15650064ee6bfa1f972d0e84db456d7bd46601dea442eda0",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-test2-fee-isnt-zero, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"target_owner_id\": null}; the packet fingerprint was recomputed."
   },

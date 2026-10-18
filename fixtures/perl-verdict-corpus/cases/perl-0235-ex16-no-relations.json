@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex16-no-relations.json",
-    "sha256": "b16505eaf087ea58ed9e3d9100cb64302ea47e4d7b4ddf071cc8058bbaff87f3",
+    "sha256": "190b60dd897b9587b9cc56a4ae9ebdf18f7073dd8c609063018b59fcd733d24f",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-test2-fee-isnt-zero, then in relations remove where {\"change_id\": \"$CHANGE_ID\"}; the packet fingerprint was recomputed."
   },

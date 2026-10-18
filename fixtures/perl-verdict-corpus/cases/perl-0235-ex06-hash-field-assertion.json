@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex06-hash-field-assertion.json",
-    "sha256": "448e1c69b4ccd54beddde99d0129baa6c4ef56bfd2cd7ac76529dc4e91533469",
+    "sha256": "d73af773b9b57b3b69cc922b008b2a6a166a3625666d19807f4d1014a17a0957",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-test2-fee-isnt-zero, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"kind\": \"hash_or_object_field_assertion\", \"observed_sink\": null}; the packet fingerprint was recomputed."
   },

@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex08-mention-only.json",
-    "sha256": "1da19a2e61b2d4970aa8f5830525f6126b6fb2a37786f2df510a8aa512d5e835",
+    "sha256": "43cd67d0e9ebbf87eda5617290e143f67204e7e674178be4a0efd992c6475b02",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-test2-deposit-lives-only, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"kind\": \"mention_only\", \"strength\": \"mention_only\"}; the packet fingerprint was recomputed."
   },

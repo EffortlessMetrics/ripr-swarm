@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex07-like-weak-broad.json",
-    "sha256": "d7eb0ecbf2b1b044e1eab8d7a904464d99104298c2ca3385bb56cc4f737d46cf",
+    "sha256": "127d349e17e5aed6815dc5e6d12b900d6a309b46f03b01e26dcca9439e6c15c2",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-test2-format-entry-like, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"kind\": \"exact_return_assertion\"}; the packet fingerprint was recomputed."
   },
