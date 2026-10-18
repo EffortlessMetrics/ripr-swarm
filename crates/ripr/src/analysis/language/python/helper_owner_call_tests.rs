@@ -181,6 +181,8 @@ fn given_unreadable_or_stacked_decorators_then_no_helper_relation_is_made() -> R
         "@(lambda f: f)",
         "@decos[0]",
         "@staticmethod\n@other",
+        "@async_def",
+        "@property(x)",
     ] {
         let source = format!(
             "def helper(x):\n    return x > 0\n\n\n{decorator}\ndef make(x):\n    return helper(x)\n"

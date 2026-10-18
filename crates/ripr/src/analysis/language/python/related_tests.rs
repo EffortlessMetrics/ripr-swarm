@@ -186,13 +186,6 @@ pub(super) fn helper_owner_call_candidates<'a>(
                     && caller.owner_kind.is_some()
                     && caller.name != owner.name
                     && !callers.iter().any(|seen| std::ptr::eq(*seen, *caller))
-                // A wrapping decorator may not call the function at all.
-                && caller.decorators.iter().all(|decorator| {
-                    matches!(
-                        decorator.as_str(),
-                        "classmethod" | "staticmethod" | "property" | "async_def"
-                    )
-                })
                     && caller
                         .module_callees
                         .iter()
