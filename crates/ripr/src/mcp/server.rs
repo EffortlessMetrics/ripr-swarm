@@ -805,7 +805,34 @@ impl ServerHandler for McpServer {
         // The same id-aware budget the tool path uses (#7768): a resource
         // read answers one request whose echoed id rides the same wire cap.
         let max_envelope_bytes = super::outer_envelope_budget(&context.id);
-        if request.uri == protocol::STATUS_RESOURCE_URI {
+        let raw = self
+            .read_resource_at(&request.uri, &request.uri, max_envelope_bytes)
+            .await;
+        // RFC 6570 simple expansion percent-encodes reserved characters, so a
+        // client that expands an advertised template sends `gap%3Arust%3A...`
+        // for an id the server links unencoded. The raw spelling stays
+        // authoritative (a real id may contain `%`); only a failed raw read
+        // is retried with the decoded spelling, and the reply keeps echoing
+        // the URI the client asked for.
+        if raw.is_err()
+            && let Some(decoded) = percent_decode_uri(&request.uri)
+        {
+            return self
+                .read_resource_at(&decoded, &request.uri, max_envelope_bytes)
+                .await;
+        }
+        raw
+    }
+}
+
+impl McpServer {
+    async fn read_resource_at(
+        &self,
+        uri: &str,
+        echo_uri: &str,
+        max_envelope_bytes: usize,
+    ) -> Result<ReadResourceResponse, ErrorData> {
+        if uri == protocol::STATUS_RESOURCE_URI {
             let session = self.session.lock().await;
             let result = protocol::status_resource_result(
                 &self.status,
@@ -831,12 +858,12 @@ impl ServerHandler for McpServer {
                 .with_cache_scope(CacheScope::Private)
                 .into());
         }
-        if let Some(snapshot_id) = gaps::snapshot_resource_id(&request.uri) {
+        if let Some(snapshot_id) = gaps::snapshot_resource_id(uri) {
             let session = self.session.lock().await;
             return match session.snapshot_document(snapshot_id) {
                 Ok(document) => self.resource_result(
                     document,
-                    &request.uri,
+                    echo_uri,
                     workspace::RECOVERY_SNAPSHOT_TOO_LARGE,
                     max_envelope_bytes,
                 ),
@@ -850,47 +877,47 @@ impl ServerHandler for McpServer {
                 )),
             };
         }
-        if let Some(canonical_id) = gaps::gap_resource_id(&request.uri) {
+        if let Some(canonical_id) = gaps::gap_resource_id(uri) {
             let session = self.session.lock().await;
             return match session.get_gap(canonical_id, None) {
                 Ok(document) => self.resource_result(
                     document,
-                    &request.uri,
+                    echo_uri,
                     workspace::RECOVERY_GAP_ITEM_TOO_LARGE,
                     max_envelope_bytes,
                 ),
                 Err(failure) => Err(resource_failure("gap", &failure, None)),
             };
         }
-        if let Some(attempt_id) = repair::repair_attempt_resource_id(&request.uri) {
+        if let Some(attempt_id) = repair::repair_attempt_resource_id(uri) {
             return match self.repair_read_document(attempt_id, false).await {
                 Ok(document) => self.resource_result(
                     document,
-                    &request.uri,
+                    echo_uri,
                     workspace::RECOVERY_REPAIR_TOO_LARGE,
                     max_envelope_bytes,
                 ),
                 Err(failure) => Err(resource_failure("repair-attempt", &failure, None)),
             };
         }
-        if let Some(receipt_id) = repair::receipt_resource_id(&request.uri) {
+        if let Some(receipt_id) = repair::receipt_resource_id(uri) {
             return match self.repair_read_document(receipt_id, true).await {
                 Ok(document) => self.resource_result(
                     document,
-                    &request.uri,
+                    echo_uri,
                     workspace::RECOVERY_REPAIR_TOO_LARGE,
                     max_envelope_bytes,
                 ),
                 Err(failure) => Err(resource_failure("receipt", &failure, None)),
             };
         }
-        if let Some(item_id) = repair_card::repair_card_resource_id(&request.uri) {
+        if let Some(item_id) = repair_card::repair_card_resource_id(uri) {
             let session = self.session.lock().await;
             return match session.repair_card_document(item_id, None, self.analysis_root.as_deref())
             {
                 Ok(document) => self.resource_result(
                     document,
-                    &request.uri,
+                    echo_uri,
                     workspace::RECOVERY_REPAIR_TOO_LARGE,
                     max_envelope_bytes,
                 ),
@@ -1075,6 +1102,43 @@ impl rmcp::Service<RoleServer> for InitializeSessionService {
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
         <McpServer as rmcp::Service<RoleServer>>::supported_protocol_versions(&self.inner)
     }
+}
+
+/// Decode `%XX` escapes in a resource URI, or `None` when the URI carries no
+/// valid escape or the decoded bytes are not UTF-8. A malformed escape stays
+/// literal, so `%zz` never errors and never decodes.
+fn percent_decode_uri(uri: &str) -> Option<String> {
+    let mut decoded = Vec::with_capacity(uri.len());
+    let mut changed = false;
+    let mut bytes = uri.bytes();
+    while let Some(byte) = bytes.next() {
+        if byte == b'%' {
+            let mut ahead = bytes.clone();
+            let pair = ahead
+                .next()
+                .and_then(hex_value)
+                .zip(ahead.next().and_then(hex_value));
+            if let Some((high, low)) = pair {
+                decoded.push(high << 4 | low);
+                changed = true;
+                bytes.next();
+                bytes.next();
+                continue;
+            }
+        }
+        decoded.push(byte);
+    }
+    if changed {
+        String::from_utf8(decoded).ok()
+    } else {
+        None
+    }
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    char::from(byte)
+        .to_digit(16)
+        .and_then(|digit| u8::try_from(digit).ok())
 }
 
 #[cfg(test)]

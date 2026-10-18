@@ -3268,3 +3268,88 @@ fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// RFC 6570 simple expansion of the advertised `{canonical_id}` /
+/// `{snapshot_id}` templates percent-encodes `:`, `/` and `=`. A client that
+/// expands a template must reach the same document as the raw link the
+/// server itself emits, and the reply must keep echoing the requested URI.
+#[test]
+fn percent_encoded_resource_uris_resolve_like_their_raw_links() -> Result<(), String> {
+    const REFRESH_TIMEOUT: Duration = Duration::from_mins(3);
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    fn encode(raw: &str) -> String {
+        raw.bytes()
+            .map(|byte| {
+                if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+                    char::from(byte).to_string()
+                } else {
+                    format!("%{byte:02X}")
+                }
+            })
+            .collect()
+    }
+    let root = install_b4_repair_ready_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    structured_tool_success(&refresh, "ripr_refresh")?;
+    let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    let list = structured_tool_success(&list, "ripr_list_gaps")?;
+    let snapshot_id = list
+        .pointer("/snapshot_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("list omitted snapshot_id: {list}"))?
+        .to_string();
+    let canonical_id = list
+        .pointer("/items/0/canonical_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("list has no item: {list}"))?
+        .to_string();
+    if !canonical_id.contains('/') {
+        return Err(format!(
+            "fixture id must carry reserved characters: {canonical_id}"
+        ));
+    }
+    for (family, raw_id) in [
+        ("gap", &canonical_id),
+        ("repair-card", &canonical_id),
+        ("snapshot", &snapshot_id),
+    ] {
+        let raw_uri = format!("ripr://{family}/{raw_id}");
+        let encoded_uri = format!("ripr://{family}/{}", encode(raw_id));
+        let raw = read_resource_document(&mut session, "raw", &raw_uri, REPLY_TIMEOUT)?;
+        let encoded_reply = session.call(
+            "encoded",
+            "resources/read",
+            json!({ "uri": encoded_uri }),
+            REPLY_TIMEOUT,
+        )?;
+        let text = encoded_reply
+            .pointer("/result/contents/0/text")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("encoded {family} read failed: {encoded_reply}"))?;
+        let encoded: Value = serde_json::from_str(text).map_err(|error| error.to_string())?;
+        if encoded != raw {
+            return Err(format!("encoded {family} read diverged from raw read"));
+        }
+        if encoded_reply
+            .pointer("/result/contents/0/uri")
+            .and_then(Value::as_str)
+            != Some(encoded_uri.as_str())
+        {
+            return Err(format!("encoded {family} read lost the requested uri"));
+        }
+    }
+    // A decode that still names nothing stays a typed miss, not a success.
+    let miss = session.call(
+        "encoded-miss",
+        "resources/read",
+        json!({ "uri": "ripr://gap/no%2Dsuch%2Ditem" }),
+        REPLY_TIMEOUT,
+    )?;
+    if miss.pointer("/error/data/code").and_then(Value::as_str) != Some("item_not_found") {
+        return Err(format!("encoded miss lost item_not_found: {miss}"));
+    }
+    Ok(())
+}

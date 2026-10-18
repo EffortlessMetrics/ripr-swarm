@@ -926,6 +926,30 @@ fn gap_resource_templates_spell_the_identity_canonical_id() -> Result<(), String
     Ok(())
 }
 
+/// RFC 6570 simple expansion percent-encodes `:`, `/` and `>`; the decoder
+/// recovers the raw id and refuses to invent a decode for input without a
+/// valid escape or for escapes that are not UTF-8.
+#[test]
+fn percent_decode_uri_recovers_expanded_template_ids_and_nothing_else() {
+    assert_eq!(
+        percent_decode_uri("ripr://gap/gap%3Arust%3Asrc%2Flib.rs%3Aage%3E%3D18").as_deref(),
+        Some("ripr://gap/gap:rust:src/lib.rs:age>=18")
+    );
+    assert_eq!(
+        percent_decode_uri("ripr://gap/a%3a%3A").as_deref(),
+        Some("ripr://gap/a::")
+    );
+    for unchanged in [
+        "ripr://gap/a:b",
+        "ripr://gap/100%",
+        "ripr://gap/%zz",
+        "ripr://gap/%4",
+    ] {
+        assert_eq!(percent_decode_uri(unchanged), None, "{unchanged}");
+    }
+    assert_eq!(percent_decode_uri("ripr://gap/%ff"), None);
+}
+
 #[tokio::test]
 async fn prepare_repair_fails_closed_before_refresh() -> Result<(), String> {
     let server = healthy_server()?;
