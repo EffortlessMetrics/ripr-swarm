@@ -717,12 +717,11 @@ fn extract_stderr_tail(path: &Path) -> Option<String> {
         return primary;
     }
     let len = std::fs::metadata(path).ok()?.len();
-    if len > u64::try_from(STDERR_TAIL_READ_WINDOW).ok()? {
-        if let Some((text, _)) = read_stderr_tail_window(path, STDERR_TAIL_FALLBACK_WINDOW) {
-            if let Some(tail) = trim_stderr_char_tail(&text) {
-                return Some(tail);
-            }
-        }
+    if len > u64::try_from(STDERR_TAIL_READ_WINDOW).ok()?
+        && let Some((text, _)) = read_stderr_tail_window(path, STDERR_TAIL_FALLBACK_WINDOW)
+        && let Some(tail) = trim_stderr_char_tail(&text)
+    {
+        return Some(tail);
     }
     primary
 }
