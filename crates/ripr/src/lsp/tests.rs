@@ -12517,11 +12517,15 @@ async fn refresh_show_messages(
         for index in 0..refreshes {
             let notifications =
                 run_wire_refresh_collecting(&mut reader, &mut writer, 2 + index).await?;
-            shown.extend(notifications.iter().filter_map(|message| {
-                (message.get("method").and_then(serde_json::Value::as_str)
-                    == Some("window/showMessage"))
-                .then(|| message["params"].clone())
-            }));
+            shown.extend(
+                notifications
+                    .iter()
+                    .filter(|message| {
+                        message.get("method").and_then(serde_json::Value::as_str)
+                            == Some("window/showMessage")
+                    })
+                    .map(|message| message["params"].clone()),
+            );
             statuses.extend(analysis_status_params(&notifications));
         }
         Ok::<_, String>((shown, statuses))
