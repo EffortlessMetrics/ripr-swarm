@@ -21,6 +21,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     let mut selector: Option<String> = None;
     let mut max_tests = crate::config::DEFAULT_CONTEXT_RELATED_TESTS;
     let mut explicit_max_tests = false;
+    let mut quiet = false;
     // RIPR-SPEC-0140: `--from` loads a previously written check artifact
     // instead of re-running the pipeline. Scope flags passed alongside it
     // are assertions verified against the recording, not overrides.
@@ -95,6 +96,8 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
                 explicit_max_tests = true;
             }
             "--json" => input.format = OutputFormat::Json,
+            // #8739: same meaning as `ripr check --quiet`: stderr progress only.
+            "--quiet" => quiet = true,
             "--help" | "-h" => {
                 help::print_context_help();
                 return Ok(());
@@ -211,11 +214,15 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     // stderr-only stage lines `ripr check` projects (throttled heartbeats
     // included) disclose the work without touching machine stdout. The
     // `--from` artifact path runs no pipeline and wires no sink.
-    let progress = crate::cli::progress::CliProgressSink::for_stderr(
-        std::io::IsTerminal::is_terminal(&std::io::stderr()),
-        crate::cli::progress::ProgressPolicy::STANDARD,
-    );
-    let progress_sink = Some(&progress as &dyn app::AnalysisProgressSink);
+    let progress = (!quiet).then(|| {
+        crate::cli::progress::CliProgressSink::for_stderr(
+            std::io::IsTerminal::is_terminal(&std::io::stderr()),
+            crate::cli::progress::ProgressPolicy::STANDARD,
+        )
+    });
+    let progress_sink = progress
+        .as_ref()
+        .map(|sink| sink as &dyn app::AnalysisProgressSink);
     let rendered = match from_artifact.as_deref() {
         Some(artifact_path) => app::collect_context_from_artifact(
             input,
@@ -244,7 +251,9 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     // #7352 review: commit the held `completed` terminal before the sink
     // drops, or the drop projects `ripr progress: failed` on success; the
     // artifact path wired no sink and has nothing to commit.
-    progress.commit_success();
+    if let Some(progress) = &progress {
+        progress.commit_success();
+    }
     println!("{rendered}");
     Ok(())
 }
