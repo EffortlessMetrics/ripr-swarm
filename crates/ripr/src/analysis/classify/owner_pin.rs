@@ -170,7 +170,7 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// Per test file, its `std`/`core`-rooted `assert_eq!` calls and which
     /// of those roots the file itself leaves unrebound (#7857). Parsed once
     /// per file, not once per assertion.
-    std_rooted: SyncMemo<BTreeMap<PathBuf, StdRootedCalls>>,
+    std_rooted: SyncMemo<BTreeMap<PathBuf, Arc<StdRootedCalls>>>,
     fallible_dependencies:
         SyncMemo<BTreeMap<PathBuf, (String, Option<crate::analysis::workspace::AnyhowIdentity>)>>,
     ambiguous_macro_bindings: SyncMemo<Option<BTreeSet<String>>>,
@@ -192,7 +192,14 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// once per (probe, test, assertion) made a diff with many related tests
     /// run for an hour.
     test_file_macro_sites: SyncMemo<TestFileMacroSites>,
-    by_file: SyncMemo<BTreeMap<PathBuf, OwnerPinAssertions>>,
+    /// Per test file, read with the assertion-context macro list. A file that
+    /// is also a module parent has a second, separate entry in
+    /// `module_parents`: the two lists differ (`json`), and one shared key
+    /// made the entry depend on which probe reached the file first, which
+    /// with workers is scheduling (#8797).
+    by_file: SyncMemo<BTreeMap<PathBuf, Arc<OwnerPinAssertions>>>,
+    /// Per module-parent file, read with the plain trusted-macro list.
+    module_parents: SyncMemo<BTreeMap<PathBuf, Arc<OwnerPinAssertions>>>,
     /// #6648 (RIPR-SPEC-0279): per doc example test (file, start line), its
     /// assertion admission read from its synthetic source, parsed once per
     /// run. A doctest is its own crate, so the file holding the comment
@@ -201,7 +208,7 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// Per file: the exact pattern pins of its tests through a verified
     /// local `assert_matches!` (#6616), parsed once per run.
     pattern_pins: SyncMemo<BTreeMap<PathBuf, PatternPins>>,
-    empty_macro_ambiguities: SyncMemo<BTreeMap<PathBuf, BTreeSet<String>>>,
+    empty_macro_ambiguities: SyncMemo<BTreeMap<PathBuf, Arc<BTreeSet<String>>>>,
     /// Per file: the expansion-coordinate admission facts of the tests a
     /// same-file `macro_rules!` generated (#5334).
     generated: SyncMemo<BTreeMap<PathBuf, Vec<GeneratedTestPins>>>,
@@ -700,9 +707,8 @@ impl OwnerPinSyntax {
                 )
                 .cloned();
         }
-        self.by_file
-            .borrow()
-            .get(&test.file)?
+        let assertions = self.by_file.borrow().get(&test.file).cloned()?;
+        assertions
             .helper_loan(
                 (test.start_line, test.end_line, &test.name),
                 (assertion.line, &assertion.text),
@@ -724,14 +730,11 @@ impl OwnerPinSyntax {
         let Some(facts) = index.files().get(&test.file) else {
             return false;
         };
-        let mut by_file = self.by_file.borrow_mut();
         facts.role_provenance.edges.iter().all(|edge| {
             let Some(parent) = index.files().get(&edge.parent) else {
                 return false;
             };
-            by_file
-                .entry(edge.parent.clone())
-                .or_insert_with(|| owner_pin_assertions(&parent.source, NON_RETURNING_MACROS))
+            self.module_parent_assertions(&edge.parent, &parent.source)
                 .admits_targeted_module_declaration(edge.line, &edge.declaration)
         })
     }
@@ -981,7 +984,6 @@ impl OwnerPinSyntax {
         if let Some(reason) = &facts.role_provenance.earliest_unresolved_reason {
             return Some(AssertionRefusal::UnresolvedModule(reason.clone()));
         }
-        let mut by_file = self.by_file.borrow_mut();
         for edge in &facts.role_provenance.edges {
             // Module composition already owns resolution. Include expansions
             // lack an exact declaration coordinate here, so remain unknown.
@@ -998,9 +1000,8 @@ impl OwnerPinSyntax {
             else {
                 return Some(AssertionRefusal::LexicalFallback);
             };
-            if !by_file
-                .entry(edge.parent.clone())
-                .or_insert_with(|| owner_pin_assertions(&parent.source, NON_RETURNING_MACROS))
+            if !self
+                .module_parent_assertions(&edge.parent, &parent.source)
                 .admits_module_declaration(edge.line, &edge.declaration)
             {
                 return Some(AssertionRefusal::ModuleDeclaration {
@@ -1011,6 +1012,13 @@ impl OwnerPinSyntax {
             }
         }
         None
+    }
+
+    /// A module-parent file's declaration admissions, read once per run with
+    /// the plain trusted-macro list (see `module_parents`).
+    fn module_parent_assertions(&self, file: &PathBuf, source: &str) -> Arc<OwnerPinAssertions> {
+        self.module_parents
+            .get_or_build(file, || owner_pin_assertions(source, NON_RETURNING_MACROS))
     }
 
     /// The gates every assertion of `test` shares, whatever its macro: a
@@ -1038,8 +1046,7 @@ impl OwnerPinSyntax {
         else {
             return Err(Box::new(AssertionRefusal::LexicalFallback));
         };
-        let mut empty_by_file = self.empty_macro_ambiguities.borrow_mut();
-        let empty_ambiguities = empty_by_file.entry(test.file.clone()).or_insert_with(|| {
+        let empty_ambiguities = self.empty_macro_ambiguities.get_or_build(&test.file, || {
             let names = local_empty_macro_names(&facts.source);
             if names.is_empty() {
                 return BTreeSet::new();
@@ -1064,7 +1071,7 @@ impl OwnerPinSyntax {
                 )
                 .collect()
         });
-        let mut ambiguous: BTreeSet<_> = ambiguous.union(empty_ambiguities).cloned().collect();
+        let mut ambiguous: BTreeSet<_> = ambiguous.union(&empty_ambiguities).cloned().collect();
         // Recheck provenance for every admission even when syntax is memoized.
         if facts.source.contains("json")
             && !index.drop_in_manifests.verified_literal_json(&test.file)
@@ -1159,13 +1166,10 @@ impl OwnerPinSyntax {
         // `std::assert_eq!` may expand to an early return that skips it.
         let rooted = self
             .std_rooted
-            .borrow_mut()
-            .entry(test.file.clone())
-            .or_insert_with(|| StdRootedCalls::of(&facts.source))
-            .clone();
+            .get_or_build(&test.file, || StdRootedCalls::of(&facts.source));
         let qualified: BTreeSet<String> = std_rooted_macro_path(&assertion.text, "assert_eq")
             .into_iter()
-            .chain(rooted.calls)
+            .chain(rooted.calls.iter().cloned())
             .collect();
         if let Some(path) = qualified.into_iter().find(|path| {
             !(rooted.unrebound.contains(path)
@@ -1175,14 +1179,15 @@ impl OwnerPinSyntax {
                 AssertionContextRefusal::OpaqueMacro(path),
             ));
         }
-        let mut by_file = self.by_file.borrow_mut();
         // A terminal Err-return guard is keyed by its condition; the oracle
         // text may join continuation lines or elide the Err payload.
         let guard_key = err_return_guard_twin(&assertion.text)
             .map(|(condition, _)| err_return_guard_key(condition));
-        let file_refusal = by_file
-            .entry(test.file.clone())
-            .or_insert_with(|| owner_pin_assertions(&facts.source, &assertion_context_macros()))
+        let file_refusal = self
+            .by_file
+            .get_or_build(&test.file, || {
+                owner_pin_assertions(&facts.source, &assertion_context_macros())
+            })
             .refusal(
                 (test.start_line, test.end_line, &test.name),
                 &test.body,
@@ -2026,10 +2031,27 @@ fn scan_macro_sites(
         .map(|(name, site)| ((*path).clone(), name, site))
         .collect::<Vec<_>>()
     };
-    if nested_parallelism_allowed() {
-        files.par_iter().flat_map_iter(scan_file).collect()
+    map_scans(files, scan_file).into_iter().flatten().collect()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// What the last [`map_scans`] on this thread decided: `Some(true)` when
+    /// it fanned out on the rayon pool, `Some(false)` when it ran in line.
+    static LAST_SCAN_FAN_OUT: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// Maps `scan` over `items` in order, on the rayon pool only where
+/// [`nested_parallelism_allowed`]. Every production scan that can be reached
+/// from classification goes through here, so that guard has one seam.
+fn map_scans<T: Sync, R: Send>(items: &[T], scan: impl Fn(&T) -> R + Sync + Send) -> Vec<R> {
+    let fan_out = nested_parallelism_allowed();
+    #[cfg(test)]
+    LAST_SCAN_FAN_OUT.with(|last| last.set(Some(fan_out)));
+    if fan_out {
+        items.par_iter().map(scan).collect()
     } else {
-        files.iter().flat_map(scan_file).collect()
+        items.iter().map(scan).collect()
     }
 }
 

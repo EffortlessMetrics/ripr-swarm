@@ -12,9 +12,10 @@
 //! `cfg(test)` the memo records the thread that holds it and panics on
 //! re-entry, so such a site fails the lib-test run instead of hanging.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::ops::{Deref, DerefMut};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 #[cfg(test)]
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -77,6 +78,23 @@ impl<T> SyncMemo<T> {
     /// Same lock as [`Self::borrow`], named for the mutating call sites.
     pub(in crate::analysis) fn borrow_mut(&self) -> SyncMemoGuard<'_, T> {
         self.borrow()
+    }
+}
+
+impl<K: Ord + Clone, V> SyncMemo<BTreeMap<K, Arc<V>>> {
+    /// The entry for `key`, built by `build` outside the lock on a miss.
+    ///
+    /// A guard held while an entry is built stalls every other worker that
+    /// needs any entry of this memo, and a guard held after the entry is read
+    /// stalls them for the rest of the caller's work (#8797). The entry is
+    /// pure in its key, so two workers that miss together build it twice and
+    /// the first insert wins; both get the same value.
+    pub(in crate::analysis) fn get_or_build(&self, key: &K, build: impl FnOnce() -> V) -> Arc<V> {
+        if let Some(found) = self.borrow().get(key) {
+            return Arc::clone(found);
+        }
+        let built = Arc::new(build());
+        Arc::clone(self.borrow_mut().entry(key.clone()).or_insert(built))
     }
 }
 
@@ -166,6 +184,52 @@ mod tests {
             *guard += 1;
         }
         assert_eq!(*memo.borrow(), 8);
+    }
+
+    #[test]
+    fn get_or_build_runs_the_builder_outside_the_lock() {
+        use std::sync::Arc;
+        let memo: SyncMemo<BTreeMap<u8, Arc<u32>>> = SyncMemo::default();
+        let first = memo.get_or_build(&1, || {
+            // A builder that reads the same memo would panic (and in a
+            // release build deadlock) if the lock were still held.
+            assert!(memo.borrow().is_empty());
+            10
+        });
+        let second = memo.get_or_build(&1, || 99);
+        assert_eq!((*first, *second), (10, 10));
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "a hit returns the stored entry"
+        );
+    }
+
+    #[test]
+    fn get_or_build_keeps_the_first_entry_when_workers_miss_together() {
+        use std::sync::Arc;
+        let memo: SyncMemo<BTreeMap<u8, Arc<usize>>> = SyncMemo::default();
+        let barrier = std::sync::Barrier::new(4);
+        let seen: Vec<usize> = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..4usize)
+                .map(|id| {
+                    let (memo, barrier) = (&memo, &barrier);
+                    scope.spawn(move || {
+                        *memo.get_or_build(&0, || {
+                            // Every worker is inside its builder before any
+                            // inserts, so all four miss.
+                            barrier.wait();
+                            id
+                        })
+                    })
+                })
+                .collect();
+            workers.into_iter().filter_map(|w| w.join().ok()).collect()
+        });
+        assert_eq!(seen.len(), 4);
+        assert!(
+            seen.iter().all(|value| *value == seen[0]),
+            "every worker must see the one stored entry, got {seen:?}"
+        );
     }
 
     #[test]

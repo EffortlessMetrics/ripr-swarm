@@ -10874,3 +10874,40 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
     assert!(rebound(refusal.clone()), "{refusal:?}");
     Ok(())
 }
+
+/// #8797: a workspace macro-site scan reached from classification must run in
+/// line on a pool worker. A worker blocked in a nested `par_iter` steals
+/// sibling probes onto its own stack while it may hold a memo lock they need.
+/// `nested_parallelism_allowed` is tested alone elsewhere; this binds the
+/// production scan to it, so a call site that fans out unconditionally, or
+/// that ignores the guard, fails here.
+#[test]
+fn the_workspace_macro_scan_runs_in_line_on_a_pool_worker_and_fans_out_elsewhere()
+-> Result<(), String> {
+    let index = index(&[(LIB, WEIGHT_LIB), (TESTS, "fn t() {}\n")]);
+    let (likely, rest) = partition_macro_scan_files(&index);
+    let files: Vec<MacroScanFile<'_>> = likely.into_iter().chain(rest).collect();
+    assert!(!files.is_empty(), "the scan needs files to map over");
+    let resolved = |_: &Path, _: usize, _: &str| true;
+    let decision_of_scan = || {
+        LAST_SCAN_FAN_OUT.with(|last| last.set(None));
+        scan_macro_sites(&files, &index, &resolved);
+        LAST_SCAN_FAN_OUT.with(std::cell::Cell::get)
+    };
+
+    assert_eq!(
+        decision_of_scan(),
+        Some(true),
+        "a scan from a thread outside the pool may fan out"
+    );
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(2)
+        .build()
+        .map_err(|e| e.to_string())?;
+    assert_eq!(
+        pool.install(decision_of_scan),
+        Some(false),
+        "a scan on a pool worker must run in line"
+    );
+    Ok(())
+}

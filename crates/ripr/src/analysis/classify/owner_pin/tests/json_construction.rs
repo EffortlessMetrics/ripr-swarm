@@ -224,3 +224,71 @@ fn literal_json_binding_in_a_withheld_file_remains_a_refusal() -> Result<(), Str
     }
     Ok(())
 }
+
+/// #8797: a file that is both a test file and a module parent is read twice,
+/// with the assertion-context macro list (which trusts `json!`) for its own
+/// tests and the plain trusted list for the module declarations it holds.
+/// One shared memo entry made a test's verdict depend on whether a probe in
+/// a child module reached the file first, which with parallel workers is
+/// scheduling. The verdict of each test must not depend on the order.
+#[test]
+fn a_test_file_that_is_also_a_module_parent_is_read_the_same_in_either_order() -> Result<(), String>
+{
+    const PARENT: &str = "tests/json_parent.rs";
+    const NESTED: &str = "tests/json_parent/child.rs";
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/owner_return_pin_json_real_literal/input");
+    let parent_src = "use serde_json::{Value, json};\nuse demo::weight;\n#[test]\nfn parent_checks() { assert_eq!(weight(4), json!(12)); }\nmod child;\n";
+    let child_src =
+        "use demo::weight;\n#[test]\nfn child_checks() { assert_eq!(weight(4), 12); }\n";
+    let build = || {
+        let mut index = index_with_provenance(
+            &[(LIB, WEIGHT_LIB), (PARENT, parent_src), (NESTED, child_src)],
+            &[(
+                NESTED,
+                SourceRoleProvenance {
+                    edges: vec![module_edge(PARENT, NESTED, "child", 5, false)],
+                    earliest_unresolved_reason: None,
+                    ..Default::default()
+                },
+            )],
+        );
+        index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(&fixture);
+        index
+    };
+    let refusal_of = |syntax: &OwnerPinSyntax,
+                      index: &RustIndex,
+                      file: &str|
+     -> Result<Option<AssertionRefusal>, String> {
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.file == Path::new(file))
+            .ok_or_else(|| format!("{file}: the fixture test must be indexed"))?;
+        let assertion = test
+            .assertions
+            .first()
+            .ok_or_else(|| format!("{file}: the test's assertion must parse"))?;
+        Ok(syntax.refusal(test, assertion, index))
+    };
+
+    let index = build();
+    let alone = refusal_of(&OwnerPinSyntax::default(), &index, PARENT)?;
+    assert!(
+        alone.is_none(),
+        "the json! assertion is admitted on a fresh run: {alone:?}"
+    );
+    let child_alone = refusal_of(&OwnerPinSyntax::default(), &index, NESTED)?;
+
+    // The nested test first: it reads the parent file for the `mod child;`
+    // declaration before the parent's own test is judged.
+    let syntax = OwnerPinSyntax::default();
+    let child_first = refusal_of(&syntax, &index, NESTED)?;
+    let parent_after_child = refusal_of(&syntax, &index, PARENT)?;
+    assert_eq!(child_first, child_alone);
+    assert_eq!(
+        parent_after_child, alone,
+        "the parent's verdict must not depend on the nested test running first"
+    );
+    Ok(())
+}
