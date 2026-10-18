@@ -824,7 +824,7 @@ fn relabel_reports_drift_for_exactly_the_mislabelled_toy_case() -> Result<(), St
         cases: vec![TOY_LABELLED_ID.to_string(), TOY_MISLABELLED_ID.to_string()],
         checkouts: None,
         repeat: 1,
-        timeout: Duration::from_secs(120),
+        timeout: Duration::from_mins(2),
         out: out.clone(),
         work_dir: work,
     };
@@ -868,18 +868,7 @@ fn relabel_reports_drift_for_exactly_the_mislabelled_toy_case() -> Result<(), St
 }
 
 fn host_rustc_label() -> Result<String, String> {
-    let output = std::process::Command::new("rustc")
-        .arg("--version")
-        .output()
-        .map_err(|err| format!("run rustc --version: {err}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "rustc --version failed ({})",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    let stdout = String::from_utf8(output.stdout)
-        .map_err(|err| format!("rustc --version stdout is not utf-8: {err}"))?;
+    let stdout = run_output_owned("rustc", &["--version".to_string()])?;
     let label = toolchain_release(stdout.trim());
     if labeled_toolchain(label).is_none() {
         return Err(format!(
