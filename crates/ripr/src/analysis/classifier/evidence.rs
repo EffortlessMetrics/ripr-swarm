@@ -59,6 +59,12 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     /// related `assert_eq!` was refused for an analyzer limit, so the gap
     /// rests on what ripr could not read (RIPR-SPEC-0240).
     pub(in crate::analysis) refusals_are_analyzer_limits: bool,
+    /// Related tests `(file, name)` whose reach to the owner is established
+    /// by indexed implicit dispatch (a trait impl the language runs without
+    /// a named call). Their relation reason is proximity-only, so
+    /// annotation must not read "reason does not establish reach" as
+    /// "never calls the owner" for them.
+    pub(in crate::analysis) implicit_dispatch_tests: BTreeSet<(PathBuf, String)>,
 }
 
 #[derive(Clone, Debug)]
@@ -648,6 +654,11 @@ impl ClassifiedProbeEvidence {
                     )
                 })
         };
+        let fallback_expansion = crate::analysis::classify::ImplicitExpansionMemo::default();
+        let expansion = crate::analysis::classify::ImplicitExpansionContext::new(
+            context.index,
+            context.implicit_expansion.unwrap_or(&fallback_expansion),
+        );
         let reveal = reveal_outcome(
             context.probe,
             reveal_expression,
@@ -658,6 +669,31 @@ impl ClassifiedProbeEvidence {
             &ReturnOracleAdmission {
                 owner_return_pin: &owner_pin_admits,
                 assertion_admitted: &assertion_admitted,
+                assertion_has_known_implicit_observer: &|test, assertion| {
+                    if !matches!(
+                        context.probe.family,
+                        ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+                    ) {
+                        return None;
+                    }
+                    let owner = context.owner_fn?;
+                    let reach =
+                        owner_reach.get_or_init(|| proximity_reach.owner_reach(&owner.name));
+                    reach
+                        .test_has_known_implicit_dispatch(owner, test)
+                        .then(|| {
+                            context.index.files().get(&test.file).is_some_and(|facts| {
+                                reach.assertion_has_known_implicit_observer(
+                                    owner,
+                                    test,
+                                    assertion,
+                                    &context.probe.expression,
+                                    &facts.source,
+                                    &expansion,
+                                )
+                            })
+                        })
+                },
                 sibling_exclusion_admitted: &sibling_exclusion_admitted,
                 proximity_may_reach_owner: &|test| {
                     context.owner_fn.is_none_or(|owner| {
@@ -1063,6 +1099,28 @@ impl ClassifiedProbeEvidence {
                 && refusals.all(|refusal| is_limit(&refusal))
         };
 
+        let implicit_dispatch_tests = match context.owner_fn {
+            Some(owner)
+                if matches!(
+                    context.probe.family,
+                    ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+                ) =>
+            {
+                context
+                    .related_tests
+                    .iter()
+                    .filter(|(_, reason)| !reason.establishes_reach(true))
+                    .filter(|(test, _)| {
+                        owner_reach
+                            .get_or_init(|| proximity_reach.owner_reach(&owner.name))
+                            .test_has_known_implicit_dispatch(owner, test)
+                    })
+                    .map(|(test, _)| (test.file.clone(), test.name.clone()))
+                    .collect()
+            }
+            _ => BTreeSet::new(),
+        };
+
         Self {
             ripr,
             evidence,
@@ -1079,6 +1137,7 @@ impl ClassifiedProbeEvidence {
             reach_ruled_out,
             assertion_refusal,
             refusals_are_analyzer_limits,
+            implicit_dispatch_tests,
         }
     }
 

@@ -100,6 +100,8 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     /// Run-scoped activation memo, keyed by slots of the same index.
     test_value_facts: super::TestValueFacts,
     owner_pin_syntax: super::OwnerPinSyntax,
+    /// Source-expansion facts for this immutable classification run.
+    implicit_expansion: super::ImplicitExpansionMemo,
     /// Run-scoped unseen-reach scan. `includes_external_docs` parses each
     /// file; asking per owner re-parsed the crate on every changed function.
     unseen_reach: super::UnseenReachNames,
@@ -187,6 +189,10 @@ impl RelatedTestCandidateIndex {
     /// against this index.
     pub(in crate::analysis) fn file_use_statements(&self) -> &super::FileUseStatements {
         &self.file_use_statements
+    }
+
+    pub(in crate::analysis) fn implicit_expansion(&self) -> &super::ImplicitExpansionMemo {
+        &self.implicit_expansion
     }
 
     pub(in crate::analysis) fn owner_pin_syntax(&self) -> &super::OwnerPinSyntax {
@@ -3078,6 +3084,121 @@ fn method_call_resolves_to_impl_in(
                 false,
             )
     })
+}
+
+/// A bounded, test-local dispatch witness for an indexed trait impl. Naming
+/// its type elsewhere, an unknown method, or a same-name free/inherent function
+/// is not a witness. Reuse the established receiver binding rules (#4760).
+pub(in crate::analysis) fn test_dispatches_trait_impl(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+) -> bool {
+    let FunctionContainer::TraitImpl {
+        trait_path,
+        self_ty,
+    } = &owner.item.container
+    else {
+        return false;
+    };
+    let Some(impl_type) = compact_impl_type_name(self_ty) else {
+        return false;
+    };
+    if method_call_resolves_to_impl(
+        test,
+        &owner.name,
+        &impl_type,
+        owner_dispatch_trait(owner).as_deref(),
+    ) {
+        return true;
+    }
+    let trait_name = trait_path
+        .split('<')
+        .next()
+        .unwrap_or(trait_path)
+        .rsplit("::")
+        .next()
+        .unwrap_or("");
+    let body = mask_comments_and_strings(&test.body);
+    if matches!(
+        (trait_name, owner.name.as_str()),
+        ("Iterator", "next") | ("IntoIterator", "into_iter")
+    ) {
+        if method_call_resolves_to_impl_type_in(test, &body, "for_each", &impl_type) {
+            return true;
+        }
+        for (at, _) in body.match_indices("in") {
+            if !ident_boundary(body.as_bytes(), at, at + 2) {
+                continue;
+            }
+            let Some(for_at) = body[..at].rmatch_indices("for").find_map(|(start, _)| {
+                ident_boundary(body.as_bytes(), start, start + 3).then_some(start)
+            }) else {
+                continue;
+            };
+            if body[for_at..at].contains([';', '{', '}']) {
+                continue;
+            }
+            let after = &body[at + 2..];
+            let Some(end) = after.find('{') else {
+                continue;
+            };
+            let receiver = after[..end].trim();
+            if dispatch_operand_has_type(receiver, &body[..for_at], &impl_type) {
+                return true;
+            }
+        }
+    }
+    let operator = match (trait_name, owner.name.as_str()) {
+        ("Add", "add") => "+",
+        ("Sub", "sub") => "-",
+        ("Mul", "mul") => "*",
+        ("Div", "div") => "/",
+        ("Rem", "rem") => "%",
+        ("BitAnd", "bitand") => "&",
+        ("BitOr", "bitor") => "|",
+        ("BitXor", "bitxor") => "^",
+        ("Shl", "shl") => "<<",
+        ("Shr", "shr") => ">>",
+        ("AddAssign", "add_assign") => "+=",
+        ("SubAssign", "sub_assign") => "-=",
+        ("MulAssign", "mul_assign") => "*=",
+        ("DivAssign", "div_assign") => "/=",
+        ("RemAssign", "rem_assign") => "%=",
+        ("BitAndAssign", "bitand_assign") => "&=",
+        ("BitOrAssign", "bitor_assign") => "|=",
+        ("BitXorAssign", "bitxor_assign") => "^=",
+        ("ShlAssign", "shl_assign") => "<<=",
+        ("ShrAssign", "shr_assign") => ">>=",
+        ("PartialEq", "eq") => "==",
+        ("PartialEq", "ne") => "!=",
+        ("PartialOrd", "lt") => "<",
+        ("PartialOrd", "le") => "<=",
+        ("PartialOrd", "gt") => ">",
+        ("PartialOrd", "ge") => ">=",
+        _ => return false,
+    };
+    body.match_indices(operator).any(|(at, _)| {
+        // A short operator inside another token is not this trait's dispatch.
+        let before = body[..at].trim_end();
+        let after = &body[at + operator.len()..];
+        if after.starts_with(['=', operator.as_bytes()[0] as char]) {
+            return false;
+        }
+        let prior_bindings = before.rfind(';').map_or("", |end| &before[..=end]);
+        ident_ending_at(before, before.len())
+            .is_some_and(|receiver| dispatch_operand_has_type(receiver, prior_bindings, &impl_type))
+            || receiver_expr_resolves_to_type(before, before.len(), &impl_type, prior_bindings)
+    })
+}
+
+fn dispatch_operand_has_type(expr: &str, preceding: &str, impl_type: &str) -> bool {
+    let preceding = preceding.rfind(';').map_or("", |end| &preceding[..=end]);
+    let expr = expr.trim().strip_prefix('&').unwrap_or(expr).trim();
+    let expr = expr.strip_prefix("mut ").unwrap_or(expr).trim();
+    if !expr.is_empty() && expr.bytes().all(is_ident_byte) {
+        return let_binding_mentions_type(preceding, expr, impl_type);
+    }
+    bracketed_expr_has_type(expr, expr.len(), impl_type, preceding, true)
 }
 
 fn owner_call_relation_reason(
