@@ -1,0 +1,48 @@
+{
+  "case_id": "py-spec0260-ex03-or-guard-fails-open",
+  "subject_id": "authored-py-pytest-guard-arms",
+  "diff": "cases/py-spec0260-ex03-or-guard-fails-open.diff",
+  "anchor": {
+    "file": "guards/quote_force.py",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "pytest_literal_call_forces_or_guard",
+  "hard_case": "the guard has an `or`, so the gate cannot exclude the row; the forced call does run the guarded line",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return round(total * 1.03, 2)",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_quote_force.py::test_forced_quote",
+        "equivalence_review": "not equivalent: the edit changes the value the test asserts"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`1.02` becomes `1.03` inside `if total > 1000 or force`. `quote_force(100.0, True)` takes the guarded branch through `force` and the assertion `== 102.0` fails on 103.0. RIPR-SPEC-0260 example 3 keeps this `exposed`: the `or` makes the guard unreadable and the gate fails open.",
+  "labeling_observation": {
+    "ripr_commit": "006eaf8",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0260#3"
+  ]
+}
