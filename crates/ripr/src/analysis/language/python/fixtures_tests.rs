@@ -161,3 +161,87 @@ fn given_a_test_that_calls_the_owner_directly_then_the_direct_relation_wins() ->
     );
     Ok(())
 }
+
+#[test]
+fn given_a_direct_parametrize_argname_matching_a_fixture_then_the_test_stays_unrelated()
+-> Result<(), String> {
+    let test = SAME_MODULE.replace(
+        "def test_short(out):",
+        "@pytest.mark.parametrize('out', ['abc'])\ndef test_short(out):",
+    );
+    assert!(relations(&[("src/utils.py", UTILS_PY), ("tests/test_utils.py", &test)])?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn given_an_indirect_parametrize_argname_then_the_fixture_is_still_resolved() -> Result<(), String>
+{
+    let test = SAME_MODULE.replace(
+        "def test_short(out):",
+        "@pytest.mark.parametrize('out', ['abc'], indirect=True)\ndef test_short(out):",
+    );
+    assert_eq!(
+        relations(&[("src/utils.py", UTILS_PY), ("tests/test_utils.py", &test)])?,
+        vec![("test_short".to_string(), "fixture_owner_call")]
+    );
+    Ok(())
+}
+
+#[test]
+fn given_duplicate_same_name_fixtures_then_the_last_definition_wins() -> Result<(), String> {
+    let calls = "@pytest.fixture\ndef out():\n    return _short('abcd', 3)\n\n\n";
+    let plain = "@pytest.fixture\ndef out():\n    return 'abc'\n\n\n";
+    let head = "import pytest\nfrom src.utils import _short\n\n\n";
+    let tail = "def test_short(out):\n    assert out == 'abc'\n";
+    let last_plain = format!("{head}{calls}{plain}{tail}");
+    assert!(
+        relations(&[
+            ("src/utils.py", UTILS_PY),
+            ("tests/test_utils.py", &last_plain)
+        ])?
+        .is_empty()
+    );
+    let last_calls = format!("{head}{plain}{calls}{tail}");
+    assert_eq!(
+        relations(&[
+            ("src/utils.py", UTILS_PY),
+            ("tests/test_utils.py", &last_calls)
+        ])?,
+        vec![("test_short".to_string(), "fixture_owner_call")]
+    );
+    Ok(())
+}
+
+#[test]
+fn given_more_fixtures_than_the_cap_then_only_the_first_eight_are_attached() -> Result<(), String> {
+    let mut source = String::from("import pytest\n\n\n");
+    let mut params = Vec::new();
+    for index in 0..10 {
+        source.push_str(&format!(
+            "@pytest.fixture\ndef f{index}():\n    return {index}\n\n\n"
+        ));
+        params.push(format!("f{index}"));
+    }
+    source.push_str(&format!(
+        "def test_many({}):\n    assert True\n",
+        params.join(", ")
+    ));
+    let (_, tests) = workspace(&[("tests/test_many.py", &source)]);
+    let test = tests.first().ok_or_else(|| "test must parse".to_string())?;
+    assert_eq!(test.fixture_defs.len(), 8);
+    Ok(())
+}
+
+#[test]
+fn given_a_skipped_test_with_a_fixture_relation_then_the_finding_is_not_exposed()
+-> Result<(), String> {
+    let test = SAME_MODULE.replace(
+        "def test_short(out):",
+        "@pytest.mark.skip\ndef test_short(out):",
+    );
+    let finding = classify(&[("src/utils.py", UTILS_PY), ("tests/test_utils.py", &test)])?;
+    assert_ne!(finding.class, ExposureClass::Exposed);
+    assert_eq!(finding.related_tests.len(), 1);
+    assert_eq!(finding.related_tests[0].oracle, None);
+    Ok(())
+}

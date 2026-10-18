@@ -80,7 +80,17 @@ pub(super) fn attach_fixture_defs(
     }
     for test in tests {
         let mut attached: Vec<PythonFixtureDef> = Vec::new();
+        // A direct (non-indirect) parametrize argname is supplied by pytest,
+        // not resolved as a fixture.
+        let parametrized = test
+            .parametrize
+            .as_ref()
+            .map(|found| found.argnames())
+            .unwrap_or_default();
         for parameter in &test.fixtures {
+            if parametrized.contains(parameter) {
+                continue;
+            }
             if attached.len() >= MAX_FIXTURE_DEFS_PER_TEST {
                 break;
             }
@@ -100,7 +110,8 @@ fn resolve<'a>(
     let find = |file: &Path| {
         defs_by_file
             .get(file)
-            .and_then(|defs| defs.iter().find(|def| def.name == name))
+            // The last same-name definition in a file is the one pytest binds.
+            .and_then(|defs| defs.iter().rev().find(|def| def.name == name))
     };
     if let Some(def) = find(test_file) {
         return Some(def);
