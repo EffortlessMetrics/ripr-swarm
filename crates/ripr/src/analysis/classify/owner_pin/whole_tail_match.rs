@@ -297,7 +297,7 @@ mod tests {
             let mut other = owner.clone();
             match case {
                 "name" => other.name = "other".to_string(),
-                "body" => other.body = other.body.replace("600", "601"),
+                "body" => other.body = other.body.replace("600", "601").into(),
                 "start" => other.start_line += 1,
                 "id" => other.id.0.push_str("-wrong"),
                 "file" => other.file = PathBuf::from("src/other.rs"),
