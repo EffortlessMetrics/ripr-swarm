@@ -219,6 +219,21 @@ pub(crate) struct TypeScriptOwnerExtractionGap {
     pub(crate) snippet: String,
 }
 
+/// One concrete, observed conditional or loop branch that holds an extracted
+/// assertion under a condition static analysis cannot evaluate (#8714).
+/// Produced by `detect_conditional_assertion_credit`; consumed by the
+/// `typescript_conditional_assertion_credit` named-limitation producer.
+/// Classification-neutral, additive disclosure only: the branch recursion is
+/// deliberate, and this record carries the caveat so a credited oracle is
+/// known to possibly never execute.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TypeScriptConditionalCreditGap {
+    pub(crate) file: PathBuf,
+    pub(crate) sample_line: usize,
+    /// Bounded single-line source text of the unevaluated condition.
+    pub(crate) condition: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TypeScriptRelationKind {
     DirectOwnerCall,

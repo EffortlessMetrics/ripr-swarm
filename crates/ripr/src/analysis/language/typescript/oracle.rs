@@ -311,19 +311,59 @@ pub(crate) fn collect_expect_assertions_in_statement(
             }
         }
         Statement::IfStatement(if_stmt) => {
-            collect_expect_assertions_in_statement(&if_stmt.consequent, source, &nested, out);
-            if let Some(alternate) = &if_stmt.alternate {
-                collect_expect_assertions_in_statement(alternate, source, &nested, out);
+            match constant_condition_value(&if_stmt.test) {
+                // #8714: a constant-falsy condition never runs its consequent
+                // (`if (false) { ... }`, a common way to disable a check), so
+                // assertions there can never discriminate and are withheld,
+                // fail closed like a swallowed try body. The alternate runs
+                // instead and keeps collection.
+                Some(false) => {
+                    if let Some(alternate) = &if_stmt.alternate {
+                        collect_expect_assertions_in_statement(alternate, source, &nested, out);
+                    }
+                }
+                // A constant-truthy condition always runs its consequent; the
+                // alternate is the dead branch.
+                Some(true) => {
+                    collect_expect_assertions_in_statement(
+                        &if_stmt.consequent,
+                        source,
+                        &nested,
+                        out,
+                    );
+                }
+                // An unevaluated condition keeps the deliberate setup-branch
+                // recursion; `detect_conditional_assertion_credit` discloses
+                // the caveat at the analysis level (#8714).
+                None => {
+                    collect_expect_assertions_in_statement(
+                        &if_stmt.consequent,
+                        source,
+                        &nested,
+                        out,
+                    );
+                    if let Some(alternate) = &if_stmt.alternate {
+                        collect_expect_assertions_in_statement(alternate, source, &nested, out);
+                    }
+                }
             }
         }
         Statement::DoWhileStatement(do_while) => {
+            // A do-while body runs at least once even under a falsy test, so
+            // no constant-condition guard applies here (#8714).
             collect_expect_assertions_in_statement(&do_while.body, source, &nested, out);
         }
-        Statement::WhileStatement(while_stmt) => {
+        Statement::WhileStatement(while_stmt)
+            if constant_condition_value(&while_stmt.test) != Some(false) =>
+        {
             collect_expect_assertions_in_statement(&while_stmt.body, source, &nested, out);
         }
         Statement::ForStatement(for_stmt) => {
-            collect_expect_assertions_in_statement(&for_stmt.body, source, &nested, out);
+            let constantly_dead =
+                for_stmt.test.as_ref().and_then(constant_condition_value) == Some(false);
+            if !constantly_dead {
+                collect_expect_assertions_in_statement(&for_stmt.body, source, &nested, out);
+            }
         }
         Statement::ForInStatement(for_in) => {
             collect_expect_assertions_in_statement(&for_in.body, source, &nested, out);
@@ -2060,6 +2100,33 @@ pub(crate) fn call_expression_is_expect(call: &oxc_ast::ast::CallExpression<'_>)
         &call.callee,
         Expression::Identifier(ident) if ident.name.as_str() == "expect"
     )
+}
+
+/// Static value of a branch or loop condition made of constant literals
+/// (`false`, `0`, `0n`, `""`, `` ` ` ``, `null`), or `None` when the
+/// condition is anything else — an identifier, an env read, a call or an
+/// operation (#8714). Only the honestly decidable cases are evaluated; the
+/// deliberate setup-branch recursion keeps collecting under an unevaluated
+/// condition and `detect_conditional_assertion_credit` discloses the caveat.
+pub(crate) fn constant_condition_value(expr: &Expression<'_>) -> Option<bool> {
+    match expr {
+        Expression::BooleanLiteral(boolean) => Some(boolean.value),
+        Expression::NumericLiteral(number) => Some(number.value != 0.0),
+        Expression::BigIntLiteral(bigint) => {
+            Some(bigint.value.as_str().trim_end_matches('n') != "0")
+        }
+        Expression::StringLiteral(string) => Some(!string.value.is_empty()),
+        Expression::TemplateLiteral(template) if template.expressions.is_empty() => Some(
+            !template
+                .quasis
+                .iter()
+                .filter_map(|quasi| quasi.value.cooked.as_deref())
+                .collect::<String>()
+                .is_empty(),
+        ),
+        Expression::NullLiteral(_) => Some(false),
+        _ => None,
+    }
 }
 
 /// RIPR-SPEC-0243 rule 9 (#8713): true when the matcher's single argument is

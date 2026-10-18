@@ -91,6 +91,8 @@ mod predicate_activation_tests;
 pub(crate) use package::detect_framework_for_root;
 #[cfg(test)]
 mod ambient_declaration_tests;
+#[cfg(test)]
+mod conditional_assertion_tests;
 mod parse;
 mod paths;
 mod probe_shape;
@@ -303,6 +305,10 @@ impl TypeScriptAdapter {
         let mut parse_limits: Vec<TypeScriptParseLimit> = Vec::new();
         let mut read_failures: Vec<TypeScriptReadFailure> = Vec::new();
         let mut extraction_gaps: Vec<TypeScriptTestExtractionGap> = Vec::new();
+        // Assertions credited under a condition static analysis cannot
+        // evaluate (#8714): the credit stands, the disclosure carries the
+        // "may never execute" caveat.
+        let mut conditional_credit_gaps: Vec<TypeScriptConditionalCreditGap> = Vec::new();
         // Owner shapes the extractor does not index, detected on CHANGED
         // production files only (#4104-A): their changed lines produce no
         // finding today, so the disclosure is the only honest signal.
@@ -376,6 +382,12 @@ impl TypeScriptAdapter {
                 // confident `no_static_path` is known to be possibly false.
                 if let Some(gap) = detect_partial_test_extraction(relative, source, &tests) {
                     extraction_gaps.push(gap);
+                }
+                // #8714: an extracted assertion sitting under an unevaluated
+                // branch condition keeps its credit; the disclosure records
+                // that the branch (and the oracle) may never execute.
+                if let Some(gap) = detect_conditional_assertion_credit(relative, source, &tests) {
+                    conditional_credit_gaps.push(gap);
                 }
                 all_tests.extend(tests);
             } else {
@@ -783,6 +795,18 @@ impl TypeScriptAdapter {
         if let Some(limitation) = test_extraction_partial_summary(consulted_gaps)? {
             limitations.push(limitation);
         }
+        // Conditional assertion credit (#8714): same collapse as partial
+        // extraction and the same consultation gate — the credited oracle
+        // may sit under a branch that never runs, so the disclosure rides
+        // with results that actually consumed the test index.
+        let consulted_credit_gaps: &[_] = if test_index_consumed {
+            &conditional_credit_gaps
+        } else {
+            &[]
+        };
+        if let Some(limitation) = conditional_assertion_credit_summary(consulted_credit_gaps)? {
+            limitations.push(limitation);
+        }
         // Partial owner extraction (#4104-A): changed lines inside owner
         // shapes the extractor does not index produce no finding, so this
         // typed limitation replaces the silent skip.
@@ -979,6 +1003,89 @@ fn test_extraction_partial_summary(
             let remainder = gaps.len().saturating_sub(samples.len());
             let head = format!(
                 "typescript_test_extraction_partial: {} test file(s) register tests the extractor does not index",
+                files.len()
+            );
+            let mut detail = format!("{head}; e.g. {}", samples.join("; "));
+            if remainder > 0 {
+                detail.push_str(&format!(" (+{remainder} more)"));
+            }
+            if detail.chars().count()
+                > crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS
+            {
+                detail = head;
+            }
+            Ok(Some(
+                AnalysisLimitation::new(
+                    AnalysisLimitationKind::LanguageScopeUnsupported,
+                    AnalysisStage::LanguageAdapter,
+                    recovery()?,
+                )
+                .with_affected_items(u64::try_from(files.len()).unwrap_or(u64::MAX))?
+                .with_detail(detail)?,
+            ))
+        }
+    }
+}
+
+/// Recovery for conditional assertion credit. Static analysis cannot decide
+/// the branch condition, so the reader resolves the caveat with runtime
+/// coverage, not a re-run.
+const CONDITIONAL_ASSERTION_CREDIT_RECOVERY: &str = "Static analysis cannot evaluate the branch condition; runtime coverage establishes whether the discriminator executes.";
+
+/// Samples named in a multi-file conditional-credit summary.
+const CONDITIONAL_ASSERTION_CREDIT_SAMPLES: usize = 3;
+
+/// Collapse per-file conditional-credit gaps into one typed limitation,
+/// mirroring `test_extraction_partial_summary`: a single gap keeps its path;
+/// several gaps carry the file count, the first few samples and the
+/// remainder count. The credited oracle is unchanged — this only discloses
+/// that the branch holding it may never execute (#8714).
+fn conditional_assertion_credit_summary(
+    gaps: &[TypeScriptConditionalCreditGap],
+) -> Result<Option<AnalysisLimitation>, String> {
+    let recovery = || {
+        AnalysisRecovery::new(
+            AnalysisRecoveryKind::InspectFailure,
+            CONDITIONAL_ASSERTION_CREDIT_RECOVERY,
+        )
+    };
+    match gaps {
+        [] => Ok(None),
+        [gap] => {
+            let limitation = conditional_assertion_credit_limitation(gap);
+            Ok(Some(
+                AnalysisLimitation::new(
+                    AnalysisLimitationKind::LanguageScopeUnsupported,
+                    AnalysisStage::LanguageAdapter,
+                    recovery()?,
+                )
+                .with_path(gap.file.to_string_lossy())?
+                .with_affected_items(1)?
+                .with_detail(format!(
+                    "typescript_conditional_assertion_credit: `{}` at {}",
+                    gap.condition, limitation.sample_source
+                ))?,
+            ))
+        }
+        _ => {
+            let files = gaps
+                .iter()
+                .map(|gap| normalized_path(&gap.file))
+                .collect::<std::collections::BTreeSet<_>>();
+            let samples = gaps
+                .iter()
+                .take(CONDITIONAL_ASSERTION_CREDIT_SAMPLES)
+                .map(|gap| {
+                    format!(
+                        "`{}` at {}",
+                        gap.condition,
+                        conditional_assertion_credit_limitation(gap).sample_source
+                    )
+                })
+                .collect::<Vec<_>>();
+            let remainder = gaps.len().saturating_sub(samples.len());
+            let head = format!(
+                "typescript_conditional_assertion_credit: {} test file(s) credit assertions under conditions static analysis cannot evaluate",
                 files.len()
             );
             let mut detail = format!("{head}; e.g. {}", samples.join("; "));

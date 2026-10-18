@@ -26,6 +26,7 @@ Linked issues:
 - #4554 (workspace package-name resolution)
 - #6654 (corpus cases scored false actionable under the first draft)
 - #7315 (literal rejection equality observes the rejected reason)
+- #8714 (conditional-branch assertion guard and disclosure)
 
 Linked PRs:
 
@@ -780,7 +781,15 @@ to `amount - 20`, and `tests/lib.test.ts` has
     `unknown`, `weakly_exposed` (unchanged). Amended by RIPR-SPEC-0246
     rule 2: the literal-array `forEach` body is collected, `exposed` when
     the assertion pins the changed value.
-11. `if (ok) { expect(price(150)).toBe(130); }`: `exposed` (unchanged).
+11. `if (ok) { expect(price(150)).toBe(130); }`: `exposed` (unchanged;
+    the class does not move under #8714). Constant-literal conditions are
+    decidable: `if (true)` always runs (benign), and assertions inside
+    `if (false)` are withheld at collection because the branch never runs.
+    A condition static analysis cannot evaluate (`ok`, a feature flag, an
+    env read) keeps the credited assertion but the result now carries the
+    `typescript_conditional_assertion_credit` limitation, naming the
+    unevaluated condition and recording that the credited oracle may never
+    execute (classification-neutral disclosure, #8714).
 12. `src/lib.ts` is `export function parse(s: string): string { if (s ===
     "") { throw new Error("empty"); } return s; }`, formatted with the
     `throw` on its own line, which is the changed line: `"empty"` changed
