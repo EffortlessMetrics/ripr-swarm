@@ -190,19 +190,52 @@ impl ChangedFile {
         runs
     }
 
-    /// The new-side line where the contiguous added run holding this line
-    /// starts.
-    pub(crate) fn added_run_start(&self, added_new_side_line: usize) -> usize {
-        let mut run_start = added_new_side_line;
-        while run_start > 0
-            && self
-                .added_lines
-                .iter()
-                .any(|line| line.new_side_line == run_start - 1)
-        {
-            run_start -= 1;
+    /// Map from each added new-side line to the start of its contiguous run.
+    /// Built in one pass over the file's added coordinates, so a caller
+    /// visiting every added line costs O(n log n), not a scan of every added
+    /// line at every step of the run.
+    pub(crate) fn added_run_starts(&self) -> BTreeMap<usize, usize> {
+        let added: BTreeSet<usize> = self
+            .added_lines
+            .iter()
+            .map(|line| line.new_side_line)
+            .collect();
+        let mut starts = BTreeMap::new();
+        let mut lines = added.iter().copied().peekable();
+        while let Some(start) = lines.next() {
+            let mut end = start;
+            starts.insert(start, start);
+            while lines.next_if(|&next| next == end + 1).is_some() {
+                end += 1;
+                starts.insert(end, start);
+            }
         }
-        run_start
+        starts
+    }
+
+    /// The new-side line where the contiguous added run holding this line
+    /// starts. Callers visiting every added line of a file should build
+    /// [`Self::added_run_starts`] once and use [`Self::added_run_start_from`].
+    pub(crate) fn added_run_start(&self, added_new_side_line: usize) -> usize {
+        Self::added_run_start_from(&self.added_run_starts(), added_new_side_line)
+    }
+
+    /// Look up a run start in a map from [`Self::added_run_starts`]. A line
+    /// that is not itself added still walks back through an immediately
+    /// preceding contiguous run, matching the previous per-step scan.
+    pub(crate) fn added_run_start_from(
+        starts: &BTreeMap<usize, usize>,
+        added_new_side_line: usize,
+    ) -> usize {
+        starts
+            .get(&added_new_side_line)
+            .copied()
+            .or_else(|| {
+                added_new_side_line
+                    .checked_sub(1)
+                    .and_then(|previous| starts.get(&previous).copied())
+            })
+            .unwrap_or(added_new_side_line)
     }
 }
 
@@ -438,6 +471,34 @@ mod tests {
         assert_eq!(text(4), Some("a"));
         assert_eq!(text(5), Some("b"));
         assert_eq!(changed.added_run_start(5), 4);
+    }
+
+    #[test]
+    fn added_run_start_on_a_long_run_is_bounded() {
+        // One contiguous 20_000-line added run: the start map is built once
+        // and every lookup is log time. The previous walk scanned every
+        // added line at every step of the run, once per call.
+        let n = 20_000;
+        let changed = ChangedFile {
+            path: PathBuf::from("src/long.rs"),
+            added_lines: (1..=n).map(|i| line(i, i, "x();")).collect(),
+            removed_lines: Vec::new(),
+        };
+        let started = std::time::Instant::now();
+        let starts = changed.added_run_starts();
+        assert_eq!(starts.len(), n);
+        for i in 1..=n {
+            assert_eq!(starts.get(&i).copied(), Some(1));
+            assert_eq!(ChangedFile::added_run_start_from(&starts, i), 1);
+        }
+        assert_eq!(changed.added_run_start(n), 1);
+        assert_eq!(changed.added_run_start(1), 1);
+        // Walking back from the first line after the run still lands at the
+        // run start; a further gap does not.
+        assert_eq!(ChangedFile::added_run_start_from(&starts, n + 1), 1);
+        assert_eq!(changed.added_run_start(n + 2), n + 2);
+        assert_eq!(changed.added_run_start(0), 0);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
     }
 
     #[test]
