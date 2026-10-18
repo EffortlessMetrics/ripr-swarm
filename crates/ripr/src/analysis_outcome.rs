@@ -80,6 +80,7 @@ impl AnalysisLimitationKind {
             Self::ProducerTimeout => "producer_timeout",
             Self::ProducerFailure => "producer_failure",
             Self::EolOnlyChurn => "eol_only_churn",
+            Self::UnevaluatedCondition => "unevaluated_condition",
         }
     }
 
@@ -96,6 +97,9 @@ impl AnalysisLimitationKind {
             Self::ProducerTimeout => "the analysis ran out of time",
             Self::ProducerFailure => "part of the analysis failed",
             Self::EolOnlyChurn => "some files changed only in line endings",
+            Self::UnevaluatedCondition => {
+                "a credited assertion sits under a condition static analysis cannot evaluate"
+            }
         }
     }
 }
@@ -185,6 +189,11 @@ pub(crate) enum AnalysisLimitationKind {
     /// full changed scope was read and probed — so unlike the kinds above it
     /// may ride on a complete outcome.
     EolOnlyChurn,
+    /// #8714: a credited assertion sits under a branch condition static
+    /// analysis cannot evaluate, so the credited oracle may never execute.
+    /// The changed scope itself was fully read and probed; the limitation
+    /// discloses conditional credit, not unanalyzed files.
+    UnevaluatedCondition,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -769,6 +778,10 @@ mod tests {
             (AnalysisLimitationKind::ProducerTimeout, "producer_timeout"),
             (AnalysisLimitationKind::ProducerFailure, "producer_failure"),
             (AnalysisLimitationKind::EolOnlyChurn, "eol_only_churn"),
+            (
+                AnalysisLimitationKind::UnevaluatedCondition,
+                "unevaluated_condition",
+            ),
         ];
         for (kind, expected) in limitation_kinds {
             assert_eq!(kind.as_str(), expected);

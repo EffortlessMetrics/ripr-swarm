@@ -362,6 +362,58 @@ fn ts_credit_gaps_scoped_to_credited_test_files() {
     );
 }
 
+/// The conditional-credit limitation rides its own kind. The changed scope
+/// was fully analyzed; the caveat is conditional credit, not unanalyzed
+/// files (review on #8714): mapping it to `language_scope_unsupported` made
+/// both JSON and human output claim files were not analyzed and drop the
+/// unevaluated condition.
+#[test]
+fn ts_conditional_credit_limitation_kind_is_unevaluated_condition() -> Result<(), String> {
+    let gap = TypeScriptConditionalCreditGap {
+        file: PathBuf::from("tests/lib.test.ts"),
+        sample_line: 5,
+        condition: "ok".to_string(),
+    };
+    let summary = conditional_assertion_credit_summary(&[&gap])?
+        .ok_or_else(|| "a single consulted gap must produce a limitation".to_string())?;
+    assert!(
+        matches!(
+            summary.kind,
+            crate::analysis_outcome::AnalysisLimitationKind::UnevaluatedCondition
+        ),
+        "conditional credit must not ride language_scope_unsupported: {summary:?}"
+    );
+    Ok(())
+}
+
+/// The one-parse extraction entry point discloses the same gap as the
+/// standalone detector (review on #8714): production consumes the fold, so
+/// the fold is what must stay honest — live conditions disclose, dead
+/// branches stay silent, both through the same walk as `extract_tests`.
+#[test]
+fn ts_combined_extraction_discloses_same_conditional_credit_gap() -> Result<(), String> {
+    let source = test_file("  if (ok) {\n    expect(price(150)).toBe(130);\n  }");
+    let (tests, gap) =
+        extract_tests_and_conditional_credit_gap(Path::new("tests/lib.test.ts"), &source);
+    assert_eq!(tests.len(), 1, "fixture must register its test");
+    let gap = gap.ok_or_else(|| "combined extraction must disclose the gap".to_string())?;
+    assert_eq!(gap.condition, "ok", "gap must name the condition: {gap:?}");
+    assert_eq!(
+        gap.file,
+        PathBuf::from("tests/lib.test.ts"),
+        "gap must name the test file: {gap:?}"
+    );
+    let dead = test_file(
+        "  expect(price(150)).toBe(129);\n  if (false) {\n    if (ok) {\n      expect(price(150)).toBe(130);\n    }\n  }",
+    );
+    let (_, gap) = extract_tests_and_conditional_credit_gap(Path::new("tests/lib.test.ts"), &dead);
+    assert!(
+        gap.is_none(),
+        "dead branch must stay silent through the fold too: {gap:?}"
+    );
+    Ok(())
+}
+
 /// An empty branch and the assertion after it on the SAME line must not earn
 /// conditional credit: the probe reads the branch body's real content, not
 /// the first/last line of its span (#8714 review).

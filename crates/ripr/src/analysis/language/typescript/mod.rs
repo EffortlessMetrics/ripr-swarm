@@ -372,7 +372,8 @@ impl TypeScriptAdapter {
                 continue;
             }
             if is_test_file(relative) {
-                let mut tests = extract_tests(relative, source);
+                let (mut tests, conditional_credit_gap) =
+                    extract_tests_and_conditional_credit_gap(relative, source);
                 // RIPR-SPEC-0258: a committed snapshot entry pins the value.
                 promote_committed_snapshots(&options.root, relative, source, &mut tests);
                 // A recognized test file that parses but registers test
@@ -385,8 +386,10 @@ impl TypeScriptAdapter {
                 }
                 // #8714: an extracted assertion sitting under an unevaluated
                 // branch condition keeps its credit; the disclosure records
-                // that the branch (and the oracle) may never execute.
-                if let Some(gap) = detect_conditional_assertion_credit(relative, source, &tests) {
+                // that the branch (and the oracle) may never execute. The gap
+                // came out of the same parse as the extraction (one parse per
+                // file, not two).
+                if let Some(gap) = conditional_credit_gap {
                     conditional_credit_gaps.push(gap);
                 }
                 all_tests.extend(tests);
@@ -1065,7 +1068,7 @@ fn conditional_assertion_credit_summary(
             let limitation = conditional_assertion_credit_limitation(gap);
             Ok(Some(
                 AnalysisLimitation::new(
-                    AnalysisLimitationKind::LanguageScopeUnsupported,
+                    AnalysisLimitationKind::UnevaluatedCondition,
                     AnalysisStage::LanguageAdapter,
                     recovery()?,
                 )
@@ -1109,7 +1112,7 @@ fn conditional_assertion_credit_summary(
             }
             Ok(Some(
                 AnalysisLimitation::new(
-                    AnalysisLimitationKind::LanguageScopeUnsupported,
+                    AnalysisLimitationKind::UnevaluatedCondition,
                     AnalysisStage::LanguageAdapter,
                     recovery()?,
                 )

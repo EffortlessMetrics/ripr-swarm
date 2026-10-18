@@ -54,12 +54,17 @@ The TypeScript preview adapter:
 - finds the related test in `tests/lib.test.ts`,
 - keeps the credited oracle and the finding classification unchanged
   (RIPR-SPEC-0243 example 11: `exposed` does not move),
-- renders the `typescript_conditional_assertion_credit` analysis limitation
-  naming the unevaluated condition `ok` and recording that the credited
-  oracle may never execute (#8714).
+- renders one `unevaluated_condition` analysis limitation whose detail is the
+  `typescript_conditional_assertion_credit` disclosure, naming the unevaluated
+  condition `ok` and recording that the credited oracle may never execute
+  (#8714). The kind is `unevaluated_condition`, not
+  `language_scope_unsupported`: the changed scope was fully analyzed; the
+  caveat is conditional credit, not unanalyzed files (review on #8714).
 
 ## Must Not
 
 - Move the finding class because of the conditional credit.
 - Withhold the assertion at collection (the condition is not constant).
 - Claim runtime knowledge of whether the branch executes.
+- Claim changed files were not analyzed, or drop the unevaluated condition
+  from the limitation.

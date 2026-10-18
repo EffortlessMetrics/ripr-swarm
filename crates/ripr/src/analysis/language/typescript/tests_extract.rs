@@ -61,14 +61,35 @@ fn statement_call<'s, 'a>(stmt: &'s Statement<'a>) -> Option<&'s oxc_ast::ast::C
     }
 }
 
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "unit-test extraction surface; the analysis path uses extract_tests_and_conditional_credit_gap for one parse per file"
+    )
+)]
 pub(crate) fn extract_tests(file: &Path, source: &str) -> Vec<TypeScriptTest> {
+    extract_tests_and_conditional_credit_gap(file, source).0
+}
+
+/// Extraction plus the conditional-assertion-credit gap in ONE parse
+/// (review on #8714): the deep-analysis path needs both, and re-parsing each
+/// recognized test file doubles the parse cost of the run. The gap is
+/// `None` whenever `detect_conditional_assertion_credit` would stay silent:
+/// parse errors (the parse-error disclosure owns that case) and files where
+/// no extracted assertion was credited. Other callers keep the cheap
+/// `extract_tests` wrapper.
+pub(crate) fn extract_tests_and_conditional_credit_gap(
+    file: &Path,
+    source: &str,
+) -> (Vec<TypeScriptTest>, Option<TypeScriptConditionalCreditGap>) {
     // Same guard as owner extraction (#4101): a file under the nesting
-    // budget can still overflow the caller stack, so the second parse must
+    // budget can still overflow the caller stack, so the parse must
     // not run on the main thread.
-    let Ok(tests) = parse_on_worker(file, source, |file, source, allocator| {
+    let Ok(out) = parse_on_worker(file, source, |file, source, allocator| {
         let ret = Parser::new(allocator, source, source_type_for(file)).parse();
         if !ret.errors.is_empty() {
-            return Vec::new();
+            return (Vec::new(), None);
         }
         let imports = extract_imports_for_test_file(&ret.program.body);
         let mocks = extract_mocks_from_statements(&ret.program.body, &imports);
@@ -120,11 +141,25 @@ pub(crate) fn extract_tests(file: &Path, source: &str) -> Vec<TypeScriptTest> {
                 test.mock_factories_in_file = factories.clone();
             }
         }
-        tests
+        // Same silence conditions as `detect_conditional_assertion_credit`:
+        // no credited assertion means the walker cannot disclose anything.
+        let conditional_credit_gap = if tests.iter().any(|test| !test.assertions.is_empty()) {
+            let source_text = SourceText::new(source);
+            let mut sample = None;
+            find_conditional_assertion_credit(&ret.program.body, &source_text, source, &mut sample);
+            sample.map(|(sample_line, condition)| TypeScriptConditionalCreditGap {
+                file: file.to_path_buf(),
+                sample_line,
+                condition,
+            })
+        } else {
+            None
+        };
+        (tests, conditional_credit_gap)
     }) else {
-        return Vec::new();
+        return (Vec::new(), None);
     };
-    tests
+    out
 }
 
 /// Walk a list of statements and collect every syntactic owner-module mock
@@ -3230,6 +3265,18 @@ pub(crate) fn snippet_for_span(source: &str, start: usize, end: usize) -> String
 /// Classification-neutral, additive disclosure only — the branch recursion is
 /// deliberate; the gap carries the caveat so a credited oracle is known to
 /// possibly never execute.
+///
+/// The deep-analysis path gets this gap from
+/// `extract_tests_and_conditional_credit_gap` (one parse per file); this
+/// standalone entry point stays as the tested contract and shares the same
+/// walker and silence conditions.
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "tested standalone contract; production consumes the gap from extract_tests_and_conditional_credit_gap"
+    )
+)]
 pub(crate) fn detect_conditional_assertion_credit(
     file: &Path,
     source: &str,
@@ -3274,7 +3321,10 @@ fn branch_statements_hold_assertion(statements: &[Statement<'_>], source: &Sourc
 /// Recursive statement walk mirroring the collection walker: blocks,
 /// `if`/`else`, loops, labels, `switch`, `try`/`catch`/`finally` and `with`.
 /// Records the first branch (in source order) whose condition is not a
-/// constant literal and whose body range covers an extracted assertion line.
+/// constant literal and whose body the collector would credit an assertion
+/// from (`branch_statements_hold_assertion`, a structural probe — not a
+/// check against the extracted assertion lines; constant-condition branch
+/// selection mirrors the collector's withholding, review on #8714).
 fn find_conditional_assertion_credit(
     statements: &[Statement<'_>],
     source: &SourceText<'_>,

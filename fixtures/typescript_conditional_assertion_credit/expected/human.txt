@@ -9,7 +9,7 @@ Changed file(s) by language: typescript = 1
 
 Analysis outcome: limitations below (analysis incomplete)
   The 1 finding(s) below cover only the analyzed scope; behavior outside it has no finding.
-  Limitation: some changed files were not analyzed during language analysis; file: tests/lib.test.ts; affected items: 1; recovery: inspect the failure — Static analysis cannot evaluate the branch condition; runtime coverage establishes whether the discriminator executes.
+  Limitation: a credited assertion sits under a condition static analysis cannot evaluate during language analysis; file: tests/lib.test.ts; affected items: 1; recovery: inspect the failure — Static analysis cannot evaluate the branch condition; runtime coverage establishes whether the discriminator executes.
 
 Start here:
   State: preview language, advisory only

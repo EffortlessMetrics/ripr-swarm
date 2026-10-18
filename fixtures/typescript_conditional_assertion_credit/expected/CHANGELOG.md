@@ -11,3 +11,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_conditional_assertion_credit (2)
+
+Reason:
+RIPR-SPEC-0243: conditional-credit limitation rides its own unevaluated_condition kind instead of language_scope_unsupported (#8714 review)
+
+Command:
+`cargo xtask goldens bless typescript_conditional_assertion_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
