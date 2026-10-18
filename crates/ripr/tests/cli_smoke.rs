@@ -48,6 +48,8 @@ mod human_full_shared;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/implicit_git_root.rs"]
 mod implicit_git_root;
+#[path = "cli_smoke/init_ci_guidance.rs"]
+mod init_ci_guidance;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/init_followups.rs"]
 mod init_followups;

@@ -2106,6 +2106,16 @@ fn far_above_threshold_discounts() {
         if text == "github.event_name" {
             return Ok("pull_request".to_string());
         }
+        // The replay is a same-repository pull request by a human author.
+        if matches!(
+            text,
+            "github.event.pull_request.head.repo.full_name" | "github.repository"
+        ) {
+            return Ok("ripr-test/repo".to_string());
+        }
+        if text == "github.actor" {
+            return Ok("ripr-test-user".to_string());
+        }
         Err(format!("replay does not model the condition operand `{text}`").into())
     }
 
@@ -2189,6 +2199,8 @@ fn far_above_threshold_discounts() {
             ("RIPR_GATE_MODE".to_string(), String::new()),
             ("RIPR_GATE_BASELINE".to_string(), String::new()),
             ("RIPR_COMMENT_MODE".to_string(), "off".to_string()),
+            // The replay never reaches GitHub; the summary step has its own test.
+            ("RIPR_SUMMARY_COMMENT".to_string(), "false".to_string()),
             ("GITHUB_ENV".to_string(), github_env.display().to_string()),
             (
                 "GITHUB_STEP_SUMMARY".to_string(),
@@ -3707,6 +3719,100 @@ fn generated_publish_step_sends_every_request_in_order() -> Result<(), Box<dyn E
     Ok(())
 }
 
+/// The summary step, replayed with a stand-in `gh`: the earlier bot comment
+/// is found in the conversation pages and PATCHed, not duplicated.
+#[test]
+fn summary_step_updates_the_bot_comment_it_posted_before() -> Result<(), Box<dyn Error>> {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos();
+    let root =
+        std::env::temp_dir().join(format!("ripr-summary-step-{}-{nonce}", std::process::id()));
+    fs::create_dir_all(&root)?;
+    let result = (|| -> Result<(String, String), Box<dyn Error>> {
+        let init = run_ripr_init(&root)?;
+        if !init.status.success() {
+            return Err("ripr init failed".into());
+        }
+        let workflow = fs::read_to_string(root.join(".github/workflows/ripr.yml"))?;
+        let block = workflow_step_block(&workflow, "Publish RIPR summary comment")
+            .ok_or("missing summary step")?;
+        let body = block
+            .split_once("\n        run: |\n")
+            .map(|(_, body)| body)
+            .ok_or("summary step has no run block")?
+            .replace("${{ github.repository }}", "ripr-test/pricing")
+            .replace("${{ github.event.pull_request.number }}", "42")
+            .replace("${{ github.event.pull_request.head.sha }}", "0123abcd");
+        fs::create_dir_all(root.join("target/ripr/review"))?;
+        fs::write(
+            root.join("target/ripr/review/comments.json"),
+            serde_json::json!({
+                "comments": [{
+                    "seam": {"file": "src/lib.rs", "line": 2},
+                    "owner": "src/lib.rs::discount",
+                    "kind": "predicate_boundary",
+                    "missing_discriminator": "5 (equality boundary)"
+                }],
+                "summary": {"summary_only": 0}
+            })
+            .to_string(),
+        )?;
+        let bin = root.join("stand-in-bin");
+        fs::create_dir_all(&bin)?;
+        let log = root.join("gh.log");
+        // Pages for the listing call; every other call is logged.
+        let pages = root.join("pages.json");
+        fs::write(
+            &pages,
+            serde_json::json!([[{
+                "id": 5,
+                "body": "<!-- ripr:summary -->\nold",
+                "user": {"login": "github-actions[bot]", "type": "Bot"}
+            }]])
+            .to_string(),
+        )?;
+        fs::write(
+            bin.join("gh"),
+            format!(
+                "#!/bin/sh\ncase \"$*\" in\n*--paginate*) cat '{}' ;;\n*) echo \"$*\" >> '{}'; cat >/dev/null ;;\nesac\n",
+                pages.display(),
+                log.display()
+            ),
+        )?;
+        let ripr_dir = std::path::Path::new(env!("CARGO_BIN_EXE_ripr"))
+            .parent()
+            .ok_or("ripr binary has no directory")?;
+        let script = format!(
+            "chmod +x '{bin}/gh'\nexport PATH='{bin}:{ripr}':\"$PATH\"\nexport GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=ripr-test/pricing GITHUB_RUN_ID=9\n{body}",
+            bin = bin.display(),
+            ripr = ripr_dir.display(),
+        );
+        let run = run_sh(&script, &root)?;
+        if !run.status.success() {
+            return Err(format!(
+                "summary step failed: {}",
+                String::from_utf8_lossy(&run.stderr)
+            )
+            .into());
+        }
+        let payload =
+            fs::read_to_string(root.join("target/ripr/review/summary/summary-request.json"))?;
+        Ok((fs::read_to_string(&log)?, payload))
+    })();
+    let _ = fs::remove_dir_all(&root);
+    let (log, payload) = result?;
+    assert_eq!(
+        log.lines().collect::<Vec<_>>(),
+        vec![
+            "api --method PATCH repos/ripr-test/pricing/issues/comments/5 --input target/ripr/review/summary/summary-request.json"
+        ]
+    );
+    assert!(payload.contains("actions/runs/9"), "{payload}");
+    assert!(payload.contains("5 (equality boundary)"), "{payload}");
+    Ok(())
+}
+
 /// One request `ripr pr-comments requests` wrote, as the publish step
 /// replays it.
 #[derive(Debug)]
@@ -3823,6 +3929,7 @@ fn ci_summary_reads_the_workflow_settings_from_the_environment() -> Result<(), B
                 "RIPR_UPLOAD_SARIF",
                 "RIPR_COMMENT_MODE",
                 "RIPR_GATE_BASELINE",
+                "RIPR_GATE_MODE",
             ],
             settings,
         )?;

@@ -3883,11 +3883,14 @@ fn crate_identifier(name: &str) -> String {
 /// `ripr check` on this repository. The memo must not outlive the index it was filled from.
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct FileUseStatements {
-    by_file: std::cell::RefCell<std::collections::BTreeMap<std::path::PathBuf, Vec<String>>>,
+    by_file: crate::analysis::sync_memo::SyncMemo<
+        std::collections::BTreeMap<std::path::PathBuf, Vec<String>>,
+    >,
     /// #7985: per file and name, whether a macro invocation may define an
     /// item of that name.
-    macro_defined:
-        std::cell::RefCell<std::collections::BTreeMap<(std::path::PathBuf, String), bool>>,
+    macro_defined: crate::analysis::sync_memo::SyncMemo<
+        std::collections::BTreeMap<(std::path::PathBuf, String), bool>,
+    >,
 }
 
 impl FileUseStatements {

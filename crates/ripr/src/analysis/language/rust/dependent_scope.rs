@@ -1535,7 +1535,7 @@ mod tests {
     /// leading digit, raw identifiers, paths and macro bangs.
     #[test]
     fn ascii_fast_path_matches_the_identifier_run_scan() {
-        let haystacks: [&[u8]; 14] = [
+        let haystacks: [&[u8]; 17] = [
             b"parse",
             b"x.parse()",
             b"1parse",
@@ -1550,6 +1550,9 @@ mod tests {
             "“parse”".as_bytes(),
             "größe_parse".as_bytes(),
             b"",
+            b"1parse go",
+            "é1parse parse".as_bytes(),
+            b"a::b",
         ];
         for wanted in [
             &["parse"][..],
@@ -1557,6 +1560,12 @@ mod tests {
             &["_parse"][..],
             &["parse1"][..],
             &["x"][..],
+            // Not plain ASCII identifiers: these take the full scan, so the
+            // answer must still match it (a digit-led name never matches a
+            // run, `a::b` is never one run, and a mixed set has a Unicode name).
+            &["1parse"][..],
+            &["a::b"][..],
+            &["parse", "größe"][..],
         ] {
             let set = names(wanted);
             for haystack in haystacks {
