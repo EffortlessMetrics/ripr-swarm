@@ -3290,43 +3290,78 @@ fn find_conditional_assertion_credit(
                 find_conditional_assertion_credit(&block.body, source, raw, sample)
             }
             Statement::IfStatement(if_stmt) => {
-                if constant_condition_value(&if_stmt.test).is_none() {
-                    let consequent_holds = branch_statements_hold_assertion(
-                        std::slice::from_ref(&if_stmt.consequent),
-                        source,
-                    );
-                    let alternate_holds = if_stmt.alternate.as_ref().is_some_and(|alternate| {
-                        branch_statements_hold_assertion(std::slice::from_ref(alternate), source)
-                    });
-                    if consequent_holds || alternate_holds {
-                        let condition = snippet_for_span(
-                            raw,
-                            if_stmt.test.span().start as usize,
-                            if_stmt.test.span().end as usize,
-                        );
-                        *sample = Some((
-                            source.line_for_offset(if_stmt.span().start as usize),
-                            condition,
-                        ));
-                        return;
+                match constant_condition_value(&if_stmt.test) {
+                    // A constant-falsy condition never runs its consequent and
+                    // the collector withholds it, so only the alternate can
+                    // hold a live nested condition (review on #8714).
+                    Some(false) => {
+                        if let Some(alternate) = &if_stmt.alternate {
+                            find_conditional_assertion_credit(
+                                std::slice::from_ref(alternate),
+                                source,
+                                raw,
+                                sample,
+                            );
+                        }
                     }
-                }
-                find_conditional_assertion_credit(
-                    std::slice::from_ref(&if_stmt.consequent),
-                    source,
-                    raw,
-                    sample,
-                );
-                if let Some(alternate) = &if_stmt.alternate {
-                    find_conditional_assertion_credit(
-                        std::slice::from_ref(alternate),
+                    // A constant-truthy condition runs its consequent; the
+                    // alternate is the dead branch.
+                    Some(true) => find_conditional_assertion_credit(
+                        std::slice::from_ref(&if_stmt.consequent),
                         source,
                         raw,
                         sample,
-                    );
+                    ),
+                    None => {
+                        let consequent_holds = branch_statements_hold_assertion(
+                            std::slice::from_ref(&if_stmt.consequent),
+                            source,
+                        );
+                        let alternate_holds = if_stmt.alternate.as_ref().is_some_and(|alternate| {
+                            branch_statements_hold_assertion(
+                                std::slice::from_ref(alternate),
+                                source,
+                            )
+                        });
+                        if consequent_holds || alternate_holds {
+                            let condition = snippet_for_span(
+                                raw,
+                                if_stmt.test.span().start as usize,
+                                if_stmt.test.span().end as usize,
+                            );
+                            *sample = Some((
+                                source.line_for_offset(if_stmt.span().start as usize),
+                                condition,
+                            ));
+                            return;
+                        }
+                        find_conditional_assertion_credit(
+                            std::slice::from_ref(&if_stmt.consequent),
+                            source,
+                            raw,
+                            sample,
+                        );
+                        if let Some(alternate) = &if_stmt.alternate {
+                            find_conditional_assertion_credit(
+                                std::slice::from_ref(alternate),
+                                source,
+                                raw,
+                                sample,
+                            );
+                        }
+                    }
                 }
             }
             Statement::WhileStatement(while_stmt) => {
+                // `while (false)` never runs: the collector withholds the
+                // body, so the walker must not discover nested conditions
+                // inside it either (review on #8714).
+                // `while (false)` never runs: the collector withholds the
+                // body, so the walker must not discover nested conditions
+                // inside it either (review on #8714).
+                if constant_condition_value(&while_stmt.test) == Some(false) {
+                    continue;
+                }
                 if constant_condition_value(&while_stmt.test).is_none()
                     && branch_statements_hold_assertion(
                         std::slice::from_ref(&while_stmt.body),
@@ -3360,6 +3395,12 @@ fn find_conditional_assertion_credit(
                 sample,
             ),
             Statement::ForStatement(for_stmt) => {
+                // `for (;false;)` never runs: the collector withholds the
+                // body, so the walker must not discover nested conditions
+                // inside it either (review on #8714).
+                if for_stmt.test.as_ref().and_then(constant_condition_value) == Some(false) {
+                    continue;
+                }
                 // `for (;;)` has no test: the body always runs (benign). Only
                 // a present, non-constant test is unevaluated.
                 let unevaluated = for_stmt

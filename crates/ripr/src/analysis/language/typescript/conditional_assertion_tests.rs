@@ -129,6 +129,79 @@ fn ts_constant_loop_conditions_never_disclose() {
     );
 }
 
+/// The conditional-credit walker mirrors the collector's constant-condition
+/// withholding (review on #8714): a nested condition inside a branch the
+/// collector discarded is never extracted, so the walker must not discover
+/// it either — otherwise `if (false) { if (ok) { expect(...) } }` earns a
+/// false `typescript_conditional_assertion_credit` limitation whenever any
+/// other assertion in the file was credited.
+#[test]
+fn ts_nested_condition_in_constant_dead_branch_is_silent() {
+    let dead_consequent = "  expect(price(150)).toBe(129);\n  if (false) {\n    if (ok) {\n      expect(price(150)).toBe(130);\n    }\n  }";
+    assert_eq!(
+        extracted_assertions(dead_consequent).len(),
+        1,
+        "only the live assertion is extracted"
+    );
+    assert!(
+        credit_gap_for_body(dead_consequent).is_none(),
+        "walker must not disclose the dead consequent's nested condition"
+    );
+    let dead_alternate = "  if (true) {\n    expect(price(150)).toBe(131);\n  } else {\n    if (ok) {\n      expect(price(150)).toBe(130);\n    }\n  }";
+    assert_eq!(
+        extracted_assertions(dead_alternate).len(),
+        1,
+        "consequent of if (true) keeps its assertion"
+    );
+    assert!(
+        credit_gap_for_body(dead_alternate).is_none(),
+        "walker must not disclose the dead alternate's nested condition"
+    );
+    // Live branch of a constant `if` still recurses: the nested unevaluated
+    // condition with a collected assertion earns the disclosure.
+    let live_nested =
+        "  if (true) {\n    if (ok) {\n      expect(price(150)).toBe(130);\n    }\n  }";
+    let gap = credit_gap_for_body(live_nested)
+        .expect("live nested condition under constant if must still disclose");
+    assert_eq!(
+        gap.condition, "ok",
+        "gap must name the nested condition: {gap:?}"
+    );
+}
+
+/// Constant-falsy loops: the walker must not disclose a nested condition
+/// inside a body the collector withheld (review on #8714).
+#[test]
+fn ts_nested_condition_in_dead_loop_body_is_silent() {
+    let while_dead = "  expect(price(150)).toBe(129);\n  while (false) {\n    if (ok) {\n      expect(price(150)).toBe(130);\n    }\n  }";
+    assert_eq!(
+        extracted_assertions(while_dead).len(),
+        1,
+        "only the live assertion is extracted"
+    );
+    assert!(
+        credit_gap_for_body(while_dead).is_none(),
+        "walker must not disclose the dead while body's nested condition"
+    );
+    let for_dead = "  expect(price(150)).toBe(129);\n  for (;false;) {\n    if (ok) {\n      expect(price(150)).toBe(130);\n    }\n  }";
+    assert_eq!(
+        extracted_assertions(for_dead).len(),
+        1,
+        "only the live assertion is extracted"
+    );
+    assert!(
+        credit_gap_for_body(for_dead).is_none(),
+        "walker must not disclose the dead for body's nested condition"
+    );
+    // Live loop bodies still recurse.
+    let while_live =
+        "  while (true) {\n    if (ok) {\n      expect(price(150)).toBe(130);\n    }\n  }";
+    assert!(
+        credit_gap_for_body(while_live).is_some(),
+        "live while body must still disclose its nested condition"
+    );
+}
+
 /// `for (;;)` has no test: the body always runs, so it is benign and silent
 /// (#8714).
 #[test]
