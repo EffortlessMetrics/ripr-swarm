@@ -733,8 +733,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.91";
 /// `0.88`: same field-selector limitation metadata as full `1.82` (#8479).
 /// `0.89`: same direct-record field selectors as full `1.83`.
 /// `0.90`: same helper/local field selection as full `1.84`.
-pub(crate) /// `0.91`: same local-module macro binding as full `1.85`.
-const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.91";
+/// `0.91`: same local-module macro binding as full `1.85`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.91";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
