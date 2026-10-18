@@ -795,16 +795,24 @@ impl TypeScriptAdapter {
         if let Some(limitation) = test_extraction_partial_summary(consulted_gaps)? {
             limitations.push(limitation);
         }
-        // Conditional assertion credit (#8714): same collapse as partial
-        // extraction and the same consultation gate — the credited oracle
-        // may sit under a branch that never runs, so the disclosure rides
-        // with results that actually consumed the test index.
-        let consulted_credit_gaps: &[_] = if test_index_consumed {
-            &conditional_credit_gaps
+        // Conditional assertion credit (#8714): the consultation gate is the
+        // same as partial extraction, but the scope is the test files this
+        // diff's findings actually credited (review): the credit consumption
+        // happens in the test file holding the related test, which the diff
+        // usually does not touch, so changed-path scoping would kill the
+        // disclosure exactly where it matters. A gap in a test file no
+        // finding relates to must not mark this analysis partial.
+        let consulted_test_files: std::collections::BTreeSet<String> = findings
+            .iter()
+            .flat_map(|finding| finding.related_tests.iter())
+            .map(|related| normalized_path(&related.file))
+            .collect();
+        let consulted_credit_gaps: Vec<&TypeScriptConditionalCreditGap> = if test_index_consumed {
+            consulted_credit_gaps(&conditional_credit_gaps, &consulted_test_files)
         } else {
-            &[]
+            Vec::new()
         };
-        if let Some(limitation) = conditional_assertion_credit_summary(consulted_credit_gaps)? {
+        if let Some(limitation) = conditional_assertion_credit_summary(&consulted_credit_gaps)? {
             limitations.push(limitation);
         }
         // Partial owner extraction (#4104-A): changed lines inside owner
@@ -1039,9 +1047,10 @@ const CONDITIONAL_ASSERTION_CREDIT_SAMPLES: usize = 3;
 /// mirroring `test_extraction_partial_summary`: a single gap keeps its path;
 /// several gaps carry the file count, the first few samples and the
 /// remainder count. The credited oracle is unchanged — this only discloses
-/// that the branch holding it may never execute (#8714).
+/// that the branch holding it may never execute (#8714). Callers pass only
+/// diff-scoped gaps (`diff_scoped_credit_gaps`).
 fn conditional_assertion_credit_summary(
-    gaps: &[TypeScriptConditionalCreditGap],
+    gaps: &[&TypeScriptConditionalCreditGap],
 ) -> Result<Option<AnalysisLimitation>, String> {
     let recovery = || {
         AnalysisRecovery::new(
@@ -1052,6 +1061,7 @@ fn conditional_assertion_credit_summary(
     match gaps {
         [] => Ok(None),
         [gap] => {
+            let gap = *gap;
             let limitation = conditional_assertion_credit_limitation(gap);
             Ok(Some(
                 AnalysisLimitation::new(
@@ -1108,4 +1118,19 @@ fn conditional_assertion_credit_summary(
             ))
         }
     }
+}
+
+/// Conditional-credit gaps scoped to the test files a set of findings
+/// actually credited (review on #8714): the credit consumption happens in
+/// the test file holding the related test, which the diff usually does not
+/// touch; a gap in a test file no finding relates to must not mark this
+/// analysis partial. Normalization matches the related-test path
+/// convention so separator spelling cannot split a match.
+fn consulted_credit_gaps<'a>(
+    gaps: &'a [TypeScriptConditionalCreditGap],
+    consulted_test_files: &std::collections::BTreeSet<String>,
+) -> Vec<&'a TypeScriptConditionalCreditGap> {
+    gaps.iter()
+        .filter(|gap| consulted_test_files.contains(&normalized_path(&gap.file)))
+        .collect()
 }

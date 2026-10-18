@@ -184,3 +184,120 @@ fn ts_no_assertions_no_credit_gap() {
         "no collected assertions means no conditional-credit gap"
     );
 }
+
+/// BigInt zero is falsy in every radix, so `0x0n` / `0o0n` / `0b0n` branches
+/// are dead and their assertions are withheld just like `0n` (review on
+/// #8714); non-zero spellings of every radix stay truthy and collected.
+#[test]
+fn ts_bigint_zero_is_falsy_in_every_radix() {
+    for falsy in ["0n", "0x0n", "0X0n", "0o0n", "0O0n", "0b0n", "0B0n"] {
+        let assertions = extracted_assertions(&format!(
+            "  if ({falsy}) {{\n    expect(price(150)).toBe(130);\n  }}"
+        ));
+        assert!(
+            assertions.is_empty(),
+            "constant-falsy BigInt {falsy} must withhold its branch: {assertions:?}"
+        );
+    }
+    for truthy in ["1n", "0x1n", "0o1n", "0b1n", "10n", "0xffn"] {
+        let assertions = extracted_assertions(&format!(
+            "  if ({truthy}) {{\n    expect(price(150)).toBe(130);\n  }}"
+        ));
+        assert_eq!(
+            assertions.len(),
+            1,
+            "constant-truthy BigInt {truthy} must keep its assertion: {assertions:?}"
+        );
+    }
+}
+
+/// Plain hex/octal/binary numeric literals without the `n` suffix parse to
+/// their value, so `0x0` / `0o0` / `0b0` are constant-falsy too (review on
+/// #8714).
+#[test]
+fn ts_radix_numeric_zero_is_falsy() {
+    for falsy in ["0x0", "0o0", "0b0", "0", "0.0", "0e3"] {
+        let assertions = extracted_assertions(&format!(
+            "  if ({falsy}) {{\n    expect(price(150)).toBe(130);\n  }}"
+        ));
+        assert!(
+            assertions.is_empty(),
+            "constant-falsy numeric {falsy} must withhold its branch: {assertions:?}"
+        );
+    }
+}
+
+/// Consulted conditional-credit gaps are scoped to the test files this
+/// diff's findings actually credited (review on #8714): the credit
+/// consumption happens in the test file holding the related test, which the
+/// diff usually does not touch; a gap in a test file no finding relates to
+/// must not mark this analysis partial.
+#[test]
+fn ts_credit_gaps_scoped_to_credited_test_files() {
+    let gap = |file: &str| TypeScriptConditionalCreditGap {
+        file: PathBuf::from(file),
+        sample_line: 4,
+        condition: "flag".to_string(),
+    };
+    let gaps = vec![
+        gap("tests/credited.test.ts"),
+        gap("tests/unrelated.test.ts"),
+    ];
+    let consulted: std::collections::BTreeSet<String> = ["tests/credited.test.ts"]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    let scoped = consulted_credit_gaps(&gaps, &consulted);
+    assert_eq!(
+        scoped.len(),
+        1,
+        "only the credited file's gap may be consulted: {scoped:?}"
+    );
+    assert_eq!(
+        scoped[0].file,
+        PathBuf::from("tests/credited.test.ts"),
+        "scoped gap must be the credited file's: {scoped:?}"
+    );
+    // No credited overlap: nothing consulted, and the summary stays silent.
+    let consulted: std::collections::BTreeSet<String> =
+        ["src/other.ts".to_string()].into_iter().collect();
+    let scoped = consulted_credit_gaps(&gaps, &consulted);
+    assert!(scoped.is_empty(), "no overlap means no consulted gaps");
+    let summary = conditional_assertion_credit_summary(&scoped);
+    assert!(
+        matches!(summary, Ok(None)),
+        "empty scoped set must produce no limitation: {summary:?}"
+    );
+}
+
+/// An empty branch and the assertion after it on the SAME line must not earn
+/// conditional credit: the probe reads the branch body's real content, not
+/// the first/last line of its span (#8714 review).
+#[test]
+fn ts_empty_branch_sharing_a_line_with_the_assertion_is_benign() {
+    let body = "  if (flag) {} expect(price(150)).toBe(130);";
+    let assertions = extracted_assertions(body);
+    assert_eq!(
+        assertions.len(),
+        1,
+        "the assertion after the empty branch is collected and unconditional: {assertions:?}"
+    );
+    assert!(
+        credit_gap_for_body(body).is_none(),
+        "an empty branch must not earn conditional credit: {assertions:?}"
+    );
+}
+
+/// Positive control for the same-line probe: a single-line branch whose body
+/// HOLDS the assertion still earns the disclosure (#8714).
+#[test]
+fn ts_single_line_branch_holding_the_assertion_discloses() -> Result<(), String> {
+    let body = "  if (flag) { expect(price(150)).toBe(130); }";
+    let gap = credit_gap_for_body(body)
+        .ok_or_else(|| "a one-line branch holding the assertion must disclose".to_string())?;
+    assert_eq!(
+        gap.condition, "flag",
+        "gap must name the condition: {gap:?}"
+    );
+    Ok(())
+}

@@ -3250,13 +3250,7 @@ pub(crate) fn detect_conditional_assertion_credit(
         }
         let source = SourceText::new(source);
         let mut sample = None;
-        find_conditional_assertion_credit(
-            &ret.program.body,
-            &source,
-            &source,
-            &assertion_lines,
-            &mut sample,
-        );
+        find_conditional_assertion_credit(&ret.program.body, &source, &source, &mut sample);
         sample.map(|(sample_line, condition)| TypeScriptConditionalCreditGap {
             file: file.to_path_buf(),
             sample_line,
@@ -3268,18 +3262,13 @@ pub(crate) fn detect_conditional_assertion_credit(
     gap
 }
 
-/// Whether any extracted assertion line falls inside the branch's line range.
-fn branch_holds_assertion(
-    start: usize,
-    end: usize,
-    source: &SourceText<'_>,
-    assertion_lines: &[usize],
-) -> bool {
-    let start_line = source.line_for_offset(start);
-    let end_line = source.line_for_offset(end);
-    assertion_lines
-        .iter()
-        .any(|line| (start_line..=end_line).contains(line))
+/// Whether the branch body actually collects an assertion. Probed with the
+/// real collector (`statements_collect_assertion_probe`) instead of a
+/// first/last-line range (#8714 review): a line-range check credits
+/// `if (flag) {} expect(...)` when the empty branch and the assertion share
+/// one line, while the probe reads the branch body's real content.
+fn branch_statements_hold_assertion(statements: &[Statement<'_>], source: &SourceText<'_>) -> bool {
+    statements_collect_assertion_probe(statements, source)
 }
 
 /// Recursive statement walk mirroring the collection walker: blocks,
@@ -3290,7 +3279,6 @@ fn find_conditional_assertion_credit(
     statements: &[Statement<'_>],
     source: &SourceText<'_>,
     raw: &str,
-    assertion_lines: &[usize],
     sample: &mut Option<(usize, String)>,
 ) {
     if sample.is_some() {
@@ -3299,21 +3287,18 @@ fn find_conditional_assertion_credit(
     for stmt in statements {
         match stmt {
             Statement::BlockStatement(block) => {
-                find_conditional_assertion_credit(&block.body, source, raw, assertion_lines, sample)
+                find_conditional_assertion_credit(&block.body, source, raw, sample)
             }
             Statement::IfStatement(if_stmt) => {
                 if constant_condition_value(&if_stmt.test).is_none() {
-                    let branch_end = if_stmt
-                        .alternate
-                        .as_ref()
-                        .map(|alternate| alternate.span().end)
-                        .unwrap_or_else(|| if_stmt.consequent.span().end);
-                    if branch_holds_assertion(
-                        if_stmt.consequent.span().start as usize,
-                        branch_end as usize,
+                    let consequent_holds = branch_statements_hold_assertion(
+                        std::slice::from_ref(&if_stmt.consequent),
                         source,
-                        assertion_lines,
-                    ) {
+                    );
+                    let alternate_holds = if_stmt.alternate.as_ref().is_some_and(|alternate| {
+                        branch_statements_hold_assertion(std::slice::from_ref(alternate), source)
+                    });
+                    if consequent_holds || alternate_holds {
                         let condition = snippet_for_span(
                             raw,
                             if_stmt.test.span().start as usize,
@@ -3330,7 +3315,6 @@ fn find_conditional_assertion_credit(
                     std::slice::from_ref(&if_stmt.consequent),
                     source,
                     raw,
-                    assertion_lines,
                     sample,
                 );
                 if let Some(alternate) = &if_stmt.alternate {
@@ -3338,18 +3322,15 @@ fn find_conditional_assertion_credit(
                         std::slice::from_ref(alternate),
                         source,
                         raw,
-                        assertion_lines,
                         sample,
                     );
                 }
             }
             Statement::WhileStatement(while_stmt) => {
                 if constant_condition_value(&while_stmt.test).is_none()
-                    && branch_holds_assertion(
-                        while_stmt.body.span().start as usize,
-                        while_stmt.body.span().end as usize,
+                    && branch_statements_hold_assertion(
+                        std::slice::from_ref(&while_stmt.body),
                         source,
-                        assertion_lines,
                     )
                 {
                     let condition = snippet_for_span(
@@ -3367,7 +3348,6 @@ fn find_conditional_assertion_credit(
                     std::slice::from_ref(&while_stmt.body),
                     source,
                     raw,
-                    assertion_lines,
                     sample,
                 );
             }
@@ -3377,7 +3357,6 @@ fn find_conditional_assertion_credit(
                 std::slice::from_ref(&do_while.body),
                 source,
                 raw,
-                assertion_lines,
                 sample,
             ),
             Statement::ForStatement(for_stmt) => {
@@ -3388,11 +3367,9 @@ fn find_conditional_assertion_credit(
                     .as_ref()
                     .is_some_and(|test| constant_condition_value(test).is_none());
                 if unevaluated
-                    && branch_holds_assertion(
-                        for_stmt.body.span().start as usize,
-                        for_stmt.body.span().end as usize,
+                    && branch_statements_hold_assertion(
+                        std::slice::from_ref(&for_stmt.body),
                         source,
-                        assertion_lines,
                     )
                 {
                     let condition = for_stmt
@@ -3416,7 +3393,6 @@ fn find_conditional_assertion_credit(
                     std::slice::from_ref(&for_stmt.body),
                     source,
                     raw,
-                    assertion_lines,
                     sample,
                 );
             }
@@ -3424,98 +3400,58 @@ fn find_conditional_assertion_credit(
                 std::slice::from_ref(&for_stmt.body),
                 source,
                 raw,
-                assertion_lines,
                 sample,
             ),
             Statement::ForOfStatement(for_stmt) => find_conditional_assertion_credit(
                 std::slice::from_ref(&for_stmt.body),
                 source,
                 raw,
-                assertion_lines,
                 sample,
             ),
             Statement::LabeledStatement(labeled) => find_conditional_assertion_credit(
                 std::slice::from_ref(&labeled.body),
                 source,
                 raw,
-                assertion_lines,
                 sample,
             ),
             Statement::SwitchStatement(switch) => {
                 for case in &switch.cases {
-                    find_conditional_assertion_credit(
-                        &case.consequent,
-                        source,
-                        raw,
-                        assertion_lines,
-                        sample,
-                    );
+                    find_conditional_assertion_credit(&case.consequent, source, raw, sample);
                     if sample.is_some() {
                         return;
                     }
                 }
             }
             Statement::TryStatement(try_stmt) => {
-                find_conditional_assertion_credit(
-                    &try_stmt.block.body,
-                    source,
-                    raw,
-                    assertion_lines,
-                    sample,
-                );
+                find_conditional_assertion_credit(&try_stmt.block.body, source, raw, sample);
                 if sample.is_some() {
                     return;
                 }
                 if let Some(handler) = &try_stmt.handler {
-                    find_conditional_assertion_credit(
-                        &handler.body.body,
-                        source,
-                        raw,
-                        assertion_lines,
-                        sample,
-                    );
+                    find_conditional_assertion_credit(&handler.body.body, source, raw, sample);
                     if sample.is_some() {
                         return;
                     }
                 }
                 if let Some(finalizer) = &try_stmt.finalizer {
-                    find_conditional_assertion_credit(
-                        &finalizer.body,
-                        source,
-                        raw,
-                        assertion_lines,
-                        sample,
-                    );
+                    find_conditional_assertion_credit(&finalizer.body, source, raw, sample);
                 }
             }
             Statement::WithStatement(with) => find_conditional_assertion_credit(
                 std::slice::from_ref(&with.body),
                 source,
                 raw,
-                assertion_lines,
                 sample,
             ),
             Statement::FunctionDeclaration(func) => {
                 if let Some(body) = &func.body {
-                    find_conditional_assertion_credit(
-                        &body.statements,
-                        source,
-                        raw,
-                        assertion_lines,
-                        sample,
-                    );
+                    find_conditional_assertion_credit(&body.statements, source, raw, sample);
                 }
             }
             Statement::VariableDeclaration(var) => {
                 for declarator in &var.declarations {
                     if let Some(init) = &declarator.init {
-                        find_conditional_assertion_credit_in_expression(
-                            init,
-                            source,
-                            raw,
-                            assertion_lines,
-                            sample,
-                        );
+                        find_conditional_assertion_credit_in_expression(init, source, raw, sample);
                         if sample.is_some() {
                             return;
                         }
@@ -3524,13 +3460,7 @@ fn find_conditional_assertion_credit(
             }
             Statement::ReturnStatement(ret) => {
                 if let Some(argument) = &ret.argument {
-                    find_conditional_assertion_credit_in_expression(
-                        argument,
-                        source,
-                        raw,
-                        assertion_lines,
-                        sample,
-                    );
+                    find_conditional_assertion_credit_in_expression(argument, source, raw, sample);
                 }
             }
             Statement::ExpressionStatement(expr_stmt) => {
@@ -3538,7 +3468,6 @@ fn find_conditional_assertion_credit(
                     &expr_stmt.expression,
                     source,
                     raw,
-                    assertion_lines,
                     sample,
                 );
             }
@@ -3556,7 +3485,6 @@ fn find_conditional_assertion_credit_in_expression(
     expression: &Expression<'_>,
     source: &SourceText<'_>,
     raw: &str,
-    assertion_lines: &[usize],
     sample: &mut Option<(usize, String)>,
 ) {
     if sample.is_some() {
@@ -3564,35 +3492,17 @@ fn find_conditional_assertion_credit_in_expression(
     }
     match expression {
         Expression::ArrowFunctionExpression(arrow) => {
-            find_conditional_assertion_credit(
-                &arrow.body.statements,
-                source,
-                raw,
-                assertion_lines,
-                sample,
-            );
+            find_conditional_assertion_credit(&arrow.body.statements, source, raw, sample);
         }
         Expression::FunctionExpression(func) => {
             if let Some(body) = &func.body {
-                find_conditional_assertion_credit(
-                    &body.statements,
-                    source,
-                    raw,
-                    assertion_lines,
-                    sample,
-                );
+                find_conditional_assertion_credit(&body.statements, source, raw, sample);
             }
         }
         Expression::CallExpression(call) => {
             for argument in &call.arguments {
                 if let Some(expr) = argument.as_expression() {
-                    find_conditional_assertion_credit_in_expression(
-                        expr,
-                        source,
-                        raw,
-                        assertion_lines,
-                        sample,
-                    );
+                    find_conditional_assertion_credit_in_expression(expr, source, raw, sample);
                 }
                 if sample.is_some() {
                     return;
@@ -3602,13 +3512,7 @@ fn find_conditional_assertion_credit_in_expression(
         Expression::NewExpression(call) => {
             for argument in &call.arguments {
                 if let Some(expr) = argument.as_expression() {
-                    find_conditional_assertion_credit_in_expression(
-                        expr,
-                        source,
-                        raw,
-                        assertion_lines,
-                        sample,
-                    );
+                    find_conditional_assertion_credit_in_expression(expr, source, raw, sample);
                 }
                 if sample.is_some() {
                     return;
@@ -3616,89 +3520,45 @@ fn find_conditional_assertion_credit_in_expression(
             }
         }
         Expression::AwaitExpression(awaited) => {
-            find_conditional_assertion_credit_in_expression(
-                &awaited.argument,
-                source,
-                raw,
-                assertion_lines,
-                sample,
-            );
+            find_conditional_assertion_credit_in_expression(&awaited.argument, source, raw, sample);
         }
         Expression::SequenceExpression(sequence) => {
             for expr in &sequence.expressions {
-                find_conditional_assertion_credit_in_expression(
-                    expr,
-                    source,
-                    raw,
-                    assertion_lines,
-                    sample,
-                );
+                find_conditional_assertion_credit_in_expression(expr, source, raw, sample);
                 if sample.is_some() {
                     return;
                 }
             }
         }
         Expression::LogicalExpression(logical) => {
-            find_conditional_assertion_credit_in_expression(
-                &logical.left,
-                source,
-                raw,
-                assertion_lines,
-                sample,
-            );
-            find_conditional_assertion_credit_in_expression(
-                &logical.right,
-                source,
-                raw,
-                assertion_lines,
-                sample,
-            );
+            find_conditional_assertion_credit_in_expression(&logical.left, source, raw, sample);
+            find_conditional_assertion_credit_in_expression(&logical.right, source, raw, sample);
         }
         Expression::ConditionalExpression(conditional) => {
             find_conditional_assertion_credit_in_expression(
                 &conditional.consequent,
                 source,
                 raw,
-                assertion_lines,
                 sample,
             );
             find_conditional_assertion_credit_in_expression(
                 &conditional.alternate,
                 source,
                 raw,
-                assertion_lines,
                 sample,
             );
         }
         Expression::AssignmentExpression(assign) => {
-            find_conditional_assertion_credit_in_expression(
-                &assign.right,
-                source,
-                raw,
-                assertion_lines,
-                sample,
-            );
+            find_conditional_assertion_credit_in_expression(&assign.right, source, raw, sample);
         }
         Expression::ParenthesizedExpression(paren) => {
-            find_conditional_assertion_credit_in_expression(
-                &paren.expression,
-                source,
-                raw,
-                assertion_lines,
-                sample,
-            );
+            find_conditional_assertion_credit_in_expression(&paren.expression, source, raw, sample);
         }
         Expression::ChainExpression(chain) => {
             if let oxc_ast::ast::ChainElement::CallExpression(call) = &chain.expression {
                 for argument in &call.arguments {
                     if let Some(expr) = argument.as_expression() {
-                        find_conditional_assertion_credit_in_expression(
-                            expr,
-                            source,
-                            raw,
-                            assertion_lines,
-                            sample,
-                        );
+                        find_conditional_assertion_credit_in_expression(expr, source, raw, sample);
                     }
                     if sample.is_some() {
                         return;
@@ -3707,51 +3567,21 @@ fn find_conditional_assertion_credit_in_expression(
             }
         }
         Expression::TSAsExpression(cast) => {
-            find_conditional_assertion_credit_in_expression(
-                &cast.expression,
-                source,
-                raw,
-                assertion_lines,
-                sample,
-            );
+            find_conditional_assertion_credit_in_expression(&cast.expression, source, raw, sample);
         }
         Expression::TSSatisfiesExpression(cast) => {
-            find_conditional_assertion_credit_in_expression(
-                &cast.expression,
-                source,
-                raw,
-                assertion_lines,
-                sample,
-            );
+            find_conditional_assertion_credit_in_expression(&cast.expression, source, raw, sample);
         }
         Expression::TSTypeAssertion(cast) => {
-            find_conditional_assertion_credit_in_expression(
-                &cast.expression,
-                source,
-                raw,
-                assertion_lines,
-                sample,
-            );
+            find_conditional_assertion_credit_in_expression(&cast.expression, source, raw, sample);
         }
         Expression::TSNonNullExpression(cast) => {
-            find_conditional_assertion_credit_in_expression(
-                &cast.expression,
-                source,
-                raw,
-                assertion_lines,
-                sample,
-            );
+            find_conditional_assertion_credit_in_expression(&cast.expression, source, raw, sample);
         }
         Expression::ArrayExpression(array) => {
             for element in &array.elements {
                 if let Some(expr) = element.as_expression() {
-                    find_conditional_assertion_credit_in_expression(
-                        expr,
-                        source,
-                        raw,
-                        assertion_lines,
-                        sample,
-                    );
+                    find_conditional_assertion_credit_in_expression(expr, source, raw, sample);
                 }
                 if sample.is_some() {
                     return;
@@ -3765,7 +3595,6 @@ fn find_conditional_assertion_credit_in_expression(
                         &prop.value,
                         source,
                         raw,
-                        assertion_lines,
                         sample,
                     );
                 }
@@ -3775,23 +3604,11 @@ fn find_conditional_assertion_credit_in_expression(
             }
         }
         Expression::UnaryExpression(unary) => {
-            find_conditional_assertion_credit_in_expression(
-                &unary.argument,
-                source,
-                raw,
-                assertion_lines,
-                sample,
-            );
+            find_conditional_assertion_credit_in_expression(&unary.argument, source, raw, sample);
         }
         Expression::YieldExpression(yield_expr) => {
             if let Some(argument) = &yield_expr.argument {
-                find_conditional_assertion_credit_in_expression(
-                    argument,
-                    source,
-                    raw,
-                    assertion_lines,
-                    sample,
-                );
+                find_conditional_assertion_credit_in_expression(argument, source, raw, sample);
             }
         }
         _ => {}

@@ -197,6 +197,37 @@ pub(crate) fn collect_callback_assertions(
     out
 }
 
+/// `true` when the statement list collects at least one assertion under
+/// generic runner-global bindings. `detect_conditional_assertion_credit`
+/// probes branch bodies with this instead of comparing first/last lines
+/// (#8714 review): a line-range check credits `if (flag) {} expect(...)`
+/// when the empty branch and the assertion share one line, while the probe
+/// reads the branch body's real collected content. Generic bindings
+/// under-disclose (a receiver-scoped AVA assertion is not probed) rather
+/// than over-credit; callers keep the extracted-assertions pre-check so the
+/// disclosure never fires where nothing was credited.
+pub(crate) fn statements_collect_assertion_probe(
+    statements: &[Statement<'_>],
+    source: &SourceText<'_>,
+) -> bool {
+    let bindings = TypeScriptAssertionBindings::default();
+    let context = AssertionContext {
+        receiver: None,
+        bindings: &bindings,
+        returns_to_runner: false,
+        literal_consts: &[],
+        match_object_consts: &[],
+    };
+    let mut probe = Vec::new();
+    for stmt in statements {
+        collect_expect_assertions_in_statement(stmt, source, &context, &mut probe);
+        if !probe.is_empty() {
+            return true;
+        }
+    }
+    false
+}
+
 /// What a test body's assertions may be made through: the AVA-style callback
 /// receiver (`t`) and the file's imported assertion libraries.
 pub(crate) struct AssertionContext<'a> {
@@ -892,7 +923,8 @@ pub(crate) fn expect_assertion_from_expression(
     // RIPR-SPEC-0262: the file's own matcher passes only on `===`. The same
     // credit carries reference identity for RIPR-SPEC-0246 rule 1; `toEqual`
     // is also `exact_value` and must not inherit that property. A negated
-    // matcher earns capped weak credit, so no strict identity credit either.
+    // matcher earns capped weak credit and asserts NON-identity, so it pins
+    // neither: the flag stays false for `expect(x).not.toBe(y)` (#8712).
     let credited_strict_custom = !negated
         && async_modifier != Some("rejects")
         && bindings.strict_matchers.iter().any(|name| name == matcher)
@@ -915,9 +947,9 @@ pub(crate) fn expect_assertion_from_expression(
     } else {
         oracle_for_matcher(matcher)
     };
-    let compares_reference_identity =
-        TypeScriptAssertion::jest_expect_compares_reference_identity(matcher)
-            || credited_strict_custom;
+    let compares_reference_identity = !negated
+        && (TypeScriptAssertion::jest_expect_compares_reference_identity(matcher)
+            || credited_strict_custom);
 
     // Oracle metadata (RIPR-SPEC-0085 §PR5).
     // Extract observed_expression from the first argument of `expect(...)`.
@@ -2103,30 +2135,63 @@ pub(crate) fn call_expression_is_expect(call: &oxc_ast::ast::CallExpression<'_>)
 }
 
 /// Static value of a branch or loop condition made of constant literals
-/// (`false`, `0`, `0n`, `""`, `` ` ` ``, `null`), or `None` when the
-/// condition is anything else — an identifier, an env read, a call or an
-/// operation (#8714). Only the honestly decidable cases are evaluated; the
-/// deliberate setup-branch recursion keeps collecting under an unevaluated
-/// condition and `detect_conditional_assertion_credit` discloses the caveat.
+/// (`false`, `0`, `0x0`, `0n`, `0x0n`, `""`, `` ` ` ``, `null`), or `None`
+/// when the condition is anything else — an identifier, an env read, a call
+/// or an operation (#8714). Only the honestly decidable cases are evaluated;
+/// the deliberate setup-branch recursion keeps collecting under an
+/// unevaluated condition and `detect_conditional_assertion_credit` discloses
+/// the caveat. BigInt zero is falsy in EVERY radix (`0n`, `0x0n`, `0o0n`,
+/// `0b0n`), so the raw digits are parsed with their radix prefix rather than
+/// compared to the decimal spelling "0" (review on #8714).
 pub(crate) fn constant_condition_value(expr: &Expression<'_>) -> Option<bool> {
     match expr {
         Expression::BooleanLiteral(boolean) => Some(boolean.value),
+        // Numeric literals arrive parsed, so every radix (`0x0`, `0o0`,
+        // `0b0`, legacy `00`) is already a zero value here.
         Expression::NumericLiteral(number) => Some(number.value != 0.0),
-        Expression::BigIntLiteral(bigint) => {
-            Some(bigint.value.as_str().trim_end_matches('n') != "0")
-        }
+        Expression::BigIntLiteral(bigint) => Some(bigint_zero_is_falsy(
+            bigint.value.as_str().trim_end_matches('n'),
+        )),
         Expression::StringLiteral(string) => Some(!string.value.is_empty()),
-        Expression::TemplateLiteral(template) if template.expressions.is_empty() => Some(
-            !template
-                .quasis
-                .iter()
-                .filter_map(|quasi| quasi.value.cooked.as_deref())
-                .collect::<String>()
-                .is_empty(),
-        ),
+        Expression::TemplateLiteral(template) if template.expressions.is_empty() => {
+            Some(!template.quasis.iter().any(|quasi| {
+                quasi
+                    .value
+                    .cooked
+                    .as_ref()
+                    .is_some_and(|cooked| !cooked.is_empty())
+            }))
+        }
         Expression::NullLiteral(_) => Some(false),
         _ => None,
     }
+}
+
+/// `true` when the BigInt literal's digits denote zero. Zero is falsy in
+/// every radix (`0n`, `0x0n`, `0o0n`, `0b0n`), so the digits are parsed with
+/// their radix prefix rather than compared to the decimal spelling "0"
+/// (#8714 review). A value that overflows even `u128` is certainly non-zero,
+/// so an unparseable digit string reads truthy.
+fn bigint_zero_is_falsy(literal: &str) -> bool {
+    let (digits, radix) = if let Some(rest) = literal
+        .strip_prefix("0x")
+        .or_else(|| literal.strip_prefix("0X"))
+    {
+        (rest, 16)
+    } else if let Some(rest) = literal
+        .strip_prefix("0o")
+        .or_else(|| literal.strip_prefix("0O"))
+    {
+        (rest, 8)
+    } else if let Some(rest) = literal
+        .strip_prefix("0b")
+        .or_else(|| literal.strip_prefix("0B"))
+    {
+        (rest, 2)
+    } else {
+        (literal, 10)
+    };
+    u128::from_str_radix(digits, radix) != Ok(0)
 }
 
 /// RIPR-SPEC-0243 rule 9 (#8713): true when the matcher's single argument is

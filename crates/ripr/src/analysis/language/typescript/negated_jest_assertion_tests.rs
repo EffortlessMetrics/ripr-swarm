@@ -212,3 +212,24 @@ fn ts_negation_composes_with_resolves_modifier() {
         );
     }
 }
+
+/// A negated identity matcher asserts NON-identity, so it must not carry the
+/// reference-identity property that RIPR-SPEC-0246 rule 1 reads: the capped
+/// weak negated oracle (`not.toBe`) cannot pin a copy-for-identity change to
+/// `exposed` (#8712; review on #8713's wave).
+#[test]
+fn ts_negated_tobe_pins_no_identity() {
+    let dynamic =
+        extracted_assertion("  const other = price(100);\n  expect(price(150)).not.toBe(other);");
+    assert!(
+        !dynamic.compares_reference_identity,
+        "negated toBe with a dynamic expected must not pin identity: {dynamic:?}"
+    );
+    // Control: the unconditional spelling keeps the property.
+    let plain =
+        extracted_assertion("  const other = price(100);\n  expect(price(150)).toBe(other);");
+    assert!(
+        plain.compares_reference_identity,
+        "unconditional toBe with a dynamic expected pins identity: {plain:?}"
+    );
+}
