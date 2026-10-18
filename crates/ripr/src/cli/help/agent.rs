@@ -135,7 +135,9 @@ pub(super) const AGENT_STUB_HELP: &str = r#"Write a compiling Rust test stub for
 Usage: ripr agent stub [--root PATH] (--seam-id ID | --at FILE:LINE [--kind FAMILY]) [--write] [--json]
 
 Options:
-  --root PATH      Workspace root. Defaults to current directory.
+  --root PATH      Workspace root. Defaults to the current directory, then
+                   walks up to the enclosing workspace or package, or the git
+                   top level; `--root .` pins this directory.
   --seam-id ID     Select one visible seam by ID.
   --at FILE:LINE   Select the gap at a `ripr check` finding location.
   --kind FAMILY    With --at: the finding's probe family (`predicate`,

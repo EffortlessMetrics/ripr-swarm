@@ -243,6 +243,12 @@ pub(super) fn resolve_implicit_command_root(
         ..CheckInput::default()
     };
     resolve_implicit_workspace_root(&mut input)?;
+    // #7468 parity: a closer member-level ripr.toml is skipped by the walk.
+    if input.root != *root
+        && let Some(warning) = skipped_closer_config_warning(Path::new("."), &input.root)
+    {
+        eprintln!("{}", terminal_safe(warning));
+    }
     *root = input.root;
     Ok(())
 }

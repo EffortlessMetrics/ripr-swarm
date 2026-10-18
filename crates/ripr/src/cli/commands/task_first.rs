@@ -27,7 +27,9 @@ pub(in crate::cli) const REPAIR_HELP: &str = r#"Start a repair attempt for one g
 Usage: ripr repair [<item>] [--root PATH]
 
 Options:
-  --root PATH      Workspace root. Defaults to current directory.
+  --root PATH      Workspace root. Defaults to the current directory, then
+                   walks up to the enclosing workspace or package, or the git
+                   top level; `--root .` pins this directory.
 
 Without an item, repair starts only when exactly one repair-eligible seam
 is visible under the selected root. Several eligible seams print a bounded
@@ -56,7 +58,9 @@ Usage: ripr continue [--attempt ID] [--root PATH]
 
 Options:
   --attempt ID     Select one repair attempt by ID.
-  --root PATH      Workspace root. Defaults to current directory.
+  --root PATH      Workspace root. Defaults to the current directory, then
+                   walks up to the enclosing workspace or package, or the git
+                   top level; `--root .` pins this directory.
 
 Without an ID, continue runs only when exactly one current attempt is
 eligible under the selected root. Several current attempts print a bounded
@@ -87,7 +91,9 @@ Options:
                    recovery action. Without it, status lists every attempt in
                    the store and selects a next command only when that choice
                    is unambiguous.
-  --root PATH      Workspace root. Defaults to current directory.
+  --root PATH      Workspace root. Defaults to the current directory, then
+                   walks up to the enclosing workspace or package, or the git
+                   top level; `--root .` pins this directory.
   --json           Emit the machine-readable status report. Human Markdown is the default.
 
 Status projects the repair-attempt state with its canonical next action.

@@ -92,11 +92,9 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     let mut options = parse_pilot_options(args)?;
     // #8767: same implicit root `ripr check` uses; `--root .` opts out. The
     // default packet directory follows the resolved root.
-    if !options.root_explicit {
-        super::check::resolve_implicit_command_root(&mut options.root, false)?;
-        if !options.out_explicit {
-            options.out_dir = default_pilot_out_dir(&options.root);
-        }
+    super::check::resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+    if !options.root_explicit && !options.out_explicit {
+        options.out_dir = default_pilot_out_dir(&options.root);
     }
     if !options.root.is_dir() {
         return Err(format!(
