@@ -744,6 +744,18 @@ fn collect(fixture: &Fixture, subcommands: &BTreeSet<String>) -> Result<Collecte
                     "HEAD",
                 ]),
             ),
+            // Empty `base..head` (#6620). Keep this last among first-pr flows
+            // so artifact ingest reads the no-diff start-here packet. The CLI
+            // summary for empty-diff does not reprint recovery steps; they
+            // live in that packet. Minimum 0 is the stdout count, not a claim
+            // that the packet printed nothing.
+            (
+                "first-pr-no-diff",
+                0,
+                args(&[
+                    "first-pr", "--root", root, "--base", "HEAD", "--head", "HEAD",
+                ]),
+            ),
             (
                 "explain",
                 1,

@@ -661,6 +661,38 @@ impl ServerHandler for McpServer {
         .with_instructions(protocol::INSTRUCTIONS)
         .with_server_info(Implementation::new("ripr", env!("CARGO_PKG_VERSION")))
     }
+    /// The SDK decodes a request whose params fail typed validation as a
+    /// custom request and the default answers `-32601` with only the method
+    /// name. A method this server serves is not missing: report the shape
+    /// violation as `-32602` so a client can tell a bad call from a bad
+    /// method (#8504).
+    async fn on_custom_request(
+        &self,
+        request: CustomRequest,
+        _: RequestContext<RoleServer>,
+    ) -> Result<CustomResult, ErrorData> {
+        const SERVED_METHODS: [&str; 8] = [
+            "server/discover",
+            "completion/complete",
+            "tools/call",
+            "tools/list",
+            "resources/read",
+            "resources/list",
+            "resources/templates/list",
+            "prompts/list",
+        ];
+        if SERVED_METHODS.contains(&request.method.as_str()) {
+            return Err(ErrorData::invalid_params(
+                format!("invalid params for `{}`", request.method),
+                None,
+            ));
+        }
+        Err(ErrorData::new(
+            ErrorCode::METHOD_NOT_FOUND,
+            request.method,
+            None,
+        ))
+    }
     async fn list_tools(
         &self,
         _: Option<PaginatedRequestParams>,

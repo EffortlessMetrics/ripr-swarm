@@ -4039,6 +4039,43 @@ fn extract_tests_withholds_caught_assertions_but_reads_handler_and_finally() {
 }
 
 #[test]
+fn extract_tests_withholds_assertions_a_finalizer_completion_can_replace() {
+    let assertions = |body: &str| {
+        let source = format!("test(\"t\", async () => {{\n{body}\n}});\n");
+        let tests = extract_tests(Path::new("tests/lib.test.ts"), &source);
+        assert_eq!(tests.len(), 1, "{body}");
+        tests[0]
+            .assertions
+            .iter()
+            .map(|assertion| assertion.matcher.clone())
+            .collect::<Vec<_>>()
+    };
+    let check = "expect(a).toBe(1);";
+    for replaced in [
+        format!("try {{ {check} }} finally {{ return; }}"),
+        format!("try {{ {check} }} finally {{ if (x) {{ return; }} }}"),
+        format!("try {{ {check} }} finally {{ try {{}} finally {{ throw 1; }} }}"),
+        format!("for (;;) {{ try {{ {check} }} finally {{ break; }} }}"),
+        format!("for (;;) {{ try {{ {check} }} finally {{ continue; }} }}"),
+        format!("a: for (;;) {{ for (;;) {{ try {{ {check} }} finally {{ break a; }} }} }}"),
+        format!("try {{ f(); }} catch {{ {check} }} finally {{ return; }}"),
+    ] {
+        assert!(assertions(&replaced).is_empty(), "{replaced}");
+    }
+    for kept in [
+        format!("try {{ {check} }} finally {{ cleanup(); }}"),
+        format!("try {{ {check} }} finally {{ const f = () => {{ return 1; }}; }}"),
+        format!("try {{ {check} }} finally {{ for (;;) {{ break; }} }}"),
+        format!("try {{ {check} }} finally {{ switch (x) {{ case 1: break; }} }}"),
+        format!("try {{ {check} }} finally {{ b: {{ break b; }} }}"),
+        format!("try {{ f(); }} finally {{ {check} }}"),
+        format!("try {{ f(); }} finally {{ {check} return; }}"),
+    ] {
+        assert_eq!(assertions(&kept), ["toBe"], "{kept}");
+    }
+}
+
+#[test]
 fn extract_tests_unknown_matcher_maps_to_unknown_oracle() {
     let tests = extract_tests(
         Path::new("tests/lib.test.ts"),

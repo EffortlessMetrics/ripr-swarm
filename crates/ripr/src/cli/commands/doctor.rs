@@ -73,14 +73,25 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
         }
     }
     let root = root.map_or_else(|| PathBuf::from("."), PathBuf::from);
+    // #8540: one clock for the whole run, shared by both surfaces, so the
+    // total the human screen prints is the total the JSON document carries.
+    let run_started = std::time::Instant::now();
 
     // One marker scan per run, shared by both surfaces. `--json` used to branch
     // away before any of the environment facts were gathered, so the machine
     // surface reported none of them (#5214).
+    let detection_started = std::time::Instant::now();
     let detected = detect_languages(&root);
+    let language_detection_elapsed = detection_started.elapsed();
 
     if json_output {
-        return doctor_json(&root, profile, &detected);
+        return doctor_json(
+            &root,
+            profile,
+            &detected,
+            run_started,
+            language_detection_elapsed,
+        );
     }
 
     // Human-readable path. Gather every typed fact first, then project a
@@ -91,7 +102,13 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
     let mut report = core_evaluation.report;
     let mut ok = matches!(report.status, output::doctor::DoctorStatus::Pass);
     let enabled_languages = enabled_languages(&core_evaluation.config);
-    let environment = DoctorEnvironment::probe(&root, &detected, &core_evaluation.config);
+    let environment = DoctorEnvironment::probe(
+        &root,
+        &detected,
+        &core_evaluation.config,
+        language_detection_elapsed,
+    );
+    report.segments = environment.facts.segments.clone();
     let binary = output::doctor_binary::probe_binary_identity();
     ok &= add_language_runtime_probes(
         &root,
@@ -112,6 +129,7 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
         }
     }
     let passed = ok && report.status == output::doctor::DoctorStatus::Pass;
+    report.elapsed_ms = Some(run_started.elapsed().as_millis() as u64);
     for line in render_doctor_human_screen(DoctorHumanScreen {
         root: &root,
         profile,
@@ -140,6 +158,8 @@ fn doctor_json(
     root: &Path,
     profile: output::doctor::DoctorProfile,
     detected: &[LanguageId],
+    run_started: std::time::Instant,
+    language_detection_elapsed: std::time::Duration,
 ) -> Result<(), String> {
     let evaluation =
         output::doctor::evaluate_doctor_core_with_config_for_profile(root, detected, profile);
@@ -157,7 +177,12 @@ fn doctor_json(
     if let Some(advisory) = generated_workflow_advisory(root) {
         report.add_advisory_check("generated_workflow", advisory);
     }
-    let environment = DoctorEnvironment::probe(root, detected, &evaluation.config);
+    let environment = DoctorEnvironment::probe(
+        root,
+        detected,
+        &evaluation.config,
+        language_detection_elapsed,
+    );
     report.apply_environment(environment.facts);
     if profile == output::doctor::DoctorProfile::SourceBuild
         && let Some(advisory) = linker_temp_redirect_advisory(root)
@@ -165,6 +190,7 @@ fn doctor_json(
         report.add_advisory_check("linker_temp_redirect", advisory);
     }
     report.attach_canonical_next_action(root);
+    report.elapsed_ms = Some(run_started.elapsed().as_millis() as u64);
     println!("{}", report.render_json()?);
     output::doctor::doctor_report_result(&report)
 }
@@ -185,21 +211,58 @@ struct DoctorEnvironment {
 }
 
 impl DoctorEnvironment {
-    fn probe(root: &Path, detected: &[LanguageId], config: &Result<RiprConfig, String>) -> Self {
+    fn probe(
+        root: &Path,
+        detected: &[LanguageId],
+        config: &Result<RiprConfig, String>,
+        language_detection_elapsed: std::time::Duration,
+    ) -> Self {
         let loaded = config.as_ref().ok();
         let preview_enablement = preview_languages_to_enable(detected, config);
+        // #8540 follow-up: each expensive computation is timed where it runs
+        // and named after itself, so the segment list can explain the run
+        // total alongside the timed checks and probes.
+        let mut segments = vec![output::doctor::DoctorSegmentTiming {
+            name: "language_detection".to_string(),
+            elapsed_ms: language_detection_elapsed.as_millis() as u64,
+        }];
+        let segment_started = std::time::Instant::now();
+        let unanalyzed_source_languages = unanalyzed_language_entries(root);
+        segments.push(output::doctor::DoctorSegmentTiming {
+            name: "unanalyzed_source_scan".to_string(),
+            elapsed_ms: segment_started.elapsed().as_millis() as u64,
+        });
+        let segment_started = std::time::Instant::now();
+        let cache = cache_status(root);
+        segments.push(output::doctor::DoctorSegmentTiming {
+            name: "cache_status".to_string(),
+            elapsed_ms: segment_started.elapsed().as_millis() as u64,
+        });
+        let segment_started = std::time::Instant::now();
+        let test_surfaces = detect_test_surfaces(root, detected);
+        segments.push(output::doctor::DoctorSegmentTiming {
+            name: "test_surfaces".to_string(),
+            elapsed_ms: segment_started.elapsed().as_millis() as u64,
+        });
+        let segment_started = std::time::Instant::now();
+        let perl_preview = probe_perl_preview(root, loaded);
+        segments.push(output::doctor::DoctorSegmentTiming {
+            name: "perl_preview".to_string(),
+            elapsed_ms: segment_started.elapsed().as_millis() as u64,
+        });
         Self {
             facts: output::doctor::DoctorEnvironmentFacts {
                 detected_languages: detected_language_entries(
                     detected,
                     loaded.map(|config| config.languages().enabled()),
                 ),
-                unanalyzed_source_languages: unanalyzed_language_entries(root),
+                unanalyzed_source_languages,
                 preview_language_gaps: preview_language_gaps(preview_enablement.as_ref()),
                 config_defaults: config_defaults(config),
-                cache: cache_status(root),
-                test_surfaces: detect_test_surfaces(root, detected),
-                perl_preview: probe_perl_preview(root, loaded),
+                cache,
+                test_surfaces,
+                perl_preview,
+                segments,
             },
             preview_enablement,
         }
@@ -413,6 +476,31 @@ fn join_compact(label: &str, parts: &[String]) -> Option<String> {
         return None;
     }
     Some(format!("✓ {label}: {}", parts.join(" · ")))
+}
+
+/// The ` in 4.9s (slowest: tool_cargo 3.1s)` suffix for the final doctor
+/// line (#8540). Empty when the report carries no measured total, so
+/// un-timed reports render exactly as before.
+fn doctor_timing_suffix(report: &output::doctor::DoctorReport) -> String {
+    let Some(total) = report.elapsed_ms else {
+        return String::new();
+    };
+    match report.slowest_measured() {
+        Some((name, ms)) => format!(
+            " in {} (slowest: {name} {})",
+            doctor_duration(total),
+            doctor_duration(ms)
+        ),
+        None => format!(" in {}", doctor_duration(total)),
+    }
+}
+
+fn doctor_duration(elapsed_ms: u64) -> String {
+    if elapsed_ms < 1_000 {
+        format!("{elapsed_ms}ms")
+    } else {
+        format!("{:.1}s", elapsed_ms as f64 / 1_000.0)
+    }
 }
 
 fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
@@ -690,14 +778,18 @@ Point RIPR_CACHE_DIR at a writable directory.",
         }
     }
 
+    // #8540: the final line carries the run's total and slowest measured
+    // check as a suffix, inside the existing line budget. Reports built
+    // without the adapter's clock (unit tests, core-only evaluations) carry
+    // no elapsed value and render the plain line.
+    let timing = doctor_timing_suffix(report);
     if passed {
-        lines.push("✓ doctor checks passed".to_string());
+        lines.push(format!("✓ doctor checks passed{timing}"));
     } else {
-        lines.push(
-            output::doctor::DOCTOR_FAILED_LINE
-                .trim_end_matches('\n')
-                .to_string(),
-        );
+        lines.push(format!(
+            "{}{timing}",
+            output::doctor::DOCTOR_FAILED_LINE.trim_end_matches('\n')
+        ));
     }
 
     if verbose {
@@ -1123,13 +1215,18 @@ where
 {
     let mut ok = true;
     for (language, tool, hint) in language_runtime_probes_for(root, detected, enabled) {
+        let probe_started = std::time::Instant::now();
         let (status, evidence) = probe(tool);
+        let probe_elapsed = probe_started.elapsed();
         // A language runtime is an analysis capability, not a prerequisite
         // for building RIPR from source: the source-build profile keeps the
         // probe visible but never lets it decide that profile's status.
         let required = report.profile == output::doctor::DoctorProfile::Analysis
             && runtime_probe_is_required(language, tool, enabled);
         report.add_runtime_probe(language, tool, status, &evidence, required, hint);
+        if let Some(probe) = report.runtime_probes.last_mut() {
+            probe.elapsed_ms = Some(probe_elapsed.as_millis() as u64);
+        }
         if required && status == output::doctor::DoctorStatus::Fail {
             ok = false;
         }
@@ -2504,11 +2601,27 @@ fn ripr_artifact_tracking(root: &Path) -> output::doctor::DoctorArtifactTracking
     if probe.stdout.is_empty() {
         return DoctorArtifactTracking::Untracked;
     }
+    let untrack = untrack_artifacts_command(root);
     DoctorArtifactTracking::Tracked {
-        warning: "! ripr artifacts under target/ripr are tracked by git; `git add -A` keeps \
-                  refreshing them and `ripr check` diffs them. Untrack them with: \
-                  git rm --cached -r -- target/ripr"
-            .to_string(),
+        warning: format!(
+            "! ripr artifacts under target/ripr are tracked by git; `git add -A` keeps \
+             refreshing them and `ripr check` diffs them. Untrack them with: {untrack}"
+        ),
+    }
+}
+
+/// The untrack command doctor prints, bound to the selected root: pasted from
+/// another directory, a bare `git rm --cached` would untrack files in whatever
+/// repository the shell happens to be in (#8301 review). The default `.` root
+/// keeps the short form.
+fn untrack_artifacts_command(root: &Path) -> String {
+    if root == Path::new(".") {
+        "git rm --cached -r -- target/ripr".to_string()
+    } else {
+        format!(
+            "git -C {} rm --cached -r -- target/ripr",
+            crate::agent::loop_commands::shell_arg(&output::path::human_path(root))
+        )
     }
 }
 
@@ -2956,6 +3069,7 @@ mod tests {
                 },
                 test_surfaces: Vec::new(),
                 perl_preview: None,
+                segments: Vec::new(),
             },
             preview_enablement: None,
         }
@@ -3023,6 +3137,53 @@ mod tests {
             verbose,
             passed,
         })
+    }
+
+    #[test]
+    fn final_line_attributes_total_and_slowest_measured_check() {
+        // #8540: injected durations, never wall-clock, name the slowest
+        // measured check on the existing final line.
+        let mut report = passing_report();
+        report.elapsed_ms = Some(4_900);
+        report.mark_check_elapsed("tool_cargo", std::time::Duration::from_millis(3_100));
+        report.mark_check_elapsed("tool_git", std::time::Duration::from_millis(200));
+        let environment = empty_environment();
+        let lines = render_screen(&report, &environment, false, true);
+        assert_eq!(
+            lines.last().map(String::as_str),
+            Some("✓ doctor checks passed in 4.9s (slowest: tool_cargo 3.1s)"),
+            "{lines:?}"
+        );
+        // An un-timed report renders the plain line, byte for byte.
+        let lines = render_screen(&passing_report(), &environment, false, true);
+        assert_eq!(
+            lines.last().map(String::as_str),
+            Some("✓ doctor checks passed"),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn final_line_names_a_segment_when_it_is_the_slowest_measured() {
+        // #8540 follow-up: injected durations only, never wall-clock. A
+        // segment that beats every check wins the slowest attribution on
+        // the same final line, within the existing screen budget.
+        let mut report = passing_report();
+        report.elapsed_ms = Some(4_900);
+        report.mark_check_elapsed("tool_cargo", std::time::Duration::from_millis(300));
+        report.mark_check_elapsed("tool_git", std::time::Duration::from_millis(200));
+        report.segments.push(output::doctor::DoctorSegmentTiming {
+            name: "unanalyzed_source_scan".to_string(),
+            elapsed_ms: 3_800,
+        });
+        let environment = empty_environment();
+        let lines = render_screen(&report, &environment, false, true);
+        assert_eq!(
+            lines.last().map(String::as_str),
+            Some("✓ doctor checks passed in 4.9s (slowest: unanalyzed_source_scan 3.8s)"),
+            "{lines:?}"
+        );
+        assert_fits_one_screen(&lines);
     }
 
     #[test]
@@ -3966,8 +4127,17 @@ mod tests {
         assert_eq!(ripr_artifact_ignore(&root), DoctorArtifactIgnore::Ignored);
         match ripr_artifact_tracking(&root) {
             DoctorArtifactTracking::Tracked { warning } => {
+                // A non-cwd root must be named in the remedy, so pasting it
+                // elsewhere cannot untrack another repository's files.
                 assert!(
-                    warning.contains("git rm --cached -r -- target/ripr"),
+                    warning.contains("git -C ")
+                        && warning.contains("rm --cached -r -- target/ripr"),
+                    "{warning}"
+                );
+                assert!(
+                    warning.contains(&crate::agent::loop_commands::shell_arg(
+                        &output::path::human_path(&root)
+                    )),
                     "{warning}"
                 );
             }
@@ -3982,6 +4152,31 @@ mod tests {
             DoctorArtifactTracking::NotChecked
         );
         Ok(())
+    }
+
+    #[test]
+    fn untrack_command_binds_non_default_roots_and_quotes_them() {
+        // The default root keeps the short form: there is no other repository
+        // to confuse it with.
+        assert_eq!(
+            untrack_artifacts_command(Path::new(".")),
+            "git rm --cached -r -- target/ripr"
+        );
+        // Any other root is named, so the command cannot act elsewhere.
+        assert_eq!(
+            untrack_artifacts_command(Path::new("other-repo")),
+            "git -C other-repo rm --cached -r -- target/ripr"
+        );
+        // A root with spaces must stay one shell word.
+        let spaced = untrack_artifacts_command(Path::new("my repo"));
+        assert!(
+            spaced.starts_with("git -C ") && !spaced.starts_with("git -C my repo "),
+            "{spaced}"
+        );
+        assert!(
+            spaced.ends_with(" rm --cached -r -- target/ripr"),
+            "{spaced}"
+        );
     }
 
     #[test]
@@ -5732,6 +5927,8 @@ mod tests {
             &dir,
             output::doctor::DoctorProfile::Analysis,
             &detect_languages(&dir),
+            std::time::Instant::now(),
+            std::time::Duration::ZERO,
         )
         .is_ok()
         {

@@ -1707,3 +1707,484 @@ fn guarded_arm_gate_stays_off_without_source() -> Result<(), String> {
     assert_eq!(finding.class, ExposureClass::Exposed);
     Ok(())
 }
+
+// RIPR-SPEC-0238 example 22 / #6585 rule 10: a changed dict value that equals an
+// unchanged sibling must not credit `exposed` just because the sibling assertion
+// contains that literal.
+#[test]
+fn equal_sibling_dict_value_stays_weakly_exposed() -> Result<(), String> {
+    let finding = classify_case(
+        "def build():\n    return {'port': 80, 'timeout': 80}\n",
+        "from src.subject import build\n\ndef test_timeout():\n    assert build()['timeout'] == 80\n",
+        2,
+        "    return {'port': 8080, 'timeout': 80}",
+        "    return {'port': 80, 'timeout': 80}",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.oracle_alignment.as_deref(), Some("orthogonal"));
+    Ok(())
+}
+
+#[test]
+fn equal_sibling_dict_changed_key_stays_exposed() -> Result<(), String> {
+    let finding = classify_case(
+        "def build():\n    return {'port': 80, 'timeout': 80}\n",
+        "from src.subject import build\n\ndef test_port():\n    assert build()['port'] == 80\n",
+        2,
+        "    return {'port': 8080, 'timeout': 80}",
+        "    return {'port': 80, 'timeout': 80}",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert_ne!(finding.oracle_alignment.as_deref(), Some("orthogonal"));
+    Ok(())
+}
+
+#[test]
+fn equal_sibling_dict_whole_collection_stays_exposed() -> Result<(), String> {
+    let finding = classify_case(
+        "def build():\n    return {'port': 80, 'timeout': 80}\n",
+        "from src.subject import build\n\ndef test_cfg():\n    assert build() == {'port': 80, 'timeout': 80}\n",
+        2,
+        "    return {'port': 8080, 'timeout': 80}",
+        "    return {'port': 80, 'timeout': 80}",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn equal_sibling_list_value_stays_weakly_exposed() -> Result<(), String> {
+    let finding = classify_case(
+        "def build():\n    return [80, 80]\n",
+        "from src.subject import build\n\ndef test_second():\n    assert build()[1] == 80\n",
+        2,
+        "    return [8080, 80]",
+        "    return [80, 80]",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.oracle_alignment.as_deref(), Some("orthogonal"));
+    Ok(())
+}
+
+#[test]
+fn equal_sibling_list_changed_index_stays_exposed() -> Result<(), String> {
+    let finding = classify_case(
+        "def build():\n    return [80, 80]\n",
+        "from src.subject import build\n\ndef test_first():\n    assert build()[0] == 80\n",
+        2,
+        "    return [8080, 80]",
+        "    return [80, 80]",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn equal_sibling_list_whole_collection_stays_exposed() -> Result<(), String> {
+    let finding = classify_case(
+        "def build():\n    return [80, 80]\n",
+        "from src.subject import build\n\ndef test_all():\n    assert build() == [80, 80]\n",
+        2,
+        "    return [8080, 80]",
+        "    return [80, 80]",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+const LAST_SOURCE: &str = "def last(iterable, default=None):\n    try:\n        return next(iter(iterable))\n    except StopIteration:\n        return None\n";
+const LAST_OLD: &str = "        return default";
+const LAST_NEW: &str = "        return None";
+
+fn last_finding(tests: &str) -> Result<Finding, String> {
+    classify_case(LAST_SOURCE, tests, 5, LAST_OLD, LAST_NEW)
+}
+
+fn last_does_not_vary_default(finding: &Finding) {
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|entry| entry.contains("table rows do not vary default")),
+        "{finding:?}"
+    );
+    assert!(
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .any(|fact| fact.reason == "table rows do not vary default"),
+        "{finding:?}"
+    );
+}
+
+/// #6651: a unittest subTest table whose every row passes the same default
+/// cannot catch `return default` -> `return None`. Before the gate the exact
+/// oracle credited `exposed`.
+#[test]
+fn subtest_table_that_never_varies_default_is_weakly_exposed() -> Result<(), String> {
+    let finding = last_finding(
+        "import unittest\nfrom src.subject import last\n\nclass LastTests(unittest.TestCase):\n    def test_default(self):\n        for iterable, default in [\n            ([], None),\n            (iter([]), None),\n        ]:\n            with self.subTest(iterable=iterable, default=default):\n                self.assertEqual(last(iterable, default=default), default)\n",
+    )?;
+    last_does_not_vary_default(&finding);
+    Ok(())
+}
+
+/// An unvaried nonzero default still fails after `return None`, so the table
+/// remains a discriminator. Constant is not the same as undetectable.
+#[test]
+fn subtest_table_that_never_varies_nonzero_default_stays_exposed() -> Result<(), String> {
+    let finding = last_finding(
+        "import unittest\nfrom src.subject import last\n\nclass LastTests(unittest.TestCase):\n    def test_default(self):\n        for iterable, default in [\n            ([], 0),\n            (iter([]), 0),\n        ]:\n            with self.subTest(iterable=iterable, default=default):\n                self.assertEqual(last(iterable, default=default), default)\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(finding.activation.missing_discriminators.is_empty());
+    Ok(())
+}
+
+/// Positive control for #6651: one row that varies `default` keeps `exposed`.
+#[test]
+fn subtest_table_that_varies_default_stays_exposed() -> Result<(), String> {
+    let finding = last_finding(
+        "import unittest\nfrom src.subject import last\n\nclass LastTests(unittest.TestCase):\n    def test_default(self):\n        for iterable, default in [\n            ([], None),\n            (iter([]), 0),\n        ]:\n            with self.subTest(iterable=iterable, default=default):\n                self.assertEqual(last(iterable, default=default), default)\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(finding.activation.missing_discriminators.is_empty());
+    Ok(())
+}
+
+/// The same unvaried-default shape through pytest parametrize, which #4559
+/// did not cover: that fix was the predicate-boundary miss, not a returned
+/// default argument.
+#[test]
+fn parametrize_table_that_never_varies_default_is_weakly_exposed() -> Result<(), String> {
+    let finding = last_finding(
+        "import pytest\nfrom src.subject import last\n\n@pytest.mark.parametrize(\"iterable, default\", [([], None), (iter([]), None)])\ndef test_default(iterable, default):\n    assert last(iterable, default=default) == default\n",
+    )?;
+    last_does_not_vary_default(&finding);
+    Ok(())
+}
+
+#[test]
+fn parametrize_table_that_varies_default_stays_exposed() -> Result<(), String> {
+    let finding = last_finding(
+        "import pytest\nfrom src.subject import last\n\n@pytest.mark.parametrize(\"iterable, default\", [([], None), (iter([]), 0)])\ndef test_default(iterable, default):\n    assert last(iterable, default=default) == default\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+/// A loop table without `subTest` is still a table of expected values.
+#[test]
+fn loop_table_that_never_varies_default_is_weakly_exposed() -> Result<(), String> {
+    let finding = last_finding(
+        "from src.subject import last\n\ndef test_default():\n    for iterable, default in [([], None), (iter([]), None)]:\n        assert last(iterable, default=default) == default\n",
+    )?;
+    last_does_not_vary_default(&finding);
+    Ok(())
+}
+
+/// A later unvaried table in the same test must not hide an earlier exact
+/// oracle. `select_relevant_assertion` would prefer the later equal-strength
+/// line and wrongly downgrade.
+#[test]
+fn unvaried_table_does_not_hide_an_earlier_exact_oracle_in_the_same_test() -> Result<(), String> {
+    let finding = last_finding(
+        "import unittest\nfrom src.subject import last\n\nclass LastTests(unittest.TestCase):\n    def test_default(self):\n        self.assertEqual(last([], default=0), 0)\n        for iterable, default in [([], None), (iter([]), None)]:\n            with self.subTest(iterable=iterable):\n                self.assertEqual(last(iterable, default=default), default)\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+/// A second, non-table exact oracle may still discriminate; do not downgrade
+/// the finding merely because a sibling table is unvaried.
+#[test]
+fn unvaried_table_does_not_hide_a_varied_exact_oracle() -> Result<(), String> {
+    let finding = last_finding(
+        "import unittest\nfrom src.subject import last\n\nclass LastTests(unittest.TestCase):\n    def test_default(self):\n        for iterable, default in [([], None), (iter([]), None)]:\n            with self.subTest(iterable=iterable):\n                self.assertEqual(last(iterable, default=default), default)\n    def test_nonzero_default(self):\n        self.assertEqual(last([], default=0), 0)\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+const YY_SOURCE: &str = "def yy(year):\n    return year % 1000\n";
+const YY_OLD: &str = "    return year % 100";
+const YY_NEW: &str = "    return year % 1000";
+
+fn yy_finding(tests: &str) -> Result<Finding, String> {
+    classify_case(YY_SOURCE, tests, 2, YY_OLD, YY_NEW)
+}
+
+fn table_does_not_vary_year(finding: &Finding) {
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|entry| entry.contains("table rows do not vary year")),
+        "{finding:?}"
+    );
+    assert!(
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .any(|fact| fact.reason == "table rows do not vary year"),
+        "{finding:?}"
+    );
+}
+
+/// #6651 loguru slice: every parametrized year is 20xx, so `year % 100` and
+/// `year % 1000` agree on every row. Before per-row arithmetic evaluation the
+/// exact oracle credited `exposed`.
+#[test]
+fn parametrize_20xx_years_do_not_distinguish_year_modulo() -> Result<(), String> {
+    let finding = yy_finding(
+        "import pytest\nfrom src.subject import yy\n\n@pytest.mark.parametrize(\"year\", [2015, 2016, 2020])\ndef test_yy(year):\n    assert yy(year) == year % 100\n",
+    )?;
+    table_does_not_vary_year(&finding);
+    Ok(())
+}
+
+/// A year such as 1999 makes `x % 100` differ from `x % 1000`, so the table
+/// remains a discriminator.
+#[test]
+fn parametrize_year_that_distinguishes_modulo_stays_exposed() -> Result<(), String> {
+    let finding = yy_finding(
+        "import pytest\nfrom src.subject import yy\n\n@pytest.mark.parametrize(\"year\", [2015, 1999])\ndef test_yy(year):\n    assert yy(year) == year % 100\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(finding.activation.missing_discriminators.is_empty());
+    Ok(())
+}
+
+#[test]
+fn subtest_20xx_years_do_not_distinguish_year_modulo() -> Result<(), String> {
+    let finding = yy_finding(
+        "import unittest\nfrom src.subject import yy\n\nclass YearTests(unittest.TestCase):\n    def test_yy(self):\n        for year in [2015, 2016, 2020]:\n            with self.subTest(year=year):\n                self.assertEqual(yy(year), year % 100)\n",
+    )?;
+    table_does_not_vary_year(&finding);
+    Ok(())
+}
+
+/// Arithmetic that still changes on 20xx years (`+ 1` vs `+ 2`) must not be
+/// weakened just because the table is a year column.
+#[test]
+fn parametrize_20xx_years_still_distinguish_plus_offset() -> Result<(), String> {
+    let finding = classify_case(
+        "def yy(year):\n    return year + 2\n",
+        "import pytest\nfrom src.subject import yy\n\n@pytest.mark.parametrize(\"year\", [2015, 2016, 2020])\ndef test_yy(year):\n    assert yy(year) == year + 1\n",
+        2,
+        "    return year + 1",
+        "    return year + 2",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+/// A table whose year cells are not integer literals stays on today's verdict.
+#[test]
+fn variable_year_table_does_not_claim_unvaried_modulo() -> Result<(), String> {
+    let finding = yy_finding(
+        "from src.subject import yy\n\nYEARS = [2015, 2016, 2020]\n\ndef test_yy():\n    for year in YEARS:\n        assert yy(year) == year % 100\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+const TOKENS_SOURCE: &str =
+    "def tokens(t):\n    return {\n        \"YY\": t.tm_year % 1000,\n    }\n";
+const TOKENS_OLD: &str = "        \"YY\": t.tm_year % 100,";
+const TOKENS_NEW: &str = "        \"YY\": t.tm_year % 1000,";
+
+/// Loguru shape: the changed dict field is `t.tm_year % 100`, and every
+/// parametrized datetime is constructed from a 20xx year literal.
+#[test]
+fn datetime_20xx_rows_do_not_distinguish_tm_year_modulo() -> Result<(), String> {
+    let finding = classify_case(
+        TOKENS_SOURCE,
+        "import pytest\nfrom datetime import datetime\nfrom src.subject import tokens\n\n@pytest.mark.parametrize(\"year\", [2015, 2016, 2020])\ndef test_yy(year):\n    assert tokens(datetime(year, 1, 1))[\"YY\"] == year % 100\n",
+        3,
+        TOKENS_OLD,
+        TOKENS_NEW,
+    )?;
+    table_does_not_vary_year(&finding);
+    Ok(())
+}
+
+#[test]
+fn datetime_row_that_distinguishes_tm_year_modulo_stays_exposed() -> Result<(), String> {
+    let finding = classify_case(
+        TOKENS_SOURCE,
+        "import pytest\nfrom datetime import datetime\nfrom src.subject import tokens\n\n@pytest.mark.parametrize(\"year\", [2015, 1999])\ndef test_yy(year):\n    assert tokens(datetime(year, 1, 1))[\"YY\"] == year % 100\n",
+        3,
+        TOKENS_OLD,
+        TOKENS_NEW,
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+// #6585 equality-predicate boundary (P4). Trailing block so it does not sit
+// next to #8521's equal-sibling classify tests.
+
+const EQ_SOURCE: &str = "def eq(n):\n    if n == 10:\n        return True\n    return False\n";
+
+/// Owner `if n == 10` mutated from `n == 11`, with `assert eq(20) == False`.
+/// Input 20 takes the else branch both ways, so a strong oracle must not
+/// credit `exposed`.
+#[test]
+fn equality_predicate_off_both_constants_is_weakly_exposed() -> Result<(), String> {
+    let finding = classify_case(
+        EQ_SOURCE,
+        "from src.subject import eq\n\ndef test_eq():\n    assert eq(20) == False\n",
+        2,
+        "    if n == 11:",
+        "    if n == 10:",
+    )?;
+    assert_owner(&finding, "eq");
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.ripr.infect.state, StageState::Weak);
+    assert_eq!(finding.ripr.reveal.observe.state, StageState::Yes);
+    assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Weak);
+    assert_eq!(
+        missing_boundary(&finding, "n == 10"),
+        Some(
+            "No strong related test call places n equal to 10 or n equal to 11; observed n values: 20"
+        )
+    );
+    assert!(observed(&finding, "n = 20"), "{finding:?}");
+    assert!(!observed(&finding, "n == 10"));
+    assert!(!observed(&finding, "n == 11"));
+    Ok(())
+}
+
+/// Calling at the new compared literal does discriminate `== 11` -> `== 10`.
+#[test]
+fn equality_predicate_at_new_constant_stays_exposed() -> Result<(), String> {
+    let finding = classify_case(
+        EQ_SOURCE,
+        "from src.subject import eq\n\ndef test_eq():\n    assert eq(10) == True\n",
+        2,
+        "    if n == 11:",
+        "    if n == 10:",
+    )?;
+    assert_owner(&finding, "eq");
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert!(finding.activation.missing_discriminators.is_empty());
+    assert!(observed(&finding, "n == 10"), "{finding:?}");
+    Ok(())
+}
+
+/// Calling at the pre-change compared literal also discriminates the mutation.
+#[test]
+fn equality_predicate_at_old_constant_stays_exposed() -> Result<(), String> {
+    let finding = classify_case(
+        EQ_SOURCE,
+        "from src.subject import eq\n\ndef test_eq():\n    assert eq(11) == False\n",
+        2,
+        "    if n == 11:",
+        "    if n == 10:",
+    )?;
+    assert_owner(&finding, "eq");
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert!(finding.activation.missing_discriminators.is_empty());
+    assert!(observed(&finding, "n == 11"), "{finding:?}");
+    Ok(())
+}
+
+/// A newly added equality predicate has no paired old `==`, so the gate
+/// stays off and today's strong-oracle verdict stands.
+#[test]
+fn equality_predicate_without_old_line_stays_outside_the_gate() -> Result<(), String> {
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, EQ_SOURCE);
+    let tests = extract_tests(
+        Path::new("tests/test_subject.py"),
+        "from src.subject import eq\n\ndef test_eq():\n    assert eq(20) == False\n",
+    );
+    let finding = classify_change_with_old(file, 2, "    if n == 10:", None, &owners, &tests)
+        .ok_or_else(|| "behavioral fixture must produce a finding".to_string())?;
+    assert_owner(&finding, "eq");
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert!(finding.activation.observed_values.is_empty());
+    Ok(())
+}
+
+/// `!=` and `is` stay outside this gate (handle `==` only). Complementary
+/// `!=` -> `==` still discriminates every input, so it must keep `exposed`.
+#[test]
+fn equality_predicate_gate_does_not_swallow_inequality_or_identity_forms() -> Result<(), String> {
+    let from_ne = classify_case(
+        "def is_zero(value):\n    if value == 0:\n        return True\n    return False\n",
+        "from src.subject import is_zero\n\ndef test_is_zero():\n    assert is_zero(5) == False\n",
+        2,
+        "    if value != 0:",
+        "    if value == 0:",
+    )?;
+    assert_eq!(from_ne.class, ExposureClass::Exposed);
+    assert!(from_ne.activation.observed_values.is_empty());
+
+    let ne_constant = classify_case(
+        "def ne(n):\n    if n != 10:\n        return True\n    return False\n",
+        "from src.subject import ne\n\ndef test_ne():\n    assert ne(20) == True\n",
+        2,
+        "    if n != 11:",
+        "    if n != 10:",
+    )?;
+    assert_eq!(ne_constant.class, ExposureClass::Exposed);
+
+    let identity = classify_case(
+        "def same(n):\n    if n is True:\n        return True\n    return False\n",
+        "from src.subject import same\n\ndef test_same():\n    assert same(20) == False\n",
+        2,
+        "    if n is False:",
+        "    if n is True:",
+    )?;
+    assert_eq!(identity.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+/// Literal `==` still uses the #4559 parametrize expansion: cases that miss
+/// both compared constants are weakly exposed; a case on either constant
+/// keeps credit.
+#[test]
+fn equality_predicate_parametrize_off_both_constants_is_weakly_exposed() -> Result<(), String> {
+    let finding = classify_case(
+        EQ_SOURCE,
+        "import pytest\nfrom src.subject import eq\n\n@pytest.mark.parametrize(\"n\", [20, 30])\ndef test_eq(n):\n    assert eq(n) == False\n",
+        2,
+        "    if n == 11:",
+        "    if n == 10:",
+    )?;
+    assert_owner(&finding, "eq");
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert_eq!(
+        missing_boundary(&finding, "n == 10"),
+        Some(
+            "No strong related test call places n equal to 10 or n equal to 11; observed n values: 20, 30"
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn equality_predicate_parametrize_on_either_constant_stays_exposed() -> Result<(), String> {
+    for cases in ["[20, 10]", "[11, 30]"] {
+        let tests = format!(
+            "import pytest\nfrom src.subject import eq\n\n@pytest.mark.parametrize(\"n\", {cases})\ndef test_eq(n):\n    assert eq(n) == False\n"
+        );
+        let finding = classify_case(EQ_SOURCE, &tests, 2, "    if n == 11:", "    if n == 10:")?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{cases}: {finding:?}"
+        );
+        assert!(
+            finding.activation.missing_discriminators.is_empty(),
+            "{cases}"
+        );
+    }
+    Ok(())
+}

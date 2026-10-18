@@ -25,6 +25,13 @@ pub(super) fn apply_rust_field_match_selector_limit(
         || finding.source_currentness != SourceCurrentness::CandidateCurrent
         || finding.ripr.reach.state != StageState::Yes
         || finding.ripr.reveal.discriminate.state != StageState::Weak
+        // Exact supported sibling inputs already establish a real missing arm.
+        // Do not replace that producer evidence with an unresolved-value limit.
+        || crate::domain::input_boundary_fact(
+            &finding.activation.missing_discriminators,
+            &probe.family,
+        )
+        .is_some()
         || !finding.oracle_related_tests().any(|test| {
             test.relation_reason == Some(RelationReason::DirectOwnerCall)
                 && test.oracle_strength == OracleStrength::Strong

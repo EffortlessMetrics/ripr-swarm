@@ -318,7 +318,12 @@ pub(crate) fn render_human_triage(
             // start, naming the seam identity the check pipeline's
             // producer-owned gate established. No route, no line: an
             // ineligible or unbound finding keeps only explain/context.
-            if let Some(route) = navigation.repair_route_for(&finding.id) {
+            // #8166 residual (F3): a static-limited finding never prints the
+            // runnable repair line, even if a route was computed for it; the
+            // limitation guidance above is its only next action.
+            if !is_static_limited(finding)
+                && let Some(route) = navigation.repair_route_for(&finding.id)
+            {
                 let command = navigation.repair_command(&route.seam_id);
                 out.push_str(&format!("  {command}\n"));
                 super::push_powershell_variant(out, "  ", &command);
@@ -713,16 +718,26 @@ fn selected_hidden_line(omitted: &[&Finding]) -> String {
             suffix
         ),
         (base_side, 0, lower_priority) => format!(
-            "  {} lower-priority finding(s) omitted; {} base-side evidence, not candidate edit targets{}.\n",
-            lower_priority, base_side, suffix
+            "  {} finding(s) omitted: {} lower-priority, {} base-side evidence (not candidate edit targets){}.\n",
+            omitted.len(),
+            lower_priority,
+            base_side,
+            suffix
         ),
         (0, unresolved, lower_priority) => format!(
-            "  {} lower-priority finding(s) omitted; {} unresolved currentness, not candidate edit targets{}.\n",
-            lower_priority, unresolved, suffix
+            "  {} finding(s) omitted: {} lower-priority, {} unresolved currentness (not candidate edit targets){}.\n",
+            omitted.len(),
+            lower_priority,
+            unresolved,
+            suffix
         ),
         (base_side, unresolved, lower_priority) => format!(
-            "  {} lower-priority finding(s) omitted; {} base-side evidence and {} unresolved currentness, not candidate edit targets{}.\n",
-            lower_priority, base_side, unresolved, suffix
+            "  {} finding(s) omitted: {} lower-priority, {} base-side evidence and {} unresolved currentness (the last two are not candidate edit targets){}.\n",
+            omitted.len(),
+            lower_priority,
+            base_side,
+            unresolved,
+            suffix
         ),
     }
 }
@@ -1101,6 +1116,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,

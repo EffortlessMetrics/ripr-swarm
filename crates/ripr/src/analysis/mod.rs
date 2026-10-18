@@ -82,7 +82,7 @@ pub use language::{
     PartialDiffStopReason,
 };
 pub(crate) use probes::{
-    fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
+    fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression, sanitize_path,
 };
 #[cfg(test)]
 pub(crate) use rust_index::{FileFacts, RaRustSyntaxAdapter, RustIndex, RustSyntaxAdapter};
@@ -980,6 +980,13 @@ pub struct AnalysisResult {
     /// staging) instead of offering `--worktree`. Empty when no untracked
     /// routed file exists.
     pub(crate) untracked_source_paths: Vec<String>,
+    /// Gitignored routed files (#7467): ignored-file records plus routed
+    /// files under ignored directories, on both committed-history and
+    /// working-tree runs, because neither diff analyzes them. The output
+    /// layer names them instead of letting a result read as covering them;
+    /// the exclusion itself is unchanged. Empty when no gitignored routed
+    /// file exists.
+    pub(crate) ignored_source_paths: Vec<String>,
     /// Crate-private numeric diagnostic origins for Rust findings (#4464).
     pub(crate) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
     /// Raw per-path Rust producer observations, separate from decoded geometry.
