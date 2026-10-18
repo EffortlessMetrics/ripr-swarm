@@ -6,7 +6,9 @@ mod module_tree;
 mod name_scope;
 mod nesting;
 mod owner_pin;
-pub(in crate::analysis) use owner_pin::primitive_namespace_is_closed;
+pub(in crate::analysis) use owner_pin::{
+    module_export_source_is_visible, primitive_namespace_is_closed,
+};
 mod pattern_pin;
 pub(crate) mod run_memo;
 pub(crate) use owner_pin::macro_binding_candidates;
@@ -18,7 +20,7 @@ pub(crate) use owner_pin::{
     local_empty_macro_names, macro_binding_scan, macro_call_is_statement, owner_pin_assertions,
     owner_reference_count, returns_leave_the_function, source_binds_value_name,
     source_declares_value_name, supported_targeted_item_context, trusted_macro_binding_sites,
-    use_rebinds_crate_name,
+    trusted_macro_binding_sites_with_local_modules, use_rebinds_crate_name,
 };
 pub(crate) use owner_pin::{decimal_u8, literal_check_syntax, literal_owner_syntax};
 pub(crate) use pattern_pin::{PatternPins, pattern_pins};

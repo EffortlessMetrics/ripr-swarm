@@ -76,6 +76,7 @@ use crate::analysis::syntax::{
     err_return_guard_key, generated_test_pins, local_empty_macro_names, macro_binding_scan,
     owner_pin_assertions, parse_clean_source_file, pattern_pins, returns_leave_the_function,
     source_binds_value_name, source_declares_value_name, trusted_macro_binding_sites,
+    trusted_macro_binding_sites_with_local_modules,
 };
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
@@ -174,6 +175,7 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     fallible_dependencies:
         RefCell<BTreeMap<PathBuf, (String, Option<crate::analysis::workspace::AnyhowIdentity>)>>,
     ambiguous_macro_bindings: RefCell<Option<BTreeSet<String>>>,
+    local_glob_namespace_closed: OnceCell<bool>,
     /// Definitions confined to one inline module or function body, keyed by
     /// file: they make a name ambiguous only for tests inside that scope.
     scoped_macro_bindings: RefCell<Option<ScopedMacroBindings>>,
@@ -275,6 +277,7 @@ struct PathCallMemo {
 /// admits every file that spells a test file's local empty-macro name.
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct WithheldMacroBindings {
+    present: bool,
     /// Some withheld file may shadow any macro name.
     any_name: bool,
     /// A crate-local site routed by root may shadow any macro name. The
@@ -304,6 +307,7 @@ impl WithheldMacroBindings {
         packages: &BTreeSet<String>,
         drop_ins: &DropInManifests,
     ) -> bool {
+        self.present = true;
         if self.any_name {
             return true;
         }
@@ -614,6 +618,7 @@ impl OwnerPinSyntax {
                     index,
                     &self.test_file_macro_sites,
                     &resolved,
+                    self.local_glob_namespace_is_closed(index),
                 );
                 let site = if local.as_ref().is_some_and(|(_, site)| rebinds(site)) {
                     local
@@ -813,6 +818,29 @@ impl OwnerPinSyntax {
                 .any(|candidate| candidate == name)
     }
 
+    fn local_glob_namespace_is_closed(&self, index: &RustIndex) -> bool {
+        *self.local_glob_namespace_closed.get_or_init(|| {
+            if self.withheld.present
+                || !index.non_utf8_sources.is_empty()
+                || !index.include_limitations.is_empty()
+                || !index.include_targets.is_empty()
+            {
+                return false;
+            }
+            let resolved = self.resolved_module_declarations(index);
+            index.files().iter().all(|(path, facts)| {
+                !facts.used_lexical_fallback
+                    && facts.role_provenance.earliest_unresolved_reason.is_none()
+                    && crate::analysis::syntax::module_export_source_is_visible(
+                        &facts.source,
+                        &|line, declaration| {
+                            resolved.contains(&(path.clone(), line, declaration.to_string()))
+                        },
+                    )
+            })
+        })
+    }
+
     fn trusted_macro_ambiguities(&self, index: &RustIndex) -> BTreeSet<String> {
         let resolved_modules = self.resolved_module_declarations(index);
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
@@ -821,8 +849,12 @@ impl OwnerPinSyntax {
         let mut ambiguous = self.ambiguous_macro_bindings.borrow_mut();
         ambiguous
             .get_or_insert_with(|| {
-                let (mut global, scoped, by_root, retained) =
-                    trusted_macro_sites_in(index, self.target_roots(index), &module_resolved);
+                let (mut global, scoped, by_root, retained) = trusted_macro_sites_in(
+                    index,
+                    self.target_roots(index),
+                    &module_resolved,
+                    self.local_glob_namespace_is_closed(index),
+                );
                 *self.scoped_macro_bindings.borrow_mut() = Some(scoped);
                 #[cfg(test)]
                 self.workspace_scan_passes
@@ -914,7 +946,12 @@ impl OwnerPinSyntax {
             resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
         };
         let (_, rest) = partition_macro_scan_files(index);
-        let sites = scan_macro_sites(&rest, index, &module_resolved);
+        let sites = scan_macro_sites(
+            &rest,
+            index,
+            &module_resolved,
+            self.local_glob_namespace_is_closed(index),
+        );
         // Resolved before the map borrow: target roots never re-enter the
         // site scan, and the mutable borrow must not outlive its purpose.
         let roots = self.target_roots(index);
@@ -1795,6 +1832,7 @@ fn workspace_macro_binding_site(
             (path, facts, root)
         })
         .collect();
+    let local_modules_visible = OwnerPinSyntax::default().local_glob_namespace_is_closed(index);
     let scan = |(path, facts, root): &(&PathBuf, FileFactsView<'_>, Option<PathBuf>)| {
         // The same rule as the decision: a crate-local site in another
         // recognized root does not reach this test.
@@ -1813,6 +1851,7 @@ fn workspace_macro_binding_site(
             facts.macro_candidates.as_deref(),
             index,
             module_resolved,
+            local_modules_visible,
         ) {
             if site.scope.is_some() || !reaches(&site) {
                 continue;
@@ -1858,6 +1897,7 @@ fn test_macro_binding_site(
     index: &RustIndex,
     memo: &RefCell<TestFileMacroSites>,
     module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
+    local_modules_visible: bool,
 ) -> Option<(PathBuf, MacroBindingSite)> {
     if !assertion_context_macros().contains(&name) {
         return None;
@@ -1873,6 +1913,7 @@ fn test_macro_binding_site(
                 facts.macro_candidates.as_deref(),
                 index,
                 module_resolved,
+                local_modules_visible,
             )
         })
         .iter()
@@ -1889,11 +1930,12 @@ fn macro_binding_sites(
     candidates: Option<&MacroBindingCandidates>,
     index: &RustIndex,
     module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
+    local_modules_visible: bool,
 ) -> Vec<(String, MacroBindingSite)> {
     if candidates.is_some_and(|candidates| !candidates.may_bind(name)) {
         return Vec::new();
     }
-    trusted_macro_binding_sites(
+    trusted_macro_binding_sites_with_local_modules(
         source,
         index.macro_scope_crates(),
         &[name],
@@ -1905,6 +1947,7 @@ fn macro_binding_sites(
                 index.drop_in_manifests.verified(path, krate)
             }
         },
+        local_modules_visible,
     )
 }
 
@@ -1924,6 +1967,7 @@ fn trusted_macro_sites_in(
     index: &RustIndex,
     roots: &TargetRoots,
     module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
+    local_modules_visible: bool,
 ) -> (
     BTreeSet<String>,
     ScopedMacroBindings,
@@ -1944,7 +1988,7 @@ fn trusted_macro_sites_in(
     // retained scan once instead (#8255).
     let (likely, rest) = partition_macro_scan_files(index);
     absorb_macro_sites(
-        scan_macro_sites(&likely, index, module_resolved),
+        scan_macro_sites(&likely, index, module_resolved, local_modules_visible),
         &mut global,
         &mut scoped,
         &mut by_root,
@@ -1954,7 +1998,7 @@ fn trusted_macro_sites_in(
     );
     if global.len() < assertion_context_macros().len() {
         absorb_macro_sites(
-            scan_macro_sites(&rest, index, module_resolved),
+            scan_macro_sites(&rest, index, module_resolved, local_modules_visible),
             &mut global,
             &mut scoped,
             &mut by_root,
@@ -1995,6 +2039,7 @@ fn scan_macro_sites(
     files: &[MacroScanFile<'_>],
     index: &RustIndex,
     module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
+    local_modules_visible: bool,
 ) -> Vec<(PathBuf, String, MacroBindingSite)> {
     let context_macros = assertion_context_macros();
     files
@@ -2005,7 +2050,7 @@ fn scan_macro_sites(
             candidates.is_none_or(MacroBindingCandidates::may_bind_any_trusted)
         })
         .flat_map_iter(|(path, source, _)| {
-            trusted_macro_binding_sites(
+            trusted_macro_binding_sites_with_local_modules(
                 source,
                 index.macro_scope_crates(),
                 &context_macros,
@@ -2017,6 +2062,7 @@ fn scan_macro_sites(
                         index.drop_in_manifests.verified(path, krate)
                     }
                 },
+                local_modules_visible,
             )
             .into_iter()
             .map(|(name, site)| ((*path).clone(), name, site))

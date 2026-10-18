@@ -68,7 +68,7 @@ fn custom_macro_and_opaque_module_exports_never_gain_assertion_identity()
     let shadowed = OWNER.replace("#[cfg(test)]", &format!("{custom}#[cfg(test)]"));
     assert_eq!(
         classification("mod proof;\npub(crate) use proof::*;\n", &shadowed)?,
-        ExposureClass::StaticUnknown
+        ExposureClass::ReachableUnrevealed
     );
     let opaque = OWNER.replace(
         "#[cfg(test)]",
@@ -85,5 +85,62 @@ fn custom_macro_and_opaque_module_exports_never_gain_assertion_identity()
         )?,
         ExposureClass::StaticUnknown
     );
+    Ok(())
+}
+
+#[test]
+fn local_module_glob_refuses_unproved_namespace_shapes() -> Result<(), Box<dyn std::error::Error>> {
+    let nested = format!("{OWNER}\npub(crate) mod sub {{}}\n");
+    let renamed = OWNER.replace(
+        "#[cfg(test)]",
+        "use core::assert_eq as println;\nfn unused() { println!(1, 1); }\n#[cfg(test)]",
+    );
+    let qualified = OWNER.replace(
+        "#[cfg(test)]",
+        "fn unused() { core::assert_eq!(1, 1); }\n#[cfg(test)]",
+    );
+    for (case, root, owner) in [
+        (
+            "grouped",
+            "mod proof;\npub(crate) use proof::{sub::*};\n",
+            nested.as_str(),
+        ),
+        (
+            "nested",
+            "mod proof;\npub(crate) use proof::sub::*;\n",
+            nested.as_str(),
+        ),
+        (
+            "gated declaration",
+            "#[cfg(test)] mod proof;\npub(crate) use proof::*;\n",
+            OWNER,
+        ),
+        (
+            "path attribute",
+            "#[path=\"proof.rs\"] mod proof;\npub(crate) use proof::*;\n",
+            OWNER,
+        ),
+        (
+            "unresolved sibling",
+            "mod missing;\nmod proof;\npub(crate) use proof::*;\n",
+            OWNER,
+        ),
+        (
+            "renamed body macro",
+            "mod proof;\npub(crate) use proof::*;\n",
+            renamed.as_str(),
+        ),
+        (
+            "qualified body macro",
+            "mod proof;\npub(crate) use proof::*;\n",
+            qualified.as_str(),
+        ),
+    ] {
+        assert_eq!(
+            classification(root, owner)?,
+            ExposureClass::StaticUnknown,
+            "{case}"
+        );
+    }
     Ok(())
 }

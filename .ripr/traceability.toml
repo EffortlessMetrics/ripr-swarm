@@ -12792,6 +12792,9 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/tests/local_module_glob_assertions.rs::resolved_local_module_glob_keeps_standard_assertion_identity",
+  "crates/ripr/tests/local_module_glob_assertions.rs::custom_macro_and_opaque_module_exports_never_gain_assertion_identity",
+  "crates/ripr/tests/local_module_glob_assertions.rs::local_module_glob_refuses_unproved_namespace_shapes",
   "crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs::boolean_helper_pins_require_the_existing_execution_and_identity_gates",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_early_err_variant_return_is_pinned_when_no_other_exit_builds_it",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_early_err_variant_pin_admits_only_its_variant_through_derived_equality",

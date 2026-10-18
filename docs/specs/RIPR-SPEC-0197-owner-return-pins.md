@@ -2440,3 +2440,31 @@ existing owner-call argument pin is unavailable; this leaf does not relax that
 authority. Withheld diff-index source bindings receive the same constructor scan.
 Full frozen consumer replay is separate from fixture admission and never clears
 consumer gates, missing IDs or unrelated propagation residuals by absence.
+
+### Source-visible direct local-module glob imports (#5500)
+
+A relative, single-component `module::*` at a file root is not a foreign
+macro import when that same file unconditionally declares exactly one direct
+module of that name, has no competing import of the name, and the module
+composition resolves every out-of-line declaration. The import and selected
+module declaration have no attributes. Grouped or nested import paths,
+absolute paths, nested scopes and gated declarations remain outside this slice.
+
+This removes only the foreign-glob wrapper; it does not prove an assertion
+macro standard by spelling. The immutable indexed namespace must be fully
+source-visible, without withheld files, lexical fallback, non-UTF-8 sources,
+unresolved provenance or includes. The existing full module-tree scan and
+attribute source-preservation authority reject hidden item/body expansions
+and derives. Every name that the module-tree scanner treats as a standard
+body/item macro must also have no non-glob binding site in the existing
+binding scanner. Qualified body macro roots remain outside this proof.
+All visible definitions, imports and remaining foreign globs still pass through
+the ordinary macro-binding authority. A known empty custom assertion remains
+a real gap; uncertain bindings remain unknown.
+
+The stored file-fact candidate over-approximation is unchanged. In particular,
+a local-looking glob still produces `MacroBindingCandidates::Any`; this repair
+does not weaken the separate whole-tail adapter's wildcard veto or independent
+expected-value/glob refusal. No consumer improvement follows without an exact
+replay. Classified full/compact/sharded cache generations change together;
+file-fact generation does not change because its producer is unchanged.

@@ -247,6 +247,27 @@ pub(crate) fn trusted_macro_binding_sites(
     module_resolved: &dyn Fn(usize, &str) -> bool,
     drop_in_verified: &dyn Fn(&str) -> bool,
 ) -> Vec<(String, MacroBindingSite)> {
+    trusted_macro_binding_sites_with_local_modules(
+        source,
+        packages,
+        trusted,
+        module_resolved,
+        drop_in_verified,
+        false,
+    )
+}
+
+/// Locality removes only a foreign-glob wrapper. The caller must first prove
+/// the complete indexed export namespace source-visible; every visible macro
+/// definition, import and opaque call still goes through the ordinary scan.
+pub(crate) fn trusted_macro_binding_sites_with_local_modules(
+    source: &str,
+    packages: &BTreeSet<String>,
+    trusted: &[&str],
+    module_resolved: &dyn Fn(usize, &str) -> bool,
+    drop_in_verified: &dyn Fn(&str) -> bool,
+    local_modules_visible: bool,
+) -> Vec<(String, MacroBindingSite)> {
     macro_binding_ambiguities(
         source,
         packages,
@@ -254,7 +275,128 @@ pub(crate) fn trusted_macro_binding_sites(
         &BTreeSet::new(),
         module_resolved,
         drop_in_verified,
+        local_modules_visible,
     )
+}
+
+/// Existing composition and attribute authorities bound the namespace, rather
+/// than guessing what an opaque expansion exports. A body macro may export a
+/// macro to crate root, so the full module-tree scan must be complete.
+pub(in crate::analysis) fn module_export_source_is_visible(
+    source: &str,
+    module_resolved: &dyn Fn(usize, &str) -> bool,
+) -> bool {
+    if !super::rust_module_tree_scan(source).complete {
+        return false;
+    }
+    let mut names = super::module_tree::BODY_MACROS_WITHOUT_MODULES.to_vec();
+    names.extend(super::module_tree::ITEM_MACROS_WITHOUT_MODULES);
+    names.extend(TRUSTED_MACRO_NAMES);
+    if trusted_macro_binding_sites(source, &BTreeSet::new(), &names, module_resolved, &|_| {
+        false
+    })
+    .iter()
+    .any(|(_, site)| !matches!(site.kind, MacroBindingKind::ForeignGlob(_)))
+    {
+        return false;
+    }
+    let Some(parse) = parse_clean_source_file(source) else {
+        return false;
+    };
+    parse.tree().syntax().descendants().all(|node| {
+        // The module-tree scanner's standard-name exception is only borrowed
+        // for bare names with no visible rebinding above. Qualified macro
+        // roots need independent namespace proof outside this initial slice.
+        if let Some(call) = ast::MacroCall::cast(node.clone()) {
+            return call
+                .path()
+                .is_some_and(|path| !path.syntax().text().to_string().contains("::"));
+        }
+
+        if let Some(attr) = ast::Attr::cast(node.clone()) {
+            return crate::analysis::facts::cfg_predicates::attribute_preserves_source_items(
+                &attr.syntax().text().to_string(),
+            );
+        }
+        if let Some(module) = ast::Module::cast(node) {
+            if module.item_list().is_some() {
+                return true;
+            }
+            return module
+                .mod_token()
+                .zip(module.name())
+                .is_some_and(|(token, name)| {
+                    let offset: usize = token.text_range().start().into();
+                    let line = source[..offset]
+                        .bytes()
+                        .filter(|byte| *byte == b'\n')
+                        .count()
+                        + 1;
+                    module_resolved(line, &format!("mod {};", name.text()))
+                });
+        }
+        true
+    })
+}
+
+fn resolved_direct_local_glob(
+    import: &ast::Use,
+    root: &str,
+    source: &str,
+    module_resolved: &dyn Fn(usize, &str) -> bool,
+) -> bool {
+    // The initial slice covers only an unconditional direct file-root module
+    // and a single-component, relative import in that same exact scope.
+    let Some(file) = import.syntax().parent().and_then(ast::SourceFile::cast) else {
+        return false;
+    };
+    if import.attrs().next().is_some()
+        || file
+            .syntax()
+            .children()
+            .any(|node| ast::Attr::can_cast(node.kind()))
+        || import
+            .use_tree()
+            .and_then(|tree| tree.path())
+            .is_none_or(|path| path.syntax().text().to_string() != root)
+        || import
+            .use_tree()
+            .is_none_or(|tree| tree.star_token().is_none() || tree.use_tree_list().is_some())
+        || module_use_leaves(file.syntax()).iter().any(
+            |leaf| matches!(&leaf.binding, UseBinding::Name(name) if unraw(name) == unraw(root)),
+        )
+    {
+        return false;
+    }
+    let modules = file
+        .syntax()
+        .children()
+        .filter_map(ast::Module::cast)
+        .filter(|module| {
+            module
+                .name()
+                .is_some_and(|name| unraw(name.text()) == unraw(root))
+        })
+        .collect::<Vec<_>>();
+    let [module] = modules.as_slice() else {
+        return false;
+    };
+    if module.attrs().next().is_some() {
+        return false;
+    }
+    module.item_list().is_some()
+        || module
+            .mod_token()
+            .zip(module.name())
+            .is_some_and(|(token, name)| {
+                let offset: usize = token.text_range().start().into();
+                let line = source[..offset]
+                    .bytes()
+                    .filter(|byte| *byte == b'\n')
+                    .count()
+                    + 1;
+                module_resolved(line, &format!("mod {};", name.text()))
+            })
 }
 
 /// Apply the same binding/import/opaque-expansion authority to candidate empty
@@ -280,6 +422,7 @@ pub(crate) fn empty_macro_binding_ambiguities(
         &allowed,
         module_resolved,
         &|_| false,
+        false,
     )
     .into_iter()
     .map(|(name, _)| name)
@@ -369,6 +512,7 @@ pub(crate) fn macro_binding_scan(
         &BTreeSet::new(),
         &|_, _| false,
         drop_in_verified,
+        false,
     )
     .into_iter()
     .filter(|(_, site)| site.scope.is_none())
@@ -557,6 +701,7 @@ fn macro_binding_ambiguities(
     allowed_empty: &BTreeSet<String>,
     module_resolved: &dyn Fn(usize, &str) -> bool,
     drop_in_verified: &dyn Fn(&str) -> bool,
+    local_modules_visible: bool,
 ) -> Vec<(String, MacroBindingSite)> {
     let mut ambiguous = Vec::new();
     if !(trusted.contains(&"json") && source.contains("serde_json")
@@ -843,7 +988,10 @@ fn macro_binding_ambiguities(
             let own = matches!(root, "crate" | "self" | "super")
                 || packages
                     .iter()
-                    .any(|package| package.replace('-', "_") == root);
+                    .any(|package| package.replace('-', "_") == root)
+                || (!external
+                    && local_modules_visible
+                    && resolved_direct_local_glob(&import, root, source, module_resolved));
             for item in tree.syntax().descendants().filter_map(ast::UseTree::cast) {
                 if item.star_token().is_some() && !own {
                     let path = import.syntax().text().to_string();

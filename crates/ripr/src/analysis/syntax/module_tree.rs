@@ -45,13 +45,13 @@ use crate::analysis::facts::cfg_predicates::rust_ident_name;
 
 /// Std item-position macros whose expansion cannot declare a module.
 /// Compared after any `std::`/`core::` prefix is dropped.
-const ITEM_MACROS_WITHOUT_MODULES: [&str; 2] = ["thread_local", "compile_error"];
+pub(super) const ITEM_MACROS_WITHOUT_MODULES: [&str; 2] = ["thread_local", "compile_error"];
 
 /// Std macros that expand to an expression or statement with no item in it,
 /// so their calls inside a body cannot declare a module. Compared after any
 /// `std::`/`core::`/`alloc::` prefix is dropped. A dependency macro that
 /// shadows one of these names is not modeled.
-const BODY_MACROS_WITHOUT_MODULES: [&str; 35] = [
+pub(super) const BODY_MACROS_WITHOUT_MODULES: [&str; 35] = [
     "assert",
     "assert_eq",
     "assert_matches",
