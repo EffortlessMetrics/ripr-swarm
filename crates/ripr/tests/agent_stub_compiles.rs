@@ -811,6 +811,54 @@ fn bare_at_stubs_only_a_reported_gap() -> Result<(), String> {
     scratch.cleanup()
 }
 
+/// A CRLF owner file stays CRLF after `--write`: the stub is produced with
+/// `\n` line breaks, so splicing it verbatim leaves mixed line endings.
+#[test]
+fn write_keeps_a_crlf_owner_file_crlf() -> Result<(), String> {
+    const NEW_MODULE: &str = "pub fn gate(a: u32) -> bool {\r\n    a > 10\r\n}";
+    const EXISTING_MODULE: &str = "pub fn gate(a: u32) -> bool {\r\n    a > 10\r\n}\r\n\r\n#[cfg(test)]\r\nmod tests {\r\n    #[test]\r\n    fn smoke() {}\r\n}\r\n";
+    for (label, source) in [("new", NEW_MODULE), ("existing", EXISTING_MODULE)] {
+        let scratch = Scratch::new()?;
+        let root = scratch.directory.clone();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"stub_crlf\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
+        let output = run_bounded(
+            ripr_stub_write(&root, "src/lib.rs:2"),
+            &root,
+            "stub",
+            Duration::from_mins(2),
+        )?;
+        assert!(
+            output.status.success(),
+            "{label}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let written = std::fs::read(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
+        assert!(
+            written.len() > source.len(),
+            "{label}: stub was not written"
+        );
+        let lone_lf = written
+            .iter()
+            .enumerate()
+            .filter(|(index, byte)| **byte == b'\n' && (*index == 0 || written[index - 1] != b'\r'))
+            .count();
+        assert_eq!(
+            lone_lf,
+            0,
+            "{label}: mixed line endings in {}",
+            String::from_utf8_lossy(&written)
+        );
+        scratch.cleanup()?;
+    }
+    Ok(())
+}
+
 /// #6689 items 1–2: refusal hints keep the requested family and never route
 /// the caller to a nearer seam of another family.
 const KIND_REFUSAL_SOURCE: &str = "pub fn plain(n: u8) -> u8 {\n    if n > 3 { n } else { 0 }\n}\n\npub fn fallible(input: &str) -> Result<u8, E> {\n    if input.is_empty() {\n        return Err(E::Bad);\n    }\n    Ok(1)\n}\n\n#[derive(Debug, PartialEq)]\npub enum E { Bad }\n";
