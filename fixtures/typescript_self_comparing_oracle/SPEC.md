@@ -1,6 +1,6 @@
 # Fixture: typescript_self_comparing_oracle
 
-Spec: RIPR-SPEC-0243 rule 9 (#8713)
+Spec: RIPR-SPEC-0243
 Spec: RIPR-SPEC-0108
 
 ## Given
