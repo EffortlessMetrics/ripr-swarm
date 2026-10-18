@@ -1,0 +1,710 @@
+//! A changed line inside an `if` arm that no related test call enters (#8569).
+//!
+//! `if (coupon === "HALF") { total = total / 3; }` runs its body only when
+//! the call's `coupon` is `"HALF"`. When every related test calls the owner
+//! with literal inputs that provably leave the guard untaken, the changed
+//! line never executes under the suite, so a strong oracle elsewhere in the
+//! test passes on both versions: reach plus a strong oracle does not
+//! discriminate the change. This is the TypeScript counterpart of the Rust
+//! guard-entry rule (RIPR-SPEC-0263) and the Python guarded-arm gate.
+//!
+//! The rule only withdraws credit, and only on proof. A condition it cannot
+//! read (member access, calls, a rebound or defaulted parameter, a computed
+//! or non-literal argument) is `None`, which never excludes a call, so the
+//! existing verdict stands. This module reads structure and evaluates
+//! literals; which calls a test makes is the classifier's glue.
+
+use super::{ts_mask_literals_and_comments, ts_parameter_is_stable};
+
+/// One condition an enclosing block needs (`want == true`) or needs to be
+/// false (`want == false`, an `else` arm) for the changed line to run.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct GuardCondition {
+    pub(crate) text: String,
+    pub(crate) want: bool,
+}
+
+impl GuardCondition {
+    /// The condition as a reader would write the arm's guard.
+    pub(crate) fn display(&self) -> String {
+        if self.want {
+            self.text.clone()
+        } else {
+            format!("!({})", self.text)
+        }
+    }
+}
+
+/// A literal value a test passes or a guard compares against.
+#[derive(Clone, Debug, PartialEq)]
+enum Lit {
+    Num(f64),
+    Str(String),
+    Bool(bool),
+    Null,
+    Undef,
+}
+
+impl Lit {
+    fn truthy(&self) -> bool {
+        match self {
+            Lit::Num(n) => *n != 0.0,
+            Lit::Str(s) => !s.is_empty(),
+            Lit::Bool(b) => *b,
+            Lit::Null | Lit::Undef => false,
+        }
+    }
+
+    fn nullish(&self) -> bool {
+        matches!(self, Lit::Null | Lit::Undef)
+    }
+
+    fn same_kind(&self, other: &Lit) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+}
+
+/// The `if` / `else if` / `else` conditions enclosing the changed line, from
+/// the owner's own source, or `None` when the line is not exactly located or
+/// sits under no readable conditional arm.
+pub(crate) fn enclosing_conditions(
+    owner_source: &str,
+    start_line: usize,
+    changed_line: usize,
+    line_text: &str,
+) -> Option<Vec<GuardCondition>> {
+    let wanted = line_text.trim();
+    if wanted.is_empty() {
+        return None;
+    }
+    let lines: Vec<&str> = owner_source.lines().collect();
+    let by_position = changed_line
+        .checked_sub(start_line)
+        .filter(|at| lines.get(*at).is_some_and(|line| line.trim() == wanted));
+    let index = match by_position {
+        Some(at) => at,
+        None => {
+            let mut matches = lines
+                .iter()
+                .enumerate()
+                .filter(|(_, line)| line.trim() == wanted)
+                .map(|(at, _)| at);
+            let first = matches.next()?;
+            if matches.next().is_some() {
+                return None;
+            }
+            first
+        }
+    };
+    let line_start: usize = lines[..index].iter().map(|line| line.len() + 1).sum();
+
+    let masked = ts_mask_literals_and_comments(owner_source);
+    let original: Vec<char> = owner_source.chars().collect();
+    let masked_chars: Vec<char> = masked.chars().collect();
+    if original.len() != masked_chars.len() {
+        return None;
+    }
+    // Character offset of the changed line's start. Lines were split on
+    // `\n` (a `\r` stays in the line), so byte math matches char math only
+    // for ASCII; any other text is refused.
+    if !owner_source.is_ascii() {
+        return None;
+    }
+    let target = line_start.min(original.len());
+
+    struct Block {
+        conditions: Vec<GuardCondition>,
+    }
+    let mut stack: Vec<Block> = Vec::new();
+    // Conditions a following `else` arm inherits from the block just closed.
+    let mut chain: Option<Vec<GuardCondition>> = None;
+    let mut closing_conditions: Vec<Vec<GuardCondition>> = Vec::new();
+    let mut segment_start = 0usize;
+    let mut parens = 0usize;
+    for (at, c) in masked_chars.iter().enumerate().take(target) {
+        match c {
+            '(' => parens += 1,
+            ')' => parens = parens.saturating_sub(1),
+            ';' if parens == 0 => {
+                chain = None;
+                segment_start = at + 1;
+            }
+            '{' if parens == 0 => {
+                let header: String = masked_chars[segment_start..at].iter().collect();
+                let header_original: String = original[segment_start..at].iter().collect();
+                let (conditions, next_chain) = block_conditions(
+                    header.trim(),
+                    header_original.trim(),
+                    chain.take().unwrap_or_default(),
+                );
+                closing_conditions.push(next_chain);
+                stack.push(Block { conditions });
+                segment_start = at + 1;
+            }
+            '}' if parens == 0 => {
+                stack.pop()?;
+                chain = closing_conditions.pop().filter(|next| !next.is_empty());
+                segment_start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    // A segment still open at the line start means the line continues a
+    // statement or sits in an unbalanced scan; refuse rather than guess.
+    if parens != 0 || stack.is_empty() {
+        return None;
+    }
+    let conditions: Vec<GuardCondition> = stack
+        .into_iter()
+        .flat_map(|block| block.conditions)
+        .collect();
+    (!conditions.is_empty()).then_some(conditions)
+}
+
+/// The conditions a block with `header` needs, and the chain a directly
+/// following `else` inherits. `masked` and `original` are the same span
+/// (equal length, ASCII), so offsets read in one index the other.
+fn block_conditions(
+    masked: &str,
+    original: &str,
+    inherited: Vec<GuardCondition>,
+) -> (Vec<GuardCondition>, Vec<GuardCondition>) {
+    let none = (Vec::new(), Vec::new());
+    let lead = masked.len() - masked.trim_start().len();
+    let body_masked = masked[lead..].trim_end();
+    let body_original = &original[lead..lead + body_masked.len()];
+    // Drop `keyword` and following whitespace from both spans.
+    let mut m = body_masked;
+    let mut o = body_original;
+    let mut is_else = false;
+    if let Some(rest) = m.strip_prefix("else")
+        && !rest.starts_with(is_identifier_char)
+    {
+        is_else = true;
+        let cut = m.len() - rest.trim_start().len();
+        m = &m[cut..];
+        o = &o[cut..];
+        if m.is_empty() {
+            return (inherited, Vec::new());
+        }
+    }
+    let Some(after) = m.strip_prefix("if") else {
+        return none;
+    };
+    if after.starts_with(is_identifier_char) {
+        return none;
+    }
+    let cut = m.len() - after.trim_start().len();
+    let m = &m[cut..];
+    let o = &o[cut..];
+    if !m.starts_with('(') {
+        return none;
+    }
+    let mut depth = 0usize;
+    let mut close = None;
+    for (at, c) in m.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(at);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(close) = close.filter(|close| m[close + 1..].trim().is_empty()) else {
+        return none;
+    };
+    let condition = o[1..close].trim().to_string();
+    if condition.is_empty() {
+        return none;
+    }
+    let mut needs = if is_else { inherited } else { Vec::new() };
+    let mut next = needs.clone();
+    needs.push(GuardCondition {
+        text: condition.clone(),
+        want: true,
+    });
+    next.push(GuardCondition {
+        text: condition,
+        want: false,
+    });
+    (needs, next)
+}
+
+fn is_identifier_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '$'
+}
+
+/// What the owner's parameter list shows: per parameter, whether it has a
+/// default. `None` when the list cannot be read against `params`.
+pub(crate) fn parameter_defaults(owner_source: &str, params: &[String]) -> Option<Vec<bool>> {
+    let masked = ts_mask_literals_and_comments(owner_source);
+    let open = masked.find('(')?;
+    let mut depth = 0usize;
+    let mut end = None;
+    for (at, c) in masked[open..].char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(open + at);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let end = end?;
+    let list = &masked[open + 1..end];
+    let mut parts = Vec::new();
+    let (mut depth, mut start) = (0usize, 0usize);
+    for (at, c) in list.char_indices() {
+        match c {
+            '(' | '[' | '{' | '<' => depth += 1,
+            ')' | ']' | '}' | '>' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&list[start..at]);
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    if !list[start..].trim().is_empty() {
+        parts.push(&list[start..]);
+    }
+    if parts.len() != params.len() {
+        return None;
+    }
+    let mut defaults = Vec::new();
+    for (part, name) in parts.iter().zip(params) {
+        let part = part.trim();
+        let ident: String = part
+            .chars()
+            .take_while(|c| is_identifier_char(*c))
+            .collect();
+        if ident != *name {
+            return None;
+        }
+        // A default `= v` after the optional annotation; `=>` inside a type
+        // is not one.
+        let has_default = part.match_indices('=').any(|(at, _)| {
+            !part[at..].starts_with("=>") && !part[..at].ends_with(['=', '!', '<', '>'])
+        });
+        defaults.push(has_default);
+    }
+    Some(defaults)
+}
+
+/// One owner call's argument bindings, read from literal arguments.
+pub(crate) struct CallInputs<'a> {
+    pub(crate) owner_source: &'a str,
+    pub(crate) params: &'a [String],
+    pub(crate) defaults: &'a [bool],
+    pub(crate) arguments: &'a [String],
+}
+
+impl CallInputs<'_> {
+    fn lookup(&self, name: &str) -> Option<Lit> {
+        let index = self.params.iter().position(|param| param == name)?;
+        if !ts_parameter_is_stable(self.owner_source, name) {
+            return None;
+        }
+        match self.arguments.get(index) {
+            Some(argument) => parse_literal(argument),
+            None if !self.defaults.get(index).copied().unwrap_or(true) => Some(Lit::Undef),
+            None => None,
+        }
+    }
+
+    /// `Some(false)` when `condition` is provably false for this call and
+    /// `Some(true)` when provably true; `None` when unreadable.
+    fn evaluate(&self, condition: &str) -> Option<bool> {
+        let condition = condition.trim();
+        if let Some(parts) = split_top_level(condition, "||") {
+            return or_of(parts.iter().map(|part| self.evaluate(part)));
+        }
+        if let Some(parts) = split_top_level(condition, "&&") {
+            return and_of(parts.iter().map(|part| self.evaluate(part)));
+        }
+        if let Some(inner) = strip_outer_parens(condition) {
+            return self.evaluate(inner);
+        }
+        if let Some(rest) = condition.strip_prefix('!')
+            && !rest.starts_with('=')
+        {
+            return self.evaluate(rest).map(|value| !value);
+        }
+        for operator in ["===", "!==", "==", "!=", "<=", ">=", "<", ">"] {
+            if let Some((left, right)) = split_once_top_level(condition, operator) {
+                let left = self.operand(left)?;
+                let right = self.operand(right)?;
+                return compare(&left, operator, &right);
+            }
+        }
+        self.operand(condition).map(|value| value.truthy())
+    }
+
+    fn operand(&self, text: &str) -> Option<Lit> {
+        let text = text.trim();
+        if let Some(inner) = strip_outer_parens(text) {
+            return self.operand(inner);
+        }
+        if let Some(literal) = parse_literal(text) {
+            return Some(literal);
+        }
+        if !text.is_empty()
+            && text.chars().all(is_identifier_char)
+            && !text.starts_with(|c: char| c.is_ascii_digit())
+        {
+            return self.lookup(text);
+        }
+        None
+    }
+}
+
+/// Whether `inputs` provably keep one arm closed: some needed condition is
+/// provably the opposite of what the arm needs.
+pub(crate) fn call_excludes_arm(inputs: &CallInputs<'_>, conditions: &[GuardCondition]) -> bool {
+    conditions
+        .iter()
+        .any(|condition| inputs.evaluate(&condition.text) == Some(!condition.want))
+}
+
+fn or_of(values: impl Iterator<Item = Option<bool>>) -> Option<bool> {
+    let mut all_false = true;
+    for value in values {
+        match value {
+            Some(true) => return Some(true),
+            Some(false) => {}
+            None => all_false = false,
+        }
+    }
+    all_false.then_some(false)
+}
+
+fn and_of(values: impl Iterator<Item = Option<bool>>) -> Option<bool> {
+    let mut all_true = true;
+    for value in values {
+        match value {
+            Some(false) => return Some(false),
+            Some(true) => {}
+            None => all_true = false,
+        }
+    }
+    all_true.then_some(true)
+}
+
+fn compare(left: &Lit, operator: &str, right: &Lit) -> Option<bool> {
+    match operator {
+        "===" | "!==" => {
+            let equal = left.same_kind(right) && left == right;
+            Some(equal == (operator == "==="))
+        }
+        "==" | "!=" => {
+            let equal = if left.same_kind(right) {
+                left == right
+            } else if left.nullish() && right.nullish() {
+                true
+            } else if left.nullish() || right.nullish() {
+                false
+            } else {
+                // Loose coercion between number, string and boolean.
+                return None;
+            };
+            Some(equal == (operator == "=="))
+        }
+        _ => match (left, right) {
+            (Lit::Num(a), Lit::Num(b)) => Some(match operator {
+                "<" => a < b,
+                "<=" => a <= b,
+                ">" => a > b,
+                _ => a >= b,
+            }),
+            _ => None,
+        },
+    }
+}
+
+/// A literal the way a test writes it, or `None` for anything computed.
+fn parse_literal(text: &str) -> Option<Lit> {
+    let text = text.trim();
+    match text {
+        "true" => return Some(Lit::Bool(true)),
+        "false" => return Some(Lit::Bool(false)),
+        "null" => return Some(Lit::Null),
+        "undefined" => return Some(Lit::Undef),
+        _ => {}
+    }
+    let bytes = text.as_bytes();
+    if bytes.len() >= 2 {
+        let (first, last) = (bytes[0], bytes[bytes.len() - 1]);
+        if first == last && matches!(first, b'\'' | b'"' | b'`') {
+            let inner = &text[1..text.len() - 1];
+            let interpolates = first == b'`' && inner.contains("${");
+            let plain = !(inner.contains('\\') || inner.contains(first as char) || interpolates);
+            return plain.then(|| Lit::Str(inner.to_string()));
+        }
+    }
+    let digits = text.strip_prefix('-').unwrap_or(text);
+    let well_formed = !digits.is_empty()
+        && digits.chars().next().is_some_and(|c| c.is_ascii_digit())
+        && digits.chars().all(|c| c.is_ascii_digit() || c == '.')
+        && digits.matches('.').count() <= 1
+        && !digits.ends_with('.');
+    if well_formed {
+        return text.parse::<f64>().ok().map(Lit::Num);
+    }
+    None
+}
+
+fn strip_outer_parens(text: &str) -> Option<&str> {
+    let inner = text.strip_prefix('(')?.strip_suffix(')')?;
+    let mut depth = 0usize;
+    for c in inner.chars() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                if depth == 0 {
+                    return None;
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    (depth == 0).then_some(inner)
+}
+
+/// Split at every top-level `operator`, or `None` when it does not occur.
+fn split_top_level<'a>(text: &'a str, operator: &str) -> Option<Vec<&'a str>> {
+    let mut parts = Vec::new();
+    let (mut depth, mut start) = (0usize, 0usize);
+    let mut quote: Option<char> = None;
+    let mut at = 0usize;
+    while at < text.len() {
+        let rest = &text[at..];
+        let c = rest.chars().next()?;
+        if let Some(open) = quote {
+            if c == open {
+                quote = None;
+            }
+        } else if matches!(c, '\'' | '"' | '`') {
+            quote = Some(c);
+        } else if matches!(c, '(' | '[' | '{') {
+            depth += 1;
+        } else if matches!(c, ')' | ']' | '}') {
+            depth = depth.saturating_sub(1);
+        } else if depth == 0 && rest.starts_with(operator) {
+            parts.push(&text[start..at]);
+            start = at + operator.len();
+            at = start;
+            continue;
+        }
+        at += c.len_utf8();
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    parts.push(&text[start..]);
+    Some(parts)
+}
+
+/// Split at the single top-level comparison `operator`, refusing text that
+/// holds a longer operator containing it or a second comparison.
+fn split_once_top_level<'a>(text: &'a str, operator: &str) -> Option<(&'a str, &'a str)> {
+    let mut found = None;
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    for (at, c) in text.char_indices() {
+        if let Some(open) = quote {
+            if c == open {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            '\'' | '"' | '`' => quote = Some(c),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            _ if depth == 0 && text[at..].starts_with(operator) => {
+                let before = text[..at].chars().next_back();
+                let after = text[at + operator.len()..].chars().next();
+                // `==` inside `===`, `<` inside `<=`, and so on.
+                if matches!(before, Some('=' | '!' | '<' | '>'))
+                    || matches!(after, Some('='))
+                    || (operator.len() == 1 && matches!(after, Some('<' | '>')))
+                {
+                    continue;
+                }
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(at);
+            }
+            _ => {}
+        }
+    }
+    let at = found?;
+    Some((&text[..at], &text[at + operator.len()..]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SOURCE: &str = "export function price(qty: number, coupon?: string) {\n  let total = qty * 10;\n  if (coupon === 'HALF') {\n    total = total / 3;\n  } else if (qty > 100) {\n    total = 0;\n  } else {\n    total += 1;\n  }\n  return total;\n}\n";
+
+    fn at(line: usize, text: &str) -> Option<Vec<GuardCondition>> {
+        enclosing_conditions(SOURCE, 1, line, text)
+    }
+
+    #[test]
+    fn reads_then_else_if_and_else_arms() {
+        let then = at(4, "total = total / 3;")
+            .map(|c| c.iter().map(GuardCondition::display).collect::<Vec<_>>());
+        assert_eq!(then, Some(vec!["coupon === 'HALF'".to_string()]));
+        let else_if =
+            at(6, "total = 0;").map(|c| c.iter().map(GuardCondition::display).collect::<Vec<_>>());
+        assert_eq!(
+            else_if,
+            Some(vec![
+                "!(coupon === 'HALF')".to_string(),
+                "qty > 100".to_string()
+            ])
+        );
+        let else_arm =
+            at(8, "total += 1;").map(|c| c.iter().map(GuardCondition::display).collect::<Vec<_>>());
+        assert_eq!(
+            else_arm,
+            Some(vec![
+                "!(coupon === 'HALF')".to_string(),
+                "!(qty > 100)".to_string()
+            ])
+        );
+        // Unguarded lines have no conditions.
+        assert_eq!(at(2, "let total = qty * 10;"), None);
+        assert_eq!(at(10, "return total;"), None);
+    }
+
+    fn inputs<'a>(
+        arguments: &'a [String],
+        params: &'a [String],
+        defaults: &'a [bool],
+    ) -> CallInputs<'a> {
+        CallInputs {
+            owner_source: SOURCE,
+            params,
+            defaults,
+            arguments,
+        }
+    }
+
+    #[test]
+    fn evaluates_literal_calls_against_guards() {
+        let params = vec!["qty".to_string(), "coupon".to_string()];
+        let defaults = parameter_defaults(SOURCE, &params).unwrap_or_default();
+        assert_eq!(defaults, vec![false, false]);
+        let then = at(4, "total = total / 3;").unwrap_or_default();
+        let missing = vec!["2".to_string()];
+        assert!(call_excludes_arm(
+            &inputs(&missing, &params, &defaults),
+            &then
+        ));
+        let wrong = vec!["2".to_string(), "'NONE'".to_string()];
+        assert!(call_excludes_arm(
+            &inputs(&wrong, &params, &defaults),
+            &then
+        ));
+        let entering = vec!["2".to_string(), "'HALF'".to_string()];
+        assert!(!call_excludes_arm(
+            &inputs(&entering, &params, &defaults),
+            &then
+        ));
+        let computed = vec!["2".to_string(), "pick()".to_string()];
+        assert!(!call_excludes_arm(
+            &inputs(&computed, &params, &defaults),
+            &then
+        ));
+        // The else arm is excluded by the entering call and not the other.
+        let else_arm = at(8, "total += 1;").unwrap_or_default();
+        assert!(call_excludes_arm(
+            &inputs(&entering, &params, &defaults),
+            &else_arm
+        ));
+        assert!(!call_excludes_arm(
+            &inputs(&wrong, &params, &defaults),
+            &else_arm
+        ));
+    }
+
+    #[test]
+    fn a_defaulted_parameter_is_not_assumed_undefined() {
+        let source = "function f(a: number, b = 'X') {\n  if (b === 'Y') {\n    a = 1;\n  }\n  return a;\n}\n";
+        let params = vec!["a".to_string(), "b".to_string()];
+        let defaults = parameter_defaults(source, &params).unwrap_or_default();
+        assert_eq!(defaults, vec![false, true]);
+        let arms = enclosing_conditions(source, 1, 3, "a = 1;").unwrap_or_default();
+        let call = vec!["1".to_string()];
+        let inputs = CallInputs {
+            owner_source: source,
+            params: &params,
+            defaults: &defaults,
+            arguments: &call,
+        };
+        assert!(!call_excludes_arm(&inputs, &arms));
+    }
+
+    #[test]
+    fn loose_coercion_and_unreadable_syntax_never_exclude() {
+        let params = vec!["x".to_string()];
+        let defaults = vec![false];
+        for (guard, argument) in [
+            ("x == 1", "'1'"),
+            ("x.length > 2", "'a'"),
+            ("check(x)", "1"),
+            ("x === other", "1"),
+            ("x > 'a'", "1"),
+            ("x === 1 || x.y", "2"),
+        ] {
+            let source = "function f(x) {\n  return x;\n}\n";
+            let arguments = vec![argument.to_string()];
+            let call = CallInputs {
+                owner_source: source,
+                params: &params,
+                defaults: &defaults,
+                arguments: &arguments,
+            };
+            let arms = vec![GuardCondition {
+                text: guard.to_string(),
+                want: true,
+            }];
+            assert!(!call_excludes_arm(&call, &arms), "{guard} with {argument}");
+        }
+        // Definite exclusions.
+        for (guard, argument) in [
+            ("x === 1", "2"),
+            ("x > 5", "3"),
+            ("!x", "1"),
+            ("x === 'a' && y", "'b'"),
+        ] {
+            let source = "function f(x) {\n  return x;\n}\n";
+            let arguments = vec![argument.to_string()];
+            let call = CallInputs {
+                owner_source: source,
+                params: &params,
+                defaults: &defaults,
+                arguments: &arguments,
+            };
+            let arms = vec![GuardCondition {
+                text: guard.to_string(),
+                want: true,
+            }];
+            assert!(call_excludes_arm(&call, &arms), "{guard} with {argument}");
+        }
+    }
+}

@@ -16579,6 +16579,7 @@ mod custom_matcher_tests;
 mod directory_specifier_tests;
 mod dropped_term_tests;
 mod error_payload_tests;
+mod guard_entry_tests;
 mod instance_class_tests;
 mod issue7507_shadow_tests;
 mod literal_matcher_tests;
