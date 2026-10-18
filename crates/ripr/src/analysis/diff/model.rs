@@ -216,6 +216,7 @@ impl ChangedFile {
     /// The new-side line where the contiguous added run holding this line
     /// starts. Callers visiting every added line of a file should build
     /// [`Self::added_run_starts`] once and use [`Self::added_run_start_from`].
+    #[cfg(test)]
     pub(crate) fn added_run_start(&self, added_new_side_line: usize) -> usize {
         Self::added_run_start_from(&self.added_run_starts(), added_new_side_line)
     }
