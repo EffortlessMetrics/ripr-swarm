@@ -1,0 +1,326 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/field_match_helper_mutable/input",
+  "summary": {"changed_rust_files":1,"probes":3,"findings":3,"exposed":2,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:d8f68705f7f321a58365dcea3a5219d0375734d9295cd2823d4e1d221b4e7716","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":3,"finding_count":3},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:match_arm:afe43b21",
+      "canonical_gap_id": "gap:rust:src/lib.rs:charge:match_arm:match_arm:some_ms",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:charge:match_arm:match_arm:some_ms",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "charge",
+        "behavior_kind": "match_arm",
+        "probe_kind": "match_arm",
+        "normalized_discriminator": "some_ms"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:match_arm:afe43b21",
+        "family": "match_arm",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 7,
+        "expression": "Some(ms) =>"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach charge: selected"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: Some(ms) =>"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach charge: selected", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: Some(ms) =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches match arm result: Some(ms) => (line 7)", "related test src/lib.rs:14 selected uses strong exact value oracle: assert_eq!(charge(&lease), 600);", "related test src/lib.rs:14 selected uses strong exact value oracle: assert_eq!(charge(&lease), 1001);", "source assertion argument value 600 at line 16", "source assertion argument value 1001 at line 18"],
+      "flow_sinks": [
+        {"kind":"match_arm","text":"Some(ms) =>","line":7}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: Some(ms) =>", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach charge: selected", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "16": "assert_eq!(charge(&lease), 600);",
+        "18": "assert_eq!(charge(&lease), 1001);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 16,
+            "value": "600",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 18,
+            "value": "1001",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 16,
+          "value": "600",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 18,
+          "value": "1001",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "selected",
+          "file": "src/lib.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(charge(&lease), 600);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "selected",
+          "file": "src/lib.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(charge(&lease), 1001);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["fixture_opaque"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:match_arm:0137bebb",
+      "canonical_gap_id": "gap:rust:src/lib.rs:charge:match_arm:match_arm:some_ms=>0",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:charge:match_arm:match_arm:some_ms=>0",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "charge",
+        "behavior_kind": "match_arm",
+        "probe_kind": "match_arm",
+        "normalized_discriminator": "some_ms=>0"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:match_arm:0137bebb",
+        "family": "match_arm",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 7,
+        "expression": "Some(ms) => 0,"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach charge: selected"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: 0"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach charge: selected", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: 0", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches match arm result: 0 (line 7)", "related test src/lib.rs:14 selected uses strong exact value oracle: assert_eq!(charge(&lease), 600);", "related test src/lib.rs:14 selected uses strong exact value oracle: assert_eq!(charge(&lease), 1001);", "source assertion argument value 600 at line 16", "source assertion argument value 1001 at line 18"],
+      "flow_sinks": [
+        {"kind":"match_arm","text":"0","line":7}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: 0", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach charge: selected", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "16": "assert_eq!(charge(&lease), 600);",
+        "18": "assert_eq!(charge(&lease), 1001);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 16,
+            "value": "600",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 18,
+            "value": "1001",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 16,
+          "value": "600",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 18,
+          "value": "1001",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "selected",
+          "file": "src/lib.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(charge(&lease), 600);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "selected",
+          "file": "src/lib.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(charge(&lease), 1001);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["fixture_opaque"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "base_deleted"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:d5889fa5",
+      "canonical_gap_id": "gap:rust:src/lib.rs:charge:return_value:return_value:some_ms=>0",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:charge:return_value:return_value:some_ms=>0",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "charge",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "some_ms=>0"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:d5889fa5",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 7,
+        "expression": "Some(ms) => 0,"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach charge: selected"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"weak","confidence":"low","summary":"Propagation witness is incomplete for returned value: Some(ms) => ms as u64"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach charge: selected", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: Propagation witness is incomplete for returned value: Some(ms) => ms as u64", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: Some(ms) => ms as u64 (line 7)", "related test src/lib.rs:14 selected uses strong exact value oracle: assert_eq!(charge(&lease), 600);", "related test src/lib.rs:14 selected uses strong exact value oracle: assert_eq!(charge(&lease), 1001);", "source assertion argument value 600 at line 16", "source assertion argument value 1001 at line 18"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"Some(ms) => ms as u64","line":7}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Propagation witness is incomplete for returned value: Some(ms) => ms as u64", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach charge: selected"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "16": "assert_eq!(charge(&lease), 600);",
+        "18": "assert_eq!(charge(&lease), 1001);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 16,
+            "value": "600",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 18,
+            "value": "1001",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 16,
+          "value": "600",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 18,
+          "value": "1001",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "selected",
+          "file": "src/lib.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(charge(&lease), 600);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "selected",
+          "file": "src/lib.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(charge(&lease), 1001);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": ["fixture_opaque"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "The related test `selected` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
+      "suggested_next_action": "The related test `selected` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
+      "language": "rust",
+      "source_currentness": "base_deleted"
+    }
+  ]
+}

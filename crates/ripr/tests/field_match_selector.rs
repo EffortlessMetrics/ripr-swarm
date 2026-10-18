@@ -546,6 +546,42 @@ fn helper_mutable_field_projection_refuses_unrelated_or_invalidated_values()
             "let mut lease = fixture(); lease.settled_elapsed_ms = Some(1001); lease.settled_elapsed_ms.take(); assert_eq!(charge(&lease), 600);",
         ),
         (
+            "string shifted later write",
+            "let mut lease = fixture(); let _ = \"a long string changes lexical columns\"; assert_eq!(charge(&lease), 600); lease.settled_elapsed_ms = Some(1001);",
+        ),
+        (
+            "comment masquerading as field write",
+            "let lease = fixture(); /* lease.settled_elapsed_ms = Some(1001); */ assert_eq!(charge(&lease), 600);",
+        ),
+        (
+            "comment braces around conditional write",
+            "let mut lease = fixture(); if false { /* } */ lease.settled_elapsed_ms = Some(1001); } assert_eq!(charge(&lease), 600);",
+        ),
+        (
+            "implicit pattern borrow",
+            "let mut lease = fixture(); lease.settled_elapsed_ms = Some(1001); let ref mut alias = lease.settled_elapsed_ms; *alias = None; assert_eq!(charge(&lease), 600);",
+        ),
+        (
+            "match pattern borrow",
+            "let mut lease = fixture(); lease.settled_elapsed_ms = Some(1001); match lease.settled_elapsed_ms { ref mut alias => *alias = None } assert_eq!(charge(&lease), 600);",
+        ),
+        (
+            "tuple field write",
+            "let mut lease = fixture(); lease.settled_elapsed_ms = Some(1001); (lease.settled_elapsed_ms,) = (None,); assert_eq!(charge(&lease), 600);",
+        ),
+        (
+            "array field write",
+            "let mut lease = fixture(); lease.settled_elapsed_ms = Some(1001); [lease.settled_elapsed_ms] = [None]; assert_eq!(charge(&lease), 600);",
+        ),
+        (
+            "parenthesized field write",
+            "let mut lease = fixture(); lease.settled_elapsed_ms = Some(1001); (lease.settled_elapsed_ms) = None; assert_eq!(charge(&lease), 600);",
+        ),
+        (
+            "multiline field write",
+            "let mut lease = fixture(); lease.settled_elapsed_ms = Some(1001);\nlease.settled_elapsed_ms\n = None;\nassert_eq!(charge(&lease), 600);",
+        ),
+        (
             "parenthesized implicit borrow",
             "let mut lease = fixture(); lease.settled_elapsed_ms = Some(1001); ((lease.settled_elapsed_ms)).take(); assert_eq!(charge(&lease), 600);",
         ),
@@ -666,5 +702,39 @@ fn a_callable_module_binding_cannot_borrow_a_root_helpers_record()
                 == Some(ripr::domain::StaticLimitKind::RustFieldMatchSelectorUnresolved)),
         "the helper namespace remains unresolved, not an established sibling"
     );
+    Ok(())
+}
+
+#[test]
+fn a_helper_returned_none_is_a_real_sibling_gap_not_an_unsupported_selector()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!("../../../fixtures/field_match_helper_mutable/input/src/lib.rs")
+        .replace(
+            "        lease.elapsed = Some(1001);\n        assert_eq!(charge(&lease), 1001);\n",
+            "",
+        );
+    let diff = include_str!("../../../fixtures/field_match_helper_mutable/diff.patch");
+    let fixture = Fixture::new(&source, diff)?;
+    let output = fixture.check()?;
+    let arms = output
+        .findings
+        .iter()
+        .filter(|finding| {
+            finding.probe.family == ripr::ProbeFamily::MatchArm
+                && finding.source_currentness == ripr::domain::SourceCurrentness::CandidateCurrent
+        })
+        .collect::<Vec<_>>();
+    assert!(!arms.is_empty());
+    for arm in arms {
+        assert_ne!(arm.class, ExposureClass::Exposed);
+        assert!(arm.static_limit_kind.is_none());
+        assert!(arm.canonical_gap.is_some());
+        assert!(
+            arm.activation
+                .missing_discriminators
+                .iter()
+                .any(|missing| missing.value == "Some(ms)")
+        );
+    }
     Ok(())
 }

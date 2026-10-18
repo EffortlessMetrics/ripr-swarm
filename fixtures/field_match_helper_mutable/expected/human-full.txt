@@ -1,0 +1,118 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/field_match_helper_mutable/input
+
+Summary: 3 probe(s), 2 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 3 of 3 finding(s) unsuppressed (2 base-side evidence, not candidate edit targets)
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 3 probe(s), 3 finding(s)
+
+INFO ./src/lib.rs:7
+  id: probe:src_lib.rs:match_arm:afe43b21
+
+Changed
+  before: Some(ms) => 0,
+  after:  Some(ms) =>
+
+Probe
+  family: match_arm
+  delta:  control
+  owner:  src/lib.rs::charge
+  canonical gap: gap:rust:src/lib.rs:charge:match_arm:match_arm:some_ms
+
+Static exposure
+  exposed (info, confidence 1.00)
+
+Evidence
+  - reach yes: Related tests appear to reach charge: selected
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Changed behavior appears to influence match arm result: Some(ms) =>
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator yes: Strong oracle found: exact value or pattern assertion
+  - local flow reaches match arm result: Some(ms) => (line 7)
+  - related test src/lib.rs:14 selected uses strong exact value oracle: assert_eq!(charge(&lease), 600);
+  - related test src/lib.rs:14 selected uses strong exact value oracle: assert_eq!(charge(&lease), 1001);
+  - source assertion argument value 600 at line 16
+  - source assertion argument value 1001 at line 18
+
+Stop reasons:
+  - fixture_opaque — a related test mentions a fixture, builder, or generator, so its inputs may come from values ripr does not evaluate
+Drill in:
+  ripr explain --root <cwd>/fixtures/field_match_helper_mutable/input --diff <cwd>/fixtures/field_match_helper_mutable/diff.patch --mode fast probe:src_lib.rs:match_arm:afe43b21
+  ripr context --root <cwd>/fixtures/field_match_helper_mutable/input --diff <cwd>/fixtures/field_match_helper_mutable/diff.patch --mode fast --at probe:src_lib.rs:match_arm:afe43b21
+
+INFO ./src/lib.rs:7
+  id: probe:src_lib.rs:match_arm:0137bebb
+
+Changed
+  before: Some(ms) => 0,
+  expr:   Some(ms) => 0,
+  source:  base_deleted — base-side evidence, not a candidate edit target
+
+Probe
+  family: match_arm
+  delta:  control
+  owner:  src/lib.rs::charge
+  canonical gap: gap:rust:src/lib.rs:charge:match_arm:match_arm:some_ms=>0
+
+Static exposure
+  exposed (info, confidence 1.00)
+
+Evidence
+  - reach yes: Related tests appear to reach charge: selected
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Changed behavior appears to influence match arm result: 0
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator yes: Strong oracle found: exact value or pattern assertion
+  - local flow reaches match arm result: 0 (line 7)
+  - related test src/lib.rs:14 selected uses strong exact value oracle: assert_eq!(charge(&lease), 600);
+  - related test src/lib.rs:14 selected uses strong exact value oracle: assert_eq!(charge(&lease), 1001);
+  - source assertion argument value 600 at line 16
+  - source assertion argument value 1001 at line 18
+
+Stop reasons:
+  - fixture_opaque — a related test mentions a fixture, builder, or generator, so its inputs may come from values ripr does not evaluate
+Drill in:
+  ripr explain --root <cwd>/fixtures/field_match_helper_mutable/input --diff <cwd>/fixtures/field_match_helper_mutable/diff.patch --mode fast probe:src_lib.rs:match_arm:0137bebb
+  ripr context --root <cwd>/fixtures/field_match_helper_mutable/input --diff <cwd>/fixtures/field_match_helper_mutable/diff.patch --mode fast --at probe:src_lib.rs:match_arm:0137bebb
+
+WARNING ./src/lib.rs:7
+  id: probe:src_lib.rs:return_value:d5889fa5
+
+Changed
+  before: Some(ms) => 0,
+  expr:   Some(ms) => 0,
+  source:  base_deleted — base-side evidence, not a candidate edit target
+
+Probe
+  family: return_value
+  delta:  value
+  owner:  src/lib.rs::charge
+  canonical gap: gap:rust:src/lib.rs:charge:return_value:return_value:some_ms=>0
+
+Static exposure
+  weakly_exposed (warning, confidence 0.66)
+
+Evidence
+  - reach yes: Related tests appear to reach charge: selected
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation weak: Propagation witness is incomplete for returned value: Some(ms) => ms as u64
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - local flow reaches returned value: Some(ms) => ms as u64 (line 7)
+  - related test src/lib.rs:14 selected uses strong exact value oracle: assert_eq!(charge(&lease), 600); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test src/lib.rs:14 selected uses strong exact value oracle: assert_eq!(charge(&lease), 1001); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - source assertion argument value 600 at line 16
+  - source assertion argument value 1001 at line 18
+
+Weakness
+  - No strong discriminator was detected
+
+Stop reasons:
+  - fixture_opaque — a related test mentions a fixture, builder, or generator, so its inputs may come from values ripr does not evaluate
+
+Next step
+  The related test `selected` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion
+Drill in:
+  ripr explain --root <cwd>/fixtures/field_match_helper_mutable/input --diff <cwd>/fixtures/field_match_helper_mutable/diff.patch --mode fast probe:src_lib.rs:return_value:d5889fa5
+  ripr context --root <cwd>/fixtures/field_match_helper_mutable/input --diff <cwd>/fixtures/field_match_helper_mutable/diff.patch --mode fast --at probe:src_lib.rs:return_value:d5889fa5

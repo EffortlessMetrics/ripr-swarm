@@ -713,6 +713,8 @@ fn mutable_borrow_before_assignment_does_not_invalidate_the_later_value() -> Res
         vec![FieldAssignmentBinding {
             position: SourcePosition { line: 3, column: 0 },
             values: vec!["SUPPORTED_VERSION".to_string()],
+            #[cfg(feature = "lang-rust")]
+            option_value: None,
         }],
     );
     let seam = predicate_seam();
@@ -749,6 +751,8 @@ fn invalidated_field_assignment_does_not_fall_back_to_a_stale_struct_value() -> 
         vec![FieldAssignmentBinding {
             position: SourcePosition { line: 2, column: 0 },
             values: vec!["SUPPORTED_VERSION".to_string()],
+            #[cfg(feature = "lang-rust")]
+            option_value: None,
         }],
     );
     facts.field_assignment_invalidations.insert(

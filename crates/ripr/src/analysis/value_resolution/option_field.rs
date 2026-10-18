@@ -47,6 +47,24 @@ impl ValueEnvFacts {
         let parsed_source = crate::analysis::syntax::parse_clean_source_file(source)?;
         let test_tree = parsed_test.tree();
         let tree = parsed_source.tree();
+        // The shared scanner's coordinates are measured after stripping string
+        // contents/line comments. Do not reinterpret shifted coordinates, or
+        // unread block-comment braces, as exact invocation facts.
+        if self
+            .body_clean
+            .lines()
+            .zip(test.body.lines())
+            .any(|(clean, raw)| clean.len() != raw.len())
+            || test_tree
+                .syntax()
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .any(|token| token.kind() == ra_ap_syntax::SyntaxKind::COMMENT)
+        {
+            return None;
+        }
+        let function = test_tree.syntax().children().find_map(ast::Fn::cast)?;
+        let statements = function.body()?.stmt_list()?;
         // Conditional attributes can remove bindings or writes without changing
         // their lexical order. This slice has no cfg evaluation authority.
         if test_tree
@@ -67,6 +85,12 @@ impl ValueEnvFacts {
                     test.start_line,
                 ) == binding_position
             })?;
+        if binding.syntax().parent().as_ref() != Some(statements.syntax())
+            || !matches!(binding.pat(), Some(ast::Pat::IdentPat(pattern))
+                if pattern.name().is_some_and(|name| name.text() == object))
+        {
+            return None;
+        }
         if !is_unconditional_test_statement(
             &self.body_clean,
             usize::from(binding.syntax().text_range().start()),
@@ -105,8 +129,8 @@ impl ValueEnvFacts {
             0,
         )?;
         // A whole-object reassignment, move, method call or mutable borrow
-        // escapes the supported ledger identity. Field reads/writes and shared
-        // borrows preserve the selected primitive Option field.
+        // escapes the supported ledger identity. Only admitted field writes
+        // and shared whole-record borrows preserve the selected field.
         for path in test_tree
             .syntax()
             .descendants()
@@ -124,11 +148,32 @@ impl ValueEnvFacts {
                 continue;
             }
             let parent = path.syntax().parent()?;
-            if let Some(field) = ast::FieldExpr::cast(parent.clone()) {
-                if field_use_is_closed(&field) {
-                    continue;
+            if let Some(field_use) = ast::FieldExpr::cast(parent.clone()) {
+                // The supported local record needs only tracked field writes
+                // and shared whole-record borrows. Other field place uses can
+                // borrow implicitly through methods or ref-mut patterns.
+                let Some(write) = field_assignment_target(&field_use) else {
+                    return None;
+                };
+                {
+                    let position = position_at_offset(
+                        &test.body,
+                        usize::from(write.syntax().text_range().start()),
+                        test.start_line,
+                    );
+                    let written_field = field_use.name_ref()?.text().to_string();
+                    // Only a write actually retained by the shared authority can
+                    // preserve local identity. Parenthesized/multiline LHS forms
+                    // that its bounded scanner cannot read remain unresolved.
+                    if !self
+                        .field_assignments
+                        .get(&(object.to_string(), written_field))
+                        .is_some_and(|writes| writes.iter().any(|write| write.position == position))
+                    {
+                        return None;
+                    }
                 }
-                return None;
+                continue;
             }
             if let Some(borrow) = ast::RefExpr::cast(parent)
                 && borrow.mut_token().is_none()
@@ -158,7 +203,32 @@ impl ValueEnvFacts {
             if self.field_assignment_is_invalidated(object, assignment.position, call_position) {
                 return None;
             }
-            return assignment.option_value.clone();
+            let value = assignment.option_value.as_ref()?;
+            let write = test_tree
+                .syntax()
+                .descendants()
+                .filter_map(ast::BinExpr::cast)
+                .find(|write| {
+                    position_at_offset(
+                        &test.body,
+                        usize::from(write.syntax().text_range().start()),
+                        test.start_line,
+                    ) == assignment.position
+                })?;
+            if write.op_kind() != Some(ast::BinaryOp::Assignment { op: None })
+                || write
+                    .syntax()
+                    .parent()
+                    .and_then(|statement| statement.parent())
+                    .as_ref()
+                    != Some(statements.syntax())
+                || field_projection(&write.lhs()?.syntax().text().to_string())
+                    != Some((object, field))
+                || closed_option(&write.rhs()?.syntax().text().to_string()).as_ref() != Some(value)
+            {
+                return None;
+            }
+            return Some(value.clone());
         }
         if self.field_assignment_is_invalidated(object, binding_position, call_position) {
             return None;
@@ -340,14 +410,6 @@ pub(super) fn closed_option(text: &str) -> Option<String> {
     (parse_integer_literal(value)? >= 0).then(|| text.to_string())
 }
 
-fn field_use_is_closed(field: &ast::FieldExpr) -> bool {
-    let Some(parent) = field_context(field) else {
-        return false;
-    };
-    !ast::MethodCallExpr::can_cast(parent.kind())
-        && ast::RefExpr::cast(parent).is_none_or(|borrow| borrow.mut_token().is_none())
-}
-
 // Macro arguments remain syntax in the caller. Parse their tuple of expressions
 // to apply the same binding-use boundary, including implicit field-method borrows.
 fn macro_uses_are_closed(call: &ast::MacroCall, object: &str, depth: usize) -> Option<bool> {
@@ -364,10 +426,7 @@ fn macro_uses_are_closed(call: &ast::MacroCall, object: &str, depth: usize) -> O
             continue;
         }
         let parent = path.syntax().parent()?;
-        if let Some(field) = ast::FieldExpr::cast(parent.clone()) {
-            if field_use_is_closed(&field) && !field_is_assignment_target(&field) {
-                continue;
-            }
+        if ast::FieldExpr::can_cast(parent.kind()) {
             return Some(false);
         }
         if ast::RefExpr::cast(parent).is_some_and(|borrow| borrow.mut_token().is_none()) {
@@ -383,16 +442,19 @@ fn macro_uses_are_closed(call: &ast::MacroCall, object: &str, depth: usize) -> O
     Some(true)
 }
 
-fn field_context(field: &ast::FieldExpr) -> Option<ra_ap_syntax::SyntaxNode> {
-    let mut parent = field.syntax().parent()?;
-    while ast::ParenExpr::can_cast(parent.kind()) {
-        parent = parent.parent()?;
-    }
-    Some(parent)
-}
-
-fn field_is_assignment_target(field: &ast::FieldExpr) -> bool {
-    field_context(field)
-        .and_then(ast::BinExpr::cast)
-        .is_some_and(|binary| matches!(binary.op_kind(), Some(ast::BinaryOp::Assignment { .. })))
+fn field_assignment_target(field: &ast::FieldExpr) -> Option<ast::BinExpr> {
+    // Destructuring LHS forms can contain a field under tuple, array, record
+    // or parenthesis nodes. Only the shared write ledger can admit them.
+    field
+        .syntax()
+        .ancestors()
+        .filter_map(ast::BinExpr::cast)
+        .find(|binary| {
+            matches!(binary.op_kind(), Some(ast::BinaryOp::Assignment { .. }))
+                && binary.lhs().is_some_and(|lhs| {
+                    lhs.syntax()
+                        .text_range()
+                        .contains_range(field.syntax().text_range())
+                })
+        })
 }
