@@ -1367,9 +1367,9 @@ fn sequence_runs(
             let arguments = owner_name_call_text(&call.text, name, free)
                 .and_then(|text| call_arguments(text, &call.name))?;
             let argument = arguments.get(position)?;
-            for elements in
-                super::owner_pin::closure_adaptor::argument_sequences(test, None, argument)?
-            {
+            for elements in super::owner_pin::closure_adaptor::argument_sequences(
+                test, None, argument, &call.text,
+            )? {
                 runs.push(ElementRun {
                     line: call.line,
                     text: call.text.to_string(),
