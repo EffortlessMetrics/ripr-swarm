@@ -2037,20 +2037,22 @@ fn scan_macro_sites(
 #[cfg(test)]
 thread_local! {
     /// What the last [`map_scans`] on this thread decided: `Some(true)` when
-    /// it fanned out on the rayon pool, `Some(false)` when it ran in line.
+    /// it took the rayon branch, `Some(false)` when it took the in-line branch.
     static LAST_SCAN_FAN_OUT: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
 }
 
 /// Maps `scan` over `items` in order, on the rayon pool only where
 /// [`nested_parallelism_allowed`]. Every production scan that can be reached
-/// from classification goes through here, so that guard has one seam.
+/// from classification goes through here, so that guard has one seam (the
+/// `#[cfg(test)]` oracle `workspace_macro_binding_site` keeps its own copy).
 fn map_scans<T: Sync, R: Send>(items: &[T], scan: impl Fn(&T) -> R + Sync + Send) -> Vec<R> {
-    let fan_out = nested_parallelism_allowed();
-    #[cfg(test)]
-    LAST_SCAN_FAN_OUT.with(|last| last.set(Some(fan_out)));
-    if fan_out {
+    if nested_parallelism_allowed() {
+        #[cfg(test)]
+        LAST_SCAN_FAN_OUT.with(|last| last.set(Some(true)));
         items.par_iter().map(scan).collect()
     } else {
+        #[cfg(test)]
+        LAST_SCAN_FAN_OUT.with(|last| last.set(Some(false)));
         items.iter().map(scan).collect()
     }
 }

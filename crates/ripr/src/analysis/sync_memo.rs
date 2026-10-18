@@ -196,7 +196,12 @@ mod tests {
             assert!(memo.borrow().is_empty());
             10
         });
-        let second = memo.get_or_build(&1, || 99);
+        let rebuilt = std::cell::Cell::new(false);
+        let second = memo.get_or_build(&1, || {
+            rebuilt.set(true);
+            99
+        });
+        assert!(!rebuilt.get(), "a hit must not run the builder");
         assert_eq!((*first, *second), (10, 10));
         assert!(
             Arc::ptr_eq(&first, &second),

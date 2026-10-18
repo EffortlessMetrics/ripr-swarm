@@ -290,5 +290,16 @@ fn a_test_file_that_is_also_a_module_parent_is_read_the_same_in_either_order() -
         parent_after_child, alone,
         "the parent's verdict must not depend on the nested test running first"
     );
+
+    // The parent first, then the nested test: the nested test's own verdict
+    // must not depend on the parent's entry either.
+    let syntax = OwnerPinSyntax::default();
+    let parent_first = refusal_of(&syntax, &index, PARENT)?;
+    let child_after_parent = refusal_of(&syntax, &index, NESTED)?;
+    assert_eq!(parent_first, alone);
+    assert_eq!(
+        child_after_parent, child_alone,
+        "the nested test's verdict must not depend on the parent running first"
+    );
     Ok(())
 }
