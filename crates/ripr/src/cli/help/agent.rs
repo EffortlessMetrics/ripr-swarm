@@ -416,13 +416,13 @@ mod tests {
     use super::AGENT_REPAIR_HELP;
 
     #[test]
-    fn agent_repair_help_seam_id_names_before_phase_finding_id_acceptance() {
+    fn agent_repair_help_seam_id_names_before_phase_finding_id_acceptance() -> Result<(), String> {
         // #8686: pin the `--seam-id` entry, not AGENT_HELP.
         let seam_id = AGENT_REPAIR_HELP
             .split("  --seam-id ID")
             .nth(1)
             .and_then(|rest| rest.split("  --attempt ID").next())
-            .expect("AGENT_REPAIR_HELP must have a --seam-id entry before --attempt");
+            .ok_or("AGENT_REPAIR_HELP must have a --seam-id entry before --attempt")?;
         for needle in [
             "`ripr check` finding ID",
             "`probe:`",
@@ -434,14 +434,17 @@ mod tests {
             "unmapped ID refuses",
             "`ripr pilot`",
         ] {
-            assert!(
-                seam_id.contains(needle),
-                "AGENT_REPAIR_HELP --seam-id omitted {needle:?}: {seam_id}"
-            );
+            if !seam_id.contains(needle) {
+                return Err(format!(
+                    "AGENT_REPAIR_HELP --seam-id omitted {needle:?}: {seam_id}"
+                ));
+            }
         }
-        assert!(
-            !seam_id.contains("are not seam IDs"),
-            "stale pre-#8556 wording must not remain on --seam-id: {seam_id}"
-        );
+        if seam_id.contains("are not seam IDs") {
+            return Err(format!(
+                "stale pre-#8556 wording must not remain on --seam-id: {seam_id}"
+            ));
+        }
+        Ok(())
     }
 }
