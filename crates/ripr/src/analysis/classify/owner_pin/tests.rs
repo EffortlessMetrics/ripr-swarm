@@ -5699,7 +5699,7 @@ fn trusted_macro_scan_skips_files_only_once_every_name_is_ambiguous() {
     ] {
         let index = index(&files);
         let (ambiguous, _, _, _) =
-            trusted_macro_sites_in(&index, &TargetRoots::new(&index), &unresolved);
+            trusted_macro_sites_in(&index, &TargetRoots::new(&index), &unresolved, false);
         assert_eq!(ambiguous, full_scan(&index), "{files:?}");
         assert_eq!(
             ambiguous.len() == assertion_context_macros().len(),
