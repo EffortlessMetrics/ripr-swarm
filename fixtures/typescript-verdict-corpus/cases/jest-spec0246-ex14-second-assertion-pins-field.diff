@@ -1,0 +1,11 @@
+diff --git a/src/settingsBoth.ts b/src/settingsBoth.ts
+index 0000000..1111111 100644
+--- a/src/settingsBoth.ts
++++ b/src/settingsBoth.ts
+@@ -4,5 +4,5 @@
+ }
+ 
+ export function markBoth(cfg: Flags): Flags {
+-  return { ...cfg, ok: true };
++  return { ...cfg };
+ }
