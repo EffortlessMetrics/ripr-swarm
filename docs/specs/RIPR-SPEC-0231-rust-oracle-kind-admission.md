@@ -330,7 +330,7 @@ Two pattern terms are used below.
    it wraps, and a boolean literal it wraps is that literal: a constructor
    (`Some(..)`, `Ok::<bool, ()>(..)`, `E::V(..)`), a `new` or `from` path
    call (`Box::new(..)`), a one-element or repeat array (`[..]`,
-   `[..; n]`), `vec![..]`, and `.unwrap()`, `.expect(..)`, `.clone()` or
+   `[..; 2]`), `vec![..]`, and `.unwrap()`, `.expect(..)`, `.clone()` or
    `.to_owned()` on one operand, so `assert_eq!(Some(r == Err(E::Bad)),
    Some(expected))` caps and `assert_eq!(Some(r == Err(E::Bad)),
    Some(true))` reads as the comparison asserted true (#8101); a wrapped
@@ -345,9 +345,13 @@ Two pattern terms are used below.
    or `Arc` may discard its argument, an empty or unknown-length repeat
    (`[..; 0]`, `[..; n]`) holds nothing, and a test paired with anything but
    `true` in an equal-length sequence caps (`assert_eq!([r == Err(E::Bad),
-   x == 1], [false, true])`). A struct literal, a statement block, or a field
-   or method on a wrapper is not yet read this way (#8615). Such a comparison
-   asserted by a
+   x == 1], [false, true])`). A struct literal (`Foo { ok: x == 1 }`) holds
+   its fields' tests like a call and caps whatever it is compared with; the
+   tail of a statement block (`{ let a = 1; a == b }`) is the value it holds;
+   and a field or method on a wrapper or struct literal that holds a test
+   (`Wrapper(x == 1).0`, `Some(x == 3).unwrap_or(false)`) caps, except that a
+   plain field read compared with `true` still pins the held test (#8615).
+   Such a comparison asserted by a
    boolean literal caps the same way (`assert_eq!((r == Err(E::Bad)) as u8
    == 0, true)`, `assert_eq!((r == Err(E::Bad)) == flag, true)`), and a
    path call to `not` negates like `!` (`assert_eq!(Not::not(r ==

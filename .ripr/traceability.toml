@@ -15521,6 +15521,7 @@ fixtures = [
   "fixtures/test_cast_to_integer_not_exact",
   "fixtures/test_from_trait_conversion_not_exact",
   "fixtures/test_wrapped_in_some_not_exact",
+  "fixtures/test_in_struct_literal_not_exact",
 ]
 code = [
   "crates/ripr/src/analysis/classify/reveal.rs",

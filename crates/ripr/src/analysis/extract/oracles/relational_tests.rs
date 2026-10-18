@@ -610,6 +610,7 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
     let weak = (OracleKind::RelationalCheck, OracleStrength::Weak);
     let exact = (OracleKind::ExactValue, OracleStrength::Strong);
     let err = (OracleKind::ExactErrorVariant, OracleStrength::Strong);
+    let whole = (OracleKind::WholeObjectEquality, OracleStrength::Strong);
     for (text, expected) in [
         // A comparison asserted false is the inequality it states.
         ("assert_eq!(r == Err(E::Bad), false);", &weak),
@@ -1247,6 +1248,50 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
             &err,
         ),
         ("assert_eq!(Box::new(x == 3), Box::new(true));", &exact),
+        // #8615: a struct literal, a statement block and a field or method
+        // on a wrapper hold a test the same way a call does.
+        ("assert_eq!(Foo { ok: x == 1 }, f);", &weak),
+        ("assert_eq!(Some(Foo { ok: x == 1 }), Some(f));", &weak),
+        (
+            "assert_eq!(Foo { n: 0, ok: matches!(r, Ok(3)) }, f);",
+            &weak,
+        ),
+        ("assert_eq!(Foo { ok: x == 1 }, Foo { ok: true });", &weak),
+        ("assert_eq!(Foo { ok, n: x + 1 }, f);", &whole),
+        ("assert_eq!(Foo { n: f(a == b) }, f);", &whole),
+        ("assert_eq!(Wrapper(x == 1).0, flag);", &weak),
+        ("assert_eq!(Wrapper(x == 1).0, false);", &weak),
+        ("assert_eq!(Wrapper(x == 1).0, true);", &exact),
+        ("assert_eq!(Foo { ok: x == 1 }.ok, flag);", &weak),
+        (
+            "assert_eq!(Some(x == 3).unwrap_or(false), expected);",
+            &weak,
+        ),
+        ("assert_eq!(Some(x == 3).unwrap_or(false), true);", &weak),
+        ("assert_eq!(Some(x == 3).map(|b| !b), Some(true));", &weak),
+        ("assert_eq!(Wrapper(x).0, flag);", &exact),
+        ("assert_eq!(Some(x).unwrap_or(0), 3);", &exact),
+        ("assert_eq!(Foo::new({ let a = 1; a == b }), f);", &weak),
+        ("assert_eq!(Some({ x == 1 }), Some(f));", &weak),
+        ("assert_eq!(Foo::new({ let a = 1; a }), f);", &whole),
+        // Path spellings of the standard wrappers.
+        (
+            "assert_eq!(Box::<bool>::new(x == 3), Box::new(true));",
+            &exact,
+        ),
+        ("assert_eq!(Option::Some(x == 3), Some(true));", &exact),
+        (
+            "assert_eq!(Result::<bool, ()>::Ok(x == 3), Ok(true));",
+            &exact,
+        ),
+        ("assert_eq!(Option::Some(x == 3).unwrap(), true);", &exact),
+        ("assert_eq!(Option::Some(x == 3), Some(flag));", &weak),
+        ("assert_eq!(Some(x == 3), Option::Some(flag));", &weak),
+        // A trailing comma ends a list.
+        ("assert_eq!(vec![x == 3,], vec![true,]);", &exact),
+        ("assert_eq!(vec![x == 3], vec![true,]);", &exact),
+        ("assert_eq!([x == 3, y == 1], [true, true,]);", &exact),
+        ("assert_eq!([x == 3, y == 1,], [true, false]);", &weak),
         ("assert_eq!([Pair(r == Err(E::Bad), 0); 2], [p, q]);", &weak),
         ("assert_eq!(Some(r), Some(Err(E::Bad)));", &err),
         ("assert_eq!(Some(x), Some(3));", &exact),
