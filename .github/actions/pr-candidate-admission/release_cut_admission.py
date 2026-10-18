@@ -198,6 +198,13 @@ def _changed_paths(pr_files: Any) -> list[str]:
         if not isinstance(item, dict) or not isinstance(item.get("filename"), str):
             raise PacketError(f"PR files[{index}] lacks filename")
         paths.append(item["filename"])
+        # A rename or removal touches another path or deletes the packet; it
+        # is never a packet-only update.
+        previous = item.get("previous_filename")
+        if isinstance(previous, str) and previous != item["filename"]:
+            paths.append(previous)
+        if item.get("status") in {"removed", "renamed"}:
+            paths.append(f"<{item.get('status')}>")
     return sorted(set(paths))
 
 
@@ -238,15 +245,17 @@ def decide(
         return {**result, "status": "refused", "reason": "cut_sha_mismatch"}
     if packet["observed_main"]["tree"] != cut_tree:
         return {**result, "status": "refused", "reason": "cut_tree_mismatch"}
-    # The active packet lives in one reviewed control commit immediately after
-    # the product cut. Any further main movement makes its first parent differ.
-    if not base_parents or base_parents[0] != cut_sha:
-        return {**result, "status": "refused", "reason": "cut_main_moved"}
-
+    # A packet-only PR is the sole way out of a freeze, so it is admitted even
+    # after main moved (a second control commit or an unadmitted push);
+    # otherwise the freeze could only be cleared by bypassing protection.
     paths = _changed_paths(pr_files)
     if paths == [PACKET_PATH]:
         result["reason"] = "cut_packet_control_update"
         return result
+    # The active packet lives in one reviewed control commit immediately after
+    # the product cut. Any further main movement makes its first parent differ.
+    if not base_parents or base_parents[0] != cut_sha:
+        return {**result, "status": "refused", "reason": "cut_main_moved"}
     return {**result, "status": "refused", "reason": "cut_frozen"}
 
 
@@ -331,6 +340,19 @@ def self_test() -> None:
     )
     moved = fixture_commit("d" * 40, "e" * 40, ["f" * 40])
     assert result(active, base_commit=moved)["reason"] == "cut_main_moved"
+    assert (
+        result(
+            active,
+            base_commit=moved,
+            pr_files=[{"filename": PACKET_PATH}],
+        )["reason"]
+        == "cut_packet_control_update"
+    )
+    for hostile in (
+        {"filename": PACKET_PATH, "previous_filename": "src/lib.rs", "status": "renamed"},
+        {"filename": PACKET_PATH, "status": "removed"},
+    ):
+        assert result(active, pr_files=[hostile])["reason"] == "cut_frozen"
     assert (
         result(
             active,

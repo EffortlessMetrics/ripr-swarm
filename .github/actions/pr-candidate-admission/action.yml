@@ -175,10 +175,14 @@ runs:
           # The enforcement packet comes from the exact live base commit, never
           # the candidate checkout. The local inactive template is used only
           # while the machinery PR is introduced on a base that has no packet.
-          if gh api "repos/${ADMISSION_REPOSITORY}/contents/${packet_path}?ref=${base_sha}" > "$packet_meta" 2>/dev/null; then
+          packet_err="$RUNNER_TEMP/packet-err.$$"
+          if gh api "repos/${ADMISSION_REPOSITORY}/contents/${packet_path}?ref=${base_sha}" > "$packet_meta" 2>"$packet_err"; then
             jq -r '.content' "$packet_meta" | tr -d '\n' | base64 --decode > "$packet"
-          else
+          elif grep -q 'HTTP 404' "$packet_err"; then
             cp "$local_packet" "$packet"
+          else
+            echo '::error::hard-cut packet read from the live base failed for a reason other than absence'
+            exit 1
           fi
           cut_sha="$(jq -r 'if .state == "active" then .observed_main.sha // "" else "" end' "$packet")"
           cut_args=()
@@ -211,7 +215,7 @@ runs:
           set -e
 
           base_sha_after="$(gh api "repos/${ADMISSION_REPOSITORY}/git/ref/heads/${base_ref}" --jq '.object.sha // empty')"
-          if [ "$base_sha_after" != "$base_sha" ]; then
+          if [ "$base_sha_after" != "$base_sha" ] && [ "$(jq -r '.state' "$packet")" != "inactive" ]; then
             echo "::error::candidate admission base moved during evaluation ($base_sha -> $base_sha_after)"
             exit 1
           fi
