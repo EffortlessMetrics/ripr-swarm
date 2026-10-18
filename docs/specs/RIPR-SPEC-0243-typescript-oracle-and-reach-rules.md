@@ -464,11 +464,6 @@ Candidates come from the first non-empty tier:
    - module function: `ModuleValueReference`, the owner name inside an
      `expect(...)` actual, same file or through an import of the owner
      module;
-     a module function whose changed value a test only uses outside
-     `expect(...)` relates through the weak, oracle-free `ModuleValueUse`
-     (`module_value_use`) when the import resolves to the owner module, with
-     no shadow, mock or comment/string-only mention, and reads at most
-     `weakly_exposed`;
    - method: `ReceiverOwnerCall`, a receiver bound by `new Class(...)` in
      the body or in describe or `beforeEach` scope, a getter read, or a
      constructor call;
@@ -488,6 +483,12 @@ Candidates come from the first non-empty tier:
    unrelated source. The label is `SameFileProximity` (equal normalized
    file stems), then `DescribeName`, then `TestName`; with no label there
    is no relation.
+   For a module function owner, a test that only uses the changed value
+   outside `expect(...)` relates through the weak, oracle-free
+   `ModuleValueUse` (`module_value_use`) when the import resolves to the
+   owner module, with no shadow (including an enclosing describe-level or
+   test-callback binding), mock or comment/string-only mention; it reads at
+   most `weakly_exposed`.
 
 Relation rank, `uses_oracle` and reason:
 
@@ -499,6 +500,7 @@ Relation rank, `uses_oracle` and reason:
 | `ReExportChainFollowed` | 4 | yes | `re_export_chain_followed` / medium |
 | `ModuleEntryCall` | 3 | yes | `helper_owner_call` / medium |
 | `SameFileProximity` | 3 | no | none |
+| `ModuleValueUse` | 2 | no | none |
 | `DescribeName` | 2 | no | none |
 | `TestName` | 1 | no | none |
 
