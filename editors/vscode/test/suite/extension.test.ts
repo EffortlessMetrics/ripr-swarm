@@ -1719,6 +1719,61 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('typed unavailable_languages status names the language in the status bar, not message text (#8585)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+
+      const emit = (extra: Record<string, unknown>) => {
+        context.client.emitNotification('ripr/analysisStatus', {
+          schema_version: '0.1',
+          tool: 'ripr',
+          kind: 'analysis_status',
+          state: 'succeeded',
+          run_status: 'limited_incomplete_input',
+          attempt_id: 'run-lang',
+          snapshot_id: 'snapshot:run-lang',
+          ...extra
+        });
+      };
+
+      emit({
+        unavailable_languages: [
+          {
+            language: 'python',
+            file_count: 2,
+            recovery: 'add "python" to [languages] enabled in ripr.toml, then restart the language server'
+          }
+        ]
+      });
+      assert.ok(context.status.text.includes('$(warning) ripr: language off'), context.status.text);
+      assert.ok(!context.status.text.includes('ripr: limited'), context.status.text);
+      const tooltip = String(context.status.tooltip);
+      assert.ok(tooltip.includes('did not analyze changed python (2 files)'), tooltip);
+      assert.ok(tooltip.includes('not an all-clear'), tooltip);
+      assert.ok(tooltip.includes('Add "python" to [languages] enabled in ripr.toml'), tooltip);
+
+      // Without the typed row the same run status keeps the generic
+      // incomplete-input presentation: nothing is parsed out of message text.
+      emit({ unavailable_languages: [], limitations: ['python changed 2 file(s), but the preview adapter was not enabled'] });
+      assert.ok(context.status.text.includes('$(warning) ripr: limited'), context.status.text);
+      assert.ok(!context.status.text.includes('language off'), context.status.text);
+
+      // A malformed row fails closed to the generic presentation.
+      emit({ unavailable_languages: [{ language: 7 }] });
+      assert.ok(context.status.text.includes('$(warning) ripr: limited'), context.status.text);
+
+      // Stale evidence keeps its own presentation over the language row.
+      emit({
+        run_status: 'stale',
+        unavailable_languages: [{ language: 'python', file_count: 1 }]
+      });
+      assert.ok(context.status.text.includes('ripr: stale'), context.status.text);
+    } finally {
+      await context.dispose();
+    }
+  });
+
   test('limited status prefers the degraded component recovery route over the canned refresh step (#5004)', async () => {
     const context = createControllerTestContext({});
     try {
@@ -3952,6 +4007,7 @@ suite('Extension Smoke', () => {
       analysisRunning: true,
       analysisReady: true,
       analysisLimited: true,
+      languageNotEnabled: true,
       gapActionable: true,
       gapNoAction: true,
       gapArtifactWarning: true,

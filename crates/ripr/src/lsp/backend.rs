@@ -214,6 +214,11 @@ pub(super) struct Backend {
     /// clears it so a later recurrence shows again. Mirrors
     /// `last_component_degradation`.
     last_analysis_failure_shown: Mutex<Option<String>>,
+    /// Languages whose "adapter not enabled" notice a generic client has
+    /// already been shown (#8585). A language is shown once while it stays
+    /// unavailable; leaving the set (adapter enabled, or its files no longer
+    /// changed) lets a later recurrence show again.
+    unavailable_language_notices_shown: Mutex<BTreeSet<String>>,
     /// Set when the bounded disclosure window after an initialize-time
     /// failure commit expired without completing client delivery (#3802).
     /// The owning session failure stays committed; this records the delivery
@@ -360,6 +365,7 @@ impl Backend {
             diagnostics_input_watch: AsyncMutex::new(DiagnosticsInputWatch::default()),
             last_component_degradation: Mutex::new(None),
             last_analysis_failure_shown: Mutex::new(None),
+            unavailable_language_notices_shown: Mutex::new(BTreeSet::new()),
             initialize_failure_disclosure_omitted: AtomicBool::new(false),
             refresh_failure_shown: AtomicBool::new(false),
             refresh_scheduler: RefreshScheduler::default(),
@@ -1016,6 +1022,8 @@ impl Backend {
         self.request_code_lens_refresh_if_view_changed(lens_view)
             .await;
         self.log_component_degradations(&component_outcomes).await;
+        self.disclose_unavailable_languages_to_generic_client()
+            .await;
         self.log_refresh_completed(
             summary,
             published_uri_count,
@@ -2103,6 +2111,72 @@ impl Backend {
             .await;
     }
 
+    /// The committed snapshot's typed unavailable-language rows (#8585):
+    /// `(wire language, skipped changed-file count)` in producer order.
+    fn unavailable_language_rows(&self) -> Vec<(String, usize)> {
+        self.latest_analysis
+            .lock()
+            .ok()
+            .and_then(|snapshot| {
+                snapshot.as_ref().map(|value| {
+                    value
+                        .unavailable_adapter
+                        .languages
+                        .iter()
+                        .map(|row| (row.language.clone(), row.file_count))
+                        .collect()
+                })
+            })
+            .unwrap_or_default()
+    }
+
+    /// Tell a client without the `riprEditor` integration, once per
+    /// language, that changed files of a language whose adapter is not
+    /// enabled were not analyzed (#8585). Generic editors do not render
+    /// `ripr/analysisStatus`, so without this the per-document
+    /// `language_adapter_unavailable` limitation never reaches the user and
+    /// the save looks like a clean run. The VS Code extension renders the
+    /// same typed `unavailable_languages` rows in its status bar instead.
+    /// A language stays quiet while it remains unavailable and shows again
+    /// after it has left the set.
+    async fn disclose_unavailable_languages_to_generic_client(&self) {
+        let generic_client = self
+            .client_features
+            .lock()
+            .map(|features| features.ripr_editor.is_none())
+            .unwrap_or(true);
+        if !generic_client {
+            return;
+        }
+        let rows = self.unavailable_language_rows();
+        let fresh = {
+            let Ok(mut shown) = self.unavailable_language_notices_shown.lock() else {
+                return;
+            };
+            let current = rows
+                .iter()
+                .map(|(language, _)| language.clone())
+                .collect::<BTreeSet<_>>();
+            let fresh = rows
+                .iter()
+                .filter(|(language, _)| !shown.contains(language))
+                .cloned()
+                .collect::<Vec<_>>();
+            *shown = current;
+            fresh
+        };
+        for (language, file_count) in fresh {
+            self.client
+                .send_notification::<ShowMessage>(ShowMessageParams {
+                    typ: MessageType::WARNING,
+                    message: bounded_failure_message(&unavailable_language_notice(
+                        &language, file_count,
+                    )),
+                })
+                .await;
+        }
+    }
+
     /// Record the current health failure as already disclosed on screen,
     /// so `disclose_analysis_failure_to_generic_client` does not repeat a
     /// failure that a dedicated path (initialize, config reload) showed
@@ -2404,6 +2478,18 @@ impl Backend {
             "last_success_age_ms": last_success_age_ms,
             "run_status": health.run_status(),
             "analysis_outcome": analysis_outcome,
+            // Typed changed-file languages skipped because their adapter was
+            // not enabled or compiled in (#8585). Clients render this field,
+            // not the limitation's detail text.
+            "unavailable_languages": self
+                .unavailable_language_rows()
+                .into_iter()
+                .map(|(language, file_count)| serde_json::json!({
+                    "language": language,
+                    "file_count": file_count,
+                    "recovery": unavailable_language_recovery(&language),
+                }))
+                .collect::<Vec<_>>(),
             // Profile-withholding disclosure (#5276): when the actionable
             // profile withholds live `*_unknown` findings from every
             // diagnostic/listing surface, this names the count, the classes,
@@ -4694,6 +4780,23 @@ fn config_failure_notice(error: &str) -> String {
 /// On-screen refresh-failure notice for clients without `riprEditor` (#8583).
 /// The body is path-redacted and length-bounded by the same owner as
 /// `ripr/analysisStatus` `failure.message` (#8584 / #8604).
+/// On-screen notice for changed files of a language whose adapter is not
+/// enabled (#8585): the count, the fact that they were not analyzed, and the
+/// shared recovery route.
+fn unavailable_language_notice(language: &str, file_count: usize) -> String {
+    format!(
+        "ripr did not analyze {file_count} changed {language} file(s): the {language} adapter is not enabled; {}",
+        unavailable_language_recovery(language)
+    )
+}
+
+fn unavailable_language_recovery(language: &str) -> String {
+    match crate::domain::LanguageId::from_wire(language) {
+        Some(id) => language_adapter_not_enabled_recovery(id),
+        None => format!("enable the {language} adapter in [languages] enabled in ripr.toml"),
+    }
+}
+
 fn refresh_failure_notice(message: &str) -> String {
     bounded_failure_message(&format!("ripr analysis failed: {message}"))
 }

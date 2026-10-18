@@ -1917,7 +1917,8 @@ export class RiprClientController {
             ? status.retry_recovery.detail
             : undefined,
           dirtyRoutedDocuments: Array.from(this.dirtyRiprDocuments),
-          components: status.components
+          components: status.components,
+          unavailableLanguages: status.unavailable_languages
         }));
         void this.refreshFirstUsefulActionStatus();
         return;
@@ -3192,6 +3193,7 @@ function serverStartedSummary(kind: RiprStatusKind): string {
     case 'analysisRunning':
     case 'analysisReady':
     case 'analysisLimited':
+    case 'languageNotEnabled':
     case 'gapActionable':
     case 'gapNoAction':
     case 'gapArtifactWarning':
@@ -3240,6 +3242,8 @@ function evidenceFreshnessSummary(kind: RiprStatusKind): string {
       return 'current saved-workspace status reported by server refresh';
     case 'noEnabledLanguages':
       return 'not projected; languages are disabled';
+    case 'languageNotEnabled':
+      return 'partial; changed files of a language without an enabled adapter were not analyzed';
     case 'serverUnavailable':
     case 'serverFailed':
     case 'noWorkspace':
@@ -3972,6 +3976,16 @@ interface RiprAnalysisStatusPayload {
   root_detail?: string | null;
   root_recovery_route?: string;
   components?: AnalysisStatusComponent[];
+  /** #8585: changed-file languages skipped because their adapter is not
+   * enabled; the server's typed row, not the limitation's detail text. */
+  unavailable_languages?: AnalysisStatusUnavailableLanguage[];
+}
+
+/** One typed `unavailable_languages` row from `ripr/analysisStatus` (#8585). */
+export interface AnalysisStatusUnavailableLanguage {
+  language: string;
+  file_count?: number;
+  recovery?: string | null;
 }
 
 function analysisStatusPayload(params: unknown): RiprAnalysisStatusPayload | undefined {
@@ -4123,6 +4137,7 @@ export function statusForRunStatus(
     retryRecovery?: string;
     dirtyRoutedDocuments?: readonly string[];
     components?: readonly AnalysisStatusComponent[];
+    unavailableLanguages?: readonly AnalysisStatusUnavailableLanguage[];
   } = {}
 ): RiprStatusState {
   const dirty = input.dirtyRoutedDocuments ?? [];
@@ -4156,6 +4171,19 @@ export function statusForRunStatus(
       ].filter((line): line is string => Boolean(line)).join('\n'),
       nextStep: `Run ${REFRESH_DIAGNOSTICS_COMMAND_TITLE} to compute the full seam inventory.`
     };
+  }
+  // #8585: changed files of a language whose adapter is not enabled were not
+  // analyzed. The typed rows name the language; this outranks the generic
+  // incomplete-input and healthy presentations they would otherwise fall
+  // into, but not the stale, deferred, cache, limited or partition states,
+  // which carry their own recovery.
+  const unavailable = validUnavailableLanguages(input.unavailableLanguages);
+  if (
+    unavailable.length > 0
+    && (runStatus === 'limited_incomplete_input'
+      || !((runStatus ?? '') in LIMITED_RUN_STATUS_PRESENTATIONS))
+  ) {
+    return statusForUnavailableLanguages(unavailable, input.detail);
   }
   const limited = LIMITED_RUN_STATUS_PRESENTATIONS[runStatus ?? ''];
   if (limited) {
@@ -4202,6 +4230,41 @@ export function statusForRunStatus(
     summary: 'ripr saved-workspace analysis completed.',
     detail: input.detail,
     nextStep: 'Inspect diagnostics, then use bounded ripr hover and code actions for one focused test.'
+  };
+}
+
+/** Drop malformed rows: the payload crosses a process boundary. */
+function validUnavailableLanguages(
+  rows: readonly AnalysisStatusUnavailableLanguage[] | undefined
+): AnalysisStatusUnavailableLanguage[] {
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+  return rows.filter(
+    (row) => typeof row?.language === 'string' && row.language.trim().length > 0
+  );
+}
+
+function statusForUnavailableLanguages(
+  rows: readonly AnalysisStatusUnavailableLanguage[],
+  detail: string | undefined
+): RiprStatusState {
+  const described = rows.map((row) =>
+    typeof row.file_count === 'number' && row.file_count > 0
+      ? `${row.language} (${row.file_count} ${plural(row.file_count, 'file')})`
+      : row.language
+  );
+  const recoveries = uniqueStrings(rows.map((row) => row.recovery));
+  return {
+    kind: 'languageNotEnabled',
+    summary: `ripr did not analyze changed ${described.join(', ')}: the language adapter is not enabled.`,
+    detail: [
+      detail,
+      'Changed files of these languages produce no diagnostics, so a quiet editor is not an all-clear for them.'
+    ].filter((line): line is string => Boolean(line)).join('\n'),
+    nextStep: recoveries.length > 0
+      ? recoveries.map(capitalizeFirst).join('; ')
+      : 'Add the language to ripr.toml [languages] enabled, then run ripr: Restart Server.'
   };
 }
 
