@@ -8,7 +8,7 @@ fn charge(input: bool) -> u64 {
 fn input() -> bool { true }
 #[cfg(test)]
 mod tests {
-    use super::charge;
+    use super::{charge, input};
     crate::define_expected!();
     #[test]
     fn observed() { assert_eq!(charge(input()), u64::MAX); }

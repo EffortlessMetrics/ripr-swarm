@@ -872,7 +872,7 @@ A match header is not an individual arm. A separate internal
    and overwrite guards for the exact invocation. This adapter further limits
    expected operands to literals or unrebound primitive integer `MAX` paths;
    MAX additionally requires closed parser-backed module namespaces in the
-   assertion file, including nested test modules, under the same authority.
+   assertion file, including nested test modules and local item scopes, under the same authority.
    opaque expected bindings, static values and computed expectations remain
    refused. A same-file parent/self glob is readable only when the complete
    source contains no primitive-name binding or opaque competing glob.

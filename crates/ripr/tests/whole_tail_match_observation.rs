@@ -498,6 +498,15 @@ fn external_item_macro_cannot_supply_primitive_expected_identity()
     for (case, source) in [
         ("module expected", source.to_string()),
         (
+            "local attribute expected",
+            source
+                .replace("    crate::define_expected!();\n", "")
+                .replace(
+                    "fn observed() {",
+                    "fn observed() { #[opaque::make_expected] fn marker() {}",
+                ),
+        ),
+        (
             "selected arm zero",
             source.replace("true => 600", "true => 0"),
         ),
@@ -521,6 +530,23 @@ fn external_item_macro_cannot_supply_primitive_expected_identity()
         );
         let fixture = Fixture::new(&source, &diff)?;
         std::fs::write(fixture.0.join("src/foreign.rs"), foreign)?;
+        std::fs::write(
+            fixture.0.join("Cargo.toml"),
+            include_str!("../../../fixtures/whole_tail_match_macro_expected/input/Cargo.toml"),
+        )?;
+        std::fs::create_dir_all(fixture.0.join("opaque/src"))?;
+        std::fs::write(
+            fixture.0.join("opaque/Cargo.toml"),
+            include_str!(
+                "../../../fixtures/whole_tail_match_macro_expected/input/opaque/Cargo.toml"
+            ),
+        )?;
+        std::fs::write(
+            fixture.0.join("opaque/src/lib.rs"),
+            include_str!(
+                "../../../fixtures/whole_tail_match_macro_expected/input/opaque/src/lib.rs"
+            ),
+        )?;
         let output = fixture.check()?;
         let headers = output
             .findings

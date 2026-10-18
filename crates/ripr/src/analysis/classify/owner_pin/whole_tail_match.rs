@@ -215,13 +215,15 @@ fn independent_expected(
         };
         // A nested test module can expand a custom primitive::MAX even
         // while the owner's root return namespace remains closed. Require
-        // the same provenance in every visible module scope of this file.
+        // the same provenance in every visible module and block item scope.
         parsed
             .tree()
             .syntax()
             .descendants()
             .filter(|node| {
-                ast::SourceFile::can_cast(node.kind()) || ast::ItemList::can_cast(node.kind())
+                ast::SourceFile::can_cast(node.kind())
+                    || ast::ItemList::can_cast(node.kind())
+                    || ast::StmtList::can_cast(node.kind())
             })
             .all(|module| {
                 crate::analysis::syntax::primitive_namespace_is_closed(&module, primitive)
