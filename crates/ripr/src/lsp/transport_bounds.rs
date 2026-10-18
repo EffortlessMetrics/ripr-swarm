@@ -176,7 +176,7 @@ pub(crate) struct BoundedStdinReader<R> {
     trip_reason: &'static str,
     /// Bytes read from the inner stream but withheld so a zero-length frame
     /// is never delivered in the same read as the bytes that follow it. They
-    /// are served (and re-observed) on the next poll.
+    /// are served and observed (once, at that point) on the next poll.
     carry: Vec<u8>,
 }
 
@@ -681,7 +681,7 @@ mod tests {
     async fn frames_packed_behind_an_empty_frame_survive_small_reads_and_eof() -> Result<(), String>
     {
         // Several non-empty frames behind an empty one, drained through tiny
-        // read buffers (so the carry is served in pieces and re-observed),
+        // read buffers (so the carry is served in pieces, each observed when served),
         // then EOF: no carried byte may be dropped or reordered.
         let mut payload = b"Content-Length: 0\r\n\r\n".to_vec();
         for _ in 0..5 {
@@ -720,6 +720,24 @@ mod tests {
             .await
             .map_err(|err| format!("header-looking body must pass: {err}"))?;
         assert_eq!(out, stream);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn bounds_still_trip_on_frames_carried_behind_an_empty_frame() -> Result<(), String> {
+        // The carried bytes are observed when served, so a violation that
+        // follows a `Content-Length: 0` frame must still trip the bound.
+        let mut over_header = b"Content-Length: 0\r\n\r\nContent-Length: 2\r\nX-Pad: ".to_vec();
+        over_header.extend_from_slice(&[b'x'; 128]);
+        over_header.extend_from_slice(b"\r\n\r\n{}");
+        let over_length = b"Content-Length: 0\r\n\r\nContent-Length: 257\r\n\r\n".to_vec();
+        for payload in [over_header, over_length] {
+            let (reader, _writer) = bounds().wrap(&payload[..], tokio::io::sink());
+            match read_all(reader).await {
+                Err(err) if err.kind() == io::ErrorKind::InvalidData => {}
+                other => return Err(format!("expected InvalidData trip, got: {other:?}")),
+            }
+        }
         Ok(())
     }
 
