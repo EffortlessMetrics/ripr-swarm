@@ -115,3 +115,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — propagated_error_closing_early_path (10)
+
+Reason:
+RIPR-SPEC-0122: printed agent stub --at line is now the seam line the stub targets (#8444); the old line triggered nearest-gap substitution
+
+Command:
+`cargo xtask goldens bless propagated_error_closing_early_path --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

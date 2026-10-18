@@ -344,3 +344,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — unwrap_err_generic_is_err (30)
+
+Reason:
+RIPR-SPEC-0122: printed agent stub --at line is now the seam line the stub targets (#8444); the old line triggered nearest-gap substitution
+
+Command:
+`cargo xtask goldens bless unwrap_err_generic_is_err --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
