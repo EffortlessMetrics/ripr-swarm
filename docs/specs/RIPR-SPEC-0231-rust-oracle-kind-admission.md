@@ -325,7 +325,29 @@ Two pattern terms are used below.
    that indexes by a test caps whatever it is compared with, because the table
    may hold one value at both positions
    (`assert_eq!(table[(r == Err(E::Bad)) as usize], expected)`; #8101),
-   including when a field, method or further index follows it. Such a comparison asserted by a
+   including when a field, method or further index follows it. Beyond a shared
+   constructor, a value wrapper holds the test
+   it wraps, and a boolean literal it wraps is that literal: a constructor
+   (`Some(..)`, `Ok::<bool, ()>(..)`, `E::V(..)`), a `new` or `from` path
+   call (`Box::new(..)`), a one-element or repeat array (`[..]`,
+   `[..; n]`), `vec![..]`, and `.unwrap()`, `.expect(..)`, `.clone()` or
+   `.to_owned()` on one operand, so `assert_eq!(Some(r == Err(E::Bad)),
+   Some(expected))` caps and `assert_eq!(Some(r == Err(E::Bad)),
+   Some(true))` reads as the comparison asserted true (#8101); a wrapped
+   plain value still pins (`assert_eq!(Some(x), Some(3))`) and a lowercase
+   call stays an opaque call (`wrap(r == Err(E::Bad))`). A test held by one
+   of these call, array or `vec!` wrappers reads
+   through its wrapper only against the same wrapper around a literal (the
+   same constructor, a turbofish aside, or the same repeat count); otherwise
+   it caps (`assert_eq!(Wrapper(r == Err(E::Bad)), true)`,
+   `assert_eq!(Wrapper(matches!(..)), Other(true))`). Only `Some` and `Ok`
+   unwrap to what they hold, a `new` or `from` call other than `Box`, `Rc`
+   or `Arc` may discard its argument, an empty or unknown-length repeat
+   (`[..; 0]`, `[..; n]`) holds nothing, and a test paired with anything but
+   `true` in an equal-length sequence caps (`assert_eq!([r == Err(E::Bad),
+   x == 1], [false, true])`). A struct literal, a statement block, or a field
+   or method on a wrapper is not yet read this way (#8615). Such a comparison
+   asserted by a
    boolean literal caps the same way (`assert_eq!((r == Err(E::Bad)) as u8
    == 0, true)`, `assert_eq!((r == Err(E::Bad)) == flag, true)`), and a
    path call to `not` negates like `!` (`assert_eq!(Not::not(r ==

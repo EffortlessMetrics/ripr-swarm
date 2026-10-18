@@ -590,6 +590,12 @@ pub(crate) struct DoctorCheck {
     /// Human-readable evidence (e.g. "Cargo.toml found at /workspace").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) evidence: Option<String>,
+    /// How long the check's own computation took, in milliseconds
+    /// (additive, #8540). Measured at the production site; `None` for
+    /// skipped checks and for checks produced without a timer, so an absent
+    /// value never reads as a zero measurement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) elapsed_ms: Option<u64>,
 }
 
 /// One language the marker scan found in the selected root.
@@ -831,6 +837,23 @@ pub(crate) struct DoctorRuntimeProbe {
     pub(crate) evidence: String,
     pub(crate) required: bool,
     pub(crate) hint: String,
+    /// How long the probe took, in milliseconds (additive, #8540).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) elapsed_ms: Option<u64>,
+}
+
+/// One named segment of doctor work that is not a check or a runtime probe
+/// (#8540 follow-up). The report total covers computations such as language
+/// detection and the environment probe; naming their segments lets the
+/// slowest attribution explain the total instead of only checks and probes
+/// competing for it. Segments never change a check status or the exit code.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct DoctorSegmentTiming {
+    /// The computation name, in `snake_case` after the computation it times.
+    pub(crate) name: String,
+    /// How long that computation took, in milliseconds, measured at its
+    /// production site.
+    pub(crate) elapsed_ms: u64,
 }
 
 /// Every environment fact both doctor surfaces report, computed once per run.
@@ -855,6 +878,10 @@ pub(crate) struct DoctorEnvironmentFacts {
     pub(crate) test_surfaces: Vec<DoctorTestSurface>,
     /// The Perl preview state, `None` when no Perl project was detected.
     pub(crate) perl_preview: Option<DoctorPerlPreview>,
+    /// Named segment timings measured where each computation runs
+    /// (#8540 follow-up), carried here so `apply_environment` moves them
+    /// onto the report both surfaces render.
+    pub(crate) segments: Vec<DoctorSegmentTiming>,
 }
 
 /// The full doctor report.
@@ -921,6 +948,18 @@ pub(crate) struct DoctorReport {
     /// leaves it unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) canonical_next_action: Option<CanonicalNextActionV1>,
+    /// How long the whole doctor run took, in milliseconds (additive,
+    /// #8540). Measured by the command adapter around the same computation
+    /// both surfaces render, so the human screen and the JSON document
+    /// report one number. Core evaluation leaves it unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) elapsed_ms: Option<u64>,
+    /// Named segment timings for work the total covers that is neither a
+    /// check nor a runtime probe (additive, #8540 follow-up). Omitted when
+    /// no segment was measured, so an un-timed report serializes exactly as
+    /// before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) segments: Vec<DoctorSegmentTiming>,
 }
 
 impl DoctorReport {
@@ -947,6 +986,8 @@ impl DoctorReport {
             test_surfaces: Vec::new(),
             perl_preview: None,
             canonical_next_action: None,
+            elapsed_ms: None,
+            segments: Vec::new(),
         }
     }
 
@@ -977,6 +1018,7 @@ impl DoctorReport {
         self.cache = Some(facts.cache);
         self.test_surfaces = facts.test_surfaces;
         self.perl_preview = facts.perl_preview;
+        self.segments = facts.segments;
     }
 
     /// Add a typed check and update the overall status.
@@ -988,7 +1030,43 @@ impl DoctorReport {
             name: name.to_string(),
             status: status.into(),
             evidence,
+            elapsed_ms: None,
         });
+    }
+
+    /// Record how long the most recently added check with `name` took.
+    /// Called by the producer that timed the check's computation (#8540).
+    /// A skipped check keeps no measurement: it did no work to time.
+    pub(crate) fn mark_check_elapsed(&mut self, name: &str, elapsed: std::time::Duration) {
+        if let Some(check) = self
+            .checks
+            .iter_mut()
+            .rev()
+            .find(|check| check.name == name && check.status != DoctorCheckStatus::Skipped)
+        {
+            check.elapsed_ms = Some(elapsed.as_millis() as u64);
+        }
+    }
+
+    /// The slowest measured check, runtime probe, or named segment, by name
+    /// and elapsed milliseconds. `None` when nothing was timed.
+    pub(crate) fn slowest_measured(&self) -> Option<(String, u64)> {
+        let from_checks = self
+            .checks
+            .iter()
+            .filter_map(|check| check.elapsed_ms.map(|ms| (check.name.clone(), ms)));
+        let from_probes = self
+            .runtime_probes
+            .iter()
+            .filter_map(|probe| probe.elapsed_ms.map(|ms| (probe.tool.clone(), ms)));
+        let from_segments = self
+            .segments
+            .iter()
+            .map(|segment| (segment.name.clone(), segment.elapsed_ms));
+        from_checks
+            .chain(from_probes)
+            .chain(from_segments)
+            .max_by_key(|(_, ms)| *ms)
     }
 
     /// Record a check that does not apply to this root. It never changes the
@@ -998,6 +1076,7 @@ impl DoctorReport {
             name: name.to_string(),
             status: DoctorCheckStatus::Skipped,
             evidence: Some(evidence),
+            elapsed_ms: None,
         });
     }
 
@@ -1006,6 +1085,7 @@ impl DoctorReport {
             name: name.to_string(),
             status: DoctorCheckStatus::Advisory,
             evidence: Some(evidence),
+            elapsed_ms: None,
         });
     }
 
@@ -1031,6 +1111,7 @@ impl DoctorReport {
             evidence: evidence.to_string(),
             required,
             hint: hint.to_string(),
+            elapsed_ms: None,
         });
     }
 
@@ -1752,12 +1833,20 @@ fn evaluate_doctor_core_with_probe_for_profile(
 ) -> DoctorCoreEvaluation {
     let mut report = DoctorReport::new(&root.display().to_string());
     report.profile = profile;
+    // #8540: time each check's own computation where it runs, so the
+    // first-run cost is attributable. Skipped checks keep no measurement.
+    let config_started = std::time::Instant::now();
     let config = load_for_root(root);
+    let config_elapsed = config_started.elapsed();
+    let located_started = std::time::Instant::now();
     let located = locate_cargo_toml(root);
+    let located_elapsed = located_started.elapsed();
     let rust_scope = rust_toolchain_scope(&config, detected, located.is_some());
+    let root_started = std::time::Instant::now();
     let root_path = DoctorRootPath::classify(root);
     let (root_status, root_evidence) = root_path.root_directory_evidence(root);
     report.add_check("root_directory", root_status, Some(root_evidence));
+    report.mark_check_elapsed("root_directory", root_started.elapsed());
     if let RustToolchainScope::NotInScope(reason) = &rust_scope {
         report.add_skipped_check("cargo_toml", format!("Cargo.toml check skipped: {reason}"));
     } else if let Some(reason) = root_path.unusable_skip_reason() {
@@ -1780,6 +1869,8 @@ fn evaluate_doctor_core_with_probe_for_profile(
             )),
         );
     }
+    report.mark_check_elapsed("cargo_toml", located_elapsed);
+    let git_started = std::time::Instant::now();
     match root_path.unusable_skip_reason() {
         Some(reason) => report.add_skipped_check(
             "git_repository",
@@ -1834,6 +1925,7 @@ fn evaluate_doctor_core_with_probe_for_profile(
             ),
         },
     }
+    report.mark_check_elapsed("git_repository", git_started.elapsed());
     match &config {
         Ok(config) => report.add_check(
             "config",
@@ -1849,6 +1941,7 @@ fn evaluate_doctor_core_with_probe_for_profile(
             Some(redact_config_parse_error(error)),
         ),
     }
+    report.mark_check_elapsed("config", config_elapsed);
     for tool in DOCTOR_TOOLS {
         let name = format!("tool_{tool}");
         if let RustToolchainScope::NotInScope(reason) = &rust_scope
@@ -1866,7 +1959,9 @@ fn evaluate_doctor_core_with_probe_for_profile(
             report.add_skipped_check(&name, format!("{tool} check skipped: {reason}"));
             continue;
         }
+        let tool_started = std::time::Instant::now();
         let (status, evidence) = probe_tool(tool, root);
+        let tool_elapsed = tool_started.elapsed();
         if RUST_TOOLCHAIN_TOOLS.contains(&tool)
             && profile == DoctorProfile::Analysis
             && status == DoctorStatus::Fail
@@ -1884,6 +1979,7 @@ fn evaluate_doctor_core_with_probe_for_profile(
         } else {
             report.add_check(&name, status, Some(evidence));
         }
+        report.mark_check_elapsed(&name, tool_elapsed);
     }
     // Typed language surface for generated CI (#2072): mirror exactly the
     // effective enabled set the human projection prints.
@@ -2612,6 +2708,108 @@ mod tests {
         let report = DoctorReport::new("/workspace");
         assert_eq!(report.status, DoctorStatus::Pass);
         assert!(report.checks.is_empty());
+    }
+
+    #[test]
+    fn elapsed_times_are_additive_and_slowest_spans_checks_and_probes() -> Result<(), String> {
+        // #8540: un-timed values serialize as absent, never as zero.
+        let mut report = DoctorReport::new("/workspace");
+        report.add_check(
+            "tool_cargo",
+            DoctorStatus::Pass,
+            Some("cargo 1.0".to_string()),
+        );
+        let json = report.render_json()?;
+        assert!(!json.contains("elapsed_ms"), "{json}");
+        assert_eq!(report.slowest_measured(), None);
+
+        report.mark_check_elapsed("tool_cargo", std::time::Duration::from_millis(300));
+        report.add_runtime_probe("rust", "cargo", DoctorStatus::Pass, "ok", true, "hint");
+        report.elapsed_ms = Some(900);
+        let json = report.render_json()?;
+        assert!(json.contains("\"elapsed_ms\": 900"), "{json}");
+        assert!(json.contains("\"elapsed_ms\": 300"), "{json}");
+        assert_eq!(
+            report.slowest_measured(),
+            Some(("tool_cargo".to_string(), 300))
+        );
+        report
+            .runtime_probes
+            .last_mut()
+            .ok_or("probe must exist")?
+            .elapsed_ms = Some(450);
+        assert_eq!(
+            report.slowest_measured(),
+            Some(("cargo".to_string(), 450)),
+            "probes compete with checks for slowest"
+        );
+        // A skipped check keeps no measurement even when marked.
+        report.add_skipped_check("tool_rustc", "not in scope".to_string());
+        report.mark_check_elapsed("tool_rustc", std::time::Duration::from_millis(50));
+        let skipped = report
+            .checks
+            .iter()
+            .find(|check| check.name == "tool_rustc")
+            .ok_or("skipped check must exist")?;
+        assert_eq!(skipped.elapsed_ms, None);
+        Ok(())
+    }
+
+    #[test]
+    fn segments_serialize_when_present_and_are_absent_when_empty() -> Result<(), String> {
+        // #8540 follow-up: injected durations only. An empty segment list
+        // serializes as absent, never as an empty array.
+        let mut report = DoctorReport::new("/workspace");
+        let json = report.render_json()?;
+        assert!(!json.contains("\"segments\""), "{json}");
+
+        report.apply_environment(DoctorEnvironmentFacts {
+            detected_languages: Vec::new(),
+            unanalyzed_source_languages: Vec::new(),
+            preview_language_gaps: Vec::new(),
+            config_defaults: None,
+            cache: DoctorCacheStatus {
+                cache_dir: "target/ripr/cache".to_string(),
+                relocated_by_env: false,
+                size_bytes: 0,
+                size_display: "0 B".to_string(),
+                artifact_ignore: DoctorArtifactIgnore::NoArtifacts,
+                artifact_tracking: DoctorArtifactTracking::Untracked,
+            },
+            test_surfaces: Vec::new(),
+            perl_preview: None,
+            segments: vec![
+                DoctorSegmentTiming {
+                    name: "language_detection".to_string(),
+                    elapsed_ms: 120,
+                },
+                DoctorSegmentTiming {
+                    name: "unanalyzed_source_scan".to_string(),
+                    elapsed_ms: 2_500,
+                },
+            ],
+        });
+        let json = report.render_json()?;
+        assert!(json.contains("\"segments\""), "{json}");
+        assert!(json.contains("\"name\": \"language_detection\""), "{json}");
+        assert!(json.contains("\"elapsed_ms\": 120"), "{json}");
+        assert!(
+            json.contains("\"name\": \"unanalyzed_source_scan\""),
+            "{json}"
+        );
+        assert!(json.contains("\"elapsed_ms\": 2500"), "{json}");
+        // Segments compete for slowest alongside checks and probes.
+        report.add_check(
+            "tool_cargo",
+            DoctorStatus::Pass,
+            Some("cargo 1.0".to_string()),
+        );
+        report.mark_check_elapsed("tool_cargo", std::time::Duration::from_millis(300));
+        assert_eq!(
+            report.slowest_measured(),
+            Some(("unanalyzed_source_scan".to_string(), 2_500))
+        );
+        Ok(())
     }
 
     #[test]
@@ -4420,6 +4618,7 @@ mod tests {
             },
             test_surfaces: Vec::new(),
             perl_preview: None,
+            segments: Vec::new(),
         });
         let json = report.render_json()?;
         let parsed: serde_json::Value =
@@ -4486,6 +4685,7 @@ mod tests {
                 evidence: "python: pytest".to_string(),
             }],
             perl_preview: None,
+            segments: Vec::new(),
         });
         let parsed: serde_json::Value = serde_json::from_str(&report.render_json()?)
             .map_err(|e| format!("invalid JSON: {e}"))?;

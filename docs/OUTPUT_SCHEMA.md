@@ -721,7 +721,8 @@ identity agree and the analysis-outcome validator accepts the artifact.
     "no_static_path": 0,
     "infection_unknown": 0,
     "propagation_unknown": 0,
-    "static_unknown": 0
+    "static_unknown": 0,
+    "changed_files_by_language": [{ "language": "rust", "files": 1 }]
   },
   "analysis_outcome": {
     "analysis_complete": true,
@@ -865,6 +866,7 @@ zeroed `summary`, same empty `findings`, same
 | `gap_ledger_unusable` | `analysis/gap-ledger` | A named `ripr rerun --gap-ledger` file cannot be read or parsed (#7331). |
 | `seam_id_unknown` | `analysis/seam-inventory` | A named `ripr agent packet --seam-id` matches no current seam (#7331). |
 | `git_invocation_timeout` | `analysis/git-timeout` | A git invocation exceeded its cooperative deadline and was terminated. |
+| `analysis_timeout` | `analysis/timeout` | The `ripr check` wall-clock budget (`--timeout SECS`, `RIPR_CHECK_TIMEOUT`) ran out before analysis finished; no findings were produced (#5369). |
 | `analysis_failed` | `analysis/failure` | Honest fallback for any other failure: the run produced no findings, with no claim about which stage stopped. |
 
 The scope-guard identities (`diff_scope_oversized`, `repo_scope_oversized`)
@@ -2497,6 +2499,32 @@ Example:
 ```json
 "untracked_working_tree_source_paths": ["src/new.rs"]
 ```
+
+### `ignored_working_tree_source_paths` (top-level additive array, #7467)
+
+Added as an additive optional top-level array of path strings. Emitted only
+when at least one routed source or test file is gitignored in the live
+repository (an ignored-file record, or a routed file under an ignored
+directory such as `target/`), on both committed-history and working-tree
+reads: committed history reads every file as committed, and the working-tree
+diff covers tracked files only, so in both cases the named files were not
+analyzed. Absent (not emitted) when the list is empty. Does not bump
+`schema_version`.
+
+This is the machine-readable form of the human and GitHub gitignored-files
+notes. Without it, a JSON report with zero findings reads as complete while
+routed files were silently excluded — the same false-clean gap the untracked
+field closes, but plain `git add -N` refuses ignored paths, so the notes
+name the force intent-to-add repair (`git add -f -N <path>`). The exclusion
+itself is unchanged: `target/` and other ignored paths stay excluded, only
+disclosed.
+
+Example:
+
+```json
+"ignored_working_tree_source_paths": ["crates/alpha/src/ignored_gen.rs"]
+```
+
 ### `base_commit`, `merge_base_commit`, and `head` (top-level additive, RIPR-SPEC-0116 amendment)
 
 A run that diffs the live repository names the base and head it analyzed.
@@ -18031,7 +18059,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.82",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.83",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -18742,7 +18770,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.82",
+      "schema_version": "1.83",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

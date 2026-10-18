@@ -1732,6 +1732,92 @@ fn nested_helper_local_shadow_keeps_outer_owner_credit() -> Result<(), String> {
 }
 
 #[test]
+fn walrus_match_and_module_level_replacements_withhold_owner_credit() -> Result<(), String> {
+    // #8247 residuals: each form rebinds `fee` before the assertion reads it.
+    let walrus = classify_shop_fee(
+        "from src.shop import fee\n\n\ndef test_fee():\n    if (fee := (lambda amount: 30)):\n        assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_withholds_stand_in_credit(&walrus, "walrus target");
+
+    let capture = classify_shop_fee(
+        "from src.shop import fee\n\n\ndef test_fee():\n    match (lambda amount: 30):\n        case fee:\n            pass\n    assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_withholds_stand_in_credit(&capture, "match capture");
+
+    let nested_capture = classify_shop_fee(
+        "from src.shop import fee\n\n\ndef test_fee():\n    match [lambda amount: 30]:\n        case [fee]:\n            pass\n    assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_withholds_stand_in_credit(&nested_capture, "match sequence capture");
+
+    let reassigned = classify_shop_fee(
+        "from src.shop import fee\n\nfee = lambda amount: 30\n\n\ndef test_fee():\n    assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_withholds_stand_in_credit(&reassigned, "module-level reassignment");
+
+    let redefined = classify_shop_fee(
+        "from src.shop import fee\n\n\ndef fee(amount):\n    return 30\n\n\ndef test_fee():\n    assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_withholds_stand_in_credit(&redefined, "module-level def");
+
+    // Controls: a match that captures another name, a walrus on another
+    // name, and an unrelated module-level binding keep the owner credit.
+    let other_capture = classify_shop_fee(
+        "from src.shop import fee\n\n\ndef test_fee():\n    match 1:\n        case other:\n            pass\n    assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_exposed(&other_capture);
+    let other_walrus = classify_shop_fee(
+        "from src.shop import fee\n\nrate = 3\n\n\ndef test_fee():\n    if (feed := 1):\n        assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_exposed(&other_walrus);
+    Ok(())
+}
+
+#[test]
+fn assertion_on_a_receiver_not_bound_to_the_owner_class_is_not_owner_identity() -> Result<(), String>
+{
+    // #8247: the test body binds `TokenValidator` elsewhere, but the asserted
+    // `.validate(` runs on an unrelated class.
+    let owners = extract_owners(Path::new("src/auth.py"), AUTH_SOURCE);
+    let classify = |source: &str| -> Result<crate::domain::Finding, String> {
+        let tests = extract_tests(Path::new("tests/test_auth.py"), source);
+        classify_change(
+            Path::new("src/auth.py"),
+            6,
+            AUTH_CHANGED_LINE,
+            &owners,
+            &tests,
+        )
+        .ok_or_else(|| "changed return inside validate should classify".to_string())
+    };
+    for (label, source) in [
+        (
+            "local receiver",
+            "from src.auth import TokenValidator\nfrom src.billing import PaymentProcessor\n\n\ndef test_validate():\n    validator = TokenValidator([\"a\"])\n    validator.validate(\"a\")\n    proc = PaymentProcessor()\n    assert proc.validate(\"a\") == True\n",
+        ),
+        (
+            "inline receiver",
+            "from src.auth import TokenValidator\nfrom src.billing import PaymentProcessor\n\n\ndef test_validate():\n    TokenValidator([\"a\"]).validate(\"a\")\n    assert PaymentProcessor().validate(\"a\") == True\n",
+        ),
+    ] {
+        let finding = classify(source)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::WeaklyExposed,
+            "{label}: an unbound asserted receiver must not credit exposed"
+        );
+    }
+    // Controls: the bound receiver asserted beside a foreign one, and the
+    // bound receiver alone, keep exposed credit.
+    for source in [
+        "from src.auth import TokenValidator\nfrom src.billing import PaymentProcessor\n\n\ndef test_validate():\n    validator = TokenValidator([\"a\"])\n    proc = PaymentProcessor()\n    assert proc.validate(\"a\") == True\n    assert validator.validate(\"a\") == True\n",
+        "from src.auth import TokenValidator\n\n\ndef test_validate():\n    assert TokenValidator([\"a\"]).validate(\"a\") == True\n",
+    ] {
+        assert_eq!(classify(source)?.class, ExposureClass::Exposed);
+    }
+    Ok(())
+}
+
+#[test]
 fn genuine_alias_local_import_and_unrelated_helper_keep_owner_credit() -> Result<(), String> {
     let aliased = classify_shop_fee(
         "from src.shop import fee as price\n\n\ndef test_fee():\n    assert price(10) == 30\n",

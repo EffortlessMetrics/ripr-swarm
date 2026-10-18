@@ -1,5 +1,38 @@
 use super::mask_comments_and_strings;
-use crate::analysis::facts::CallFact;
+use crate::analysis::facts::{CallFact, CallText};
+
+/// Most distinct call names kept per source line. Every call fact carries
+/// the full line text, so one line with N distinct callees holds N views of
+/// the same line. The shared allocation keeps the in-memory cost linear, but
+/// serialized facts inline the line per call, so the count is bounded.
+/// Calls past the budget are dropped, which removes reach evidence (fewer
+/// related-test links, never a stronger finding) rather than inventing any.
+pub(crate) const MAX_CALL_FACTS_PER_LINE: usize = 256;
+
+/// Whether `line` holds [`MAX_CALL_FACTS_PER_LINE`] facts, so the budget may
+/// have dropped a call there. A proof that every call on the line is one
+/// specific call must read such a line as unknown.
+pub(crate) fn line_at_call_budget<'a>(
+    calls: impl Iterator<Item = &'a CallFact>,
+    line: usize,
+) -> bool {
+    calls.filter(|call| call.line == line).count() >= MAX_CALL_FACTS_PER_LINE
+}
+
+/// Whether any line of `calls` reached [`MAX_CALL_FACTS_PER_LINE`] facts, so
+/// the budget may have dropped a call there. An absence proof ("no other call
+/// to X") must read such a line as unknown.
+pub(crate) fn has_saturated_line<'a>(calls: impl Iterator<Item = &'a CallFact>) -> bool {
+    let mut per_line = std::collections::BTreeMap::<usize, usize>::new();
+    for call in calls {
+        let count = per_line.entry(call.line).or_insert(0);
+        *count += 1;
+        if *count >= MAX_CALL_FACTS_PER_LINE {
+            return true;
+        }
+    }
+    false
+}
 
 pub(crate) fn extract_call_facts(body: &str, start_line: usize) -> Vec<CallFact> {
     // Comments (line and block, nested) and string contents are erased
@@ -43,6 +76,10 @@ pub(crate) fn extract_call_facts(body: &str, start_line: usize) -> Vec<CallFact>
         }
         let line_properties = &property_macros[line_property_start..line_property_end];
         let scan_line = masked_line;
+        // One shared allocation per line, built on the first call, instead
+        // of one copy of the line per call (quadratic on a long line).
+        let mut line_text: Option<CallText> = None;
+        let mut line_names: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
         let bytes = scan_line.as_bytes();
         let mut i = 0usize;
         while i < bytes.len() {
@@ -68,11 +105,20 @@ pub(crate) fn extract_call_facts(body: &str, start_line: usize) -> Vec<CallFact>
                 && let Some((start, end)) = call_name_bounds_before_paren(scan_line, i)
             {
                 let name = &scan_line[start..end];
-                if is_call_name(name) {
+                // Facts on one line differ only by name (the text is the
+                // line), so a repeated name is the duplicate the final
+                // dedup would drop; skip it before allocating anything.
+                if is_call_name(name)
+                    && line_names.len() < MAX_CALL_FACTS_PER_LINE
+                    && line_names.insert(name)
+                {
+                    let text = line_text.get_or_insert_with(|| {
+                        property_safe_call_text(original_line, line_offset, line_properties).into()
+                    });
                     calls.push(CallFact {
                         line: start_line + offset,
                         name: name.to_string(),
-                        text: property_safe_call_text(original_line, line_offset, line_properties),
+                        text: text.clone(),
                     });
                 }
             }
@@ -81,7 +127,7 @@ pub(crate) fn extract_call_facts(body: &str, start_line: usize) -> Vec<CallFact>
         line_offset += masked_line.len();
     }
     calls.sort_by(|a, b| a.line.cmp(&b.line).then(a.name.cmp(&b.name)));
-    calls.dedup_by(|a, b| a.line == b.line && a.name == b.name && a.text == b.text);
+    calls.dedup_by(|a, b| a.line == b.line && a.name == b.name);
     calls
 }
 
@@ -383,5 +429,76 @@ let spaced = render_pipeline ("beta");
         );
         assert_eq!(calls[3].line, 34);
         assert_eq!(calls[3].text, "let spaced = render_pipeline (\"beta\");");
+    }
+
+    #[test]
+    fn repeated_calls_on_one_long_line_collapse_and_share_the_line() {
+        // A chain of N `.f()` calls on one line used to push N facts that
+        // each copied the whole line (quadratic memory). Distinct names on
+        // that line must read one allocation, not a private copy each.
+        let n = 5_000;
+        let body = format!("fn a(){{ x{};}}\n", ".f()".repeat(n));
+        let calls = extract_call_facts(&body, 1);
+        assert_eq!(call_names(&calls), vec!["a", "f"]);
+        assert_eq!(calls[1].text.len(), body.trim().len());
+        assert!(calls[0].text.shares_allocation(&calls[1].text));
+    }
+
+    #[test]
+    fn the_per_line_budget_keeps_the_first_names_in_scan_order() {
+        let total = MAX_CALL_FACTS_PER_LINE + 50;
+        let names: Vec<String> = (0..total).map(|index| format!("g{index}")).collect();
+        // `g0` repeats after the budget filled; `g300` is first seen past it
+        // and repeats too.
+        let body = format!(
+            "fn a(){{ {}.g0().g300().g300();}}\n",
+            names.join("().") + "()"
+        );
+        let calls = extract_call_facts(&body, 1);
+        assert_eq!(calls.len(), MAX_CALL_FACTS_PER_LINE);
+        let kept: std::collections::BTreeSet<&str> =
+            calls.iter().map(|call| call.name.as_str()).collect();
+        // `a` is scanned first, then g0..g254.
+        assert!(kept.contains("a"));
+        assert!(kept.contains("g0") && kept.contains("g254"));
+        assert!(!kept.contains("g255") && !kept.contains("g300"));
+        assert!(has_saturated_line(calls.iter()));
+    }
+
+    #[test]
+    fn line_at_call_budget_reads_only_its_own_line() {
+        let names: Vec<String> = (0..MAX_CALL_FACTS_PER_LINE + 5)
+            .map(|index| format!("g{index}"))
+            .collect();
+        let body = format!(
+            "fn a(){{ {};}}\nfn b(){{ x.f(); }}\n",
+            names.join("().") + "()"
+        );
+        let calls = extract_call_facts(&body, 1);
+        assert!(line_at_call_budget(calls.iter(), 1));
+        assert!(!line_at_call_budget(calls.iter(), 2));
+    }
+
+    #[test]
+    fn a_line_under_the_budget_is_not_saturated() {
+        let calls = extract_call_facts("fn a(){ x.f().g(); }\n", 1);
+        assert!(!has_saturated_line(calls.iter()));
+    }
+
+    #[test]
+    fn calls_with_distinct_names_on_one_line_share_one_line_allocation() {
+        let names: Vec<String> = (0..MAX_CALL_FACTS_PER_LINE + 50)
+            .map(|index| format!("g{index}"))
+            .collect();
+        let body = format!("fn a(){{ {};}}\n", names.join("().") + "()");
+        let calls = extract_call_facts(&body, 1);
+        // The budget bounds the facts for the line, and every kept fact
+        // reads the same allocation instead of a private copy.
+        assert_eq!(calls.len(), MAX_CALL_FACTS_PER_LINE);
+        assert!(
+            calls
+                .iter()
+                .all(|call| call.text.shares_allocation(&calls[0].text))
+        );
     }
 }

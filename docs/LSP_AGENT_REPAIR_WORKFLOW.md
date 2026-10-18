@@ -189,7 +189,7 @@ different outcome; inspect the route-quality guidance in step 7 instead.
 
 ## Step 6 — Show Receipt Status (`ripr.collectReceiptStatus`)
 
-**Command palette:** `RIPR: Show Receipt Status`
+**Command palette:** `ripr: Show Receipt Status`
 **LSP executeCommand:** `ripr.collectReceiptStatus`
 
 Run after the receipt command completes.
@@ -215,7 +215,7 @@ repeat the edit blindly. Proceed to step 7.
 
 ## Step 7 — Show Route Quality (VS Code command)
 
-**Command palette:** `RIPR: Show Route Quality`
+**Command palette:** `ripr: Show Route Quality`
 **Backing LSP executeCommand:** `ripr.collectReceiptStatus`
 
 Run when the receipt outcome is `unchanged`, `regressed`, or `unknown`, or any

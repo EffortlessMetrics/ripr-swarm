@@ -1,5 +1,22 @@
 use std::path::{Component, Path, PathBuf};
 
+/// Deepest accepted diff path, in components. Real repositories sit far below
+/// this; a crafted header with tens of thousands of `a/` components made
+/// ancestor walks and path comparisons quadratic in time and memory (hang or
+/// OOM). The bounded parser refuses such a header explicitly
+/// (`diff_path_too_deep`); `confine_to_relative_path` rejects it too so an
+/// unbounded caller can never register one.
+pub(super) const MAX_DIFF_PATH_COMPONENTS: usize = 256;
+
+/// Whether a path-bearing diff header line is deeper than the bound. A cheap
+/// separator count over the raw line: a `diff --git` line carries two paths,
+/// so the line allowance is twice the per-path bound plus the side prefixes.
+pub(super) fn path_marker_exceeds_depth_bound(raw: &str) -> bool {
+    const PREFIXES: [&str; 5] = ["--- ", "+++ ", "diff --git ", "rename from ", "rename to "];
+    PREFIXES.iter().any(|prefix| raw.starts_with(prefix))
+        && raw.bytes().filter(|byte| *byte == b'/').count() > 2 * MAX_DIFF_PATH_COMPONENTS + 4
+}
+
 pub(super) fn parse_new_path_marker(raw: &str) -> Option<PathBuf> {
     let marker = raw.strip_prefix("+++ ")?;
     let path = parse_diff_path_token(marker)?;
@@ -104,7 +121,7 @@ fn confine_to_relative_path(path: &DecodedPath) -> Option<PathBuf> {
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
         }
     }
-    if parts.is_empty() {
+    if parts.is_empty() || parts.len() > MAX_DIFF_PATH_COMPONENTS {
         return None;
     }
     // Unix native separators are `/`, so the platform join already

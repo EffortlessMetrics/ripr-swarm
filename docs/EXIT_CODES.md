@@ -1,12 +1,13 @@
 # Exit Codes
 
-ripr uses a three-value exit code contract:
+ripr uses three ordinary command exit codes, plus standalone Unix check interruption:
 
 | Code | Meaning |
 |------|---------|
 | `0`  | The command completed. |
 | `2`  | The command could not complete: usage, parse, operational, or internal error. |
 | `3`  | The command ran successfully and reached a blocking decision or a typed refusal. |
+| `130` | Supported standalone Unix `check` analysis was interrupted. |
 
 `ripr check` is advisory: it exits `0` whether or not it found gaps, including
 `exposed` and `weakly_exposed` findings. A non-zero exit from `check` means the
@@ -37,9 +38,11 @@ verify-execute` declining a packet (the refusal JSON document is on stdout)
 - `2`: the invocation or operation failed; retrying differently is
   appropriate.
 
-`ripr help --json` projects this same mapping as a typed per-command `exit`
+`ripr help --json` projects this ordinary completion mapping as a typed per-command `exit`
 object (RIPR-SPEC-0190). Orchestrators that discover commands from that
-document should branch on `exit`, not on free-text `stop_states`.
+document should branch on `exit`, not on free-text `stop_states`. External
+standalone interruption (130 or native signal termination) is separate from
+that completion metadata.
 
 Error and panic diagnostics on stderr are best effort. If a stderr reader
 closes after a JSON refusal has been written, the command retains that stdout
@@ -92,8 +95,9 @@ preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
   `analysis_outcome: null`; no `run_status` field), and
   `repo-exposure-json` and `agent-seam-packets-json` render their format's
   refused envelope (zeroed counts, `run_status: "refused"`). Machine formats without an
-  honest refusal shape yet — `repo-sarif`, `badge-plus`, `repo-badge-*`,
-  `shields`, `repo-seams-*`, and `repo-exposure-summary-json` — write
+  honest refusal shape yet — `repo-sarif`, `badge-shields`, `badge-plus-*`,
+  `repo-badge-*`, `repo-seams-*`, `repo-exposure-md`, and
+  `repo-exposure-summary-json` — write
   nothing to stdout and put the prose diagnostic on stderr for now; that
   gap is a named limitation, not a clean result. Exactly two cases stay
   prose-only with empty stdout on every command: argv usage errors and
@@ -287,3 +291,31 @@ argv-level exit `2`, names the root, and writes no report. `ripr gate evaluate`
 treats an incomplete, partial, or unsupported
 analysis outcome as a `config_error` in every mode, so a gate never passes
 on a partial denominator.
+
+## Standalone Unix check interruption (#7618)
+
+For ordinary single-output `ripr check` with live Git or a resolved regular
+`--diff` file, first SIGINT requests existing cooperative cancellation during
+analysis. The existing child owner settles/reaps the managed exporter before
+returning where supported. Exit 130 and stderr explain how to rerun; cancellation
+is not a partial successful report or fail-soft producer degradation. Confirmed
+settlement discards only the current unpublished packet. Cleanup blockers or
+unconfirmed settlement retain named staging; prior packets and user data survive.
+The next invocation uses fresh staging and never consumes that retained partial.
+
+Stdin (`--diff -`), FIFO/nonregular/unresolved inputs, `--output-dir`,
+`--write-artifact`, and `--gap-ledger` retain native SIGINT. Their blocking I/O or
+separate publication paths are outside cooperative single-output qualification.
+After analysis/rendering, stdout publication switches to native interruption;
+streamed bytes cannot be retracted. A second analysis SIGINT also permits native
+termination if I/O or cleanup stalls. Forced termination does not establish
+reaping or staging cleanup.
+
+Existing library `ripr::cli::run` preserves caller-owned signal policy. The binary
+opts into `run_with_interrupt_handling`, a once-per-process standalone entry whose
+signal actions last until process exit. `CommandError::Interrupted(String)` adds
+an exhaustive-match arm; use it or `message()`/`exit_code()`. This recorded but
+unendorsed API migration is for the upcoming 0.11.0 minor, not a 0.11.x patch.
+Native execution evidence is Linux x86_64 with explicitly trusted single-process
+fixture exporters. macOS/Windows runtime, arbitrary descendants, hostile path
+replacement and real perllsp compatibility remain unqualified.

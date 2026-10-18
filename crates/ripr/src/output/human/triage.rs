@@ -223,27 +223,12 @@ pub(crate) fn render_human_triage(
                         ) && typescript_named_limitation_why(finding).is_some() =>
                     {
                         if let Some(why) = typescript_named_limitation_why(finding) {
-                            // #7384 review: only claim "not by missing fields"
-                            // when the shared packet authority confirms the
-                            // field list is empty; a finding can carry a named
-                            // limitation AND still miss packet fields, and
-                            // naming only one blocker misdirects the repair.
-                            let missing_fields = not_ready
-                                .as_ref()
-                                .map(|actionability| {
-                                    actionability.missing_actionability_fields.as_slice()
-                                })
-                                .unwrap_or(&[]);
-                            if missing_fields.is_empty() {
-                                out.push_str(&format!(
-                                    "  Safe next action: preview-language evidence is advisory; the repair packet is blocked by the named static limitation, not by missing fields: {why}; resolve the limitation and rerun preview evidence before acting\n"
-                                ));
-                            } else {
-                                out.push_str(&format!(
-                                    "  Safe next action: preview-language evidence is advisory; the repair packet is blocked by the named static limitation and by missing packet fields ({}): {why}; resolve the limitation and complete the missing fields before acting\n",
-                                    missing_fields.join(", ")
-                                ));
-                            }
+                            // #8630: named limitations refuse projection before
+                            // packet validation. Internal missing fields are
+                            // diagnostics, not inputs the operator can fill.
+                            out.push_str(&format!(
+                                "  Safe next action: preview-language evidence is advisory; no repair packet is emitted because of the named static limitation: {why}; `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`\n"
+                            ));
                         }
                     }
                     Some(finding) if let Some(actionability) = not_ready.as_ref() => {
@@ -318,7 +303,12 @@ pub(crate) fn render_human_triage(
             // start, naming the seam identity the check pipeline's
             // producer-owned gate established. No route, no line: an
             // ineligible or unbound finding keeps only explain/context.
-            if let Some(route) = navigation.repair_route_for(&finding.id) {
+            // #8166 residual (F3): a static-limited finding never prints the
+            // runnable repair line, even if a route was computed for it; the
+            // limitation guidance above is its only next action.
+            if !is_static_limited(finding)
+                && let Some(route) = navigation.repair_route_for(&finding.id)
+            {
                 let command = navigation.repair_command(&route.seam_id);
                 out.push_str(&format!("  {command}\n"));
                 super::push_powershell_variant(out, "  ", &command);
@@ -1111,6 +1101,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,

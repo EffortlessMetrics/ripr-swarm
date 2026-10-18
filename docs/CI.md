@@ -189,8 +189,10 @@ schedule/merge queue), not the default PR path.
 ### 4) Hosted fallback boundary
 
 - Do **not** remove, narrow, or relabel the current protected GitHub-hosted
-  Rust-small fallback without updating the routed-runner docs, active-goal
-  state, and branch-protection contract in the same PR.
+  Rust-small fallback without updating the routed-runner docs and the
+  branch-protection contract in the same PR (the retired active-goal state
+  left with the `.ripr/goals/` scheduler in #1701 and has no successor to
+  update).
 - The current routed Rust-small workflow may select GitHub-hosted when a PR is
   untrusted, runner state cannot be read, or no idle image-ready CX53/CX43
   runner is available. That result remains a valid protected-path success while
@@ -1214,7 +1216,7 @@ ripr init --ci github
 
 Copy the generated file, not a workflow from this page. Run
 `ripr init --ci github --dry-run` to print it without writing anything. It
-uploads the pilot, report, and agent artifact directories. The official GitHub
+uploads `target/ripr` (pilot, workflow, agent, report and review artifacts) and `target/ci` as the `ripr-reports` artifact. The official GitHub
 SARIF upload documentation uses `github/codeql-action/upload-sarif@v4`; keep
 the RIPR job, artifact upload, and optional SARIF steps advisory until the
 repository has chosen a baseline policy.
@@ -1412,15 +1414,25 @@ configure the workflow, so changing a mode never means editing the file:
   nothing and leaves findings in artifacts; `plan` computes and uploads a
   comment plan without posting; `inline` publishes inline review comments on
   changed lines.
+- `RIPR_SUMMARY_COMMENT` controls the one summary comment on the pull request
+  conversation. `true` (the default) posts a short digest of the changed-behavior
+  findings and updates that same comment on every push, so a reviewer sees the
+  result without opening the Actions run; `false` turns it off. A clean pull
+  request gets no comment, and a comment left by an earlier push is updated to
+  say the findings are gone. It is skipped for fork and Dependabot pull
+  requests, whose token cannot write; those still get the job summary, check
+  annotations and SARIF. Only the comment `github-actions[bot]` posted is ever
+  updated.
 - `RIPR_UPLOAD_SARIF` is set in the file, not as a variable. `"true"` uploads
   SARIF to the Security tab; set `"false"` if the repository does not use code
   scanning.
 
 Permissions and job settings:
 
-- `pull-requests: write` is used only when `RIPR_COMMENT_MODE` is `inline`.
-  With `off`, nothing writes to the pull request; set it to `read` if you keep
-  comments off.
+- `pull-requests: write` is used by the summary comment and by
+  `RIPR_COMMENT_MODE=inline`. If you set `RIPR_SUMMARY_COMMENT` to `false` and
+  keep `RIPR_COMMENT_MODE` at `off`, nothing writes to the pull request; set it
+  to `read` then.
 - `security-events: write` is used only for the SARIF upload. Remove it and set
   `RIPR_UPLOAD_SARIF` to `"false"` if the repository does not use code
   scanning.
@@ -1476,6 +1488,17 @@ Steps:
   another author must not suppress a RIPR card or be PATCHed by this job.
 - **Run RIPR** is the one command above. It reads no token; the comment steps
   around it hold that.
+- **Publish RIPR summary comment** pipes the pull request's conversation
+  comments into `ripr pr-comments summary`, which renders the digest and writes
+  one POST (or a PATCH of the bot's earlier comment); the step sends it with
+  `gh api`. It is `continue-on-error` and skips fork and Dependabot heads.
+  Two known limits: it runs only when `Run RIPR` left
+  `target/ripr/review/comments.json`, so if that step fails before writing it,
+  an earlier push's comment stays as it was (stale) rather than being marked
+  incomplete; and two overlapping runs can each find no earlier comment and
+  post two, after which the later runs update only the first. Concurrency
+  groups on the workflow narrow the race; neither is a correctness claim about
+  the code under review.
 - **Publish RIPR inline comments** runs `ripr pr-comments requests`, which turns
   the publish plan into an ordered list of GitHub API requests (updates first,
   then one review for new cards), and the step sends each one with `gh api`.

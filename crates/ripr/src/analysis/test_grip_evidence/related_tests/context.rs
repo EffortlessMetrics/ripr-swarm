@@ -3810,7 +3810,7 @@ mod tests {
         let call = CallFact {
             line: 8,
             name: "wrapper".to_string(),
-            text: "wrapper()".to_string(),
+            text: "wrapper()".to_string().into(),
         };
         assert!(!same_file_unit_production_helper_call_is_allowed(
             &call,
@@ -3844,7 +3844,7 @@ mod tests {
             let call = CallFact {
                 line: 2,
                 name: "target".to_string(),
-                text: text.to_string(),
+                text: text.to_string().into(),
             };
             assert!(
                 helper_owner_call_names_from_qualified_calls(&[call], &modules, None).is_empty()
@@ -3898,7 +3898,7 @@ mod tests {
             let call = CallFact {
                 line: 2,
                 name: "target".to_string(),
-                text: text.to_string(),
+                text: text.to_string().into(),
             };
             let old = unbounded_qualified_helper_names(
                 std::slice::from_ref(&call),

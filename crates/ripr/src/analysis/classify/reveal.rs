@@ -3949,6 +3949,8 @@ fn all_use_statements(masked: &str) -> Vec<String> {
             && bytes.get(index + 1) == Some(&b's')
             && bytes.get(index + 2) == Some(&b'e')
             && (index == 0 || !is_ident_byte(bytes[index - 1]))
+            // A raw identifier `r#use` is not the keyword (#7936).
+            && !(index >= 2 && bytes[index - 1] == b'#' && bytes[index - 2] == b'r')
             && bytes[index + 3..]
                 .first()
                 .is_some_and(|byte| byte.is_ascii_whitespace());
