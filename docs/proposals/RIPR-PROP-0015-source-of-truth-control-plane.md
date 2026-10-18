@@ -74,6 +74,11 @@ Claim boundary:
   references; they do not prove analyzer correctness, runtime adequacy,
   coverage adequacy, mutation outcomes, release readiness, or blocking CI
   promotion.
+- Amendment (2026-10, #1706 PR D): the active-goal shape validator and
+  `cargo xtask check-goals` were retired with the `.ripr/goals/` scheduler
+  (#1701); the remaining live validators are the document-artifact and
+  support-tier checks. The active-goal prose below is retained as the
+  historical record of the accepted 2026 doctrine.
 
 Rollback:
 

@@ -1139,3 +1139,76 @@ fn work_selection_identity_standalone_issue_gains_duplicate_family_sibling() -> 
     }
     Ok(())
 }
+
+/// Acceptance "a fresh root reconstructs the selected-work contract state
+/// without prior chat": the committed fresh-root receipt loads and binds to
+/// the committed corpus bytes, and every one of the ten domain checks
+/// re-runs from committed artifacts alone in this fresh process, agreeing
+/// with the receipt's recorded scenario/case counts and pass state.
+#[test]
+fn work_selection_identity_fresh_root_receipt_reconstructs_all_domains() -> Result<(), String> {
+    let receipt = load_work_identity_fresh_root_receipt()?;
+    verify_work_identity_fresh_root_receipt(&receipt)?;
+    for domain in &receipt.domains {
+        let (scenarios, cases, failed) = reconstruct_work_identity_domain(&domain.domain)?;
+        if failed != 0 {
+            return Err(format!(
+                "fresh-root reconstruction of `{}` observed {failed} failing cases",
+                domain.domain
+            ));
+        }
+        if scenarios != domain.scenarios || cases != domain.cases {
+            return Err(format!(
+                "`{}` counts drifted: receipt recorded {} scenarios/{} cases, \
+                 reconstruction observed {scenarios}/{cases}",
+                domain.domain, domain.scenarios, domain.cases
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Negative control: a receipt whose recorded corpus digest drifted from the
+/// committed bytes must reject, not re-bless itself into agreement.
+#[test]
+fn work_selection_identity_fresh_root_receipt_rejects_digest_drift() -> Result<(), String> {
+    let mut receipt = load_work_identity_fresh_root_receipt()?;
+    let domain = receipt
+        .domains
+        .first_mut()
+        .ok_or_else(|| "receipt must record at least one domain".to_string())?;
+    domain.corpus_sha256 = "0".repeat(64);
+    if verify_work_identity_fresh_root_receipt(&receipt).is_ok() {
+        return Err("a digest-drifted receipt verified clean".to_string());
+    }
+    Ok(())
+}
+
+/// Negative control: a receipt that drops one of the nine PR B consumer
+/// domains is not a reconstruction of the whole selected-work contract.
+#[test]
+fn work_selection_identity_fresh_root_receipt_requires_all_ten_domains() -> Result<(), String> {
+    let mut receipt = load_work_identity_fresh_root_receipt()?;
+    receipt.domains.pop();
+    if verify_work_identity_fresh_root_receipt(&receipt).is_ok() {
+        return Err("a nine-domain receipt verified clean".to_string());
+    }
+    Ok(())
+}
+
+/// Negative control: a receipt that points one domain at another domain's
+/// corpus directory binds bytes the domain check never ran on and must
+/// reject.
+#[test]
+fn work_selection_identity_fresh_root_receipt_rejects_corpus_swap() -> Result<(), String> {
+    let mut receipt = load_work_identity_fresh_root_receipt()?;
+    let domain = receipt
+        .domains
+        .get_mut(1)
+        .ok_or_else(|| "receipt must record at least two domains".to_string())?;
+    domain.corpus = "fixtures/work_selection_identity".to_string();
+    if verify_work_identity_fresh_root_receipt(&receipt).is_ok() {
+        return Err("a corpus-swapped receipt verified clean".to_string());
+    }
+    Ok(())
+}

@@ -233,9 +233,10 @@ ripr init --ci github
 ```
 
 Review the generated files before committing them. The workflow installs the
-ripr version that generated it, so generate it with a released `ripr`: an
-unreleased development build names a version crates.io does not publish yet,
-and the install step fails. On a PR, read the job summary
+ripr version that generated it. An unreleased development build instead pins
+the latest release and says so in a warning; after
+upgrading ripr, refresh with `ripr init --ci github --force`. Preview the
+files first with `--dry-run`. On a PR, read the job summary
 first, then open the linked artifacts for the evidence and suggested test.
 The generated workflow is non-blocking by default; a policy gate is a separate,
 explicit adoption decision.
@@ -258,7 +259,8 @@ ripr pilot --root .
 ```
 
 Before starting a repair, make sure `target/` is in a committed `.gitignore`
-(see below). When pilot recommends a repair, run the exact
+(see below) and that the production change itself is committed: the before
+phase refuses a seam whose edit-target file has uncommitted changes. When pilot recommends a repair, run the exact
 `ripr agent repair ... --phase before` command it prints. That printed command
 is the advanced spelling of the ordinary start `ripr repair <seam-id>`; both
 begin the same before/edit/after attempt, and the ordinary start additionally

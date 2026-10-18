@@ -404,6 +404,7 @@ where
 }
 
 #[test]
+#[serial]
 fn watched_diagnostics_inputs_register_root_anchored_and_refresh_over_the_wire()
 -> Result<(), String> {
     work_done_progress_runtime()?.block_on(async {
@@ -20513,6 +20514,7 @@ async fn run_wire_refresh_with_progress_capability(
 }
 
 #[test]
+#[serial]
 fn work_done_progress_failed_end_through_real_refresh_on_broken_workspace() -> Result<(), String> {
     work_done_progress_runtime()?.block_on(async {
         let root = unique_lsp_test_root("progress-analysis-error")?;
@@ -20622,6 +20624,7 @@ fn work_done_progress_failed_end_through_real_refresh_on_broken_workspace() -> R
 }
 
 #[test]
+#[serial]
 fn work_done_progress_capability_absent_refresh_emits_no_traffic() -> Result<(), String> {
     work_done_progress_runtime()?.block_on(async {
         let root = unique_lsp_test_root("progress-capability-absent")?;
@@ -22386,16 +22389,37 @@ async fn did_save_without_text_during_unknown_buffer_authority_holds_the_quarant
     // bookkeeping under test runs before and after each send regardless.
     drop(socket);
     let backend = service.inner();
+    // A selected workspace root is what lets a save schedule a refresh at all;
+    // without it the scheduling assertion below could not discriminate.
+    backend
+        .initialize(initialize_params(
+            None,
+            Some(file_uri_for_path(&fixture.root)?),
+        ))
+        .await
+        .map_err(|err| format!("initialize failed: {err}"))?;
     backend
         .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
         .await;
     commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
 
+    // Diverge the retained buffer from the persisted bytes first, so the
+    // buffer digest and the recorded saved digest are distinct. Without this
+    // the frozen buffer still equals the persisted text and an implementation
+    // that fell back to the buffer for the save identity would record the same
+    // digest, passing the assertions below vacuously.
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.uri_a,
+            2,
+            QUARANTINE_TEXT_A_DIRTY,
+        ))
+        .await;
     // A rejected incremental change (position past the line end) disowns the
     // retained buffer and enters the fail-closed quarantine.
     backend
         .did_change(DidChangeTextDocumentParams {
-            text_document: VersionedTextDocumentIdentifier::new(fixture.uri_a.clone(), 2),
+            text_document: VersionedTextDocumentIdentifier::new(fixture.uri_a.clone(), 3),
             content_changes: vec![TextDocumentContentChangeEvent {
                 range: Some(Range {
                     start: Position {
@@ -22428,6 +22452,10 @@ async fn did_save_without_text_during_unknown_buffer_authority_holds_the_quarant
     // observe the persisted bytes. It must adopt no save identity from the
     // disowned buffer and hold the quarantine across both the save and the
     // refresh commit the save schedules (#1746).
+    let saves_before = backend
+        .refresh_scheduler_for_test()
+        .telemetry()
+        .did_save_requests;
     backend
         .did_save(DidSaveTextDocumentParams {
             text_document: TextDocumentIdentifier {
@@ -22450,6 +22478,16 @@ async fn did_save_without_text_during_unknown_buffer_authority_holds_the_quarant
     if state.saved_digest.as_deref() != Some(content_digest(QUARANTINE_TEXT_A.as_bytes()).as_str())
     {
         return Err("saved identity must stay the persisted bytes".to_string());
+    }
+    if backend
+        .refresh_scheduler_for_test()
+        .telemetry()
+        .did_save_requests
+        != saves_before + 1
+    {
+        return Err(
+            "the unobserved save must still schedule the persisted-file re-analysis".to_string(),
+        );
     }
     commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
     let state = backend

@@ -431,9 +431,6 @@ impl ClassifiedProbeEvidence {
         // Every diff-classifier consumer of a covered equality uses this same
         // decision. Keep the original TestSummary and assertion cardinality;
         // filtering a clone would manufacture singleton matching fallbacks.
-        let assertion_admitted = |test: &TestSummary, assertion: &OracleFact| {
-            pin_syntax.admits_equality_assertion(context.probe, test, assertion, context.index)
-        };
         let sibling_exclusion_admitted = |test: &TestSummary, assertion: &OracleFact| {
             pin_syntax.admits_assertion_context(test, assertion, context.index)
         };
@@ -489,6 +486,14 @@ impl ClassifiedProbeEvidence {
                     // RIPR-SPEC-0229 decision 7: a constant-row table's cells (#5328).
                     .with_table_rows(context.related_tests.iter().map(|(test, _)| *test))
             });
+        let field_oracle_needs_admission = arm_selector
+            .as_ref()
+            .is_some_and(ArmSelector::field_oracle_needs_admission);
+        let assertion_admitted = |test: &TestSummary, assertion: &OracleFact| {
+            pin_syntax.admits_equality_assertion(context.probe, test, assertion, context.index)
+                && (!field_oracle_needs_admission
+                    || pin_syntax.admits(test, assertion, context.index))
+        };
         // RIPR-SPEC-0094 Part D: the state a deleted `self.callee(..)` writes,
         // established once per probe; `None` keeps the Part C reading.
         let effect_carrier = context.owner_fn.and_then(|owner| {
@@ -918,9 +923,14 @@ impl ClassifiedProbeEvidence {
         // assertion on the returned value without consulting the owner
         // return pin, so a returned type whose `Drop` may exit while
         // unwinding from a failed assertion demotes here, at the final
-        // semantic owner, exactly as the pin's own refusal does.
-        let discriminate = if matches!(context.probe.family, ProbeFamily::ReturnValue)
-            && discriminate.state == StageState::Yes
+        // semantic owner, exactly as the pin's own refusal does. The same
+        // holds for the error-path and predicate families: their credited
+        // shapes hold the returned value in the asserting test while it
+        // decides, so the same unwind can mask the failure.
+        let discriminate = if matches!(
+            context.probe.family,
+            ProbeFamily::ReturnValue | ProbeFamily::ErrorPath | ProbeFamily::Predicate
+        ) && discriminate.state == StageState::Yes
             && context.owner_fn.is_some_and(|owner| {
                 !OwnerReturnPin::returned_types_drop_plain(owner, context.index)
             }) {
@@ -1650,6 +1660,63 @@ mod tests {
             ExposureClass::WeaklyExposed
         );
         assert_eq!(class_for("")?, ExposureClass::Exposed);
+        Ok(())
+    }
+
+    /// #8480 exit-position narrowing: a non-plain Drop record built only
+    /// as a local guard drops inside the owner, so a return_value finding
+    /// for the plain record the owner returns stays exposed. The scalar
+    /// form of this shape is covered by the
+    /// `rust_returned_type_drop_local_guard` fixture.
+    #[test]
+    fn a_local_non_plain_drop_guard_keeps_return_value_exposed() -> Result<(), String> {
+        use crate::domain::ExposureClass;
+
+        let source = "#[derive(Debug, PartialEq)]\npub struct Cfg {\n    pub n: u32,\n}\n\nimpl Drop for Cfg {\n    fn drop(&mut self) {\n    }\n}\n\npub struct Guard {\n    pub n: u32,\n}\n\nimpl Drop for Guard {\n    fn drop(&mut self) {\n        self.n = self.n.wrapping_add(1);\n    }\n}\n\npub fn make(x: u32) -> Cfg { let _guard = Guard { n: 0 };\n    Cfg { n: x * 3 }\n}\n\n#[test]\nfn makes() {\n    assert_eq!(make(4), Cfg { n: 12 });\n}\n";
+        let path = PathBuf::from("src/lib.rs");
+        let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, source)?;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: facts.functions.clone(),
+            tests: facts.tests.clone(),
+            files: [(path, facts)].into_iter().collect(),
+            ..Default::default()
+        });
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "make")
+            .ok_or("missing owner")?;
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "makes")
+            .ok_or("missing test")?;
+        let probe = Probe {
+            id: ProbeId("probe:local-drop-guard".to_string()),
+            location: SourceLocation::new("src/lib.rs", 21, 5),
+            owner: Some(owner.id.clone()),
+            family: ProbeFamily::ReturnValue,
+            delta: DeltaKind::Value,
+            before: Some("x * 2".to_string()),
+            after: Some("x * 3".to_string()),
+            expression: "Cfg { n: x * 3 }".to_string(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        };
+        let context = ProbeContext::new(
+            &probe,
+            Some(owner),
+            vec![(test, RelationReason::DirectOwnerCall)],
+            false,
+            &index,
+            true,
+        );
+        let evidence = ClassifiedProbeEvidence::gather(
+            &context,
+            &probe.expression,
+            &crate::analysis::classify::TransitiveReachIndex::new(context.index),
+        );
+        assert_eq!(evidence.classify(&probe), ExposureClass::Exposed);
         Ok(())
     }
 

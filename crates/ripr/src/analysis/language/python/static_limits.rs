@@ -732,6 +732,7 @@ mod tests {
             ambiguous_src_modules: Vec::new(),
             module_constants: Vec::new(),
             same_class_callees: Vec::new(),
+            module_callees: Vec::new(),
             class_path: String::new(),
             term_facts: Default::default(),
         }
