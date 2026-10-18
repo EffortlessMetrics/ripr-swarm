@@ -3295,7 +3295,7 @@ fn unusable_root_warns_once_on_stderr_and_keeps_stdout_clean() -> Result<(), Str
     .map_err(|error| error.to_string())?;
 
     let run = |root: &Path| -> Result<Output, String> {
-        Command::new(env!("CARGO_BIN_EXE_ripr"))
+        worktree_ripr()
             .args(["mcp", "--stdio", "--root"])
             .arg(root)
             .stdin(Stdio::null())
