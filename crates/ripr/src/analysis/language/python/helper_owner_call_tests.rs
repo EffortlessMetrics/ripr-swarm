@@ -161,6 +161,27 @@ fn given_an_edge_that_is_not_a_bare_module_call_then_no_helper_relation_is_made(
 }
 
 #[test]
+fn given_a_decorated_caller_then_no_helper_relation_is_made() -> Result<(), String> {
+    let tests = "from src.version import make\n\n\ndef test_make():\n    assert make(1)\n";
+    let plain = "def helper(x):\n    return x > 0\n\n\ndef make(x):\n    return helper(x)\n";
+    assert_eq!(
+        helper_relations(plain, tests, "helper")?,
+        vec!["test_make via make as helper_owner_call".to_string()]
+    );
+    let decorated = "import functools\n\n\ndef helper(x):\n    return x > 0\n\n\n@functools.lru_cache\ndef make(x):\n    return helper(x)\n";
+    assert!(helper_relations(decorated, tests, "helper")?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn given_a_docstring_mention_of_the_helper_then_no_helper_relation_is_made() -> Result<(), String> {
+    let tests = "from src.version import make\n\n\ndef test_make():\n    assert make(1)\n";
+    let source = "def helper(x):\n    return x > 0\n\n\ndef make(x):\n    \"\"\"Calls helper(x) when asked.\"\"\"\n    return x\n";
+    assert!(helper_relations(source, tests, "helper")?.is_empty());
+    Ok(())
+}
+
+#[test]
 fn given_a_duplicate_helper_definition_then_no_helper_relation_is_made() -> Result<(), String> {
     let source = "def helper(x):\n    return x > 0\n\n\ndef helper(x):\n    return x >= 0\n\n\ndef make(x):\n    return helper(x)\n";
     let tests = "from src.version import make\n\n\ndef test_make():\n    assert make(1)\n";

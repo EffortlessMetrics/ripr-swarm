@@ -186,6 +186,13 @@ pub(super) fn helper_owner_call_candidates<'a>(
                     && caller.owner_kind.is_some()
                     && caller.name != owner.name
                     && !callers.iter().any(|seen| std::ptr::eq(*seen, *caller))
+                // A wrapping decorator may not call the function at all.
+                && caller.decorators.iter().all(|decorator| {
+                    matches!(
+                        decorator.as_str(),
+                        "classmethod" | "staticmethod" | "property" | "async_def"
+                    )
+                })
                     && caller
                         .module_callees
                         .iter()
@@ -1461,11 +1468,21 @@ pub(super) fn first_parenthesized_string_argument(text: &str) -> Option<String> 
 
 pub(super) fn contains_call_name(body_text: &str, call_name: &str) -> bool {
     let needle = format!("{call_name}(");
-    body_text.match_indices(&needle).any(|(idx, _)| {
-        python_callee_start_has_boundary(body_text, idx)
-            && !line_prefix_looks_like_comment_or_string(body_text, idx)
-            && !is_definition_name(body_text, idx)
-    })
+    body_text
+        .match_indices(&needle)
+        .any(|(idx, _)| is_bare_call_site(body_text, idx))
+}
+
+/// Whether a `name(` at byte `idx` is a bare call: an identifier boundary (no
+/// attribute receiver), outside comments, strings and docstrings, and not a
+/// `def` / `class` header. The one definition both `contains_call_name`
+/// (test-to-owner calls) and `module_callees::bare_callees` (owner-to-helper
+/// edges) use, so the two cannot drift (#4568).
+pub(super) fn is_bare_call_site(text: &str, idx: usize) -> bool {
+    python_callee_start_has_boundary(text, idx)
+        && !line_prefix_looks_like_comment_or_string(text, idx)
+        && !python_text_hides_code(text, idx)
+        && !is_definition_name(text, idx)
 }
 
 /// `def name(` / `async def name(` / `class name(` defines `name`; it does not
