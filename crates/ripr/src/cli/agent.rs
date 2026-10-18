@@ -71,6 +71,8 @@ pub(super) struct AgentCardOptions {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct AgentStubOptions {
     pub(super) root: PathBuf,
+    /// `--root` was typed, so the root is used as given (#8767).
+    pub(super) root_explicit: bool,
     pub(super) selector: crate::app::test_stub::TestStubSelector,
     /// Apply the stub to the working tree instead of only printing it.
     pub(super) write: bool,
@@ -813,6 +815,7 @@ fn parse_agent_stub_command(args: &[String]) -> Result<AgentCommand, String> {
 pub(super) fn parse_agent_stub_options(args: &[String]) -> Result<AgentStubOptions, String> {
     use crate::app::test_stub::TestStubSelector;
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut selector: Option<TestStubSelector> = None;
     let mut kind: Option<String> = None;
     let mut write = false;
@@ -824,6 +827,7 @@ pub(super) fn parse_agent_stub_options(args: &[String]) -> Result<AgentStubOptio
             "--root" => {
                 i += 1;
                 root = PathBuf::from(expect_value(args, i, "--root")?);
+                root_explicit = true;
             }
             "--kind" => {
                 i += 1;
@@ -865,6 +869,7 @@ pub(super) fn parse_agent_stub_options(args: &[String]) -> Result<AgentStubOptio
     };
     Ok(AgentStubOptions {
         root,
+        root_explicit,
         selector,
         write,
         json,

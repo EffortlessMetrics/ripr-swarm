@@ -375,3 +375,70 @@ fn fixed_root_probe_timeout_names_only_effective_consumer_recovery() -> TestResu
     fs::remove_dir_all(sandbox)?;
     Ok(())
 }
+
+/// #8767: from a workspace member directory `repair`, `pilot`, `status`,
+/// `continue` and `agent stub` resolve the workspace root like `check`, and
+/// `--root .` keeps the member directory.
+#[cfg(unix)]
+#[test]
+fn task_first_commands_resolve_workspace_root_from_a_member_directory() -> TestResult {
+    let outer = unique_external_workspace("member-root")?;
+    let member = outer.join("crates/app");
+    fs::create_dir_all(member.join("src"))?;
+    fs::write(
+        outer.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/app\"]\n",
+    )?;
+    fs::write(
+        member.join("Cargo.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )?;
+    fs::write(member.join("src/lib.rs"), "pub fn price() -> u32 { 2 }\n")?;
+    let root_text = outer.canonicalize()?.display().to_string();
+    let disclosure = format!("ripr: resolved workspace root to {root_text} ");
+    let run = |args: &[&str]| -> TestResult<std::process::Output> {
+        Ok(run_command_with_env(
+            env!("CARGO_BIN_EXE_ripr"),
+            &member,
+            args,
+            &[("RIPR_CACHE_DIR", "")],
+        )?)
+    };
+
+    let pilot = run(&["pilot", "--quiet"])?;
+    assert!(
+        String::from_utf8_lossy(&pilot.stderr).contains(&disclosure),
+        "pilot must disclose the resolved root; stderr:\n{}",
+        String::from_utf8_lossy(&pilot.stderr)
+    );
+    assert!(
+        outer.join("target/ripr").exists(),
+        "pilot artifacts belong under the workspace target/ripr"
+    );
+    assert!(
+        !member.join("target/ripr").exists(),
+        "pilot must not create a member-local target/ripr"
+    );
+
+    for args in [
+        &["repair"][..],
+        &["status"][..],
+        &["continue"][..],
+        &["agent", "stub", "--at", "src/lib.rs:1"][..],
+    ] {
+        let output = run(args)?;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(&disclosure),
+            "{args:?} must disclose the resolved root; stderr:\n{stderr}"
+        );
+        let opted_out = run(&[args, &["--root", "."]].concat())?;
+        assert!(
+            !String::from_utf8_lossy(&opted_out.stderr).contains("resolved workspace root"),
+            "{args:?} --root . must keep the member directory"
+        );
+    }
+
+    fs::remove_dir_all(outer)?;
+    Ok(())
+}

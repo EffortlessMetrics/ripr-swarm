@@ -228,6 +228,25 @@ fn non_cargo_workspace_marker(dir: &Path) -> Option<ImplicitRootReason> {
     None
 }
 
+/// Shared by every command that takes `--root` and defaults to `.`: without a
+/// typed `--root`, resolve the workspace root exactly as `ripr check` does
+/// (#8767), with the same stderr disclosure. A typed `--root` is kept as given.
+pub(super) fn resolve_implicit_command_root(
+    root: &mut PathBuf,
+    root_explicit: bool,
+) -> Result<(), String> {
+    if root_explicit {
+        return Ok(());
+    }
+    let mut input = CheckInput {
+        root: root.clone(),
+        ..CheckInput::default()
+    };
+    resolve_implicit_workspace_root(&mut input)?;
+    *root = input.root;
+    Ok(())
+}
+
 pub(super) fn resolve_implicit_workspace_root(input: &mut CheckInput) -> Result<(), String> {
     let resolved = resolve_project_root(Path::new(".")).map_err(|error| {
         format!("{error}; pass --root PATH to select the analysis root explicitly")
