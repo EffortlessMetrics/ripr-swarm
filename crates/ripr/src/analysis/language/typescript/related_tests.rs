@@ -968,7 +968,10 @@ fn module_value_use_relation(
     if test_mocks_owner_module(test, owner, alias_map, workspace_root) {
         return false;
     }
-    let body = &test.body_text;
+    // Mask comments, string/template text and regexes (including trailing
+    // `//` and multi-line forms) so only code references count.
+    let masked = super::classifier::ts_mask_literals_and_comments(&test.body_text);
+    let body = masked.as_str();
     test.imports_in_file.iter().any(|import| {
         if !import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root) {
             return false;

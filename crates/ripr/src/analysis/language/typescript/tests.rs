@@ -2884,6 +2884,35 @@ test("type-only import never binds the runtime value", () => {
 }
 
 #[test]
+fn find_related_tests_module_value_use_masks_trailing_and_multiline_comments_and_templates() {
+    let owner = module_value_owner("stop");
+    let tests = extract_tests(
+        Path::new("tests/masked.test.ts"),
+        r#"import { run, stop } from "../src/owners";
+
+test("trailing line comment", () => {
+    expect(run([1])).toEqual([1]); // stop is unused
+});
+
+test("multi-line block comment", () => {
+    /* the stop
+       value is unused */
+    expect(run([1])).toEqual([1]);
+});
+
+test("multi-line template literal", () => {
+    const text = `first line
+    mentions stop here`;
+    expect(run([text])).toEqual([text]);
+});
+"#,
+    );
+    assert_eq!(tests.len(), 3);
+    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    assert!(candidates.is_empty(), "{candidates:?}");
+}
+
+#[test]
 fn find_related_tests_matches_named_import_alias_calls() {
     let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
