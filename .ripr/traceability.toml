@@ -15280,6 +15280,8 @@ id = "RIPR-SPEC-0229"
 name = "Match-arm selection names the unselected arm"
 spec = "docs/specs/RIPR-SPEC-0229-match-arm-selection-discriminator.md"
 tests = [
+  "crates/ripr/tests/field_match_selector.rs::owner_doc_comments_preserve_the_asserted_field_selector",
+  "crates/ripr/src/analysis/classify/arm_selection/field_selector.rs::owner_doc_comments_preserve_only_the_exact_unconditional_root_declaration",
   "crates/ripr/tests/field_match_selector.rs::a_helper_returned_none_is_a_real_sibling_gap_not_an_unsupported_selector",
   "crates/ripr/tests/field_match_selector.rs::a_callable_module_binding_cannot_borrow_a_root_helpers_record",
   "crates/ripr/tests/field_match_selector.rs::a_helper_returned_mutable_record_selects_its_exact_asserted_call",

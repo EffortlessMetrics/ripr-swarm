@@ -807,6 +807,20 @@ retain a real missing-`Some` gap; unsupported helper shapes retain the named
 field-selector limitation. The positive and implicit-borrow negative fixtures
 are `field_match_helper_mutable` and `field_match_helper_taken`.
 
+Owner doc comments preserve admission only when the source AST root declaration
+has the exact indexed name, `fn` token line and function-body span. Ordinary
+`pub` and `pub(crate)` visibility is inert; synchronous, nongeneric owners with
+no executable attributes retain the same proof. Async, unsafe, const, ABI,
+conditional/custom attributes, duplicate owners and nested or mismatched source
+occurrences remain unsupported. Explicit `#[doc = ...]` attributes remain outside
+this comment-only slice. Both added-owner Some/None arms can be exposed by their
+own admitted assertions; the whole-match header remains unresolved.
+
+Persisted classified caches already include the analyzer build identity: clean
+builds key by commit and dirty builds by their source digest. A successor build
+cannot reuse an earlier build's unsupported doc-owner result; the shared cache
+schema generations remain unchanged for this declaration-identity repair.
+
 This does not establish a newly introduced whole match's before-side arm
 provenance. The retained broad-match `field_match_selector` API fixture still
 has three named unresolved rows because its paired old expression is not an

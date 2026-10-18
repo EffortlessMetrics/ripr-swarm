@@ -112,6 +112,118 @@ fn a_helper_returned_mutable_record_selects_its_exact_asserted_call()
 }
 
 #[test]
+fn owner_doc_comments_preserve_the_asserted_field_selector()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = SOURCE.replace(
+        "fn charge(lease: &Lease)",
+        "/// Charge terminal elapsed, or retain the admission reservation.\n/// Completion must be observed by this exact call.\nfn charge(lease: &Lease)",
+    );
+    let line = source
+        .lines()
+        .position(|line| line.trim_start().starts_with("Some(ms) =>"))
+        .ok_or("Some arm")?
+        + 1;
+    let diff = format!(
+        "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{line} +{line} @@\n-        Some(ms) => 1,\n+        Some(ms) => u64::try_from(ms.div_ceil(1000)).unwrap_or(u64::MAX).max(1),\n"
+    );
+    let fixture = Fixture::new(&source, &diff)?;
+    let output = fixture.check()?;
+    let arms = output
+        .findings
+        .iter()
+        .filter(|finding| {
+            finding.probe.family == ripr::ProbeFamily::MatchArm
+                && finding.probe.location.line == line
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !arms.is_empty(),
+        "the documented owner's changed arm must be analyzed"
+    );
+    for arm in arms {
+        assert_eq!(arm.class, ExposureClass::Exposed, "{}", arm.id);
+        assert!(arm.static_limit_kind.is_none());
+    }
+    for visibility in ["pub", "pub(crate)"] {
+        let visible = source.replace("\nfn charge(", &format!("\n{visibility} fn charge("));
+        let output = Fixture::new(&visible, &diff)?.check()?;
+        let arms = output
+            .findings
+            .iter()
+            .filter(|finding| {
+                finding.probe.family == ripr::ProbeFamily::MatchArm
+                    && finding.probe.location.line == line
+            })
+            .collect::<Vec<_>>();
+        assert!(!arms.is_empty());
+        assert!(
+            arms.iter()
+                .all(|finding| finding.class == ExposureClass::Exposed
+                    && finding.static_limit_kind.is_none()),
+            "{visibility}"
+        );
+    }
+    let added_diff = format!(
+        "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -8,0 +9,{} @@\n{}",
+        source.lines().count() - 8,
+        source
+            .lines()
+            .skip(8)
+            .map(|line| format!("+{line}\n"))
+            .collect::<String>()
+    );
+    let added = Fixture::new(&source, &added_diff)?.check()?;
+    let added_arms = added.findings.iter().filter(|finding|
+        finding.probe.family == ripr::ProbeFamily::MatchArm && matches!(finding.probe.location.line, value if value == line || value == line + 1)
+    ).collect::<Vec<_>>();
+    assert_eq!(
+        added_arms.len(),
+        2,
+        "both added owner arms must survive analysis"
+    );
+    assert!(
+        added_arms
+            .iter()
+            .all(|finding| finding.class == ExposureClass::Exposed
+                && finding.static_limit_kind.is_none())
+    );
+    assert!(
+        added.findings.iter().any(
+            |finding| finding.probe.family == ripr::ProbeFamily::MatchArm
+                && finding.probe.location.line == line - 1
+                && finding.class != ExposureClass::Exposed
+        ),
+        "the match header remains unresolved"
+    );
+    for (case, call) in [
+        ("discarded call", "let _ = charge(&lease);"),
+        ("wrong invocation", "assert_eq!(charge(&fixture()), 600);"),
+        (
+            "uncalled closure",
+            "let _ = || { assert_eq!(charge(&lease), 2); };",
+        ),
+    ] {
+        let unsupported = source.replace("assert_eq!(charge(&lease), 2);", call);
+        let output = Fixture::new(&unsupported, &diff)?.check()?;
+        let arms = output
+            .findings
+            .iter()
+            .filter(|finding| {
+                finding.probe.family == ripr::ProbeFamily::MatchArm
+                    && finding.probe.location.line == line
+            })
+            .collect::<Vec<_>>();
+        assert!(!arms.is_empty(), "{case}: subject must survive analysis");
+        assert!(
+            arms.iter()
+                .all(|finding| finding.class != ExposureClass::Exposed),
+            "{case} cannot borrow the doc owner's oracle"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn field_match_selector_names_all_three_rows_without_credit_or_wire_shape_change()
 -> Result<(), Box<dyn std::error::Error>> {
     let fixture = Fixture::new(SOURCE, DIFF)?;

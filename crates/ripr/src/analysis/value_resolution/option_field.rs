@@ -122,7 +122,7 @@ impl ValueEnvFacts {
         let initial = closed_record_field(
             binding.initializer()?,
             &tree,
-            &caller,
+            caller,
             &[],
             record_type,
             field,
@@ -136,7 +136,7 @@ impl ValueEnvFacts {
             .descendants()
             .filter_map(ast::PathExpr::cast)
         {
-            if path.syntax().text().to_string() != object {
+            if path.syntax().text() != object {
                 continue;
             }
             let position = position_at_offset(
@@ -152,9 +152,7 @@ impl ValueEnvFacts {
                 // The supported local record needs only tracked field writes
                 // and shared whole-record borrows. Other field place uses can
                 // borrow implicitly through methods or ref-mut patterns.
-                let Some(write) = field_assignment_target(&field_use) else {
-                    return None;
-                };
+                let write = field_assignment_target(&field_use)?;
                 {
                     let position = position_at_offset(
                         &test.body,
@@ -251,7 +249,7 @@ fn closed_record_field(
 ) -> Option<String> {
     match expression {
         ast::Expr::RecordExpr(record) => {
-            if record.path()?.syntax().text().to_string() != record_type {
+            if record.path()?.syntax().text() != record_type {
                 return None;
             }
             let fields = record.record_expr_field_list()?;
@@ -322,7 +320,7 @@ fn closed_record_field(
                 || function.abi().is_some()
                 || function.generic_param_list().is_some()
                 || function.attrs().next().is_some()
-                || function.ret_type()?.ty()?.syntax().text().to_string() != record_type
+                || function.ret_type()?.ty()?.syntax().text() != record_type
             {
                 return None;
             }
@@ -341,7 +339,7 @@ fn closed_record_field(
                         import.attrs().next().is_none()
                             && import
                                 .use_tree()
-                                .is_some_and(|tree| tree.syntax().text().to_string() == "super::*")
+                                .is_some_and(|tree| tree.syntax().text() == "super::*")
                     })
             {
                 return None;
@@ -422,7 +420,7 @@ fn macro_uses_are_closed(call: &ast::MacroCall, object: &str, depth: usize) -> O
     let parsed = crate::analysis::syntax::parse_clean_source_file(&wrapped)?;
     let tree = parsed.tree();
     for path in tree.syntax().descendants().filter_map(ast::PathExpr::cast) {
-        if path.syntax().text().to_string() != object {
+        if path.syntax().text() != object {
             continue;
         }
         let parent = path.syntax().parent()?;

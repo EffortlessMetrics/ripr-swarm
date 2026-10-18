@@ -534,8 +534,13 @@ impl ArmSelector {
                     if declared.mutable || declared.qualified || arithmetic.is_some() {
                         return None;
                     }
-                    let mut selector =
-                        FieldSelector::new(field, declared.type_name.as_deref()?, &owner.body)?;
+                    let mut selector = FieldSelector::new(
+                        field,
+                        declared.type_name.as_deref()?,
+                        &owner.body,
+                        &owner.name,
+                        owner.start_line,
+                    )?;
                     if let Some(original) = probe.before.as_deref().and_then(arm_pattern_text) {
                         selector.require_original_pattern(&original);
                     }

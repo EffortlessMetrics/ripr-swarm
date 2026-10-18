@@ -11,17 +11,27 @@ pub(super) struct FieldSelector {
     field: String,
     record_type: String,
     owner_body: String,
+    owner_name: String,
+    owner_start_line: usize,
     original_pattern_admitted: bool,
     admitted: bool,
     source: Option<String>,
 }
 
 impl FieldSelector {
-    pub(super) fn new(field: &str, record_type: &str, owner_body: &str) -> Option<Self> {
+    pub(super) fn new(
+        field: &str,
+        record_type: &str,
+        owner_body: &str,
+        owner_name: &str,
+        owner_start_line: usize,
+    ) -> Option<Self> {
         (is_identifier(field) && is_identifier(record_type)).then(|| Self {
             field: field.to_string(),
             record_type: record_type.to_string(),
             owner_body: owner_body.to_string(),
+            owner_name: owner_name.to_string(),
+            owner_start_line,
             original_pattern_admitted: true,
             admitted: false,
             source: None,
@@ -82,12 +92,41 @@ impl FieldSelector {
             .children()
             .filter_map(ast::Fn::cast)
             .filter(|function| {
-                function.syntax().text().to_string().trim() == self.owner_body.trim()
+                function
+                    .name()
+                    .is_some_and(|name| name.text() == self.owner_name)
             })
             .collect::<Vec<_>>();
         let [function] = functions.as_slice() else {
             return;
         };
+        // Facts begin at the fn token, while the AST item includes preceding
+        // doc comments. Match the same source span without erasing qualifiers,
+        // executable attributes or a different declaration's identity.
+        if function.async_token().is_some()
+            || function.unsafe_token().is_some()
+            || function.const_token().is_some()
+            || function.abi().is_some()
+            || function.generic_param_list().is_some()
+            || function.attrs().next().is_some()
+        {
+            return;
+        }
+        let Some(token) = function.fn_token() else {
+            return;
+        };
+        let start = usize::from(token.text_range().start());
+        let end = usize::from(function.syntax().text_range().end());
+        if source[..start]
+            .bytes()
+            .filter(|byte| *byte == b'\n')
+            .count()
+            + 1
+            != self.owner_start_line
+            || source.get(start..end) != Some(self.owner_body.as_str())
+        {
+            return;
+        }
         let Some(ast::Expr::MatchExpr(matched)) = function.body().and_then(|body| body.tail_expr())
         else {
             return;
@@ -400,7 +439,8 @@ mod tests {
 
     #[test]
     fn direct_record_projection_keeps_the_exact_field_and_constructor() -> Result<(), String> {
-        let mut field = FieldSelector::new("elapsed", "Lease", OWNER).ok_or("field descriptor")?;
+        let mut field =
+            FieldSelector::new("elapsed", "Lease", OWNER, "reason", 2).ok_or("field descriptor")?;
         assert_eq!(
             field.project("&Lease { elapsed: None, timeout: 600 }"),
             None
@@ -452,8 +492,8 @@ mod tests {
             ),
             ("fn test() { foreign::assert_eq!(); }", false),
         ] {
-            let mut field =
-                FieldSelector::new("elapsed", "Lease", OWNER).ok_or("field descriptor")?;
+            let mut field = FieldSelector::new("elapsed", "Lease", OWNER, "reason", 2)
+                .ok_or("field descriptor")?;
             field.admit_source(&format!("{RECORD}\n{body}"));
             assert_eq!(field.project(input).is_some(), admitted, "{body}");
         }
@@ -482,8 +522,8 @@ mod tests {
             format!("{RECORD}\nuse other::Record as r#Lease;"),
             RECORD.replace("None => lease.timeout", "foreign::None => lease.timeout"),
         ] {
-            let mut field =
-                FieldSelector::new("elapsed", "Lease", OWNER).ok_or("field descriptor")?;
+            let mut field = FieldSelector::new("elapsed", "Lease", OWNER, "reason", 2)
+                .ok_or("field descriptor")?;
             field.admit_source(&source);
             assert_eq!(
                 field.project("&Lease { elapsed: Some(1001), timeout: 600 }"),
@@ -499,12 +539,70 @@ mod tests {
 mod pattern_currentness_tests {
     use super::*;
     #[test]
+    fn owner_doc_comments_preserve_only_the_exact_unconditional_root_declaration()
+    -> Result<(), String> {
+        let body = "fn reason(lease: &Lease) -> u64 { match lease.elapsed { Some(ms) => ms as u64, None => lease.timeout } }";
+        let record = "struct Lease { elapsed: Option<u128>, timeout: u64 }";
+        let input = "&Lease { elapsed: None, timeout: 600 }";
+        let documented = format!("{record}\n/// Owner documentation.\n{body}");
+        let mut field =
+            FieldSelector::new("elapsed", "Lease", body, "reason", 3).ok_or("field descriptor")?;
+        field.admit_source(&documented);
+        assert_eq!(field.project(input), Some("None"));
+        for visibility in ["pub", "pub(crate)"] {
+            field.admit_source(
+                &documented.replace("fn reason(", &format!("{visibility} fn reason(")),
+            );
+            assert_eq!(field.project(input), Some("None"), "{visibility}");
+        }
+        for prefix in [
+            "#[cfg(any())]",
+            "#[cfg_attr(all(), custom)]",
+            "#[custom]",
+            "#[doc = \"documented\"]",
+            "async",
+            "unsafe",
+            "const",
+            "extern \"C\"",
+        ] {
+            let source = format!("{record}\n/// Owner documentation.\n{prefix} {body}");
+            field.admit_source(&source);
+            assert_eq!(field.project(input), None, "{prefix}");
+        }
+        for source in [
+            documented.replace("fn reason(", "fn reason<T>("),
+            format!("{documented}\n{body}"),
+            format!("{record}\nmod nested {{\n/// Owner documentation.\n{body}\n}}"),
+            format!(
+                "{record}\n/// Owner documentation.\n{}",
+                body.replace("None => lease.timeout", "None => 1")
+            ),
+            format!(
+                "{record}\n/// Owner documentation.\n#[cfg(any())] {body}\nuse foreign::reason;"
+            ),
+        ] {
+            field.admit_source(&source);
+            assert_eq!(field.project(input), None, "{source}");
+        }
+        let mut misplaced =
+            FieldSelector::new("elapsed", "Lease", body, "reason", 2).ok_or("field descriptor")?;
+        misplaced.admit_source(&documented);
+        assert_eq!(
+            misplaced.project(input),
+            None,
+            "a different source occurrence cannot lend its body"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn original_foreign_patterns_and_changed_owner_bodies_cannot_borrow_admission()
     -> Result<(), String> {
         let body = "fn reason(lease: &Lease) -> u64 { match lease.elapsed { Some(ms) => ms as u64, None => lease.timeout } }";
         let source = format!("struct Lease {{ elapsed: Option<u128>, timeout: u64 }}\n{body}");
         let input = "&Lease { elapsed: None, timeout: 600 }";
-        let mut field = FieldSelector::new("elapsed", "Lease", body).ok_or("field descriptor")?;
+        let mut field =
+            FieldSelector::new("elapsed", "Lease", body, "reason", 2).ok_or("field descriptor")?;
         field.admit_source(&source);
         assert_eq!(field.project(input), Some("None"));
         field.admit_source(&source.replace("None => lease.timeout", "None => 1"));
