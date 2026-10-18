@@ -7589,6 +7589,10 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::a_refused_effect_carrier_withholds_only_the_whole_object_observer"
 ]
 fixtures = [
+  "fixtures/rust_unused_trait_effect_oracle",
+  "fixtures/rust_competing_direct_effect_oracle",
+  "fixtures/rust_competing_reverse_effect_oracle",
+  "fixtures/rust_same_test_disconnected_effect_oracle",
   "fixtures/collection_argument_imported_constructor",
   "fixtures/collection_argument_macro_constructor",
   "fixtures/collection_argument_proc_constructor",
