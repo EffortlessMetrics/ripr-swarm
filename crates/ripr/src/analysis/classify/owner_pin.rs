@@ -176,6 +176,7 @@ pub(in crate::analysis) struct OwnerPinSyntax {
         RefCell<BTreeMap<PathBuf, (String, Option<crate::analysis::workspace::AnyhowIdentity>)>>,
     ambiguous_macro_bindings: RefCell<Option<BTreeSet<String>>>,
     local_glob_namespace_closed: OnceCell<bool>,
+    index_complete: bool,
     /// Definitions confined to one inline module or function body, keyed by
     /// file: they make a name ambiguous only for tests inside that scope.
     scoped_macro_bindings: RefCell<Option<ScopedMacroBindings>>,
@@ -536,6 +537,11 @@ impl OwnerPinSyntax {
     }
 
     /// Fold in the macro bindings of files the diff index withheld.
+    pub(in crate::analysis) fn with_complete_index(mut self, complete: bool) -> Self {
+        self.index_complete = complete;
+        self
+    }
+
     pub(in crate::analysis) fn with_withheld(mut self, withheld: WithheldMacroBindings) -> Self {
         self.withheld = withheld;
         self
@@ -819,6 +825,9 @@ impl OwnerPinSyntax {
     }
 
     fn local_glob_namespace_is_closed(&self, index: &RustIndex) -> bool {
+        if !self.index_complete {
+            return false;
+        }
         *self.local_glob_namespace_closed.get_or_init(|| {
             if self.withheld.present
                 || !index.non_utf8_sources.is_empty()
@@ -1814,6 +1823,7 @@ fn workspace_macro_binding_site(
     index: &RustIndex,
     roots: &TargetRoots,
     module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
+    workspace_complete: bool,
 ) -> Option<(PathBuf, MacroBindingSite)> {
     if !assertion_context_macros().contains(&name) {
         return None;
@@ -1832,7 +1842,9 @@ fn workspace_macro_binding_site(
             (path, facts, root)
         })
         .collect();
-    let local_modules_visible = OwnerPinSyntax::default().local_glob_namespace_is_closed(index);
+    let local_modules_visible = OwnerPinSyntax::default()
+        .with_complete_index(workspace_complete)
+        .local_glob_namespace_is_closed(index);
     let scan = |(path, facts, root): &(&PathBuf, FileFactsView<'_>, Option<PathBuf>)| {
         // The same rule as the decision: a crate-local site in another
         // recognized root does not reach this test.

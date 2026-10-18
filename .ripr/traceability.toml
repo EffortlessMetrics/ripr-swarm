@@ -12792,6 +12792,7 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::local_glob_assertion_identity_requires_complete_index_and_no_withheld_source",
   "crates/ripr/tests/local_module_glob_assertions.rs::resolved_local_module_glob_keeps_standard_assertion_identity",
   "crates/ripr/tests/local_module_glob_assertions.rs::custom_macro_and_opaque_module_exports_never_gain_assertion_identity",
   "crates/ripr/tests/local_module_glob_assertions.rs::local_module_glob_refuses_unproved_namespace_shapes",

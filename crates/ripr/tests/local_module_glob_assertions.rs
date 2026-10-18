@@ -115,7 +115,7 @@ fn local_module_glob_refuses_unproved_namespace_shapes() -> Result<(), Box<dyn s
         ),
         (
             "gated declaration",
-            "#[cfg(test)] mod proof;\npub(crate) use proof::*;\n",
+            "#[cfg(all())] mod proof;\npub(crate) use proof::*;\n",
             OWNER,
         ),
         (

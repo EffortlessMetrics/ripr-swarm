@@ -2306,6 +2306,7 @@ impl RustAdapter {
                 let related_test_candidate_index =
                     related_test_candidate_index.get_or_insert_with(|| {
                         classify::RelatedTestCandidateIndex::new(&index)
+                            .with_complete_macro_index(workspace_index_complete)
                             .with_analysis_root(&options.root)
                             .with_withheld_macro_bindings(std::mem::take(
                                 &mut withheld_macro_bindings,
@@ -2837,6 +2838,7 @@ impl RustAdapter {
                 let related_test_candidate_index =
                     related_test_candidate_index.get_or_insert_with(|| {
                         classify::RelatedTestCandidateIndex::new(&index)
+                            .with_complete_macro_index(true)
                             .with_analysis_root(&options.root)
                     });
                 let mut finding = classifier::classify_probe_with_candidate_index(

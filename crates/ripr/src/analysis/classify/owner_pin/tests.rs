@@ -5791,7 +5791,14 @@ fn a_refusal_site_lookup_matches_the_replaced_scan_for_every_name_and_root() {
         ] {
             assert_eq!(
                 syntax.workspace_macro_site(name, test_root, &index),
-                workspace_macro_binding_site(name, test_root, &index, roots, &resolved),
+                workspace_macro_binding_site(
+                    name,
+                    test_root,
+                    &index,
+                    roots,
+                    &resolved,
+                    syntax.index_complete
+                ),
                 "{name} at {test_root:?}"
             );
         }
@@ -10756,5 +10763,39 @@ fn a_macro_body_site_names_the_macro_and_its_reach() {
     assert_eq!(
         sites("macro_rules! g { () => { use crate::x::*; use $crate::y::*; use super::*; }; }\n"),
         Vec::new()
+    );
+}
+
+#[test]
+fn local_glob_assertion_identity_requires_complete_index_and_no_withheld_source() {
+    let root = "mod helpers;\nuse helpers::*;\n";
+    let child = "#[test]\nfn observed() { assert_eq!(600, 600); }\n";
+    let provenance = SourceRoleProvenance {
+        edges: vec![module_edge(LIB, HELPERS, "helpers", 1, false)],
+        ..SourceRoleProvenance::default()
+    };
+    let index = index_with_provenance(&[(LIB, root), (HELPERS, child)], &[(HELPERS, provenance)]);
+    assert_eq!(index.tests().len(), 1);
+    let test = index.tests().at(0);
+    assert_eq!(test.assertions.len(), 1);
+    let assertion = &test.assertions[0];
+    assert!(!OwnerPinSyntax::default().admits(test, assertion, &index));
+    assert!(
+        OwnerPinSyntax::default()
+            .with_complete_index(true)
+            .admits(test, assertion, &index)
+    );
+    let mut withheld = WithheldMacroBindings::default();
+    withheld.absorb(
+        Path::new("other/src/lib.rs"),
+        "fn hidden() {}",
+        &BTreeSet::new(),
+        &DropInManifests::default(),
+    );
+    assert!(
+        !OwnerPinSyntax::default()
+            .with_complete_index(true)
+            .with_withheld(withheld)
+            .admits(test, assertion, &index)
     );
 }

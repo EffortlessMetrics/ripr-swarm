@@ -219,6 +219,14 @@ impl RelatedTestCandidateIndex {
         &self.diff_touched
     }
 
+    /// The language adapter's exact input coverage, never inferred from
+    /// the subset of file facts that happened to be indexed.
+    pub(in crate::analysis) fn with_complete_macro_index(mut self, complete: bool) -> Self {
+        self.owner_pin_syntax =
+            std::mem::take(&mut self.owner_pin_syntax).with_complete_index(complete);
+        self
+    }
+
     /// Fold in the macro bindings of files a narrowed diff index withheld
     /// (#5320), so the owner-pin ambiguity unions match the full selection.
     pub(in crate::analysis) fn with_withheld_macro_bindings(

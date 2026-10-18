@@ -2451,7 +2451,8 @@ module declaration have no attributes. Grouped or nested import paths,
 absolute paths, nested scopes and gated declarations remain outside this slice.
 
 This removes only the foreign-glob wrapper; it does not prove an assertion
-macro standard by spelling. The immutable indexed namespace must be fully
+macro standard by spelling. The language adapter must explicitly bind complete index coverage; an
+indexed subset never proves it. The immutable indexed namespace must be fully
 source-visible, without withheld files, lexical fallback, non-UTF-8 sources,
 unresolved provenance or includes. The existing full module-tree scan and
 attribute source-preservation authority (with the existing plain test gate

@@ -32,7 +32,8 @@ pub fn classify_probe(
     workspace_complete: bool,
     dependency_edges: Option<&DependencyEdgeContext<'_>>,
 ) -> Finding {
-    let candidate_index = RelatedTestCandidateIndex::new(index);
+    let candidate_index =
+        RelatedTestCandidateIndex::new(index).with_complete_macro_index(workspace_complete);
     let transitive_reach = TransitiveReachIndex::new(index);
     classify_probe_with_candidate_index(
         probe,
