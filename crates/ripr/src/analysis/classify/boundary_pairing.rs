@@ -318,6 +318,9 @@ fn loan_pairs_boundary_call(
         // Every call fact on the line is the helper call: a call buried in a
         // macro (`assert!(passes(50) || true)`) or chained after it is
         // another source of the line's `==` fact.
+        if crate::analysis::extract::line_at_call_budget(test.calls.iter(), *line) {
+            return false;
+        }
         let mut on_line = test.calls.iter().filter(|call| call.line == *line);
         let Some(helper_call) = on_line.next() else {
             return false;
@@ -622,6 +625,7 @@ fn assertion_observes_boundary_owner_call(
     // `value.name(..)` call is never the owner's (#6713).
     lists.len() == 1
         && owner_call_sites(&assertion.text, owner).len() == 1
+        && !crate::analysis::extract::line_at_call_budget(test.calls.iter(), assertion.line)
         && line_owner_call_count(test, assertion.line, owner) <= 1
         && owner_call_arguments_admit_activation_fallback(probe, owner, &lists[0])
         && activation_marks_boundary_call(

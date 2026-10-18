@@ -7,9 +7,9 @@ use crate::analysis_outcome::{
 
 use super::model::{ChangedFile, ChangedLine};
 use super::path::{
-    is_dev_null_new_path_marker, is_new_path_marker, parse_git_old_path, parse_new_path_marker,
-    parse_old_path_for_confinement, parse_old_path_marker, parse_rename_from_path,
-    parse_rename_to_path,
+    MAX_DIFF_PATH_COMPONENTS, is_dev_null_new_path_marker, is_new_path_marker, parse_git_old_path,
+    parse_new_path_marker, parse_old_path_for_confinement, parse_old_path_marker,
+    parse_rename_from_path, parse_rename_to_path, path_marker_exceeds_depth_bound,
 };
 
 mod stream;
