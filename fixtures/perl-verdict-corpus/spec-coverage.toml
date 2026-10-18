@@ -465,4 +465,3 @@ reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
 id = "RIPR-SPEC-0279"
 scope = "out"
 reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
-

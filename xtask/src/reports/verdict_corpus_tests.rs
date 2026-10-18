@@ -2190,7 +2190,12 @@ fn declared_validation_keeps_every_ledger_but_perl_mandatory() -> Result<(), Str
     // there too.
     let perl = perl_corpus_dir();
     assert_eq!(corpus_coverage_mode(&perl), CorpusCoverage::Gated);
-    let corpus = validated_corpus_without_coverage(&perl)?;
+    let leaf = perl.file_name().ok_or("corpus dir has no name")?;
+    let copy = crate::tests::temp_dir("verdict-declared-perl-ledgerless").join(leaf);
+    crate::tests::copy_dir_recursive(&perl, &copy)?;
+    fs::remove_file(copy.join(coverage::LEDGER_FILE)).map_err(|err| err.to_string())?;
+    let (corpus, coverage) = validated_corpus_declared(&copy)?;
+    assert!(coverage.is_none());
     assert!(!corpus.cases.is_empty());
     Ok(())
 }
