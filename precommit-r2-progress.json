@@ -1,0 +1,29 @@
+{
+  "utc": "2026-10-18T07:46:07.767937+00:00",
+  "owned": {
+    "23847": {
+      "ppid": 23846,
+      "state": "S",
+      "pgid": 23846,
+      "cmd": "python /workspace/scratch/8265-reconstruction/run.py precommit-r2 cargo xtask precommit "
+    },
+    "23851": {
+      "ppid": 23847,
+      "state": "S",
+      "pgid": 23851,
+      "cmd": "/workspace/ripr-swarm/target/debug/xtask precommit "
+    },
+    "24457": {
+      "ppid": 23851,
+      "state": "S",
+      "pgid": 24457,
+      "cmd": "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo test -p xtask --bin xtask implementation_slices_validate_and_coexist --no-run "
+    },
+    "24466": {
+      "ppid": 24457,
+      "state": "S",
+      "pgid": 24457,
+      "cmd": "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/rustc --crate-name xtask --edition=2024 xtask/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=line-tables-only --deny=clippy::unwrap_used --deny=clippy::unwrap_in_result --deny=clippy::unu"
+    }
+  }
+}

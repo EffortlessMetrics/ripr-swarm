@@ -1,0 +1,29 @@
+{
+  "worktree": {
+    "path": "/workspace/macro-site-parity",
+    "disposition": "retained for published Draft review/possible repairs"
+  },
+  "proof": {
+    "path": "/workspace/scratch/8265-reconstruction",
+    "disposition": "retained: baseline36113/final native binaries and distinct RED/GREEN archives with hashes; remote raw evidence is recoverable"
+  },
+  "shared_target": {
+    "path": "/workspace/ripr-swarm/target",
+    "disposition": "mutable inherited/shared build state retained; never deleted"
+  },
+  "main_dependency_baseline": {
+    "path": "/workspace/8265-dependency-baseline",
+    "head": "ddfa2a138ae816cdd46e639c532900d2abe60b27",
+    "disposition": "retained for independent reproduction of named-gate main/candidate classification"
+  },
+  "evidence_readback": {
+    "path": "/workspace/scratch/8265-reconstruction/remote-readback.git",
+    "disposition": "to be retained for complete remote evidence verification"
+  },
+  "storage": {
+    "free_bytes": 25978732544,
+    "reserve_bytes": 10737418240,
+    "peak_total_growth_budget_bytes": 8589934592,
+    "cleanup": "No source/evidence/shared target cleanup or task archival"
+  }
+}

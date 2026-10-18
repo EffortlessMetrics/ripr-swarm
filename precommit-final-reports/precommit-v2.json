@@ -1,0 +1,306 @@
+{
+  "schema_version": "0.2",
+  "composition": "local_precommit",
+  "status": "pass",
+  "failure_kind": null,
+  "repository_root": "$REPO",
+  "head_sha": "9fc6a47f29b5ad581a527244681d4c4bf0d4714b",
+  "merge_base_ref": "origin/main",
+  "merge_base_sha": "006eaf853fce5713a2e9044ba9c8d6a9a873f3d0",
+  "change_set": {
+    "changes": [
+      {
+        "kind": "added",
+        "path": "changelog.d/8265-macro-site-parity.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "crates/ripr/src/analysis/classify/owner_pin/tests/retention_parity.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/macro_site_scoped_rest_limit/SPEC.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/macro_site_scoped_rest_limit/diff.patch",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/macro_site_scoped_rest_limit/expected/CHANGELOG.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/macro_site_scoped_rest_limit/expected/check.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/macro_site_scoped_rest_limit/expected/human-full.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/macro_site_scoped_rest_limit/expected/human.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/macro_site_scoped_rest_limit/input/Cargo.toml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/macro_site_scoped_rest_limit/input/src/globs.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/macro_site_scoped_rest_limit/input/src/lib.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/macro_site_scoped_rest_limit/input/tests/buf_tests.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": ".ripr/traceability.toml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/classify/owner_pin.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/classify/owner_pin/tests.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/syntax/mod.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/syntax/owner_pin.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "fixtures/evidence-promotion-honesty-corpus/corpus.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      }
+    ],
+    "complete": true,
+    "limitations": []
+  },
+  "impact_plan": {
+    "impacted_packages": [
+      "ripr",
+      "xtask"
+    ],
+    "workspace_clippy": false,
+    "workspace_widening_reason": null,
+    "skipped_reason": null
+  },
+  "commands": [
+    {
+      "command": "cargo metadata --format-version 1 --no-deps --manifest-path $REPO/Cargo.toml",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": null
+    },
+    {
+      "command": "existing repository policy precommit",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": null
+    },
+    {
+      "command": "git diff --check 006eaf853fce5713a2e9044ba9c8d6a9a873f3d0...HEAD",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": {
+        "program": "git",
+        "argv": [
+          "-C",
+          "$REPO",
+          "diff",
+          "--check",
+          "006eaf853fce5713a2e9044ba9c8d6a9a873f3d0...HEAD"
+        ],
+        "outcome": "pass",
+        "status": "exit status: 0",
+        "exit_code": 0,
+        "elapsed_ms": 100,
+        "elapsed_scope": "runner_start_to_observed_exit_excluding_pipe_drain",
+        "cargo_progress": null
+      }
+    },
+    {
+      "command": "git diff --cached --check",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": {
+        "program": "git",
+        "argv": [
+          "-C",
+          "$REPO",
+          "diff",
+          "--cached",
+          "--check"
+        ],
+        "outcome": "pass",
+        "status": "exit status: 0",
+        "exit_code": 0,
+        "elapsed_ms": 100,
+        "elapsed_scope": "runner_start_to_observed_exit_excluding_pipe_drain",
+        "cargo_progress": null
+      }
+    },
+    {
+      "command": "git diff --check",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": {
+        "program": "git",
+        "argv": [
+          "-C",
+          "$REPO",
+          "diff",
+          "--check"
+        ],
+        "outcome": "pass",
+        "status": "exit status: 0",
+        "exit_code": 0,
+        "elapsed_ms": 100,
+        "elapsed_scope": "runner_start_to_observed_exit_excluding_pipe_drain",
+        "cargo_progress": null
+      }
+    },
+    {
+      "command": "cargo clippy --manifest-path $REPO/Cargo.toml -p ripr --all-targets -- -D warnings",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": {
+        "program": "cargo",
+        "argv": [
+          "clippy",
+          "--manifest-path",
+          "$REPO/Cargo.toml",
+          "-p",
+          "ripr",
+          "--all-targets",
+          "--",
+          "-D",
+          "warnings"
+        ],
+        "outcome": "pass",
+        "status": "exit status: 0",
+        "exit_code": 0,
+        "elapsed_ms": 132115,
+        "elapsed_scope": "runner_start_to_observed_exit_excluding_pipe_drain",
+        "cargo_progress": {
+          "compiling_lines": 1,
+          "checking_lines": null,
+          "fresh_lines": null
+        }
+      }
+    },
+    {
+      "command": "cargo clippy --manifest-path $REPO/Cargo.toml -p xtask --all-targets -- -D warnings",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": {
+        "program": "cargo",
+        "argv": [
+          "clippy",
+          "--manifest-path",
+          "$REPO/Cargo.toml",
+          "-p",
+          "xtask",
+          "--all-targets",
+          "--",
+          "-D",
+          "warnings"
+        ],
+        "outcome": "pass",
+        "status": "exit status: 0",
+        "exit_code": 0,
+        "elapsed_ms": 137278,
+        "elapsed_scope": "runner_start_to_observed_exit_excluding_pipe_drain",
+        "cargo_progress": {
+          "compiling_lines": 7,
+          "checking_lines": 22,
+          "fresh_lines": null
+        }
+      }
+    }
+  ],
+  "skipped": [],
+  "limitations": [],
+  "report_digest": "sha256:dc70d640fe103a9eb99da34430a516e9634335a802129e19aac9faef358ad111"
+}

@@ -3,14 +3,13 @@
   "tree": "78bb14ec667570f0877f7c369e98bf0be1967f96",
   "basis": "006eaf853fce5713a2e9044ba9c8d6a9a873f3d0",
   "reconstruction": true,
-  "stage": "completed GREEN, CLI/corpus, source/oracle review checkpoint; successor precommit active and final-head CLI capture pending",
   "old_candidate_lost": "fc18360e9a50eb94b194fa38ba2f89e34d19fa82",
-  "utc": "2026-10-18T07:46:54.409035+00:00",
+  "utc": "2026-10-18T07:55:19.169521+00:00",
   "native_binaries_and_archives": "locally retained, excluded from this packet; sources/raw receipts/inputs recoverable",
   "payloads": {
     "README.md": {
-      "bytes": 3600,
-      "sha256": "da491babede1412c8891b69dfcc4daf421a710ca8d1d23b179b372ce5e4ef331"
+      "bytes": 4301,
+      "sha256": "7653ac069ef2f41b4b8f9d711ce5639eb0427fb297bc3c8a74d051e688355288"
     },
     "add-fixture.py": {
       "bytes": 3208,
@@ -312,6 +311,10 @@
       "bytes": 9918,
       "sha256": "5ed58325f3a95b464bf3061ba4fcb9826ceacefdf2959a8cc9dd79367ca8be6f"
     },
+    "cli-comparison-final.json": {
+      "bytes": 4502,
+      "sha256": "85c5955baa4f7fcef0b3f8e847d46a0018567edad941c63be9cf72413f234c46"
+    },
     "cli-comparison.json": {
       "bytes": 4502,
       "sha256": "85c5955baa4f7fcef0b3f8e847d46a0018567edad941c63be9cf72413f234c46"
@@ -536,13 +539,81 @@
       "bytes": 619,
       "sha256": "44edb7bf80d1f5fc084c04dff943c771cbf9e005f6ad7f5f5e1061b708cd1435"
     },
+    "early-green-evidence-identity.json": {
+      "bytes": 305,
+      "sha256": "e6bb65baeab6b17ee08c37296553a227c038a2c68adb031a25b9f488cea389ba"
+    },
     "early-green-evidence.py": {
       "bytes": 2869,
       "sha256": "b808f4dd87c42632e9292233d0c1ab7c090601a1727b131b36f8f39368972c9f"
     },
+    "final-binary.json": {
+      "bytes": 1830,
+      "sha256": "1a54f67c3557bd3ee401ac119aed59b1614cd2259c89a745b4a06240d187897f"
+    },
+    "final-cli-build-env.json": {
+      "bytes": 776,
+      "sha256": "fed7a190f8e2cd26e3e75fa5a3f1eb386a3930188d1da26d8e9dc9492f13c3a0"
+    },
+    "final-cli-build.json": {
+      "bytes": 532,
+      "sha256": "f637ae502249107dabdafa6c461395e14c0e49047124e9d0284ae440e21ae667"
+    },
+    "final-cli-build.stderr": {
+      "bytes": 72,
+      "sha256": "fecede7c2157efe2f16c8c8b9dce94b0fb4dd384dca8207046c8bf7636eb0ffe"
+    },
+    "final-cli-build.stdout": {
+      "bytes": 201637,
+      "sha256": "e3a74098b69227287edfd928358b4b167777bceb0e5a9272423c0c0ede8f3634"
+    },
+    "final-controls/clean.json": {
+      "bytes": 14827,
+      "sha256": "1b8998dc0697add859ff1462cff395110495fb1ad542a8bfd4c4313c54ad59bd"
+    },
+    "final-controls/clean.stderr": {
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    "final-controls/receipts.json": {
+      "bytes": 6799,
+      "sha256": "546b22d49c7c4d9154bf2d09e0fc15324c92afd61f50531aefd563cc026fe7be"
+    },
+    "final-controls/same-path-rank.json": {
+      "bytes": 19541,
+      "sha256": "7887f9124b0f861a9d3af0e9d6c4db91b84d618998af2411bb049a08becb1cc1"
+    },
+    "final-controls/same-path-rank.stderr": {
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    "final-controls/scoped-public-only.json": {
+      "bytes": 15539,
+      "sha256": "84cf6aae5ac1f878805a34f33823e652f8592953297d53a938e23ff301d80eb2"
+    },
+    "final-controls/scoped-public-only.stderr": {
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    "final-controls/scoped-rest.json": {
+      "bytes": 19423,
+      "sha256": "95f0b14cc9dceccb6e858f7c2a423645a3436b6035160071ae8837c76c209f85"
+    },
+    "final-controls/scoped-rest.stderr": {
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
+    "final-controls/trusted-subset.json": {
+      "bytes": 19487,
+      "sha256": "eefe6ec412cfcd2c3ee85c3bdc15783e7923f810b9e994eddad139f3719cede1"
+    },
+    "final-controls/trusted-subset.stderr": {
+      "bytes": 138,
+      "sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"
+    },
     "final-evidence.py": {
-      "bytes": 2673,
-      "sha256": "8c3da54dc3c52429c694e90e891bff0b2055b34e3474344d128e6c50bde22461"
+      "bytes": 2686,
+      "sha256": "5997bd514007fb9eab09addd688143e1a9cd54c963126927f99a5032ac38704e"
     },
     "final-selector-independent.json": {
       "bytes": 1410,
@@ -652,6 +723,10 @@
       "bytes": 15819,
       "sha256": "9cd55f770b041e35ef5bccff5190d2220d3c4c6773782d235e4e96a79dd9b5c3"
     },
+    "integration-subject.json": {
+      "bytes": 1333,
+      "sha256": "338ce0f1f805d0ed45a513c3cafa841c6c64242e98e49bb7f3861d1679744f34"
+    },
     "later-main-delta.json": {
       "bytes": 504,
       "sha256": "fa8cc6458dc3c9c7ad62b181dedde6bc5fd3a568bf8af2c4760dc30d76c38475"
@@ -676,6 +751,50 @@
       "bytes": 776,
       "sha256": "fed7a190f8e2cd26e3e75fa5a3f1eb386a3930188d1da26d8e9dc9492f13c3a0"
     },
+    "precommit-final-reports/changelog-fragments.md": {
+      "bytes": 597,
+      "sha256": "450a380a902b3cc12195570b891f9ef370d92282040247a9801e1d67de4ece6d"
+    },
+    "precommit-final-reports/corpus-summary.json": {
+      "bytes": 109381,
+      "sha256": "122f3f948c743f341ce45a7116c96cc95a44d1d6d2d612a2971f4fd741b2edd0"
+    },
+    "precommit-final-reports/dependencies.md": {
+      "bytes": 253,
+      "sha256": "c0c9aa86483a9b10b3a20ee450c5557c68cf38ab21c06d9e111044cd2dc15e0f"
+    },
+    "precommit-final-reports/evidence-promotion-honesty.md": {
+      "bytes": 758,
+      "sha256": "4d371079e78da3af1d23db65b0d000be01226c38c591689607258d0d42ffddb6"
+    },
+    "precommit-final-reports/fixture-contracts.md": {
+      "bytes": 2563,
+      "sha256": "87293587e6bfeafc532eeeaa11bce080e203308f06764937f3374826e8472b76"
+    },
+    "precommit-final-reports/golden-drift.md": {
+      "bytes": 413,
+      "sha256": "17f5b11838d42b7fe04994cd9f999af7bea6e7ede7a832e4ddf79371aaa0d28d"
+    },
+    "precommit-final-reports/goldens.md": {
+      "bytes": 411727,
+      "sha256": "80a52b6fef28068f7ce1bf34e9b1f8a02638d328181a173fee7adfb7f0cb0cbb"
+    },
+    "precommit-final-reports/precommit-v2.json": {
+      "bytes": 7640,
+      "sha256": "ce2d2a036aa248e936f9f7237219ef3d00eece47f01066036353536d5be779b7"
+    },
+    "precommit-final-reports/precommit-v2.md": {
+      "bytes": 4727,
+      "sha256": "89d3554db368ad37950f5d6663e2debb3bc85a022acd95b4add781f2d6e3ef2c"
+    },
+    "precommit-final-reports/precommit.md": {
+      "bytes": 1653,
+      "sha256": "2f2fc891c631a7f8aa4aea53bfb34388e90c19e027108fe9290fa7a35c8b5643"
+    },
+    "precommit-final-reports/traceability.md": {
+      "bytes": 1991348,
+      "sha256": "91171f4eb403a828a2e532ff817719eebd60cfe3783f7fae27b6f723d9715604"
+    },
     "precommit-first-reports/dependencies.md": {
       "bytes": 798,
       "sha256": "442313ef88db546bc17ecd7dbe14b98e4f7baacac64902a198b17edcc52af923"
@@ -687,6 +806,26 @@
     "precommit-first-reports/goldens.md": {
       "bytes": 411725,
       "sha256": "93d5e679795a398caa5af320c12cc264710b092a7a6d9ad2a7fcb382ce130348"
+    },
+    "precommit-r2-env.json": {
+      "bytes": 776,
+      "sha256": "fed7a190f8e2cd26e3e75fa5a3f1eb386a3930188d1da26d8e9dc9492f13c3a0"
+    },
+    "precommit-r2-progress.json": {
+      "bytes": 1104,
+      "sha256": "5336884d0a52efa80326768cdb6f61ba68532aee22985606b3d9e6b3c8cf9e6f"
+    },
+    "precommit-r2.json": {
+      "bytes": 456,
+      "sha256": "cb2c0f180d85f453e18ecae69a3f0dce9413e79aa0477fd10da6a754c099efd1"
+    },
+    "precommit-r2.stderr": {
+      "bytes": 538,
+      "sha256": "04246673f4e39736f1f85632b7161d49e6af8cb7096ca9d08dc77776936eabbe"
+    },
+    "precommit-r2.stdout": {
+      "bytes": 42180,
+      "sha256": "f0c756b2c2024584ee64dc057141e728075fb5910cc10195a9e87a2f417cc310"
     },
     "precommit.json": {
       "bytes": 455,
@@ -767,6 +906,10 @@
     "red.stdout": {
       "bytes": 183073,
       "sha256": "f99224cec505266d02e132f7b9218d57e621dcf58b4925205beb8a0b998629ff"
+    },
+    "retention-handoff.json": {
+      "bytes": 1152,
+      "sha256": "a959dd7a570eed499bb41ea0e8061723f977c2d0777987ce1edcd86769b9fbc6"
     },
     "run.py": {
       "bytes": 3960,

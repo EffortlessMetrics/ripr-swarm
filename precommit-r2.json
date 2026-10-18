@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "cargo",
+    "xtask",
+    "precommit"
+  ],
+  "head": "9fc6a47f29b5ad581a527244681d4c4bf0d4714b",
+  "tree": "78bb14ec667570f0877f7c369e98bf0be1967f96",
+  "started_utc": "2026-10-18T07:40:08.480800+00:00",
+  "finished_utc": "2026-10-18T07:52:26.619962+00:00",
+  "elapsed_s": 738.1391658830003,
+  "exit": 0,
+  "abort": null,
+  "process_group": 23851,
+  "owned_cleanup": {
+    "before": {},
+    "after": {}
+  },
+  "free_after": 26209673216
+}

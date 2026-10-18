@@ -1,0 +1,25 @@
+{
+  "argv": [
+    "cargo",
+    "build",
+    "--locked",
+    "-p",
+    "ripr",
+    "--bin",
+    "ripr",
+    "--message-format=json"
+  ],
+  "head": "9fc6a47f29b5ad581a527244681d4c4bf0d4714b",
+  "tree": "78bb14ec667570f0877f7c369e98bf0be1967f96",
+  "started_utc": "2026-10-18T07:52:47.338190+00:00",
+  "finished_utc": "2026-10-18T07:52:49.344595+00:00",
+  "elapsed_s": 2.0064102400001502,
+  "exit": 0,
+  "abort": null,
+  "process_group": 39818,
+  "owned_cleanup": {
+    "before": {},
+    "after": {}
+  },
+  "free_after": 26206892032
+}

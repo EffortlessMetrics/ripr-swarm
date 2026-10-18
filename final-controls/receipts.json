@@ -1,0 +1,151 @@
+[
+  {
+    "case": "clean",
+    "argv": [
+      "/workspace/scratch/8265-reconstruction/final-ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/8265-reconstruction/controls/clean",
+      "--diff",
+      "/workspace/scratch/8265-reconstruction/controls/clean/change.diff",
+      "--format",
+      "json",
+      "--mode",
+      "ready"
+    ],
+    "exit": 0,
+    "elapsed_s": 0.032842431999597466,
+    "censored": false,
+    "binary_sha256": "ce52bc536ab50d9bd52b8215dac4291ec7f803315eed3655458321fb589b1aaf",
+    "stdout_sha256": "1b8998dc0697add859ff1462cff395110495fb1ad542a8bfd4c4313c54ad59bd",
+    "stdout_bytes": 14827,
+    "remaining_owned": [],
+    "inputs": {
+      "controls/clean/change.diff": "d4d94b4407af47c4faa3981551c2bd144beea83a4303246e37369bdf59a063c5",
+      "controls/clean/Cargo.lock": "b6571892f4fff50e388fe0b97de5fc87609c679f50afbdbab1e4d0c0d071cbc0",
+      "controls/clean/Cargo.toml": "5199022a4d609b34ab891450ef9612231999b0c9c801e0fdfa9901afd1000df3",
+      "controls/clean/tests/buf_tests.rs": "3f35cfc950faa8fcf7b13564ab410c47e11d8f73607dc99cf139b31933691747",
+      "controls/clean/src/lib.rs": "7688946e70d62df28e72f3a128e334ff22d61d315abc1b006177fad39a6a2c18"
+    }
+  },
+  {
+    "case": "same-path-rank",
+    "argv": [
+      "/workspace/scratch/8265-reconstruction/final-ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/8265-reconstruction/controls/same-path-rank",
+      "--diff",
+      "/workspace/scratch/8265-reconstruction/controls/same-path-rank/change.diff",
+      "--format",
+      "json",
+      "--mode",
+      "ready"
+    ],
+    "exit": 0,
+    "elapsed_s": 0.0329284950003057,
+    "censored": false,
+    "binary_sha256": "ce52bc536ab50d9bd52b8215dac4291ec7f803315eed3655458321fb589b1aaf",
+    "stdout_sha256": "7887f9124b0f861a9d3af0e9d6c4db91b84d618998af2411bb049a08becb1cc1",
+    "stdout_bytes": 19541,
+    "remaining_owned": [],
+    "inputs": {
+      "controls/same-path-rank/change.diff": "0e4ed0d9a0f7824867bbfcf5861bd8b87157b15ef8bcdf8b4a51b543119b5c45",
+      "controls/same-path-rank/Cargo.lock": "b6571892f4fff50e388fe0b97de5fc87609c679f50afbdbab1e4d0c0d071cbc0",
+      "controls/same-path-rank/Cargo.toml": "5199022a4d609b34ab891450ef9612231999b0c9c801e0fdfa9901afd1000df3",
+      "controls/same-path-rank/tests/buf_tests.rs": "3f35cfc950faa8fcf7b13564ab410c47e11d8f73607dc99cf139b31933691747",
+      "controls/same-path-rank/src/lib.rs": "1ae771691b6c2c85d671300048cd7dd8fc98dc24bfec37f4b42ce96cde5412a0"
+    }
+  },
+  {
+    "case": "scoped-public-only",
+    "argv": [
+      "/workspace/scratch/8265-reconstruction/final-ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/8265-reconstruction/controls/scoped-public-only",
+      "--diff",
+      "/workspace/scratch/8265-reconstruction/controls/scoped-public-only/change.diff",
+      "--format",
+      "json",
+      "--mode",
+      "ready"
+    ],
+    "exit": 0,
+    "elapsed_s": 0.03309845100011444,
+    "censored": false,
+    "binary_sha256": "ce52bc536ab50d9bd52b8215dac4291ec7f803315eed3655458321fb589b1aaf",
+    "stdout_sha256": "84cf6aae5ac1f878805a34f33823e652f8592953297d53a938e23ff301d80eb2",
+    "stdout_bytes": 15539,
+    "remaining_owned": [],
+    "inputs": {
+      "controls/scoped-public-only/change.diff": "f7451522dad108db66b9eaa7df604673a26cdeb08c46fb94dd493014496ebd4a",
+      "controls/scoped-public-only/Cargo.lock": "b6571892f4fff50e388fe0b97de5fc87609c679f50afbdbab1e4d0c0d071cbc0",
+      "controls/scoped-public-only/Cargo.toml": "5199022a4d609b34ab891450ef9612231999b0c9c801e0fdfa9901afd1000df3",
+      "controls/scoped-public-only/tests/buf_tests.rs": "93fdb11f88c9c81d9263cb41e7d7b8063d3bb3c0d5ddcdb95cd1149441abb244",
+      "controls/scoped-public-only/src/globs.rs": "2ae43589c43bc1f8cfdad5c01b90af94f4cdc474deb4618d35cfe3fd3c242fc2",
+      "controls/scoped-public-only/src/lib.rs": "2266a035b2a871048f37b904c53705881474a503f430526060455d54bd101eaf"
+    }
+  },
+  {
+    "case": "scoped-rest",
+    "argv": [
+      "/workspace/scratch/8265-reconstruction/final-ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/8265-reconstruction/controls/scoped-rest",
+      "--diff",
+      "/workspace/scratch/8265-reconstruction/controls/scoped-rest/change.diff",
+      "--format",
+      "json",
+      "--mode",
+      "ready"
+    ],
+    "exit": 0,
+    "elapsed_s": 0.032887237000068126,
+    "censored": false,
+    "binary_sha256": "ce52bc536ab50d9bd52b8215dac4291ec7f803315eed3655458321fb589b1aaf",
+    "stdout_sha256": "95f0b14cc9dceccb6e858f7c2a423645a3436b6035160071ae8837c76c209f85",
+    "stdout_bytes": 19423,
+    "remaining_owned": [],
+    "inputs": {
+      "controls/scoped-rest/change.diff": "f7451522dad108db66b9eaa7df604673a26cdeb08c46fb94dd493014496ebd4a",
+      "controls/scoped-rest/Cargo.lock": "b6571892f4fff50e388fe0b97de5fc87609c679f50afbdbab1e4d0c0d071cbc0",
+      "controls/scoped-rest/Cargo.toml": "5199022a4d609b34ab891450ef9612231999b0c9c801e0fdfa9901afd1000df3",
+      "controls/scoped-rest/tests/buf_tests.rs": "93fdb11f88c9c81d9263cb41e7d7b8063d3bb3c0d5ddcdb95cd1149441abb244",
+      "controls/scoped-rest/src/globs.rs": "c015e613fa5b6045f77d1c26caf24ea7fb24350e56568adaea83b9ec0454d2c4",
+      "controls/scoped-rest/src/lib.rs": "127b557ebbc7aedfe7e9422941c90a7f5a17529b78fae95a61e3a9037ad98aab"
+    }
+  },
+  {
+    "case": "trusted-subset",
+    "argv": [
+      "/workspace/scratch/8265-reconstruction/final-ripr",
+      "check",
+      "--root",
+      "/workspace/scratch/8265-reconstruction/controls/trusted-subset",
+      "--diff",
+      "/workspace/scratch/8265-reconstruction/controls/trusted-subset/change.diff",
+      "--format",
+      "json",
+      "--mode",
+      "ready"
+    ],
+    "exit": 0,
+    "elapsed_s": 0.03277888799948414,
+    "censored": false,
+    "binary_sha256": "ce52bc536ab50d9bd52b8215dac4291ec7f803315eed3655458321fb589b1aaf",
+    "stdout_sha256": "eefe6ec412cfcd2c3ee85c3bdc15783e7923f810b9e994eddad139f3719cede1",
+    "stdout_bytes": 19487,
+    "remaining_owned": [],
+    "inputs": {
+      "controls/trusted-subset/change.diff": "0e4ed0d9a0f7824867bbfcf5861bd8b87157b15ef8bcdf8b4a51b543119b5c45",
+      "controls/trusted-subset/Cargo.lock": "b6571892f4fff50e388fe0b97de5fc87609c679f50afbdbab1e4d0c0d071cbc0",
+      "controls/trusted-subset/Cargo.toml": "5199022a4d609b34ab891450ef9612231999b0c9c801e0fdfa9901afd1000df3",
+      "controls/trusted-subset/tests/buf_tests.rs": "3f35cfc950faa8fcf7b13564ab410c47e11d8f73607dc99cf139b31933691747",
+      "controls/trusted-subset/src/z.rs": "5ef44c524e3672dca4bfe66a46ae793c46d26fbcc07fb86ea5d67edc37d19cfd",
+      "controls/trusted-subset/src/lib.rs": "fadb208342111f4988f0a9f11b2e63a03a56714ae2dd70086e97e5b4acdf269f",
+      "controls/trusted-subset/src/a.rs": "096945b778e7e5561e6628a6f0715f1e5661e9d4f34e390994dcfa20c6167b7b"
+    }
+  }
+]

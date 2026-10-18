@@ -1,7 +1,7 @@
 from pathlib import Path
 import subprocess,os,json,hashlib,datetime
 P=Path('/workspace/scratch/8265-reconstruction');R=Path('/workspace/macro-site-parity')
-parent='5e94663edd90e21d91e7365597a38028a9605148';head='9fc6a47f29b5ad581a527244681d4c4bf0d4714b';branch='refs/heads/codex/8265-macro-site-parity-evidence'
+parent='010c20d92ec9972ca95b3c1dfffada32fd78e112';head='9fc6a47f29b5ad581a527244681d4c4bf0d4714b';branch='refs/heads/codex/8265-macro-site-parity-evidence'
 def git(*args,input=None,env=None,cwd=R):
     return subprocess.check_output(['git',*args],cwd=cwd,input=input,env=env).strip()
 assert git('rev-parse','HEAD').decode()==head
@@ -14,7 +14,7 @@ for f in P.rglob('*'):
     if not f.is_file():continue
     rel=f.relative_to(P)
     if any(x.startswith('cache-') or x in ['__pycache__','remote-readback.git'] for x in rel.parts):continue
-    if f.name in ['baseline-ripr','candidate-ripr','manifest.json','pr-body-draft.md','pr-body.md'] or f.suffix in ['.gz','.index','.pyc']:continue
+    if f.name in ['baseline-ripr','candidate-ripr','final-ripr','manifest.json','pr-body-draft.md','pr-body.md'] or f.suffix in ['.gz','.index','.pyc']:continue
     if f.name.startswith('final-evidence-') or f.name.startswith('remote-readback'):continue
     files.append(str(rel))
 sha=lambda b:hashlib.sha256(b).hexdigest()

@@ -1,0 +1,24 @@
+{
+  "pr": 8772,
+  "head": "9fc6a47f29b5ad581a527244681d4c4bf0d4714b",
+  "basis": "006eaf853fce5713a2e9044ba9c8d6a9a873f3d0",
+  "advertised_merge": "4c4bba7406236cc47eec1c64d19560c6149080e6",
+  "parents": [
+    "4f481952e1143415d0c8997ad14954a518ee9d49",
+    "9fc6a47f29b5ad581a527244681d4c4bf0d4714b"
+  ],
+  "tree": "6675f441ac26ded8c6765357707d27cd0110215b",
+  "independent_local_merge_tree": "6675f441ac26ded8c6765357707d27cd0110215b",
+  "all_candidate_path_blobs_match": true,
+  "later_main_changed_candidate_paths": [],
+  "later_main_commits": [
+    "4f481952e Python corpus: cases for the guard-arm and self-reach spec examples (#8758)",
+    "cacacac10 fix(probes): skip behavior-neutral lifetime and int-constant respellings (#8748)",
+    "0818e1257 docs(roles): add the eight required headings to five planning docs (#8591)",
+    "c8526cf22 fix(rust): read boundary parameters from the whole signature (#7840) (#8596)",
+    "ddfa2a138 perf(diff): map added-run starts once per file (#7524)",
+    "ab64ae7a6 fix(python): sole-argument materializers are transparent to owner sink alignment (#8562) (#8605)"
+  ],
+  "execution": "NOT_EXECUTED: source/oracle and local CLI proof is candidate-head dimension; advertised combined subject and hosted checkout await parent qualification",
+  "utc": "2026-10-18T07:49:45.311217+00:00"
+}
