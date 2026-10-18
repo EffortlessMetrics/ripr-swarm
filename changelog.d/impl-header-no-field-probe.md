@@ -1,6 +1,7 @@
 <!-- section: Fixed -->
-- A changed `impl` header line (`impl Tr for K where Self: Sized {`) no longer
-  seeds a probe. Its `Self: Sized` text was read as a constructed field and
-  reported as a `no_static_path` gap that does not exist. A one-line `impl`
-  holding a `fn`, the `fn` bodies inside an `impl`, and function `where` bound
-  lines (still reported as `static_unknown`) keep their probes (#8389).
+- A changed `impl` header line (`impl Tr for K where Self: Sized {`) is no longer
+  read as a constructed field. `Self: Sized` looked like a field `name: Type`,
+  so the header was reported as a `field_construction` probe with a
+  `no_static_path` gap that does not exist. The header is now one
+  `static_unknown` probe, so a changed bound is still disclosed, and the `fn`
+  bodies inside the `impl` keep their own probes (#8389).

@@ -511,21 +511,21 @@ pub fn should_ignore_changed_line(text: &str) -> bool {
         || text.starts_with("pub use ")
         || text.starts_with("mod ")
         || text.starts_with("#")
-        || is_item_header(text)
 }
 
-/// An `impl` header (`impl Tr for K where Self: Sized {`) opens an item and
-/// holds no expression: its `Self: Sized` text only looks like a field
-/// `name: Type`, so probing it reports a constructed-field gap that does not
-/// exist (#8389). A one-line `impl` whose body holds a `fn` keeps its probes.
-/// Function `where` bound lines stay probed as `static_unknown` on purpose, so
-/// a changed bound is never silently dropped.
-fn is_item_header(text: &str) -> bool {
+/// An `impl` header (`impl Tr for K where Self: Sized {`) holds no expression:
+/// its `Self: Sized` text only looks like a field `name: Type`, so a
+/// constructed-field probe on it reports a gap that does not exist (#8389).
+/// The header itself stays probed as `static_unknown`, so a changed bound is
+/// never silently dropped. A one-line `impl` whose body holds a `fn` is not a
+/// header.
+pub(crate) fn is_item_header(text: &str) -> bool {
+    let text = text.strip_prefix("unsafe ").unwrap_or(text);
     let word_after = |word: &str| {
         text.strip_prefix(word)
             .is_some_and(|rest| rest.starts_with([' ', '<']) || rest.is_empty())
     };
-    if text.contains("fn ") || text.contains(';') || text.contains('=') {
+    if text.contains("fn ") || text.contains(';') {
         return false;
     }
     word_after("impl") && (text.ends_with('{') || text.contains(" where"))
@@ -563,8 +563,10 @@ mod tests {
             "impl Tr for K {",
             "impl<T: Debug> Tr for K<T> where Self: Sized {",
             "impl Tr for K where Self: Sized",
+            "unsafe impl Send for K {",
+            "impl<T: Iterator<Item = u32>> Tr for K<T> {",
         ] {
-            assert!(should_ignore_changed_line(header), "`{header}`");
+            assert!(is_item_header(header), "`{header}`");
         }
         for behavior in [
             "impl K { fn go(&self) -> u32 { 1 } }",
@@ -573,9 +575,15 @@ mod tests {
             "let impl_len = 3;",
             "where T: Debug,",
             "impl Tr for K where Self: Sized;",
+            "impl_len += 1",
+            // A multi-line header's generic bound stays probed as
+            // `static_unknown` (`inline_impl_bound_added_stays_unknown`).
+            "impl<T: Debug> Tr for K<T>",
+            "impl K { const A: u32 = 1; }",
+            "impl K where Self: Sized { const A: u32 = 1; }",
             "T: Debug + Clone,",
         ] {
-            assert!(!should_ignore_changed_line(behavior), "`{behavior}`");
+            assert!(!is_item_header(behavior), "`{behavior}`");
         }
     }
 
