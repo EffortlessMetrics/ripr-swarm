@@ -6973,9 +6973,39 @@ fn opaque_wrapper_around_owner_call_stays_unaligned() -> Result<(), String> {
         "import src.gen as mi\n\n\ndef test_empty():\n    assert list(always_true(mi.interleave_evenly([]))) == []\n",
         "from src.gen import interleave_evenly\n\n\ndef test_empty():\n    actual = always_true(interleave_evenly([]))\n    assert actual == True\n",
         "from src.gen import interleave_evenly\n\n\ndef test_empty():\n    actual = list(interleave_evenly([]), 1)\n    assert actual == []\n",
+        "import src.gen as mi\n\n\ndef test_empty():\n    assert list(mi.interleave_evenly([]), 1) == []\n",
+        "import src.gen as mi\n\n\ndef test_empty():\n    assert sorted(mi.interleave_evenly([]), key=str) == []\n",
     ] {
         let finding = classify_generator_guard(test_src)?;
         assert_ne!(finding.class, ExposureClass::Exposed, "{test_src}");
+        assert_eq!(
+            finding.oracle_alignment.as_deref(),
+            Some("orthogonal"),
+            "{test_src}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn every_materializing_wrapper_is_transparent_to_sink_alignment() -> Result<(), String> {
+    for wrapper in ["list", "tuple", "set", "frozenset", "sorted"] {
+        for test_src in [
+            format!(
+                "import src.gen as mi\n\n\ndef test_empty():\n    assert {wrapper}(mi.interleave_evenly([])) == []\n"
+            ),
+            format!(
+                "from src.gen import interleave_evenly\n\n\ndef test_empty():\n    actual = {wrapper}(interleave_evenly([]))\n    assert actual == []\n"
+            ),
+        ] {
+            let finding = classify_generator_guard(&test_src)?;
+            assert_eq!(finding.class, ExposureClass::Exposed, "{test_src}");
+            assert_eq!(
+                finding.oracle_alignment.as_deref(),
+                Some("direct"),
+                "{test_src}"
+            );
+        }
     }
     Ok(())
 }
