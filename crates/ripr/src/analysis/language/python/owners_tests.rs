@@ -550,6 +550,14 @@ pub(super) fn collect_tests_from_statements(
                                 .flatten()
                                 .cloned(),
                         );
+                        test.direct_parametrized.extend(
+                            local_classes
+                                .class_direct_parametrized
+                                .get(class_name)
+                                .into_iter()
+                                .flatten()
+                                .cloned(),
+                        );
                         test.decorators.extend(
                             local_classes
                                 .class_decorators
@@ -752,6 +760,8 @@ struct LocalTestClasses<'a> {
     last_definitions: BTreeSet<*const ast::StmtClassDef>,
     /// Marks on known local ancestors can control an overridden test too.
     class_decorators: BTreeMap<&'a str, Vec<String>>,
+    /// Argnames a class-level (or ancestor) pytest parametrize supplies.
+    class_direct_parametrized: BTreeMap<&'a str, Vec<String>>,
     class_activation_controls:
         BTreeMap<&'a str, Vec<super::test_activation::PythonActivationControl>>,
     definition_imports: BTreeMap<&'a str, Vec<PythonImport>>,
@@ -818,6 +828,15 @@ impl<'a> LocalTestClasses<'a> {
                 .flat_map(|(_, class)| decorator_names(&class.decorator_list))
                 .collect();
             found.class_decorators.insert(name, decorators);
+            let direct_parametrized = scope
+                .ancestors_or_self(name)
+                .iter()
+                .filter_map(|ancestor| scope.defs.get(ancestor))
+                .flat_map(|(_, class)| super::parametrize::direct_argnames(&class.decorator_list))
+                .collect();
+            found
+                .class_direct_parametrized
+                .insert(name, direct_parametrized);
             let controls = scope
                 .ancestors_or_self(name)
                 .iter()

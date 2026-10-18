@@ -329,3 +329,27 @@ fn given_a_parametrize_naming_a_different_argname_then_the_fixture_is_still_reso
     );
     Ok(())
 }
+
+#[test]
+fn given_a_class_level_parametrize_naming_a_fixture_then_the_method_stays_unrelated()
+-> Result<(), String> {
+    let test = SAME_MODULE.replace(
+        "def test_short(out):\n    assert out == 'abc'\n",
+        "@pytest.mark.parametrize('out', VALUES)\nclass TestShort:\n    def test_short(self, out):\n        assert out == 'abc'\n",
+    );
+    assert!(relations(&[("src/utils.py", UTILS_PY), ("tests/test_utils.py", &test)])?.is_empty());
+    let routed = test.replace("VALUES)", "VALUES, indirect=True)");
+    assert_eq!(
+        relations(&[("src/utils.py", UTILS_PY), ("tests/test_utils.py", &routed)])?,
+        vec![("test_short".to_string(), "fixture_owner_call")]
+    );
+    let plain = SAME_MODULE.replace(
+        "def test_short(out):\n    assert out == 'abc'\n",
+        "class TestShort:\n    def test_short(self, out):\n        assert out == 'abc'\n",
+    );
+    assert_eq!(
+        relations(&[("src/utils.py", UTILS_PY), ("tests/test_utils.py", &plain)])?,
+        vec![("test_short".to_string(), "fixture_owner_call")]
+    );
+    Ok(())
+}
