@@ -44,6 +44,15 @@ pub(super) fn collect_fixture_defs(
             _ => continue,
         };
         if !is_plain_fixture(source, decorators) {
+            // A later ordinary `def` of the same name replaces the fixture
+            // as the module attribute pytest collects.
+            if !decorators.iter().any(|decorator| {
+                decorator_names(std::slice::from_ref(decorator))
+                    .iter()
+                    .any(|name| name == "fixture" || name.ends_with(".fixture"))
+            }) {
+                defs.retain(|def: &PythonFixtureDef| def.name != name);
+            }
             continue;
         }
         defs.push(PythonFixtureDef {

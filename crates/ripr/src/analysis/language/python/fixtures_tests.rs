@@ -353,3 +353,43 @@ fn given_a_class_level_parametrize_naming_a_fixture_then_the_method_stays_unrela
     );
     Ok(())
 }
+
+#[test]
+fn given_an_ancestor_or_mixin_class_parametrize_naming_a_fixture_then_the_method_stays_unrelated()
+-> Result<(), String> {
+    let inherited = SAME_MODULE.replace(
+        "def test_short(out):\n    assert out == 'abc'\n",
+        "@pytest.mark.parametrize('out', VALUES)\nclass Base:\n    pass\n\n\nclass TestShort(Base):\n    def test_short(self, out):\n        assert out == 'abc'\n",
+    );
+    let mixin = SAME_MODULE.replace(
+        "def test_short(out):\n    assert out == 'abc'\n",
+        "@pytest.mark.parametrize('out', VALUES)\nclass Base:\n    def test_short(self, out):\n        assert out == 'abc'\n\n\nclass TestShort(Base):\n    pass\n",
+    );
+    for test in [&inherited, &mixin] {
+        assert!(
+            relations(&[
+                ("src/utils.py", UTILS_PY),
+                ("tests/test_utils.py", test.as_str())
+            ])?
+            .is_empty(),
+            "{test}"
+        );
+        let routed = test.replace("VALUES)", "VALUES, indirect=True)");
+        assert_eq!(
+            relations(&[("src/utils.py", UTILS_PY), ("tests/test_utils.py", &routed)])?,
+            vec![("test_short".to_string(), "fixture_owner_call")],
+            "{routed}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn given_a_later_plain_def_replacing_the_fixture_then_it_is_not_attached() -> Result<(), String> {
+    let test = SAME_MODULE.replace(
+        "\n\ndef test_short(out):",
+        "\n\ndef out():\n    return 'abc'\n\n\ndef test_short(out):",
+    );
+    assert!(relations(&[("src/utils.py", UTILS_PY), ("tests/test_utils.py", &test)])?.is_empty());
+    Ok(())
+}

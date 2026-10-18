@@ -301,8 +301,9 @@ unreadable `indirect` values still count) unless `indirect=` is the literal
 class or a local ancestor) counts the same way. When a file defines the same
 fixture name twice the last definition wins, and the analyzer attaches at most
 eight fixture definitions to one test (an implementation limit, not a pytest
-rule). Not covered: module-level `pytestmark = pytest.mark.parametrize(...)`,
-aliased or bare parametrize forms (`import pytest as pt`, `from pytest.mark
+rule). A later ordinary `def` of the same name replaces the fixture and
+is not attached. Not covered: module-level or class-body
+`pytestmark = pytest.mark.parametrize(...)`, aliased or bare parametrize forms (`import pytest as pt`, `from pytest.mark
 import parametrize`), fixtures defined inside a class, `mock` or rebinding
 inside the fixture body, parameters with defaults or supplied by `@patch`,
 `autouse` fixtures and fixtures of fixtures. The relation is uncertain,
