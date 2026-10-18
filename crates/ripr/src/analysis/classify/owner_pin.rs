@@ -83,7 +83,7 @@ use ra_ap_syntax::{
     ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasModuleItem, HasName},
 };
 use rayon::prelude::*;
-use std::cell::OnceCell;
+use std::cell::{Cell, OnceCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -2926,6 +2926,7 @@ impl OwnerReturnPin {
         index: &RustIndex,
         syntax: &OwnerPinSyntax,
         compared: &[String; 2],
+        skip: usize,
     ) -> Option<[String; 2]> {
         if !matches!(self.path, ReturnPathGate::Any)
             || (test.start_line..=test.end_line).contains(&assertion.line)
@@ -2945,6 +2946,7 @@ impl OwnerReturnPin {
             &self.name,
             index,
             |operands| self.substituted_pin(operands, index).is_some(),
+            skip,
         )
     }
 
@@ -2993,6 +2995,32 @@ impl OwnerReturnPin {
         index: &RustIndex,
         imports_foreign: ForeignImport<'_>,
         syntax: &OwnerPinSyntax,
+    ) -> bool {
+        // A selected check-helper argument pin that a later gate refuses
+        // (another owner of the same name, a scope or identity gate) leaves
+        // the helper's later eager calls to try: an unrelated earlier call
+        // must not hide the genuine pin.
+        let mut probe = HelperCallProbe::default();
+        loop {
+            if self.admits_candidate(test, assertion, index, imports_foreign, syntax, &probe) {
+                return true;
+            }
+            if !probe.selected.get() {
+                return false;
+            }
+            probe.skip += 1;
+            probe.selected.set(false);
+        }
+    }
+
+    fn admits_candidate(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        imports_foreign: ForeignImport<'_>,
+        syntax: &OwnerPinSyntax,
+        probe: &HelperCallProbe,
     ) -> bool {
         // A `#[should_panic]` test passes when the values differ.
         if test
@@ -3062,8 +3090,14 @@ impl OwnerReturnPin {
             equality.clone()
         };
         let substituted = compared.and_then(|compared| {
-            self.substituted_helper_operands(test, assertion, index, syntax, &compared)
+            self.substituted_helper_operands(test, assertion, index, syntax, &compared, probe.skip)
         });
+        if probe.skip > 0 && substituted.is_none() {
+            // Every eligible call was already tried; the plain readings
+            // below were not what the first attempt selected.
+            return false;
+        }
+        probe.selected.set(substituted.is_some());
         let substituted_expected;
         // RIPR-SPEC-0265: the text of the owner call, when one operand is it,
         // so an adaptor gate can read the argument the call passes.
@@ -12107,3 +12141,11 @@ const BY_VALUE_PRELUDE_METHODS: &[&str] = &[
 
 #[cfg(test)]
 mod tests;
+
+/// Which eligible eager call of a borrowed check helper one admission attempt
+/// reads, and whether the attempt selected one (RIPR-SPEC-0197).
+#[derive(Default)]
+struct HelperCallProbe {
+    skip: usize,
+    selected: Cell<bool>,
+}

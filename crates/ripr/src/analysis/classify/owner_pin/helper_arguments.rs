@@ -24,9 +24,9 @@ const BY_VALUE_TYPES: &[&str] = &[
 ];
 
 /// The test-scope texts the helper's `compared` parameters stand for at the
-/// first of the test's eager calls of it whose readable arguments `pins`
+/// `skip`th of the test's eager calls of it whose readable arguments `pins`
 /// accepts (an unrelated earlier call such as `check(0, 0)` does not hide a
-/// later one), or `None` when the helper does not compare two distinct
+/// later one, and the caller moves past a call a later gate refuses), or `None` when the helper does not compare two distinct
 /// plain parameters of one by-value type, or no call qualifies. An argument that is a plain identifier is
 /// read through its one `let` ([`bound_owner_initializer`]): bound once,
 /// immutable, in the test's own block, and used only by this call.
@@ -37,6 +37,7 @@ pub(super) fn substituted_operands(
     owner: &str,
     index: &RustIndex,
     pins: impl Fn(&[String; 2]) -> bool,
+    skip: usize,
 ) -> Option<[String; 2]> {
     let position = |name: &str| {
         loan.parameters
@@ -54,23 +55,27 @@ pub(super) fn substituted_operands(
     if !compares_by_value(left_type, right_type, index) {
         return None;
     }
-    loan.call_lines.iter().find_map(|line| {
-        let text = test.body.lines().nth(line.checked_sub(test.start_line)?)?;
-        let arguments = call_arguments(text, &loan.name)?;
-        if arguments.len() != loan.parameters.len() {
-            return None;
-        }
-        let read = |at: usize| -> Option<String> {
-            let argument = arguments.get(at)?.trim();
-            if is_plain_identifier(argument) {
-                bound_owner_initializer(test, argument, owner).map(|init| init.trim().to_string())
-            } else {
-                Some(argument.to_string())
+    loan.call_lines
+        .iter()
+        .filter_map(|line| {
+            let text = test.body.lines().nth(line.checked_sub(test.start_line)?)?;
+            let arguments = call_arguments(text, &loan.name)?;
+            if arguments.len() != loan.parameters.len() {
+                return None;
             }
-        };
-        let pair = [read(left)?, read(right)?];
-        pins(&pair).then_some(pair)
-    })
+            let read = |at: usize| -> Option<String> {
+                let argument = arguments.get(at)?.trim();
+                if is_plain_identifier(argument) {
+                    bound_owner_initializer(test, argument, owner)
+                        .map(|init| init.trim().to_string())
+                } else {
+                    Some(argument.to_string())
+                }
+            };
+            let pair = [read(left)?, read(right)?];
+            pins(&pair).then_some(pair)
+        })
+        .nth(skip)
 }
 
 /// Whether `==` between parameters of these declared types compares their

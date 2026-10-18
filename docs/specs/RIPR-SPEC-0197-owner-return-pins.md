@@ -1686,8 +1686,11 @@ arguments, in the test's own scope, when:
    call, and `==` then compares only that view.
 3. The test's call is an eager statement `helper(..);` with nothing else
    on its line and one argument per parameter. When the test calls the
-   helper more than once, the first call that satisfies rule 4 is the pin
-   (an unrelated earlier `check(0, 0);` does not hide a later one). Each
+   helper more than once, the first call that satisfies rule 4 and the
+   owner identity and scope gates is the pin (an unrelated earlier
+   `check(0, 0);`, or a call of a different function that shares the
+   owner's name, does not hide a later one; the identity gate itself is
+   not relaxed). Each
    argument is read as
    written, or, when it is a plain name, through its one `let` under
    RIPR-SPEC-0225 rule 1: bound once, never `mut`, in the test's own block,

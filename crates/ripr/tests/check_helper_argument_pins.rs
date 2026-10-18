@@ -178,6 +178,57 @@ fn a_direct_template_rendering_pins_a_scalar_owner() -> Result<(), String> {
 }
 
 #[test]
+fn a_later_genuine_pin_counts_after_a_wrong_owner_call() -> Result<(), String> {
+    let wrong_owner = "    mod other {
+        pub fn score(_: u32) -> u32 {
+            0
+        }
+    }
+";
+    let decoy_first = test_fn(
+        "        let decoy = other::score(2);
+        check(decoy, 0);
+        let actual = score(2);
+        check(actual, 4);
+",
+    );
+    let decoy_after = test_fn(
+        "        let actual = score(2);
+        check(actual, 4);
+        let decoy = other::score(2);
+        check(decoy, 0);
+",
+    );
+    let decoy_alone = test_fn(
+        "        let decoy = other::score(2);
+        check(decoy, 0);
+",
+    );
+    for (name, body, class) in [
+        (
+            "wrong-owner call first",
+            decoy_first,
+            ExposureClass::Exposed,
+        ),
+        (
+            "wrong-owner call after",
+            decoy_after,
+            ExposureClass::Exposed,
+        ),
+        (
+            "wrong-owner call alone",
+            decoy_alone,
+            ExposureClass::NoStaticPath,
+        ),
+    ] {
+        let tests = format!("{wrong_owner}{SCALAR_HELPER}{body}");
+        let finding = TempRepo::create(&source(&tests))?.changed()?;
+        assert_eq!(finding.class, class, "{name}: {finding:?}");
+    }
+    Ok(())
+}
+
+#[test]
 fn decoy_helper_arguments_lend_no_pin() -> Result<(), String> {
     let string_helper = "    fn check(actual: String, expected: String) {
         assert!(actual == expected, \"differs\");
