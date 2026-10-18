@@ -5739,6 +5739,17 @@ fn ts_unentered_guard(context: &TsPostLadderContext<'_>) -> Option<TsUnenteredGu
             context.workspace_root,
         );
         let callback = test_callback_block(&test.body_text).unwrap_or(&test.body_text);
+        // A file-local helper (`check = (c) => price(3, c)`) could enter the
+        // arm with an input the test text does not show: only the owner and
+        // the test framework's own calls are readable.
+        let allowed: Vec<&str> = names
+            .iter()
+            .copied()
+            .chain(["expect", "assert", "test", "it", "describe"])
+            .collect();
+        if !super::guard_entry_guard::calls_only_allowed(callback, &allowed) {
+            return None;
+        }
         let mut calls = 0usize;
         for name in names {
             if local_identifier_declared_in_test_body(&test.body_text, name)

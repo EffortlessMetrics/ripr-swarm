@@ -74,7 +74,9 @@ pub(crate) fn enclosing_conditions(
     line_text: &str,
 ) -> Option<Vec<GuardCondition>> {
     let wanted = line_text.trim();
-    if wanted.is_empty() {
+    // A line that opens with `}` closes a block the scan would count as
+    // still open, and CRLF text shifts the byte offsets the scan relies on.
+    if wanted.is_empty() || wanted.starts_with('}') || owner_source.contains('\r') {
         return None;
     }
     let lines: Vec<&str> = owner_source.lines().collect();
@@ -293,7 +295,8 @@ pub(crate) fn parameter_defaults(owner_source: &str, params: &[String]) -> Optio
         // A default `= v` after the optional annotation; `=>` inside a type
         // is not one.
         let has_default = part.match_indices('=').any(|(at, _)| {
-            !part[at..].starts_with("=>") && !part[..at].ends_with(['=', '!', '<', '>'])
+            let after = &part[at + 1..];
+            !after.starts_with(['>', '=']) && !part[..at].ends_with(['=', '!'])
         });
         defaults.push(has_default);
     }
@@ -315,7 +318,10 @@ impl CallInputs<'_> {
             return None;
         }
         match self.arguments.get(index) {
-            Some(argument) => parse_literal(argument),
+            // An explicit `undefined` applies a parameter's default.
+            Some(argument) => parse_literal(argument).filter(|literal| {
+                *literal != Lit::Undef || !self.defaults.get(index).copied().unwrap_or(true)
+            }),
             None if !self.defaults.get(index).copied().unwrap_or(true) => Some(Lit::Undef),
             None => None,
         }
@@ -325,6 +331,10 @@ impl CallInputs<'_> {
     /// `Some(true)` when provably true; `None` when unreadable.
     fn evaluate(&self, condition: &str) -> Option<bool> {
         let condition = condition.trim();
+        // A ternary (or optional chain) changes precedence.
+        if condition.contains('?') {
+            return None;
+        }
         if let Some(parts) = split_top_level(condition, "||") {
             return or_of(parts.iter().map(|part| self.evaluate(part)));
         }
@@ -337,6 +347,10 @@ impl CallInputs<'_> {
         if let Some(rest) = condition.strip_prefix('!')
             && !rest.starts_with('=')
         {
+            // `!x === y` negates `x` first, not the comparison.
+            if has_top_level_comparison(rest) {
+                return None;
+            }
             return self.evaluate(rest).map(|value| !value);
         }
         for operator in ["===", "!==", "==", "!=", "<=", ">=", "<", ">"] {
@@ -370,9 +384,87 @@ impl CallInputs<'_> {
 /// Whether `inputs` provably keep one arm closed: some needed condition is
 /// provably the opposite of what the arm needs.
 pub(crate) fn call_excludes_arm(inputs: &CallInputs<'_>, conditions: &[GuardCondition]) -> bool {
+    // A spread argument shifts every later position.
+    if inputs
+        .arguments
+        .iter()
+        .any(|argument| argument.trim_start().starts_with("..."))
+    {
+        return false;
+    }
     conditions
         .iter()
         .any(|condition| inputs.evaluate(&condition.text) == Some(!condition.want))
+}
+
+fn has_top_level_comparison(text: &str) -> bool {
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    for c in text.chars() {
+        if let Some(open) = quote {
+            if c == open {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            '\'' | '"' | '`' => quote = Some(c),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            '=' | '<' | '>' if depth == 0 => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Whether every call-shaped identifier in the (masked) test text is one of
+/// `allowed`. A member call (`.toBe(`) is not an identifier call. Any other
+/// call could be a file-local helper that reaches the owner with an input
+/// the test text does not show.
+pub(crate) fn calls_only_allowed(test_text: &str, allowed: &[&str]) -> bool {
+    let masked = ts_mask_literals_and_comments(test_text);
+    let chars: Vec<char> = masked.chars().collect();
+    let mut at = 0usize;
+    while at < chars.len() {
+        if is_identifier_char(chars[at]) && (at == 0 || !is_identifier_char(chars[at - 1])) {
+            let mut end = at;
+            while end < chars.len() && is_identifier_char(chars[end]) {
+                end += 1;
+            }
+            let word: String = chars[at..end].iter().collect();
+            let mut next = end;
+            while next < chars.len() && chars[next].is_whitespace() {
+                next += 1;
+            }
+            let before = chars[..at].iter().rev().find(|c| !c.is_whitespace());
+            let is_member = before == Some(&'.');
+            let calls = chars.get(next) == Some(&'(');
+            let keyword = matches!(
+                word.as_str(),
+                "if" | "for"
+                    | "while"
+                    | "switch"
+                    | "catch"
+                    | "function"
+                    | "return"
+                    | "await"
+                    | "async"
+                    | "typeof"
+                    | "void"
+                    | "new"
+                    | "of"
+                    | "in"
+            );
+            if calls && !is_member && !keyword && !allowed.contains(&word.as_str()) {
+                return false;
+            }
+            at = end;
+        } else {
+            at += 1;
+        }
+    }
+    true
 }
 
 fn or_of(values: impl Iterator<Item = Option<bool>>) -> Option<bool> {
@@ -706,5 +798,96 @@ mod tests {
             }];
             assert!(call_excludes_arm(&call, &arms), "{guard} with {argument}");
         }
+    }
+
+    #[test]
+    fn spread_undefined_default_precedence_and_crlf_never_exclude() {
+        let params = vec!["qty".to_string(), "coupon".to_string()];
+        let defaults = parameter_defaults(SOURCE, &params).unwrap_or_default();
+        let then = at(4, "total = total / 3;").unwrap_or_default();
+        // A spread shifts positions: `price(...a)` may carry the coupon.
+        let spread = vec!["...a".to_string()];
+        assert!(!call_excludes_arm(
+            &inputs(&spread, &params, &defaults),
+            &then
+        ));
+        // An explicit `undefined` applies a default.
+        let source = "function price(qty, coupon = 'HALF') {\n  if (coupon === 'HALF') {\n    qty = 1;\n  }\n}\n";
+        let defaulted = parameter_defaults(source, &params).unwrap_or_default();
+        assert_eq!(defaulted, vec![false, true]);
+        let arms = enclosing_conditions(source, 1, 3, "qty = 1;").unwrap_or_default();
+        let explicit = vec!["2".to_string(), "undefined".to_string()];
+        let call = CallInputs {
+            owner_source: source,
+            params: &params,
+            defaults: &defaulted,
+            arguments: &explicit,
+        };
+        assert!(!call_excludes_arm(&call, &arms));
+        // Precedence and ternaries are unreadable.
+        for guard in [
+            "!x === false",
+            "x === 1 && y ? 1 : 2",
+            "x === 1 ? true : false",
+        ] {
+            let arguments = vec!["2".to_string()];
+            let p = vec!["x".to_string()];
+            let d = vec![false];
+            let call = CallInputs {
+                owner_source: "function f(x) {\n  return x;\n}\n",
+                params: &p,
+                defaults: &d,
+                arguments: &arguments,
+            };
+            assert!(
+                !call_excludes_arm(
+                    &call,
+                    &[GuardCondition {
+                        text: guard.to_string(),
+                        want: true
+                    }]
+                ),
+                "{guard}"
+            );
+        }
+        // CRLF text and a line that opens with `}` are refused.
+        let crlf = SOURCE.replace('\n', "\r\n");
+        assert_eq!(
+            enclosing_conditions(&crlf, 1, 4, "total = total / 3;"),
+            None
+        );
+        assert_eq!(
+            enclosing_conditions(SOURCE, 1, 5, "} else if (qty > 100) {"),
+            None
+        );
+        // `Array<string>= []` is a default.
+        let generic = vec!["a".to_string()];
+        assert_eq!(
+            parameter_defaults("function f(a: Array<string>= []) {}", &generic),
+            Some(vec![true])
+        );
+    }
+
+    #[test]
+    fn braces_and_ifs_in_strings_and_comments_do_not_open_blocks() {
+        let source = "function f(x: number) {\n  const s = \"if (x === 1) {\"; // }\n  /* if (x === 2) { */\n  total = 1;\n  if (x === 3) {\n    total = 2;\n  }\n}\n";
+        assert_eq!(enclosing_conditions(source, 1, 4, "total = 1;"), None);
+        let arms = enclosing_conditions(source, 1, 6, "total = 2;").unwrap_or_default();
+        assert_eq!(arms.len(), 1);
+        assert_eq!(arms[0].text, "x === 3");
+    }
+
+    #[test]
+    fn only_framework_and_owner_calls_are_readable() {
+        let allowed = ["price", "expect"];
+        assert!(calls_only_allowed(
+            "expect(price(2)).toBe(20); await price(3, 'A');",
+            &allowed
+        ));
+        assert!(!calls_only_allowed(
+            "expect(price(2)).toBe(20); expect(check('HALF')).toBe(1);",
+            &allowed
+        ));
+        assert!(!calls_only_allowed("run(price);", &allowed));
     }
 }

@@ -144,3 +144,66 @@ fn an_else_arm_is_entered_by_the_inputs_that_fail_the_guard() -> Result<(), Stri
     assert_eq!(strong.class, ExposureClass::Exposed, "{:?}", strong.missing);
     Ok(())
 }
+
+#[test]
+fn unreadable_entries_keep_exposed() -> Result<(), String> {
+    // A spread may carry the coupon at index 1.
+    let spread = "import { price } from \"../src/price\";\ntest(\"price\", () => {\n  const args = [3, 'HALF'];\n  expect(price(...args)).toBe(15);\n});\n";
+    let finding = then_arm("guard-spread", spread)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+
+    // A file-local helper enters the arm; the direct call alone would not.
+    let helper = "import { price } from \"../src/price\";\nconst check = (c: string) => price(3, c);\ntest(\"price\", () => {\n  expect(price(2)).toBe(20);\n  expect(check('HALF')).toBe(10);\n});\n";
+    let finding = then_arm("guard-helper", helper)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+
+    // An explicit `undefined` applies the parameter default.
+    let source = PRICE
+        .replace("coupon?: string", "coupon = 'HALF'")
+        .replace("total / 3", "total / 2");
+    let test = test_with(&[("price(3, undefined)", "15")]);
+    let finding = finding_at(
+        "guard-default",
+        &source,
+        4,
+        "    total = total / 3;",
+        "    total = total / 2;",
+        &test,
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+
+    // CRLF sources are not read.
+    let crlf = PRICE
+        .replace("total / 3", "total / 2")
+        .replace('\n', "\r\n");
+    let finding = finding_at(
+        "guard-crlf",
+        &crlf,
+        4,
+        "    total = total / 3;",
+        "    total = total / 2;",
+        &test_with(&[("price(2)", "20")]),
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+    Ok(())
+}
