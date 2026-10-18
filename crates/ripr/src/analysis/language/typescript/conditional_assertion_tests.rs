@@ -136,7 +136,7 @@ fn ts_constant_loop_conditions_never_disclose() {
 /// false `typescript_conditional_assertion_credit` limitation whenever any
 /// other assertion in the file was credited.
 #[test]
-fn ts_nested_condition_in_constant_dead_branch_is_silent() {
+fn ts_nested_condition_in_constant_dead_branch_is_silent() -> Result<(), String> {
     let dead_consequent = "  expect(price(150)).toBe(129);\n  if (false) {\n    if (ok) {\n      expect(price(150)).toBe(130);\n    }\n  }";
     assert_eq!(
         extracted_assertions(dead_consequent).len(),
@@ -162,11 +162,12 @@ fn ts_nested_condition_in_constant_dead_branch_is_silent() {
     let live_nested =
         "  if (true) {\n    if (ok) {\n      expect(price(150)).toBe(130);\n    }\n  }";
     let gap = credit_gap_for_body(live_nested)
-        .expect("live nested condition under constant if must still disclose");
+        .ok_or_else(|| "live nested condition under constant if must still disclose".to_string())?;
     assert_eq!(
         gap.condition, "ok",
         "gap must name the nested condition: {gap:?}"
     );
+    Ok(())
 }
 
 /// Constant-falsy loops: the walker must not disclose a nested condition
