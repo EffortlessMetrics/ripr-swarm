@@ -1006,14 +1006,14 @@ fn classify_workers_follow_the_callers_cancellation() -> Result<(), String> {
             .name()
             .is_some_and(|name| name.starts_with("ripr-classify-"));
         if on_worker {
-            started + std::time::Duration::from_secs(120)
+            started + std::time::Duration::from_mins(2)
         } else {
             started
         }
     });
     let budgeted = AnalysisCancellationToken::with_budget(
         started,
-        std::time::Duration::from_secs(60),
+        std::time::Duration::from_mins(1),
         worker_sees_spent_budget,
     );
     let outcome = cancellation::with_token(&budgeted, || {
