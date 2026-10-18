@@ -184,6 +184,12 @@ fn init_followups_replay_the_selected_root_from_foreign_cwd() -> TestResult {
                 .collect();
             assert_eq!(commands.len(), 2, "{stdout}");
             for command in commands {
+                // The root is the last argument; an implicit `.` root must not
+                // render as `<cwd>/.`.
+                assert!(
+                    !command.trim_end_matches(['\'', '"']).ends_with("/."),
+                    "{command}"
+                );
                 let replay = replay_printed_ripr(command, &decoy)?;
                 assert!(replay.status.success(), "{command}: {replay:?}");
                 let text = String::from_utf8(replay.stdout)?;
