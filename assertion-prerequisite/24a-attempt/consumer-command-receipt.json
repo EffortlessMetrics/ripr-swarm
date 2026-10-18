@@ -1,0 +1,18 @@
+{
+  "head": "24a203c27655e5b1431aee8e91b30ba7ba710721",
+  "started_utc": "2026-10-18T19:36:29.620111+00:00",
+  "command": [
+    "/workspace/5500-assertion-prerequisite/ripr-24a203c2",
+    "check",
+    "--root",
+    "/workspace/5500-consumer",
+    "--diff",
+    "/workspace/5500-whole-tail-evidence/consumer.diff",
+    "--mode",
+    "ready",
+    "--format",
+    "json"
+  ],
+  "cache": "/workspace/5500-assertion-prerequisite/cache-consumer-24a",
+  "native_exit": 0
+}

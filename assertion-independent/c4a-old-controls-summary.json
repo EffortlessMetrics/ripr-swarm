@@ -1,0 +1,121 @@
+{
+  "prior_controls": 14,
+  "unique_controls": 23,
+  "results": [
+    {
+      "case": "arm_return",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "binding_multiline",
+      "classification": "exposed",
+      "whole_tail_receipt": true
+    },
+    {
+      "case": "binding_same_line",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "comment_string_words",
+      "classification": "exposed",
+      "whole_tail_receipt": true
+    },
+    {
+      "case": "literal_expected_wrong",
+      "classification": "exposed",
+      "whole_tail_receipt": true
+    },
+    {
+      "case": "macro_max",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "macro_max_wrong",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "macro_scrutinee",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "non_tail",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "positive",
+      "classification": "exposed",
+      "whole_tail_receipt": true
+    },
+    {
+      "case": "scrutinee_both-zero",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "scrutinee_none-zero",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "scrutinee_return",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "scrutinee_some-zero",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "rootmacro",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "moduleMAX",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "localproc",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "localmacro",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "registered_scalar",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "registered_MAX",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "ancestor_original",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "ancestor_root_tests",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "ancestor_primitive_positive",
+      "classification": "exposed",
+      "whole_tail_receipt": true
+    }
+  ]
+}

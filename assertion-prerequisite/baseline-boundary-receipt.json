@@ -1,0 +1,42 @@
+[
+  {
+    "case": "grouped",
+    "native_exit": 0,
+    "classification": "static_unknown"
+  },
+  {
+    "case": "nested",
+    "native_exit": 0,
+    "classification": "static_unknown"
+  },
+  {
+    "case": "gated",
+    "native_exit": 0,
+    "classification": "static_unknown"
+  },
+  {
+    "case": "path",
+    "native_exit": 0,
+    "classification": "static_unknown"
+  },
+  {
+    "case": "unresolved",
+    "native_exit": 0,
+    "classification": "static_unknown"
+  },
+  {
+    "case": "renamed",
+    "native_exit": 0,
+    "classification": "static_unknown"
+  },
+  {
+    "case": "qualified",
+    "native_exit": 0,
+    "classification": "static_unknown"
+  },
+  {
+    "case": "opaque",
+    "native_exit": 0,
+    "classification": "static_unknown"
+  }
+]

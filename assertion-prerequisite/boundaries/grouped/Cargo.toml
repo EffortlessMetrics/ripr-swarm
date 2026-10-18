@@ -1,0 +1,4 @@
+[package]
+name="local_glob_witness"
+version="0.1.0"
+edition="2024"

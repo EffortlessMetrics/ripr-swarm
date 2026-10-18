@@ -1,0 +1,14 @@
+{
+  "schema_version": "0.1",
+  "status": "pass",
+  "drift_count": 0,
+  "provenance": {
+    "binary": "/workspace/5500-target/debug/ripr",
+    "ripr_version": "ripr 0.11.0 (c4a8f7828e15426c4d872718f66bd4bac3ab0daf)",
+    "revision": "c4a8f7828e15426c4d872718f66bd4bac3ab0daf"
+  },
+  "entries": [
+
+  ],
+  "violations": []
+}

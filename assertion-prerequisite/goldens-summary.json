@@ -1,0 +1,8 @@
+{
+  "head": "c4a8f7828e15426c4d872718f66bd4bac3ab0daf",
+  "report_status": "pass",
+  "fixtures": 502,
+  "comparisons": 1272,
+  "non_pass_rows": [],
+  "violations": "None detected."
+}

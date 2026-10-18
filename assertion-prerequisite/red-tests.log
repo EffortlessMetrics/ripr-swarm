@@ -1,0 +1,33 @@
+   Compiling ripr v0.11.0 (/workspace/5500-assertion-source/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 1m 24s
+     Running tests/local_module_glob_assertions.rs (/workspace/5500-target/debug/deps/local_module_glob_assertions-6481397db659272b)
+
+running 2 tests
+test resolved_local_module_glob_keeps_standard_assertion_identity ... FAILED
+test custom_macro_and_opaque_module_exports_never_gain_assertion_identity ... FAILED
+
+failures:
+
+---- resolved_local_module_glob_keeps_standard_assertion_identity stdout ----
+
+thread 'resolved_local_module_glob_keeps_standard_assertion_identity' (71524) panicked at crates/ripr/tests/local_module_glob_assertions.rs:52:9:
+assertion `left == right` failed: proof
+  left: StaticUnknown
+ right: Exposed
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- custom_macro_and_opaque_module_exports_never_gain_assertion_identity stdout ----
+
+thread 'custom_macro_and_opaque_module_exports_never_gain_assertion_identity' (71523) panicked at crates/ripr/tests/local_module_glob_assertions.rs:69:5:
+assertion `left == right` failed
+  left: ReachableUnrevealed
+ right: StaticUnknown
+
+
+failures:
+    custom_macro_and_opaque_module_exports_never_gain_assertion_identity
+    resolved_local_module_glob_keeps_standard_assertion_identity
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p ripr --test local_module_glob_assertions`

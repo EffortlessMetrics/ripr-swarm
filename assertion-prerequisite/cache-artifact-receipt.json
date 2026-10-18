@@ -1,0 +1,10 @@
+{
+  "before.repo-exposure.json": {
+    "content": "sha256:ee1cc366442055cd51507a818856482992eefe6c8e54399ee3ae2728c8880633",
+    "raw": "sha256:93763151d562409b2827c523dc9ac195de9c16f0fa15dc2dd8a653321d942e98"
+  },
+  "after.repo-exposure.json": {
+    "content": "sha256:ee1cc366442055cd51507a818856482992eefe6c8e54399ee3ae2728c8880633",
+    "raw": "sha256:93763151d562409b2827c523dc9ac195de9c16f0fa15dc2dd8a653321d942e98"
+  }
+}

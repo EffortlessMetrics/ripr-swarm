@@ -1,0 +1,15 @@
+   Compiling ripr v0.11.0 (/workspace/5500-assertion-source/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 10.15s
+     Running tests/cli_smoke.rs (/workspace/5500-target/debug/deps/cli_smoke-3196b73852df6444)
+
+running 7 tests
+test rerun_ledger_recovery::rerun_absolute_root_ledger_keeps_edited_source_and_unstamped_legacy_recomputation ... ok
+test rerun_ledger_recovery::lsp_real_gap_ledger_admits_symlink_selected_root_and_refuses_foreign_checkout ... ok
+test rerun_ledger_recovery::rerun_default_gap_ledger_binds_producer_root_before_scope_recomputation ... ok
+test rerun_ledger_recovery::rerun_gap_ledger_preserves_literal_percent_root_and_refuses_encoded_sibling ... ok
+test rerun_ledger_recovery::rerun_missing_gap_ledger_help_names_source_specific_capture_steps ... ok
+test rerun_ledger_recovery::rerun_missing_gap_ledger_recovery_executes_the_rust_producer ... ok
+test rerun_ledger_recovery::rerun_legacy_unbound_roots_require_current_complete_source_subject ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 583 filtered out; finished in 0.91s
+

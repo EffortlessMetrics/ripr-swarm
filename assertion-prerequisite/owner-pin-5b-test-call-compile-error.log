@@ -1,0 +1,22 @@
+   Compiling ripr v0.11.0 (/workspace/5500-assertion-source/crates/ripr)
+error[E0061]: this function takes 4 arguments but 3 arguments were supplied
+    --> crates/ripr/src/analysis/classify/owner_pin/tests.rs:5702:13
+     |
+5702 |             trusted_macro_sites_in(&index, &TargetRoots::new(&index), &unresolved);
+     |             ^^^^^^^^^^^^^^^^^^^^^^------------------------------------------------ argument #4 of type `bool` is missing
+     |
+note: function defined here
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:1978:4
+     |
+1978 | fn trusted_macro_sites_in(
+     |    ^^^^^^^^^^^^^^^^^^^^^^
+...
+1982 |     local_modules_visible: bool,
+     |     ---------------------------
+help: provide the argument
+     |
+5702 |             trusted_macro_sites_in(&index, &TargetRoots::new(&index), &unresolved, /* bool */);
+     |                                                                                  ++++++++++++
+
+For more information about this error, try `rustc --explain E0061`.
+error: could not compile `ripr` (lib test) due to 1 previous error

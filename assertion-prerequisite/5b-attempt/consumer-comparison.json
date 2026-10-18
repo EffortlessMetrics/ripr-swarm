@@ -1,0 +1,280 @@
+{
+  "producer_head": "5b097c8d18285c2c1511800b1451e9a58734b8cc",
+  "baseline_head": "656d6d7effb51a888c4b627e2a0cd44c3bbd37ef",
+  "native_exit": 0,
+  "analysis_complete": true,
+  "inventory": {
+    "unchanged": 52
+  },
+  "classes": {
+    "weakly_exposed": 20,
+    "exposed": 6,
+    "static_unknown": 21,
+    "infection_unknown": 3,
+    "propagation_unknown": 2
+  },
+  "other_top_level_changes": [],
+  "all_rows": [
+    {
+      "id": "probe:src_main.rs:field_construction:2306990b",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_broker.rs:field_construction:188a422b",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_broker.rs:field_construction:69aa322d",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_budget.rs:call_deletion:0eec3785",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_budget.rs:call_deletion:6990fff7",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_budget.rs:call_deletion:78f374cc",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_budget.rs:call_deletion:9dc5965c",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_budget.rs:call_deletion:b5713742",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_budget.rs:call_deletion:c6665ff7",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_budget.rs:match_arm:0e8cee91",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_budget.rs:match_arm:1d471a88",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_budget.rs:match_arm:34e117a9",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_budget.rs:match_arm:388528e9",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_budget.rs:match_arm:496dd6f2",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_budget.rs:match_arm:67654dc6",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_budget.rs:match_arm:853cf817",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_budget.rs:match_arm:b44424aa",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_budget.rs:predicate:4b5a906e",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_budget.rs:return_value:3eb0b2d2",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_budget.rs:return_value:42a7edc8",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_budget.rs:return_value:ff35fc7f",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_budget.rs:static_unknown:2cb89e3a",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_budget.rs:static_unknown:323539c0",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_budget.rs:static_unknown:600135d5",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_budget.rs:static_unknown:751eb4ca",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_budget.rs:static_unknown:a6d968ad",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_budget.rs:static_unknown:b3d35848",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_budget.rs:static_unknown:d0c7cad2",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_budget.rs:static_unknown:d34e7cdc",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_build.rs:call_deletion:1af29cdf",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_build.rs:call_deletion:90a08fae",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_build.rs:call_deletion:960ed207",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_build.rs:call_deletion:f1d8cf82",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_build.rs:predicate:9fd79113",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_build.rs:side_effect:bc66e99e",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_build.rs:static_unknown:074eb3c4",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_build.rs:static_unknown:2f173b0f",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_build.rs:static_unknown:478cc714",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_build.rs:static_unknown:495af177",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_build.rs:static_unknown:9e264c1c",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_build.rs:static_unknown:a5ea475b",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_mod.rs:static_unknown:728a1885",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_red_green.rs:call_deletion:89084678",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_red_green.rs:call_deletion:89c039f0",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_red_green.rs:call_deletion:ed0196db",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_red_green.rs:predicate:e4cac396",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_red_green.rs:static_unknown:3d048342",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_red_green.rs:static_unknown:3e1b9771",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_red_green.rs:static_unknown:b66692c9",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_red_green.rs:static_unknown:bdebb155",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_red_green.rs:static_unknown:caa6883f",
+      "status": "unchanged",
+      "changed_fields": []
+    },
+    {
+      "id": "probe:src_proof_red_green.rs:static_unknown:d42f467e",
+      "status": "unchanged",
+      "changed_fields": []
+    }
+  ],
+  "output_sha256": "e67563d1ec9aad34b8c54d5f341a13114b93469c73bb6b97f55f6ccbe66db96b"
+}

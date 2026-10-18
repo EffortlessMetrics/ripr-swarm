@@ -1,0 +1,14 @@
+   Compiling ripr v0.11.0 (/workspace/5500-assertion-source/crates/ripr)
+error[E0599]: no method named `contains` found for struct `SyntaxText` in the current scope
+   --> crates/ripr/src/analysis/syntax/owner_pin.rs:313:59
+    |
+313 |                 .is_some_and(|path| !path.syntax().text().contains("::"));
+    |                                                           ^^^^^^^^
+    |
+help: there is a method `contains_char` with a similar name
+    |
+313 |                 .is_some_and(|path| !path.syntax().text().contains_char("::"));
+    |                                                                   +++++
+
+For more information about this error, try `rustc --explain E0599`.
+error: could not compile `ripr` (lib) due to 1 previous error

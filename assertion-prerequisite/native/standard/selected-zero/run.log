@@ -1,0 +1,20 @@
+
+running 1 test
+test proof::tests::observed ... FAILED
+
+failures:
+
+---- proof::tests::observed stdout ----
+
+thread 'proof::tests::observed' (71395) panicked at /workspace/5500-assertion-prerequisite/native/standard/selected-zero/src/proof.rs:8:21:
+assertion `left == right` failed
+  left: 0
+ right: 600
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    proof::tests::observed
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -1,0 +1,17 @@
+{
+  "scope": "Committed judged-panel advisory departures printed by precommit; distinct from exactconsumer findings. Nativegate status owned by command receipts.",
+  "baseline_source": "656d6d7effb51a888c4b627e2a0cd44c3bbd37ef",
+  "current_source": "c4a8f7828e15426c4d872718f66bd4bac3ab0daf",
+  "baseline_count": 6,
+  "current_count": 6,
+  "introduced": [],
+  "removed": [],
+  "unchanged": [
+    "departs from expected: p1741-helper-rows-quiet (expected should_stay_quiet, judged should_gap)",
+    "departs from expected: p1745-catalog-row-quiet (expected should_stay_quiet, judged should_gap)",
+    "departs from expected: p1745-triple-rows-gap (expected should_gap, judged should_stay_quiet)",
+    "departs from expected: p1617-command-rows-quiet (expected should_stay_quiet, judged should_gap)",
+    "departs from expected: p1705-headline-rows-gap (expected should_gap, judged should_stay_quiet)",
+    "departs from expected: p1705-passthrough-rows-quiet (expected should_stay_quiet, judged should_gap)"
+  ]
+}

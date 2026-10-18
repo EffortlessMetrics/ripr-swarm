@@ -1,0 +1,29 @@
+{
+  "observed_utc": "2026-10-18T19:50:59.371684+00:00",
+  "source24a": {
+    "head": "24a203c27655e5b1431aee8e91b30ba7ba710721",
+    "tree": "6ac9947a1ebf85fb89ccb02996a5a8de7dc1b3ce",
+    "custody": "Nativegitcat-file commit andancestorofpushedc4 bothverified; exactCLI retainedlocal and receipt;24a-attempt contains300testreports,36reviewreceipts,consumerterminal0/raw/comparison and failedClippy checkpoint",
+    "consumer_native_exit": 0,
+    "independent_cli_controls": 36,
+    "tests": 300,
+    "check_fast_native_exit": 1,
+    "clippy_native_exit": 101
+  },
+  "current_source": {
+    "head": "c4a8f7828e15426c4d872718f66bd4bac3ab0daf",
+    "tree": "58e19fdafaa9a83509a50c8402b13211a34eefdc",
+    "clean": true,
+    "change": "Exactequivalentallocationremoval only",
+    "focused35_native_exit": 0,
+    "independent_controls36_native_exit": 0,
+    "consumer_native_exit": 0,
+    "consumer_inventory": "All52 byteidentical656, unchangedtarget/currentweak18"
+  },
+  "disconnect": "Independentps/df exec creation rejectedbyexec-servertransport disconnect; recoverednextread. Originalgate14284 survived; no review/consumer interrupted; no validation repeated becauseoftransport.",
+  "remaining": "Existingownedgate14284 checkfast\u2192precommit\u2192dogfood\u2192honesty; publishtext evidence andfinalexactreview afterterminal; no new source work/PR/hostedCI/Ready/merge/release.",
+  "frozen_source656": "656d6d7effb51a888c4b627e2a0cd44c3bbd37ef",
+  "original16ff_custody_preserved": true,
+  "closeout_utc": "2026-10-18T19:59:41.008595+00:00",
+  "remaining_at_checkpoint_resolved": "Originalsession14284 terminal0;checkfast/precommit/dogfood/honesty all0. No duplicatedvalidation due todisconnect. Finaltext evidence publication/review closeout only."
+}

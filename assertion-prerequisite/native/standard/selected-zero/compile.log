@@ -1,0 +1,10 @@
+warning: unused import: `proof::*`
+ --> /workspace/5500-assertion-prerequisite/native/standard/selected-zero/src/lib.rs:2:16
+  |
+2 | pub(crate) use proof::*;
+  |                ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: 1 warning emitted
+

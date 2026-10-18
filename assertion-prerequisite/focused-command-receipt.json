@@ -1,0 +1,38 @@
+[
+  {
+    "name": "focused-final",
+    "command": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--test",
+      "local_module_glob_assertions",
+      "--test",
+      "whole_tail_match_observation",
+      "--test",
+      "field_match_selector",
+      "--test",
+      "native_path_roots"
+    ],
+    "started_utc": "2026-10-18T19:44:19.430583+00:00",
+    "native_exit": 0,
+    "head": "c4a8f7828e15426c4d872718f66bd4bac3ab0daf"
+  },
+  {
+    "name": "build-final-cli",
+    "command": [
+      "cargo",
+      "build",
+      "--locked",
+      "-p",
+      "ripr",
+      "--bin",
+      "ripr"
+    ],
+    "started_utc": "2026-10-18T19:45:48.041388+00:00",
+    "native_exit": 0,
+    "head": "c4a8f7828e15426c4d872718f66bd4bac3ab0daf"
+  }
+]

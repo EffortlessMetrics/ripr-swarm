@@ -1,0 +1,62 @@
+[
+  {
+    "case": "local",
+    "native_exit": 0,
+    "findings": [
+      {
+        "id": "probe:src_proof.rs:return_value:d87248f4",
+        "classification": "static_unknown",
+        "probe": {
+          "id": "probe:src_proof.rs:return_value:d87248f4",
+          "family": "return_value",
+          "delta": "value",
+          "file": "./src/proof.rs",
+          "line": 2,
+          "expression": "600"
+        }
+      },
+      {
+        "id": "probe:src_proof.rs:static_unknown:b4c9105d",
+        "classification": "static_unknown",
+        "probe": {
+          "id": "probe:src_proof.rs:static_unknown:b4c9105d",
+          "family": "static_unknown",
+          "delta": "unknown",
+          "file": "./src/proof.rs",
+          "line": 2,
+          "expression": "2"
+        }
+      }
+    ]
+  },
+  {
+    "case": "qualified",
+    "native_exit": 0,
+    "findings": [
+      {
+        "id": "probe:src_proof.rs:return_value:d87248f4",
+        "classification": "exposed",
+        "probe": {
+          "id": "probe:src_proof.rs:return_value:d87248f4",
+          "family": "return_value",
+          "delta": "value",
+          "file": "./src/proof.rs",
+          "line": 2,
+          "expression": "600"
+        }
+      },
+      {
+        "id": "probe:src_proof.rs:static_unknown:b4c9105d",
+        "classification": "static_unknown",
+        "probe": {
+          "id": "probe:src_proof.rs:static_unknown:b4c9105d",
+          "family": "static_unknown",
+          "delta": "unknown",
+          "file": "./src/proof.rs",
+          "line": 2,
+          "expression": "2"
+        }
+      }
+    ]
+  }
+]

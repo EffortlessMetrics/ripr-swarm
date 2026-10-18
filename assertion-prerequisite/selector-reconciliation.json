@@ -1,0 +1,46 @@
+{
+  "head": "c4a8f7828e15426c4d872718f66bd4bac3ab0daf",
+  "recorded_source_basis": "ddfa2a138ae816cdd46e639c532900d2abe60b27",
+  "actual_merge_base": "ddfa2a138ae816cdd46e639c532900d2abe60b27",
+  "native_selector_exit": 0,
+  "selector_command": [
+    "git",
+    "diff",
+    "--name-only",
+    "origin/main...HEAD"
+  ],
+  "path_count": 81,
+  "path_inventory_sha256": "27eb48a3a2508ce594dfbb1d33fa1e01e3e71256a98ad5c4daaafd8a17a53235",
+  "independently_visible_surfaces": {
+    "rust_source_or_tests": true,
+    "specs": true,
+    "xtask": true,
+    "fixtures": true,
+    "output_surface": true,
+    "workflow_changes": false,
+    "editor_changes": false
+  },
+  "basis_disposition": "Expected recorded mergebase unchanged. Behind-only32 did not alter candidate authority or require restack.",
+  "scope": "Same81path inventory after allocation-only correction; actualnativegit selector rerun before finalreport.",
+  "report_scope": "Exactc4 source checkfast native0:15gates;selectedstrictworkspacealltargetClippy exit0;onlycli-help-parity skipped, expected because no CLIhelp owner path changed.",
+  "ran": [
+    "fmt --check",
+    "check-static-language",
+    "check-command-catalog",
+    "check-support-tiers",
+    "check-no-panic-family",
+    "check-allow-attributes",
+    "check-file-policy",
+    "clippy",
+    "check-covered-by",
+    "check-process-policy",
+    "check-network-policy",
+    "check-fixture-contracts",
+    "check-generated",
+    "check-generated-clean",
+    "check-lint-policy"
+  ],
+  "skipped": [
+    "cli-help-parity"
+  ]
+}

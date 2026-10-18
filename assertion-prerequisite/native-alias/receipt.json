@@ -1,0 +1,26 @@
+[
+  {
+    "case": "grouped_alias",
+    "variant": "original",
+    "compile_exit": 1,
+    "test_exit": null
+  },
+  {
+    "case": "grouped_alias",
+    "variant": "zero",
+    "compile_exit": 1,
+    "test_exit": null
+  },
+  {
+    "case": "renamed_body",
+    "variant": "original",
+    "compile_exit": 1,
+    "test_exit": null
+  },
+  {
+    "case": "renamed_body",
+    "variant": "zero",
+    "compile_exit": 1,
+    "test_exit": null
+  }
+]

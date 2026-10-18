@@ -1,0 +1,34 @@
+{
+  "observed_utc": "2026-10-18T19:33:01.986871+00:00",
+  "source_head": "c4a8f7828e15426c4d872718f66bd4bac3ab0daf",
+  "owners": {
+    "8772": "cb6f7667430ad12f1cea5bb8b23ad98e078400b9",
+    "8592": "2b3013d0f4e445fab18846af6c75c3d482f3437a",
+    "8597": "5aa226a14a0012dfb3638e2ebbfdf58dbf2e75a7"
+  },
+  "consumer": {
+    "head": "278253a03b00d1aa777eeba7633954122163890f",
+    "base": "715a36434a56be3a9abeb5545012d56e2cb9cb60",
+    "draft": true
+  },
+  "source": "GitHub API GET pulls, all four native successful, heads unchanged from ownership coordination",
+  "all_state_duplicate_search": [
+    {
+      "query": "repo:EffortlessMetrics/ripr-swarm is:pr \"local glob\"",
+      "total": 29,
+      "open_results": [
+        8740
+      ]
+    },
+    {
+      "query": "repo:EffortlessMetrics/ripr-swarm is:pr \"module glob\" assertion",
+      "total": 34,
+      "open_results": [
+        8740
+      ]
+    }
+  ],
+  "same_claim_disposition": "Only open targeted-search result8740 is explicitly implicit effect ordered shared sink observer admission per its currentbody/head1dd36eb6c22397eceefc794aa592af5137bb2311, not local-module-glob macro namespace. Closed8529 std/core/alloc exemption not this residual. A proof::* search tokenized too broadly(total3323/first100), not used as absence evidence.",
+  "latest_shared_owner_comments": "8772 only existing qualification hold and our coordination;8592 latest6254186609 retains helper argument wrong-owner retry at2b3013d0;8597 no newowner response. No exact localglob overlap claimed.",
+  "source_remote_ref": "GitHub REST git/ref ordinary branch readback exactc4a8f7828e15426c4d872718f66bd4bac3ab0daf"
+}

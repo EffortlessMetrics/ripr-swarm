@@ -1,0 +1,22 @@
+[
+  {
+    "case": "local",
+    "native_cli_exit": 0,
+    "header_id": "probe:src_proof.rs:match_arm:5a9f3bd7",
+    "classification": "weakly_exposed",
+    "native_compile_exit": 0,
+    "native_test_exit": 0,
+    "root_sha256": "adeb0fc27b73beea3d54cd74e77b2d8ddbb29a1055322a6e54617d267281d873",
+    "owner_sha256": "516b697a4d27bb55da7954dc6a75af1be03efde947e135d0854fd439e0163aaf"
+  },
+  {
+    "case": "qualified",
+    "native_cli_exit": 0,
+    "header_id": "probe:src_proof.rs:match_arm:5a9f3bd7",
+    "classification": "exposed",
+    "native_compile_exit": 0,
+    "native_test_exit": 0,
+    "root_sha256": "2545cdd581479a13d9ed84249c658f6af601efb77d7e8d12a821f1fe26e96c36",
+    "owner_sha256": "516b697a4d27bb55da7954dc6a75af1be03efde947e135d0854fd439e0163aaf"
+  }
+]

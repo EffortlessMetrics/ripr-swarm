@@ -1,0 +1,46 @@
+[
+  {
+    "name": "check-fast",
+    "command": [
+      "cargo",
+      "xtask",
+      "check-fast"
+    ],
+    "started_utc": "2026-10-18T19:47:31.901785+00:00",
+    "native_exit": 0,
+    "head": "c4a8f7828e15426c4d872718f66bd4bac3ab0daf"
+  },
+  {
+    "name": "precommit",
+    "command": [
+      "cargo",
+      "xtask",
+      "precommit"
+    ],
+    "started_utc": "2026-10-18T19:55:31.017946+00:00",
+    "native_exit": 0,
+    "head": "c4a8f7828e15426c4d872718f66bd4bac3ab0daf"
+  },
+  {
+    "name": "dogfood",
+    "command": [
+      "cargo",
+      "xtask",
+      "dogfood"
+    ],
+    "started_utc": "2026-10-18T19:59:14.358650+00:00",
+    "native_exit": 0,
+    "head": "c4a8f7828e15426c4d872718f66bd4bac3ab0daf"
+  },
+  {
+    "name": "honesty",
+    "command": [
+      "cargo",
+      "xtask",
+      "check-evidence-promotion-honesty"
+    ],
+    "started_utc": "2026-10-18T19:59:16.086009+00:00",
+    "native_exit": 0,
+    "head": "c4a8f7828e15426c4d872718f66bd4bac3ab0daf"
+  }
+]

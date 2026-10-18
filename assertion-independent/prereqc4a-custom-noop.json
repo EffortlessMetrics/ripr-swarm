@@ -1,0 +1,180 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "ready",
+  "root": "/workspace/5500-macro-review/prereq-custom-noop",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":1,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":1,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:76b92a77f1d7e51c66fc1f0f733c063f6b464b2676e0eab432c982569e56567c","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_proof.rs:return_value:d87248f4",
+      "canonical_gap_id": "gap:rust:src/proof.rs:charge:return_value:return_value:600",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/proof.rs:charge:return_value:return_value:600",
+        "language": "rust",
+        "file": "src/proof.rs",
+        "owner": "charge",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "600"
+
+      },
+      "classification": "reachable_unrevealed",
+      "severity": "warning",
+      "confidence": 0.79,
+      "probe": {
+        "id": "probe:src_proof.rs:return_value:d87248f4",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/proof.rs",
+        "line": 2,
+        "expression": "600"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach charge: observed"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: 600"},
+        "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach charge: observed", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: 600", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches returned value: 600 (line 2)", "related test src/proof.rs:10 observed uses none unknown oracle", "source assertion argument value 600 at line 10"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"600","line":2}
+      ],
+      "evidence": ["Complete propagation witness reaches returned value: 600", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach charge: observed", "assertion not credited: `assert_eq!` in observed at src/proof.rs:10: src/proof.rs:5 imports a different `assert_eq` by name"],
+      "missing": ["No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "10": "assert_eq!(charge(), 600);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 10,
+            "value": "600",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 10,
+          "value": "600",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "observed",
+          "file": "src/proof.rs",
+          "line": 10,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "assertion_not_credited",
+          "why": "assertion not credited: ripr could not establish that it runs as the standard macro"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "recommended_next_step": "ripr did not credit the `assert_eq!` in observed at src/proof.rs:10; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
+      "suggested_next_action": "ripr did not credit the `assert_eq!` in observed at src/proof.rs:10; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof.rs:static_unknown:b4c9105d",
+      "canonical_gap_id": "gap:rust:src/proof.rs:charge:static_unknown:static_unknown:2",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/proof.rs:charge:static_unknown:static_unknown:2",
+        "language": "rust",
+        "file": "src/proof.rs",
+        "owner": "charge",
+        "behavior_kind": "static_unknown",
+        "probe_kind": "static_unknown",
+        "normalized_discriminator": "2"
+
+      },
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.50,
+      "probe": {
+        "id": "probe:src_proof.rs:static_unknown:b4c9105d",
+        "family": "static_unknown",
+        "delta": "unknown",
+        "file": "./src/proof.rs",
+        "line": 2,
+        "expression": "2"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach charge: observed"},
+        "infect": {"state":"unknown","confidence":"unknown","summary":"Changed syntax is not mapped to a high-confidence probe family"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"No propagation model is available for this changed syntax"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"unknown","confidence":"low","summary":"Assertions exist, but oracle strength is unknown"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach charge: observed", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 2)", "related test src/proof.rs:10 observed uses unknown exact value oracle: assert_eq!(charge(), 600);", "source assertion argument value 600 at line 10"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"unknown sink","line":2}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Assertions exist, but oracle strength is unknown", "Changed syntax is not mapped to a high-confidence probe family", "No propagation model is available for this changed syntax", "Related tests appear to reach charge: observed"],
+      "missing": ["No strong discriminator was detected", "Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests"],
+      "assertion_texts": {
+        "10": "assert_eq!(charge(), 600);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 10,
+            "value": "600",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 10,
+          "value": "600",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "observed",
+          "file": "src/proof.rs",
+          "line": 10,
+          "oracle_strength": "unknown",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(charge(), 600);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["static_probe_unknown"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "unknown",
+      "recommended_next_step": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "suggested_next_action": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "language": "rust",
+      "source_currentness": "base_deleted"
+    }
+  ],
+  "canonical_next_action": {"schema_version":"canonical_next_action.v1","producer":"check_top_result","subject":{"root":"/workspace/5500-macro-review/prereq-custom-noop","diff_source":{"committed":{"base":null,"head":null}},"item":"probe:src_proof.rs:return_value:d87248f4"},"currentness":{"head_expected":null,"head_observed":null,"config_expected":null,"config_observed":null},"action_class":"inspect_details","stop":{"kind":"check_triage","case":"top_gap","detail_route":"ripr explain --root /workspace/5500-macro-review/prereq-custom-noop --diff /workspace/5500-macro-review/prereq-custom-noop/input.diff --mode ready probe:src_proof.rs:return_value:d87248f4"},"alternatives":[{"label":"considered finding probe:src_proof.rs:static_unknown:b4c9105d","route":"ripr explain --root /workspace/5500-macro-review/prereq-custom-noop --diff /workspace/5500-macro-review/prereq-custom-noop/input.diff --mode ready probe:src_proof.rs:static_unknown:b4c9105d"}],"non_claim":"Advisory selection from producer-bound state; it does not execute, complete, or prove the repair, and the display string is never execution authority."}
+}

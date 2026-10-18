@@ -1,0 +1,30 @@
+warning: unused import: `assert_eq`
+ --> /workspace/5500-assertion-prerequisite/native/custom/selected-zero/src/proof.rs:5:16
+  |
+5 | pub(crate) use assert_eq;
+  |                ^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `super::*`
+ --> /workspace/5500-assertion-prerequisite/native/custom/selected-zero/src/proof.rs:8:9
+  |
+8 |     use super::*;
+  |         ^^^^^^^^
+
+warning: unused import: `proof::*`
+ --> /workspace/5500-assertion-prerequisite/native/custom/selected-zero/src/lib.rs:2:16
+  |
+2 | pub(crate) use proof::*;
+  |                ^^^^^^^^
+
+warning: function `charge` is never used
+ --> /workspace/5500-assertion-prerequisite/native/custom/selected-zero/src/proof.rs:1:15
+  |
+1 | pub(crate) fn charge() -> u64 {
+  |               ^^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: 4 warnings emitted
+

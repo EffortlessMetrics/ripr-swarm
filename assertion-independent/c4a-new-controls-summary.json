@@ -1,0 +1,249 @@
+[
+  {
+    "case": "return-local",
+    "command": [
+      "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+      "check",
+      "--root",
+      "/workspace/5500-assertion-prerequisite/return-local",
+      "--diff",
+      "/workspace/5500-assertion-prerequisite/return-local/input.diff",
+      "--mode",
+      "ready",
+      "--format",
+      "json"
+    ],
+    "native_exit": 0,
+    "id": "probe:src_proof.rs:return_value:d87248f4",
+    "classification": "exposed",
+    "whole_tail_receipt": false
+  },
+  {
+    "case": "return-qualified",
+    "command": [
+      "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+      "check",
+      "--root",
+      "/workspace/5500-assertion-prerequisite/return-qualified",
+      "--diff",
+      "/workspace/5500-assertion-prerequisite/return-qualified/input.diff",
+      "--mode",
+      "ready",
+      "--format",
+      "json"
+    ],
+    "native_exit": 0,
+    "id": "probe:src_proof.rs:return_value:d87248f4",
+    "classification": "exposed",
+    "whole_tail_receipt": false
+  },
+  {
+    "case": "boundary-gated",
+    "command": [
+      "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+      "check",
+      "--root",
+      "/workspace/5500-assertion-prerequisite/boundaries/gated",
+      "--diff",
+      "/workspace/5500-assertion-prerequisite/boundaries/gated/input.diff",
+      "--mode",
+      "ready",
+      "--format",
+      "json"
+    ],
+    "native_exit": 0,
+    "id": "probe:src_proof.rs:return_value:d87248f4",
+    "classification": "static_unknown",
+    "whole_tail_receipt": false
+  },
+  {
+    "case": "boundary-grouped",
+    "command": [
+      "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+      "check",
+      "--root",
+      "/workspace/5500-assertion-prerequisite/boundaries/grouped",
+      "--diff",
+      "/workspace/5500-assertion-prerequisite/boundaries/grouped/input.diff",
+      "--mode",
+      "ready",
+      "--format",
+      "json"
+    ],
+    "native_exit": 0,
+    "id": "probe:src_proof.rs:return_value:d87248f4",
+    "classification": "static_unknown",
+    "whole_tail_receipt": false
+  },
+  {
+    "case": "boundary-nested",
+    "command": [
+      "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+      "check",
+      "--root",
+      "/workspace/5500-assertion-prerequisite/boundaries/nested",
+      "--diff",
+      "/workspace/5500-assertion-prerequisite/boundaries/nested/input.diff",
+      "--mode",
+      "ready",
+      "--format",
+      "json"
+    ],
+    "native_exit": 0,
+    "id": "probe:src_proof.rs:return_value:d87248f4",
+    "classification": "static_unknown",
+    "whole_tail_receipt": false
+  },
+  {
+    "case": "boundary-opaque",
+    "command": [
+      "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+      "check",
+      "--root",
+      "/workspace/5500-assertion-prerequisite/boundaries/opaque",
+      "--diff",
+      "/workspace/5500-assertion-prerequisite/boundaries/opaque/input.diff",
+      "--mode",
+      "ready",
+      "--format",
+      "json"
+    ],
+    "native_exit": 0,
+    "id": "probe:src_proof.rs:return_value:d87248f4",
+    "classification": "static_unknown",
+    "whole_tail_receipt": false
+  },
+  {
+    "case": "boundary-path",
+    "command": [
+      "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+      "check",
+      "--root",
+      "/workspace/5500-assertion-prerequisite/boundaries/path",
+      "--diff",
+      "/workspace/5500-assertion-prerequisite/boundaries/path/input.diff",
+      "--mode",
+      "ready",
+      "--format",
+      "json"
+    ],
+    "native_exit": 0,
+    "id": "probe:src_proof.rs:return_value:d87248f4",
+    "classification": "static_unknown",
+    "whole_tail_receipt": false
+  },
+  {
+    "case": "boundary-qualified",
+    "command": [
+      "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+      "check",
+      "--root",
+      "/workspace/5500-assertion-prerequisite/boundaries/qualified",
+      "--diff",
+      "/workspace/5500-assertion-prerequisite/boundaries/qualified/input.diff",
+      "--mode",
+      "ready",
+      "--format",
+      "json"
+    ],
+    "native_exit": 0,
+    "id": "probe:src_proof.rs:return_value:d87248f4",
+    "classification": "static_unknown",
+    "whole_tail_receipt": false
+  },
+  {
+    "case": "boundary-renamed",
+    "command": [
+      "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+      "check",
+      "--root",
+      "/workspace/5500-assertion-prerequisite/boundaries/renamed",
+      "--diff",
+      "/workspace/5500-assertion-prerequisite/boundaries/renamed/input.diff",
+      "--mode",
+      "ready",
+      "--format",
+      "json"
+    ],
+    "native_exit": 0,
+    "id": "probe:src_proof.rs:return_value:d87248f4",
+    "classification": "static_unknown",
+    "whole_tail_receipt": false
+  },
+  {
+    "case": "boundary-unresolved",
+    "command": [
+      "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+      "check",
+      "--root",
+      "/workspace/5500-assertion-prerequisite/boundaries/unresolved",
+      "--diff",
+      "/workspace/5500-assertion-prerequisite/boundaries/unresolved/input.diff",
+      "--mode",
+      "ready",
+      "--format",
+      "json"
+    ],
+    "native_exit": 0,
+    "id": "probe:src_proof.rs:return_value:d87248f4",
+    "classification": "static_unknown",
+    "whole_tail_receipt": false
+  },
+  {
+    "case": "whole-local",
+    "command": [
+      "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+      "check",
+      "--root",
+      "/workspace/5500-assertion-prerequisite/local",
+      "--diff",
+      "/workspace/5500-assertion-prerequisite/local/input.diff",
+      "--mode",
+      "ready",
+      "--format",
+      "json"
+    ],
+    "native_exit": 0,
+    "id": "probe:src_proof.rs:match_arm:5a9f3bd7",
+    "classification": "weakly_exposed",
+    "whole_tail_receipt": false
+  },
+  {
+    "case": "whole-qualified",
+    "command": [
+      "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+      "check",
+      "--root",
+      "/workspace/5500-assertion-prerequisite/qualified",
+      "--diff",
+      "/workspace/5500-assertion-prerequisite/qualified/input.diff",
+      "--mode",
+      "ready",
+      "--format",
+      "json"
+    ],
+    "native_exit": 0,
+    "id": "probe:src_proof.rs:match_arm:5a9f3bd7",
+    "classification": "exposed",
+    "whole_tail_receipt": true
+  },
+  {
+    "case": "custom-noop",
+    "command": [
+      "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+      "check",
+      "--root",
+      "/workspace/5500-macro-review/prereq-custom-noop",
+      "--diff",
+      "/workspace/5500-macro-review/prereq-custom-noop/input.diff",
+      "--mode",
+      "ready",
+      "--format",
+      "json"
+    ],
+    "native_exit": 0,
+    "id": "probe:src_proof.rs:return_value:d87248f4",
+    "classification": "reachable_unrevealed",
+    "whole_tail_receipt": false
+  }
+]

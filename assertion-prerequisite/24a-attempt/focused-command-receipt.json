@@ -1,0 +1,83 @@
+[
+  {
+    "name": "owner-pin-confirm",
+    "command": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--lib",
+      "owner_pin"
+    ],
+    "started_utc": "2026-10-18T19:33:16.071194+00:00",
+    "native_exit": 0,
+    "head": "24a203c27655e5b1431aee8e91b30ba7ba710721"
+  },
+  {
+    "name": "cache-generation",
+    "command": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--lib",
+      "schema_versions_pin_the_role_composition_generation"
+    ],
+    "started_utc": "2026-10-18T19:33:22.560029+00:00",
+    "native_exit": 0,
+    "head": "24a203c27655e5b1431aee8e91b30ba7ba710721"
+  },
+  {
+    "name": "cache-integrity",
+    "command": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--lib",
+      "integrity_policy_checks_current_digest_after_decoded_identity_and_excludes_invalid_inventory"
+    ],
+    "started_utc": "2026-10-18T19:33:22.851485+00:00",
+    "native_exit": 0,
+    "head": "24a203c27655e5b1431aee8e91b30ba7ba710721"
+  },
+  {
+    "name": "focused-final",
+    "command": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--test",
+      "local_module_glob_assertions",
+      "--test",
+      "whole_tail_match_observation",
+      "--test",
+      "field_match_selector",
+      "--test",
+      "native_path_roots"
+    ],
+    "started_utc": "2026-10-18T19:33:23.048927+00:00",
+    "native_exit": 0,
+    "head": "24a203c27655e5b1431aee8e91b30ba7ba710721"
+  },
+  {
+    "name": "build-final-cli",
+    "command": [
+      "cargo",
+      "build",
+      "--locked",
+      "-p",
+      "ripr",
+      "--bin",
+      "ripr"
+    ],
+    "started_utc": "2026-10-18T19:34:57.571469+00:00",
+    "native_exit": 0,
+    "head": "24a203c27655e5b1431aee8e91b30ba7ba710721"
+  }
+]

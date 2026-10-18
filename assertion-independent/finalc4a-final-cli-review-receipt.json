@@ -1,0 +1,446 @@
+{
+  "head": "c4a8f7828e15426c4d872718f66bd4bac3ab0daf",
+  "binary": "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+  "sha256": "913bc60fcd8591c13b019c630f67a79882e92dd34cf02f9dedf26642b3fa68fe",
+  "prior_control_count": 14,
+  "unique_controls": 23,
+  "records": [
+    {
+      "case": "arm_return",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-review/arm_return",
+        "--diff",
+        "/workspace/5500-review/arm_return/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_exit": 0,
+      "id": "probe:src_lib.rs:match_arm:8e7ef68c",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "binding_multiline",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-review/binding_multiline",
+        "--diff",
+        "/workspace/5500-review/binding_multiline/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_exit": 0,
+      "id": "probe:src_lib.rs:match_arm:8e7ef68c",
+      "classification": "exposed",
+      "whole_tail_receipt": true
+    },
+    {
+      "case": "binding_same_line",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-review/binding_same_line",
+        "--diff",
+        "/workspace/5500-review/binding_same_line/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_exit": 0,
+      "id": "probe:src_lib.rs:match_arm:8e7ef68c",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "comment_string_words",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-review/comment_string_words",
+        "--diff",
+        "/workspace/5500-review/comment_string_words/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_exit": 0,
+      "id": "probe:src_lib.rs:match_arm:8e7ef68c",
+      "classification": "exposed",
+      "whole_tail_receipt": true
+    },
+    {
+      "case": "literal_expected_wrong",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-review/literal_expected_wrong",
+        "--diff",
+        "/workspace/5500-review/literal_expected_wrong/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_exit": 0,
+      "id": "probe:src_lib.rs:match_arm:8e7ef68c",
+      "classification": "exposed",
+      "whole_tail_receipt": true
+    },
+    {
+      "case": "macro_max",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-review/macro_max",
+        "--diff",
+        "/workspace/5500-review/macro_max/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_exit": 0,
+      "id": "probe:src_lib.rs:match_arm:8e7ef68c",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "macro_max_wrong",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-review/macro_max_wrong",
+        "--diff",
+        "/workspace/5500-review/macro_max_wrong/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_exit": 0,
+      "id": "probe:src_lib.rs:match_arm:8e7ef68c",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "macro_scrutinee",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-review/macro_scrutinee",
+        "--diff",
+        "/workspace/5500-review/macro_scrutinee/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_exit": 0,
+      "id": "probe:src_lib.rs:match_arm:5825018b",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "non_tail",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-review/non_tail",
+        "--diff",
+        "/workspace/5500-review/non_tail/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_exit": 0,
+      "id": "probe:src_lib.rs:match_arm:8e7ef68c",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "positive",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-review/positive",
+        "--diff",
+        "/workspace/5500-review/positive/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_exit": 0,
+      "id": "probe:src_lib.rs:match_arm:8e7ef68c",
+      "classification": "exposed",
+      "whole_tail_receipt": true
+    },
+    {
+      "case": "scrutinee_both-zero",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-review/scrutinee_both-zero",
+        "--diff",
+        "/workspace/5500-review/scrutinee_both-zero/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_exit": 0,
+      "id": "probe:src_lib.rs:match_arm:0ca211c2",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "scrutinee_none-zero",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-review/scrutinee_none-zero",
+        "--diff",
+        "/workspace/5500-review/scrutinee_none-zero/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_exit": 0,
+      "id": "probe:src_lib.rs:match_arm:0ca211c2",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "scrutinee_return",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-review/scrutinee_return",
+        "--diff",
+        "/workspace/5500-review/scrutinee_return/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_exit": 0,
+      "id": "probe:src_lib.rs:match_arm:0ca211c2",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "scrutinee_some-zero",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-review/scrutinee_some-zero",
+        "--diff",
+        "/workspace/5500-review/scrutinee_some-zero/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_exit": 0,
+      "id": "probe:src_lib.rs:match_arm:0ca211c2",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "rootmacro",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-macro-repair/repro",
+        "--diff",
+        "/workspace/5500-macro-repair/repro/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_exit": 0,
+      "id": "probe:src_lib.rs:match_arm:54eaf025",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "moduleMAX",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-macro-review/expected-identity",
+        "--diff",
+        "/workspace/5500-macro-review/expected-identity/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_exit": 0,
+      "id": "probe:src_lib.rs:match_arm:54eaf025",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "localproc",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-macro-review/expected-proc-local",
+        "--diff",
+        "/workspace/5500-macro-review/expected-proc-local/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_exit": 0,
+      "id": "probe:src_lib.rs:match_arm:54eaf025",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "localmacro",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-macro-repair/expected-local",
+        "--diff",
+        "/workspace/5500-macro-repair/expected-local/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_exit": 0,
+      "id": "probe:src_lib.rs:match_arm:54eaf025",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "registered_scalar",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/ripr-swarm/fixtures/whole_tail_match_macro_scalar/input",
+        "--diff",
+        "/workspace/ripr-swarm/fixtures/whole_tail_match_macro_scalar/diff.patch",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_exit": 0,
+      "id": "probe:src_lib.rs:match_arm:54eaf025",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "registered_MAX",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/ripr-swarm/fixtures/whole_tail_match_macro_expected/input",
+        "--diff",
+        "/workspace/ripr-swarm/fixtures/whole_tail_match_macro_expected/diff.patch",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_exit": 0,
+      "id": "probe:src_lib.rs:match_arm:d59d892c",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "ancestor_original",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-macro-review/ancestor-macro-use-local-tests",
+        "--diff",
+        "/workspace/5500-macro-review/ancestor-macro-use-local-tests/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_exit": 0,
+      "id": "probe:src_owned.rs:match_arm:b7574575",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "ancestor_root_tests",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-macro-review/ancestor-macro-use",
+        "--diff",
+        "/workspace/5500-macro-review/ancestor-macro-use/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_exit": 0,
+      "id": "probe:src_owned.rs:match_arm:b7574575",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false
+    },
+    {
+      "case": "ancestor_primitive_positive",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-macro-review/ancestor-positive-local-tests",
+        "--diff",
+        "/workspace/5500-macro-review/ancestor-positive-local-tests/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_exit": 0,
+      "id": "probe:src_owned.rs:match_arm:b7574575",
+      "classification": "exposed",
+      "whole_tail_receipt": true
+    }
+  ]
+}

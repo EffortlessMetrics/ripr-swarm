@@ -1,0 +1,394 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "ready",
+  "root": "/workspace/ripr-swarm/fixtures/whole_tail_match_macro_expected/input",
+  "summary": {"changed_rust_files":1,"probes":4,"findings":4,"exposed":0,"weakly_exposed":4,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:2dfb105ff4fcd58539c013b0bb67818028f4189c787c5cf1c1f1862c7421a49c","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":15,"candidate_line_count":4,"probe_count":4,"finding_count":4},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:field_construction:d07a2e86",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:field_construction:d07a2e86",
+        "family": "field_construction",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "struct Input { flag: bool }"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach changed owner: observed"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"weak","confidence":"low","summary":"No complete owner-bound propagation witness found for constructed field: struct Input { flag: bool }"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no field-value assertion observes the constructed field"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach changed owner: observed", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: No complete owner-bound propagation witness found for constructed field: struct Input { flag: bool }", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no field-value assertion observes the constructed field", "local flow reaches constructed field: struct Input { flag: bool } (line 2)", "related test src/lib.rs:14 observed uses strong whole object equality oracle: assert_eq!(charge(&Input { flag: true }), u64::MAX);", "source assertion argument value true at line 14", "source constant value u64::MAX at line 14", "source function argument value true at line 14", "missing discriminator struct Input { flag: bool }: No field-value assertion observes the constructed field: struct Input { flag: bool }"],
+      "flow_sinks": [
+        {"kind":"struct_field","text":"struct Input { flag: bool }","line":2}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no field-value assertion observes the constructed field", "No complete owner-bound propagation witness found for constructed field: struct Input { flag: bool }", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach changed owner: observed"],
+      "missing": ["Missing discriminator value: struct Input { flag: bool }", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "14": "assert_eq!(charge(&Input { flag: true }), u64::MAX);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 14,
+            "value": "true",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 14,
+            "value": "u64::MAX",
+            "context": "constant"
+          },
+          {
+            "line": 14,
+            "value": "true",
+            "context": "function_argument",
+            "provenance": "fn observed() { assert_eq!(charge(&Input { flag: true }), u64::MAX); }"
+          }
+        ],
+        "missing_discriminators": [
+          {
+            "value": "struct Input { flag: bool }",
+            "reason": "No field-value assertion observes the constructed field: struct Input { flag: bool }",
+            "flow_sink": {"kind":"struct_field","text":"struct Input { flag: bool }","line":2}
+          }
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 14,
+          "value": "true",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 14,
+          "value": "u64::MAX",
+          "context": "constant"
+        },
+        {
+          "line": 14,
+          "value": "true",
+          "context": "function_argument",
+          "provenance": "fn observed() { assert_eq!(charge(&Input { flag: true }), u64::MAX); }"
+        }
+      ],
+      "missing_discriminators": [
+        {
+          "value": "struct Input { flag: bool }",
+          "reason": "No field-value assertion observes the constructed field: struct Input { flag: bool }",
+          "flow_sink": {"kind":"struct_field","text":"struct Input { flag: bool }","line":2}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "observed",
+          "file": "src/lib.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "whole_object_equality",
+          "oracle": "assert_eq!(charge(&Input { flag: true }), u64::MAX);",
+          "relation_reason": "assertion_target_affinity",
+          "relation_confidence": "medium",
+          "miss": "missing_exact_assertion",
+          "why": "no assertion pins `struct Input { flag: bool }`"
+        }
+      ],
+      "stop_reasons": ["no_changed_rust_line"],
+      "oracle_kind": "whole_object_equality",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:match_arm:d59d892c",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:match_arm:d59d892c",
+        "family": "match_arm",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 4,
+        "expression": "match input.flag"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach charge: observed"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: match input.flag"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach charge: observed", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: match input.flag", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: match input.flag (line 4)", "related test src/lib.rs:14 observed uses strong whole object equality oracle: assert_eq!(charge(&Input { flag: true }), u64::MAX);", "source constant value u64::MAX at line 14", "source function argument value input = true at line 14"],
+      "flow_sinks": [
+        {"kind":"match_arm","text":"match input.flag","line":4}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: match input.flag", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach charge: observed", "limitation_last_established_edge: owner parameter field `input.flag` is the changed tail match selector", "limitation_first_unresolved_edge: `input.flag` value at the owner invocation and whether a related assertion observes that invocation's returned value", "limitation_analyzer_route: analysis/rust-field-match-selector", "limitation_non_claim: named analyzer limitation only; no coverage, test adequacy, gap absence, or same-invocation proof"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "14": "assert_eq!(charge(&Input { flag: true }), u64::MAX);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 14,
+            "value": "u64::MAX",
+            "context": "constant"
+          },
+          {
+            "line": 14,
+            "value": "input = true",
+            "context": "function_argument",
+            "provenance": "fn observed() { assert_eq!(charge(&Input { flag: true }), u64::MAX); }"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 14,
+          "value": "u64::MAX",
+          "context": "constant"
+        },
+        {
+          "line": 14,
+          "value": "input = true",
+          "context": "function_argument",
+          "provenance": "fn observed() { assert_eq!(charge(&Input { flag: true }), u64::MAX); }"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "observed",
+          "file": "src/lib.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "whole_object_equality",
+          "oracle": "assert_eq!(charge(&Input { flag: true }), u64::MAX);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "whole_object_equality",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Inspect `input.flag` at the existing owner call and whether a related assertion observes that call's returned value; add or strengthen a test only if that inspection identifies a missing observation.",
+      "suggested_next_action": "Inspect `input.flag` at the existing owner call and whether a related assertion observes that call's returned value; add or strengthen a test only if that inspection identifies a missing observation.",
+      "language": "rust",
+      "static_limit_kind": "rust_field_match_selector_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/rust-field-match-selector",
+        "first_unresolved_edge": "`input.flag` value at the owner invocation and whether a related assertion observes that invocation's returned value",
+        "kind": "rust_field_match_selector_unresolved",
+        "last_established_edge": "owner parameter field `input.flag` is the changed tail match selector",
+        "non_claim": "named analyzer limitation only; no coverage, test adequacy, gap absence, or same-invocation proof"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:match_arm:4c5c074c",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:match_arm:4c5c074c",
+        "family": "match_arm",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 5,
+        "expression": "true =>"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach charge: observed"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: true =>"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach charge: observed", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: true =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: true => (line 5)", "related test src/lib.rs:14 observed uses strong whole object equality oracle: assert_eq!(charge(&Input { flag: true }), u64::MAX);", "source constant value u64::MAX at line 14", "source function argument value input = true at line 14"],
+      "flow_sinks": [
+        {"kind":"match_arm","text":"true =>","line":5}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: true =>", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach charge: observed", "limitation_last_established_edge: owner parameter field `input.flag` is the changed tail match selector", "limitation_first_unresolved_edge: `input.flag` value at the owner invocation and whether a related assertion observes that invocation's returned value", "limitation_analyzer_route: analysis/rust-field-match-selector", "limitation_non_claim: named analyzer limitation only; no coverage, test adequacy, gap absence, or same-invocation proof"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "14": "assert_eq!(charge(&Input { flag: true }), u64::MAX);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 14,
+            "value": "u64::MAX",
+            "context": "constant"
+          },
+          {
+            "line": 14,
+            "value": "input = true",
+            "context": "function_argument",
+            "provenance": "fn observed() { assert_eq!(charge(&Input { flag: true }), u64::MAX); }"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 14,
+          "value": "u64::MAX",
+          "context": "constant"
+        },
+        {
+          "line": 14,
+          "value": "input = true",
+          "context": "function_argument",
+          "provenance": "fn observed() { assert_eq!(charge(&Input { flag: true }), u64::MAX); }"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "observed",
+          "file": "src/lib.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "whole_object_equality",
+          "oracle": "assert_eq!(charge(&Input { flag: true }), u64::MAX);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "whole_object_equality",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Inspect `input.flag` at the existing owner call and whether a related assertion observes that call's returned value; add or strengthen a test only if that inspection identifies a missing observation.",
+      "suggested_next_action": "Inspect `input.flag` at the existing owner call and whether a related assertion observes that call's returned value; add or strengthen a test only if that inspection identifies a missing observation.",
+      "language": "rust",
+      "static_limit_kind": "rust_field_match_selector_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/rust-field-match-selector",
+        "first_unresolved_edge": "`input.flag` value at the owner invocation and whether a related assertion observes that invocation's returned value",
+        "kind": "rust_field_match_selector_unresolved",
+        "last_established_edge": "owner parameter field `input.flag` is the changed tail match selector",
+        "non_claim": "named analyzer limitation only; no coverage, test adequacy, gap absence, or same-invocation proof"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:match_arm:eeeda15b",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:match_arm:eeeda15b",
+        "family": "match_arm",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 6,
+        "expression": "false =>"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach charge: observed"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: false =>"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach charge: observed", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: false =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: false => (line 6)", "related test src/lib.rs:14 observed uses strong whole object equality oracle: assert_eq!(charge(&Input { flag: true }), u64::MAX);", "source constant value u64::MAX at line 14", "source function argument value input = true at line 14"],
+      "flow_sinks": [
+        {"kind":"match_arm","text":"false =>","line":6}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: false =>", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach charge: observed", "limitation_last_established_edge: owner parameter field `input.flag` is the changed tail match selector", "limitation_first_unresolved_edge: `input.flag` value at the owner invocation and whether a related assertion observes that invocation's returned value", "limitation_analyzer_route: analysis/rust-field-match-selector", "limitation_non_claim: named analyzer limitation only; no coverage, test adequacy, gap absence, or same-invocation proof"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "14": "assert_eq!(charge(&Input { flag: true }), u64::MAX);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 14,
+            "value": "u64::MAX",
+            "context": "constant"
+          },
+          {
+            "line": 14,
+            "value": "input = true",
+            "context": "function_argument",
+            "provenance": "fn observed() { assert_eq!(charge(&Input { flag: true }), u64::MAX); }"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 14,
+          "value": "u64::MAX",
+          "context": "constant"
+        },
+        {
+          "line": 14,
+          "value": "input = true",
+          "context": "function_argument",
+          "provenance": "fn observed() { assert_eq!(charge(&Input { flag: true }), u64::MAX); }"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "observed",
+          "file": "src/lib.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "whole_object_equality",
+          "oracle": "assert_eq!(charge(&Input { flag: true }), u64::MAX);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "whole_object_equality",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Inspect `input.flag` at the existing owner call and whether a related assertion observes that call's returned value; add or strengthen a test only if that inspection identifies a missing observation.",
+      "suggested_next_action": "Inspect `input.flag` at the existing owner call and whether a related assertion observes that call's returned value; add or strengthen a test only if that inspection identifies a missing observation.",
+      "language": "rust",
+      "static_limit_kind": "rust_field_match_selector_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/rust-field-match-selector",
+        "first_unresolved_edge": "`input.flag` value at the owner invocation and whether a related assertion observes that invocation's returned value",
+        "kind": "rust_field_match_selector_unresolved",
+        "last_established_edge": "owner parameter field `input.flag` is the changed tail match selector",
+        "non_claim": "named analyzer limitation only; no coverage, test adequacy, gap absence, or same-invocation proof"
+      },
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "canonical_next_action": {"schema_version":"canonical_next_action.v1","producer":"check_top_result","subject":{"root":"/workspace/ripr-swarm/fixtures/whole_tail_match_macro_expected/input","diff_source":{"committed":{"base":null,"head":null}},"item":"probe:src_lib.rs:match_arm:d59d892c"},"currentness":{"head_expected":null,"head_observed":null,"config_expected":null,"config_observed":null},"action_class":"unsupported_or_limited","stop":{"kind":"check_triage","case":"static_limited","detail_route":"ripr explain --root /workspace/ripr-swarm/fixtures/whole_tail_match_macro_expected/input --diff /workspace/ripr-swarm/fixtures/whole_tail_match_macro_expected/diff.patch --mode ready probe:src_lib.rs:match_arm:d59d892c"},"alternatives":[{"label":"considered finding probe:src_lib.rs:field_construction:d07a2e86","route":"ripr explain --root /workspace/ripr-swarm/fixtures/whole_tail_match_macro_expected/input --diff /workspace/ripr-swarm/fixtures/whole_tail_match_macro_expected/diff.patch --mode ready probe:src_lib.rs:field_construction:d07a2e86"},{"label":"considered finding probe:src_lib.rs:match_arm:4c5c074c","route":"ripr explain --root /workspace/ripr-swarm/fixtures/whole_tail_match_macro_expected/input --diff /workspace/ripr-swarm/fixtures/whole_tail_match_macro_expected/diff.patch --mode ready probe:src_lib.rs:match_arm:4c5c074c"}],"non_claim":"Advisory selection from producer-bound state; it does not execute, complete, or prove the repair, and the display string is never execution authority."}
+}

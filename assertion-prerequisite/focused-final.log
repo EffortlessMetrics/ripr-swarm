@@ -1,0 +1,61 @@
+   Compiling ripr v0.11.0 (/workspace/5500-assertion-source/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 1m 26s
+     Running tests/field_match_selector.rs (/workspace/5500-target/debug/deps/field_match_selector-592b990fc609014b)
+
+running 15 tests
+test a_direct_parameter_match_keeps_its_genuine_unselected_arm_gap ... ok
+test a_callable_module_binding_cannot_borrow_a_root_helpers_record ... ok
+test a_direct_record_selector_is_paired_with_its_own_asserted_call ... ok
+test a_field_selector_cannot_credit_an_assertion_that_does_not_execute ... ok
+test a_foreign_option_constant_cannot_name_the_selected_field_arm ... ok
+test a_direct_record_sibling_names_the_missing_arm_and_wrong_calls_never_credit_it ... ok
+test a_helper_returned_none_is_a_real_sibling_gap_not_an_unsupported_selector ... ok
+test an_imported_statement_macro_cannot_supply_an_unread_option_binding ... ok
+test a_helper_returned_mutable_record_selects_its_exact_asserted_call ... ok
+test ffi_binding_keeps_its_prior_limitation_without_field_selector_detail ... ok
+test field_match_selector_names_all_three_rows_without_credit_or_wire_shape_change ... ok
+test field_match_selector_never_borrows_an_unrelated_or_overwritten_observation ... ok
+test owner_doc_comments_preserve_the_asserted_field_selector ... ok
+test raw_identifier_option_shadows_cannot_borrow_prelude_identity ... ok
+test helper_mutable_field_projection_refuses_unrelated_or_invalidated_values ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.97s
+
+     Running tests/local_module_glob_assertions.rs (/workspace/5500-target/debug/deps/local_module_glob_assertions-6481397db659272b)
+
+running 3 tests
+test custom_macro_and_opaque_module_exports_never_gain_assertion_identity ... ok
+test resolved_local_module_glob_keeps_standard_assertion_identity ... ok
+test local_module_glob_refuses_unproved_namespace_shapes ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/native_path_roots.rs (/workspace/5500-target/debug/deps/native_path_roots-55b00665eec56961)
+
+running 5 tests
+test common::fixture_git::tests::resolves_the_subcommand_past_global_options ... ok
+test common::fixture_git::tests::zero_deadline_reports_timeouts_without_retrying_state ... ok
+test long_root_check_round_trips_or_names_the_windows_path_limit ... ok
+test spaced_root_check_and_file_fact_cache_round_trip ... ok
+test unicode_root_check_and_file_fact_cache_round_trip ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+
+     Running tests/whole_tail_match_observation.rs (/workspace/5500-target/debug/deps/whole_tail_match_observation-f975328be5f8d501)
+
+running 12 tests
+test ancestor_macro_prelude_cannot_supply_primitive_derive_identity ... ok
+test added_documented_owner_header_observes_its_whole_return ... ok
+test existing_nested_and_mismatched_owners_never_receive_the_receipt ... ok
+test external_item_macro_cannot_supply_primitive_expected_identity ... ok
+test immutable_whole_result_binding_preserves_observation ... ok
+test neighboring_old_text_does_not_replace_validated_new_owner_custody ... ok
+test external_item_macro_cannot_supply_primitive_return_identity ... ok
+test nonlocal_or_macro_exit_in_the_tail_cannot_bypass_header_observation ... ok
+test opaque_or_rebound_expected_values_never_gain_new_credit ... ok
+test saturated_opaque_imported_input_observes_the_whole_result ... ok
+test whole_tail_receipt_never_selects_an_unobserved_sibling_arm ... ok
+test whole_result_refuses_unobserved_or_ambiguous_assertions ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.48s
+

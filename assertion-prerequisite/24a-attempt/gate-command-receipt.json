@@ -1,0 +1,57 @@
+[
+  {
+    "name": "cache-copied-generation-rejection",
+    "command": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--lib",
+      "integrity_missing_and_bad_digest_reject_all_classified_and_fingerprint_families"
+    ],
+    "started_utc": "2026-10-18T19:36:29.383952+00:00",
+    "native_exit": 0,
+    "head": "24a203c27655e5b1431aee8e91b30ba7ba710721"
+  },
+  {
+    "name": "retained-rerun",
+    "command": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--test",
+      "cli_smoke",
+      "rerun_ledger_recovery::"
+    ],
+    "started_utc": "2026-10-18T19:36:29.639001+00:00",
+    "native_exit": 0,
+    "head": "24a203c27655e5b1431aee8e91b30ba7ba710721"
+  },
+  {
+    "name": "goldens-prepare",
+    "command": [
+      "cargo",
+      "xtask",
+      "goldens",
+      "prepare",
+      "--offline"
+    ],
+    "started_utc": "2026-10-18T19:36:40.757691+00:00",
+    "native_exit": 0,
+    "head": "24a203c27655e5b1431aee8e91b30ba7ba710721"
+  },
+  {
+    "name": "check-fast",
+    "command": [
+      "cargo",
+      "xtask",
+      "check-fast"
+    ],
+    "started_utc": "2026-10-18T19:37:35.515579+00:00",
+    "native_exit": 1,
+    "head": "24a203c27655e5b1431aee8e91b30ba7ba710721"
+  }
+]

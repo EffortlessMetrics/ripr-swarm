@@ -1,0 +1,30 @@
+[
+  {
+    "case": "standard",
+    "variant": "original",
+    "compile_exit": 0,
+    "test_exit": 0,
+    "owner_sha256": "150fe571ba79f07096b321f9e82282e70e4f278b9f5ac99fc934c498e7dce159"
+  },
+  {
+    "case": "standard",
+    "variant": "selected-zero",
+    "compile_exit": 0,
+    "test_exit": 101,
+    "owner_sha256": "d278ba4320a636ff657f079c8e3eb7a502a99e1dd0b9e66843effad6d4575985"
+  },
+  {
+    "case": "custom",
+    "variant": "original",
+    "compile_exit": 0,
+    "test_exit": 0,
+    "owner_sha256": "4abf6ff315d24caf4fdbc6b7df68703693b881a64ee9333ada7770a486b66cf5"
+  },
+  {
+    "case": "custom",
+    "variant": "selected-zero",
+    "compile_exit": 0,
+    "test_exit": 0,
+    "owner_sha256": "786427e3aa368793299de5643397eafa9db5394ac5661c80315dd863a01fd040"
+  }
+]

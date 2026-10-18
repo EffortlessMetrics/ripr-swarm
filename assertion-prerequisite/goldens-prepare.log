@@ -1,0 +1,9 @@
+   Compiling repo-policy v0.1.0 (/workspace/5500-assertion-source/tools/repo-policy)
+   Compiling xtask v0.1.0 (/workspace/5500-assertion-source/xtask)
+    Finished `dev` profile [unoptimized] target(s) in 54.63s
+     Running `/workspace/5500-target/debug/xtask goldens prepare --offline`
+fixture: owner_return_pin_fallible_literal
+environment: CARGO_HOME="/workspace/.cargo" RUSTUP_TOOLCHAIN="1.95.0" RUSTUP_HOME="/workspace/.rustup" RUSTUP_AUTO_INSTALL="0"
+cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+rustc 1.95.0 (59807616e 2026-04-14)
+prepared owner_return_pin_fallible_literal; retry fixture/golden checks with the environment above

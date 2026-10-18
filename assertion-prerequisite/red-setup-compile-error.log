@@ -1,0 +1,19 @@
+   Compiling ripr v0.11.0 (/workspace/5500-assertion-source/crates/ripr)
+error[E0507]: cannot move out of index of `Vec<&Finding>`
+  --> crates/ripr/tests/local_module_glob_assertions.rs:42:17
+   |
+42 |     let class = findings[0].class;
+   |                 ^^^^^^^^^^^^^^^^^ move occurs because value has type `ExposureClass`, which does not implement the `Copy` trait
+   |
+help: consider borrowing here
+   |
+42 |     let class = &findings[0].class;
+   |                 +
+help: consider cloning the value if the performance cost is acceptable
+   |
+42 |     let class = findings[0].class.clone();
+   |                                  ++++++++
+
+For more information about this error, try `rustc --explain E0507`.
+error: could not compile `ripr` (test "local_module_glob_assertions") due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
