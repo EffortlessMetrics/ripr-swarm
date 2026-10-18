@@ -3,4 +3,4 @@
   (`Chunk` to `Chunk<'_>`) or moves a primitive integer constant from its
   deprecated module (`core::i32::MAX` to `i32::MAX`) no longer seeds a
   probe, so lint-cleanup commits stop naming a refactor as the top "Start
-  here" finding.
+  here" finding (#8747).
