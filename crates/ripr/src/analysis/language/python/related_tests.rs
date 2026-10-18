@@ -543,7 +543,9 @@ fn protocol_entry_calls(text: &str, body: &str, local: &str, builtin: &str) -> V
     let bound = match constructions.as_slice() {
         [only] => binding_target_for_construction(body, *only)
             .filter(|var| assignment_count(body, var) == 1)
-            .filter(|var| !keyword_or_operator_binds_text(body, var, true)),
+            .filter(|var| !keyword_or_operator_binds_text(body, var, true))
+            .filter(|var| !binds_in_target_list(body, var))
+            .filter(|_| construction_is_whole_value(body, constructions[0], &construct)),
         _ => None,
     };
     let needle = format!("{builtin}(");
@@ -569,11 +571,51 @@ fn protocol_entry_calls(text: &str, body: &str, local: &str, builtin: &str) -> V
         .collect()
 }
 
+/// Whether `var` appears in a position that can bind it through a target list
+/// or an annotation (`x, r = ...`, `for i, r in ...`, `with a as (b, r)`,
+/// `r: list = ...`). Any `var,` / `, var` / `var:` occurrence counts, which
+/// also demotes some reads (`f(r, 1)`); that only fails closed.
+fn binds_in_target_list(body: &str, var: &str) -> bool {
+    body.match_indices(var).any(|(idx, _)| {
+        let end = idx + var.len();
+        python_callee_start_has_boundary(body, idx)
+            && !next_char_is_identifier(body, end)
+            && !python_text_hides_code(body, idx)
+            && {
+                let after = body[end..].trim_start_matches([' ', '\t']);
+                let before = body[..idx].trim_end_matches([' ', '\t']);
+                after.starts_with(',')
+                    || (after.starts_with(':') && !after.starts_with(":="))
+                    || before.ends_with(',')
+                    || before.ends_with('*')
+            }
+    })
+}
+
+/// Whether the construction at `idx` is the whole right-hand side of its
+/// statement: its matching paren ends the line (or is followed only by a
+/// comment), so `Class(0).as_list()`, `Class(0) or [1]` and
+/// `Class(0) if c else [1]` do not bind the receiver.
+fn construction_is_whole_value(body: &str, idx: usize, construct: &str) -> bool {
+    let open = idx + construct.len() - 1;
+    super::no_behavior::matching_call_paren(body, open).is_some_and(|close| {
+        let rest = body[close + 1..].split('\n').next().unwrap_or("").trim();
+        rest.is_empty() || rest.starts_with('#')
+    })
+}
+
 /// Whether the test rebinds the builtin `name` (an import, an assignment,
 /// a `def`/`class`/`for`/`as`/walrus target, or a parameter), so a call spelled
 /// `name(...)` is no longer the builtin.
 fn builtin_is_shadowed(test: &PythonTest, name: &str) -> bool {
-    test.imports.iter().any(|import| import.alias == name) || test_rebinds_import_alias(test, name)
+    test.imports.iter().any(|import| import.alias == name)
+        || test_rebinds_import_alias(test, name)
+        || test.constant_rebinding.module_opaque
+        || test
+            .constant_rebinding
+            .module_bound
+            .iter()
+            .any(|bound| bound == name)
 }
 
 /// Protocol-entry calls of the owner dunder in `text` on a receiver bound to

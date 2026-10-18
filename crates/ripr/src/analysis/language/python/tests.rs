@@ -7167,9 +7167,23 @@ fn protocol_entry_stays_uncredited_without_a_bound_owner_receiver() -> Result<()
         "from src.nr import numeric_range\n\n\ndef test_suffix():\n    assert list(my_reversed(numeric_range(0))) == []\n",
         // The receiver is rebound by a loop target or a `with ... as` target.
         "from src.nr import numeric_range\n\n\ndef test_loop():\n    r = numeric_range(0)\n    for r in [[1]]:\n        pass\n    assert list(reversed(r)) == [1]\n",
-        "from src.nr import numeric_range\n\n\ndef test_with():\n    r = numeric_range(0)\n    with open_it() as r:\n        pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_with():\n    r = numeric_range(0)\n    with open_it() as r :\n        pass\n    assert list(reversed(r)) == [1]\n",
         "from src.nr import numeric_range\n\n\ndef test_walrus():\n    r = numeric_range(0)\n    (r := [1])\n    assert list(reversed(r)) == [1]\n",
         "from src.nr import numeric_range\n\n\ndef test_augmented():\n    r = numeric_range(0)\n    r += [1]\n    assert list(reversed(r)) == [1]\n",
+        // The receiver is rebound through a tuple target, an annotation or a loop tuple.
+        "from src.nr import numeric_range\n\n\ndef test_tuple_target():\n    r = numeric_range(0)\n    x, r = 1, [1]\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_annotated():\n    r = numeric_range(0)\n    r: list = [1]\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_loop_tuple():\n    r = numeric_range(0)\n    for i, r in enumerate([[1]]):\n        pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_with_tuple():\n    r = numeric_range(0)\n    with a as (b, r):\n        pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_def_local():\n    r = numeric_range(0)\n    def r():\n        return [1]\n    assert list(reversed(r)) == [1]\n",
+        // The construction is only part of the bound value.
+        "from src.nr import numeric_range\n\n\ndef test_chained():\n    r = numeric_range(0).as_list()\n    assert list(reversed(r)) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_or():\n    r = numeric_range(0) or [1]\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_conditional():\n    r = numeric_range(0) if c else [1]\n    assert list(reversed(r)) == [1]\n",
+        // The entry name is replaced at module level.
+        "from src.nr import numeric_range\n\n\ndef reversed(x):\n    return iter([])\n\n\ndef test_module_def_entry():\n    assert list(reversed(numeric_range(0))) == []\n",
+        "from src.nr import numeric_range\nimport helpers\n\nreversed = helpers.my_reversed\n\n\ndef test_module_assign_entry():\n    assert list(reversed(numeric_range(0))) == []\n",
+        "from helpers import *\nfrom src.nr import numeric_range\n\n\ndef test_star_entry():\n    assert list(reversed(numeric_range(0))) == []\n",
         // The entry name is replaced by an import or a local definition.
         "from helpers import reversed\nfrom src.nr import numeric_range\n\n\ndef test_imported_entry():\n    assert list(reversed(numeric_range(0))) == []\n",
         "from src.nr import numeric_range\n\n\ndef test_local_entry():\n    def reversed(x):\n        return x\n    assert list(reversed(numeric_range(0))) == []\n",
@@ -7204,6 +7218,9 @@ fn protocol_entry_outside_the_assertion_or_under_an_unordered_wrapper_is_not_cre
         "from src.nr import numeric_range\n\n\ndef test_set():\n    assert set(reversed(numeric_range(0))) == set()\n",
         "from src.nr import numeric_range\n\n\ndef test_frozenset():\n    assert frozenset(reversed(numeric_range(0))) == frozenset()\n",
         // A replaced wrapper is not the order-preserving builtin.
+        "from src.nr import numeric_range\n\n\ndef list(x):\n    return []\n\n\ndef test_module_def_wrapper():\n    assert list(reversed(numeric_range(0))) == []\n",
+        "from src.nr import numeric_range\nimport helpers\n\nlist = helpers.my_list\n\n\ndef test_module_assign_wrapper():\n    assert list(reversed(numeric_range(0))) == []\n",
+        "from helpers import *\nfrom src.nr import numeric_range\n\n\ndef test_star_wrapper():\n    assert list(reversed(numeric_range(0))) == []\n",
         "from helpers import list\nfrom src.nr import numeric_range\n\n\ndef test_imported_wrapper():\n    assert list(reversed(numeric_range(0))) == []\n",
     ] {
         let (finding, _) = classify_reversed_guard(test_src)?;
