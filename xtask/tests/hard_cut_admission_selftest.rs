@@ -40,13 +40,20 @@ fn release_cut_admission_self_test_passes() -> Result<(), String> {
 /// Executes the real action shell with a stubbed read-only `gh` so the
 /// wrapper boundary (live-ref re-read) is exercised, not only the pure scripts.
 fn run_wrapper(second_ref_packet_state: &str, initial_absent: bool) -> Result<i32, String> {
-    run_scenario(second_ref_packet_state, initial_absent, None)
+    run_scenario(second_ref_packet_state, initial_absent, None).map(|(code, _)| code)
 }
 
 /// The base carries an `active` packet bound to the product cut `b…b`; the
 /// live ref does not move. `base_parent` is the first parent of the base commit.
-fn run_active_wrapper(files_json: &str, base_parent: &str) -> Result<i32, String> {
-    run_scenario("active", false, Some((files_json, base_parent)))
+/// Returns the exit code and the `cut_reason` the action published.
+fn run_active_wrapper(files_json: &str, base_parent: &str) -> Result<(i32, String), String> {
+    let (code, outputs) = run_scenario("active", false, Some((files_json, base_parent)))?;
+    let reason = outputs
+        .lines()
+        .find_map(|line| line.strip_prefix("cut_reason="))
+        .unwrap_or("")
+        .to_string();
+    Ok((code, reason))
 }
 
 static NEXT_SCENARIO: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -55,7 +62,7 @@ fn run_scenario(
     second_ref_packet_state: &str,
     initial_absent: bool,
     active: Option<(&str, &str)>,
-) -> Result<i32, String> {
+) -> Result<(i32, String), String> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     let action_dir = root.join(".github/actions/pr-candidate-admission");
     let yaml = std::fs::read_to_string(action_dir.join("action.yml")).map_err(|e| e.to_string())?;
@@ -131,8 +138,8 @@ case "$url" in
     esac ;;
   */contents/*)
     if [ -e "$CONTROL_TMP/initial_absent" ]; then echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi
-    if [ -e "$CONTROL_TMP/active.json" ]; then base64 -w0 "$CONTROL_TMP/active.json" | jq -R '{content: .}'; exit 0; fi
-    base64 -w0 "$CONTROL_TMP/inactive.json" | jq -R '{content: .}' ;;
+    if [ -e "$CONTROL_TMP/active.json" ]; then base64 "$CONTROL_TMP/active.json" | tr -d '\r\n' | jq -R '{content: .}'; exit 0; fi
+    base64 "$CONTROL_TMP/inactive.json" | tr -d '\r\n' | jq -R '{content: .}' ;;
   */files?*) if [ -e "$CONTROL_TMP/files.json" ]; then cat "$CONTROL_TMP/files.json"; else echo '[{"filename":"src/lib.rs","status":"modified"}]'; fi ;;
   */pulls\?state*) echo '[]' ;;
   *) echo '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"o/r"}},"base":{"ref":"main"},"changed_files":1,"additions":1,"deletions":0,"body":"Governing issue or accepted claim: #5391\nAcceptance delta (one sentence): race control"}' ;;
@@ -165,12 +172,14 @@ esac
         .env("ADMISSION_MODE", "admit")
         .status()
         .map_err(|e| e.to_string())?;
+    let outputs = std::fs::read_to_string(tmp.join("outputs")).unwrap_or_default();
     if std::env::var_os("KEEP_WRAPPER_TMP").is_none() {
         let _ = std::fs::remove_dir_all(&tmp);
     }
-    status
+    let code = status
         .code()
-        .ok_or_else(|| "wrapper ended by signal".to_string())
+        .ok_or_else(|| "wrapper ended by signal".to_string())?;
+    Ok((code, outputs))
 }
 
 fn base64_encode(bytes: &[u8]) -> String {
@@ -242,32 +251,26 @@ const PRODUCT_ONLY: &str = r#"[{"filename":"src/lib.rs","status":"modified"}]"#;
 
 #[test]
 fn wrapper_refuses_ordinary_pr_while_the_packet_is_active() -> Result<(), String> {
-    let cut = "b".repeat(40);
-    if run_active_wrapper(PRODUCT_ONLY, &cut)? == 0 {
-        return Err("an ordinary PR must be refused while the cut is active".to_string());
-    }
-    let moved = "9".repeat(40);
-    if run_active_wrapper(PRODUCT_ONLY, &moved)? == 0 {
-        return Err("an ordinary PR must be refused after main moved past the cut".to_string());
+    for (parent, expected) in [("b", "cut_frozen"), ("9", "cut_main_moved")] {
+        let (code, reason) = run_active_wrapper(PRODUCT_ONLY, &parent.repeat(40))?;
+        if code != 1 || reason != expected {
+            return Err(format!(
+                "ordinary PR (base parent {parent}) must be refused as {expected}, got exit {code} reason {reason:?}"
+            ));
+        }
     }
     Ok(())
 }
 
 #[test]
 fn wrapper_admits_packet_only_pr_while_the_packet_is_active() -> Result<(), String> {
-    let cut = "b".repeat(40);
-    let code = run_active_wrapper(PACKET_ONLY, &cut)?;
-    if code != 0 {
-        return Err(format!(
-            "a packet-only PR must admit under an active cut, got exit {code}"
-        ));
-    }
-    let moved = "9".repeat(40);
-    let code = run_active_wrapper(PACKET_ONLY, &moved)?;
-    if code != 0 {
-        return Err(format!(
-            "a packet-only PR must admit after main moved, got exit {code}"
-        ));
+    for parent in ["b", "9"] {
+        let (code, reason) = run_active_wrapper(PACKET_ONLY, &parent.repeat(40))?;
+        if code != 0 || reason != "cut_packet_control_update" {
+            return Err(format!(
+                "packet-only PR (base parent {parent}) must admit as cut_packet_control_update, got exit {code} reason {reason:?}"
+            ));
+        }
     }
     Ok(())
 }
