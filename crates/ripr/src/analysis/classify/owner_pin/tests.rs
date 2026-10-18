@@ -6120,6 +6120,13 @@ fn a_cast_or_qualified_path_is_not_a_rename_of_the_field_type() {
             with("pub fn width(letters: usize) -> u32 {\n    letters as u32\n}\n"),
             true,
         ),
+        // A raw identifier `r#use` is not the `use` keyword (#7936).
+        (
+            with(
+                "pub fn width(letters: usize) -> u32 {\n    let r#use = letters as u32;\n    r#use\n}\n",
+            ),
+            true,
+        ),
         // Both used to read as renames of `Clone` and `PartialEq`.
         (
             with("pub fn dup(w: &Window) -> Window {\n    <Window as Clone>::clone(w)\n}\n"),

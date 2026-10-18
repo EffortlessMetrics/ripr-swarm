@@ -7443,6 +7443,8 @@ fn rename_statement_spans(masked: &str) -> Vec<std::ops::Range<usize>> {
     let mut spans: Vec<std::ops::Range<usize>> = whole_word_offsets(masked, "use")
         .into_iter()
         .filter(|offset| !masked[offset + "use".len()..].trim_start().starts_with('<'))
+        // A raw identifier `r#use` is not the keyword (#7936).
+        .filter(|offset| !masked[..*offset].ends_with("r#"))
         .map(|offset| offset..item_end(offset))
         .collect();
     spans.extend(

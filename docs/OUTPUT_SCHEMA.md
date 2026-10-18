@@ -721,7 +721,8 @@ identity agree and the analysis-outcome validator accepts the artifact.
     "no_static_path": 0,
     "infection_unknown": 0,
     "propagation_unknown": 0,
-    "static_unknown": 0
+    "static_unknown": 0,
+    "changed_files_by_language": [{ "language": "rust", "files": 1 }]
   },
   "analysis_outcome": {
     "analysis_complete": true,
@@ -18057,7 +18058,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.83",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.84",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -18768,7 +18769,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.83",
+      "schema_version": "1.84",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

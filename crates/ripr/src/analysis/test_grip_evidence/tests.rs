@@ -419,6 +419,58 @@ fn production_target_evidence_hashes_each_test_file_once_per_context() -> Result
 }
 
 #[test]
+fn target_admission_is_decided_once_per_test_file_per_seam() -> Result<(), String> {
+    let root = authority_fixture_root("admission-memo")?;
+    fs::write(
+        root.join("src/lib.rs"),
+        "pub fn score(amount: i32, threshold: i32) -> i32 { if amount >= threshold { 1 } else { 0 } }\n#[cfg(test)]\nmod tests {\n#[test] fn score_boundary() { assert_eq!(super::score(1, 1), 1); }\n#[test] fn score_below() { assert_eq!(super::score(0, 1), 0); }\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let (index, seam, _) = authority_fixture_target(&root)?;
+    let file = PathBuf::from("src/lib.rs");
+    let context = CompactGripContext::new(&index);
+    let related = context
+        .tests
+        .iter()
+        .filter(|indexed| indexed.test.file == file)
+        .map(|indexed| indexed.test)
+        .collect::<Vec<_>>();
+    if related.len() < 2 {
+        return Err(format!("fixture needs two tests, got {}", related.len()));
+    }
+    let mut admitted = std::collections::HashMap::new();
+    let relation = RelationReason::DirectOwnerCall;
+    if test_target_evidence_memo(&context, &seam, related[0], relation, &mut admitted).is_none() {
+        return Err("first test must be admitted".to_string());
+    }
+    if admitted.get(file.as_path()) != Some(&true) {
+        return Err(format!("verdict was not recorded: {admitted:?}"));
+    }
+    // A poisoned digest cache would reject a fresh admission; the shared map
+    // must still decide for the second test of the same file.
+    context
+        .source_digest_cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(file.as_path(), "sha256:poisoned".to_string());
+    if test_target_evidence_memo(&context, &seam, related[1], relation, &mut admitted).is_none() {
+        return Err("shared verdict was not reused for the second test".to_string());
+    }
+    if test_target_evidence_memo(
+        &context,
+        &seam,
+        related[1],
+        relation,
+        &mut std::collections::HashMap::new(),
+    )
+    .is_some()
+    {
+        return Err("a fresh map must re-validate and reject the poisoned digest".to_string());
+    }
+    Ok(())
+}
+
+#[test]
 fn value_facts_share_one_file_scan_per_file() -> Result<(), String> {
     let root = authority_fixture_root("file-scan-memo")?;
     fs::write(
