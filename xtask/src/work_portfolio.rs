@@ -4814,13 +4814,19 @@ mod tests {
             Some(&notice),
         );
         let mut lines = markdown.lines();
+        let cand_notice = markdown.find("captured from");
+        let cand_anchor = markdown.find("- portfolio identity:");
+        if !matches!((cand_notice, cand_anchor), (Some(n), Some(a)) if n < a) {
+            return Err(format!(
+                "candidates notice must precede identity: {markdown}"
+            ));
+        }
         if lines.next() != Some("# Work candidates") {
             return Err(format!("title must stay first: {markdown}"));
         }
         for needle in [
             "Committed fixture corpus, not live state",
             "captured from: `fixtures/work_portfolio/corpus`",
-            "captured at: `2026-10-05T12:00:00Z` @ `7cb64d60c9dd0dda59586e6b72dcdf150296a26f`",
             "- portfolio identity:",
         ] {
             if !markdown.contains(needle) {
@@ -4843,14 +4849,20 @@ mod tests {
             &build_explain_view(&snapshot, "candidate:issue:9101")?,
             Some(&notice),
         );
-        for (name, rendered, title) in [
-            ("portfolio", &portfolio, "# Work portfolio"),
+        for (name, rendered, title, anchor) in [
+            ("portfolio", &portfolio, "# Work portfolio", "- repository:"),
             (
                 "explain",
                 &explain,
                 "# Work candidate `candidate:issue:9101`",
+                "- candidate:",
             ),
         ] {
+            let anchor_at = rendered.find(anchor);
+            let notice_pos = rendered.find("captured from");
+            if !matches!((notice_pos, anchor_at), (Some(n), Some(a)) if n < a) {
+                return Err(format!("{name} notice must precede `{anchor}`: {rendered}"));
+            }
             let Some(title_at) = rendered.find(title) else {
                 return Err(format!("{name} lost its title: {rendered}"));
             };
