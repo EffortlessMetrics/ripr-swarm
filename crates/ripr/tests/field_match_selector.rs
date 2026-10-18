@@ -191,9 +191,9 @@ fn owner_doc_comments_preserve_the_asserted_field_selector()
         added.findings.iter().any(
             |finding| finding.probe.family == ripr::ProbeFamily::MatchArm
                 && finding.probe.location.line == line - 1
-                && finding.class != ExposureClass::Exposed
+                && finding.class == ExposureClass::Exposed
         ),
-        "the match header remains unresolved"
+        "the added whole-tail header has its own return observation receipt"
     );
     for (case, call) in [
         ("discarded call", "let _ = charge(&lease);"),

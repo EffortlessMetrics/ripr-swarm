@@ -45,7 +45,9 @@ pub(super) mod closure_adaptor;
 mod expected_binding;
 mod fallible_check;
 pub(super) mod short_circuit;
+mod whole_tail_match;
 pub(in crate::analysis) use fallible_check::{FallibleCheckReceipt, fallible_check_receipt};
+pub(in crate::analysis) use whole_tail_match::WholeTailMatchObservation;
 
 use super::super::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use super::call_identity::{CallTarget, OwnerCallIdentity};
@@ -2478,7 +2480,6 @@ impl OwnerReturnPin {
         if !parser_backed {
             return None;
         }
-        let name = owner.name.as_str();
         let changed_line = probe.location.line.checked_sub(owner.start_line)?;
         let path = match return_path_gate_from(
             &owner.body,
@@ -2545,6 +2546,18 @@ impl OwnerReturnPin {
         }) {
             return None;
         }
+        Self::from_owner_path(owner, index, path)
+    }
+
+    /// Shared call/result admission; semantic adapters must establish their
+    /// own owner-side return path before reaching this private constructor.
+    fn from_owner_path(
+        owner: &FunctionSummary,
+        index: &RustIndex,
+        path: ReturnPathGate,
+    ) -> Option<Self> {
+        let name = owner.name.as_str();
+        let returns_bool = declared_return_type(&owner.body).as_deref() == Some("bool");
         let call = pin_call(owner, index)?;
         // #6544: a bare call's same-package module-level rivals are settled
         // per test by the import or path that spells the call; every other

@@ -839,3 +839,36 @@ The retained full UB PR1503 consumer (source `278253a`) produced the same 52
 finding objects before and after this repair, including 18 current weak rows and
 the same three current charge-selector limitations. This is executable evidence
 of nonregression and of the remaining consumer gap; it does not clear PR1503.
+
+## Added whole-tail match header return observation (#5500)
+
+A match header is not an individual arm. A separate internal
+`WholeTailMatchObservation` receipt may confirm its whole returned value when:
+
+1. A complete parser-backed workspace, exact current match-token byte origin,
+   contiguous header text and owning symbol all agree. A unique root function
+   agrees by name, function-token line and complete indexed body. Visibility and
+   doc comments are inert; explicit attributes, async/unsafe/const/ABI/generic
+   declarations and file attributes refuse this slice.
+2. The validated diff reconstructs parseable old source, every owner body line
+   is newly added, no removed line maps into it, and no old function has that
+   name. Existing changed owners, mismatched source/diff and missing parser
+   custody refuse the receipt.
+3. The synchronous function returns an unshadowed primitive scalar and its
+   statement-free body has exactly this `MatchExpr` as its tail. A nested match,
+   discarded match or match following a statement receives no receipt.
+4. The existing owner-return admission establishes assertion execution, standard
+   macro and callee identity, whole-result binding, expected-side independence
+   and overwrite guards for the exact invocation. This adapter further limits
+   expected operands to literals or unrebound primitive integer `MAX` paths;
+   opaque expected bindings, static values and computed expectations remain
+   refused. A same-file parent/self glob is readable only when the complete
+   source contains no primitive-name binding or opaque competing glob.
+
+Only the header's return observation is confirmed. The receipt neither evaluates
+imported input records or helpers nor establishes selected input, arm execution,
+branch coverage or individual-arm discrimination. Input values may remain opaque.
+ArmSelector, activation facts, individual-arm gaps and unknown thresholds retain
+their existing authority. In particular, observing a `None` invocation's whole
+result cannot credit an unselected `Some` arm. Existing unchanged-match and
+nested/non-tail limitations remain outside this bounded receipt.

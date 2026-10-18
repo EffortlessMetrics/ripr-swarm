@@ -2319,7 +2319,11 @@ impl RustAdapter {
                     dependency_edges.as_ref(),
                     related_test_candidate_index,
                     &transitive_reach,
-                    propagation_origin.as_ref(),
+                    classifier::ProbeOrigin {
+                        propagation_origin: propagation_origin.as_ref(),
+                        changed_file: Some(changed),
+                        parser_span: seeded.parser_span,
+                    },
                 );
                 finding.language = Some(LanguageId::Rust);
                 // Producer-owned source currentness (#3280): resolved from the diff
@@ -2842,7 +2846,7 @@ impl RustAdapter {
                     Some(&dependency_edges),
                     related_test_candidate_index,
                     &transitive_reach,
-                    None,
+                    classifier::ProbeOrigin::default(),
                 );
                 finding.language = Some(LanguageId::Rust);
                 // Repo mode seeds probes from the current tree, so every

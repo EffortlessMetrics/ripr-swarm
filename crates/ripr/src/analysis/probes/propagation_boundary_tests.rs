@@ -157,7 +157,7 @@ fn an_exact_sibling_error_does_not_confirm_the_changed_question_mark() -> Result
         None,
         &candidates,
         &crate::analysis::classify::TransitiveReachIndex::new(&index),
-        None,
+        Default::default(),
     );
     assert_eq!(
         without_origin.ripr.reveal.discriminate.state,
@@ -171,7 +171,10 @@ fn an_exact_sibling_error_does_not_confirm_the_changed_question_mark() -> Result
         None,
         &candidates,
         &crate::analysis::classify::TransitiveReachIndex::new(&index),
-        Some(origin),
+        crate::analysis::classifier::ProbeOrigin {
+            propagation_origin: Some(origin),
+            ..Default::default()
+        },
     );
     assert_ne!(finding.class, crate::domain::ExposureClass::Exposed);
     assert_eq!(
@@ -245,7 +248,10 @@ fn changed_opening_and_closing_lines_retain_the_propagation_origin() -> Result<(
         None,
         &candidates,
         &crate::analysis::classify::TransitiveReachIndex::new(&index),
-        Some(origin),
+        crate::analysis::classifier::ProbeOrigin {
+            propagation_origin: Some(origin),
+            ..Default::default()
+        },
     );
     assert_ne!(finding.class, crate::domain::ExposureClass::Exposed);
     assert!(
@@ -387,7 +393,10 @@ fn propagation_path_keeps_a_strong_oracle_without_inventing_activation() -> Resu
         None,
         &candidates,
         &crate::analysis::classify::TransitiveReachIndex::new(&index),
-        error.propagation_origin.as_ref(),
+        crate::analysis::classifier::ProbeOrigin {
+            propagation_origin: error.propagation_origin.as_ref(),
+            ..Default::default()
+        },
     );
     assert_eq!(
         finding.ripr.reveal.observe.state,

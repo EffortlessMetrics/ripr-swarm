@@ -76,7 +76,9 @@ pub(in crate::analysis) use owner_pin::{
     pin_scope_needs, targeted_free_call_reaches_owner, targeted_name_is_alias,
     targeted_type_name_is_unresolved, trait_impl_self_type_names,
 };
-pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_receipt};
+pub(in crate::analysis) use owner_pin::{
+    FallibleCheckReceipt, WholeTailMatchObservation, fallible_check_receipt,
+};
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
 pub(in crate::analysis) use propagation_witness::{
     PropagationWitnessV1, assertion_observes_collection_argument,

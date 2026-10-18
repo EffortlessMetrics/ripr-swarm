@@ -5,7 +5,7 @@ use super::reveal::FileUseStatements;
 use crate::domain::{Probe, RelationReason};
 
 pub(in crate::analysis) struct ProbeContext<'a> {
-    pub propagation_origin: Option<&'a crate::analysis::diff::ChangedLine>,
+    pub origin: super::super::classifier::ProbeOrigin<'a>,
     pub probe: &'a Probe,
     pub owner_fn: Option<&'a FunctionSummary>,
     /// Related tests paired with their relation reason so `reveal_evidence`
@@ -54,7 +54,7 @@ impl<'a> ProbeContext<'a> {
         workspace_complete: bool,
     ) -> Self {
         Self {
-            propagation_origin: None,
+            origin: Default::default(),
             probe,
             owner_fn,
             related_tests,

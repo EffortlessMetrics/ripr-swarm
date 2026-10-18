@@ -15280,6 +15280,14 @@ id = "RIPR-SPEC-0229"
 name = "Match-arm selection names the unselected arm"
 spec = "docs/specs/RIPR-SPEC-0229-match-arm-selection-discriminator.md"
 tests = [
+  "crates/ripr/tests/whole_tail_match_observation.rs::added_documented_owner_header_observes_its_whole_return",
+  "crates/ripr/tests/whole_tail_match_observation.rs::saturated_opaque_imported_input_observes_the_whole_result",
+  "crates/ripr/tests/whole_tail_match_observation.rs::whole_result_refuses_unobserved_or_ambiguous_assertions",
+  "crates/ripr/tests/whole_tail_match_observation.rs::whole_tail_receipt_never_selects_an_unobserved_sibling_arm",
+  "crates/ripr/tests/whole_tail_match_observation.rs::existing_nested_and_mismatched_owners_never_receive_the_receipt",
+  "crates/ripr/tests/whole_tail_match_observation.rs::immutable_whole_result_binding_preserves_observation",
+  "crates/ripr/tests/whole_tail_match_observation.rs::opaque_or_rebound_expected_values_never_gain_new_credit",
+  "crates/ripr/src/analysis/classify/owner_pin/whole_tail_match.rs::tests::receipt_refuses_incomplete_wrong_owner_ast_source_and_diff",
   "crates/ripr/tests/field_match_selector.rs::owner_doc_comments_preserve_the_asserted_field_selector",
   "crates/ripr/src/analysis/classify/arm_selection/field_selector.rs::owner_doc_comments_preserve_only_the_exact_unconditional_root_declaration",
   "crates/ripr/tests/field_match_selector.rs::a_helper_returned_none_is_a_real_sibling_gap_not_an_unsupported_selector",

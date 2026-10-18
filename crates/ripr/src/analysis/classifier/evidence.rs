@@ -1,8 +1,8 @@
 use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, AssertionRefusal, EffectStateCarrier,
     HELPER_RESULT_NOT_FORWARDED, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
-    PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
-    activation_and_boundary_input, assertion_observes_collection_argument,
+    PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WholeTailMatchObservation,
+    WrapperEntryPairing, activation_and_boundary_input, assertion_observes_collection_argument,
     body_contains_owner_call, call_parameter_names, callee_is_unique,
     chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
     confidence_score, constructor_starts_empty, contains_as_whole_word, current_path_witness_with,
@@ -451,6 +451,16 @@ impl ClassifiedProbeEvidence {
         let owner_return_pin = context
             .owner_fn
             .and_then(|owner| OwnerReturnPin::establish(context.probe, owner, context.index));
+        let whole_tail_match = context.owner_fn.and_then(|owner| {
+            WholeTailMatchObservation::establish(
+                context.probe,
+                owner,
+                context.index,
+                context.origin.changed_file?,
+                context.origin.parser_span?,
+                context.workspace_complete,
+            )
+        });
         // RIPR-SPEC-0229: which owner-call input selects a changed arm.
         // A same-named function elsewhere (a trait method on another enum
         // with the same variant names) makes a direct call ambiguous; a
@@ -657,6 +667,25 @@ impl ClassifiedProbeEvidence {
             &cross_package_defeats,
             &ReturnOracleAdmission {
                 owner_return_pin: &owner_pin_admits,
+                whole_tail_match_observed: &|test, assertion| {
+                    whole_tail_match.as_ref().is_some_and(|receipt| {
+                        receipt.admits(
+                            test,
+                            assertion,
+                            context.index,
+                            &|file, name| {
+                                context.index.files().get(file).is_some_and(|facts| {
+                                    context.test_file_imports_foreign_callee_name(
+                                        file,
+                                        &facts.source,
+                                        name,
+                                    )
+                                })
+                            },
+                            pin_syntax,
+                        )
+                    })
+                },
                 assertion_admitted: &assertion_admitted,
                 sibling_exclusion_admitted: &sibling_exclusion_admitted,
                 proximity_may_reach_owner: &|test| {
@@ -961,7 +990,7 @@ impl ClassifiedProbeEvidence {
         // equality for another error exit cannot certify that propagation path.
         // Retain the closing-line origin and refuse new token-only promotion
         // until same-test activation of this exact boundary is established.
-        let discriminate = if context.propagation_origin.is_some()
+        let discriminate = if context.origin.propagation_origin.is_some()
             && discriminate.state == StageState::Yes
         {
             StageEvidence::new(
@@ -975,6 +1004,16 @@ impl ClassifiedProbeEvidence {
             discriminate
         };
 
+        let whole_match_observed = whole_tail_match.is_some() && reveal.owner_pin_credited;
+        let propagate = if whole_match_observed && propagate.state == StageState::Yes {
+            StageEvidence::new(
+                StageState::Yes,
+                propagate.confidence.clone(),
+                "The whole tail match supplies the observed owner return value; individual-arm selection remains separate",
+            )
+        } else {
+            propagate
+        };
         let ripr = RiprEvidence {
             reach: reach.clone(),
             infect: infect.clone(),
@@ -986,6 +1025,9 @@ impl ClassifiedProbeEvidence {
         };
         let mut evidence =
             evidence_summaries([&reach, &infect, &propagate, &observe, &discriminate]);
+        if whole_match_observed {
+            evidence.push("whole_tail_match_return_observation: exact invocation result pinned; no selected-input or individual-arm credit".to_string());
+        }
         // Disclose a refused related assertion whenever the refusal can
         // matter: the reveal is not fully established. See
         // `preferred_refusal_note` for which one.

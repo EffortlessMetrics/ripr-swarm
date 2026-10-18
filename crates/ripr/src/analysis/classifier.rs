@@ -17,6 +17,14 @@ use super::probes::parser_expression_for_probe;
 use super::rust_index::RustIndex;
 use crate::domain::*;
 
+/// Diff and parser custody are absent for repo-mode and synthetic probes.
+#[derive(Default)]
+pub(in crate::analysis) struct ProbeOrigin<'a> {
+    pub propagation_origin: Option<&'a crate::analysis::diff::ChangedLine>,
+    pub changed_file: Option<&'a crate::analysis::diff::ChangedFile>,
+    pub parser_span: Option<crate::analysis::diagnostic_origin::ParserByteSpan>,
+}
+
 #[cfg(test)]
 pub fn classify_probe(
     probe: &Probe,
@@ -33,7 +41,7 @@ pub fn classify_probe(
         dependency_edges,
         &candidate_index,
         &transitive_reach,
-        None,
+        ProbeOrigin::default(),
     )
 }
 
@@ -44,7 +52,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     dependency_edges: Option<&DependencyEdgeContext<'_>>,
     candidate_index: &RelatedTestCandidateIndex,
     transitive_reach: &TransitiveReachIndex<'_>,
-    propagation_origin: Option<&crate::analysis::diff::ChangedLine>,
+    origin: ProbeOrigin<'_>,
 ) -> Finding {
     let owner_fn = resolve_owner_function(probe, index);
     // #3296: one chain resolution per probe, shared by the relation
@@ -85,7 +93,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     .with_test_value_facts(candidate_index.test_value_facts())
     .with_owner_caller_names(candidate_index.owner_caller_names())
     .with_diff_touched(candidate_index.diff_touched());
-    context.propagation_origin = propagation_origin;
+    context.origin = origin;
     let reveal_expression = parser_expression_for_probe(
         index,
         &probe.location.file,

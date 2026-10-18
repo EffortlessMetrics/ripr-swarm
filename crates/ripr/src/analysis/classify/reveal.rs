@@ -36,6 +36,9 @@ use crate::domain::*;
 /// before token, strength, observation, or owner-pin confirmation.
 pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     pub(in crate::analysis) owner_return_pin: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    /// Exact added whole-tail MatchExpr header receipt; never selects an arm.
+    pub(in crate::analysis) whole_tail_match_observed:
+        &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     pub(in crate::analysis) assertion_admitted: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// Whether the assertion's macros are the standard ones (no visible
     /// binding rebinds `assert_ne!`, `assert!` or `matches!`). Consulted
@@ -128,6 +131,7 @@ fn reveal_evidence(
         &|_, _| false,
         &ReturnOracleAdmission {
             owner_return_pin: &|_, _| false,
+            whole_tail_match_observed: &|_, _| false,
             assertion_admitted: &|_, _| true,
             sibling_exclusion_admitted: &|_, _| true,
             proximity_may_reach_owner: &|_| false,
@@ -167,6 +171,7 @@ fn reveal_evidence_with_exit(
         &|_, _| false,
         &ReturnOracleAdmission {
             owner_return_pin: &|_, _| false,
+            whole_tail_match_observed: &|_, _| false,
             assertion_admitted: &|_, _| true,
             sibling_exclusion_admitted: &|_, _| true,
             proximity_may_reach_owner: &|_| false,
@@ -1930,6 +1935,10 @@ fn analyze_related_assertions(
                 _ => false,
             } && pin_strength_admits(assertion)
                 && (return_admission.owner_return_pin)(test, assertion);
+            let owner_pinned = owner_pinned
+                || (matches!(probe.family, ProbeFamily::MatchArm)
+                    && pin_strength_admits(assertion)
+                    && (return_admission.whole_tail_match_observed)(test, assertion));
             let strength_raising_pin = owner_pinned
                 && (matches!(assertion.kind, OracleKind::RelationalCheck)
                     || is_inline_expect_snapshot(assertion));
@@ -3553,7 +3562,11 @@ fn assertion_matches_probe_detail_with_literals(
     // (parameter names, the callee name, `Into::into`, a message string) is
     // token coincidence by construction, so observation stays unverified and
     // the seam cannot read `exposed` from lexical heuristics.
-    let has_token_match = if arm_lent_selected && matches!(family, ProbeFamily::MatchArm) {
+    let has_token_match = if matches!(family, ProbeFamily::MatchArm) && owner_return_pinned {
+        // Only the typed header receipt can supply this pin for MatchArm.
+        // Individual arms still require the selector below.
+        true
+    } else if arm_lent_selected && matches!(family, ProbeFamily::MatchArm) {
         // RIPR-SPEC-0229 decisions 5 and 7: the owner call receives a lent
         // input (a helper's literal or a table row's cell) that selects the
         // arm, under the same owner defeats. A test that names the owner
@@ -5089,6 +5102,7 @@ mod tests {
         };
         let admission = ReturnOracleAdmission {
             owner_return_pin: &|_, _| false,
+            whole_tail_match_observed: &|_, _| false,
             assertion_admitted: &|_, _| true,
             sibling_exclusion_admitted: &|_, _| true,
             proximity_may_reach_owner: &|_| false,
@@ -5896,6 +5910,7 @@ mod tests {
             &|_, _| false,
             &ReturnOracleAdmission {
                 owner_return_pin: &pin,
+                whole_tail_match_observed: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
@@ -5986,6 +6001,7 @@ mod tests {
                 &|_, _| false,
                 &ReturnOracleAdmission {
                     owner_return_pin: &pin,
+                    whole_tail_match_observed: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
@@ -6163,6 +6179,7 @@ mod tests {
                 &|_, _| false,
                 &ReturnOracleAdmission {
                     owner_return_pin: &|_, _| false,
+                    whole_tail_match_observed: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
@@ -6267,6 +6284,7 @@ mod tests {
                 package,
                 &ReturnOracleAdmission {
                     owner_return_pin: &pin,
+                    whole_tail_match_observed: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
@@ -6629,6 +6647,7 @@ mod tests {
             &|_, _| false,
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
+                whole_tail_match_observed: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
@@ -6709,6 +6728,7 @@ mod tests {
             &|_, _| false,
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
+                whole_tail_match_observed: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
@@ -8368,6 +8388,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
+                whole_tail_match_observed: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
@@ -8433,6 +8454,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
+                whole_tail_match_observed: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
@@ -8469,6 +8491,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
+                whole_tail_match_observed: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
@@ -8524,6 +8547,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
+                whole_tail_match_observed: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
@@ -8581,6 +8605,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
+                whole_tail_match_observed: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
@@ -8782,6 +8807,7 @@ return Err(\"typed pin\".into());
             &|_, _| true,
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
+                whole_tail_match_observed: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
@@ -8821,6 +8847,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
+                whole_tail_match_observed: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
@@ -9219,6 +9246,7 @@ return Err(\"typed pin\".into());
                 &|_, _| false,
                 &ReturnOracleAdmission {
                     owner_return_pin: &|_, _| false,
+                    whole_tail_match_observed: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
@@ -9504,6 +9532,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
+                whole_tail_match_observed: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|test| test.name == "from_str_fortnight",
@@ -9604,6 +9633,7 @@ return Err(\"typed pin\".into());
                 &|_, _| false,
                 &ReturnOracleAdmission {
                     owner_return_pin: &|_, _| false,
+                    whole_tail_match_observed: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|test| test.name == "a_large_refund_hits_the_limit",
@@ -9647,6 +9677,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
+                whole_tail_match_observed: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
@@ -10036,6 +10067,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
+                whole_tail_match_observed: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
@@ -10576,6 +10608,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
+                whole_tail_match_observed: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
