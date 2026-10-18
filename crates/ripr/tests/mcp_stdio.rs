@@ -2027,7 +2027,10 @@ fn empty_gap_pages_keep_structured_outcomes_at_the_response_bound() -> Result<()
         .as_str()
         .ok_or("baseline omitted snapshot ID")?;
 
-    for field in ["file", "class", "language"] {
+    // `class` is validated against the exposure vocabulary, so an oversized
+    // class token is invalid params, not an empty page; that arm is covered
+    // by `list_gaps_bounds_the_echoed_unknown_class_token`.
+    for field in ["file", "language"] {
         let fitting_filter = "\u{1}".repeat(9_500);
         let mut arguments = json!({});
         arguments[field] = json!(fitting_filter);
@@ -2678,7 +2681,6 @@ fn refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation() -> Re
             json!({"file": "src/pricing.rs", "class": "no_static_path"}),
             vec![],
         ),
-        (json!({"class": "unknown-class"}), vec![]),
         (json!({"language": "unknown-language"}), vec![]),
         (json!({"file": "missing.rs"}), vec![]),
     ];
@@ -3109,6 +3111,17 @@ fn list_gaps_rejects_unknown_class_tokens_with_the_vocabulary() -> Result<(), St
             return Err(format!("class {bad:?} must be invalid params: {reply}"));
         }
     }
+    let refresh = session.call_tool("refresh-class", "ripr_refresh", json!({}), REPLY_TIMEOUT)?;
+    let refresh = structured_tool_success(&refresh, "class refresh")?;
+    if refresh["attempt"]["state"] != "completed" {
+        return Err(format!("fixture must complete analysis: {refresh}"));
+    }
+    let all = session.call_tool("all-class", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    let all = structured_tool_success(&all, "unfiltered class list")?;
+    let items = all["items"].as_array().ok_or("list omitted items")?;
+    if items.is_empty() {
+        return Err("fixture must expose a nonempty selection".into());
+    }
     for good in ["exposed", "weakly_exposed", "static_unknown"] {
         let reply = session.call_tool(
             "good-class",
@@ -3116,8 +3129,61 @@ fn list_gaps_rejects_unknown_class_tokens_with_the_vocabulary() -> Result<(), St
             json!({ "class": good }),
             REPLY_TIMEOUT,
         )?;
-        if reply.get("error").is_some() {
-            return Err(format!("class {good:?} must pass validation: {reply}"));
+        let document = structured_tool_success(&reply, "valid class list")?;
+        let kept = document["items"].as_array().ok_or("list omitted items")?;
+        let expected = items.iter().filter(|item| item["class"] == good).count();
+        if kept.len() != expected
+            || document["filtered"] != json!(expected)
+            || kept.iter().any(|item| item["class"] != good)
+            || document["filters"]["class"] != good
+        {
+            return Err(format!(
+                "class {good:?} must keep exactly its {expected} gaps: {document}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The invalid-params message echoes the caller's class token; it must stay
+/// bounded (a near-cap or escape-heavy token must not push the error past the
+/// writer's 128 KiB response cap and turn it into -32603) and correlated.
+#[test]
+fn list_gaps_bounds_the_echoed_unknown_class_token() -> Result<(), String> {
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let root = install_b4_repair_ready_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    for (label, token) in [
+        ("near-cap", "x".repeat(130_000)),
+        ("escape-heavy", "\u{1}\"\\".repeat(22_000)),
+        ("multibyte", "\u{1f600}".repeat(30_000)),
+    ] {
+        let id = format!("big-class-{label}");
+        let reply = session.call_tool(
+            &id,
+            "ripr_list_gaps",
+            json!({ "class": token }),
+            REPLY_TIMEOUT,
+        )?;
+        let bytes = serde_json::to_vec(&reply)
+            .map_err(|error| error.to_string())?
+            .len();
+        let message = reply
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
+            || reply.get("id") != Some(&json!(id))
+            || !message.contains("weakly_exposed")
+            || bytes > 8 * 1024
+        {
+            return Err(format!(
+                "{label} class must be a bounded correlated -32602 (bytes={bytes}): code={:?} id={:?}",
+                reply.pointer("/error/code"),
+                reply.get("id")
+            ));
         }
     }
     Ok(())

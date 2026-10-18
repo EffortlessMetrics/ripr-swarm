@@ -195,8 +195,17 @@ impl McpServer {
                 .iter()
                 .map(crate::domain::ExposureClass::as_str)
                 .collect::<Vec<_>>();
+            // The echoed token is caller-controlled and unbounded; cap it so
+            // the error stays well under the writer's response bound.
+            const ECHO_CHARS: usize = 32;
+            let echoed: String = token.chars().take(ECHO_CHARS).collect();
+            let marker = if token.chars().nth(ECHO_CHARS).is_some() {
+                "..."
+            } else {
+                ""
+            };
             return Err(ErrorData::invalid_params(
-                format!("unknown class \"{token}\"; allowed: {allowed:?}"),
+                format!("unknown class \"{echoed}{marker}\"; allowed: {allowed:?}"),
                 None,
             ));
         }
