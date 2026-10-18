@@ -19,7 +19,7 @@ fn spy_class(
     test: &str,
 ) -> Result<ExposureClass, String> {
     // A refusal that reads the wrong line proves nothing about its guard.
-    if owner.lines().nth(line.0 - 1) != Some(line.1) {
+    if line.0.checked_sub(1).and_then(|at| owner.lines().nth(at)) != Some(line.1) {
         return Err(format!(
             "{label}: changed line {} is not `{}`",
             line.0, line.1
@@ -223,6 +223,15 @@ fn spy_on_a_module_object_refuses_every_other_path_to_the_spy() -> Result<(), St
             // Module code outside the object can leave a mock with calls.
             "owner-module-reassigns",
             OWNER.to_string() + "mailer.send = jest.fn();\nmailer.send(\"order 7\");\n",
+        ),
+        (
+            // CommonJS output makes `exports.mailer` the same object.
+            "owner-module-exports-member",
+            OWNER.to_string() + "exports.mailer.send = jest.fn();\nexports.mailer.send(\"order 7\");\n",
+        ),
+        (
+            "owner-module-export-from",
+            OWNER.to_string() + "export * from \"./patch\";\n",
         ),
         (
             "owner-module-imports",

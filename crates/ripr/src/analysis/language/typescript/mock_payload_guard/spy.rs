@@ -89,9 +89,17 @@ pub(super) fn module_object_calls(
     // Module code that imports, or that names the object anywhere but its
     // declaration and the owner's call, can leave a mock with calls on the
     // method (`o.m = jest.fn(); o.m(...)`) before the test's spy installs.
-    let imports_or_requires = ["import", "require", "eval"]
-        .iter()
-        .any(|word| identifier_or_member_offsets(&masked_module, word) != 0);
+    let imports_or_requires = [
+        "import",
+        "require",
+        "eval",
+        "from",
+        "exports",
+        "module",
+        "globalThis",
+    ]
+    .iter()
+    .any(|word| identifier_or_member_offsets(&masked_module, word) != 0);
     if imports_or_requires
         || !line_start(&masked_module, owner_start_line)
             .is_some_and(|at| at_module_top_level(&masked_module, at))
@@ -103,7 +111,7 @@ pub(super) fn module_object_calls(
         .filter(|call| call.depth == 1 && call.root != "this")
         .filter(|call| {
             identifier_offsets(&masked_owner, &call.root).len() == 1
-                && identifier_offsets(&masked_module, &call.root).len() == 2
+                && identifier_or_member_offsets(&masked_module, &call.root) == 2
                 && exports_top_level_const(&masked_module, &call.root)
         })
         .map(|call| ModuleObjectCall {

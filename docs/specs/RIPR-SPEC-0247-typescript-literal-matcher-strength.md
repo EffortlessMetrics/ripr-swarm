@@ -240,8 +240,9 @@ payload reads `mock_expectation` / strong when all of these hold:
   parameter default (which runs inside the call), or is a spread,
   computed key, getter or property value could record the asserted
   payload whatever the owner sent), and the module has no `import`,
-  `require` or `eval` and names `o` only in that declaration and the
-  owner's call (`o.m = jest.fn(); o.m("x")` at the module's top level
+  `require`, `eval`, `from` (re-export), `exports`, `module` or
+  `globalThis` and names `o`, member positions included, only in that
+  declaration and the owner's call (`o.m = jest.fn(); o.m("x")` at the module's top level
   would leave a mock with calls);
 - the test file imports `o` by name (renaming allowed) from a specifier
   that resolves to the owner's module, and its callback declares
@@ -273,7 +274,8 @@ word but those the test runs no helper, getter, constructor or `await`
 (which would let other queued work run) between installing the spy and
 asserting. One test after the imports, one `spyOn` in the file and no
 repeated test (`each`, `concurrent`, `retryTimes`) means no earlier code
-left calls on the spy. Known limit: code ripr does not read, a Jest
+left calls on the spy. Known limit: code ripr does not read, a Jest `automock` or
+`restoreMocks` setting, a Jest
 `setupFiles` / `setupFilesAfterEnv` module or a Vitest run with
 `isolate: false` whose earlier file left `o.m` a mock with calls, can
 still satisfy the assertion.
@@ -540,8 +542,9 @@ and the rejected alternative. Recorded on #6654.
     template (`` `${config.suffix}` ``); in the owner's module: a method
     that calls (`this.send(...)`, `relay(m)`), has a parameter default,
     or is a property value, spread or getter, `export const mailer:
-    Mailer =`, `mailer.send = jest.fn()` after the object, or an
-    `import`; in the test: `mailer.send("order 7")`, `send("order 7")`, a second
+    Mailer =`, `mailer.send = jest.fn()` after the object, an
+    `exports.mailer.send = jest.fn()` (CommonJS output makes it the same
+    object), an `export * from`, or an `import`; in the test: `mailer.send("order 7")`, `send("order 7")`, a second
     `announceMail(...)`, a helper call, a getter read (`other.warm`), a
     non-ASCII helper name, `` announceMail`7` ``, `await`, an arrow, the
     spy in a nested block, a spy on `"other"`, `.mockImplementation(...)`,
