@@ -313,13 +313,48 @@ struct MacroInvocations<'a> {
 
 #[cfg(test)]
 thread_local! {
-    static GRAPH_BUILD_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static GRAPH_BUILD_COUNT: std::cell::RefCell<std::sync::Arc<std::sync::atomic::AtomicUsize>> =
+        std::cell::RefCell::new(std::sync::Arc::default());
+}
+
+/// Lets the pool workers that classify a run's probes (#8756) add to the
+/// calling thread's graph-build count, so a test still counts one run's
+/// builds on its own thread. Compiles to nothing outside tests.
+pub(in crate::analysis) struct InheritedGraphCounter {
+    #[cfg(test)]
+    counter: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl InheritedGraphCounter {
+    pub(in crate::analysis) fn capture() -> Self {
+        Self {
+            #[cfg(test)]
+            counter: GRAPH_BUILD_COUNT.with(|count| count.borrow().clone()),
+        }
+    }
+
+    pub(in crate::analysis) fn run<T>(&self, work: impl FnOnce() -> T) -> T {
+        #[cfg(test)]
+        {
+            let previous =
+                GRAPH_BUILD_COUNT.with(|count| count.replace(std::sync::Arc::clone(&self.counter)));
+            let out = work();
+            GRAPH_BUILD_COUNT.with(|count| count.replace(previous));
+            out
+        }
+        #[cfg(not(test))]
+        work()
+    }
 }
 
 impl<'a> ReachGraph<'a> {
     fn build(index: &'a RustIndex) -> Self {
         #[cfg(test)]
-        GRAPH_BUILD_COUNT.with(|count| count.set(count.get() + 1));
+        GRAPH_BUILD_COUNT.with(|count| {
+            count
+                .borrow()
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        });
         let all_tests = collect_all_tests(index);
         let mut by_name: HashMap<&'a str, Vec<&'a FunctionSummary>> = HashMap::new();
         let mut callers: HashMap<&'a str, Vec<&'a str>> = HashMap::new();
@@ -923,7 +958,7 @@ impl OwnerReach<'_, '_> {
 impl<'a> TransitiveReachIndex<'a> {
     #[cfg(test)]
     pub(in crate::analysis) fn graph_build_count() -> usize {
-        GRAPH_BUILD_COUNT.with(std::cell::Cell::get)
+        GRAPH_BUILD_COUNT.with(|count| count.borrow().load(std::sync::atomic::Ordering::Relaxed))
     }
 
     pub(in crate::analysis) fn new(index: &'a RustIndex) -> Self {

@@ -18,8 +18,9 @@ use crate::analysis::classify::{
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
+use crate::analysis::sync_memo::SyncMemo;
 use crate::domain::*;
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -1263,8 +1264,11 @@ type OwnerCallerSets = BTreeMap<usize, BTreeSet<(Option<String>, String)>>;
 
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct OwnerCallerNames {
-    index_identity: Cell<Option<(usize, usize, u64)>>,
-    by_owner_slot: RefCell<OwnerCallerSets>,
+    index_identity: SyncMemo<Option<(usize, usize, u64)>>,
+    by_owner_slot: SyncMemo<OwnerCallerSets>,
+    /// Walks the memo ran, so a test can tell a hit from a recompute.
+    #[cfg(test)]
+    walks: SyncMemo<usize>,
 }
 
 impl OwnerCallerNames {
@@ -1287,7 +1291,7 @@ impl OwnerCallerNames {
         if let Some(cached) = self.by_owner_slot.borrow().get(&slot) {
             return cached.iter().any(matches);
         }
-        let callers = transitive_caller_names(owner, index);
+        let callers = self.walk(owner, index);
         let found = callers.iter().any(matches);
         self.by_owner_slot.borrow_mut().insert(slot, callers);
         found
@@ -1306,7 +1310,7 @@ impl OwnerCallerNames {
         if let Some(cached) = self.by_owner_slot.borrow().get(&slot) {
             return cached.clone();
         }
-        let callers = transitive_caller_names(owner, index);
+        let callers = self.walk(owner, index);
         self.by_owner_slot
             .borrow_mut()
             .insert(slot, callers.clone());
@@ -1316,16 +1320,37 @@ impl OwnerCallerNames {
     /// The cache cells, so tests can hold a shared borrow across a repeat
     /// query: a hit only borrows, while a recompute's `borrow_mut` panics.
     #[cfg(test)]
-    pub(in crate::analysis) fn slots_for_test(&self) -> &std::cell::RefCell<OwnerCallerSets> {
+    pub(in crate::analysis) fn slots_for_test(&self) -> &SyncMemo<OwnerCallerSets> {
         &self.by_owner_slot
+    }
+
+    fn walk(
+        &self,
+        owner: &FunctionSummary,
+        index: &RustIndex,
+    ) -> BTreeSet<(Option<String>, String)> {
+        #[cfg(test)]
+        {
+            *self.walks.borrow_mut() += 1;
+        }
+        transitive_caller_names(owner, index)
+    }
+
+    /// How many times the memo walked callers instead of serving a hit.
+    #[cfg(test)]
+    pub(in crate::analysis) fn walks_for_test(&self) -> usize {
+        *self.walks.borrow()
     }
 
     fn slot_key(&self, index: &RustIndex, owner: &FunctionSummary) -> Option<usize> {
         let identity = index.storage_identity();
-        match self.index_identity.get() {
-            None => self.index_identity.set(Some(identity)),
-            Some(bound) if bound != identity => return None,
-            Some(_) => {}
+        {
+            let mut bound = self.index_identity.borrow_mut();
+            match *bound {
+                None => *bound = Some(identity),
+                Some(bound) if bound != identity => return None,
+                Some(_) => {}
+            }
         }
         index.function_slot(owner)
     }
@@ -2174,16 +2199,14 @@ mod tests {
             1,
             "the first query populated the cache"
         );
-        // The repeat query must hit: a shared borrow is held across it, so
-        // a recompute's `borrow_mut` panics instead of silently re-walking.
-        {
-            let _guard = memo.slots_for_test().borrow();
-            assert_eq!(
-                memo.callers_for(&index, owner),
-                direct,
-                "the repeat query serves the cached set"
-            );
-        }
+        // The repeat query must hit: the walk counter does not move.
+        assert_eq!(memo.walks_for_test(), 1, "the first query walked once");
+        assert_eq!(
+            memo.callers_for(&index, owner),
+            direct,
+            "the repeat query serves the cached set"
+        );
+        assert_eq!(memo.walks_for_test(), 1, "the repeat query hit the cache");
         // The borrow-scoped predicate agrees with the walked set.
         for (ty, caller) in &direct {
             assert!(

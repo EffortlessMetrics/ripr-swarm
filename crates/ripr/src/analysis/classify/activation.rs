@@ -11,6 +11,7 @@ use super::arm_selection::{may_declare_items_in_owner_scope, may_name_constant};
 use super::text::{
     delimited_contents_at, enum_variant_values, exact_error_variant, path_value_is_constant,
 };
+use crate::analysis::sync_memo::SyncMemo;
 use crate::domain::*;
 
 #[cfg(test)]
@@ -167,8 +168,8 @@ type TestOwnerSlot = (usize, Option<usize>);
 
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct TestValueFacts {
-    index_identity: std::cell::Cell<Option<(usize, usize, u64)>>,
-    by_slot: std::cell::RefCell<std::collections::BTreeMap<TestOwnerSlot, Vec<ValueFact>>>,
+    index_identity: SyncMemo<Option<(usize, usize, u64)>>,
+    by_slot: SyncMemo<std::collections::BTreeMap<TestOwnerSlot, Vec<ValueFact>>>,
 }
 
 impl TestValueFacts {
@@ -197,10 +198,13 @@ impl TestValueFacts {
         owner_fn: Option<&FunctionSummary>,
     ) -> Option<TestOwnerSlot> {
         let identity = index.storage_identity();
-        match self.index_identity.get() {
-            None => self.index_identity.set(Some(identity)),
-            Some(bound) if bound != identity => return None,
-            Some(_) => {}
+        {
+            let mut bound = self.index_identity.borrow_mut();
+            match *bound {
+                None => *bound = Some(identity),
+                Some(bound) if bound != identity => return None,
+                Some(_) => {}
+            }
         }
         let test_slot = index.test_slot(test)?;
         let owner_slot = match owner_fn {

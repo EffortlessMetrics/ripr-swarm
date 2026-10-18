@@ -66,6 +66,7 @@ use crate::analysis::facts::drop_in::DropInManifests;
 use crate::analysis::facts::{
     DOCTEST_FUNCTION_NAME, FunctionContainer, ModulePathTarget, SourceRoleProvenanceEdgeKind,
 };
+use crate::analysis::sync_memo::SyncMemo;
 use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equality};
 use crate::analysis::syntax::{
     AssertionContextRefusal, GeneratedTestPins, HelperLoan, MacroBindingCandidates,
@@ -81,10 +82,11 @@ use ra_ap_syntax::{
     ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasModuleItem, HasName},
 };
 use rayon::prelude::*;
-use std::cell::{OnceCell, RefCell};
+use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 /// The owner-side half of the pin, established once per probe.
 pub(in crate::analysis) struct OwnerReturnPin {
@@ -120,7 +122,7 @@ pub(in crate::analysis) struct OwnerReturnPin {
     drop_plain: bool,
     /// Per test file: whether the owner's trait is in scope. The trait is
     /// fixed per pin and the scan masks the whole file, so it runs once.
-    trait_scope_by_file: RefCell<BTreeMap<PathBuf, bool>>,
+    trait_scope_by_file: SyncMemo<BTreeMap<PathBuf, bool>>,
     /// Same-named module-level rivals in the owner's package, settled per
     /// test by the call's spelled path (#6544). `None` when there are none.
     /// Shared per analysis run with the relation stage's identity (#7716).
@@ -168,74 +170,74 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// Per test file, its `std`/`core`-rooted `assert_eq!` calls and which
     /// of those roots the file itself leaves unrebound (#7857). Parsed once
     /// per file, not once per assertion.
-    std_rooted: RefCell<BTreeMap<PathBuf, StdRootedCalls>>,
+    std_rooted: SyncMemo<BTreeMap<PathBuf, StdRootedCalls>>,
     fallible_dependencies:
-        RefCell<BTreeMap<PathBuf, (String, Option<crate::analysis::workspace::AnyhowIdentity>)>>,
-    ambiguous_macro_bindings: RefCell<Option<BTreeSet<String>>>,
+        SyncMemo<BTreeMap<PathBuf, (String, Option<crate::analysis::workspace::AnyhowIdentity>)>>,
+    ambiguous_macro_bindings: SyncMemo<Option<BTreeSet<String>>>,
     /// Definitions confined to one inline module or function body, keyed by
     /// file: they make a name ambiguous only for tests inside that scope.
-    scoped_macro_bindings: RefCell<Option<ScopedMacroBindings>>,
+    scoped_macro_bindings: SyncMemo<Option<ScopedMacroBindings>>,
     /// Crate-local sites keyed by the recognized target root that holds
     /// them: they make a name ambiguous only for tests in that crate.
-    crate_macro_bindings: RefCell<Option<CrateMacroBindings>>,
+    crate_macro_bindings: SyncMemo<Option<CrateMacroBindings>>,
     /// #8255: the workspace-wide sites the single trusted-macro ambiguity
     /// pass retained, completed on demand, so naming a refusal never
     /// rescans the workspace per (name, test root).
-    workspace_site_scan: RefCell<Option<WorkspaceMacroSiteIndex>>,
+    workspace_site_scan: SyncMemo<Option<WorkspaceMacroSiteIndex>>,
     /// #8255 test witness: full-index macro-site passes this run paid.
     #[cfg(test)]
-    workspace_scan_passes: std::cell::Cell<u32>,
+    workspace_scan_passes: SyncMemo<u32>,
     /// Disclosure memo: each test file's sites per refused name. A file's
     /// sites depend only on the name and the index, and parsing the file
     /// once per (probe, test, assertion) made a diff with many related tests
     /// run for an hour.
-    test_file_macro_sites: RefCell<TestFileMacroSites>,
-    by_file: RefCell<BTreeMap<PathBuf, OwnerPinAssertions>>,
+    test_file_macro_sites: SyncMemo<TestFileMacroSites>,
+    by_file: SyncMemo<BTreeMap<PathBuf, OwnerPinAssertions>>,
     /// #6648 (RIPR-SPEC-0279): per doc example test (file, start line), its
     /// assertion admission read from its synthetic source, parsed once per
     /// run. A doctest is its own crate, so the file holding the comment
     /// declares no function its assertions could be read under.
-    doctest_pins: RefCell<BTreeMap<(PathBuf, usize), OwnerPinAssertions>>,
+    doctest_pins: SyncMemo<BTreeMap<(PathBuf, usize), OwnerPinAssertions>>,
     /// Per file: the exact pattern pins of its tests through a verified
     /// local `assert_matches!` (#6616), parsed once per run.
-    pattern_pins: RefCell<BTreeMap<PathBuf, PatternPins>>,
-    empty_macro_ambiguities: RefCell<BTreeMap<PathBuf, BTreeSet<String>>>,
+    pattern_pins: SyncMemo<BTreeMap<PathBuf, PatternPins>>,
+    empty_macro_ambiguities: SyncMemo<BTreeMap<PathBuf, BTreeSet<String>>>,
     /// Per file: the expansion-coordinate admission facts of the tests a
     /// same-file `macro_rules!` generated (#5334).
-    generated: RefCell<BTreeMap<PathBuf, Vec<GeneratedTestPins>>>,
-    resolved_modules: OnceCell<BTreeSet<(PathBuf, usize, String)>>,
+    generated: SyncMemo<BTreeMap<PathBuf, Vec<GeneratedTestPins>>>,
+    resolved_modules: OnceLock<BTreeSet<(PathBuf, usize, String)>>,
     /// Workspace-wide inputs to [`TargetRoots::root`], computed once.
-    target_roots: OnceCell<TargetRoots>,
+    target_roots: OnceLock<TargetRoots>,
     /// #6974: path-call memos. A path-shaped assertion is read once per
     /// probe, test and assertion, and each input below scans the workspace,
     /// so every answer is kept for the run under the key it depends on.
-    path_memo: RefCell<PathCallMemo>,
+    path_memo: SyncMemo<PathCallMemo>,
     /// #7097: per-file module scopes (direct `use`s and value-taking
     /// items), parsed once per run; `None` when the file does not parse.
     /// `Arc` so the run-scoped instance stays `Send` behind the seam
     /// walk's shared `Mutex` (#8282); the table is immutable once built.
-    file_scopes: RefCell<BTreeMap<PathBuf, Option<Arc<FileScopes>>>>,
+    file_scopes: SyncMemo<BTreeMap<PathBuf, Option<Arc<FileScopes>>>>,
     /// #7097: bare-call binding verdicts per [`BareCallKey`].
-    bare_call_memo: RefCell<BTreeMap<BareCallKey, bool>>,
+    bare_call_memo: SyncMemo<BTreeMap<BareCallKey, bool>>,
     /// #7097: out-of-line module children per (parent file, `mod` name):
     /// the composed child file, or `None` when declarations conflict.
     /// Built once per run; the index is immutable.
-    mod_children: OnceCell<BTreeMap<(PathBuf, String), Option<PathBuf>>>,
+    mod_children: OnceLock<BTreeMap<(PathBuf, String), Option<PathBuf>>>,
     /// #7172: [`unit_struct_value`]'s workspace-wide scan verdicts,
     /// computed once per run over the once-built module-name set.
     /// The index is immutable, so the memo never goes stale.
-    unit_struct_facts: OnceCell<UnitStructFacts>,
+    unit_struct_facts: OnceLock<UnitStructFacts>,
     /// RIPR-SPEC-0225 decision 9: whether the workspace is closed for
     /// iteration, a whole-index scan computed once per run.
-    iteration_closed: OnceCell<bool>,
+    iteration_closed: OnceLock<bool>,
     /// The same closed-field premise without the array iteration restriction.
-    field_projection_workspace_closed: OnceCell<bool>,
+    field_projection_workspace_closed: OnceLock<bool>,
     /// RIPR-SPEC-0225 decision 9: the names a workspace macro may declare a
     /// type under, `None` when any name may be declared.
-    macro_type_names: OnceCell<Option<BTreeSet<String>>>,
+    macro_type_names: OnceLock<Option<BTreeSet<String>>>,
     /// RIPR-SPEC-0225 decision 9: [`field_builtin_integer`] answers per
     /// [`FieldIntegerKey`]; the index is immutable, so none goes stale.
-    field_integer_memo: RefCell<BTreeMap<FieldIntegerKey, Option<&'static str>>>,
+    field_integer_memo: SyncMemo<BTreeMap<FieldIntegerKey, Option<&'static str>>>,
     withheld: WithheldMacroBindings,
 }
 
@@ -823,8 +825,9 @@ impl OwnerPinSyntax {
                     trusted_macro_sites_in(index, self.target_roots(index), &module_resolved);
                 *self.scoped_macro_bindings.borrow_mut() = Some(scoped);
                 #[cfg(test)]
-                self.workspace_scan_passes
-                    .set(self.workspace_scan_passes.get() + 1);
+                {
+                    *self.workspace_scan_passes.borrow_mut() += 1;
+                }
                 let mut by_root = by_root;
                 for (root, names) in &self.withheld.by_root {
                     by_root
@@ -947,8 +950,9 @@ impl OwnerPinSyntax {
         }
         retained.complete = true;
         #[cfg(test)]
-        self.workspace_scan_passes
-            .set(self.workspace_scan_passes.get() + 1);
+        {
+            *self.workspace_scan_passes.borrow_mut() += 1;
+        }
     }
 
     /// #8255 test witness: how many full-index macro-site passes this run
@@ -956,7 +960,7 @@ impl OwnerPinSyntax {
     /// completion) however many (name, test root) refusals follow.
     #[cfg(test)]
     pub(in crate::analysis) fn workspace_scan_passes(&self) -> u32 {
-        self.workspace_scan_passes.get()
+        *self.workspace_scan_passes.borrow()
     }
 
     /// File composition authority shared by assertion admission and targeted
@@ -1395,7 +1399,7 @@ struct TargetRoots {
     /// `examples/` and `build.rs` roots beside one.
     src_dirs: BTreeSet<PathBuf>,
     /// Per-file answers, so repeated admissions do not recompute them.
-    memo: RefCell<BTreeMap<PathBuf, Option<PathBuf>>>,
+    memo: SyncMemo<BTreeMap<PathBuf, Option<PathBuf>>>,
 }
 
 impl TargetRoots {
@@ -1420,7 +1424,7 @@ impl TargetRoots {
         Self {
             disabled,
             src_dirs,
-            memo: RefCell::default(),
+            memo: SyncMemo::default(),
         }
     }
 
@@ -1854,7 +1858,7 @@ fn test_macro_binding_site(
     test: &TestSummary,
     assertion_line: usize,
     index: &RustIndex,
-    memo: &RefCell<TestFileMacroSites>,
+    memo: &SyncMemo<TestFileMacroSites>,
     module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
 ) -> Option<(PathBuf, MacroBindingSite)> {
     if !assertion_context_macros().contains(&name) {
@@ -2569,7 +2573,7 @@ impl OwnerReturnPin {
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
-            trait_scope_by_file: RefCell::default(),
+            trait_scope_by_file: SyncMemo::default(),
             identity,
         })
     }
@@ -2694,7 +2698,7 @@ impl OwnerReturnPin {
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
-            trait_scope_by_file: RefCell::default(),
+            trait_scope_by_file: SyncMemo::default(),
             identity: None,
         })
     }
@@ -2795,7 +2799,7 @@ impl OwnerReturnPin {
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
-            trait_scope_by_file: RefCell::default(),
+            trait_scope_by_file: SyncMemo::default(),
             identity: None,
         })
     }
@@ -2888,7 +2892,7 @@ impl OwnerReturnPin {
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
-            trait_scope_by_file: RefCell::default(),
+            trait_scope_by_file: SyncMemo::default(),
             identity: None,
         })
     }

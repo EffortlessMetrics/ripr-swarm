@@ -38,6 +38,7 @@ use crate::config::OraclePolicy;
 use crate::domain::{
     ExposureClass, Finding, Probe, SourceCurrentness, StaticLimitKind, StopReason,
 };
+use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -2135,7 +2136,6 @@ impl RustAdapter {
             eprintln!("{disclosure}");
         }
         rust_index::apply_oracle_policy(&mut index, oracle_policy);
-        let mut related_test_candidate_index = None;
         let property_macro_mentions =
             oracles::PropertyMacroMentionIndex::new(&index, &options.root);
         // #8387: tests this diff adds or changes lead their relation tier.
@@ -2255,6 +2255,7 @@ impl RustAdapter {
         // missing a related test, so only they earn an unresolved-route
         // limitation.
         let mut files_with_findings = std::collections::BTreeSet::new();
+        let mut seeded_probes = Vec::new();
         for changed in analyzable_changed_files
             .iter()
             .filter(|file| self.accepts_path(&file.path))
@@ -2298,29 +2299,70 @@ impl RustAdapter {
             }
             for seeded in probes {
                 seeded.record_span(&mut parser_spans);
+                candidate_lines.insert((
+                    seeded.probe.location.file.clone(),
+                    seeded.probe.location.line,
+                ));
+                cancellation::checkpoint()?;
+                seeded_probes.push((changed, seeded));
+            }
+        }
+
+        // Classifying a probe reads the immutable index and the run-shared
+        // candidate index, whose memos are thread-safe and pure in their keys
+        // (#8756), so the probes of every changed file are classified on the
+        // rayon pool. The order-dependent steps below (reach widening,
+        // limits, retention) then run serially in the original probe order.
+        // Workers inherit this thread's cancellation token and
+        // committed-source overlay; a cancelled worker drops its probe and the
+        // checkpoint after the pass discards the partial result.
+        let classified: Vec<Option<Finding>> = if seeded_probes.is_empty() {
+            Vec::new()
+        } else {
+            let related_test_candidate_index = classify::RelatedTestCandidateIndex::new(&index)
+                .with_analysis_root(&options.root)
+                .with_withheld_macro_bindings(std::mem::take(&mut withheld_macro_bindings))
+                .with_diff_touched(diff_touched.clone());
+            let token = cancellation::current_token();
+            let overlay = committed_source::current_overlay();
+            let graph_counter = classify::InheritedGraphCounter::capture();
+            seeded_probes
+                .par_iter()
+                .map_init(
+                    crate::analysis::syntax::run_memo::enter,
+                    |_, (_, seeded)| {
+                        cancellation::with_optional_token(token.as_ref(), || {
+                            committed_source::with_overlay(overlay.clone(), || {
+                                graph_counter.run(|| {
+                                    cancellation::checkpoint().ok()?;
+                                    Some(classifier::classify_probe_with_candidate_index(
+                                        &seeded.probe,
+                                        &index,
+                                        workspace_index_complete,
+                                        dependency_edges.as_ref(),
+                                        &related_test_candidate_index,
+                                        &transitive_reach,
+                                        seeded.propagation_origin.as_ref(),
+                                    ))
+                                })
+                            })
+                        })
+                    },
+                )
+                .collect()
+        };
+        cancellation::checkpoint()?;
+
+        {
+            for ((changed, seeded), classified) in seeded_probes.into_iter().zip(classified) {
+                let Some(mut finding) = classified else {
+                    // A worker only drops its probe when the run was
+                    // cancelled, which the checkpoint above has reported.
+                    cancellation::checkpoint()?;
+                    continue;
+                };
                 let probe = seeded.probe;
                 let binding_relation = seeded.binding_relation;
-                let propagation_origin = seeded.propagation_origin;
-                candidate_lines.insert((probe.location.file.clone(), probe.location.line));
-                cancellation::checkpoint()?;
-                let related_test_candidate_index =
-                    related_test_candidate_index.get_or_insert_with(|| {
-                        classify::RelatedTestCandidateIndex::new(&index)
-                            .with_analysis_root(&options.root)
-                            .with_withheld_macro_bindings(std::mem::take(
-                                &mut withheld_macro_bindings,
-                            ))
-                            .with_diff_touched(diff_touched.clone())
-                    });
-                let mut finding = classifier::classify_probe_with_candidate_index(
-                    &probe,
-                    &index,
-                    workspace_index_complete,
-                    dependency_edges.as_ref(),
-                    related_test_candidate_index,
-                    &transitive_reach,
-                    propagation_origin.as_ref(),
-                );
                 finding.language = Some(LanguageId::Rust);
                 // Producer-owned source currentness (#3280): resolved from the diff
                 // evidence that seeded the probe, before any limitation shaping.
