@@ -2087,8 +2087,8 @@ fn inside_triple_quoted_string(text: &str, idx: usize) -> bool {
     while cursor < idx {
         let rest = &text[cursor..];
         if let Some(delimiter) = triple {
-            if rest.starts_with('\\') {
-                cursor += 1 + rest[1..].chars().next().map_or(0, char::len_utf8);
+            if let Some(escaped) = rest.strip_prefix('\\') {
+                cursor += 1 + escaped.chars().next().map_or(0, char::len_utf8);
             } else if rest.starts_with(delimiter) {
                 triple = None;
                 cursor += delimiter.len();
