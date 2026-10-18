@@ -669,7 +669,11 @@ mod tests {
                 );
             }
         }
-        assert_eq!(reads.len(), 4, "reads must split after each empty frame: {reads:?}");
+        assert_eq!(
+            reads.len(),
+            4,
+            "reads must split after each empty frame: {reads:?}"
+        );
         Ok(())
     }
 
