@@ -274,3 +274,11 @@ fn given_a_triple_quote_inside_a_single_line_string_or_comment_then_a_later_call
     let after = "\"\"\"doc\"\"\"\nhelper(1)\n";
     assert!(related_tests::contains_call_name(after, "helper"));
 }
+
+#[test]
+fn given_a_backslash_continued_string_then_a_call_on_the_continuation_line_is_hidden() {
+    let continued = "x = \"about \\\nhelper(1)\"\n";
+    assert!(!related_tests::contains_call_name(continued, "helper"));
+    let after = "x = \"about \\\nmore\"\nhelper(1)\n";
+    assert!(related_tests::contains_call_name(after, "helper"));
+}

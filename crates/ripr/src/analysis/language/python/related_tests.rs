@@ -2103,10 +2103,18 @@ fn inside_triple_quoted_string(text: &str, idx: usize) -> bool {
         } else if rest.starts_with("'''") {
             triple = Some("'''");
             cursor += 3;
-        } else if rest.starts_with('#') {
-            cursor += rest.find('\n').unwrap_or(rest.len());
-        } else if rest.starts_with('"') || rest.starts_with('\'') {
-            cursor += single_line_string_len(rest);
+        } else if rest.starts_with('#') || rest.starts_with('"') || rest.starts_with('\'') {
+            let len = if rest.starts_with('#') {
+                rest.find('\n').unwrap_or(rest.len())
+            } else {
+                single_line_string_len(rest)
+            };
+            // `idx` inside a comment or a (possibly backslash-continued)
+            // string literal is hidden code, not a call.
+            if idx < cursor + len {
+                return true;
+            }
+            cursor += len;
         } else {
             cursor += rest.chars().next().map_or(1, char::len_utf8);
         }
