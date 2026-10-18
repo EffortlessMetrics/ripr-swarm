@@ -737,6 +737,54 @@ fn check_drill_down_omits_repair_when_seam_inventory_is_truncated() -> Result<()
     Ok(())
 }
 
+/// #8689: a seam-shaped selector whose reverse lookup hits a
+/// budget-truncated seam inventory must refuse as undecidable — naming the
+/// truncation, the wider-budget recovery, and the listing route — instead
+/// of rendering a clean "no finding matched" miss the lookup did not
+/// establish.
+#[test]
+fn explain_names_truncation_when_seam_reverse_cannot_check() -> Result<(), String> {
+    let fixture = Fixture::two_seam("facade-explain-truncated")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    weaken_boundary_predicate(root)?;
+    let check = run_worktree_check(root, &root_arg)?;
+    let seam_id = printed_repair_identity(&stdout_text(&check)).ok_or_else(|| {
+        format!(
+            "eligible top finding must print a repair line:\n{}",
+            stdout_text(&check)
+        )
+    })?;
+    let explained = run_ripr_env(
+        root,
+        &[
+            "explain",
+            "--root",
+            &root_arg,
+            "--base",
+            "HEAD",
+            "--worktree",
+            &seam_id,
+        ],
+        &[("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1")],
+    )?;
+    assert_exit(&explained, 2, "explain under a truncated seam inventory");
+    let stderr = stderr_text(&explained);
+    assert!(
+        stderr.contains("could not resolve") && stderr.contains("truncated"),
+        "a truncated inventory must be named, not a clean miss:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("wider seam budget"),
+        "the refusal must name the wider-budget recovery:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("no finding matched"),
+        "an undecided lookup must not render a clean miss:\n{stderr}"
+    );
+    Ok(())
+}
+
 /// #7882: display narration must never feed stable text back into identity.
 /// #8166: the `Canonical gap:` line `ripr check` prints for a Rust finding is
 /// the producer gap ID, not the seam-derived `gap:<hash>`. It must start the

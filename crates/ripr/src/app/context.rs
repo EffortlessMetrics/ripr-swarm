@@ -139,6 +139,15 @@ pub(crate) fn collect_context_with_config_worktree_and_progress(
                 &navigation.list_command(),
             )),
         ),
+        FindingSelection::Undecided(limitation) => {
+            Err(crate::core_error::CoreError::selector_miss(
+                super::explain::selector_limitation_fresh_run(
+                    selector,
+                    &navigation.list_command(),
+                    &limitation,
+                ),
+            ))
+        }
         FindingSelection::NoMatch => Err(crate::core_error::CoreError::selector_miss(
             super::explain::no_finding_matched_fresh_run(
                 selector,
@@ -199,6 +208,18 @@ pub(crate) fn collect_context_from_artifact(
         FindingSelection::Ambiguous(candidates) => {
             Err(crate::core_error::CoreError::selector_miss(
                 super::explain::ambiguous_finding_match(selector, &candidates, "ripr check --json"),
+            ))
+        }
+        // `select_finding` never inventories seams, so it cannot produce a
+        // limitation; the arm keeps the match exhaustive and renders the
+        // honest state if a future producer starts carrying one.
+        FindingSelection::Undecided(limitation) => {
+            Err(crate::core_error::CoreError::selector_miss(
+                super::explain::selector_limitation_fresh_run(
+                    selector,
+                    "ripr check --json",
+                    &limitation,
+                ),
             ))
         }
         FindingSelection::NoMatch => Err(crate::core_error::CoreError::selector_miss(

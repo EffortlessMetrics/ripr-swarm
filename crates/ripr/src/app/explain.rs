@@ -106,6 +106,11 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
             &candidates,
             &navigation.list_command(),
         )),
+        FindingSelection::Undecided(limitation) => Err(selector_limitation_fresh_run(
+            selector,
+            &navigation.list_command(),
+            &limitation,
+        )),
         FindingSelection::NoMatch => Err(no_finding_matched_fresh_run(
             selector,
             &navigation.list_command(),
@@ -162,6 +167,26 @@ pub(crate) fn ambiguous_finding_match(
         "; run `{list_command}` to list available finding ids"
     ));
     message
+}
+
+/// The refusal for a selector the lookup could not decide (#8689): an
+/// unreadable or budget-truncated seam inventory means the reverse lookup
+/// checked nothing, so the message names the limitation and the recovery —
+/// a wider seam budget — mirroring the repair resolver's truncation
+/// wording, instead of claiming a clean miss.
+pub(crate) fn selector_limitation_fresh_run(
+    selector: &str,
+    list_command: &str,
+    limitation: &super::selector::SelectorLimitation,
+) -> String {
+    match limitation {
+        super::selector::SelectorLimitation::InventoryUnreadable => format!(
+            "could not resolve {selector:?}: the seam inventory is unreadable, so no match could be checked; run `{list_command}` to list available finding ids"
+        ),
+        super::selector::SelectorLimitation::InventoryTruncated { analyzed, total } => format!(
+            "could not resolve {selector:?}: the seam inventory is truncated ({analyzed} of {total} seams), so no match could be checked; rerun with a wider seam budget, or run `{list_command}` to list available finding ids"
+        ),
+    }
 }
 
 /// The miss message for a fresh run, with the uncommitted-edits clause when
@@ -260,6 +285,14 @@ pub(crate) fn explain_finding_from_artifact_with_navigation_mode(
             selector,
             &candidates,
             "ripr check --json",
+        )),
+        // `select_finding` never inventories seams, so it cannot produce a
+        // limitation; the arm keeps the match exhaustive and renders the
+        // honest state if a future producer starts carrying one.
+        FindingSelection::Undecided(limitation) => Err(selector_limitation_fresh_run(
+            selector,
+            "ripr check --json",
+            &limitation,
         )),
         FindingSelection::NoMatch => Err(no_finding_matched(selector, "ripr check --json")),
     }
