@@ -84,6 +84,15 @@ use std::time::{Duration, Instant};
 /// Explicit refresh and config reload bypass the debounce (#1908).
 const INTERACTIVE_REFRESH_DEBOUNCE: Duration = Duration::from_millis(200);
 
+/// Clears the open-debounce-window flag on drop.
+struct DebounceWindowGuard<'a>(&'a AtomicBool);
+
+impl Drop for DebounceWindowGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
 /// Upper bound on the optional client disclosures that follow an
 /// initialize-time failure commit (#3802). The owning session failure is
 /// recorded synchronously first, so a wedged or undriven peer can delay only
@@ -188,6 +197,12 @@ pub(super) struct Backend {
     refresh_scheduler: RefreshScheduler,
     workspace_revision: Mutex<u64>,
     refresh_idle: Notify,
+    /// True while one interactive trigger is sleeping out the debounce window.
+    /// A trigger that finds it set has already advanced the workspace
+    /// revision, which the window owner reads after waking, so it returns
+    /// instead of holding one of the transport's few concurrent handler slots
+    /// for the whole window. Cleared before the owner reads the revision.
+    interactive_debounce_open: AtomicBool,
     /// Liveness bound for one server→client request round-trip (#5278,
     /// `transport_bounds::CLIENT_REQUEST_TIMEOUT`): after the transport read
     /// loop fuses, a client response can never arrive, so an unbounded await
@@ -317,6 +332,7 @@ impl Backend {
             refresh_scheduler: RefreshScheduler::default(),
             workspace_revision: Mutex::new(0),
             refresh_idle: Notify::new(),
+            interactive_debounce_open: AtomicBool::new(false),
             client_request_timeout: crate::lsp::transport_bounds::CLIENT_REQUEST_TIMEOUT,
             #[cfg(test)]
             consumed_source_barrier: Mutex::new(None),
@@ -420,7 +436,24 @@ impl Backend {
             RefreshReason::DidOpen | RefreshReason::DidSave | RefreshReason::DidClose
         );
         if is_interactive {
+            // Coalesce a flood of triggers (for example thousands of didOpen
+            // notifications) into the open window instead of parking one
+            // handler per trigger for the whole debounce: the transport runs
+            // only a few handlers concurrently, so parked handlers stop it
+            // reading stdin and serialize the flood at window/slots per open.
+            if self
+                .interactive_debounce_open
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_err()
+            {
+                return;
+            }
+            let window = DebounceWindowGuard(&self.interactive_debounce_open);
             tokio::time::sleep(INTERACTIVE_REFRESH_DEBOUNCE).await;
+            // Close the window before the revision is read below so a trigger
+            // arriving after this point owns a window of its own. The guard
+            // also closes it if this handler is dropped mid-sleep.
+            drop(window);
             // Re-check preconditions after the debounce window — config or
             // authority may have changed during the wait.
             if self.configuration_failure().is_some() {

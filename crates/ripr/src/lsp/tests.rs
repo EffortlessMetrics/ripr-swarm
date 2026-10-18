@@ -9461,6 +9461,75 @@ async fn did_open_matching_disk_bytes_with_stale_committed_snapshot_keeps_refres
 }
 
 #[tokio::test]
+async fn concurrent_did_open_flood_coalesces_into_one_refresh_request() -> Result<(), String> {
+    const OPENS: usize = 24;
+    let root = unique_lsp_test_root("did-open-flood-coalesce")?;
+    let (service, _socket) =
+        LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+    let backend = service.inner();
+    backend.initialize_test_workspace_root();
+    let baseline = backend.refresh_telemetry_for_test().did_open_requests;
+
+    // Files that do not exist on disk have no readable saved identity, so
+    // every open takes the interactive refresh path.
+    let completed = std::sync::atomic::AtomicUsize::new(0);
+    let completed_ref = &completed;
+    let opens = (0..OPENS)
+        .map(|index| {
+            let uri = crate::lsp::uri::file_uri_for_path(&root.path().join(format!("f{index}.rs")))
+                .map_err(|error| format!("uri: {error}"))?;
+            let open = backend.did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem::new(
+                    uri,
+                    "rust".to_string(),
+                    1,
+                    "pub fn f() {}\n".to_string(),
+                ),
+            });
+            Ok(Box::pin(async move {
+                open.await;
+                completed_ref.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let mut opens = opens;
+    let join_all = std::future::poll_fn(move |cx| {
+        opens.retain_mut(|open| open.as_mut().poll(cx).is_pending());
+        if opens.is_empty() {
+            std::task::Poll::Ready(())
+        } else {
+            std::task::Poll::Pending
+        }
+    });
+    // The window owner may still be running its (real) analysis when the
+    // deadline passes; the coalesced opens must not be waiting on it.
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), join_all).await;
+    let finished = completed.load(std::sync::atomic::Ordering::SeqCst);
+    if finished < OPENS - 1 {
+        return Err(format!(
+            "coalesced opens must return without waiting out the window owner: {finished}/{OPENS}"
+        ));
+    }
+
+    // Every open advanced the workspace revision, but only the debounce
+    // window owner requested a refresh: the rest returned instead of each
+    // parking a handler slot for the window and re-requesting analysis.
+    if backend.workspace_revision() != OPENS as u64 {
+        return Err(format!(
+            "every flooded open must advance the revision: {}",
+            backend.workspace_revision()
+        ));
+    }
+    let requests = backend.refresh_telemetry_for_test().did_open_requests - baseline;
+    if requests != 1 {
+        return Err(format!(
+            "a concurrent didOpen flood must coalesce into one refresh request, saw {requests}"
+        ));
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn did_open_diverging_persisted_content_keeps_the_interactive_refresh() -> Result<(), String>
 {
     let root = unique_lsp_test_root("did-open-diverging-open")?;
