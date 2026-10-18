@@ -12465,6 +12465,151 @@ fn a_reload_that_breaks_ripr_toml_is_shown_once_without_source_text() -> Result<
     })
 }
 
+/// Collect the `window/showMessage` params sent during `refreshes`
+/// explicit refreshes in one framed session (#8583). A `base_ref` that
+/// cannot resolve makes the real analysis fail fast, the same forcing the
+/// work-done-progress wire tests use.
+async fn refresh_show_messages(
+    root: &Path,
+    capabilities: serde_json::Value,
+    base_ref: &str,
+    refreshes: u64,
+) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>), String> {
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    let (mut reader, mut writer) = tokio::io::split(client_io);
+    let (server_read, server_write) = tokio::io::split(server_io);
+    let backend_root = root.to_path_buf();
+    let (service, socket) =
+        LspService::new(move |client| Backend::new(client, backend_root.clone()));
+    let mut server_task = tokio::spawn(async move {
+        Server::new(server_read, server_write, socket)
+            .serve(service)
+            .await;
+    });
+    let root_uri = file_uri_for_path(root)?;
+    let result = async {
+        write_lsp_message(
+            &mut writer,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": { "baseRef": base_ref, "checkMode": "instant" },
+                    "capabilities": capabilities
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut reader, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        write_lsp_message(
+            &mut writer,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+        let mut shown = Vec::new();
+        let mut statuses = Vec::new();
+        for index in 0..refreshes {
+            let notifications =
+                run_wire_refresh_collecting(&mut reader, &mut writer, 2 + index).await?;
+            shown.extend(notifications.iter().filter_map(|message| {
+                (message.get("method").and_then(serde_json::Value::as_str)
+                    == Some("window/showMessage"))
+                .then(|| message["params"].clone())
+            }));
+            statuses.extend(analysis_status_params(&notifications));
+        }
+        Ok::<_, String>((shown, statuses))
+    }
+    .await;
+    let shutdown =
+        shutdown_framed_session(&mut reader, &mut writer, &mut server_task, 2 + refreshes).await;
+    let (shown, statuses) = result?;
+    shutdown?;
+    Ok((shown, statuses))
+}
+
+#[test]
+fn generic_client_analysis_failure_is_shown_once_and_only_to_generic_clients() -> Result<(), String>
+{
+    // #8583: a generic editor renders neither the log nor
+    // `ripr/analysisStatus`, so a failed analysis must reach it on the
+    // standard channel, once per distinct failure. The VS Code
+    // integration renders the failure from its status, and a successful
+    // analysis shows nothing.
+    work_done_progress_runtime()?.block_on(async {
+        let root = boundary_gap_git_fixture_root("analysis-failure-shown")?;
+
+        let (shown, statuses) = refresh_show_messages(
+            root.path(),
+            serde_json::json!({}),
+            "ripr-lsp-progress-missing-base",
+            2,
+        )
+        .await?;
+        if !statuses
+            .iter()
+            .any(|status| status["state"] == "failed" && status["failure"]["message"].is_string())
+        {
+            return Err(format!(
+                "the forced failure must reach the status payload: {statuses:?}"
+            ));
+        }
+        if shown.len() != 1 {
+            return Err(format!(
+                "an unchanged failure must be shown exactly once to a generic client: {shown:?}"
+            ));
+        }
+        let text = shown[0]["message"].as_str().unwrap_or_default();
+        if shown[0]["type"].as_u64() != Some(2)
+            || !text.contains("workspace analysis failed")
+            || text.chars().count() > 241
+            || text.contains('\n')
+        {
+            return Err(format!(
+                "the shown failure must be a bounded one-line warning: {shown:?}"
+            ));
+        }
+
+        let (shown, statuses) = refresh_show_messages(
+            root.path(),
+            serde_json::json!({"experimental": {"riprEditor": {"version": "0.1", "commands": []}}}),
+            "ripr-lsp-progress-missing-base",
+            1,
+        )
+        .await?;
+        if !statuses.iter().any(|status| status["state"] == "failed") {
+            return Err(format!(
+                "the forced failure must reach the status payload: {statuses:?}"
+            ));
+        }
+        if !shown.is_empty() {
+            return Err(format!(
+                "the riprEditor integration renders the failure from its status: {shown:?}"
+            ));
+        }
+
+        let (shown, statuses) =
+            refresh_show_messages(root.path(), serde_json::json!({}), "HEAD", 1).await?;
+        if statuses.iter().any(|status| status["state"] == "failed") {
+            return Err(format!(
+                "a valid base ref must not fail the analysis: {statuses:?}"
+            ));
+        }
+        if !shown.is_empty() {
+            return Err(format!(
+                "a successful analysis must not be shown: {shown:?}"
+            ));
+        }
+        Ok(())
+    })
+}
+
 #[test]
 fn workspace_folder_transitions_duplicate_and_contradictory_events_rejected_typed()
 -> Result<(), String> {
