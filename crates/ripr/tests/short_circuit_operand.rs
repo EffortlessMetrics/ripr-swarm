@@ -384,3 +384,32 @@ fn an_unrelated_mention_in_a_string_keeps_the_short_circuit_reading() -> Result<
     );
     Ok(())
 }
+
+#[test]
+fn a_later_macro_arm_may_evaluate_the_changed_operand() -> Result<(), String> {
+    other_production_code_may_evaluate_the_changed_operand(
+        "macro_rules! both_ones {\n    (zero) => {\n        0\n    };\n    () => {\n        either(1, 1)\n    };\n}\n\npub fn via_macro() -> bool {\n    both_ones!() != 0\n}\n",
+    )
+}
+
+#[test]
+fn a_macro_that_only_comments_on_the_owner_keeps_the_short_circuit_reading() -> Result<(), String> {
+    // Control: a comment inside a `macro_rules!` body is not a use.
+    let source = format!(
+        "{}\nmacro_rules! note {{\n    () => {{\n        /* about either */\n        0\n    }};\n}}\n",
+        lib("||", "y == 1")
+    );
+    let findings = findings_on_changed_line(
+        &source,
+        "    x == 0 || y == 1",
+        "    x == 0 || y == 0",
+        DIRECT_ONLY,
+    )?;
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.ripr.infect.summary.contains("short-circuits")),
+        "{findings:?}"
+    );
+    Ok(())
+}
