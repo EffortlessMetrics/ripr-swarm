@@ -486,4 +486,192 @@ mod tests {
         receipt.source_hash = "different-source".into();
         assert!(!receipt.valid_for(&probe));
     }
+
+    use crate::domain::{DeltaKind, ProbeId};
+
+    fn probe() -> Probe {
+        Probe {
+            id: ProbeId("fixture".into()),
+            location: crate::domain::SourceLocation {
+                file: "src/lib.rs".into(),
+                line: 5,
+                column: 1,
+            },
+            owner: Some(SymbolId("src/lib.rs::stats".into())),
+            family: ProbeFamily::FieldConstruction,
+            delta: DeltaKind::Value,
+            before: None,
+            after: None,
+            expression: "missing_duration_count: total - known".into(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        }
+    }
+
+    fn receipt() -> FieldProjectionReceipt {
+        let mut receipt = FieldProjectionReceipt {
+            owner: SymbolId("src/lib.rs::stats".into()),
+            helper: SymbolId("src/lib.rs::projected".into()),
+            expression: normalize_semantic_text(&probe().expression),
+            line: 5,
+            field: "missing_duration_count".into(),
+            call: "stats(total,known)".into(),
+            source_hash: "source-bytes".into(),
+            assertions: vec![ProjectionAssertion {
+                file: "src/lib.rs".into(),
+                test: "pin".into(),
+                test_line: 12,
+                line: 13,
+                text: "assert_eq!(projected(20, 1), 19);".into(),
+            }],
+            semantic_digest: String::new(),
+            validation_digest: String::new(),
+        };
+        receipt.semantic_digest = digest(&receipt.semantic_fields());
+        receipt.validation_digest = digest(&receipt.validation_fields());
+        receipt
+    }
+
+    fn first_fn(source: &str) -> Result<ast::Fn, String> {
+        let parse = parse_clean_source_file(source).ok_or("source did not parse cleanly")?;
+        parse
+            .tree()
+            .syntax()
+            .children()
+            .find_map(ast::Fn::cast)
+            .ok_or_else(|| "no function in source".to_string())
+    }
+
+    #[test]
+    fn integer_literal_accepts_only_plain_unsigned_decimal_digits() {
+        for text in ["0", "19", "007", "18446744073709551615"] {
+            assert!(integer_literal(text), "{text}");
+        }
+        for text in [
+            "",
+            "-1",
+            "+1",
+            "1_0",
+            "0x10",
+            "1u8",
+            " 1",
+            "1.0",
+            // One past `usize::MAX` on a 64-bit target.
+            "18446744073709551616",
+        ] {
+            assert!(!integer_literal(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn digest_is_length_prefixed_so_field_boundaries_matter() {
+        let split =
+            |parts: &[&str]| digest(&parts.iter().map(|p| (*p).to_owned()).collect::<Vec<_>>());
+        assert_ne!(split(&["ab", "c"]), split(&["a", "bc"]));
+        assert_ne!(split(&["a"]), split(&["a", ""]));
+        assert_eq!(split(&["a", "b"]), split(&["a", "b"]));
+        assert!(split(&[]).starts_with("sha256:"));
+    }
+
+    #[test]
+    fn projection_pin_refuses_wrong_macro_arity_literals_and_shapes() {
+        assert!(pins_projection(
+            "assert_eq!(projected(20, 1), 19)",
+            "projected",
+            2
+        ));
+        assert!(pins_projection(
+            "  assert_eq!( 19 , projected(20,1) );  ",
+            "projected",
+            2
+        ));
+        for text in [
+            // The wrapper takes two arguments.
+            "assert_eq!(projected(20), 19);",
+            "assert_eq!(projected(20, 1, 2), 19);",
+            // Only `assert_eq!` pins an exact value.
+            "assert_ne!(projected(20, 1), 19);",
+            "assert!(projected(20, 1) == 19);",
+            "debug_assert_eq!(projected(20, 1), 19);",
+            // Signed, hex, underscored and named operands are not plain literals.
+            "assert_eq!(projected(20, 1), -19);",
+            "assert_eq!(projected(0x14, 1), 19);",
+            "assert_eq!(projected(2_0, 1), 19);",
+            "assert_eq!(projected(n, 1), 19);",
+            // Both sides calls, or neither a literal.
+            "assert_eq!(projected(20, 1), projected(20, 1));",
+            "assert_eq!(a, b);",
+            "assert_eq!(projected(20, 1));",
+            "",
+        ] {
+            assert!(!pins_projection(text, "projected", 2), "{text}");
+        }
+    }
+
+    #[test]
+    fn primitive_expression_admits_only_bounded_add_sub_over_parameters_and_literals()
+    -> Result<(), String> {
+        let parameters = ["a".to_string(), "b".to_string()];
+        let admitted = |text: &str, depth: usize| -> Result<bool, String> {
+            let function = first_fn(&format!("fn f() -> usize {{ {text} }}"))?;
+            let expr = sole_tail(&function).ok_or("no tail expression")?;
+            Ok(primitive_expression(&expr, &parameters, depth))
+        };
+        for text in ["a", "7", "a + 1", "(a - b)", "a + (b - 1) - 2"] {
+            assert!(admitted(text, 16)?, "{text}");
+        }
+        for text in [
+            "c",
+            "a * b",
+            "a / 2",
+            "a % 2",
+            "a + b.len()",
+            "a + f(b)",
+            "-a",
+            "a as usize",
+            "1_0",
+            "99999999999999999999999",
+            "a + c",
+            "if a > 1 { a } else { b }",
+        ] {
+            assert!(!admitted(text, 16)?, "{text}");
+        }
+        // Each paren and operator spends one level of depth.
+        assert!(!admitted("(a)", 1)?);
+        assert!(admitted("(a)", 2)?);
+        assert!(!admitted("a + b", 1)?);
+        assert!(admitted("a + b", 2)?);
+        assert!(!admitted("a", 0)?);
+        let deep = format!("{}a{}", "(".repeat(17), ")".repeat(17));
+        assert!(!admitted(&deep, 16)?);
+        Ok(())
+    }
+
+    #[test]
+    fn valid_for_refuses_each_mismatched_probe_dimension() {
+        let probe = probe();
+        let receipt = receipt();
+        assert!(receipt.valid_for(&probe));
+        let refuses = |mutate: &dyn Fn(&mut Probe)| {
+            let mut changed = probe.clone();
+            mutate(&mut changed);
+            assert!(!receipt.valid_for(&changed));
+        };
+        refuses(&|p| p.family = ProbeFamily::ReturnValue);
+        refuses(&|p| p.delta = DeltaKind::Effect);
+        refuses(&|p| p.owner = Some(SymbolId("src/lib.rs::other".into())));
+        refuses(&|p| p.owner = None);
+        refuses(&|p| p.location.line = 6);
+        refuses(&|p| p.expression = "missing_duration_count: total + known".into());
+        // Whitespace in the probe expression does not change its identity.
+        let mut spaced = probe.clone();
+        spaced.expression = "  missing_duration_count:   total - known,  ".into();
+        assert!(receipt.valid_for(&spaced));
+        // A receipt with no credited assertion proves nothing.
+        let mut empty = receipt.clone();
+        empty.assertions.clear();
+        empty.semantic_digest = digest(&empty.semantic_fields());
+        empty.validation_digest = digest(&empty.validation_fields());
+        assert!(!empty.valid_for(&probe));
+    }
 }

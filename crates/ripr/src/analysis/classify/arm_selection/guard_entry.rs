@@ -636,4 +636,318 @@ mod tests {
             "x"
         ));
     }
+
+    use crate::domain::{DeltaKind, ProbeFamily, ProbeId, SourceLocation, SymbolId};
+    use std::path::{Path, PathBuf};
+
+    fn facts_for(source: &str) -> crate::analysis::facts::FileFacts {
+        crate::analysis::rust_index::summarize_file(PathBuf::from("src/lib.rs"), source.to_string())
+    }
+
+    fn probe_at(line: usize) -> Probe {
+        Probe {
+            id: ProbeId("guard".into()),
+            location: SourceLocation {
+                file: "src/lib.rs".into(),
+                line,
+                column: 1,
+            },
+            owner: Some(SymbolId("src/lib.rs::add".into())),
+            family: ProbeFamily::SideEffect,
+            delta: DeltaKind::Effect,
+            before: None,
+            after: None,
+            expression: "v.push(x);".into(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        }
+    }
+
+    /// The guard of line `line` of the `add` owner in `source`.
+    fn guard_of(source: &str, line: usize) -> Option<GuardEntry> {
+        let facts = facts_for(source);
+        let owner = facts.functions.iter().find(|f| f.name == "add")?;
+        GuardEntry::establish(&probe_at(line), owner, |_| None)
+    }
+
+    const PUSH_IF_GT_10: &str =
+        "pub fn add(v: &mut Vec<u32>, x: u32) {\n    if x > 10 {\n        v.push(x);\n    }\n}\n";
+
+    /// The inputs `guard` reads from one test body calling `add`.
+    fn inputs_of(guard: &GuardEntry, body: &str) -> Option<Vec<String>> {
+        let facts = facts_for(&format!("#[test]\nfn t() {{\n{body}\n}}\n"));
+        guard.unentered_inputs(facts.tests.first()?)
+    }
+
+    fn established(source: &str, line: usize) -> Result<GuardEntry, String> {
+        guard_of(source, line).ok_or_else(|| format!("no guard established for:\n{source}"))
+    }
+
+    #[test]
+    fn establish_refuses_every_unreadable_enclosing_shape() {
+        // The changed line is outside any `if` block.
+        assert!(
+            guard_of(
+                "pub fn add(v: &mut Vec<u32>, x: u32) {\n    v.push(x);\n}\n",
+                2
+            )
+            .is_none()
+        );
+        // The signature line has no preceding block.
+        assert!(guard_of(PUSH_IF_GT_10, 1).is_none());
+        // A line before the owner's own start.
+        let facts = facts_for(&format!("\n\n{PUSH_IF_GT_10}"));
+        let owner = facts.functions.iter().find(|f| f.name == "add");
+        assert!(
+            owner
+                .is_some_and(|owner| GuardEntry::establish(&probe_at(1), owner, |_| None).is_none())
+        );
+        // An `else` block is not the `if` it follows.
+        assert!(
+            guard_of(
+                "pub fn add(v: &mut Vec<u32>, x: u32) {\n    if x > 10 {\n        v.clear();\n    } else {\n        v.push(x);\n    }\n}\n",
+                5
+            )
+            .is_none()
+        );
+        // A `loop` block around the line is not an `if`.
+        assert!(
+            guard_of(
+                "pub fn add(v: &mut Vec<u32>, x: u32) {\n    loop {\n        v.push(x);\n    }\n}\n",
+                3
+            )
+            .is_none()
+        );
+        // A brace on the changed line itself.
+        assert!(
+            guard_of(
+                "pub fn add(v: &mut Vec<u32>, x: u32) {\n    if x > 10 {\n        if true { v.push(x); }\n    }\n}\n",
+                3
+            )
+            .is_none()
+        );
+        // A compound or non-parameter condition.
+        for condition in [
+            "x > 10 && x < 20",
+            "y > 10",
+            "x.is_positive()",
+            "x + 1 > 10",
+        ] {
+            let source = format!(
+                "pub fn add(v: &mut Vec<u32>, x: u32) {{\n    let y = 1u32;\n    if {condition} {{\n        v.push(x);\n    }}\n}}\n"
+            );
+            assert!(guard_of(&source, 4).is_none(), "{condition}");
+        }
+    }
+
+    #[test]
+    fn establish_refuses_a_parameter_that_may_change_before_the_guard() {
+        for (parameter, prelude) in [
+            ("mut x: u32", ""),
+            ("x: u32", "    let x = x + 1;\n"),
+            ("x: u32", "    for _ in 0..3 {}\n"),
+            (
+                "x: u32",
+                "    let mut y = x;\n    y += 1;\n    while y < 3 { y += 1; }\n",
+            ),
+        ] {
+            let source = format!(
+                "pub fn add(v: &mut Vec<u32>, {parameter}) {{\n{prelude}    if x > 10 {{\n        v.push(x);\n    }}\n}}\n"
+            );
+            let line = source.lines().count() - 2;
+            assert!(guard_of(&source, line).is_none(), "{parameter} / {prelude}");
+        }
+        // A plain read before the guard is fine.
+        let source = "pub fn add(v: &mut Vec<u32>, x: u32) {\n    let y = x + 1;\n    if x > 10 {\n        v.push(y);\n    }\n}\n";
+        assert!(guard_of(source, 4).is_some());
+    }
+
+    #[test]
+    fn establish_judges_the_bound_in_the_parameters_own_integer_type() {
+        let source = |ty: &str, bound: &str| {
+            format!(
+                "pub fn add(v: &mut Vec<u32>, x: {ty}) {{\n    if x > {bound} {{\n        v.push(1);\n    }}\n}}\n"
+            )
+        };
+        assert!(guard_of(&source("u8", "255"), 3).is_some());
+        // 256 wraps in a `u8`, so the comparison is unread.
+        assert!(guard_of(&source("u8", "256"), 3).is_none());
+        assert!(guard_of(&source("u8", "-1"), 3).is_none());
+        assert!(guard_of(&source("i8", "-128"), 3).is_some());
+        assert!(guard_of(&source("i8", "-129"), 3).is_none());
+        // Aliases and non-integer parameter types are unread.
+        assert!(guard_of(&source("Small", "1"), 3).is_none());
+        assert!(guard_of(&source("std::primitive::u32", "1"), 3).is_none());
+    }
+
+    #[test]
+    fn unentered_inputs_requires_every_call_to_miss_the_guard_exactly() -> Result<(), String> {
+        let guard = established(PUSH_IF_GT_10, 3)?;
+        let call =
+            |argument: &str| format!("    let mut v = Vec::new();\n    add(&mut v, {argument});");
+        // `x > 10`: 10 misses, 11 enters.
+        assert_eq!(inputs_of(&guard, &call("10")), Some(vec!["10".to_string()]));
+        assert_eq!(inputs_of(&guard, &call("0")), Some(vec!["0".to_string()]));
+        assert_eq!(inputs_of(&guard, &call("11")), None);
+        // A value outside the `u32` range wraps at runtime: unread.
+        assert_eq!(inputs_of(&guard, &call("-1")), None);
+        assert_eq!(inputs_of(&guard, &call("4294967296")), None);
+        // Not an integer literal, and no argument at the parameter's index.
+        assert_eq!(inputs_of(&guard, &call("n")), None);
+        assert_eq!(
+            inputs_of(&guard, "    let mut v = Vec::new();\n    add(&mut v);"),
+            None
+        );
+        // The owner is not named at all, or is named without a call.
+        assert_eq!(inputs_of(&guard, "    let v: Vec<u32> = Vec::new();"), None);
+        assert_eq!(
+            inputs_of(&guard, "    let f = add;\n    f(&mut Vec::new(), 1);"),
+            None
+        );
+        // One entering call among missing ones spoils the test.
+        assert_eq!(
+            inputs_of(
+                &guard,
+                "    let mut v = Vec::new();\n    add(&mut v, 1);\n    add(&mut v, 20);"
+            ),
+            None
+        );
+        assert_eq!(
+            inputs_of(
+                &guard,
+                "    let mut v = Vec::new();\n    add(&mut v, 1);\n    add(&mut v, 2);"
+            ),
+            Some(vec!["1".to_string(), "2".to_string()])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unentered_inputs_reads_a_let_bound_name_only_when_it_is_used_as_nothing_else()
+    -> Result<(), String> {
+        let guard = established(PUSH_IF_GT_10, 3)?;
+        let with_let = |binding: &str, extra: &str| {
+            format!("    {binding}\n    let mut v = Vec::new();\n    add(&mut v, n);\n{extra}")
+        };
+        assert_eq!(
+            inputs_of(&guard, &with_let("let n = 3;", "")),
+            Some(vec!["n = 3".to_string()])
+        );
+        assert_eq!(
+            inputs_of(&guard, &with_let("let n: u32 = 4;", "")),
+            Some(vec!["n = 4".to_string()])
+        );
+        // A binding that enters the guard is refused like a literal.
+        assert_eq!(inputs_of(&guard, &with_let("let n = 11;", "")), None);
+        // Mutable, non-literal and call bindings are unread.
+        assert_eq!(inputs_of(&guard, &with_let("let mut n = 3;", "")), None);
+        assert_eq!(inputs_of(&guard, &with_let("let n = 1 + 2;", "")), None);
+        assert_eq!(inputs_of(&guard, &with_let("let n = other();", "")), None);
+        // Any further mention of the name may rebind or shadow it.
+        assert_eq!(
+            inputs_of(&guard, &with_let("let n = 3;", "    drop(n);")),
+            None
+        );
+        assert_eq!(
+            inputs_of(
+                &guard,
+                &with_let("let n = 3;", "    { let n = 20; add(&mut v, n); }")
+            ),
+            None
+        );
+        // A `let` inside a nested block is not a statement of the test's own block.
+        assert_eq!(
+            inputs_of(&guard, "    { let n = 3; add(&mut Vec::new(), n); }"),
+            None
+        );
+        // The name is bound after its first use.
+        assert_eq!(
+            inputs_of(&guard, "    add(&mut Vec::new(), n);\n    let n = 3;"),
+            None
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn let_bound_integer_refuses_a_test_with_a_nested_fn() -> Result<(), String> {
+        let facts =
+            facts_for("#[test]\nfn t() {\n    let n = 3;\n    fn n() {}\n    drop(n);\n}\n");
+        let test = facts.tests.first().ok_or("test missing")?;
+        let masked = mask_comments_and_strings(&test.body);
+        assert_eq!(let_bound_integer(test, &masked, "n"), None);
+        let facts = facts_for("#[test]\nfn t() {\n    let n = 3;\n    drop(n);\n}\n");
+        let test = facts.tests.first().ok_or("test missing")?;
+        let masked = mask_comments_and_strings(&test.body);
+        assert_eq!(let_bound_integer(test, &masked, "n"), Some(3));
+        assert_eq!(let_bound_integer(test, &masked, "not an identifier"), None);
+        assert_eq!(let_bound_integer(test, &masked, "absent"), None);
+        Ok(())
+    }
+
+    static NEXT_ROOT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    fn named_bound(files: &[(&str, &str)], owner_file: &str, name: &str) -> Option<i128> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-guard-entry-{}-{}",
+            std::process::id(),
+            NEXT_ROOT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let mut paths = Vec::new();
+        for (relative, source) in files {
+            let path = root.join(relative);
+            std::fs::create_dir_all(path.parent()?).ok()?;
+            std::fs::write(&path, source).ok()?;
+            paths.push(PathBuf::from(*relative));
+        }
+        let index = crate::analysis::rust_index::build_index(&root, &paths);
+        let _ = std::fs::remove_dir_all(&root);
+        let index = index.ok()?;
+        let owner = index
+            .functions()
+            .iter()
+            .find(|f| f.name == "add" && f.file == Path::new(owner_file))?;
+        named_integer_bound(&index, owner, name)
+    }
+
+    #[test]
+    fn named_integer_bound_reads_one_file_level_integer_const_and_refuses_the_rest() {
+        let owner = "pub fn add(v: &mut Vec<u32>, x: u32) {\n    if x > LIMIT {\n        v.push(x);\n    }\n}\n";
+        let with = |declaration: &str| format!("{declaration}\n{owner}");
+        let read = |declaration: &str| {
+            named_bound(&[("src/lib.rs", &with(declaration))], "src/lib.rs", "LIMIT")
+        };
+        assert_eq!(read("const LIMIT: u32 = 10;"), Some(10));
+        assert_eq!(read("const LIMIT: i64 = 0x10;"), Some(16));
+        assert_eq!(read("const LIMIT: u8 = 1_0;"), Some(10));
+        // Not an integer type, not a literal, or attributed: unread.
+        assert_eq!(read("type Small = u32;\nconst LIMIT: Small = 10;"), None);
+        assert_eq!(read("const LIMIT: u32 = 5 + 5;"), None);
+        assert_eq!(read("const LIMIT: f32 = 10.0;"), None);
+        assert_eq!(read("#[cfg(unix)]\nconst LIMIT: u32 = 10;"), None);
+        // A renaming or same-name import may bind the name instead.
+        assert_eq!(
+            read("use other::MAX as LIMIT;\nconst LIMIT: u32 = 10;"),
+            None
+        );
+        // No declaration at all.
+        assert_eq!(read("const OTHER: u32 = 10;"), None);
+        // A second declaration of the name anywhere in the index is ambiguous.
+        assert_eq!(
+            named_bound(
+                &[
+                    ("src/lib.rs", &with("const LIMIT: u32 = 10;")),
+                    ("src/other.rs", "pub const LIMIT: u32 = 99;\n"),
+                ],
+                "src/lib.rs",
+                "LIMIT"
+            ),
+            None
+        );
+        // An owner inside an inline module is outside the file-level scope.
+        let nested = format!("const LIMIT: u32 = 10;\nmod inner {{\n{owner}}}\n");
+        assert_eq!(
+            named_bound(&[("src/lib.rs", &nested)], "src/lib.rs", "LIMIT"),
+            None
+        );
+    }
 }
