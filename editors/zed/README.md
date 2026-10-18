@@ -90,8 +90,13 @@ zed-industries/zed `bd74733`) on 2026-09-29; not run in a Zed binary.
   it that worktree's root. A project with two folders gets two ripr servers,
   so each repository is analyzed on its own. Open the repository root, not a
   subdirectory, so ripr sees the whole Git workspace.
-- **Save to refresh.** ripr analyzes saved files. Unsaved edits withdraw that
-  file's diagnostics until the next save.
+- **Save to refresh.** ripr analyzes saved files. While a file has unsaved
+  edits, ripr replaces its findings with one information notice, `ripr
+  diagnostics for this file are paused`, and restores them on the next save.
+- **Evidence is in hover.** Zed does not advertise ripr's clipboard and
+  navigation actions, so the code action menu offers only `Refresh Analysis`.
+  The repair guidance, related tests and fix site are in the hover text. See
+  [Other LSP editors](../../docs/interop/other-editors-lsp.md#what-every-client-needs-to-know).
 - **Few diagnostics is normal.** The default `actionable` profile publishes
   only findings with a repair route. Set `diagnosticProfile` to `full` to see
   every finding.
@@ -110,6 +115,12 @@ The shared protocol notes, including ripr's commands and error behavior, are in
 - CI builds the component and runs the unit tests (`Zed extension` workflow).
   The tests cover the launch command, the missing-binary message, argument and
   environment overrides, and the `ripr` configuration section.
+
+- The server side of the two notes above was driven over stdio with a client
+  that advertises no ripr extensions (like Zed) against the `boundary_gap`
+  fixture: a save published the finding in about 0.3 s, an unsaved edit
+  replaced it with the notice, and saving the reverted file cleared it. The
+  code action response held only `Refresh Analysis`.
 
 Not verified: loading the extension in a running Zed, diagnostics and hover in
 Zed's UI, and Zed's handling of ripr's pull diagnostics after a refresh.
