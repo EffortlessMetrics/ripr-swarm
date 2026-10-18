@@ -596,6 +596,11 @@ fn collect_nested_callback_assertions(
             let [callback] = call.arguments.as_slice() else {
                 return;
             };
+            // A generator callback only creates an iterator when invoked:
+            // its body never runs, so it cannot supply assertion credit.
+            if callback_is_generator(callback) {
+                return;
+            }
             let span = member.object().span();
             let Some(receiver) = text.get(span.start as usize..span.end as usize) else {
                 return;
@@ -716,6 +721,14 @@ fn callback_is_async_or_generator(callback: &oxc_ast::ast::Argument<'_>) -> bool
         }
         _ => true,
     }
+}
+
+/// `true` for a generator (or async generator) function callback.
+fn callback_is_generator(callback: &oxc_ast::ast::Argument<'_>) -> bool {
+    matches!(
+        callback,
+        oxc_ast::ast::Argument::FunctionExpression(function) if function.generator
+    )
 }
 
 /// The source text of an arrow or function callback's body.
