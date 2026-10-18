@@ -23,10 +23,11 @@ const BY_VALUE_TYPES: &[&str] = &[
     "u64", "u128", "usize", "String",
 ];
 
-/// The test-scope texts the helper's `compared` parameters stand for at one
-/// of the test's eager calls of it, or `None` when the helper does not
-/// compare two distinct plain parameters of one by-value type, or no call
-/// passes readable arguments. An argument that is a plain identifier is
+/// The test-scope texts the helper's `compared` parameters stand for at the
+/// first of the test's eager calls of it whose readable arguments `pins`
+/// accepts (an unrelated earlier call such as `check(0, 0)` does not hide a
+/// later one), or `None` when the helper does not compare two distinct
+/// plain parameters of one by-value type, or no call qualifies. An argument that is a plain identifier is
 /// read through its one `let` ([`bound_owner_initializer`]): bound once,
 /// immutable, in the test's own block, and used only by this call.
 pub(super) fn substituted_operands(
@@ -35,6 +36,7 @@ pub(super) fn substituted_operands(
     compared: [&str; 2],
     owner: &str,
     index: &RustIndex,
+    pins: impl Fn(&[String; 2]) -> bool,
 ) -> Option<[String; 2]> {
     let position = |name: &str| {
         loan.parameters
@@ -66,7 +68,8 @@ pub(super) fn substituted_operands(
                 Some(argument.to_string())
             }
         };
-        Some([read(left)?, read(right)?])
+        let pair = [read(left)?, read(right)?];
+        pins(&pair).then_some(pair)
     })
 }
 
@@ -133,7 +136,10 @@ fn call_arguments(text: &str, name: &str) -> Option<Vec<String>> {
 
 /// The literal text `operand` stands for as an expected value: a literal
 /// (`4`, `-1.5`, `'x'`, `true`, `"text"`), or `String::from("text")` read as
-/// `"text"` while no workspace item may rebind `String`.
+/// `"text"` while no workspace item may rebind `String` or `From`. A local
+/// `trait From` is refused as a precaution: under the ordinary prelude it
+/// makes `String::from(..)` ambiguous (E0034), but a scope without the
+/// implicit prelude could bind it to a conversion that calls the owner.
 pub(super) fn expected_literal(operand: &str, index: &RustIndex) -> Option<String> {
     let parse = parse_clean_source_file(&format!("const RIPR: () = {};", operand.trim()))?;
     let expression = parse
@@ -163,6 +169,7 @@ pub(super) fn expected_literal(operand: &str, index: &RustIndex) -> Option<Strin
             };
             if callee.path()?.syntax().text() != "String::from"
                 || wrapper_may_be_rebound("String", index)
+                || wrapper_may_be_rebound("From", index)
             {
                 return None;
             }
@@ -386,6 +393,17 @@ mod tests {
         shadowed.insert_file_only(path, facts);
         assert_eq!(expected_literal(r#"String::from("4")"#, &shadowed), None);
         assert_eq!(expected_literal("4", &shadowed).as_deref(), Some("4"));
+        // A local `trait From` is refused as a precaution (unit-level only:
+        // the ordinary-prelude form does not compile, E0034).
+        let mut converting = RustIndex::default();
+        let path = std::path::PathBuf::from("src/lib.rs");
+        let facts = summarize_file(
+            path.clone(),
+            "trait From<T> { fn from(value: T) -> Self; }\n".to_string(),
+        );
+        converting.insert_file_only(path, facts);
+        assert_eq!(expected_literal(r#"String::from("4")"#, &converting), None);
+        assert_eq!(expected_literal("4", &converting).as_deref(), Some("4"));
     }
 
     #[test]

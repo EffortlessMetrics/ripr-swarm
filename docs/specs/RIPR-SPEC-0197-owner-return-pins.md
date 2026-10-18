@@ -1685,7 +1685,10 @@ arguments, in the test's own scope, when:
    is refused: a `&W` whose `Deref` targets `str` coerces into it at the
    call, and `==` then compares only that view.
 3. The test's call is an eager statement `helper(..);` with nothing else
-   on its line and one argument per parameter. Each argument is read as
+   on its line and one argument per parameter. When the test calls the
+   helper more than once, the first call that satisfies rule 4 is the pin
+   (an unrelated earlier `check(0, 0);` does not hide a later one). Each
+   argument is read as
    written, or, when it is a plain name, through its one `let` under
    RIPR-SPEC-0225 rule 1: bound once, never `mut`, in the test's own block,
    and used nowhere but this call. Anything else refuses.
@@ -1693,7 +1696,10 @@ arguments, in the test's own scope, when:
    scalar owner, a rendered template under "Rendered scalar pins" rules 2
    and 3. The other is a literal (`4`, `-1.5`, `'x'`, `true`, `"text"`) or
    `String::from("text")`, read as `"text"` while no workspace item may
-   rebind `String`. Every test-side gate after that reads the substituted
+   rebind `String` or `From` (a precaution: under the ordinary prelude a
+   local `trait From` makes `String::from(..)` ambiguous and the test does
+   not compile, but a scope without the implicit prelude could bind it to a
+   conversion that calls the owner). Every test-side gate after that reads the substituted
    pair as the test's own assertion: the self-comparison, fixture and
    written-file scans, the bare-call identity and shadow checks.
 

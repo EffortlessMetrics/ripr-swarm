@@ -2944,6 +2944,7 @@ impl OwnerReturnPin {
             [compared[0].as_str(), compared[1].as_str()],
             &self.name,
             index,
+            |operands| self.substituted_pin(operands, index).is_some(),
         )
     }
 

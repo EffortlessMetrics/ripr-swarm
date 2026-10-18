@@ -137,6 +137,18 @@ fn a_helper_comparing_its_parameters_pins_the_arguments_the_test_passes() -> Res
             ),
         ),
         (
+            "an unrelated earlier call of the helper does not hide the pinning one",
+            format!(
+                "{SCALAR_HELPER}{}",
+                test_fn(
+                    "        check(0, 0);
+        let actual = score(2);
+        check(actual, 4);
+"
+                )
+            ),
+        ),
+        (
             "let-bound owner call and inline literal, swapped order",
             format!(
                 "{SCALAR_HELPER}{}",
