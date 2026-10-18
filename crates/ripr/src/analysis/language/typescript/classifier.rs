@@ -253,13 +253,10 @@ pub(crate) fn ts_changed_value_is_observed(
             // read; the effect branch below confirms it by kind.
             let credited_mock = !value_family
                 && matches!(assertion.oracle_kind, OracleKind::MockExpectation)
-                && assertion.mock_payload.as_ref().is_some_and(|payload| {
-                    mock_facts.credits_with_factories(
-                        payload,
-                        &candidate.test.body_text,
-                        &candidate.test.mock_factories_in_file,
-                    )
-                });
+                && assertion
+                    .mock_payload
+                    .as_ref()
+                    .is_some_and(|payload| mock_facts.credits_in_test(payload, candidate.test));
             // RIPR-SPEC-0250: a credited `toMatchObject` pin lists the changed
             // field and observes the whole owner result, so it sees the sink.
             if value_family && pin_facts.credits(&candidate.test.file, assertion) {
@@ -4441,11 +4438,7 @@ pub(crate) fn strongest_family_matching_oracle(
                 (_, Some(payload))
                     if effect_family
                         && matches!(assertion.oracle_kind, OracleKind::MockExpectation)
-                        && mock_facts.credits_with_factories(
-                            payload,
-                            &candidate.test.body_text,
-                            &candidate.test.mock_factories_in_file,
-                        ) =>
+                        && mock_facts.credits_in_test(payload, candidate.test) =>
                 {
                     (OracleKind::MockExpectation, OracleStrength::Strong)
                 }
@@ -4490,13 +4483,10 @@ fn project_credited_mock_rows(
         }
         let credited = candidate.test.assertions.iter().find(|assertion| {
             matches!(assertion.oracle_kind, OracleKind::MockExpectation)
-                && assertion.mock_payload.as_ref().is_some_and(|payload| {
-                    mock_facts.credits_with_factories(
-                        payload,
-                        &candidate.test.body_text,
-                        &candidate.test.mock_factories_in_file,
-                    )
-                })
+                && assertion
+                    .mock_payload
+                    .as_ref()
+                    .is_some_and(|payload| mock_facts.credits_in_test(payload, candidate.test))
         });
         if let Some(assertion) = credited {
             row.oracle_kind = OracleKind::MockExpectation;
@@ -4814,7 +4804,40 @@ pub(crate) fn classify_change_with_alias_state(
     let owner_body = reads_mock_payload
         .then_some(owner.source_text.as_deref())
         .flatten();
-    let mock_facts = MockCallFacts::read(line_text, owner_body, &owner.name, &owner.params);
+    let mut mock_facts = MockCallFacts::read(line_text, owner_body, &owner.name, &owner.params);
+    // RIPR-SPEC-0247 rule 4: a spy on an exported module object the changed
+    // line calls. The module and the test files are read as the owner was
+    // (committed history reads HEAD), so the file checks see the same text
+    // as the test bodies.
+    if let (true, Some(root)) = (reads_mock_payload, workspace_root) {
+        let module_source = crate::analysis::committed_source::read_source_bytes(root, &owner.file)
+            .ok()
+            .flatten()
+            .and_then(|bytes| String::from_utf8(bytes).ok());
+        mock_facts.read_module_object_calls(
+            line_text,
+            owner_body,
+            &owner.name,
+            &owner.params,
+            owner.start_line,
+            module_source.as_deref(),
+        );
+        mock_facts.admit_spy_files(
+            related_candidates
+                .iter()
+                .filter(|candidate| candidate.relation.uses_oracle())
+                .map(|candidate| candidate.test),
+            |test_file| {
+                crate::analysis::committed_source::read_source_bytes(root, test_file)
+                    .ok()
+                    .flatten()
+                    .and_then(|bytes| String::from_utf8(bytes).ok())
+            },
+            |import, test_file| {
+                import_source_matches_owner(import, test_file, owner, alias_map, workspace_root)
+            },
+        );
+    }
     if reads_mock_payload {
         project_credited_mock_rows(&mut related, &related_candidates, &mock_facts);
     }
