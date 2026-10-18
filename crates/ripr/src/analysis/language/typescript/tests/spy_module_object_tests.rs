@@ -466,3 +466,73 @@ fn spy_on_a_module_object_refuses_every_other_path_to_the_spy() -> Result<(), St
     ));
     assert_all(&cases, ExposureClass::WeaklyExposed)
 }
+
+const CLEAN_TEST: &[u8] = b"import { announceMail, mailer } from \"../src/mail\";\n\ntest(\"announceMail\", () => {\n  const send = jest.spyOn(mailer, \"send\");\n  announceMail(7);\n  expect(send).toHaveBeenCalledWith(\"order 7\");\n});\n";
+const HOOK_TEST: &[u8] = b"import { announceMail, mailer } from \"../src/mail\";\nbeforeEach(() => {\n  mailer.send = jest.fn();\n  mailer.send(\"order 7\");\n});\n\ntest(\"announceMail\", () => {\n  const send = jest.spyOn(mailer, \"send\");\n  announceMail(7);\n  expect(send).toHaveBeenCalledWith(\"order 7\");\n});\n";
+
+/// The class of the `announceMail` finding when the working tree holds
+/// `worktree_test` and the committed overlay serves `committed_test` for the
+/// same path, as a dirty tree under committed-history analysis does.
+fn dirty_test_class(
+    label: &str,
+    worktree_test: &[u8],
+    committed_test: &'static [u8],
+) -> Result<ExposureClass, String> {
+    let root = ts_unique_tempdir(label)?;
+    let written = ts_write_file(&root.join("src/mail.ts"), OWNER)
+        .and_then(|()| {
+            ts_write_file(
+                &root.join("src/other.ts"),
+                "export const mailer = { send(m: string) { return m; } };\n",
+            )
+        })
+        .and_then(|()| {
+            ts_write_file(
+                &root.join("tests/mail.test.ts"),
+                &String::from_utf8_lossy(worktree_test),
+            )
+        });
+    let overlay = crate::analysis::committed_source::CommittedSourceOverlay::from_entries(
+        &root,
+        [("tests/mail.test.ts", Some(committed_test))],
+    );
+    let result = written.and_then(|()| {
+        crate::analysis::committed_source::with_overlay(Some(std::sync::Arc::new(overlay)), || {
+            TypeScriptAdapter.analyze_diff(
+                &ts_analysis_options(root.clone()),
+                &OraclePolicy::default(),
+                &[changed_with_lines("src/mail.ts", &[LINE])],
+            )
+        })
+    });
+    let _ = std::fs::remove_dir_all(&root);
+    result?
+        .findings
+        .into_iter()
+        .find(|finding| {
+            finding
+                .probe
+                .owner
+                .as_ref()
+                .is_some_and(|owner| owner.0.ends_with("announceMail"))
+        })
+        .map(|finding| finding.class)
+        .ok_or_else(|| format!("{label}: expected a finding for `announceMail`"))
+}
+
+/// Under committed-history analysis the file checks read the same text as
+/// the test bodies: HEAD's, not the working tree's. A hook added only in the
+/// committed file must refuse the credit, and a hook present only in the
+/// working tree must not.
+#[test]
+fn spy_file_checks_read_the_committed_test_file() -> Result<(), String> {
+    assert_eq!(
+        dirty_test_class("dirty-worktree-hook", HOOK_TEST, CLEAN_TEST)?,
+        ExposureClass::Exposed
+    );
+    assert_eq!(
+        dirty_test_class("dirty-committed-hook", CLEAN_TEST, HOOK_TEST)?,
+        ExposureClass::WeaklyExposed
+    );
+    Ok(())
+}

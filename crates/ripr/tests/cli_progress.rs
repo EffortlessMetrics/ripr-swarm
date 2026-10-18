@@ -312,6 +312,64 @@ fn explain_and_context_fresh_runs_disclose_progress_on_stderr() -> Result<(), St
     Ok(())
 }
 
+/// #8739: `ripr explain` / `ripr context` accept `--quiet` with the `ripr
+/// check` meaning. The paired loud run proves the flag is what silences the
+/// stream, and stdout/exit status are identical either way.
+#[test]
+fn explain_and_context_quiet_suppress_progress_only() -> Result<(), String> {
+    let fixture = DiffFixture::new()?;
+    let check = run_check(&fixture, &["--format", "json", "--quiet"])?;
+    assert!(check.status.success(), "{}", stderr_text(&check));
+    let parsed: serde_json::Value = serde_json::from_slice(&check.stdout)
+        .map_err(|error| format!("stdout is not JSON: {error}"))?;
+    let finding_id = parsed["findings"]
+        .as_array()
+        .and_then(|findings| findings.first())
+        .and_then(|finding| finding["id"].as_str())
+        .ok_or_else(|| format!("diff fixture must report a finding id: {parsed}"))?
+        .to_string();
+    let root = fixture.0.display().to_string();
+    let diff = fixture.0.join("change.diff").display().to_string();
+    for (command, extra) in [
+        ("explain", vec![finding_id.as_str()]),
+        ("context", vec!["--at", finding_id.as_str()]),
+    ] {
+        let mut base = vec![command, "--root", root.as_str(), "--diff", diff.as_str()];
+        base.extend_from_slice(&extra);
+        let loud = ripr()
+            .args(&base)
+            .output()
+            .map_err(|error| format!("run ripr {base:?}: {error}"))?;
+        let mut quiet_args = base.clone();
+        quiet_args.push("--quiet");
+        let quiet = ripr()
+            .args(&quiet_args)
+            .output()
+            .map_err(|error| format!("run ripr {quiet_args:?}: {error}"))?;
+        assert!(loud.status.success(), "{}", stderr_text(&loud));
+        assert!(
+            quiet.status.success(),
+            "{command} --quiet must be accepted: {}",
+            stderr_text(&quiet)
+        );
+        assert!(
+            stderr_text(&loud).contains("ripr progress:"),
+            "{command} default run must keep projecting progress"
+        );
+        assert!(
+            !stderr_text(&quiet).contains("ripr progress:"),
+            "{command} --quiet must suppress progress: {}",
+            stderr_text(&quiet)
+        );
+        assert_eq!(
+            loud.stdout, quiet.stdout,
+            "{command} stdout must not change"
+        );
+        assert!(!quiet.stdout.is_empty(), "{command} must still render");
+    }
+    Ok(())
+}
+
 #[test]
 fn check_help_does_not_spray_progress() -> Result<(), String> {
     let output = ripr()

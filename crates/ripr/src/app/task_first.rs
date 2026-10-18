@@ -19,7 +19,7 @@ use crate::analysis::repair_route::{RepairPacketIneligibility, repair_packet_eli
 use crate::app::agent_brief::AgentBriefPolicy;
 use crate::app::agent_status::{AgentAttemptStatusReport, build_agent_attempt_status};
 use crate::app::repair_attempt::{
-    RepairAttemptId, RepairAttemptInventoryEntry, RepairAttemptState,
+    RepairAttemptId, RepairAttemptInventoryEntry, RepairAttemptManifest, RepairAttemptState,
     find_manifest_artifact_by_role, inventory_repair_attempts_from,
     load_repair_attempt_manifest_from,
 };
@@ -648,9 +648,136 @@ pub(crate) fn select_continue_attempt(
     }
 }
 
+/// An attempt a repeated `ripr repair` resumes instead of duplicating
+/// (#8742).
+pub(crate) struct ReusableAttempt {
+    pub(crate) attempt_id: String,
+    /// The persisted after-phase command; render it with
+    /// [`crate::agent::human_after_phase_follow_up`].
+    pub(crate) next_command: String,
+}
+
+/// The attempt a second `ripr repair` for `seam_id` resumes: an ordinary
+/// attempt (no Python trust binding) for the same seam that is still
+/// awaiting its edit and was prepared at exactly the current HEAD. Its
+/// before evidence is the evidence a fresh start would record, so a second
+/// attempt adds nothing and would make `ripr continue` ambiguous. Any
+/// other state, another seam, or a moved HEAD starts a new attempt. An
+/// unreadable store or HEAD also starts a new attempt: the attempt
+/// authority then makes its own decision.
+pub(crate) fn reusable_awaiting_attempt(root: &Path, seam_id: &str) -> Option<ReusableAttempt> {
+    let head = current_git_head(root).ok()?;
+    let entries = inventory_repair_attempts_from(root, None).ok()?;
+    let manifests = entries.iter().filter_map(|entry| match entry {
+        RepairAttemptInventoryEntry::Valid(manifest) => Some(manifest.as_ref()),
+        RepairAttemptInventoryEntry::Invalid { .. } => None,
+    });
+    pick_reusable_attempt(manifests, seam_id, &head)
+}
+
+/// Decision law of [`reusable_awaiting_attempt`], free of the filesystem.
+/// The newest matching attempt wins when earlier duplicates already exist.
+fn pick_reusable_attempt<'a>(
+    manifests: impl Iterator<Item = &'a RepairAttemptManifest>,
+    seam_id: &str,
+    head: &str,
+) -> Option<ReusableAttempt> {
+    manifests
+        .filter(|manifest| {
+            manifest.state == RepairAttemptState::AwaitingEdit
+                && manifest.seam_id == seam_id
+                && manifest.repository_head == head
+                && find_manifest_artifact_by_role(
+                    manifest,
+                    crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE,
+                )
+                .is_none()
+        })
+        .max_by_key(|manifest| manifest.created_unix_ms)
+        .map(|manifest| ReusableAttempt {
+            attempt_id: manifest.repair_attempt_id.as_str().to_string(),
+            next_command: manifest.next_command.clone(),
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn awaiting(
+        id_tail: char,
+        seam: &str,
+        head: &str,
+        created: u64,
+    ) -> Result<RepairAttemptManifest, String> {
+        Ok(RepairAttemptManifest {
+            schema_version: crate::app::repair_attempt::REPAIR_ATTEMPT_SCHEMA_VERSION.to_string(),
+            kind: "repair_attempt".to_string(),
+            repair_attempt_id: RepairAttemptId::parse(format!(
+                "repair-attempt-{}",
+                id_tail.to_string().repeat(24)
+            ))?,
+            state: RepairAttemptState::AwaitingEdit,
+            root: ".".to_string(),
+            store: None,
+            repository_head: head.to_string(),
+            producer_version: "test".to_string(),
+            seam_id: seam.to_string(),
+            created_unix_ms: created,
+            artifacts: Vec::new(),
+            next_command: format!("ripr agent repair --root . --attempt {id_tail} --phase after"),
+            limitations: Vec::new(),
+            non_claims: Vec::new(),
+            after: None,
+            last_after_refusal: None,
+            terminal_artifacts: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn reuse_picks_the_newest_awaiting_attempt_for_the_same_seam_and_head() -> Result<(), String> {
+        let older = awaiting('a', "seam1", "head1", 10)?;
+        let newer = awaiting('b', "seam1", "head1", 20)?;
+        let picked = pick_reusable_attempt([&older, &newer].into_iter(), "seam1", "head1");
+        assert_eq!(
+            picked.map(|attempt| attempt.attempt_id),
+            Some(newer.repair_attempt_id.as_str().to_string())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn reuse_ignores_other_seams_other_heads_and_non_awaiting_states() -> Result<(), String> {
+        let other_seam = awaiting('a', "seam2", "head1", 10)?;
+        let other_head = awaiting('b', "seam1", "head0", 10)?;
+        let mut finished = awaiting('c', "seam1", "head1", 10)?;
+        finished.state = RepairAttemptState::ReadyToFinish;
+        let mut failed = awaiting('d', "seam1", "head1", 10)?;
+        failed.state = RepairAttemptState::Failed;
+        assert!(
+            pick_reusable_attempt(
+                [&other_seam, &other_head, &finished, &failed].into_iter(),
+                "seam1",
+                "head1"
+            )
+            .is_none()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn reuse_refuses_a_python_trust_bound_attempt() -> Result<(), String> {
+        let mut bound = awaiting('a', "seam1", "head1", 10)?;
+        bound
+            .artifacts
+            .push(crate::app::repair_attempt::RepairAttemptArtifact {
+                role: crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE.to_string(),
+                path: "binding.json".to_string(),
+                sha256: "0".repeat(64),
+                bytes: 1,
+            });
+        assert!(pick_reusable_attempt([&bound].into_iter(), "seam1", "head1").is_none());
+        Ok(())
+    }
 
     /// Owns a temp test root so a mid-test failure cleans up instead of
     /// leaking the directory; mirrors the facade `Fixture` guard.
