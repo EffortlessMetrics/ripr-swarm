@@ -27,6 +27,8 @@ pub(super) struct PythonSourceFacts {
     pub(super) language: &'static str,
     pub(super) owners: Vec<PythonOwner>,
     pub(super) tests: Vec<PythonTest>,
+    /// Module-level `@pytest.fixture` functions (#4563).
+    pub(super) fixtures: Vec<super::PythonFixtureDef>,
     pub(super) facts: Vec<PythonSourceFact>,
     pub(super) limitations: Vec<PythonSourceLimitation>,
     pub(super) docstring_line_ranges: Vec<RangeInclusive<usize>>,
@@ -465,6 +467,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         language: DomainLanguageId::Python.as_str(),
         owners: Vec::new(),
         tests: Vec::new(),
+        fixtures: Vec::new(),
         facts: Vec::new(),
         limitations: Vec::new(),
         docstring_line_ranges: Vec::new(),
@@ -539,6 +542,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         },
         &mut snapshot.tests,
     );
+    snapshot.fixtures = super::fixtures::collect_fixture_defs(file, source, &module.body, &imports);
     with_module_rebinding(source, &module.body, &mut snapshot.tests);
     super::oracles::unittest_list::withhold_modified_oracles(&mut snapshot.tests);
     collect_source_facts_from_statements(

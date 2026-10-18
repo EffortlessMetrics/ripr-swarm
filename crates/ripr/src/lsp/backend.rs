@@ -4497,6 +4497,54 @@ fn bounded_failure_message(message: &str) -> String {
     super::component_outcome::bounded_message(message)
 }
 
+#[cfg(test)]
+mod bounded_failure_message_tests {
+    use super::bounded_failure_message;
+
+    /// #8584: `ripr/analysisStatus` copies `AnalysisFailure.message`, which
+    /// is bounded here. The wrapper must keep the truncation marker inside
+    /// the 240-character summary bound and still redact path tokens.
+    #[test]
+    fn analysis_status_failure_message_marks_truncation_inside_the_bound() {
+        let message = format!("cargo config error: {}", "x".repeat(400));
+        let bounded = bounded_failure_message(&message);
+        assert!(
+            bounded.ends_with('…'),
+            "truncated analysisStatus text must carry a marker: {bounded}"
+        );
+        assert_eq!(
+            bounded.chars().count(),
+            super::super::component_outcome::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND,
+            "the marker must stay inside the published bound: {bounded}"
+        );
+        assert_eq!(
+            bounded,
+            super::super::component_outcome::bounded_message(&message)
+        );
+    }
+
+    #[test]
+    fn analysis_status_failure_message_redacts_paths_before_the_cut() {
+        let message = format!(
+            "failed reading {} {}",
+            "/tmp/ripr-secret-config.toml",
+            "x".repeat(400)
+        );
+        let bounded = bounded_failure_message(&message);
+        assert!(bounded.contains("<path>"), "{bounded}");
+        assert!(
+            !bounded.contains("/tmp/ripr-secret-config.toml"),
+            "redaction must cover the remaining summary: {bounded}"
+        );
+        assert!(bounded.ends_with('…'), "{bounded}");
+        assert_eq!(
+            bounded.chars().count(),
+            super::super::component_outcome::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND,
+            "{bounded}"
+        );
+    }
+}
+
 /// #4860: whether a refresh analysis error is the attempt's cancellation.
 /// The attempt's token, not the error text, says whether the work stopped
 /// because a checkpoint handed it an abort. A wrapped cancellation is still a

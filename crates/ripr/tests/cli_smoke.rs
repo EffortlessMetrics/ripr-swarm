@@ -5601,6 +5601,28 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
         "{stderr}"
     );
 
+    // A whole-repo `repo-probe:...` finding ID gets the same family-named
+    // refusal as `probe:...` (#8166 review).
+    let repo_probe_packet = run_ripr(&[
+        "agent",
+        "packet",
+        "--root",
+        &root_path,
+        "--seam-id",
+        "repo-probe:src_lib.rs:predicate:566edf6b",
+        "--json",
+    ]);
+    assert!(!repo_probe_packet.status.success());
+    let stderr = String::from_utf8_lossy(&repo_probe_packet.stderr);
+    assert!(
+        stderr.contains("`repo-probe:...` is a `ripr check` finding ID, not a seam ID"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("ripr pilot --root ") && stderr.contains("agent-packet-unknown-seam"),
+        "{stderr}"
+    );
+
     let packet = run_ripr(&[
         "agent",
         "packet",
@@ -18784,7 +18806,15 @@ fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
         true
     );
     assert!(
-        stdout.contains("Top recommendation:\n  current change: part of it (this seam is on a line changed since origin/main)"),
+        stdout.contains(
+            "Top recommendation:\n  Exploratory seams, not ranked by expected mutant yield:"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(
+            "  current change: part of it (this seam is on a line changed since origin/main)"
+        ),
         "{stdout}"
     );
     assert!(md.contains("- Current change: part of it"), "{md}");
