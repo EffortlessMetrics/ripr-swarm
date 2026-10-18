@@ -22,7 +22,7 @@ pub(super) const MAX_RESPONSE_BYTES: usize = 128 * 1024;
 /// frame carrying `"id": null` (the id is never echoed) and the session
 /// stays alive. Far below [`MAX_RESPONSE_BYTES`], so
 /// [`outer_envelope_budget`] always leaves a usable budget.
-pub(super) const MAX_REQUEST_ID_BYTES: usize = 1024;
+pub(super) const MAX_REQUEST_ID_BYTES: usize = 16 * 1024;
 
 /// Fixed wire overhead the pinned SDK (rmcp 3.5.1) can add around a
 /// measured tool or resource envelope when it serializes the complete

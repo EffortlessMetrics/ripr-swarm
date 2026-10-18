@@ -242,7 +242,7 @@ official SDK transport:
   request id and the fixed JSON-RPC/`resultType` overhead, #7768) before
   it is sent (#6021), so neither the document-level guard nor a legal
   request id can downgrade a success into a response without
-  `structuredContent`. Request ids whose serialized form exceeds 1024
+  `structuredContent`. Request ids whose serialized form exceeds 16384
   bytes are refused at receive with `-32600` and `"id": null` before
   dispatch, so the typed refusal always has room for its id; `MCP output
   limit` remains the fail-closed backstop.
@@ -409,7 +409,7 @@ is not evidence that a resource with a particular identity exists.
   raw-document ceiling, raw-document overflow, all three string filters,
   typed refusals bound to the current snapshot, and same-session recovery.
 - `crates/ripr/tests/mcp_stdio.rs::oversized_request_id_is_rejected_with_null_id_and_the_session_survives`
-  — a request id whose serialized form exceeds 1024 bytes (including one
+  — a request id whose serialized form exceeds 16384 bytes (including one
   that fits the input cap but not the output cap) is answered with a
   bounded `-32600` frame carrying `"id": null`, an id exactly at the bound
   and a following ping are still answered, and the process stays alive.

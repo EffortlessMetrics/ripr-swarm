@@ -547,7 +547,7 @@ fn oversized_request_id_is_rejected_with_null_id_and_the_session_survives() -> R
     // A 128 KiB id fits the input cap but no correlated reply can echo it
     // under the output cap. It must be refused at receive (id never echoed)
     // while an id exactly at the serialized boundary still round-trips.
-    const ID_BOUND: usize = 1024;
+    const ID_BOUND: usize = 16 * 1024;
     let root = workspace_root()?;
     let timeout = Duration::from_secs(30);
     let boundary_id = "b".repeat(ID_BOUND - 2);

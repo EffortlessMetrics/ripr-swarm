@@ -464,7 +464,7 @@ answered and a fixed reserve for the JSON-RPC frame fields and the
 fails closed with `result_too_large` before the wire cap is reached for
 any legal request id, however much client-controlled id escaping adds
 (#7768). Request ids are correlation tokens: a request whose JSON-serialized
-id exceeds 1024 bytes is refused at receive with a bounded `-32600` frame
+id exceeds 16384 bytes is refused at receive with a bounded `-32600` frame
 carrying `"id": null` (the id is never echoed) and the session stays alive,
 so an id can never grow a reply past the response cap. The terminal
 `MCP output limit` stderr reason remains the fail-closed backstop for any
