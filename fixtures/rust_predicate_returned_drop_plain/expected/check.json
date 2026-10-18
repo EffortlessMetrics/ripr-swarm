@@ -1,0 +1,148 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_predicate_returned_drop_plain/input",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":1,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:f23c3741c57d2dbdd63a0327c002d23fc66e73698025e399043e08f159d758d3","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:predicate:bca747dd",
+      "canonical_gap_id": "gap:rust:src/lib.rs:make:predicate_boundary:predicate:x==10",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:make:predicate_boundary:predicate:x==10",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "make",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "x==10"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:bca747dd",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 15,
+        "expression": "x >= 10"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach make: boundary, far"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Detected related test input at the changed boundary"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: high"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: whole-object equality assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach make: boundary, far", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: high", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: whole-object equality assertion", "local flow reaches returned value: high (line 15)", "related test src/lib.rs:23 boundary uses strong whole object equality oracle: assert_eq!(make(10), Cfg { n: 1 });", "related test src/lib.rs:28 far uses strong whole object equality oracle: assert_eq!(make(11), Cfg { n: 1 });", "source assertion argument value 1 at line 24", "source function argument value x = 10 at line 24", "source function argument value x == 10 at line 24", "source assertion argument value 1 at line 29", "source function argument value x = 11 at line 29"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"high","line":15}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: high", "Detected related test input at the changed boundary", "Related tests appear to reach make: boundary, far", "Strong oracle found: whole-object equality assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "24": "assert_eq!(make(10), Cfg { n: 1 });",
+        "29": "assert_eq!(make(11), Cfg { n: 1 });"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 24,
+            "value": "1",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 24,
+            "value": "x = 10",
+            "context": "function_argument"
+          },
+          {
+            "line": 24,
+            "value": "x == 10",
+            "context": "function_argument",
+            "provenance": "assert_eq!(make(10), Cfg { n: 1 }); | exact input x = 10; literal operand 10 = 10"
+          },
+          {
+            "line": 29,
+            "value": "1",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 29,
+            "value": "x = 11",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 24,
+          "value": "1",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 24,
+          "value": "x = 10",
+          "context": "function_argument"
+        },
+        {
+          "line": 24,
+          "value": "x == 10",
+          "context": "function_argument",
+          "provenance": "assert_eq!(make(10), Cfg { n: 1 }); | exact input x = 10; literal operand 10 = 10"
+        },
+        {
+          "line": 29,
+          "value": "1",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 29,
+          "value": "x = 11",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "boundary",
+          "file": "src/lib.rs",
+          "line": 23,
+          "oracle_strength": "strong",
+          "oracle_kind": "whole_object_equality",
+          "oracle": "assert_eq!(make(10), Cfg { n: 1 });",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "far",
+          "file": "src/lib.rs",
+          "line": 28,
+          "oracle_strength": "strong",
+          "oracle_kind": "whole_object_equality",
+          "oracle": "assert_eq!(make(11), Cfg { n: 1 });",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "whole_object_equality",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

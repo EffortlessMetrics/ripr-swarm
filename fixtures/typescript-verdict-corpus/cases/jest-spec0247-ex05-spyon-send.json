@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "`announceMail(id)` calls `mailer.send(\"order \" + id)` on a module object; the edit sends `order 8`. The test spies with `const send = jest.spyOn(mailer, \"send\")`, calls `announceMail(7)` and pins `expect(send).toHaveBeenCalledWith(\"order 7\")`, which fails. RIPR-SPEC-0247 example 5: with `send` not an owner parameter and a `jest.spyOn` mock the pin reads `weakly_exposed`. ripr reports `weakly_exposed`, as the spec states; against the discriminated truth that is a false actionable gap the spec accepts.",
+  "reasoning": "`announceMail(id)` calls `mailer.send(\"order \" + id)` on a module object; the edit sends `order 8`. The test spies with `const send = jest.spyOn(mailer, \"send\")`, calls `announceMail(7)` and pins `expect(send).toHaveBeenCalledWith(\"order 7\")`, which fails. RIPR-SPEC-0247 rule 4 (decision 10, amending example 5): `mailer` is an exported top-level `const`, the owner's only call is the changed `mailer.send(...)`, and the test body is only the spy, the one owner call and the assertion, so no other call can reach the spy and the literal pin reads `exposed`.",
   "labeling_observation": {
     "ripr_commit": "3480fb2",
     "full_checkout_verdict": "gap",

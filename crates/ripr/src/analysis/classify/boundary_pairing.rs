@@ -318,6 +318,9 @@ fn loan_pairs_boundary_call(
         // Every call fact on the line is the helper call: a call buried in a
         // macro (`assert!(passes(50) || true)`) or chained after it is
         // another source of the line's `==` fact.
+        if crate::analysis::extract::line_at_call_budget(test.calls.iter(), *line) {
+            return false;
+        }
         let mut on_line = test.calls.iter().filter(|call| call.line == *line);
         let Some(helper_call) = on_line.next() else {
             return false;
@@ -345,7 +348,7 @@ fn loan_pairs_boundary_call(
             fact.line == *line
                 && matches!(fact.context, ValueContext::FunctionArgument)
                 && !fact.text.is_empty()
-                && fact.text.contains(&helper_call.text)
+                && fact.text.contains(&*helper_call.text)
                 && fact_matches_fed_literals(&fact.value, &fed)
         })
     })
@@ -622,6 +625,7 @@ fn assertion_observes_boundary_owner_call(
     // `value.name(..)` call is never the owner's (#6713).
     lists.len() == 1
         && owner_call_sites(&assertion.text, owner).len() == 1
+        && !crate::analysis::extract::line_at_call_budget(test.calls.iter(), assertion.line)
         && line_owner_call_count(test, assertion.line, owner) <= 1
         && owner_call_arguments_admit_activation_fallback(probe, owner, &lists[0])
         && activation_marks_boundary_call(
@@ -629,7 +633,7 @@ fn assertion_observes_boundary_owner_call(
             &CallFact {
                 line: assertion.line,
                 name: owner.name.clone(),
-                text: assertion.text.clone(),
+                text: assertion.text.clone().into(),
             },
         )
 }
@@ -690,7 +694,7 @@ fn boundary_bound_locals(
             let call = CallFact {
                 line: line_number,
                 name: owner.name.clone(),
-                text: original_line.trim().to_string(),
+                text: original_line.trim().to_string().into(),
             };
             let is_boundary = owner_call_activates_boundary(probe, owner, test, &call, activation);
             if let Some(existing) = last.iter_mut().find(|(tracked, _)| tracked == name) {
@@ -1233,7 +1237,7 @@ fn activation_marks_boundary_call(activation: &ActivationEvidence, call: &CallFa
     activation.observed_values.iter().any(|fact| {
         fact.line == call.line
             && fact.value.contains(" == ")
-            && (fact.text.is_empty() || fact.text.contains(&call.text))
+            && (fact.text.is_empty() || fact.text.contains(&*call.text))
     })
 }
 
@@ -3670,7 +3674,7 @@ mod tests {
         CallFact {
             line: 1,
             name: name.to_string(),
-            text: text.to_string(),
+            text: text.to_string().into(),
         }
     }
 

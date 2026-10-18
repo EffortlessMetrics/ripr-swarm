@@ -482,7 +482,9 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
         {
             names.extend(trusted(name.text()));
         }
-        if let Some(body) = macro_body_bindings(&node, &|name| trusted(name).is_some()) {
+        if let Some(body) =
+            macro_body_bindings(&node, &|name| trusted(name).is_some(), &|_, _, _| false)
+        {
             let trusted_name = ast::MacroRules::cast(node.clone())
                 .and_then(|item| item.name())
                 .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()))
@@ -691,7 +693,17 @@ fn macro_binding_ambiguities(
                 ));
             }
         }
-        if let Some(body) = macro_body_bindings(&node, &|name| trusted.contains(&name)) {
+        if let Some(body) = macro_body_bindings(
+            &node,
+            &|name| trusted.contains(&name),
+            // The same rule as a `use` item outside a macro: a verified,
+            // unshadowed drop-in import keeps the assertion's meaning (#8149).
+            &|root, name, external| {
+                drop_in_crates(name).contains(&root)
+                    && !drop_in_shadowed(root, external)
+                    && drop_in_verified(root)
+            },
+        ) {
             let macro_name = ast::MacroRules::cast(node.clone())
                 .and_then(|item| item.name())
                 .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()))
@@ -945,36 +957,67 @@ fn macro_binding_ambiguities(
     // own calls opaque in turn.
     let mut bound: BTreeSet<String> = ambiguous.iter().map(|(name, _)| name.clone()).collect();
     let mut reported = BTreeSet::new();
+    // Calls spelled as tokens inside another call's tree (`dbg!(vec!(..))`)
+    // are no `MacroCall` nodes: the parser keeps `vec ! (..)` flat beside a
+    // nested tree. They count as calls of their bare name too (#8446).
+    let mut sites = Vec::new();
+    for node in parse.tree().syntax().descendants() {
+        if let Some(call) = ast::MacroCall::cast(node.clone()) {
+            if let (Some(path), Some(tree)) = (call.path(), call.token_tree()) {
+                sites.push((
+                    path.syntax().text().to_string(),
+                    tree,
+                    node.clone(),
+                    Some(call),
+                ));
+            }
+        } else if let Some(tree) = ast::TokenTree::cast(node.clone())
+            && let Some(name) = nested_call_name(&tree)
+        {
+            sites.push((name, tree, node.clone(), None));
+        }
+    }
     loop {
         let before = bound.len();
-        for node in parse.tree().syntax().descendants() {
-            let Some(call) = ast::MacroCall::cast(node.clone()) else {
-                continue;
-            };
-            let Some(path) = call.path() else { continue };
-            let path = path.syntax().text().to_string();
-            if !bound.contains(path.trim_start_matches("r#")) || !is_trusted_macro(&path, trusted) {
+        for (path, tree, node, call) in &sites {
+            if !bound.contains(path.trim_start_matches("r#")) || !is_trusted_macro(path, trusted) {
                 continue;
             }
-            let Some(tree) = call.token_tree() else {
-                continue;
-            };
             let tokens: Vec<_> = tree
                 .syntax()
                 .descendants_with_tokens()
                 .filter_map(|element| element.into_token())
                 .filter(|token| !token.kind().is_trivia())
                 .collect();
+            // As for an untrusted wrapper: an attribute in the arguments may
+            // be applied by the expansion to an item.
+            if let Some(attribute) = tokens.iter().find_map(|token| {
+                let word = token.text().trim_start_matches("r#");
+                matches!(word, "macro_use" | "no_implicit_prelude").then_some(word)
+            }) {
+                return all(
+                    line_of(node),
+                    MacroBindingKind::ArgumentAttribute {
+                        wrapper: path.clone(),
+                        attribute: attribute.to_string(),
+                    },
+                    false,
+                );
+            }
             // As for an untrusted wrapper: a macro whose only definition
             // shows an expansion that cannot bind a name stays transparent.
-            if binding_free_local_wrapper(&binding_free, &call, &tokens, trusted) {
+            // A nested call has no node to locate that definition from, so
+            // it never takes the exemption.
+            if call.as_ref().is_some_and(|call| {
+                binding_free_local_wrapper(&binding_free, call, &tokens, trusted)
+            }) {
                 continue;
             }
             for token in &tokens {
                 let name = token.text().trim_start_matches("r#");
                 if trusted.contains(&name) {
                     bound.insert(name.to_string());
-                    let line = line_of(&node);
+                    let line = line_of(node);
                     if !reported.insert((name.to_string(), line, path.clone())) {
                         continue;
                     }
@@ -997,6 +1040,23 @@ fn macro_binding_ambiguities(
     ambiguous
 }
 
+/// The bare name of a macro call written as `name ! (..)` tokens directly
+/// before a nested token tree, if any. A top-level call is a `MacroCall`
+/// node whose `!` follows a path node, so it never matches.
+fn nested_call_name(tree: &ast::TokenTree) -> Option<String> {
+    let mut previous = std::iter::successors(tree.syntax().prev_sibling_or_token(), |element| {
+        element.prev_sibling_or_token()
+    })
+    .filter(|element| !matches!(element, ra_ap_syntax::NodeOrToken::Token(token) if token.kind().is_trivia()));
+    let bang = previous.next()?.into_token()?;
+    if bang.text() != "!" {
+        return None;
+    }
+    let name = previous.next()?.into_token()?;
+    (name.kind() == ra_ap_syntax::SyntaxKind::IDENT)
+        .then(|| name.text().trim_start_matches("r#").to_string())
+}
+
 /// `pretty_assertions` exports `assert_eq!`/`assert_ne!` as drop-in
 /// replacements that panic exactly when the standard macros do (they only
 /// format the diff differently), so importing one under its own name keeps
@@ -1008,13 +1068,18 @@ const DROP_IN_ASSERTION_CRATES: &[&str] = &["pretty_assertions"];
 /// is the one binding that makes the bare macro expect-test's.
 const EXPECT_TEST_CRATES: &[&str] = &["expect_test"];
 
-fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
-    let crates = match name {
+/// The crates whose export under `name` is a drop-in for the trusted macro.
+fn drop_in_crates(name: &str) -> &'static [&'static str] {
+    match name {
         "assert_eq" | "assert_ne" => DROP_IN_ASSERTION_CRATES,
         "expect" | "expect_file" => EXPECT_TEST_CRATES,
         "json" => &["serde_json"],
-        _ => return false,
-    };
+        _ => &[],
+    }
+}
+
+fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
+    let crates = drop_in_crates(name);
     // Ancestor trees run inner to outer; reverse each path, then the whole.
     let mut segments: Vec<String> = item
         .syntax()
@@ -1479,6 +1544,7 @@ fn transcriber_tokens(tokens: &[ra_ap_syntax::SyntaxToken]) -> Vec<&ra_ap_syntax
 fn macro_body_bindings(
     definition: &SyntaxNode,
     trusted: &dyn Fn(&str) -> bool,
+    drop_in_ok: &dyn Fn(&str, &str, bool) -> bool,
 ) -> Option<MacroBodyBindings> {
     use ra_ap_syntax::SyntaxKind::{BANG, COLON, COLON2, COMMA, DOLLAR, R_CURLY, SEMICOLON, STAR};
     if !ast::MacroRules::can_cast(definition.kind()) && !ast::MacroDef::can_cast(definition.kind())
@@ -1538,6 +1604,23 @@ fn macro_body_bindings(
                 let mut start = index + 1;
                 while matches!(kind(start), Some(COLON | COLON2)) {
                     start += 1;
+                }
+                // `use root::name;` of a verified drop-in binds the standard
+                // assertion's meaning, as it does outside a macro (#8149).
+                // A token tree keeps `::` as two `:` tokens, so accept both.
+                let separator = if kind(start + 1) == Some(COLON2) {
+                    1
+                } else if kind(start + 1) == Some(COLON) && kind(start + 2) == Some(COLON) {
+                    2
+                } else {
+                    0
+                };
+                if separator > 0
+                    && end == start + 2 + separator
+                    && let (Some(root), Some(name)) = (word(start), word(start + 1 + separator))
+                    && drop_in_ok(root, name, start > index + 1)
+                {
+                    continue;
                 }
                 // `$crate` is this crate; any other fragment is unknown.
                 let root = if kind(start) == Some(DOLLAR) {

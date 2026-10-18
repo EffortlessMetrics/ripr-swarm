@@ -50,9 +50,23 @@ export interface ResolvedServer {
   readonly needsShell?: boolean;
 }
 
+/**
+ * Why resolution produced no usable server. `showMissingServerMessage` offers
+ * "Copy Install Command" only for `missing_binary`; download, HTTP, checksum
+ * and manifest failures are not repaired by `cargo install ripr` (#8588).
+ */
+export type ResolveFailureKind =
+  | 'missing_binary'
+  | 'download'
+  | 'http'
+  | 'checksum'
+  | 'manifest'
+  | 'other';
+
 export interface ResolveFailure {
   readonly message: string;
   readonly detail: string;
+  readonly kind: ResolveFailureKind;
   /**
    * Replacement guidance for the generic missing-server remedy. Set when the
    * generic "set ripr.server.path" advice would be circular: the setting is
@@ -100,7 +114,7 @@ export async function resolveServer(
     version = requestedServerVersion(context, config);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    return { message: 'ripr.server.version is invalid.', detail };
+    return { message: 'ripr.server.version is invalid.', detail, kind: 'other' };
   }
   let downloadFailure: string | undefined;
   let earlyPathResult: ResolvedServer | ResolveFailure | undefined;
@@ -183,15 +197,22 @@ export async function resolveServer(
   const autoDownloadHint = config.autoDownload
     ? 'Automatic download was enabled but did not produce a usable server.'
     : 'Automatic download is disabled.';
+  // A PATH probe of an installed-but-unusable binary is `other`, not a
+  // missing executable. Copy Install Command is only honest for a binary
+  // that was not found (#8588 CodeRabbit).
+  const kind = downloadFailure
+    ? classifyDownloadFailureKind(downloadFailure)
+    : pathResult.kind;
   return {
     message: 'ripr server is not available.',
     detail: [
       downloadFailure,
       pathResult.detail,
-      `${autoDownloadHint} ${missingServerRemedy(config.autoDownload)}`
+      `${autoDownloadHint} ${resolutionFailureRecovery(kind, config.autoDownload)}`
     ]
       .filter((line): line is string => Boolean(line))
-      .join('\n')
+      .join('\n'),
+    kind
   };
 }
 
@@ -218,6 +239,47 @@ export function missingServerRemedy(autoDownload: boolean): string {
     : 'Enable ripr.server.autoDownload, install with cargo install ripr, or set ripr.server.path.';
 }
 
+/**
+ * Recovery sentence for a resolution failure. Cargo install is only honest
+ * for `missing_binary`; other kinds point at the diagnostic and path/mirror
+ * settings (#8588).
+ */
+export function resolutionFailureRecovery(
+  kind: ResolveFailureKind,
+  autoDownload: boolean,
+  remedy?: string
+): string {
+  if (remedy) {
+    return remedy;
+  }
+  if (kind === 'missing_binary') {
+    return missingServerRemedy(autoDownload);
+  }
+  return 'Inspect the diagnostic, then retry or set ripr.server.path (ripr.server.downloadBaseUrl for a mirror).';
+}
+
+/**
+ * Map a managed-download error string onto a resolution-failure kind.
+ * Unknown download errors stay `download` (no install command) rather than
+ * `missing_binary`. A missing prebuilt target is the one download-adjacent
+ * case where `cargo install ripr` is the documented recovery.
+ */
+export function classifyDownloadFailureKind(message: string): ResolveFailureKind {
+  if (/checksum mismatch/i.test(message) || /admitted manifest SHA-256/i.test(message)) {
+    return 'checksum';
+  }
+  if (/failed with HTTP \d+/i.test(message)) {
+    return 'http';
+  }
+  if (/manifest/i.test(message)) {
+    return 'manifest';
+  }
+  if (/No prebuilt ripr server target is known/i.test(message)) {
+    return 'missing_binary';
+  }
+  return 'download';
+}
+
 export function requestedServerVersion(context: vscode.ExtensionContext, config: RiprConfig): string {
   const configured = config.serverVersion.trim();
   if (configured.length > 0) {
@@ -242,7 +304,7 @@ async function probeExistingCandidate(
   runtime: ServerResolverRuntime
 ): Promise<ResolvedServer | ResolveFailure> {
   if (!fs.existsSync(command)) {
-    return { message: `${detail} was not found.`, detail: `${command} does not exist.` };
+    return { message: `${detail} was not found.`, detail: `${command} does not exist.`, kind: 'missing_binary' };
   }
   return runtime.probeCandidate(command, source, detail, false, source === 'bundled' ? 'bundled' : 'unmanaged');
 }
@@ -298,7 +360,8 @@ export function probeServerVersion(
     const timer = setTimeout(() => {
       finish({
         message: `${detail} did not respond.`,
-        detail: `Timed out after ${timeoutMs}ms while running ${command} --version.`
+        detail: `Timed out after ${timeoutMs}ms while running ${command} --version.`,
+        kind: 'other'
       });
     }, timeoutMs);
 
@@ -306,7 +369,11 @@ export function probeServerVersion(
     child.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
 
     child.once('error', (error) => {
-      finish({ message: `${detail} could not start.`, detail: error.message });
+      finish({
+        message: `${detail} could not start.`,
+        detail: error.message,
+        kind: spawnErrorKind(error)
+      });
     });
 
     // Classify on 'close', not 'exit': the win32 wrapper reports the exit
@@ -320,7 +387,11 @@ export function probeServerVersion(
       // typed marker; name the real cause instead of a bogus exit code (#5891).
       const startFailure = probeProcessStartFailure(child);
       if (startFailure) {
-        finish({ message: `${detail} could not start.`, detail: startFailure });
+        finish({
+          message: `${detail} could not start.`,
+          detail: startFailure,
+          kind: missingExecutableMessage(startFailure) ? 'missing_binary' : 'other'
+        });
         return;
       }
       if (code === 0) {
@@ -330,7 +401,8 @@ export function probeServerVersion(
           // so it cannot count as a passed version check (#5891).
           finish({
             message: `${detail} could not start.`,
-            detail: `The ${command} --version probe wrapper exited with code 0 without reporting a probe exit code; the probe process never ran to completion.`
+            detail: `The ${command} --version probe wrapper exited with code 0 without reporting a probe exit code; the probe process never ran to completion.`,
+            kind: 'other'
           });
           return;
         }
@@ -338,7 +410,11 @@ export function probeServerVersion(
           binaryVersion: firstOutputLine(stdoutChunks, stderrChunks)
         });
       } else {
-        finish({ message: `${detail} failed version check.`, detail: `${command} --version exited with code ${code}.` });
+        finish({
+          message: `${detail} failed version check.`,
+          detail: `${command} --version exited with code ${code}.`,
+          kind: 'other'
+        });
       }
     });
   });
@@ -347,7 +423,8 @@ export function probeServerVersion(
 function compatibilityFailure(detail: string, failure: LspCompatibilityFailure): ResolveFailure {
   return {
     message: `${detail} is not LSP compatible.`,
-    detail: `[${failure.kind}] ${failure.detail}`
+    detail: `[${failure.kind}] ${failure.detail}`,
+    kind: 'other'
   };
 }
 
@@ -360,6 +437,24 @@ function withManagedIdentity(
 
 function isResolved(result: ResolvedServer | ResolveFailure): result is ResolvedServer {
   return 'command' in result;
+}
+
+function spawnErrorKind(error: unknown): ResolveFailureKind {
+  if (
+    typeof error === 'object'
+    && error !== null
+    && 'code' in error
+    && (error as { code?: unknown }).code === 'ENOENT'
+  ) {
+    return 'missing_binary';
+  }
+  return missingExecutableMessage(error instanceof Error ? error.message : String(error))
+    ? 'missing_binary'
+    : 'other';
+}
+
+function missingExecutableMessage(message: string): boolean {
+  return /ENOENT|cannot find the file|is not recognized as/i.test(message);
 }
 
 function firstOutputLine(stdoutChunks: Buffer[], stderrChunks: Buffer[]): string | undefined {
