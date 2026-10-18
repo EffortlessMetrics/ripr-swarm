@@ -327,6 +327,11 @@ pub(super) fn collect_tests_from_statements(
                     &function.args,
                     &function.decorator_list,
                 );
+                let direct_parametrized = if framework == "pytest" {
+                    super::parametrize::direct_argnames(&function.decorator_list)
+                } else {
+                    Vec::new()
+                };
                 let fixtures: Vec<String> = fixture_parameter_names(&function.args, framework)
                     .into_iter()
                     .filter(|name| !generated_inputs.contains(name))
@@ -380,6 +385,7 @@ pub(super) fn collect_tests_from_statements(
                     ),
                     fixtures,
                     fixture_defs: Vec::new(),
+                    direct_parametrized,
                     parametrized: is_parametrized(&function.decorator_list),
                     parametrize: parametrize
                         .and_then(|cases| cases.excluding_body_bindings(&function.body)),
@@ -405,6 +411,11 @@ pub(super) fn collect_tests_from_statements(
                     &function.args,
                     &function.decorator_list,
                 );
+                let direct_parametrized = if framework == "pytest" {
+                    super::parametrize::direct_argnames(&function.decorator_list)
+                } else {
+                    Vec::new()
+                };
                 let fixtures: Vec<String> = fixture_parameter_names(&function.args, framework)
                     .into_iter()
                     .filter(|name| !generated_inputs.contains(name))
@@ -450,6 +461,7 @@ pub(super) fn collect_tests_from_statements(
                     ),
                     fixtures,
                     fixture_defs: Vec::new(),
+                    direct_parametrized,
                     parametrized: is_parametrized(&function.decorator_list),
                     parametrize: parametrize
                         .and_then(|cases| cases.excluding_body_bindings(&function.body)),

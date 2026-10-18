@@ -228,7 +228,12 @@ fn given_more_fixtures_than_the_cap_then_only_the_first_eight_are_attached() -> 
     ));
     let (_, tests) = workspace(&[("tests/test_many.py", &source)]);
     let test = tests.first().ok_or_else(|| "test must parse".to_string())?;
-    assert_eq!(test.fixture_defs.len(), 8);
+    let attached: Vec<&str> = test
+        .fixture_defs
+        .iter()
+        .map(|def| def.name.as_str())
+        .collect();
+    assert_eq!(attached, ["f0", "f1", "f2", "f3", "f4", "f5", "f6", "f7"]);
     Ok(())
 }
 
@@ -258,6 +263,69 @@ fn given_a_conftest_fixture_shadowed_by_a_parametrize_argname_then_the_test_stay
             ("tests/test_utils.py", test),
         ])?
         .is_empty()
+    );
+    Ok(())
+}
+
+/// One test per parametrize shape; `decorator` replaces the plain test header.
+fn with_decorator(decorator: &str) -> String {
+    SAME_MODULE.replace(
+        "def test_short(out):",
+        &format!("{decorator}\ndef test_short(out):"),
+    )
+}
+
+#[test]
+fn given_a_parametrize_the_literal_parser_gives_up_on_then_the_argname_is_still_not_a_fixture()
+-> Result<(), String> {
+    for decorator in [
+        "@pytest.mark.parametrize('out', VALUES)",
+        "@pytest.mark.parametrize('out', [pytest.param('abc', marks=pytest.mark.skip)])",
+        "@pytest.mark.parametrize('out', ['abc'], indirect=False)",
+        "@pytest.mark.parametrize('out', ['abc'], indirect=['other'])",
+        "@pytest.mark.parametrize('out, other', [('a', 'b')])",
+        "@pytest.mark.parametrize(('out', 'other'), [('a', 'b')])",
+        "@pytest.mark.parametrize(['other', 'out'], [('a', 'b')])",
+        "@pytest.mark.parametrize(argnames='out', argvalues=VALUES)",
+        "@pytest.mark.parametrize('other', [1])\n@pytest.mark.parametrize('out', VALUES)",
+    ] {
+        let test = with_decorator(decorator);
+        assert!(
+            relations(&[("src/utils.py", UTILS_PY), ("tests/test_utils.py", &test)])?.is_empty(),
+            "{decorator}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn given_indirect_routing_the_argname_to_its_fixture_then_the_fixture_is_resolved()
+-> Result<(), String> {
+    for decorator in [
+        "@pytest.mark.parametrize('out', ['abc'], indirect=True)",
+        "@pytest.mark.parametrize('out', VALUES, indirect=['out'])",
+        "@pytest.mark.parametrize('out', VALUES, indirect=('other', 'out'))",
+    ] {
+        let test = with_decorator(decorator);
+        assert_eq!(
+            relations(&[("src/utils.py", UTILS_PY), ("tests/test_utils.py", &test)])?,
+            vec![("test_short".to_string(), "fixture_owner_call")],
+            "{decorator}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn given_a_parametrize_naming_a_different_argname_then_the_fixture_is_still_resolved()
+-> Result<(), String> {
+    let test = SAME_MODULE.replace(
+        "def test_short(out):",
+        "@pytest.mark.parametrize('other', [1])\ndef test_short(out, other):",
+    );
+    assert_eq!(
+        relations(&[("src/utils.py", UTILS_PY), ("tests/test_utils.py", &test)])?,
+        vec![("test_short".to_string(), "fixture_owner_call")]
     );
     Ok(())
 }

@@ -82,13 +82,8 @@ pub(super) fn attach_fixture_defs(
         let mut attached: Vec<PythonFixtureDef> = Vec::new();
         // A direct (non-indirect) parametrize argname is supplied by pytest,
         // not resolved as a fixture.
-        let parametrized = test
-            .parametrize
-            .as_ref()
-            .map(|found| found.argnames())
-            .unwrap_or_default();
         for parameter in &test.fixtures {
-            if parametrized.contains(parameter) {
+            if test.direct_parametrized.contains(parameter) {
                 continue;
             }
             if attached.len() >= MAX_FIXTURE_DEFS_PER_TEST {
