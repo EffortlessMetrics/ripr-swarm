@@ -680,8 +680,11 @@ labeled / unlabeled (any label):
   no Routed Rust Small run; labels never create or refresh the required context
   (only `labeled` of `merge-ready` admits the gated non-required lanes)
 
-push to main / workflow_dispatch:
-  launch under their own authorities, unchanged
+push to main / workflow_dispatch on main or master:
+  launch under their own authorities
+
+workflow_dispatch on another branch or tag:
+  diagnostic jobs may run; the required Result explicitly fails
 ```
 
 `windows-ci` continues to opt into `.github/workflows/windows-advisory.yml` only.
@@ -690,10 +693,13 @@ group is qualified by `github.event_name`, so a second Ready transition replaces
 the prior admission attempt while independent main and manual work cannot replace
 each other. No run posts a pseudo-result, so a Draft PR with no required check
 blocks rather than inheriting stale proof. The result job keeps its static
-`Ripr Rust Small Result` name on every run. One gap is not enforced: a
-`workflow_dispatch` of `routed-rust.yml` on a PR branch also posts that context
-on the branch head, without the `pull_request`-scoped PR-evidence steps.
-Do not dispatch on PR branches; #5394 tracks enforcing this.
+`Ripr Rust Small Result` name on every run. A manual dispatch on a branch or
+tag other than `refs/heads/main` or `refs/heads/master` is diagnostic-only:
+its implementation jobs may run, but Result fails explicitly even if they all
+pass (#5394). The summary names the Draft to Ready handoff. This preserves
+workflow-testing diagnostics without letting a run that skips PR-only evidence
+qualify a PR. A skipped Result would report success, so the refusal runs inside
+the Result shell; it is not a job-level skip or a renamed required check.
 
 What this means for authors and agents:
 
