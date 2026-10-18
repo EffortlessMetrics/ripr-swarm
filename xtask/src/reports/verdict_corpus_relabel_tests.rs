@@ -1,5 +1,9 @@
 use super::*;
-use crate::reports::verdict_corpus::load_corpus;
+use crate::reports::verdict_corpus::{
+    Anchor, Expected, LabelingObservation, Mutant, RetainedFile, Truth, Verdict, load_corpus,
+};
+use sha2::{Digest, Sha256};
+use std::time::Duration;
 
 fn strings(args: &[&str]) -> Vec<String> {
     args.iter().map(|arg| arg.to_string()).collect()
@@ -741,4 +745,334 @@ fn corpus_digest_keeps_backslash_names_distinct_from_nested_paths() -> Result<()
     let slash_changed = corpus_identity(&dir)?;
     assert_ne!(nested_changed.corpus_digest, slash_changed.corpus_digest);
     Ok(())
+}
+
+const TOY_SUBJECT_ID: &str = "authored-relabel-toy";
+const TOY_LABELLED_ID: &str = "relabel-toy-labelled";
+const TOY_MISLABELLED_ID: &str = "relabel-toy-mislabelled";
+const TOY_LIB: &str = "\
+pub fn is_positive(n: i32) -> bool {
+    n > 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_is_positive() {
+        assert!(is_positive(1));
+    }
+}
+";
+const TOY_MANIFEST: &str = "\
+[package]
+name = \"relabel-toy\"
+version = \"0.1.0\"
+edition = \"2021\"
+publish = false
+
+[workspace]
+";
+const TOY_DIFF: &str = "\
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,5 +1,5 @@
+ pub fn is_positive(n: i32) -> bool {
+-    n > 0
++    n > 1
+ }
+
+ #[cfg(test)]
+";
+
+/// Opt-in end-to-end proof of `relabel_case`'s drift decision (#6706).
+///
+/// Default `cargo test` does not run this: it needs the labeled toolchain
+/// installed and drives `cargo test` on a throwaway crate. It does not call
+/// `relabel()` itself, because that loads `CORPUS_DIR` through
+/// `validated_corpus` (the real corpus plus spec ledger). The helper below
+/// is the production loop from `relabel_case` through `relabel.json` and the
+/// nonzero-on-drift exit. The mislabelled case is wrong only in `truth.state`,
+/// so a revert of the observed-vs-labeled truth comparison is the only way
+/// this test can stay green.
+#[test]
+#[ignore = "needs pinned toolchain, runs cargo test"]
+fn relabel_reports_drift_for_exactly_the_mislabelled_toy_case() -> Result<(), String> {
+    let toolchain = host_rustc_label()?;
+    let dir = crate::tests::temp_dir("relabel-e2e-toy");
+    crate::tests::write(
+        &dir.join("subjects").join(TOY_SUBJECT_ID).join("Cargo.toml"),
+        TOY_MANIFEST,
+    );
+    crate::tests::write(
+        &dir.join("subjects")
+            .join(TOY_SUBJECT_ID)
+            .join("src/lib.rs.txt"),
+        TOY_LIB,
+    );
+    crate::tests::write(&dir.join("cases/threshold.diff"), TOY_DIFF);
+
+    let subject = toy_subject();
+    let labelled = toy_case(TOY_LABELLED_ID, TruthState::Discriminated, &toolchain);
+    let mislabelled = toy_case(TOY_MISLABELLED_ID, TruthState::NotDiscriminated, &toolchain);
+    let out = dir.join("out");
+    let work = dir.join("work");
+    let args = RelabelArgs {
+        sample: None,
+        seed: DEFAULT_SEED.to_string(),
+        cases: vec![TOY_LABELLED_ID.to_string(), TOY_MISLABELLED_ID.to_string()],
+        checkouts: None,
+        repeat: 1,
+        timeout: Duration::from_secs(120),
+        out: out.clone(),
+        work_dir: work,
+    };
+
+    let replayed = relabel_selected_cases(
+        &dir,
+        &[(&labelled, &subject), (&mislabelled, &subject)],
+        &args,
+    );
+    let receipt_path = out.join("relabel.json");
+    let text = fs::read_to_string(&receipt_path).map_err(|err| {
+        format!("relabel.json missing after replay ({err}); relabel_case error: {replayed:?}")
+    })?;
+    let json: serde_json::Value =
+        serde_json::from_str(&text).map_err(|err| format!("parse relabel.json: {err}"))?;
+    let drifted = drifted_case_ids(&json)?;
+    fs::remove_dir_all(&dir).map_err(|err| err.to_string())?;
+
+    match replayed {
+        Err(err) if err.contains("1 case(s) drifted from their labels") => {}
+        other => {
+            return Err(format!(
+                "expected nonzero exit naming one drifted case, got {other:?}"
+            ));
+        }
+    }
+    if drifted != [TOY_MISLABELLED_ID] {
+        return Err(format!(
+            "relabel.json drifted cases were {drifted:?}, expected [{TOY_MISLABELLED_ID}]"
+        ));
+    }
+    let mislabelled_drift = case_drift(&json, TOY_MISLABELLED_ID)?;
+    if !mislabelled_drift.iter().any(|line| {
+        line.contains("labeled not_discriminated but the replayed mutants give discriminated")
+    }) {
+        return Err(format!(
+            "mislabelled case drift did not name the truth comparison: {mislabelled_drift:?}"
+        ));
+    }
+    Ok(())
+}
+
+fn host_rustc_label() -> Result<String, String> {
+    let output = std::process::Command::new("rustc")
+        .arg("--version")
+        .output()
+        .map_err(|err| format!("run rustc --version: {err}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "rustc --version failed ({})",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|err| format!("rustc --version stdout is not utf-8: {err}"))?;
+    let label = toolchain_release(stdout.trim());
+    if labeled_toolchain(label).is_none() {
+        return Err(format!(
+            "rustc --version `{label}` names no rustc release; install the pinned toolchain"
+        ));
+    }
+    Ok(label.to_string())
+}
+
+fn toy_subject() -> Subject {
+    Subject {
+        subject_id: TOY_SUBJECT_ID.to_string(),
+        origin: SubjectOrigin::Authored,
+        upstream: None,
+        commit: None,
+        version_label: "authored relabel e2e toy".to_string(),
+        license: "MIT OR Apache-2.0".to_string(),
+        shared_corpus: None,
+        retained_files: vec![
+            RetainedFile {
+                path: "Cargo.toml".to_string(),
+                sha256: format!("{:x}", Sha256::digest(TOY_MANIFEST.as_bytes())),
+            },
+            RetainedFile {
+                path: "src/lib.rs".to_string(),
+                sha256: format!("{:x}", Sha256::digest(TOY_LIB.as_bytes())),
+            },
+        ],
+    }
+}
+
+fn toy_case(case_id: &str, state: TruthState, toolchain: &str) -> Case {
+    let (ideal, acceptable) = match state {
+        TruthState::Discriminated => (
+            Verdict::Credited,
+            vec![Verdict::Credited, Verdict::Limited, Verdict::Silent],
+        ),
+        TruthState::PartiallyDiscriminated | TruthState::NotDiscriminated => {
+            (Verdict::Gap, vec![Verdict::Gap, Verdict::Limited])
+        }
+    };
+    Case {
+        case_id: case_id.to_string(),
+        subject_id: TOY_SUBJECT_ID.to_string(),
+        diff: "cases/threshold.diff".to_string(),
+        anchor: Anchor {
+            file: "src/lib.rs".to_string(),
+            line: 2,
+        },
+        edit_kind: EditKind::BehaviorChange,
+        behavior_family: "predicate_boundary".to_string(),
+        test_shape: "unit_assert_on_edited_predicate".to_string(),
+        hard_case: None,
+        truth: Truth {
+            state,
+            method: "runtime_mutant_kill".to_string(),
+            test_command: "cargo test".to_string(),
+            toolchain: toolchain.to_string(),
+            mutants: vec![Mutant {
+                replacement: "n > 1".to_string(),
+                mutated_line: None,
+                outcome: MutantOutcome::TestsFailed,
+                failing_test: Some("tests::one_is_positive".to_string()),
+                equivalence_review: "not equivalent: is_positive(1) changes".to_string(),
+            }],
+        },
+        expected: Expected {
+            ideal_verdict: ideal,
+            acceptable_verdicts: acceptable,
+        },
+        reasoning: "toy crate for relabel_case drift wiring".to_string(),
+        labeling_observation: LabelingObservation {
+            ripr_commit: "uncommitted-test".to_string(),
+            full_checkout_verdict: Verdict::Gap,
+            full_checkout_classifications: vec!["no_static_path".to_string()],
+            excerpt_parity: "matched".to_string(),
+        },
+        spec_examples: Vec::new(),
+        perl_facts: None,
+        expected_oracle: None,
+    }
+}
+
+/// Production `relabel` loop from `relabel_case` through receipt write and
+/// nonzero-on-drift, pointed at an in-memory selection instead of `CORPUS_DIR`.
+fn relabel_selected_cases(
+    dir: &Path,
+    selected: &[(&Case, &Subject)],
+    args: &RelabelArgs,
+) -> Result<PathBuf, String> {
+    let runner = Runner {
+        args,
+        work_root: args.work_dir.clone(),
+        trees_root: args
+            .work_dir
+            .join("trees")
+            .join(std::process::id().to_string()),
+    };
+    let mut results = Vec::new();
+    let replayed = (|| {
+        for (case, owner) in selected {
+            eprintln!("verdict-corpus relabel: {}", case.case_id);
+            let result = relabel_case(&runner, dir, case, owner)?;
+            for line in &result.drift {
+                eprintln!("  drift: {line}");
+            }
+            results.push(result);
+        }
+        Ok::<(), String>(())
+    })();
+    if let Err(err) = fs::remove_dir_all(&runner.trees_root) {
+        eprintln!(
+            "verdict-corpus relabel: could not remove {}: {err}",
+            normalize_path(&runner.trees_root)
+        );
+    }
+    replayed?;
+
+    let drifted_cases = results
+        .iter()
+        .filter(|result| !result.drift.is_empty())
+        .count();
+    let identity = corpus_identity(dir)?;
+    let receipt = Receipt {
+        schema_version: RELABEL_SCHEMA,
+        git_head: identity.git_head,
+        corpus_digest: identity.corpus_digest,
+        seed: args.seed.clone(),
+        sample: args.sample,
+        repeat: args.repeat,
+        selected: results.len(),
+        not_replayed: Vec::new(),
+        drifted_cases,
+        cases: results,
+    };
+    fs::create_dir_all(&args.out)
+        .map_err(|err| format!("create {}: {err}", normalize_path(&args.out)))?;
+    let path = args.out.join("relabel.json");
+    let json = serde_json::to_string_pretty(&receipt).map_err(|err| err.to_string())?;
+    fs::write(&path, format!("{json}\n"))
+        .map_err(|err| format!("write {}: {err}", normalize_path(&path)))?;
+    if drifted_cases > 0 {
+        return Err(format!(
+            "verdict-corpus relabel: {drifted_cases} case(s) drifted from their labels; see {}",
+            normalize_path(&path)
+        ));
+    }
+    Ok(path)
+}
+
+fn drifted_case_ids(json: &serde_json::Value) -> Result<Vec<String>, String> {
+    let cases = json
+        .get("cases")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "relabel.json has no cases array".to_string())?;
+    let mut drifted = Vec::new();
+    for case in cases {
+        let id = case
+            .get("case_id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "relabel.json case has no case_id".to_string())?;
+        let drift = case
+            .get("drift")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| format!("relabel.json case `{id}` has no drift array"))?;
+        if !drift.is_empty() {
+            drifted.push(id.to_string());
+        }
+    }
+    Ok(drifted)
+}
+
+fn case_drift(json: &serde_json::Value, case_id: &str) -> Result<Vec<String>, String> {
+    let cases = json
+        .get("cases")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "relabel.json has no cases array".to_string())?;
+    for case in cases {
+        if case.get("case_id").and_then(serde_json::Value::as_str) != Some(case_id) {
+            continue;
+        }
+        let drift = case
+            .get("drift")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| format!("relabel.json case `{case_id}` has no drift array"))?;
+        return drift
+            .iter()
+            .map(|line| {
+                line.as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| format!("relabel.json case `{case_id}` drift is not a string"))
+            })
+            .collect();
+    }
+    Err(format!("relabel.json has no case `{case_id}`"))
 }
