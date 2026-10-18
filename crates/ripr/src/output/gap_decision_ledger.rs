@@ -5,7 +5,7 @@ pub(crate) const PYTHON_REPAIR_CARD_UNAVAILABLE_STATIC_LIMIT_KIND: &str =
     "python_repair_card_unavailable";
 
 use crate::agent::command_specs::{command_display_is_nonblank, command_displays_are_complete};
-use crate::agent::loop_commands::shell_arg;
+use crate::agent::loop_commands::shell_arg_for;
 use crate::domain::{CommandRole, CommandSpec};
 use crate::output::gap_source_subject::{self, GapSourceSubject};
 use crate::output::receipt_write::receipt_write_command;
@@ -520,8 +520,9 @@ pub(crate) fn build_gap_decision_ledger_report(
             warnings.push(format!(
                 // #7753: count-aware noun — "1 finding", never "1 findings".
                 "check output contained {findings}, but the --check-output route \
-                 projects Python/TypeScript/Perl findings only; no gap records were derived \
-                 from them",
+                 projects presentation/output-text and Python/TypeScript/Perl findings only; \
+                 no gap records were derived from them. For Rust findings, use `ripr check` \
+                 to read them and `ripr repair` to start a repair",
                 findings =
                     crate::output::count_noun::count_noun(input_items, "finding", "findings"),
             ));
@@ -2414,10 +2415,12 @@ fn perl_route_kind(value: &str) -> &'static str {
 }
 
 fn attach_check_output_preview_receipt_routes(records: &mut [GapRecord], root: &str) {
+    // Stored in versioned records: canonical POSIX quoting on every
+    // host (#8437), like the receipt command.
     let after_check_command = format!(
         "ripr check --root {} --json > {}",
-        shell_arg(root),
-        shell_arg(DEFAULT_CHECK_AFTER_OUTPUT)
+        shell_arg_for(root, false),
+        shell_arg_for(DEFAULT_CHECK_AFTER_OUTPUT, false)
     );
 
     for record in records {
@@ -3770,6 +3773,8 @@ mod tests {
                 warning.contains("3 findings")
                     && warning.contains("Python/TypeScript/Perl")
                     && warning.contains("--check-output")
+                    && warning.contains("ripr check")
+                    && warning.contains("ripr repair")
             }),
             "zero derived records from a valid Rust check output must carry the \
              route-coverage warning, got {:?}",
@@ -4816,7 +4821,14 @@ mod tests {
         // pass a mock for the called parameter and pin the changed argument
         // (RIPR-SPEC-0238 rule 17), so both are `exposed` and drop their
         // `no_strong_oracle` cards.
-        if (direct, no_strong, orthogonal, family_selection) != (5, 27, 13, 1) {
+        // #8247: `python_cross_test_import_alias` withholds the owner credit an
+        // alias borrowed from another test's import, so its asserting test
+        // observes a different function and adds one orthogonal card.
+        // #8247: `python_local_owner_stand_ins` and
+        // `python_wrong_receiver_assertion` each withhold owner credit from an
+        // assertion on a different object and add one orthogonal card; the
+        // two controls stay exposed and carry no card.
+        if (direct, no_strong, orthogonal, family_selection) != (5, 27, 16, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

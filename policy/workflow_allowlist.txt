@@ -12,6 +12,7 @@
 
 .github/actions/ci-scratch-lease/action.yml|86|Shared self-hosted scratch ownership authority (#3841): acquire/release a kernel flock lease per job, self-check it at reclaim and release, and reclaim only terminal trees this repository owns while holding that lease. It must run before the Rust toolchain exists and on the toolchain-free scheduled GC lane, so it cannot be an xtask command; the executed behavior harness lives in tools/repo-policy/src/ci_scratch/tests.rs.
 .github/actions/ripr-check/action.yml|7|Adoption composite action installs ripr when missing and runs one ripr check command (#2626).
+.github/actions/pr-candidate-admission/action.yml|309|Candidate admission (#2022, #4987): one bounded read-only GitHub API snapshot, then a self-tested pure decision (stale head, claim identity, trusted competing peer with recorded winner/replacement reconciliation, oversize non-docs scope) that must run before any product allocation; the decision table and its discriminating self-test controls live in the same run block so the executed behavior stays reviewable.
 
 .github/workflows/badge-endpoints.yml|1|Badge endpoint refresh delegates generation to cargo xtask and opens a PR.
 .github/workflows/ci.yml|38|#4987: bounded event-head Rust surface detection; remaining CI blocks call direct Cargo or npm commands.
@@ -20,7 +21,9 @@
 .github/workflows/droid.yml|20|Droid tag-response workflow writes local Factory BYOK settings, then uses reusable actions.
 .github/workflows/dx-scoreboard.yml|1|Nightly developer-experience scoreboard delegates corpus measurement, ingest, and the regression gate to one cargo xtask dx-scoreboard command.
 .github/workflows/first-run-install.yml|4|First-run install lane: one-command walk and ungated record steps, then one folded cargo xtask dx-scoreboard gate command.
+.github/workflows/first-run-archive.yml|5|On-demand first-run archive lane (#5311): extracts the documented install snippets from docs/QUICKSTART.md, runs each on a hosted runner, then one cargo xtask first-run --install-archive walk; read-only.
 .github/workflows/future-clippy.yml|17|#7307: bounded advisory scan captures native Cargo/tee statuses and requires fresh Cargo artifact/completion evidence; the repo-policy harness executes the production blocks.
+.github/workflows/macos-advisory.yml|26|Advisory macOS lane (#8391): one clippy and one library-test step each tee a log and capture the native exit status, then one summary step enforces that the evidence exists and at least one test ran; outcomes remain advisory and missing evidence fails.
 .github/workflows/npm-launcher.yml|1|Script-free npm launcher workflow delegates behavior and package-content proof to two single-command npm invocations.
 .github/workflows/pilot-ranking.yml|4|Pilot ranking answer key lane: one-command build, fetch and score steps, then one folded cargo xtask dx-scoreboard gate command.
 .github/workflows/pr-staleness-watchdog.yml|52|Scheduled watchdog finds open PR heads with no Ripr Rust Small Result check run on the head (#4937) and dispatches the workflow within a per-run cap; the sweep is pure gh api orchestration with its audit table, not product logic.
@@ -42,3 +45,4 @@
 .github/workflows/windows-packaged-qualification.yml|50|On-demand exact-candidate Windows package and VSIX rehearsal must retain identity checks, isolated CLI/editor journeys, and Actions-only receipts in one workflow.
 .github/workflows/python-wheelhouse-qualification.yml|50|On-demand local-wheelhouse pip/uv qualification writes isolation facts and a fail-closed aggregate; credential-free, artifact-only, no publication.
 .github/workflows/zed-extension.yml|1|Zed extension workflow keeps each run block to one Cargo command.
+.github/workflows/contabo-qualification.yml|0|#4988/#7164 reviewed dispatch-only standard reusable consumer rehearsal; no shell, hosted fallback, or protected-context claim.

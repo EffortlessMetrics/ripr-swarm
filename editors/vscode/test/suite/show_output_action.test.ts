@@ -84,4 +84,60 @@ suite('Show Output Warning Action', () => {
     );
     assert.strictEqual(outputShown, 1, 'choosing Show Output must reveal the output channel');
   });
+
+  test('a server that dies at the handshake leaves a warning and no starting status', async () => {
+    const warningCalls: string[] = [];
+    const outputLines: string[] = [];
+    const runtime: RiprClientRuntime = {
+      getConfig: () => enabledConfig,
+      workspaceRootState: () => ({ kind: 'singleRoot', root: '/workspace', roots: ['/workspace'] }),
+      workspaceFolders: () => [],
+      showQuickPick: async () => undefined,
+      resolveServer: async () => ({
+        command: '/sentinel/trusted/ripr',
+        source: 'configured',
+        detail: 'sentinel server',
+        installationState: 'unmanaged',
+        compatibilityResult: compatibleLspEvidence
+      }),
+      createLanguageClient: () => ({
+        onNotification: () => ({ dispose: () => undefined }),
+        sendRequest: async () => undefined,
+        setTrace: () => undefined,
+        start: async () => {
+          throw new Error('sentinel handshake failure');
+        },
+        stop: async () => undefined
+      }),
+      createFileSystemWatcher: () => ({} as unknown as vscode.FileSystemWatcher),
+      readFile: async () => undefined,
+      runRipr: async () => '',
+      writeClipboard: async () => undefined,
+      isWorkspaceTrusted: () => true,
+      showInformationMessage: async () => undefined,
+      showWarningMessage: async (message: string) => {
+        warningCalls.push(message);
+        return undefined;
+      },
+      showErrorMessage: async () => undefined
+    };
+    const output = {
+      appendLine: (line: string) => outputLines.push(line),
+      show: () => undefined
+    } as unknown as vscode.LogOutputChannel;
+    const controller = new RiprClientController(
+      {} as unknown as vscode.ExtensionContext,
+      output,
+      runtime
+    );
+
+    await assert.rejects(controller.start(), /sentinel handshake failure/);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.strictEqual(warningCalls.length, 1, 'expected exactly one warning');
+    assert.match(warningCalls[0], /ripr server failed to start: sentinel handshake failure/);
+    const status = (controller as unknown as { status: { kind: string; nextStep: string } }).status;
+    assert.strictEqual(status.kind, 'serverFailed', 'status must leave the starting spinner');
+    assert.match(status.nextStep, /Restart Server/);
+  });
 });

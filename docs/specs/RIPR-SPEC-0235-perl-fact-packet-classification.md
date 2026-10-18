@@ -44,6 +44,9 @@ Support-tier impact:
     location. A real-producer packet (`owner:` ids, `partial` status) keeps
     its suggested location when such a relation exists. It still gets no
     canonical gap, as today.
+  - rule 16: a `reachable_unrevealed` finding whose only bound oracle is
+    `weak_broad` on a strong-eligible kind, on an owner-call relation, becomes `static_unknown` and loses
+    its gap and suggested location.
 - Every other rule, including rules 1, 10 and 14, changes no output.
   Claim boundaries remain governed by
   [support tiers](../status/SUPPORT_TIERS.md).
@@ -197,14 +200,19 @@ For each change, the first match wins:
    never strong, whatever their label. `weak_smoke`, `weak_broad`,
    `mention_only` and `unknown` strengths are never strong. A relation
    with a bound strong oracle reads `weakly_exposed`; with any other bound
-   oracle, `reachable_unrevealed`.
+   oracle, `reachable_unrevealed` (except rule 16).
 7. **Relation-kind cap, per relation.** Only `direct_owner_call` supports
-   positive reachability. A relation of any other kind
-   (`method_receiver`, `helper_call`, `package_reference`,
-   `test_name_match`, `file_proximity`, `fixture_setup`, `unknown`) is
-   capped at `reachable_unrevealed` before aggregation. Today the cap
-   checks whether any bound relation is `direct_owner_call`, so a strong
-   advisory relation beside a weak direct one reads `weakly_exposed`.
+   positive reachability (sink-aligned `exposed`, suggested location, row
+   miss). A reachable `method_receiver` or `helper_call` relation whose own
+   bound oracle passes rules 5 and 6 keeps its per-relation
+   `weakly_exposed` (#6583, examples 13 and 14): it is an owner call shape,
+   and the binding already requires the oracle's test and target owner to
+   match the relation exactly, so a wrong-receiver, weak-oracle, or
+   unreachable relation earns nothing. A relation of any other kind
+   (`package_reference`, `test_name_match`, `file_proximity`,
+   `fixture_setup`, `unknown`) is capped at `reachable_unrevealed` before
+   aggregation. The cap is per relation, so a strong advisory relation
+   beside a weak direct one no longer reads `weakly_exposed`.
 8. **Aggregation.** The change takes the strongest per-relation class:
    any `weakly_exposed`, then any `reachable_unrevealed`, otherwise
    `static_unknown`.
@@ -293,6 +301,20 @@ For each change, the first match wins:
 15. **Constant stages.** Reach is `yes` when any relation binds, whatever
     its kind or hint. Infect and propagate are `unknown`. Confidence is
     `0.5`. ripr never reports a runtime mutation outcome from a packet.
+16. **Broad oracle is unknown.** A relation whose bound oracle (rule 5) has
+    strength `weak_broad` and a kind rule 6 lists as strong-eligible, on a
+    `direct_owner_call`, `method_receiver` or `helper_call` relation (the
+    kinds that earn weak oracle credit under rule 7), reads
+    `static_unknown`, not `reachable_unrevealed`. The producer grades
+    `throws_ok`, `dies_ok` and `like(dies {...}, ...)` alike as `weak_broad`
+    whatever the matcher pins (#6582), so a gap on it is wrong about as often
+    as right (corpus: 4 wrong, 3 right). Aggregation is unchanged, so a
+    `weakly_exposed` or `reachable_unrevealed` relation beside it still wins,
+    and rule 13 withholds the gap and location as for any `static_unknown`.
+    `smoke_ok`, `dies_only`, `mention_only`, `unknown_helper` and
+    `dynamic_framework_indirection` kinds stay `reachable_unrevealed`. The
+    recommended next step says the producer grades the assertion broad and that
+    no change is needed if it asserts the message, class or value.
 
 ### Decisions
 
@@ -368,6 +390,12 @@ rejected alternative. Any can be reversed later without touching the rest.
     remove the location from every real packet. Rejected: gate both
     suggestions on `packet_status: complete`. Reopen this if a corpus
     case shows a partial packet's omitted facts moving the right test.
+11. **Broad oracle.** Adopted: unknown (rule 16) until the producer grades
+    exception and regex oracles apart (#6582). Rejected: keep the gap, because
+    it was wrong for 4 of 7 corpus rows; recognize `throws_ok` or `dies_ok` in
+    the expression, because ripr does not parse Perl. Costs three correct
+    gaps (`close-out-dies-ok`, `format-entry-like`, `round-cents-like`), which
+    read `limited`; revisit when the producer separates them.
 
 ## Required Evidence
 
@@ -427,8 +455,8 @@ cases.
    `stdout_is(sub { Pricing::show(100) }, "90\n")` as `output_observer` /
    `strong_exact`: `weakly_exposed`, `unknown` / strong (unchanged).
 7. `like(Pricing::discount(100), qr/9/)` as `exact_return_assertion` /
-   `weak_broad`: `reachable_unrevealed`, `exact_value` / weak
-   (unchanged).
+   `weak_broad`: `static_unknown` (rule 16), `exact_value` / weak. Was
+   `reachable_unrevealed`.
 8. A test that only names `Pricing::discount`, as `mention_only` /
    `mention_only`: `reachable_unrevealed`, `unknown` / unknown
    (unchanged).
@@ -440,11 +468,12 @@ cases.
 12. Hint `static_unknown`: `static_unknown`, no gap, no location (today
     both emitted).
 13. `my $p = Pricing->new; is($p->discount(100), 90)` as
-    `method_receiver` / `reachable`: `reachable_unrevealed`, relation
-    null / null, no location (today `direct_owner_call` / high, location
-    emitted).
-14. `helper_call`: `reachable_unrevealed`, `helper_owner_call` / high, no
-    location (today location emitted).
+    `method_receiver` / `reachable` with the oracle bound to the change
+    owner: `weakly_exposed`, no location (#6583; was
+    `reachable_unrevealed`).
+14. `helper_call` with the oracle bound to the change owner:
+    `weakly_exposed`, `helper_owner_call` / high, no location (#6583; was
+    `reachable_unrevealed`).
 15. `package_reference`: `reachable_unrevealed`, `import_path_affinity` /
     medium; `test_name_match`: `reachable_unrevealed`, `owner_named_test`
     / medium. Neither has a location (class unchanged; today location
@@ -458,8 +487,8 @@ cases.
     "return $amount * 0.9"`: `weakly_exposed` (unchanged).
 19. `changed_observable: "$amount*0.9"`, `observed_sink: "$amount * 0.9"`:
     `weakly_exposed` (unchanged).
-20. Example 17's sinks with `method_receiver`: `reachable_unrevealed`
-    (unchanged).
+20. Example 17's sinks with `method_receiver`: `weakly_exposed` (#6583
+    weak credit; sink-aligned `exposed` stays `direct_owner_call`-only).
 21. Example 17's sinks with hint `weakly_reachable`:
     `reachable_unrevealed` (unchanged).
 22. Example 17's sinks with `packet_status: partial`: `exposed`, no gap
@@ -535,7 +564,7 @@ cases.
   - `PerlFactPacket::classify_related_relation`: rules 4 to 7;
   - `PerlFactPacket::classify_change_from_related_tests`: rule 8;
   - `sink_aligned_observation`: rules 5 and 9;
-  - `OracleFact::is_strong_exact`: rule 6;
+  - `OracleFact::is_strong_exact`: rule 6; `is_broad_unresolved`: rule 16;
   - `RelationKind::supports_positive_reachability`: rule 7;
   - `perl_oracle_kind_to_domain`, `perl_oracle_strength_to_domain`,
     `perl_relation_to_domain`: rule 12;

@@ -696,7 +696,7 @@ fn push_preview_boundary(lines: &mut Vec<String>, finding: &Finding) {
         lines.push(format!(
             "Static limit: {} \u{2014} {}",
             static_limit_kind.as_str(),
-            static_limit_kind.describe()
+            static_limit_kind.describe_for_family(&finding.probe.family)
         ));
     }
     if finding.language_status.is_some() {
@@ -1231,7 +1231,7 @@ fn root_matches_report(root: &Path, report_root: Option<&str>) -> bool {
 
 fn normalize_path(path: &Path) -> String {
     let normalized = path.to_string_lossy().replace('\\', "/");
-    if cfg!(windows) {
+    if crate::output::path::host_paths_case_insensitive() {
         normalized.to_lowercase()
     } else {
         normalized

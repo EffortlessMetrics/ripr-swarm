@@ -41,7 +41,9 @@ mod swarm_command;
 #[path = "commands/task_first.rs"]
 mod task_first;
 
-pub(super) use agent::{agent, before_phase_stdout, run_before_repair_with_identity};
+pub(super) use agent::{
+    agent, before_phase_stdout, run_before_repair_with_identity, translate_agent_repair_seam_id,
+};
 pub(super) use context::context;
 // Flag-documenting help bodies live beside their parsers so `cli::help`
 // suggestions mine the same text `--help` prints.
@@ -124,9 +126,13 @@ mod pr_comments_github;
 
 #[path = "commands/check.rs"]
 mod check;
+#[path = "commands/check_budget.rs"]
+mod check_budget;
 #[path = "commands/check_fanout.rs"]
 mod check_fanout;
 pub(super) use check::check;
+#[cfg(unix)]
+pub(super) use check::check_with_interrupt_flags;
 
 #[path = "commands/review_comments.rs"]
 mod review_comments;
@@ -314,8 +320,9 @@ pub(super) fn pr_comments(args: &[String]) -> Result<(), String> {
         "plan" => pr_comments_plan(rest),
         "existing" => pr_comments_github::pr_comments_existing(rest),
         "requests" => pr_comments_github::pr_comments_requests(rest),
+        "summary" => pr_comments_github::pr_comments_summary(rest),
         _ => Err(format!(
-            "unknown pr-comments subcommand {subcommand:?}; expected `plan`, `existing`, or `requests`"
+            "unknown pr-comments subcommand {subcommand:?}; expected `plan`, `existing`, `requests`, or `summary`"
         )),
     }
 }
@@ -1323,10 +1330,12 @@ enum SnapshotCaptureKind {
     CargoMutants,
 }
 
-fn snapshot_capture_hint(kind: SnapshotCaptureKind, displayed_path: &str) -> String {
-    // Quote after `display_path`: the NotFound prefix stays human-readable,
-    // but the pasted redirect must remain one shell token (#7349, #5188).
-    let quoted_path = crate::agent::loop_commands::shell_arg(displayed_path);
+fn snapshot_capture_hint(kind: SnapshotCaptureKind, path: &Path) -> String {
+    // Keep display-only normalization out of executable operands: on Unix a
+    // literal backslash is part of the filename, not a directory separator.
+    // CLI path arguments are UTF-8; retain their native spelling and quote it
+    // as one shell token (#7349, #5188).
+    let quoted_path = crate::agent::loop_commands::shell_arg(&path.to_string_lossy());
     match kind {
         SnapshotCaptureKind::Outcome => format!(
             "Run `ripr check --format repo-exposure-json > {quoted_path}` first, or pass a `ripr check --json` output."
@@ -1347,7 +1356,7 @@ fn read_calibration_text(path: &Path, kind: SnapshotCaptureKind) -> Result<Strin
         if err.kind() == std::io::ErrorKind::NotFound {
             format!(
                 "read {displayed} failed: not found. {}",
-                snapshot_capture_hint(kind, &displayed)
+                snapshot_capture_hint(kind, path)
             )
         } else {
             format!("read {displayed} failed: {err}")
@@ -3512,6 +3521,7 @@ mod tests {
             // continue-on-error semantics in `ci_packet::stage_table`.
             yaml_advisory_steps: &[
                 "Capture existing RIPR inline comments",
+                "Publish RIPR summary comment",
                 "Publish RIPR inline comments",
                 "Add RIPR advisory summary",
                 "Upload RIPR report artifacts",
@@ -6087,7 +6097,7 @@ language = "rust"
         );
         assert_eq!(
             pr_comments(&args(&["publish"])),
-            Err("unknown pr-comments subcommand \"publish\"; expected `plan`, `existing`, or `requests`".to_string())
+            Err("unknown pr-comments subcommand \"publish\"; expected `plan`, `existing`, `requests`, or `summary`".to_string())
         );
         assert_eq!(
             parse_pr_comments_plan_options(&args(&["--mode", "post"])),
@@ -7217,7 +7227,10 @@ language = "rust"
         assert_missing_snapshot_named_capture(
             &plain_message,
             &plain_display,
-            &format!("ripr check --format repo-exposure-json > {plain_display}"),
+            &format!(
+                "ripr check --format repo-exposure-json > {}",
+                plain.to_string_lossy()
+            ),
             &["cargo mutants"],
         );
         assert!(
@@ -7227,7 +7240,9 @@ language = "rust"
 
         let spaced = PathBuf::from("missing snapshot.json");
         let spaced_display = output::outcome::display_path(&spaced);
-        let quoted = shell_arg(&spaced_display);
+        // Executable redirect operands keep the native spelling; only prose uses
+        // `display_path`, which normalizes separators (#8240).
+        let quoted = shell_arg(&spaced.to_string_lossy());
         assert_ne!(
             quoted, spaced_display,
             "a space must force quoting of the redirect token"
@@ -7281,7 +7296,7 @@ language = "rust"
         std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
         let missing_before = dir.join("missing before.json");
         let displayed = output::outcome::display_path(&missing_before);
-        let quoted = shell_arg(&displayed);
+        let quoted = shell_arg(&missing_before.to_string_lossy());
         assert!(
             displayed.contains(' '),
             "CLI fixture path must contain a space: {displayed}"
@@ -7400,6 +7415,18 @@ language = "rust"
     }
 
     #[test]
+    fn init_parses_mcp_flag() {
+        assert_eq!(
+            parse_init_options(&args(&["--mcp"])).map(|options| options.mcp),
+            Ok(true)
+        );
+        assert_eq!(
+            parse_init_options(&args(&[])).map(|options| options.mcp),
+            Ok(false)
+        );
+    }
+
+    #[test]
     fn init_parses_root_dry_run_and_force() {
         assert_eq!(
             parse_init_options(&args(&[
@@ -7415,6 +7442,7 @@ language = "rust"
                 dry_run: true,
                 force: true,
                 ci: Some(InitCi::Github),
+                mcp: false,
             })
         );
     }
@@ -8021,8 +8049,8 @@ language = "rust"
         // The DX bar from #5409: a workflow an adopter can read in one sitting.
         let line_count = workflow.lines().count();
         assert!(
-            line_count <= 150,
-            "generated workflow is {line_count} lines; #5409 keeps it at 150 or fewer"
+            line_count <= 166,
+            "generated workflow is {line_count} lines; #5409 set 150, and the summary comment step took it to 165"
         );
 
         assert!(workflow.contains("RIPR_UPLOAD_SARIF: \"true\""));
@@ -8093,6 +8121,18 @@ language = "rust"
         assert!(capture.contains("| ripr pr-comments existing --root . --raw -"));
         let publish = workflow_step(&workflow, "Publish RIPR inline comments");
         assert!(publish.contains("done < target/ripr/review/publish/requests.tsv"));
+        // The conversation comment is on by default, but never for a fork or
+        // Dependabot head, whose token cannot write, and it stays advisory.
+        let summary = workflow_step(&workflow, "Publish RIPR summary comment");
+        assert!(summary.contains("env.RIPR_SUMMARY_COMMENT != 'false'"));
+        assert!(
+            summary.contains("github.event.pull_request.head.repo.full_name == github.repository")
+        );
+        assert!(summary.contains("github.actor != 'dependabot[bot]'"));
+        assert!(summary.contains("continue-on-error: true"));
+        assert!(summary.contains("| ripr pr-comments summary --root . --raw -"));
+        assert!(summary.contains("done < target/ripr/review/summary/summary.tsv"));
+        assert_step_before(&workflow, "Run RIPR", "Publish RIPR summary comment");
 
         let run = workflow_step(&workflow, "Run RIPR");
         assert_eq!(

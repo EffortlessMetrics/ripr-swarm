@@ -110,10 +110,10 @@ mod tests {
         );
 
         let human = crate::output::human::render(&output);
-        assert!(human.contains(
-            "Analysis outcome: the input is not supported (analysis incomplete; unsupported_input)"
-        ));
-        assert!(!human.contains("Analysis outcome: \"unsupported_input\""));
+        assert!(
+            human.contains("Analysis outcome: the input is not supported (analysis incomplete)")
+        );
+        assert!(!human.contains("unsupported_input"));
         assert!(human.contains("analysis incomplete"));
         // The sample output carries findings, so the zero-findings hedge is
         // replaced by the analyzed-scope caveat.
@@ -122,7 +122,7 @@ mod tests {
             output.findings.is_empty()
         );
         assert!(output.findings.is_empty() || human.contains("finding(s) below cover only"));
-        assert!(human.contains("combined_hunk_unsupported"));
+        assert!(!human.contains("combined_hunk_unsupported"));
         assert!(human.contains("two-way diff"));
         Ok(())
     }
@@ -772,6 +772,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -901,6 +902,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -1076,6 +1078,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -1885,6 +1888,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -2023,6 +2027,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -2138,6 +2143,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -2166,6 +2172,7 @@ mod tests {
             no_scope_provided: true,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -2193,11 +2200,12 @@ mod tests {
         );
         assert!(rendered.contains("--base BASE"));
         assert!(!rendered.contains("--base origin/main"));
-        // Bug 2 regression guard: the why field must recommend --format repo-exposure-md,
-        // not --mode fast (which is a speed tier, not a scope provider).
+        // Canonical whole-repo route (domain::next_action): the why field
+        // must recommend pilot, not --mode fast (a speed tier, not a scope
+        // provider) and not the repo-exposure check format.
         assert!(
-            rendered.contains("--format repo-exposure-md"),
-            "json why must recommend --format repo-exposure-md; got:\n{rendered}"
+            rendered.contains("ripr pilot --root ."),
+            "json why must recommend pilot; got:\n{rendered}"
         );
         assert!(
             !rendered.contains("--mode fast"),
@@ -2229,6 +2237,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -2251,10 +2260,10 @@ mod tests {
     }
 
     #[test]
-    fn json_guidance_recommends_format_repo_exposure_md_not_mode_fast() {
-        // Bug 2 regression guard: the JSON why string must contain
-        // --format repo-exposure-md and NOT --mode fast.
-        // --mode is a speed tier; --format repo-exposure-md is the real full-repo scope.
+    fn json_guidance_recommends_pilot_not_mode_fast() {
+        // Canonical whole-repo route (domain::next_action): the JSON why
+        // string must recommend `ripr pilot --root .` and NOT --mode fast.
+        // --mode is a speed tier; pilot is the whole-repository route.
         let output = CheckOutput {
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
@@ -2269,6 +2278,7 @@ mod tests {
             no_scope_provided: true,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -2279,8 +2289,8 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("--format repo-exposure-md"),
-            "json why must recommend --format repo-exposure-md; got:\n{rendered}"
+            rendered.contains("ripr pilot --root ."),
+            "json why must recommend pilot; got:\n{rendered}"
         );
         assert!(
             !rendered.contains("--mode fast"),

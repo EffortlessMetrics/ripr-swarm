@@ -7,9 +7,9 @@ use crate::analysis_outcome::{
 
 use super::model::{ChangedFile, ChangedLine};
 use super::path::{
-    is_dev_null_new_path_marker, is_new_path_marker, parse_git_old_path, parse_new_path_marker,
-    parse_old_path_for_confinement, parse_old_path_marker, parse_rename_from_path,
-    parse_rename_to_path,
+    MAX_DIFF_PATH_COMPONENTS, is_dev_null_new_path_marker, is_new_path_marker, parse_git_old_path,
+    parse_new_path_marker, parse_old_path_for_confinement, parse_old_path_marker,
+    parse_rename_from_path, parse_rename_to_path, path_marker_exceeds_depth_bound,
 };
 
 mod stream;
@@ -1523,6 +1523,53 @@ deleted file mode 100644
         assert_eq!(parsed.renamed_file_count, 0);
         assert_eq!(parsed.pure_rename_file_count, 0);
         assert!(parsed.changed_files.is_empty());
+    }
+
+    #[test]
+    fn metadata_registers_mixed_quote_pure_rename_under_new_path() {
+        // #7795: git quotes only the destination of an ASCII -> Unicode
+        // rename (`a/src/lib.rs "b/src/日本語.rs"`). The independently quoted
+        // boundary must not drop the old path: without it the rename pair is
+        // invalid, the new path never registers, and a parseable neighbor
+        // section can mask the missing scope entirely.
+        let pure = "diff --git a/src/lib.rs \"b/src/\\346\\227\\245\\346\\234\\254\\350\\252\\236.rs\"\nsimilarity index 100%\nrename from src/lib.rs\nrename to \"src/\\346\\227\\245\\346\\234\\254\\350\\252\\236.rs\"\n";
+        let parsed = parse_unified_diff_with_metadata(pure);
+
+        assert!(parsed.limitations.is_empty(), "{:?}", parsed.limitations);
+        assert_eq!(parsed.truncated_file_sections, 0);
+        assert_eq!(parsed.renamed_file_count, 1);
+        assert_eq!(parsed.pure_rename_file_count, 1);
+        assert_eq!(
+            parsed.pure_rename_paths,
+            vec![PathBuf::from("src/日本語.rs")]
+        );
+        assert_eq!(parsed.changed_files.len(), 1);
+        assert_eq!(parsed.changed_files[0].path, PathBuf::from("src/日本語.rs"));
+        assert!(parsed.changed_files[0].added_lines.is_empty());
+        assert!(parsed.changed_files[0].removed_lines.is_empty());
+    }
+
+    #[test]
+    fn metadata_registers_mixed_quote_edited_rename_under_new_path() {
+        // #7795 edited form (R095-class): the rename count and the changed
+        // lines both stay under the decoded new path.
+        let edited = "diff --git a/src/lib.rs \"b/src/\\346\\227\\245\\346\\234\\254\\350\\252\\236.rs\"\nsimilarity index 95%\nrename from src/lib.rs\nrename to \"src/\\346\\227\\245\\346\\234\\254\\350\\252\\236.rs\"\n--- a/src/lib.rs\n+++ \"b/src/\\346\\227\\245\\346\\234\\254\\350\\252\\236.rs\"\n@@ -2 +2 @@\n-    amount >= threshold\n+    amount > threshold\n";
+        let parsed = parse_unified_diff_with_metadata(edited);
+
+        assert!(parsed.limitations.is_empty(), "{:?}", parsed.limitations);
+        assert_eq!(parsed.truncated_file_sections, 0);
+        assert_eq!(parsed.renamed_file_count, 1);
+        assert_eq!(parsed.pure_rename_file_count, 0);
+        assert_eq!(parsed.changed_files.len(), 1);
+        assert_eq!(parsed.changed_files[0].path, PathBuf::from("src/日本語.rs"));
+        assert_eq!(parsed.changed_files[0].removed_lines.len(), 1);
+        assert_eq!(parsed.changed_files[0].added_lines.len(), 1);
+        assert_eq!(parsed.changed_files[0].removed_lines[0].line, 2);
+        assert_eq!(parsed.changed_files[0].added_lines[0].line, 2);
+        assert_eq!(
+            parsed.changed_files[0].added_lines[0].text,
+            "    amount > threshold"
+        );
     }
 
     #[test]

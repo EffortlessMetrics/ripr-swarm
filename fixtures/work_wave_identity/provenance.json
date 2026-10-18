@@ -1,0 +1,12 @@
+{
+ "schema_version": "work_wave_identity_provenance.v1",
+ "repository": "EffortlessMetrics/ripr-swarm",
+ "captured_at": "2026-10-09T12:00:00Z",
+ "capture_method": "authored wave-planning corpus for the RIPR-SPEC-0271 selected-work wave law checker against the committed RIPR-SPEC-0244 selection corpus",
+ "files": [
+  {
+   "path": "corpus.json",
+   "sha256": "1643abdb1e3ca9fa20f58aff4a5f66f421eb5f21a132e55f8a4d54734c3f6b97"
+  }
+ ]
+}

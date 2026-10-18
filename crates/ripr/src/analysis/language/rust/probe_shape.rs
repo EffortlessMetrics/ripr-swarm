@@ -26,6 +26,7 @@
 //! line; each language keeps its own matcher by contract.
 
 use crate::analysis::classify::comparison_operands;
+use crate::analysis::seams::SeamKind;
 use crate::domain::{FindingCanonicalGap, ProbeFamily, SymbolId};
 use std::path::Path;
 
@@ -67,6 +68,62 @@ fn qualified_owner(owner: Option<&SymbolId>, file: &Path) -> Option<String> {
     let id = owner.as_ref()?.0.as_str();
     let prefix = format!("{}::", crate::analysis::stable_path_text(file));
     Some(id.strip_prefix(&prefix).unwrap_or(id).to_string())
+}
+
+/// Whether a Rust producer gap id (`gap:rust:{file}:{owner}:{behavior_kind}:
+/// {probe_kind}:{discriminator}`, as `ripr check` prints it) names the seam
+/// with this file, owner, kind and source expression.
+///
+/// The id is read from the seam side because owners carry `::` and
+/// discriminators carry arbitrary operator text, so splitting the id alone is
+/// ambiguous. The discriminator is re-minted from the seam's own expression
+/// with the producer's normalization, so a changed line the seam does not
+/// carry never matches. Several seams can still share one id; the caller owns
+/// that uniqueness decision.
+pub(crate) fn producer_gap_names_seam_shape(
+    gap_id: &str,
+    seam_file: &str,
+    seam_owner: &str,
+    seam_kind: SeamKind,
+    seam_expression: &str,
+) -> bool {
+    const FAMILIES: [ProbeFamily; 7] = [
+        ProbeFamily::Predicate,
+        ProbeFamily::ReturnValue,
+        ProbeFamily::ErrorPath,
+        ProbeFamily::CallDeletion,
+        ProbeFamily::FieldConstruction,
+        ProbeFamily::SideEffect,
+        ProbeFamily::MatchArm,
+    ];
+    let Some(rest) = gap_id
+        .strip_prefix("gap:rust:")
+        .and_then(|rest| rest.strip_prefix(seam_file))
+        .and_then(|rest| rest.strip_prefix(':'))
+    else {
+        return false;
+    };
+    let qualified = seam_owner
+        .strip_prefix(seam_file)
+        .and_then(|tail| tail.strip_prefix("::"))
+        .unwrap_or(seam_owner);
+    let Some(rest) = rest
+        .strip_prefix(qualified)
+        .and_then(|rest| rest.strip_prefix(':'))
+    else {
+        return false;
+    };
+    FAMILIES.iter().any(|family| {
+        if crate::analysis::seam_kind_for_probe_family(family.as_str()) != Some(seam_kind) {
+            return false;
+        }
+        let tail = rest
+            .strip_prefix(rust_behavior_kind(family))
+            .and_then(|rest| rest.strip_prefix(':'))
+            .and_then(|rest| rest.strip_prefix(family.as_str()))
+            .and_then(|rest| rest.strip_prefix(':'));
+        tail == Some(normalize_rust_gap_discriminator(family, seam_expression).as_str())
+    })
 }
 
 fn rust_behavior_kind(probe_family: &ProbeFamily) -> &'static str {
@@ -396,5 +453,106 @@ mod tests {
         let encoded = encode_rust_string_literals("check árrow == \"x\"");
         assert!(encoded.starts_with("check árrow == lit78"));
         Ok(())
+    }
+
+    /// The join reads the producer id from the seam side, so it must accept
+    /// exactly what the producer mints for the same file, owner, kind and
+    /// changed line, and nothing a different seam shape would mint.
+    #[test]
+    fn producer_gap_id_names_only_the_seam_it_was_minted_from() -> Result<(), String> {
+        let cases = [
+            (
+                ProbeFamily::Predicate,
+                SeamKind::PredicateBoundary,
+                "if amount >= discount_threshold {",
+            ),
+            (
+                ProbeFamily::ReturnValue,
+                SeamKind::ReturnValue,
+                "return amount - 10;",
+            ),
+            (
+                ProbeFamily::ErrorPath,
+                SeamKind::ErrorVariant,
+                "return Err(PriceError::Negative);",
+            ),
+            (
+                ProbeFamily::MatchArm,
+                SeamKind::MatchArm,
+                "Tier::Gold => 20,",
+            ),
+        ];
+        for (family, kind, expression) in cases {
+            let gap = gap_for(
+                Path::new("src/pricing.rs"),
+                Some(owner("src/pricing.rs", "pricing::score")),
+                &family,
+                expression,
+            )?;
+            let names = |file: &str, owner: &str, kind: SeamKind, expression: &str| {
+                producer_gap_names_seam_shape(&gap.id, file, owner, kind, expression)
+            };
+            // Both owner spellings a repo seam carries resolve.
+            assert!(
+                names(
+                    "src/pricing.rs",
+                    "src/pricing.rs::pricing::score",
+                    kind,
+                    expression
+                ),
+                "{family:?} id must name the seam it was minted from: {}",
+                gap.id
+            );
+            assert!(names("src/pricing.rs", "pricing::score", kind, expression));
+            // Each identity dimension discriminates.
+            assert!(!names(
+                "src/other.rs",
+                "src/other.rs::pricing::score",
+                kind,
+                expression
+            ));
+            assert!(!names(
+                "src/pricing.rs",
+                "src/pricing.rs::pricing::other",
+                kind,
+                expression
+            ));
+            assert!(!names(
+                "src/pricing.rs",
+                "src/pricing.rs::pricing",
+                kind,
+                expression
+            ));
+            assert!(!names(
+                "src/pricing.rs",
+                "src/pricing.rs::pricing::score",
+                SeamKind::CallPresence,
+                expression
+            ));
+            assert!(!names(
+                "src/pricing.rs",
+                "src/pricing.rs::pricing::score",
+                kind,
+                "let unrelated = 1;"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn producer_gap_id_rejects_other_languages_and_hash_ids() {
+        for id in [
+            "gap:python:src/pricing.py:score:predicate_boundary:predicate:a==b",
+            "gap:4b5fdc1a2a157b0d",
+            "probe:src_pricing.rs:predicate:b6638ef3",
+        ] {
+            assert!(!producer_gap_names_seam_shape(
+                id,
+                "src/pricing.rs",
+                "score",
+                SeamKind::PredicateBoundary,
+                "if a >= b {"
+            ));
+        }
     }
 }

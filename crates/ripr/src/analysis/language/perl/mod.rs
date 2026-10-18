@@ -610,7 +610,17 @@ fn packet_to_findings_with_currentness(
         // established-sink-alignment Exposed promotion; we downgrade advisory
         // relations and override to StaticUnknown on a blocking boundary.
         let sink_aligned_evidence = sink_aligned_observation(&related_evidence, change, packet);
-        let class = if class_blocked {
+        // #8352: a `partial` packet may simply not have emitted the relation
+        // that would link a test to this change, and `file_proximity` is
+        // co-location, not a link. With no relation other than
+        // `file_proximity`, neither
+        // "no static path" nor "reachable but unrevealed" is an assessed
+        // result, so the class is unknown rather than a coverage claim.
+        let partial_without_change_link = packet.packet_status == PacketStatus::Partial
+            && related_evidence
+                .iter()
+                .all(|ev| ev.relation_kind == RelationKind::FileProximity);
+        let class = if class_blocked || partial_without_change_link {
             ExposureClass::StaticUnknown
         } else if related.is_empty() {
             ExposureClass::NoStaticPath
@@ -621,14 +631,22 @@ fn packet_to_findings_with_currentness(
             ExposureClass::Exposed
         } else {
             let packet_class = packet.classify_change_from_related_tests(&change.change_id);
-            // Downgrade advisory-only relations: only DirectOwnerCall can keep
-            // a WeaklyExposed (positive-reachability) class. Every other
-            // relation kind is capped at ReachableUnrevealed, regardless of
-            // oracle.
+            // Downgrade advisory-only relations: a WeaklyExposed class is
+            // kept only when some relation's own bound evidence earned it
+            // through an owner call shape (#6583). `DirectOwnerCall` earns
+            // it directly; a reachable `MethodReceiver` or `HelperCall`
+            // earns the same weak credit when its own oracle is the bound,
+            // owner-targeted strong oracle (RIPR-SPEC-0235 examples 13 and
+            // 14) — `classify_related_relation` already requires exactly
+            // that binding, so a wrong-receiver, weak-oracle, or
+            // unreachable relation never reaches WeaklyExposed. Every other
+            // relation kind is capped at ReachableUnrevealed. Sink-aligned
+            // `Exposed` stays direct-only in `sink_aligned_observation`.
             if packet_class == ExposureClass::WeaklyExposed
-                && !related_evidence
-                    .iter()
-                    .any(|ev| ev.relation_kind.supports_positive_reachability())
+                && !related_evidence.iter().any(|ev| {
+                    ev.class == ExposureClass::WeaklyExposed
+                        && ev.relation_kind.supports_weak_oracle_credit()
+                })
             {
                 ExposureClass::ReachableUnrevealed
             } else {
@@ -636,6 +654,13 @@ fn packet_to_findings_with_currentness(
             }
         };
         let is_already_observed = class == ExposureClass::Exposed;
+        let broad_oracle_unresolved = class == ExposureClass::StaticUnknown
+            && !class_blocked
+            && related_evidence.iter().any(|ev| {
+                ev.class == ExposureClass::StaticUnknown
+                    && ev.reachability_hint == ReachabilityHint::Reachable
+                    && ev.oracle_strength == Some(OracleStrength::WeakBroad)
+            });
         // RIPR-SPEC-0224 / #5498: on a weakly exposed finding from a
         // complete, unblocked packet (a concrete discriminator is not
         // required), a row whose own direct, strong exact, owner-targeted
@@ -698,25 +723,28 @@ fn packet_to_findings_with_currentness(
         // no dynamic boundary/limitation blocks static actionability. Static
         // limits stay fail-closed: they may explain why classification is
         // unknown, but they must not produce repair-shaped gap identities.
-        let canonical_gap: Option<FindingCanonicalGap> =
-            if has_concrete_discriminator && !is_already_observed && !actionability_blocked {
-                packet
-                    .canonical_gap_identity_for_change_with_assertion_shape(
-                        &change.change_id,
-                        &selected_assertion_shape,
-                    )
-                    .map(|gap| FindingCanonicalGap {
-                        id: gap.id,
-                        language: "perl".to_string(),
-                        file: file.path.clone(),
-                        owner: owner.name.clone().unwrap_or_default(),
-                        behavior_kind: gap.behavior_kind,
-                        probe_kind: gap.assertion_shape,
-                        normalized_discriminator: gap.missing_discriminator,
-                    })
-            } else {
-                None
-            };
+        let canonical_gap: Option<FindingCanonicalGap> = if has_concrete_discriminator
+            && !is_already_observed
+            && !actionability_blocked
+            && class != ExposureClass::StaticUnknown
+        {
+            packet
+                .canonical_gap_identity_for_change_with_assertion_shape(
+                    &change.change_id,
+                    &selected_assertion_shape,
+                )
+                .map(|gap| FindingCanonicalGap {
+                    id: gap.id,
+                    language: "perl".to_string(),
+                    file: file.path.clone(),
+                    owner: owner.name.clone().unwrap_or_default(),
+                    behavior_kind: gap.behavior_kind,
+                    probe_kind: gap.assertion_shape,
+                    normalized_discriminator: gap.missing_discriminator,
+                })
+        } else {
+            None
+        };
 
         // Build evidence strings (perl_*: keys the projection reads).
         //
@@ -751,6 +779,7 @@ fn packet_to_findings_with_currentness(
             ));
         } else if !is_already_observed
             && !actionability_blocked
+            && class != ExposureClass::StaticUnknown
             && has_concrete_discriminator
             && let Some(selected) = suggested_test
         {
@@ -901,6 +930,11 @@ fn packet_to_findings_with_currentness(
                     "Make the related Perl test runner available, then add a focused assertion for the changed behavior and verify it."
                         .to_string()
                 }
+            } else if broad_oracle_unresolved {
+                // RIPR-SPEC-0235 rule 16: say why this is unknown and what
+                // settles it, instead of asking for an assertion that may exist.
+                "A related Perl test reaches this code with an assertion the fact producer grades broad, so ripr cannot tell whether it pins the changed behavior. If it asserts the specific message, class or value, no change is needed; otherwise tighten it."
+                    .to_string()
             } else if is_already_observed {
                 // H2: the change is already discriminated by an existing test.
                 // No new test is needed; this is maintainer end-state outcome #2.
@@ -1712,11 +1746,18 @@ impl PerlFactPacket {
         let Some(oracle) = oracle else {
             return ExposureClass::ReachableUnrevealed;
         };
-        if oracle.test_id == relation.test_id
-            && oracle.target_owner_id.as_deref() == Some(relation.owner_id.as_str())
-            && oracle.is_strong_exact()
-        {
+        let bound = oracle.test_id == relation.test_id
+            && oracle.target_owner_id.as_deref() == Some(relation.owner_id.as_str());
+        if bound && oracle.is_strong_exact() {
             ExposureClass::WeaklyExposed
+        } else if bound
+            && oracle.is_broad_unresolved()
+            && relation.relation_kind.supports_weak_oracle_credit()
+        {
+            // RIPR-SPEC-0235 rule 16 (#6582): the producer grades `throws_ok`,
+            // `dies_ok` and `like(dies {...}, ...)` alike as `weak_broad`, so a
+            // gap here is as likely wrong as right. Unknown, not a gap.
+            ExposureClass::StaticUnknown
         } else {
             ExposureClass::ReachableUnrevealed
         }
@@ -2943,6 +2984,13 @@ impl OracleFact {
     fn is_strong_exact(&self) -> bool {
         self.strength == OracleStrength::StrongExact && self.kind.supports_strong_exact()
     }
+
+    /// A `weak_broad` label on a kind that can pin the changed behavior. The
+    /// packet does not say whether the matcher pins a message, a class or
+    /// nothing, and ripr does not parse Perl to find out.
+    fn is_broad_unresolved(&self) -> bool {
+        self.strength == OracleStrength::WeakBroad && self.kind.supports_strong_exact()
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -2991,6 +3039,19 @@ impl RelationKind {
     /// (never to promote), so classification stays conservative-or-stricter.
     fn supports_positive_reachability(self) -> bool {
         matches!(self, Self::DirectOwnerCall)
+    }
+
+    /// True when this relation kind can keep a per-relation `WeaklyExposed`
+    /// earned from its own bound, owner-targeted strong oracle (#6583).
+    /// `MethodReceiver` and `HelperCall` are owner call shapes like
+    /// `DirectOwnerCall`; the remaining kinds are advisory-only. This does
+    /// not grant sink-aligned `Exposed`, a suggested test location, or a
+    /// row miss — those stay gated by `supports_positive_reachability`.
+    fn supports_weak_oracle_credit(self) -> bool {
+        matches!(
+            self,
+            Self::DirectOwnerCall | Self::MethodReceiver | Self::HelperCall
+        )
     }
 }
 

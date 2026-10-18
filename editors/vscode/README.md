@@ -17,8 +17,9 @@ advisory, not runtime mutation results.
 ## Install and First Run
 
 Install `EffortlessMetrics.ripr` and open a Rust/Cargo workspace. The released
-extension normally downloads and caches its matching native server, so you do
-not need to build that server with `cargo install ripr`. Workspace analysis and
+extension uses a compatible `ripr` already on your `PATH` and otherwise
+downloads and caches its matching native server, so you do not need to build
+that server with `cargo install ripr`. Workspace analysis and
 test execution still need their own tooling on the workspace host.
 
 ripr analyzes Rust out of the box. TypeScript/JavaScript and Python are preview
@@ -159,6 +160,7 @@ The development extension also exposes the following commands:
 - `ripr: Open Report`
 - `ripr: Show Top Limitation`
 - `ripr: Show Receipt Status`
+- `ripr: Show Repair Attempt Status`
 - `ripr: Copy Receipt Command (Receipt Status)`
 - `ripr: Open Attempt Ledger`
 - `ripr: Show Route Quality`

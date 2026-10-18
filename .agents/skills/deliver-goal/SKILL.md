@@ -32,10 +32,18 @@ If objective text is stale, create or update a successor preserving the real par
 2. Read current source, the owning issue and substantive decisions, all-state PRs, relevant checks, specs and retained receipts. Reuse equivalent work. A stale-open issue is not permission to implement an already-landed behavior again.
 3. Select a ready, coherent acceptance-and-rollback claim. Use `deliver-pr`; enter at the earliest missing judgment rather than restarting completed ceremony.
 4. Delegate independent ready claims to implementation agents when available, each with its own candidate worktree and one writer. Give each agent the claim, exact question/input, write boundary, non-goals, proof and handback. Readers and reviewers may challenge a candidate without editing its checkout.
-5. Leave CI, review and owned builds in flight. Work another ready claim when useful; do not poll unchanged state, oversubscribe the same host, or invent worker access. If all useful work is waiting, report `GOAL_IN_FLIGHT` and the actual awaited transitions.
+5. Leave CI, review and owned builds in flight. Take one batched native snapshot, bind each wait to its exact PR/head/run and decision-changing event, then work another already-authorized independent claim when useful. Do not poll unchanged state, oversubscribe the same host, invent worker access, or keep a session alive with status-only timers. If all useful work is remote-owned, report `GOAL_IN_FLIGHT` with the exact awaited transitions and stop; do not claim background monitoring or create a resident polling worker. Follow [remote wait discipline](../../../docs/agent-context/remote-wait-discipline.md).
 6. On a material event, inspect the result and repair or evidence-refute findings. Before conflict repair or another PR, repeat the claim-identity check for upstream delivery.
 7. After merge or deliberate closure, verify the resulting GitHub object, reconcile fulfilled and remaining issue acceptance, preserve residual work, clean only lane-created state, and select the next ready claim.
 8. Re-evaluate parent predicates as `pass`, `failed`, `limited`, `not_applicable`, or `not_established`. A required `limited` or `not_established` row does not count as satisfied. A scope exclusion needs its governing rationale, not a relabeling to improve progress.
+
+# Remote wait boundary
+
+A wait is not a work item. After one current snapshot, choose useful work before choosing a timer. For a hosted stage whose normal duration is measured in tens of minutes, a status-only recheck less than five minutes after an unchanged snapshot is normally too early; after one unchanged recheck, widen rather than shorten. A known approximate terminal boundary can justify one closer read, never a repeated 30/45/60/90-second loop.
+
+`gh run watch`, tight shell loops, repeated timers, and subagents whose only job is polling are not delivery work. Elapsed time and historical medians do not establish completion. A failure, changed head, new finding, completed check, merge, or other material event already visible to the session resumes immediately; spacing never delays evidence already observed.
+
+When no ready claim remains, return the exact wait object, current state, unknowns, non-claim and wake event, then yield. A new user turn or observed event rehydrates the native object and resumes at the earliest missing judgment. Do not infer the result from the old summary or predicted completion.
 
 # Progress and completion
 

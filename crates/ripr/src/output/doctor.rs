@@ -21,7 +21,12 @@
 //! claim an existing file does not exist (#5101).
 
 use crate::config::{CONFIG_FILE_NAME, RiprConfig, load_for_root};
-use crate::domain::{LanguageId, LanguageStatus};
+use crate::domain::NextActionDoctorRecovery;
+use crate::domain::{
+    CanonicalNextActionV1, LanguageId, LanguageStatus, NextActionCurrentness, NextActionDiffSource,
+    NextActionInput, NextActionProducer, NextActionStop, current_command_platform,
+    select_canonical_next_action,
+};
 pub(crate) use crate::output::path::command_root_display as doctor_command_root_display;
 use crate::output::path::{
     absolute_command_root_display as absolute_doctor_root_display, human_path,
@@ -45,8 +50,8 @@ pub(crate) const DOCTOR_FAILED_LINE: &str =
 
 /// First command doctor prints after the checks. Git-backed routes are only
 /// recommended when the `tool_git` check actually passed (#4735). A root Git
-/// refuses gets the repository-free scan instead of a command that cannot run
-/// there (#4531); an unusable root (missing, or present but not a directory)
+/// refuses gets whole-repository pilot exploration instead of a command that
+/// cannot run there (#4531); an unusable root (missing, or present but not a directory)
 /// recommends its recovery action, which names the actual filesystem state
 /// (#4606 review, #5101), because no check command can run there (#5252 item
 /// 3). The lossless root spelling (#5010) still serves the routes that can
@@ -60,12 +65,12 @@ pub(crate) enum DoctorFirstCommand {
     /// the git state, because `check` validates an explicit `--root`
     /// through `ensure_command_root` before reading any `--diff` input.
     MissingRoot,
-    /// `git_repository` failed while git itself runs: the repository-free scan
-    /// is the only route that can run here.
+    /// `git_repository` failed while git itself runs: whole-repository
+    /// pilot exploration is the route that can run here.
     OutsideGit,
     /// `git_repository` passed but `HEAD` is unborn (#5259): the repository
     /// has no commit to diff against, so every diff-scoped first command
-    /// fails; name the commit-first path and keep the repository-free scan.
+    /// fails; name the commit-first path and keep pilot exploration.
     UnbornHead,
     /// The `config` check failed: `ripr check` loads the same `ripr.toml`
     /// and would hit the same error. Name the config correction, not a
@@ -141,7 +146,7 @@ impl DoctorFirstCommand {
             // `--diff PATH` still loads the same crate and required
             // runtimes. A named cargo_toml / runtime failure outranks the
             // git-recovery command (#8168). OutsideGit stays later so an
-            // empty or non-git root still gets the repository-free scan.
+            // empty or non-git root still gets pilot exploration.
             if failed_prerequisites {
                 Self::FailedPrerequisites
             } else {
@@ -234,35 +239,33 @@ impl DoctorFirstCommand {
             ],
             Self::OutsideGit => {
                 use crate::agent::loop_commands::shell_arg;
-                // The repository-free scan is a runnable command, so its root
-                // follows the same physical-root rule as the git-backed
-                // recommendations (#5010): a spaced, quoted, or aliased root
-                // must still analyze the diagnosed directory after the paste.
-                // The translator reads bare commands only, so the prose
-                // wrapper wraps each shell form, never enters it.
+                // Whole-repository pilot exploration is a runnable command
+                // without Git, so its root follows the same physical-root
+                // rule as the git-backed recommendations (#5010): a spaced,
+                // quoted, or aliased root must still analyze the diagnosed
+                // directory after the paste. The translator reads bare
+                // commands only, so the prose wrapper wraps each shell form,
+                // never enters it.
                 let bound = match root.canonicalize() {
                     Ok(resolved) => doctor_command_root_display(root, &resolved),
                     Err(_) => absolute_doctor_root_display(root),
                 };
                 let bash = bound.and_then(|bound| {
-                    let bash = format!(
-                        "ripr check --root {} --format repo-exposure-md",
-                        shell_arg(&bound)
-                    );
+                    let bash = crate::domain::whole_repo_pilot_command(&shell_arg(&bound));
                     require_single_line_command(&bash).map(|()| bash)
                 });
                 match bash {
                     Ok(bash) => {
                         let mut lines = vec![format!(
-                            "- Recommended first command: fix the Git check above, or scan \
-                             without Git history: `{bash}`"
+                            "- Recommended first command: fix the Git check above, or explore \
+                             the repository without Git history: `{bash}`"
                         )];
                         if let crate::output::markdown::PowershellForm::Translated(powershell) =
                             crate::output::markdown::powershell_form(&bash)
                         {
                             lines.push(format!(
                                 "- Recommended first command (PowerShell): fix the Git check \
-                                 above, or scan without Git history: `{powershell}`"
+                                 above, or explore the repository without Git history: `{powershell}`"
                             ));
                         }
                         lines
@@ -274,18 +277,16 @@ impl DoctorFirstCommand {
                 use crate::agent::loop_commands::shell_arg;
                 // #5259: the diff has no base until the first commit exists,
                 // so the line names the commit-first path (the same repair
-                // the check-time default-base error states) and keeps the
-                // repository-free scan runnable now. The scan's root follows
-                // the same physical-root rule as the other recommendations.
+                // the check-time default-base error states) and keeps
+                // whole-repository pilot exploration runnable now. Its root
+                // follows the same physical-root rule as the other
+                // recommendations.
                 let bound = match root.canonicalize() {
                     Ok(resolved) => doctor_command_root_display(root, &resolved),
                     Err(_) => absolute_doctor_root_display(root),
                 };
                 let bash = bound.and_then(|bound| {
-                    let bash = format!(
-                        "ripr check --root {} --format repo-exposure-md",
-                        shell_arg(&bound)
-                    );
+                    let bash = crate::domain::whole_repo_pilot_command(&shell_arg(&bound));
                     require_single_line_command(&bash).map(|()| bash)
                 });
                 match bash {
@@ -294,7 +295,7 @@ impl DoctorFirstCommand {
                             "- Recommended first command: this repository has no commits yet, \
                              so `ripr check` has no base to diff; commit once first (then \
                              `ripr check --base HEAD --worktree` analyzes uncommitted edits), \
-                             or scan without Git history: `{bash}`"
+                             or explore the repository without Git history: `{bash}`"
                         )];
                         if let crate::output::markdown::PowershellForm::Translated(powershell) =
                             crate::output::markdown::powershell_form(&bash)
@@ -303,7 +304,7 @@ impl DoctorFirstCommand {
                                 "- Recommended first command (PowerShell): this repository has \
                                  no commits yet, so `ripr check` has no base to diff; commit \
                                  once first (then `ripr check --base HEAD --worktree` analyzes \
-                                 uncommitted edits), or scan without Git history: `{powershell}`"
+                                 uncommitted edits), or explore the repository without Git history: `{powershell}`"
                             ));
                         }
                         lines
@@ -589,6 +590,12 @@ pub(crate) struct DoctorCheck {
     /// Human-readable evidence (e.g. "Cargo.toml found at /workspace").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) evidence: Option<String>,
+    /// How long the check's own computation took, in milliseconds
+    /// (additive, #8540). Measured at the production site; `None` for
+    /// skipped checks and for checks produced without a timer, so an absent
+    /// value never reads as a zero measurement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) elapsed_ms: Option<u64>,
 }
 
 /// One language the marker scan found in the selected root.
@@ -686,6 +693,10 @@ pub(crate) struct DoctorCacheStatus {
     /// same evidence; the typed field keeps `doctor --json` as complete as
     /// the human report (#8257 review).
     pub(crate) artifact_ignore: DoctorArtifactIgnore,
+    /// Whether git already tracks files under the artifact root (#8276).
+    /// Separate from `artifact_ignore`: an ignore rule does not untrack
+    /// files committed earlier, so `git add -A` keeps refreshing them.
+    pub(crate) artifact_tracking: DoctorArtifactTracking,
 }
 
 /// Whether git ignore rules cover ripr's own artifact root (`target/ripr`)
@@ -714,6 +725,29 @@ pub(crate) enum DoctorArtifactIgnore {
     /// Coverage could not be established: the root is not a git repository,
     /// git is unavailable, or the probe hit its deadline. Doctor stays quiet
     /// rather than claiming a checked fact it could not establish.
+    NotChecked,
+}
+
+/// Whether git's index tracks files under ripr's artifact root
+/// (`target/ripr`) (#8276).
+///
+/// Orthogonal to [`DoctorArtifactIgnore`]: a repository can ignore
+/// `/target/ripr/` while earlier reports stay tracked, so the reports keep
+/// being refreshed by `git add -A` and diffed by `ripr check`. Fail-closed:
+/// only a positive non-empty `git ls-files --cached` answer warns.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DoctorArtifactTracking {
+    /// The index holds no entries under the artifact root.
+    Untracked,
+    /// The index holds entries under the artifact root. `warning` is the
+    /// exact line the human screen prints, naming the remediation.
+    Tracked {
+        /// The actionable warning, including the exact untrack command.
+        warning: String,
+    },
+    /// The index could not be read: not a git repository, git unavailable,
+    /// or the probe hit its deadline or output cap. Doctor stays quiet.
     NotChecked,
 }
 
@@ -776,6 +810,9 @@ pub(crate) struct DoctorPerlPreview {
     /// opt-in environment variable was not set. Reported so a user can see
     /// why the configured path was not probed.
     pub(crate) ignored_configured_executable: Option<String>,
+    /// Whether the canonical `perl-ripr-facts` exporter resolves on PATH. A
+    /// PATH-only fact: it says nothing about compatibility (see `exporter`).
+    pub(crate) canonical_exporter_on_path: bool,
     pub(crate) exporter: DoctorPerlExporter,
     /// The Perl fact packet schema this build consumes.
     pub(crate) expected_schema: String,
@@ -800,6 +837,23 @@ pub(crate) struct DoctorRuntimeProbe {
     pub(crate) evidence: String,
     pub(crate) required: bool,
     pub(crate) hint: String,
+    /// How long the probe took, in milliseconds (additive, #8540).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) elapsed_ms: Option<u64>,
+}
+
+/// One named segment of doctor work that is not a check or a runtime probe
+/// (#8540 follow-up). The report total covers computations such as language
+/// detection and the environment probe; naming their segments lets the
+/// slowest attribution explain the total instead of only checks and probes
+/// competing for it. Segments never change a check status or the exit code.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct DoctorSegmentTiming {
+    /// The computation name, in `snake_case` after the computation it times.
+    pub(crate) name: String,
+    /// How long that computation took, in milliseconds, measured at its
+    /// production site.
+    pub(crate) elapsed_ms: u64,
 }
 
 /// Every environment fact both doctor surfaces report, computed once per run.
@@ -824,6 +878,10 @@ pub(crate) struct DoctorEnvironmentFacts {
     pub(crate) test_surfaces: Vec<DoctorTestSurface>,
     /// The Perl preview state, `None` when no Perl project was detected.
     pub(crate) perl_preview: Option<DoctorPerlPreview>,
+    /// Named segment timings measured where each computation runs
+    /// (#8540 follow-up), carried here so `apply_environment` moves them
+    /// onto the report both surfaces render.
+    pub(crate) segments: Vec<DoctorSegmentTiming>,
 }
 
 /// The full doctor report.
@@ -881,6 +939,27 @@ pub(crate) struct DoctorReport {
     /// project (additive in schema `0.4`).
     #[serde(default)]
     pub(crate) perl_preview: Option<DoctorPerlPreview>,
+    /// The canonical next action for a precise recovery (additive, no
+    /// `schema_version` bump, #6986). Produced by
+    /// [`canonical_next_action_for_doctor`], the same decision the human
+    /// `- Safe next action:` line follows; omitted when the first-command
+    /// state names a runnable command rather than a recovery, and for a
+    /// non-analysis profile. The command adapter fills it, so core evaluation
+    /// leaves it unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) canonical_next_action: Option<CanonicalNextActionV1>,
+    /// How long the whole doctor run took, in milliseconds (additive,
+    /// #8540). Measured by the command adapter around the same computation
+    /// both surfaces render, so the human screen and the JSON document
+    /// report one number. Core evaluation leaves it unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) elapsed_ms: Option<u64>,
+    /// Named segment timings for work the total covers that is neither a
+    /// check nor a runtime probe (additive, #8540 follow-up). Omitted when
+    /// no segment was measured, so an un-timed report serializes exactly as
+    /// before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) segments: Vec<DoctorSegmentTiming>,
 }
 
 impl DoctorReport {
@@ -906,6 +985,26 @@ impl DoctorReport {
             cache: None,
             test_surfaces: Vec::new(),
             perl_preview: None,
+            canonical_next_action: None,
+            elapsed_ms: None,
+            segments: Vec::new(),
+        }
+    }
+
+    /// Attach the canonical doctor decision for the analysis profile, so the
+    /// machine document carries the decision the human Safe-next-action line
+    /// already follows instead of a second inference. A recovery-free state, a
+    /// non-analysis profile, or a projection that cannot be built leaves the
+    /// field absent. Recovery states never depend on the dirty-worktree probe,
+    /// which only chooses between two runnable commands.
+    pub(crate) fn attach_canonical_next_action(&mut self, root: &Path) {
+        self.canonical_next_action = None;
+        if self.profile != DoctorProfile::Analysis {
+            return;
+        }
+        let first = DoctorFirstCommand::resolve_for_report(self, || false);
+        if let Ok(action) = canonical_next_action_for_doctor(self, first, root) {
+            self.canonical_next_action = action;
         }
     }
 
@@ -919,6 +1018,7 @@ impl DoctorReport {
         self.cache = Some(facts.cache);
         self.test_surfaces = facts.test_surfaces;
         self.perl_preview = facts.perl_preview;
+        self.segments = facts.segments;
     }
 
     /// Add a typed check and update the overall status.
@@ -930,7 +1030,43 @@ impl DoctorReport {
             name: name.to_string(),
             status: status.into(),
             evidence,
+            elapsed_ms: None,
         });
+    }
+
+    /// Record how long the most recently added check with `name` took.
+    /// Called by the producer that timed the check's computation (#8540).
+    /// A skipped check keeps no measurement: it did no work to time.
+    pub(crate) fn mark_check_elapsed(&mut self, name: &str, elapsed: std::time::Duration) {
+        if let Some(check) = self
+            .checks
+            .iter_mut()
+            .rev()
+            .find(|check| check.name == name && check.status != DoctorCheckStatus::Skipped)
+        {
+            check.elapsed_ms = Some(elapsed.as_millis() as u64);
+        }
+    }
+
+    /// The slowest measured check, runtime probe, or named segment, by name
+    /// and elapsed milliseconds. `None` when nothing was timed.
+    pub(crate) fn slowest_measured(&self) -> Option<(String, u64)> {
+        let from_checks = self
+            .checks
+            .iter()
+            .filter_map(|check| check.elapsed_ms.map(|ms| (check.name.clone(), ms)));
+        let from_probes = self
+            .runtime_probes
+            .iter()
+            .filter_map(|probe| probe.elapsed_ms.map(|ms| (probe.tool.clone(), ms)));
+        let from_segments = self
+            .segments
+            .iter()
+            .map(|segment| (segment.name.clone(), segment.elapsed_ms));
+        from_checks
+            .chain(from_probes)
+            .chain(from_segments)
+            .max_by_key(|(_, ms)| *ms)
     }
 
     /// Record a check that does not apply to this root. It never changes the
@@ -940,6 +1076,7 @@ impl DoctorReport {
             name: name.to_string(),
             status: DoctorCheckStatus::Skipped,
             evidence: Some(evidence),
+            elapsed_ms: None,
         });
     }
 
@@ -948,6 +1085,7 @@ impl DoctorReport {
             name: name.to_string(),
             status: DoctorCheckStatus::Advisory,
             evidence: Some(evidence),
+            elapsed_ms: None,
         });
     }
 
@@ -973,6 +1111,7 @@ impl DoctorReport {
             evidence: evidence.to_string(),
             required,
             hint: hint.to_string(),
+            elapsed_ms: None,
         });
     }
 
@@ -1149,6 +1288,144 @@ impl DoctorRootPath {
             Self::Directory => "- Rerun with `--root <path>` naming the repository directory",
         }
     }
+}
+
+/// The precise doctor recovery for a first-command state, when the state is
+/// one: the failing check and its exact recovery route. Runnable states and
+/// the git-environment states recommend a command instead, so they bind no
+/// recovery (the selector never invents one). Pure and infallible: the
+/// canonical projection and the renderer's defensive fallback share it, so
+/// the two can never disagree on the mapping.
+pub(crate) fn doctor_recovery_for_first_command(
+    first: DoctorFirstCommand,
+    report: &DoctorReport,
+) -> Option<NextActionDoctorRecovery> {
+    let (check_name, recovery_route) = match first {
+        DoctorFirstCommand::MissingRoot => (
+            "root_directory".to_string(),
+            "fix the selected root, then rerun `ripr doctor`".to_string(),
+        ),
+        DoctorFirstCommand::InvalidConfig => (
+            "config".to_string(),
+            "correct `ripr.toml` so it loads, then rerun `ripr doctor`".to_string(),
+        ),
+        DoctorFirstCommand::FailedPrerequisites => {
+            let failed_check = report
+                .checks
+                .iter()
+                .find(|check| check.name == "cargo_toml" && check.status == DoctorCheckStatus::Fail)
+                .map(|check| check.name.to_string());
+            let failed_runtime = || {
+                report
+                    .runtime_probes
+                    .iter()
+                    .find(|probe| probe.required && probe.status == DoctorStatus::Fail)
+                    .map(|probe| probe.tool.clone())
+            };
+            (
+                failed_check
+                    .or_else(failed_runtime)
+                    .unwrap_or_else(|| "prerequisites".to_string()),
+                "fix the failing checks above, then rerun `ripr doctor`".to_string(),
+            )
+        }
+        DoctorFirstCommand::OutsideGit
+        | DoctorFirstCommand::UnbornHead
+        | DoctorFirstCommand::SavedDiff
+        | DoctorFirstCommand::Worktree
+        | DoctorFirstCommand::DefaultCheck => return None,
+    };
+    Some(NextActionDoctorRecovery {
+        check_name,
+        recovery_route,
+    })
+}
+
+/// Project doctor's canonical action from its first-command state. `None`
+/// when the state names a command to run rather than a precise recovery; the
+/// check-name and recovery binding come from
+/// [`doctor_recovery_for_first_command`]. Doctor reads no diff, so the bound
+/// source is the fixed no-base committed mode, never a live-tree claim.
+pub(crate) fn canonical_next_action_for_doctor(
+    report: &DoctorReport,
+    first: DoctorFirstCommand,
+    root: &Path,
+) -> Result<Option<CanonicalNextActionV1>, String> {
+    let Some(recovery) = doctor_recovery_for_first_command(first, report) else {
+        return Ok(None);
+    };
+    let root_display = absolute_doctor_root_display(root)?;
+    let input = NextActionInput {
+        producer: NextActionProducer::Doctor,
+        root: root_display,
+        diff_source: NextActionDiffSource::Committed {
+            base: None,
+            head: None,
+        },
+        item_id: recovery.check_name.clone(),
+        check_item: None,
+        card_item: None,
+        item_candidates: Vec::new(),
+        attempts: Vec::new(),
+        currentness: NextActionCurrentness {
+            head_expected: None,
+            head_observed: None,
+            config_expected: None,
+            config_observed: None,
+        },
+        offered_command: None,
+        route_admitted: true,
+        route_refusal: None,
+        missing_input: None,
+        platform: current_command_platform(),
+        limitation: None,
+        limitation_route: None,
+        detail_route: recovery.recovery_route.clone(),
+        transition_from: "doctor_check_failed".to_string(),
+        transition_to: None,
+        restart_route: "ripr doctor".to_string(),
+        check_case: None,
+        doctor_recovery: Some(recovery),
+        pilot_delegation: None,
+        alternatives: Vec::new(),
+        limitations: Vec::new(),
+    };
+    select_canonical_next_action(&input).map(Some)
+}
+
+/// The `- Safe next action:` line when the first command is runnable.
+pub(crate) const SAFE_NEXT_ACTION_RUN_FIRST_LINE: &str = "- Safe next action: run the recommended first command below; it produces the evidence the packet is composed from";
+
+/// The `- Safe next action:` line for a precise doctor recovery, or `None`
+/// when a runnable first command follows. The canonical decision picks the
+/// line family: a doctor-recovery stop renders that check's recovery prose.
+/// A projection that cannot be built (a producer bug, never a doctor state)
+/// falls back to the shared recovery mapping, which renders the same family
+/// the projection would, so the render stays total.
+pub(crate) fn safe_next_action_recovery_line(
+    report: &DoctorReport,
+    first: DoctorFirstCommand,
+    root: &Path,
+) -> Option<&'static str> {
+    let check_name = match canonical_next_action_for_doctor(report, first, root) {
+        Ok(Some(action)) => match action.stop() {
+            Some(NextActionStop::DoctorRecovery { check_name, .. }) => check_name.clone(),
+            _ => return None,
+        },
+        Ok(None) => return None,
+        Err(_) => doctor_recovery_for_first_command(first, report)?.check_name,
+    };
+    Some(match check_name.as_str() {
+        "root_directory" => {
+            "- Safe next action: fix the selected root first (see below); no check command can run until it exists"
+        }
+        "config" => {
+            "- Safe next action: correct `ripr.toml` so it loads; no check command can run until it does"
+        }
+        _ => {
+            "- Safe next action: fix the `!` checks above; no check command can run until they pass"
+        }
+    })
 }
 
 /// Evaluate the doctor core checks (root, Cargo.toml, config, tool
@@ -1556,12 +1833,20 @@ fn evaluate_doctor_core_with_probe_for_profile(
 ) -> DoctorCoreEvaluation {
     let mut report = DoctorReport::new(&root.display().to_string());
     report.profile = profile;
+    // #8540: time each check's own computation where it runs, so the
+    // first-run cost is attributable. Skipped checks keep no measurement.
+    let config_started = std::time::Instant::now();
     let config = load_for_root(root);
+    let config_elapsed = config_started.elapsed();
+    let located_started = std::time::Instant::now();
     let located = locate_cargo_toml(root);
+    let located_elapsed = located_started.elapsed();
     let rust_scope = rust_toolchain_scope(&config, detected, located.is_some());
+    let root_started = std::time::Instant::now();
     let root_path = DoctorRootPath::classify(root);
     let (root_status, root_evidence) = root_path.root_directory_evidence(root);
     report.add_check("root_directory", root_status, Some(root_evidence));
+    report.mark_check_elapsed("root_directory", root_started.elapsed());
     if let RustToolchainScope::NotInScope(reason) = &rust_scope {
         report.add_skipped_check("cargo_toml", format!("Cargo.toml check skipped: {reason}"));
     } else if let Some(reason) = root_path.unusable_skip_reason() {
@@ -1584,6 +1869,8 @@ fn evaluate_doctor_core_with_probe_for_profile(
             )),
         );
     }
+    report.mark_check_elapsed("cargo_toml", located_elapsed);
+    let git_started = std::time::Instant::now();
     match root_path.unusable_skip_reason() {
         Some(reason) => report.add_skipped_check(
             "git_repository",
@@ -1621,10 +1908,10 @@ fn evaluate_doctor_core_with_probe_for_profile(
                 DoctorStatus::Fail,
                 Some(format!(
                     "not inside a Git work tree at {}; the diff-scoped commands read committed \
-                     history and cannot run here. For a repository-free scan, run `ripr check --root \
-                     {} --format repo-exposure-md`",
+                     history and cannot run here. For whole-repository exploration without Git \
+                     history, run `ripr pilot --root {}`",
                     human_path(root),
-                    root.display()
+                    crate::agent::loop_commands::shell_arg(&human_path(root))
                 )),
             ),
             None => report.add_check(
@@ -1638,6 +1925,7 @@ fn evaluate_doctor_core_with_probe_for_profile(
             ),
         },
     }
+    report.mark_check_elapsed("git_repository", git_started.elapsed());
     match &config {
         Ok(config) => report.add_check(
             "config",
@@ -1653,6 +1941,7 @@ fn evaluate_doctor_core_with_probe_for_profile(
             Some(redact_config_parse_error(error)),
         ),
     }
+    report.mark_check_elapsed("config", config_elapsed);
     for tool in DOCTOR_TOOLS {
         let name = format!("tool_{tool}");
         if let RustToolchainScope::NotInScope(reason) = &rust_scope
@@ -1670,7 +1959,9 @@ fn evaluate_doctor_core_with_probe_for_profile(
             report.add_skipped_check(&name, format!("{tool} check skipped: {reason}"));
             continue;
         }
+        let tool_started = std::time::Instant::now();
         let (status, evidence) = probe_tool(tool, root);
+        let tool_elapsed = tool_started.elapsed();
         if RUST_TOOLCHAIN_TOOLS.contains(&tool)
             && profile == DoctorProfile::Analysis
             && status == DoctorStatus::Fail
@@ -1688,6 +1979,7 @@ fn evaluate_doctor_core_with_probe_for_profile(
         } else {
             report.add_check(&name, status, Some(evidence));
         }
+        report.mark_check_elapsed(&name, tool_elapsed);
     }
     // Typed language surface for generated CI (#2072): mirror exactly the
     // effective enabled set the human projection prints.
@@ -2253,7 +2545,13 @@ mod tests {
         std::fs::write(gitfile.join(".git"), "not a gitfile\n")
             .map_err(|error| format!("write fixture gitfile: {error}"))?;
 
-        for fixture in [&bare, &gitfile] {
+        // A spaced root pins the paste-safety of the pilot command in the
+        // evidence: it must be shell-quoted, not a bare `root.display()`.
+        let spaced = unique_test_dir("outside work tree spaced");
+        std::fs::create_dir_all(&spaced).map_err(|error| format!("create fixture: {error}"))?;
+        git_in(&spaced, &["init", "--bare", "."])?;
+
+        for fixture in [&bare, &gitfile, &spaced] {
             let inside =
                 git_in(fixture, &["rev-parse", "--is-inside-work-tree"]).unwrap_or_default();
             if inside == "true" {
@@ -2288,11 +2586,22 @@ mod tests {
                     for expected in [
                         "not inside a Git work tree",
                         "cannot run here",
-                        "--format repo-exposure-md",
+                        // Canonical whole-repo route (domain::next_action):
+                        // pilot, not the repo-exposure check format.
+                        "ripr pilot --root",
                     ] {
                         if !evidence.contains(expected) {
                             failures.push(format!("`{evidence}` does not say `{expected}`"));
                         }
+                    }
+                    // The pilot root is shell-quoted so a spaced root
+                    // survives a paste into a shell.
+                    let quoted = format!(
+                        "ripr pilot --root {}",
+                        crate::agent::loop_commands::shell_arg(&human_path(fixture))
+                    );
+                    if !evidence.contains(&quoted) {
+                        failures.push(format!("`{evidence}` does not say `{quoted}`"));
                     }
                 }
             }
@@ -2316,6 +2625,7 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&bare);
         let _ = std::fs::remove_dir_all(&gitfile);
+        let _ = std::fs::remove_dir_all(&spaced);
         if failures.is_empty() {
             Ok(())
         } else {
@@ -2398,6 +2708,108 @@ mod tests {
         let report = DoctorReport::new("/workspace");
         assert_eq!(report.status, DoctorStatus::Pass);
         assert!(report.checks.is_empty());
+    }
+
+    #[test]
+    fn elapsed_times_are_additive_and_slowest_spans_checks_and_probes() -> Result<(), String> {
+        // #8540: un-timed values serialize as absent, never as zero.
+        let mut report = DoctorReport::new("/workspace");
+        report.add_check(
+            "tool_cargo",
+            DoctorStatus::Pass,
+            Some("cargo 1.0".to_string()),
+        );
+        let json = report.render_json()?;
+        assert!(!json.contains("elapsed_ms"), "{json}");
+        assert_eq!(report.slowest_measured(), None);
+
+        report.mark_check_elapsed("tool_cargo", std::time::Duration::from_millis(300));
+        report.add_runtime_probe("rust", "cargo", DoctorStatus::Pass, "ok", true, "hint");
+        report.elapsed_ms = Some(900);
+        let json = report.render_json()?;
+        assert!(json.contains("\"elapsed_ms\": 900"), "{json}");
+        assert!(json.contains("\"elapsed_ms\": 300"), "{json}");
+        assert_eq!(
+            report.slowest_measured(),
+            Some(("tool_cargo".to_string(), 300))
+        );
+        report
+            .runtime_probes
+            .last_mut()
+            .ok_or("probe must exist")?
+            .elapsed_ms = Some(450);
+        assert_eq!(
+            report.slowest_measured(),
+            Some(("cargo".to_string(), 450)),
+            "probes compete with checks for slowest"
+        );
+        // A skipped check keeps no measurement even when marked.
+        report.add_skipped_check("tool_rustc", "not in scope".to_string());
+        report.mark_check_elapsed("tool_rustc", std::time::Duration::from_millis(50));
+        let skipped = report
+            .checks
+            .iter()
+            .find(|check| check.name == "tool_rustc")
+            .ok_or("skipped check must exist")?;
+        assert_eq!(skipped.elapsed_ms, None);
+        Ok(())
+    }
+
+    #[test]
+    fn segments_serialize_when_present_and_are_absent_when_empty() -> Result<(), String> {
+        // #8540 follow-up: injected durations only. An empty segment list
+        // serializes as absent, never as an empty array.
+        let mut report = DoctorReport::new("/workspace");
+        let json = report.render_json()?;
+        assert!(!json.contains("\"segments\""), "{json}");
+
+        report.apply_environment(DoctorEnvironmentFacts {
+            detected_languages: Vec::new(),
+            unanalyzed_source_languages: Vec::new(),
+            preview_language_gaps: Vec::new(),
+            config_defaults: None,
+            cache: DoctorCacheStatus {
+                cache_dir: "target/ripr/cache".to_string(),
+                relocated_by_env: false,
+                size_bytes: 0,
+                size_display: "0 B".to_string(),
+                artifact_ignore: DoctorArtifactIgnore::NoArtifacts,
+                artifact_tracking: DoctorArtifactTracking::Untracked,
+            },
+            test_surfaces: Vec::new(),
+            perl_preview: None,
+            segments: vec![
+                DoctorSegmentTiming {
+                    name: "language_detection".to_string(),
+                    elapsed_ms: 120,
+                },
+                DoctorSegmentTiming {
+                    name: "unanalyzed_source_scan".to_string(),
+                    elapsed_ms: 2_500,
+                },
+            ],
+        });
+        let json = report.render_json()?;
+        assert!(json.contains("\"segments\""), "{json}");
+        assert!(json.contains("\"name\": \"language_detection\""), "{json}");
+        assert!(json.contains("\"elapsed_ms\": 120"), "{json}");
+        assert!(
+            json.contains("\"name\": \"unanalyzed_source_scan\""),
+            "{json}"
+        );
+        assert!(json.contains("\"elapsed_ms\": 2500"), "{json}");
+        // Segments compete for slowest alongside checks and probes.
+        report.add_check(
+            "tool_cargo",
+            DoctorStatus::Pass,
+            Some("cargo 1.0".to_string()),
+        );
+        report.mark_check_elapsed("tool_cargo", std::time::Duration::from_millis(300));
+        assert_eq!(
+            report.slowest_measured(),
+            Some(("unanalyzed_source_scan".to_string(), 2_500))
+        );
+        Ok(())
     }
 
     #[test]
@@ -4202,9 +4614,11 @@ mod tests {
                 size_bytes: 0,
                 size_display: "0 B".to_string(),
                 artifact_ignore: DoctorArtifactIgnore::NoArtifacts,
+                artifact_tracking: DoctorArtifactTracking::Untracked,
             },
             test_surfaces: Vec::new(),
             perl_preview: None,
+            segments: Vec::new(),
         });
         let json = report.render_json()?;
         let parsed: serde_json::Value =
@@ -4261,6 +4675,9 @@ mod tests {
                 size_bytes: 1024,
                 size_display: "1.00 KB".to_string(),
                 artifact_ignore: DoctorArtifactIgnore::Ignored,
+                artifact_tracking: DoctorArtifactTracking::Tracked {
+                    warning: "! tracked".to_string(),
+                },
             },
             test_surfaces: vec![DoctorTestSurface {
                 language: "python".to_string(),
@@ -4268,6 +4685,7 @@ mod tests {
                 evidence: "python: pytest".to_string(),
             }],
             perl_preview: None,
+            segments: Vec::new(),
         });
         let parsed: serde_json::Value = serde_json::from_str(&report.render_json()?)
             .map_err(|e| format!("invalid JSON: {e}"))?;
@@ -4294,6 +4712,10 @@ mod tests {
         );
         assert_eq!(parsed["cache"]["relocated_by_env"], true);
         assert_eq!(parsed["cache"]["artifact_ignore"], "ignored");
+        assert_eq!(
+            parsed["cache"]["artifact_tracking"]["tracked"]["warning"],
+            "! tracked"
+        );
         assert_eq!(parsed["test_surfaces"][0]["framework"], "pytest");
         assert_eq!(parsed["test_surfaces"][0]["evidence"], "python: pytest");
         Ok(())
@@ -4836,10 +5258,10 @@ mod tests {
                 DoctorFirstCommand::OutsideGit
                     .recommendation_lines_for(Path::new("/work/it's app")),
                 [
-                    r"- Recommended first command: fix the Git check above, or scan without Git history: `ripr check --root '/work/it'\''s app' --format repo-exposure-md`",
-                    "- Recommended first command (PowerShell): fix the Git check above, or scan without Git history: `ripr check --root '/work/it''s app' --format repo-exposure-md`",
+                    r"- Recommended first command: fix the Git check above, or explore the repository without Git history: `ripr pilot --root '/work/it'\''s app'`",
+                    "- Recommended first command (PowerShell): fix the Git check above, or explore the repository without Git history: `ripr pilot --root '/work/it''s app'`",
                 ],
-                "the repository-free route quotes and translates like the runnable ones"
+                "the whole-repository pilot route quotes and translates like the runnable ones"
             );
             // #5252 item 3: no check command can run against a root that is
             // not there, so the recovery action is the recommendation. The old
@@ -5029,7 +5451,7 @@ mod tests {
         assert_eq!(
             DoctorFirstCommand::resolve_for_report(&refused, || false),
             DoctorFirstCommand::OutsideGit,
-            "a non-repository root gets the repository-free scan, not a check that cannot run"
+            "a non-repository root gets pilot exploration, not a check that cannot run"
         );
 
         // A git binary that cannot run outranks the repository state (#4735):
@@ -5162,14 +5584,14 @@ mod tests {
         assert_eq!(
             DoctorFirstCommand::resolve_for_report(&non_git_missing_manifest, || false),
             DoctorFirstCommand::OutsideGit,
-            "empty/non-git roots keep the repository-free scan even when cargo_toml failed"
+            "empty/non-git roots keep pilot exploration even when cargo_toml failed"
         );
     }
 
     /// #5259: a repository with no commits passes `git_repository` (it is a
     /// real work tree) but cannot resolve a diff base, so the evaluation
     /// records the advisory `git_head` check and the first command names the
-    /// commit-first repair with the repository-free scan, never a
+    /// commit-first repair with pilot exploration, never a
     /// diff-scoped `ripr check` that would exit 2 there.
     #[test]
     fn unborn_head_repository_is_advised_and_not_sent_to_ripr_check() -> Result<(), String> {
@@ -5253,11 +5675,10 @@ mod tests {
     }
 
     /// #5259: the UnbornHead recommendation names the commit-first repair
-    /// and keeps the repository-free scan runnable now, with the root bound
-    /// exactly as the other recommendations bind it.
+    /// and keeps whole-repository pilot exploration runnable now, with the
+    /// root bound exactly as the other recommendations bind it.
     #[test]
-    fn unborn_head_recommendation_names_commit_first_and_the_repo_free_scan() -> Result<(), String>
-    {
+    fn unborn_head_recommendation_names_commit_first_and_pilot() -> Result<(), String> {
         let root = doctor_scope_root("unborn-head-rec", &[])?;
         let lines = DoctorFirstCommand::UnbornHead.recommendation_lines_for(&root);
         let _ = std::fs::remove_dir_all(&root);
@@ -5269,7 +5690,8 @@ mod tests {
             "has no base to diff",
             "commit once first",
             "--base HEAD --worktree",
-            "--format repo-exposure-md",
+            // Canonical whole-repo route (domain::next_action): pilot.
+            "ripr pilot --root",
         ] {
             if !first.contains(needle) {
                 return Err(format!("recommendation {first:?} misses {needle:?}"));
@@ -5470,6 +5892,171 @@ mod tests {
             return Err(format!(
                 "descendant {pid} outlived the doctor probe timeout"
             ));
+        }
+        Ok(())
+    }
+
+    /// Control 9 (human/JSON agreement from one DTO, #6986): for each recovery
+    /// state the human `- Safe next action:` line and the JSON document's
+    /// `canonical_next_action.stop.check_name` come from the same decision,
+    /// and a runnable first command omits the JSON member and the line alike.
+    #[test]
+    fn doctor_json_action_and_human_line_agree_for_each_recovery_state() -> Result<(), String> {
+        let root = Path::new(".");
+        let base = |failing: &'static str| {
+            let mut report = DoctorReport::new(".");
+            for name in ["root_directory", "tool_git", "git_repository"] {
+                if name != failing {
+                    report.add_check(name, DoctorStatus::Pass, None);
+                }
+            }
+            if failing != "root_directory" {
+                if failing != "cargo_toml" {
+                    report.add_check("cargo_toml", DoctorStatus::Pass, None);
+                }
+                if failing != "config" {
+                    report.add_check("config", DoctorStatus::Pass, None);
+                }
+            }
+            report.add_check(failing, DoctorStatus::Fail, Some("bad".to_string()));
+            report
+        };
+        let cases = [
+            (
+                "root_directory",
+                "- Safe next action: fix the selected root first (see below); no check command can run until it exists",
+            ),
+            (
+                "config",
+                "- Safe next action: correct `ripr.toml` so it loads; no check command can run until it does",
+            ),
+            (
+                "cargo_toml",
+                "- Safe next action: fix the `!` checks above; no check command can run until they pass",
+            ),
+        ];
+        for (failing, expected_line) in cases {
+            let mut report = base(failing);
+            report.attach_canonical_next_action(root);
+            let first = DoctorFirstCommand::resolve_for_report(&report, || false);
+            let line = safe_next_action_recovery_line(&report, first, root)
+                .ok_or_else(|| format!("{failing}: recovery state must render a line"))?;
+            assert_eq!(line, expected_line, "{failing}");
+            let parsed: serde_json::Value = serde_json::from_str(&report.render_json()?)
+                .map_err(|e| format!("invalid JSON: {e}"))?;
+            let action = &parsed["canonical_next_action"];
+            assert_eq!(action["schema_version"], "canonical_next_action.v1");
+            assert_eq!(action["stop"]["kind"], "doctor_recovery", "{failing}");
+            assert_eq!(action["stop"]["check_name"], failing, "{failing}");
+            assert!(
+                action["command"].is_null(),
+                "{failing}: no runnable command"
+            );
+            // The JSON member is the exact DTO the line family was chosen from.
+            let from_report = report
+                .canonical_next_action
+                .clone()
+                .ok_or_else(|| format!("{failing}: attached action"))?;
+            let recomputed = canonical_next_action_for_doctor(&report, first, root)?
+                .ok_or_else(|| format!("{failing}: recomputed action"))?;
+            assert_eq!(from_report, recomputed, "{failing}");
+        }
+
+        // Negative control: a runnable state omits the member and the line.
+        let mut healthy = DoctorReport::new(".");
+        for name in ["root_directory", "tool_git", "git_repository"] {
+            healthy.add_check(name, DoctorStatus::Pass, None);
+        }
+        healthy.attach_canonical_next_action(root);
+        let first = DoctorFirstCommand::resolve_for_report(&healthy, || false);
+        assert_eq!(safe_next_action_recovery_line(&healthy, first, root), None);
+        let parsed: serde_json::Value = serde_json::from_str(&healthy.render_json()?)
+            .map_err(|e| format!("invalid JSON: {e}"))?;
+        assert!(
+            parsed.get("canonical_next_action").is_none(),
+            "a runnable first command must not name a recovery action: {parsed}"
+        );
+
+        // A non-analysis profile never claims the analysis recovery.
+        let mut source_build = base("config");
+        source_build.profile = DoctorProfile::SourceBuild;
+        source_build.attach_canonical_next_action(root);
+        assert!(source_build.canonical_next_action.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn safe_next_action_line_follows_the_canonical_doctor_decision() -> Result<(), String> {
+        let root = Path::new(".");
+        let pass = |report: &mut DoctorReport, name: &'static str| {
+            report.add_check(name, DoctorStatus::Pass, None);
+        };
+
+        let mut config_fail = DoctorReport::new(".");
+        pass(&mut config_fail, "root_directory");
+        pass(&mut config_fail, "tool_git");
+        pass(&mut config_fail, "git_repository");
+        config_fail.add_check("config", DoctorStatus::Fail, Some("bad".to_string()));
+        let first = DoctorFirstCommand::resolve_for_report(&config_fail, || false);
+        let action = canonical_next_action_for_doctor(&config_fail, first, root)?
+            .ok_or_else(|| "config failure binds a precise recovery".to_string())?;
+        assert_eq!(action.producer(), NextActionProducer::Doctor);
+        assert!(matches!(
+            action.stop(),
+            Some(NextActionStop::DoctorRecovery { check_name, .. }) if check_name == "config"
+        ));
+        assert_eq!(
+            safe_next_action_recovery_line(&config_fail, first, root),
+            Some(
+                "- Safe next action: correct `ripr.toml` so it loads; no check command can run until it does"
+            )
+        );
+
+        let mut manifest_fail = DoctorReport::new(".");
+        pass(&mut manifest_fail, "root_directory");
+        pass(&mut manifest_fail, "tool_git");
+        pass(&mut manifest_fail, "git_repository");
+        manifest_fail.add_check("cargo_toml", DoctorStatus::Fail, Some("none".to_string()));
+        let first = DoctorFirstCommand::resolve_for_report(&manifest_fail, || false);
+        let line = safe_next_action_recovery_line(&manifest_fail, first, root);
+        assert_eq!(
+            line,
+            Some(
+                "- Safe next action: fix the `!` checks above; no check command can run until they pass"
+            )
+        );
+
+        let mut missing_root = DoctorReport::new(".");
+        missing_root.add_check("root_directory", DoctorStatus::Fail, Some("x".to_string()));
+        let first = DoctorFirstCommand::resolve_for_report(&missing_root, || false);
+        assert_eq!(first, DoctorFirstCommand::MissingRoot);
+        assert_eq!(
+            safe_next_action_recovery_line(&missing_root, first, root),
+            Some(
+                "- Safe next action: fix the selected root first (see below); no check command can run until it exists"
+            )
+        );
+
+        // Negative control: a runnable first command binds no recovery, so
+        // no recovery line is selected and the shared fallback maps the
+        // same states to the same family.
+        let mut healthy = DoctorReport::new(".");
+        pass(&mut healthy, "root_directory");
+        pass(&mut healthy, "tool_git");
+        pass(&mut healthy, "git_repository");
+        for runnable in [
+            DoctorFirstCommand::DefaultCheck,
+            DoctorFirstCommand::Worktree,
+            DoctorFirstCommand::SavedDiff,
+            DoctorFirstCommand::OutsideGit,
+            DoctorFirstCommand::UnbornHead,
+        ] {
+            assert!(canonical_next_action_for_doctor(&healthy, runnable, root)?.is_none());
+            assert!(doctor_recovery_for_first_command(runnable, &healthy).is_none());
+            assert_eq!(
+                safe_next_action_recovery_line(&healthy, runnable, root),
+                None
+            );
         }
         Ok(())
     }

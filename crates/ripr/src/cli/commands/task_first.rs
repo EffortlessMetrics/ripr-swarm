@@ -33,8 +33,11 @@ Without an item, repair starts only when exactly one repair-eligible seam
 is visible under the selected root. Several eligible seams print a bounded
 selection list with a retry command instead of selecting one implicitly;
 no eligible seam prints the honest setup or limitation action. With an
-item — a seam ID, or a canonical gap ID naming exactly one seam — repair
-starts the before phase for that exact subject.
+item — a seam ID, a `ripr check` finding ID (`probe:` / `repo-probe:`), a
+canonical gap ID, or a `file:line` location naming exactly one
+repair-eligible seam — repair starts the before phase for that exact
+subject. A cross-namespace ID the current seams no longer map refuses with
+the recovery route instead of guessing a seam.
 
 A successful start prints the before-phase summary and the compact repair
 card for the seam. If the card cannot render after the start published,
@@ -367,9 +370,16 @@ fn facade_before_options(root: &std::path::Path, seam_id: &str) -> AgentRepairOp
 
 fn run_facade_continue(options: ContinueFacadeOptions) -> Result<(), CommandError> {
     ensure_command_root(&options.root, "continue")?;
-    match select_continue_attempt(&options.root, options.attempt_id.as_deref())
-        .map_err(CommandError::from)?
-    {
+    match select_continue_attempt(&options.root, options.attempt_id.as_deref()).map_err(
+        |error| {
+            CommandError::from(super::agent::repair_attempt_input_error(
+                &options.root,
+                None,
+                options.attempt_id.as_deref(),
+                error,
+            ))
+        },
+    )? {
         ContinueSelection::Proceed { attempt_id } => super::agent::run_agent_repair_with_identity(
             AgentRepairOptions {
                 root: options.root,

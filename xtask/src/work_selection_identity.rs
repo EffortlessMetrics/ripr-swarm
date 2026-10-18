@@ -482,7 +482,7 @@ pub(crate) struct WorkSelectionCheckViewV1 {
 // Basis construction and the identity law engine. Pure and read-only.
 // ---------------------------------------------------------------------------
 
-fn build_portfolio_basis(
+pub(crate) fn build_portfolio_basis(
     snapshot: &WorkPortfolioSnapshotV1,
     selection_policy: &str,
     selection_policy_version: &str,
@@ -646,9 +646,9 @@ fn live_overlaps_captured(
     overlaps
 }
 
-struct CaseEvaluation {
-    violations: Vec<WorkSelectionLawViolationV1>,
-    migration_posture: Vec<String>,
+pub(crate) struct CaseEvaluation {
+    pub(crate) violations: Vec<WorkSelectionLawViolationV1>,
+    pub(crate) migration_posture: Vec<String>,
 }
 
 fn violation(
@@ -664,7 +664,7 @@ fn violation(
 /// campaign-member issues; standalone subjects resolve from captured
 /// sources). Laws run in a fixed order; each wrong identity is reported once
 /// with its exact recompile/reconcile route.
-fn check_packet(
+pub(crate) fn check_packet(
     packet: &SelectedWorkIdentityV1,
     basis: &PortfolioBasisV1,
     snapshot: &WorkPortfolioSnapshotV1,
@@ -1346,7 +1346,7 @@ fn acceptance_state(
 // Corpus runner and projections.
 // ---------------------------------------------------------------------------
 
-fn corpus_root(corpus_dir: &str) -> std::path::PathBuf {
+pub(crate) fn corpus_root(corpus_dir: &str) -> std::path::PathBuf {
     // A user-supplied `--corpus` directory is cwd-relative (absolute paths
     // honored as-is); only when it does not exist relative to the cwd does
     // it fall back to the workspace root, which keeps the documented default
@@ -1365,7 +1365,10 @@ fn corpus_root(corpus_dir: &str) -> std::path::PathBuf {
 /// repository `fixtures/` root (the committed corpus mixes both). Paths must
 /// be plain relative paths on every host platform: absolute paths, `..` or
 /// backslash segments fail closed instead of escaping the fixture boundary.
-fn resolve_scenario_captured(corpus_root: &Path, captured: &str) -> Result<PathBuf, String> {
+pub(crate) fn resolve_scenario_captured(
+    corpus_root: &Path,
+    captured: &str,
+) -> Result<PathBuf, String> {
     let path = Path::new(captured);
     if captured.trim().is_empty() || path.is_absolute() || captured.contains('\\') {
         return Err(format!(
@@ -1536,7 +1539,7 @@ pub(crate) fn work_selection_check_json(view: &WorkSelectionCheckViewV1) -> Resu
 /// Render a serde-enum value by its stable wire name, never the Rust `Debug`
 /// spelling, so the human Markdown projection matches the JSON wire forms
 /// exactly and cannot drift from the corpus vocabulary.
-fn selection_wire_name<T: Serialize>(value: &T) -> String {
+pub(crate) fn selection_wire_name<T: Serialize>(value: &T) -> String {
     serde_json::to_value(value)
         .ok()
         .and_then(|value| value.as_str().map(str::to_string))
@@ -1843,6 +1846,16 @@ pub(crate) fn validate_work_selection_identity_fixture_corpus(violations: &mut V
                 {
                     continue;
                 }
+                // The fresh-root reconstruction receipt is bound by its own
+                // dedicated gate (`validate_work_identity_fresh_root_receipt`),
+                // not by this provenance: the receipt records this
+                // provenance's digest, so listing the receipt here would make
+                // the two digests circular.
+                if path.file_name().and_then(|name| name.to_str())
+                    == Some("fresh_root_reconstruction.json")
+                {
+                    continue;
+                }
                 let Ok(relative) = path.strip_prefix(&root) else {
                     continue;
                 };
@@ -1911,6 +1924,396 @@ pub(crate) fn validate_work_selection_identity_fixture_corpus(violations: &mut V
                 }
             }
         }
+        Err(error) => violations.push(format!("fixtures/work_selection_identity: {error}")),
+    }
+    validate_work_identity_fresh_root_receipt(violations);
+}
+
+// ---------------------------------------------------------------------------
+// Fresh-root reconstruction receipt (#1706 PR D, with RIPR-SPEC-0244): one
+// committed receipt binds the shared selection corpus plus the nine PR B
+// consumer corpora so a fresh process rebuilds the whole selected-work
+// contract state from committed artifacts alone — no chat history, no
+// singleton goal file, no live GitHub state.
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct WorkIdentityFreshRootDomainV1 {
+    pub domain: String,
+    pub spec: String,
+    pub command: String,
+    pub corpus: String,
+    pub corpus_sha256: String,
+    pub provenance_sha256: String,
+    pub scenarios: u64,
+    pub cases: u64,
+    pub failed: u64,
+    pub pass_state: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct WorkIdentityFreshRootDriftCheckV1 {
+    pub subject: String,
+    pub observed: String,
+    pub if_drifted: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct WorkIdentityFreshRootReceiptV1 {
+    pub schema_version: String,
+    pub issue: u64,
+    pub spec: String,
+    pub reconstructed_by: String,
+    pub reconstructed_at: String,
+    pub branch: String,
+    pub base_main: String,
+    pub commands: BTreeMap<String, Vec<String>>,
+    pub domains: Vec<WorkIdentityFreshRootDomainV1>,
+    pub drift_checks: Vec<WorkIdentityFreshRootDriftCheckV1>,
+    pub result: String,
+}
+
+pub(crate) const WORK_IDENTITY_FRESH_ROOT_RECEIPT_SCHEMA_VERSION: &str =
+    "work_identity_fresh_root_reconstruction.v1";
+
+/// The result string the committed receipt pins; a reconstruction that
+/// observes anything else fails instead of rewording its own outcome.
+pub(crate) const WORK_IDENTITY_FRESH_ROOT_RESULT: &str =
+    "all_ten_domains_reconstruct_from_committed_artifacts_no_chat_history";
+
+/// The ten selected-work domains whose committed corpora the receipt binds,
+/// in pinned order, each with its expected committed corpus directory: the
+/// shared selection contract (PR A, #6864) plus the nine PR B consumers
+/// (#8325, RIPR-SPEC-0269..0277). The corpus directory is pinned so a
+/// receipt cannot bind one domain's identity to another directory's bytes.
+pub(crate) const WORK_IDENTITY_FRESH_ROOT_DOMAINS: [(&str, &str, &str, &str); 10] = [
+    (
+        "selection",
+        "RIPR-SPEC-0244",
+        "cargo xtask work selection check",
+        DEFAULT_WORK_SELECTION_CORPUS_DIR,
+    ),
+    (
+        "result",
+        "RIPR-SPEC-0269",
+        "cargo xtask work result check",
+        crate::work_result_identity::DEFAULT_WORK_RESULT_CORPUS_DIR,
+    ),
+    (
+        "claim",
+        "RIPR-SPEC-0270",
+        "cargo xtask work claim check",
+        crate::work_claim_identity::DEFAULT_WORK_CLAIM_CORPUS_DIR,
+    ),
+    (
+        "wave",
+        "RIPR-SPEC-0271",
+        "cargo xtask work wave check",
+        crate::work_wave_identity::DEFAULT_WORK_WAVE_CORPUS_DIR,
+    ),
+    (
+        "context",
+        "RIPR-SPEC-0272",
+        "cargo xtask work context check",
+        crate::work_context_identity::DEFAULT_WORK_CONTEXT_CORPUS_DIR,
+    ),
+    (
+        "synthesis",
+        "RIPR-SPEC-0273",
+        "cargo xtask work synthesis check",
+        crate::work_synthesis_identity::DEFAULT_WORK_SYNTHESIS_CORPUS_DIR,
+    ),
+    (
+        "burndown",
+        "RIPR-SPEC-0274",
+        "cargo xtask work burndown check",
+        crate::work_burndown_identity::DEFAULT_WORK_BURNDOWN_CORPUS_DIR,
+    ),
+    (
+        "intake",
+        "RIPR-SPEC-0275",
+        "cargo xtask work intake check",
+        crate::work_intake_identity::DEFAULT_WORK_INTAKE_CORPUS_DIR,
+    ),
+    (
+        "plan",
+        "RIPR-SPEC-0276",
+        "cargo xtask work plan check",
+        crate::work_plan_identity::DEFAULT_WORK_PLAN_CORPUS_DIR,
+    ),
+    (
+        "adapter",
+        "RIPR-SPEC-0277",
+        "cargo xtask work adapter check",
+        crate::work_adapter_identity::DEFAULT_WORK_ADAPTER_CORPUS_DIR,
+    ),
+];
+
+/// Load and parse the committed fresh-root reconstruction receipt, failing
+/// closed on an unknown schema version.
+pub(crate) fn load_work_identity_fresh_root_receipt()
+-> Result<WorkIdentityFreshRootReceiptV1, String> {
+    let body = fs::read_to_string(
+        workspace_path(DEFAULT_WORK_SELECTION_CORPUS_DIR).join("fresh_root_reconstruction.json"),
+    )
+    .map_err(|error| format!("read work identity fresh-root receipt: {error}"))?;
+    let receipt: WorkIdentityFreshRootReceiptV1 = serde_json::from_str(&body)
+        .map_err(|error| format!("parse work identity fresh-root receipt: {error}"))?;
+    if receipt.schema_version != WORK_IDENTITY_FRESH_ROOT_RECEIPT_SCHEMA_VERSION {
+        return Err(format!(
+            "unsupported work identity fresh-root receipt schema `{}`",
+            receipt.schema_version
+        ));
+    }
+    Ok(receipt)
+}
+
+fn sha256_file(root: &Path, file: &str) -> Result<String, String> {
+    let bytes = fs::read(root.join(file)).map_err(|error| format!("read {file}: {error}"))?;
+    Ok(crate::blind_journey::sha256_hex(&bytes))
+}
+
+/// Re-run one domain's committed check in this fresh process and return its
+/// `(scenarios, cases, failed)` counts. Every domain consumes only committed
+/// captured bytes through the shared RIPR-SPEC-0234 compiler; no chat
+/// history, singleton goal file or live GitHub state is read. Test-only: the
+/// `check-fixture-contracts` gate validates the receipt structurally without
+/// executing the ten domain checks.
+#[cfg(test)]
+pub(crate) fn reconstruct_work_identity_domain(domain: &str) -> Result<(u64, u64, u64), String> {
+    let read_committed = |dir: &str| -> Result<String, String> {
+        fs::read_to_string(workspace_path(dir).join("corpus.json"))
+            .map_err(|error| format!("read committed `{domain}` corpus in {dir}: {error}"))
+    };
+    match domain {
+        "selection" => {
+            let corpus =
+                load_work_selection_corpus(&read_committed(DEFAULT_WORK_SELECTION_CORPUS_DIR)?)?;
+            let view = run_work_selection_check(DEFAULT_WORK_SELECTION_CORPUS_DIR, &corpus)?;
+            Ok((view.counts.scenarios, view.counts.cases, view.counts.failed))
+        }
+        "result" => {
+            use crate::work_result_identity::{
+                DEFAULT_WORK_RESULT_CORPUS_DIR, load_work_result_corpus, run_work_result_check,
+            };
+            let corpus = load_work_result_corpus(&read_committed(DEFAULT_WORK_RESULT_CORPUS_DIR)?)?;
+            let view = run_work_result_check(DEFAULT_WORK_RESULT_CORPUS_DIR, &corpus)?;
+            Ok((view.counts.scenarios, view.counts.cases, view.counts.failed))
+        }
+        "claim" => {
+            use crate::work_claim_identity::{
+                DEFAULT_WORK_CLAIM_CORPUS_DIR, load_work_claim_corpus, run_work_claim_check,
+            };
+            let corpus = load_work_claim_corpus(&read_committed(DEFAULT_WORK_CLAIM_CORPUS_DIR)?)?;
+            let view = run_work_claim_check(DEFAULT_WORK_CLAIM_CORPUS_DIR, &corpus)?;
+            Ok((view.counts.scenarios, view.counts.cases, view.counts.failed))
+        }
+        "wave" => {
+            use crate::work_wave_identity::{
+                DEFAULT_WORK_WAVE_CORPUS_DIR, load_work_wave_corpus, run_work_wave_check,
+            };
+            let corpus = load_work_wave_corpus(&read_committed(DEFAULT_WORK_WAVE_CORPUS_DIR)?)?;
+            let view = run_work_wave_check(DEFAULT_WORK_WAVE_CORPUS_DIR, &corpus)?;
+            Ok((view.counts.scenarios, view.counts.cases, view.counts.failed))
+        }
+        "context" => {
+            use crate::work_context_identity::{
+                DEFAULT_WORK_CONTEXT_CORPUS_DIR, load_work_context_corpus, run_work_context_check,
+            };
+            let corpus =
+                load_work_context_corpus(&read_committed(DEFAULT_WORK_CONTEXT_CORPUS_DIR)?)?;
+            let view = run_work_context_check(DEFAULT_WORK_CONTEXT_CORPUS_DIR, &corpus)?;
+            Ok((view.counts.scenarios, view.counts.cases, view.counts.failed))
+        }
+        "synthesis" => {
+            use crate::work_synthesis_identity::{
+                DEFAULT_WORK_SYNTHESIS_CORPUS_DIR, load_work_synthesis_corpus,
+                run_work_synthesis_check,
+            };
+            let corpus =
+                load_work_synthesis_corpus(&read_committed(DEFAULT_WORK_SYNTHESIS_CORPUS_DIR)?)?;
+            let view = run_work_synthesis_check(DEFAULT_WORK_SYNTHESIS_CORPUS_DIR, &corpus)?;
+            Ok((view.counts.scenarios, view.counts.cases, view.counts.failed))
+        }
+        "burndown" => {
+            use crate::work_burndown_identity::{
+                DEFAULT_WORK_BURNDOWN_CORPUS_DIR, load_work_burndown_corpus,
+                run_work_burndown_check,
+            };
+            let corpus =
+                load_work_burndown_corpus(&read_committed(DEFAULT_WORK_BURNDOWN_CORPUS_DIR)?)?;
+            let view = run_work_burndown_check(DEFAULT_WORK_BURNDOWN_CORPUS_DIR, &corpus)?;
+            Ok((view.counts.scenarios, view.counts.cases, view.counts.failed))
+        }
+        "intake" => {
+            use crate::work_intake_identity::{
+                DEFAULT_WORK_INTAKE_CORPUS_DIR, load_work_intake_corpus, run_work_intake_check,
+            };
+            let corpus = load_work_intake_corpus(&read_committed(DEFAULT_WORK_INTAKE_CORPUS_DIR)?)?;
+            let view = run_work_intake_check(DEFAULT_WORK_INTAKE_CORPUS_DIR, &corpus)?;
+            Ok((view.counts.scenarios, view.counts.cases, view.counts.failed))
+        }
+        "plan" => {
+            use crate::work_plan_identity::{
+                DEFAULT_WORK_PLAN_CORPUS_DIR, load_work_plan_corpus, run_work_plan_check,
+            };
+            let corpus = load_work_plan_corpus(&read_committed(DEFAULT_WORK_PLAN_CORPUS_DIR)?)?;
+            let view = run_work_plan_check(DEFAULT_WORK_PLAN_CORPUS_DIR, &corpus)?;
+            Ok((view.counts.scenarios, view.counts.cases, view.counts.failed))
+        }
+        "adapter" => {
+            use crate::work_adapter_identity::{
+                DEFAULT_WORK_ADAPTER_CORPUS_DIR, load_work_adapter_corpus, run_work_adapter_check,
+            };
+            let corpus =
+                load_work_adapter_corpus(&read_committed(DEFAULT_WORK_ADAPTER_CORPUS_DIR)?)?;
+            let view = run_work_adapter_check(DEFAULT_WORK_ADAPTER_CORPUS_DIR, &corpus)?;
+            Ok((view.counts.scenarios, view.counts.cases, view.counts.failed))
+        }
+        other => Err(format!("unknown work identity domain `{other}`")),
+    }
+}
+
+/// Structural half of the receipt gate: schema version, identity anchors, the
+/// exact ten-domain set in pinned order, per-domain corpus/provenance digest
+/// bindings over the committed bytes, and the pinned pass state and result
+/// string. The executing half — re-running every domain check — lives in the
+/// `work_selection_identity_fresh_root_receipt_reconstructs_all_domains` test.
+pub(crate) fn verify_work_identity_fresh_root_receipt(
+    receipt: &WorkIdentityFreshRootReceiptV1,
+) -> Result<(), String> {
+    if receipt.issue != 1706 || receipt.spec != "RIPR-SPEC-0244" {
+        return Err(
+            "work identity fresh-root receipt must anchor issue 1706 and RIPR-SPEC-0244"
+                .to_string(),
+        );
+    }
+    if receipt.reconstructed_by.trim().is_empty() || receipt.branch.trim().is_empty() {
+        return Err(
+            "work identity fresh-root receipt must record who reconstructed it and on which branch"
+                .to_string(),
+        );
+    }
+    if receipt.reconstructed_at.len() < 20 || !receipt.reconstructed_at.ends_with('Z') {
+        return Err(
+            "work identity fresh-root receipt reconstructed_at must be a full UTC timestamp"
+                .to_string(),
+        );
+    }
+    if receipt.base_main.len() != 40
+        || !receipt
+            .base_main
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+    {
+        return Err(
+            "work identity fresh-root receipt base_main must be a full hex commit id".to_string(),
+        );
+    }
+    match receipt.commands.get("offline_reconstruction") {
+        Some(commands) if commands.len() == WORK_IDENTITY_FRESH_ROOT_DOMAINS.len() + 1 => {}
+        _ => {
+            return Err(
+                "work identity fresh-root receipt must list the ten domain check commands \
+                 plus the receipt test under offline_reconstruction"
+                    .to_string(),
+            );
+        }
+    }
+    let actual: Vec<(&str, &str, &str, &str)> = receipt
+        .domains
+        .iter()
+        .map(|domain| {
+            (
+                domain.domain.as_str(),
+                domain.spec.as_str(),
+                domain.command.as_str(),
+                domain.corpus.as_str(),
+            )
+        })
+        .collect();
+    if actual != WORK_IDENTITY_FRESH_ROOT_DOMAINS.to_vec() {
+        return Err(format!(
+            "work identity fresh-root receipt domains drifted from the pinned ten-domain set: {actual:?}"
+        ));
+    }
+    // The tuple check above pins each domain's corpus directory, so the
+    // digest loop below hashes exactly the bytes the domain check runs on.
+    for domain in &receipt.domains {
+        let corpus_root = workspace_path(&domain.corpus);
+        for (file, recorded) in [
+            ("corpus.json", domain.corpus_sha256.as_str()),
+            ("provenance.json", domain.provenance_sha256.as_str()),
+        ] {
+            let computed = sha256_file(&corpus_root, file)?;
+            if computed != recorded {
+                return Err(format!(
+                    "{} {file} digest drifted: recorded `{recorded}`, recomputed `{computed}`",
+                    domain.corpus
+                ));
+            }
+        }
+        if domain.scenarios == 0 || domain.cases == 0 {
+            return Err(format!(
+                "{} records no scenarios or cases; an empty reconstruction says nothing",
+                domain.domain
+            ));
+        }
+        if domain.pass_state != "passing" {
+            return Err(format!(
+                "{} records pass_state `{}`, not `passing`",
+                domain.domain, domain.pass_state
+            ));
+        }
+        if domain.failed != 0 {
+            return Err(format!(
+                "{} records {} failing cases on a passing reconstruction",
+                domain.domain, domain.failed
+            ));
+        }
+    }
+    for check in &receipt.drift_checks {
+        if check.subject.trim().is_empty()
+            || check.observed.trim().is_empty()
+            || check.if_drifted.trim().is_empty()
+        {
+            return Err(
+                "work identity fresh-root receipt drift checks must record subject, \
+                 observed and if_drifted"
+                    .to_string(),
+            );
+        }
+    }
+    if receipt.drift_checks.is_empty() {
+        return Err("work identity fresh-root receipt records no drift checks".to_string());
+    }
+    if receipt.result != WORK_IDENTITY_FRESH_ROOT_RESULT {
+        return Err(format!(
+            "work identity fresh-root receipt result `{}` drifted from `{WORK_IDENTITY_FRESH_ROOT_RESULT}`",
+            receipt.result
+        ));
+    }
+    Ok(())
+}
+
+/// Registered in `check-fixture-contracts`: the committed fresh-root receipt
+/// must exist, parse and bind to the committed domain corpus bytes.
+pub(crate) fn validate_work_identity_fresh_root_receipt(violations: &mut Vec<String>) {
+    let root = workspace_path(DEFAULT_WORK_SELECTION_CORPUS_DIR);
+    if !root.join("fresh_root_reconstruction.json").exists() {
+        violations.push(
+            "fixtures/work_selection_identity: fresh_root_reconstruction.json is missing"
+                .to_string(),
+        );
+        return;
+    }
+    match load_work_identity_fresh_root_receipt()
+        .and_then(|receipt| verify_work_identity_fresh_root_receipt(&receipt))
+    {
+        Ok(()) => {}
         Err(error) => violations.push(format!("fixtures/work_selection_identity: {error}")),
     }
 }

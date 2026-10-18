@@ -2,16 +2,16 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/owner_return_pin_json_shadowed_constructor/input
 
-Summary: 3 probe(s), 0 exposed, 0 weakly_exposed, 3 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 3 of 3 finding(s) unsuppressed
+Summary: 3 probes (0 exposed, 0 weak, 3 unrevealed, 0 no path); 3 of 3 findings unsuppressed (2 base-side evidence, not candidate edit targets)
 
-Analysis outcome: findings below (analysis complete; complete_with_findings)
+Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 3 probe(s), 3 finding(s)
 
 Start here:
-  State: a test gap to inspect or repair (top_gap)
+  State: a test gap to inspect or repair
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:5
-  Static exposure: unrevealed (reachable_unrevealed, warning, confidence 0.79)
+  Static exposure: unrevealed (severity: warning, confidence 0.79)
   Why unrevealed: a related test asserts here, but ripr could not establish that the assertion runs and is the standard `assert_eq!`
   Not credited: `assert_eq!` in save_success_is_observed_with_absent_empty_and_nonempty_text at tests/save.rs:8: tests/save.rs:4 defines a macro named `json`
   Canonical gap: gap:rust:src/lib.rs:did_save_params:return_value:return_value:ok
@@ -36,7 +36,7 @@ Write a test for it:
 
 Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - ./src/lib.rs:5 (reachable_unrevealed)
-    - ./src/lib.rs:5 (reachable_unrevealed)
+    - ./src/lib.rs:5 (unrevealed)
+    - ./src/lib.rs:5 (unrevealed)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

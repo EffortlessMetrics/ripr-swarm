@@ -910,6 +910,75 @@ fn post_initialize_ping_with_handshake_meta_returns_an_empty_result() -> Result<
 }
 
 #[test]
+fn malformed_params_of_a_served_method_answer_invalid_params_and_the_session_recovers()
+-> Result<(), String> {
+    let root = workspace_root()?;
+    let request_bytes = [
+        line(json!({
+            "jsonrpc": "2.0", "id": "discover", "method": "server/discover",
+            "params": { "_meta": current_meta() }
+        }))?,
+        line(json!({
+            "jsonrpc": "2.0", "id": "string-arguments", "method": "tools/call",
+            "params": { "_meta": current_meta(), "name": "ripr_workspace_status", "arguments": "oops" }
+        }))?,
+        line(json!({
+            "jsonrpc": "2.0", "id": "no-name", "method": "tools/call",
+            "params": { "_meta": current_meta() }
+        }))?,
+        line(json!({
+            "jsonrpc": "2.0", "id": "unserved", "method": "nope/never",
+            "params": { "_meta": current_meta() }
+        }))?,
+        line(json!({
+            "jsonrpc": "2.0", "id": "recovered-status", "method": "resources/read",
+            "params": { "_meta": current_meta(), "uri": "ripr://workspace/status" }
+        }))?,
+    ]
+    .concat();
+    let output = run_mcp(&root, &[&request_bytes])?;
+    let responses = response_lines(&output)?;
+    let expected: [(&str, i64); 3] = [
+        ("string-arguments", -32602),
+        ("no-name", -32602),
+        ("unserved", -32601),
+    ];
+    if responses.len() != 5 {
+        return Err(format!("expected 5 MCP responses, got {}", responses.len()));
+    }
+    for (index, (id, code)) in expected.iter().enumerate() {
+        let response = &responses[index + 1];
+        if response.pointer("/id").and_then(Value::as_str) != Some(id) {
+            return Err(format!(
+                "rejection for {id} must echo the request id: {response}"
+            ));
+        }
+        if response.pointer("/error/code").and_then(Value::as_i64) != Some(*code) {
+            return Err(format!(
+                "rejection for {id} must use code {code}: {response}"
+            ));
+        }
+    }
+    if !responses[1]
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .is_some_and(|message| message.contains("tools/call"))
+    {
+        return Err(format!(
+            "invalid-params message must name the method: {}",
+            responses[1]
+        ));
+    }
+    if responses[4].get("result").is_none() {
+        return Err(format!(
+            "session must recover after rejections: {}",
+            responses[4]
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn rejection_arms_survive_the_stdio_transport() -> Result<(), String> {
     let root = workspace_root()?;
     let request_bytes = [
@@ -1761,7 +1830,14 @@ impl SequentialStdio {
 
 impl Drop for SequentialStdio {
     fn drop(&mut self) {
+        // Closing stdin lets the server exit on its own; give an exiting
+        // instrumented process time to finish writing its coverage profile
+        // before the owned kill, which would otherwise truncate it (#4978).
         self.stdin = None;
+        let grace = Instant::now() + Duration::from_secs(2);
+        while matches!(self.child.try_wait(), Ok(None)) && Instant::now() < grace {
+            std::thread::sleep(Duration::from_millis(10));
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
         if let Some(stdout) = self.stdout.take() {

@@ -333,6 +333,18 @@ savings is claimed. Ordinary local `precommit` keeps selected Clippy.
 format and numbering, and the policy surfaces that should fail quickly before
 review.
 
+Local `precommit` also runs `goldens check` when the diff against
+`origin/main` touches output-surface code (`crates/ripr/src/output/`,
+`crates/ripr/src/domain/`, `lsp.rs`, `docs/OUTPUT_SCHEMA.md`,
+`policy/output_contracts.txt`) or a fixture `expected/` file, because renderer
+wording changes make stale goldens the usual way main goes red (#8421). Other
+diffs print a skip line and do not pay for the fixture run. Real drift fails
+`precommit`. If fixtures only fail because their locked dependencies cannot be
+prepared in the environment, `precommit` prints `goldens check: INCOMPLETE
+(environment gap, not a pass)` and continues; run `cargo xtask goldens prepare`
+to close the gap, and hosted CI still owns those fixtures. The step is not part
+of the hosted collect-all policy run, which has its own goldens job.
+
 `cargo xtask check-fast` also runs `check-support-tiers` for committed spec
 Markdown, the support map, root README, Rust repair trust corpus, xtask source,
 and referenced workflow/script path changes. It runs before compilation-bearing
@@ -343,10 +355,23 @@ The established selector remains `origin/main...HEAD`; while authoring
 uncommitted or untracked specs, run `cargo xtask check-support-tiers` explicitly.
 This is one applicable local scan; precommit and hosted routing are unchanged.
 
+`check-fast` runs the existing exact help/parser parity library test when the
+committed diff touches Rust source in the command-parser owners `cli`, `app`,
+`mcp`, or `output/first_pr` (module files and directories). This catches parser
+extractions whose help-owner mapping was left behind, including parser-only
+edits. The validator's registration, resolution and bidirectional flag checks
+remain unchanged. Native failure or zero/ignored/missing test execution fails
+the gate; unrelated analyzer, renderer and documentation paths skip it. The
+report and strict selector receipt retain the `cli-help-parity` obligation.
+Cold library-test compilation is additional work; the single selected case
+does not claim full CLI/runtime or hosted qualification. Uncommitted edits keep
+the existing selector semantics; run the focused test directly while authoring.
+
 Local command diagnostics reuse the existing reports: `precommit-v2.{json,md}`
 records diff-check and selected Clippy children, `file-policy.md` records actual
-covered-by warmup/list children, and `check-fast.md` records fmt and workspace
-Clippy children. Other commands are outside this bounded capture scope. Reused
+covered-by warmup/list children, and `check-fast.md` records fmt, selected CLI
+help parity and workspace Clippy children. Other commands are outside this
+bounded capture scope. Reused
 selectors and skipped warmups create no execution rows. Precommit diagnostics
 remain bound by its report digest; they add no acceptance or waiver authority.
 The nullable numeric `exit_code` comes directly from the observed native status;
@@ -517,7 +542,13 @@ latest reviews, and Droid-related checks, then writes
 checks, failed checks, behind-main state, review status, Droid status, and a
 safe next action: `wait`, `inspect integration`, `inspect failure`, or `merge`.
 `BEHIND` requests integration judgment after Draft, review-required and pending
-waits; it does not establish that a branch update is needed. It is advisory and
+waits; it does not establish that a branch update is needed. The packet retains the current head commit and each latest review's original
+commit, with `current_head`, `stale_for_head`, or `subject_unavailable` attribution.
+An `APPROVED` aggregate without an exact-head latest approval recommends `wait`.
+The CLI's `latestReviews` summaries are joined by author, submission time, and
+state to the full `reviews` subjects; missing or ambiguous identity stays unknown.
+This attribution does not establish review substance, independence, approval
+quotas, integration qualification, or protection satisfaction. It is advisory and
 never updates the branch, comments, approves, or merges.
 The provider-response section retains known quota notices and unknown substance
 from returned reviews/comments without treating either as review completion.

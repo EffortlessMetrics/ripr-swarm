@@ -1,3 +1,11 @@
+//! The `tower-lsp-server` `LanguageServer` implementation for the ripr sidecar.
+//!
+//! [`Backend`] owns client handles, workspace roots, open-document state,
+//! refresh and publication barriers, and the config-pull coordinator. It
+//! delegates analysis scheduling to `refresh_scheduler`, diagnostic shaping to
+//! `diagnostics`, and code actions to `actions`; keep protocol plumbing here
+//! and decisions in those owners.
+
 use super::AnalysisStatusNotification;
 use super::actions::{code_action_response, disable_retained_analysis_actions, resolve_action};
 use super::capabilities::{
@@ -76,6 +84,33 @@ use std::time::{Duration, Instant};
 /// Explicit refresh and config reload bypass the debounce (#1908).
 const INTERACTIVE_REFRESH_DEBOUNCE: Duration = Duration::from_millis(200);
 
+/// Claims the one in-flight interactive debounce window (#8528).
+///
+/// `try_acquire` fails when a window is already open: that trigger has
+/// already advanced the workspace revision, so it returns without parking a
+/// notification slot. The owner drops the claim after the sleep, then reads
+/// `workspace_revision` so a folded trigger cannot be sampled into a request
+/// that has already chosen its revision.
+struct InteractiveDebounceClaim<'a> {
+    flag: &'a AtomicBool,
+}
+
+impl<'a> InteractiveDebounceClaim<'a> {
+    fn try_acquire(flag: &'a AtomicBool) -> Option<Self> {
+        if flag.swap(true, Ordering::AcqRel) {
+            None
+        } else {
+            Some(Self { flag })
+        }
+    }
+}
+
+impl Drop for InteractiveDebounceClaim<'_> {
+    fn drop(&mut self) {
+        self.flag.store(false, Ordering::Release);
+    }
+}
+
 /// Upper bound on the optional client disclosures that follow an
 /// initialize-time failure commit (#3802). The owning session failure is
 /// recorded synchronously first, so a wedged or undriven peer can delay only
@@ -88,7 +123,7 @@ const INITIALIZE_FAILURE_DISCLOSURE_BUDGET: Duration = Duration::from_secs(2);
 const SAVED_WORKTREE_LIMITS_NOTE: &str = "Static evidence only; staged and unstaged tracked files are analyzed; untracked files remain out of scope until staged or supplied through an explicit diff.";
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 use tower_lsp_server::jsonrpc::{Error as LspError, Result as LspResult};
-use tower_lsp_server::ls_types::notification::LogTrace;
+use tower_lsp_server::ls_types::notification::{LogTrace, ShowMessage};
 use tower_lsp_server::ls_types::{
     CodeAction, CodeActionParams, CodeActionResponse, CodeLens, CodeLensParams, ConfigurationItem,
     Diagnostic, DidChangeConfigurationParams, DidChangeTextDocumentParams,
@@ -97,10 +132,11 @@ use tower_lsp_server::ls_types::{
     DocumentDiagnosticReport, DocumentDiagnosticReportResult, ExecuteCommandParams, FileEvent,
     Hover, HoverParams, InitializeParams, InitializeResult, InitializedParams, LSPAny,
     LogTraceParams, MessageType, PositionEncodingKind, Registration,
-    RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport, TraceValue,
-    UnchangedDocumentDiagnosticReport, Unregistration, Uri, WorkspaceDiagnosticParams,
-    WorkspaceDiagnosticReport, WorkspaceDiagnosticReportResult, WorkspaceDocumentDiagnosticReport,
-    WorkspaceFullDocumentDiagnosticReport, WorkspaceUnchangedDocumentDiagnosticReport,
+    RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport,
+    ShowMessageParams, TraceValue, UnchangedDocumentDiagnosticReport, Unregistration, Uri,
+    WorkspaceDiagnosticParams, WorkspaceDiagnosticReport, WorkspaceDiagnosticReportResult,
+    WorkspaceDocumentDiagnosticReport, WorkspaceFullDocumentDiagnosticReport,
+    WorkspaceUnchangedDocumentDiagnosticReport,
 };
 use tower_lsp_server::{Client, LanguageServer};
 
@@ -171,6 +207,13 @@ pub(super) struct Backend {
     /// snapshot: a byte-identical repeated degradation warns once, a new
     /// signature warns again, and a cleared signature logs one recovery line.
     last_component_degradation: Mutex<Option<String>>,
+    /// The failure signature covered by the last generic-client
+    /// `window/showMessage` analysis-failure disclosure (#8583). Compared
+    /// per status publication: a byte-identical repeated failure shows
+    /// once, a changed signature shows again, and a succeeded publication
+    /// clears it so a later recurrence shows again. Mirrors
+    /// `last_component_degradation`.
+    last_analysis_failure_shown: Mutex<Option<String>>,
     /// Set when the bounded disclosure window after an initialize-time
     /// failure commit expired without completing client delivery (#3802).
     /// The owning session failure stays committed; this records the delivery
@@ -179,7 +222,13 @@ pub(super) struct Backend {
     initialize_failure_disclosure_omitted: AtomicBool,
     refresh_scheduler: RefreshScheduler,
     workspace_revision: Mutex<u64>,
+    /// One in-flight interactive debounce window (#8528). A trigger that
+    /// finds this set returns immediately; the owner sleeps, then drops the
+    /// claim before reading the latest workspace revision.
+    interactive_debounce_window_open: AtomicBool,
     refresh_idle: Notify,
+    #[cfg(test)]
+    last_requested_workspace_revision: AtomicU64,
     /// Liveness bound for one server→client request round-trip (#5278,
     /// `transport_bounds::CLIENT_REQUEST_TIMEOUT`): after the transport read
     /// loop fuses, a client response can never arrive, so an unbounded await
@@ -305,10 +354,14 @@ impl Backend {
             watched_files_relative_pattern_support: AtomicBool::new(false),
             diagnostics_input_watch: AsyncMutex::new(DiagnosticsInputWatch::default()),
             last_component_degradation: Mutex::new(None),
+            last_analysis_failure_shown: Mutex::new(None),
             initialize_failure_disclosure_omitted: AtomicBool::new(false),
             refresh_scheduler: RefreshScheduler::default(),
             workspace_revision: Mutex::new(0),
+            interactive_debounce_window_open: AtomicBool::new(false),
             refresh_idle: Notify::new(),
+            #[cfg(test)]
+            last_requested_workspace_revision: AtomicU64::new(0),
             client_request_timeout: crate::lsp::transport_bounds::CLIENT_REQUEST_TIMEOUT,
             #[cfg(test)]
             consumed_source_barrier: Mutex::new(None),
@@ -389,16 +442,18 @@ impl Backend {
             return;
         };
         // Debounce interactive triggers (did_open/did_save/did_close) so
-        // rapid saves collapse into one analysis run. Explicit refresh and
-        // config reload bypass the debounce (#1908).
+        // rapid saves collapse into one analysis run. Explicit refresh,
+        // config reload, and watched-input bypass the debounce (#1908).
         //
-        // The collapse itself is handled by the refresh scheduler:
-        // `refresh_scheduler.request()` deduplicates matching active/pending
-        // work before incrementing `next_generation`, so rapid equivalent
-        // saves do not each obtain a new generation. The sleep here just
-        // delays the request so a second save arriving within the window
-        // can coalesce with the first rather than triggering a cancel +
-        // re-queue cycle on the scheduler.
+        // #8528: park at most one notification handler in this sleep.
+        // tower-lsp-server runs four handlers at a time; sleeping in each
+        // didOpen filled every slot, stopped stdin reads, and published one
+        // status burst per open. A trigger that finds a window already open
+        // has already advanced `workspace_revision` and returns immediately.
+        // The owner drops the claim after waking, then reads the latest
+        // revision so a folded trigger is not sampled into a request that
+        // already chose its revision. The scheduler still deduplicates
+        // matching active/pending work once a request is issued.
         //
         // The earlier version of this block used a `tokio::select!` arm on
         // `refresh_idle.notified()` to "cancel" when a superseding
@@ -412,18 +467,28 @@ impl Backend {
             RefreshReason::DidOpen | RefreshReason::DidSave | RefreshReason::DidClose
         );
         if is_interactive {
-            tokio::time::sleep(INTERACTIVE_REFRESH_DEBOUNCE).await;
-            // Re-check preconditions after the debounce window — config or
-            // authority may have changed during the wait.
-            if self.configuration_failure().is_some() {
-                return;
-            }
-            let post_authority = self.workspace_root_authority();
-            if !post_authority.allows_analysis() {
-                return;
+            {
+                let Some(_claim) =
+                    InteractiveDebounceClaim::try_acquire(&self.interactive_debounce_window_open)
+                else {
+                    return;
+                };
+                tokio::time::sleep(INTERACTIVE_REFRESH_DEBOUNCE).await;
+                // Re-check preconditions after the debounce window — config or
+                // authority may have changed during the wait.
+                if self.configuration_failure().is_some() {
+                    return;
+                }
+                let post_authority = self.workspace_root_authority();
+                if !post_authority.allows_analysis() {
+                    return;
+                }
             }
         }
         let workspace_revision = self.workspace_revision();
+        #[cfg(test)]
+        self.last_requested_workspace_revision
+            .store(workspace_revision, Ordering::Release);
         let authority_epoch = self.workspace_root_epoch.load(Ordering::SeqCst);
         let decision = self.refresh_scheduler.request(
             root,
@@ -1317,6 +1382,12 @@ impl Backend {
         self.refresh_scheduler.telemetry()
     }
 
+    #[cfg(test)]
+    pub(super) fn last_requested_workspace_revision_for_test(&self) -> u64 {
+        self.last_requested_workspace_revision
+            .load(Ordering::Acquire)
+    }
+
     pub(super) fn workspace_revision(&self) -> u64 {
         self.workspace_revision
             .lock()
@@ -1917,9 +1988,94 @@ impl Backend {
     }
 
     async fn publish_analysis_status(&self) {
+        let payload = self.analysis_status_payload();
         self.client
-            .send_notification::<AnalysisStatusNotification>(self.analysis_status_payload())
+            .send_notification::<AnalysisStatusNotification>(payload.clone())
             .await;
+        self.disclose_analysis_failure_to_generic_client(&payload)
+            .await;
+    }
+
+    /// Show a failed analysis to clients without the `riprEditor`
+    /// integration (#8583). Generic editors do not render
+    /// `ripr/analysisStatus`, so without this a failed run is
+    /// indistinguishable from a run that found nothing — the same reason
+    /// `disclose_blocked_root` and the config-failure paths use
+    /// `window/showMessage` for these clients. The VS Code extension
+    /// renders the failure from the status payload itself. One bounded
+    /// `window/showMessage` WARNING per distinct failure signature: a
+    /// byte-identical repeated failure does not re-show on every refresh,
+    /// a changed failure shows once, and a succeeded publication clears
+    /// the signature so a later recurrence shows again (transient
+    /// queued/running publications between two attempts of the same
+    /// failure do not clear it). The text
+    /// passes through the same `bounded_failure_message` length and
+    /// redaction bound as every other client-visible failure message.
+    /// Dedicated disclosures that already showed a failure (initialize
+    /// and config reload) record their signature through
+    /// `note_analysis_failure_disclosed` so this path does not show it a
+    /// second time with different wording.
+    async fn disclose_analysis_failure_to_generic_client(&self, payload: &LSPAny) {
+        let Some(failure) = payload.get("failure").filter(|failure| !failure.is_null()) else {
+            if payload.get("state").and_then(serde_json::Value::as_str)
+                == Some(AnalysisAttemptState::Succeeded.as_str())
+                && let Ok(mut last) = self.last_analysis_failure_shown.lock()
+            {
+                *last = None;
+            }
+            return;
+        };
+        let (Some(kind), Some(message)) = (
+            failure.get("kind").and_then(serde_json::Value::as_str),
+            failure.get("message").and_then(serde_json::Value::as_str),
+        ) else {
+            return;
+        };
+        let generic_client = self
+            .client_features
+            .lock()
+            .map(|features| features.ripr_editor.is_none())
+            .unwrap_or(true);
+        if !generic_client {
+            return;
+        }
+        let signature = format!("{kind}:{message}");
+        let previous = {
+            let Ok(mut last) = self.last_analysis_failure_shown.lock() else {
+                return;
+            };
+            last.replace(signature.clone())
+        };
+        if previous.as_deref() == Some(signature.as_str()) {
+            return;
+        }
+        // Send through the checked notification path, like
+        // `ripr/analysisStatus` itself: `Client::show_message` is
+        // unchecked, so a status publication before initialization (or
+        // in an in-process context whose client socket is not driven)
+        // would block on the client channel instead of being suppressed
+        // with the status it discloses.
+        self.client
+            .send_notification::<ShowMessage>(ShowMessageParams {
+                typ: MessageType::WARNING,
+                message: bounded_failure_message(&format!("ripr analysis failed: {message}")),
+            })
+            .await;
+    }
+
+    /// Record the current health failure as already disclosed on screen,
+    /// so `disclose_analysis_failure_to_generic_client` does not repeat a
+    /// failure that a dedicated path (initialize, config reload) showed
+    /// with its own wording — or deliberately did not show because the
+    /// client renders it from `ripr/analysisStatus` (#8583).
+    fn note_analysis_failure_disclosed(&self) {
+        let signature = self
+            .analysis_health_snapshot()
+            .failure
+            .map(|failure| format!("{}:{}", failure.kind.as_str(), failure.message));
+        if let Ok(mut last) = self.last_analysis_failure_shown.lock() {
+            *last = signature;
+        }
     }
 
     /// The selected root to keep when a folder event leaves several folders
@@ -2044,6 +2200,11 @@ impl Backend {
     /// screen saying why. The client profile is not stored yet at
     /// initialize, so the caller decides from the negotiated profile.
     async fn deliver_initialize_failure_disclosures(&self, warning: String, shown: Option<String>) {
+        // The status publication inside this delivery must not re-show
+        // the failure through the generic analysis-failure disclosure
+        // (#8583): this path already decides the on-screen wording, and
+        // the client profile is not stored yet at initialize.
+        self.note_analysis_failure_disclosed();
         self.initialize_failure_disclosure_omitted
             .store(false, Ordering::Release);
         let delivery = tokio::time::timeout(INITIALIZE_FAILURE_DISCLOSURE_BUDGET, async {
@@ -2524,6 +2685,9 @@ impl Backend {
         if let Ok(mut last) = self.last_component_degradation.lock() {
             *last = None;
         }
+        if let Ok(mut last) = self.last_analysis_failure_shown.lock() {
+            *last = None;
+        }
         if let Ok(mut health) = self.analysis_health.lock() {
             health.state = AnalysisAttemptState::Stopped;
             health.attempt_id = None;
@@ -2674,6 +2838,11 @@ impl Backend {
                 let warning = format!("ripr config load failed; analysis is paused: {error}");
                 let shown = config_failure_notice(&error);
                 self.set_configuration_failure(error);
+                // The disclosure below owns the on-screen wording (the
+                // source-free summary); keep the generic analysis-failure
+                // disclosure in the status publication from showing the
+                // same failure a second time (#8583).
+                self.note_analysis_failure_disclosed();
                 self.publish_analysis_status().await;
                 if !repeated {
                     self.disclose_configuration_reload_failure(warning, shown)
@@ -3014,6 +3183,25 @@ impl Backend {
             .ok()
             .map(|documents| documents.open_matches_persisted_saved_content(uri))
             .unwrap_or(false)
+    }
+
+    /// Adopt the committed snapshot's analyzed identity for a clean open of a
+    /// Rust file the snapshot already analyzed byte-for-byte, so reopening an
+    /// unchanged file does not quarantine it as never analyzed. Returns
+    /// whether the document is now clean.
+    fn adopt_committed_snapshot_for_clean_open(&self, uri: &Uri) -> bool {
+        let committed = self.latest_analysis.lock().ok().and_then(|latest| {
+            let snapshot = latest.as_ref()?;
+            let relative = super::uri::file_uri_relative_to_root(&snapshot.root, uri)?;
+            let digest = snapshot.rust_consumed_sources.digest(&relative)?;
+            Some((digest, snapshot.input_identity_id()))
+        });
+        let Some((digest, input_identity)) = committed else {
+            return false;
+        };
+        self.documents.lock().ok().is_some_and(|mut documents| {
+            documents.adopt_committed_identity(uri, &digest, input_identity)
+        })
     }
 
     /// Whether a clean open still carries an input the committed snapshot
@@ -3637,11 +3825,23 @@ fn path_is_detectable_source_dir_python(root: &Path, path: &Path) -> bool {
 
 /// Root-relative components of `path` when `path` sits below `root`. Root
 /// components compare with the platform path rule (case-insensitive on
-/// Windows), mirroring the LSP URI authority's containment rule. `.` and
+/// Windows and macOS), mirroring the LSP URI authority's containment rule. `.` and
 /// `..` resolve on both sides first, including a root this process built
 /// with a relative join (`crates/ripr/../..`). A collapsed file URI and
 /// that uncollapsed root are the same directory.
 fn root_relative_components(root: &Path, path: &Path) -> Option<Vec<String>> {
+    root_relative_components_on(
+        root,
+        path,
+        crate::output::path::host_paths_case_insensitive(),
+    )
+}
+
+fn root_relative_components_on(
+    root: &Path,
+    path: &Path,
+    case_insensitive: bool,
+) -> Option<Vec<String>> {
     let root = super::uri::normalize_path(root);
     let path = super::uri::normalize_path(path);
     fn component_names(path: &Path) -> Vec<Option<String>> {
@@ -3665,7 +3865,7 @@ fn root_relative_components(root: &Path, path: &Path) -> Option<Vec<String>> {
         let (Some(expected), Some(actual)) = (expected, actual) else {
             return None;
         };
-        let matched = if cfg!(windows) {
+        let matched = if case_insensitive {
             expected.eq_ignore_ascii_case(actual)
         } else {
             expected == actual
@@ -3926,9 +4126,9 @@ mod workspace_input_tests {
         assert!(WorkspaceInputKind::PythonSourcePresence.reloads_repository_config());
         assert!(!WorkspaceInputKind::PythonSourcePresence.invalidates_workspace_graph());
 
-        if cfg!(windows) {
-            // Source-directory markers resolve through the Windows
-            // filesystem, so differently-cased components classify the same.
+        if crate::output::path::host_paths_case_insensitive() {
+            // Source-directory markers resolve through the case-insensitive
+            // host filesystem (Windows, macOS), so differently-cased components classify the same.
             let upper = root.join("SRC").join("app.py");
             assert_eq!(
                 workspace_input_kind(&root, &upper),
@@ -3936,6 +4136,21 @@ mod workspace_input_tests {
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn root_relative_components_follow_explicit_host_case_rule() {
+        let root = Path::new("/Work/Repo");
+        let path = Path::new("/work/repo/src/lib.rs");
+        assert_eq!(
+            root_relative_components_on(root, path, true),
+            Some(vec!["src".to_string(), "lib.rs".to_string()])
+        );
+        assert_eq!(root_relative_components_on(root, path, false), None);
+        assert_eq!(
+            root_relative_components_on(root, Path::new("/Work/Repo/src/Lib.rs"), false),
+            Some(vec!["src".to_string(), "Lib.rs".to_string()])
+        );
     }
 
     #[test]
@@ -4443,6 +4658,57 @@ fn bounded_failure_message(message: &str) -> String {
     super::component_outcome::bounded_message(message)
 }
 
+#[cfg(test)]
+mod interactive_debounce_fold_tests;
+
+#[cfg(test)]
+mod bounded_failure_message_tests {
+    use super::bounded_failure_message;
+
+    /// #8584: `ripr/analysisStatus` copies `AnalysisFailure.message`, which
+    /// is bounded here. The wrapper must keep the truncation marker inside
+    /// the 240-character summary bound and still redact path tokens.
+    #[test]
+    fn analysis_status_failure_message_marks_truncation_inside_the_bound() {
+        let message = format!("cargo config error: {}", "x".repeat(400));
+        let bounded = bounded_failure_message(&message);
+        assert!(
+            bounded.ends_with('…'),
+            "truncated analysisStatus text must carry a marker: {bounded}"
+        );
+        assert_eq!(
+            bounded.chars().count(),
+            super::super::component_outcome::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND,
+            "the marker must stay inside the published bound: {bounded}"
+        );
+        assert_eq!(
+            bounded,
+            super::super::component_outcome::bounded_message(&message)
+        );
+    }
+
+    #[test]
+    fn analysis_status_failure_message_redacts_paths_before_the_cut() {
+        let message = format!(
+            "failed reading {} {}",
+            "/tmp/ripr-secret-config.toml",
+            "x".repeat(400)
+        );
+        let bounded = bounded_failure_message(&message);
+        assert!(bounded.contains("<path>"), "{bounded}");
+        assert!(
+            !bounded.contains("/tmp/ripr-secret-config.toml"),
+            "redaction must cover the remaining summary: {bounded}"
+        );
+        assert!(bounded.ends_with('…'), "{bounded}");
+        assert_eq!(
+            bounded.chars().count(),
+            super::super::component_outcome::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND,
+            "{bounded}"
+        );
+    }
+}
+
 /// #4860: whether a refresh analysis error is the attempt's cancellation.
 /// The attempt's token, not the error text, says whether the work stopped
 /// because a checkpoint handed it an abort. A wrapped cancellation is still a
@@ -4564,10 +4830,15 @@ fn blocked_root_message(root: &WorkspaceRootAuthority) -> Option<String> {
         };
         format!(" {label}: {listed}.")
     };
-    // The stored details already name the recovery for ambiguous, removed
-    // and changed roots; an unavailable root only says what the client sent.
+    // The stored details already name the recovery for removed and changed
+    // roots; an unavailable root only says what the client sent. An
+    // ambiguous set lists its folders above, so the guidance names the only
+    // recovery the server implements: one folder per window, then a restart
+    // (#7461). No server command, setting, or request selects a root.
     let guidance = match root.state {
-        WorkspaceRootState::WorkspaceAmbiguous => " ripr analyzes one workspace root per server.",
+        WorkspaceRootState::WorkspaceAmbiguous => {
+            " ripr analyzes one workspace root per server. Remove the extra folder from the workspace (or open each repository in its own editor session), then restart the language server. In VS Code, the `ripr: Select Workspace Root` command picks one folder and restarts instead."
+        }
         WorkspaceRootState::RootUnavailable => {
             " Open the repository folder as the editor's workspace root, then restart the language server."
         }
@@ -4581,12 +4852,21 @@ fn blocked_root_message(root: &WorkspaceRootAuthority) -> Option<String> {
     ))
 }
 
+/// Recovery route for workspace-root states that stop analysis until the
+/// editor holds a single workspace root and the server restarts (#7461).
+/// The name describes the end state the user must produce because no server
+/// command, setting, or request implements a root-selection step; a
+/// `select_*` route would name a phantom action. One wording owner for both
+/// the status projection and the top-limitation payload so they cannot drift
+/// apart.
+const SINGLE_ROOT_RESTART_ROUTE: &str = "use_single_workspace_root_and_restart";
+
 fn root_recovery_route(state: &WorkspaceRootState) -> &'static str {
     match state {
         WorkspaceRootState::SelectedSingleRoot => "refresh",
-        WorkspaceRootState::WorkspaceAmbiguous => "select_root_and_restart",
-        WorkspaceRootState::RootUnavailable => "select_root_and_restart",
-        WorkspaceRootState::RootRemoved => "select_root_and_restart",
+        WorkspaceRootState::WorkspaceAmbiguous => SINGLE_ROOT_RESTART_ROUTE,
+        WorkspaceRootState::RootUnavailable => SINGLE_ROOT_RESTART_ROUTE,
+        WorkspaceRootState::RootRemoved => SINGLE_ROOT_RESTART_ROUTE,
         WorkspaceRootState::RootChanged => "refresh",
     }
 }
@@ -5409,7 +5689,7 @@ impl LanguageServer for Backend {
         // The store records exactly the params version with the open
         // decision (#1747); capture it before `params` moves.
         let decision_version = Some(params.text_document.version);
-        let Some((uri, transition)) = self.open_document(params) else {
+        let Some((uri, mut transition)) = self.open_document(params) else {
             // A failed store lock means the document was never registered;
             // skip every downstream mutation so the store, the workspace
             // revision, and the committed snapshot cannot diverge.
@@ -5438,6 +5718,18 @@ impl LanguageServer for Backend {
         // captured for the same Rust path keeps the refresh too: the file
         // changed on disk while closed, so the session's committed evidence
         // predates the input it would otherwise keep serving.
+        if transition == QuarantineTransition::Entered
+            && self.refresh_scheduler_has_analysis_state()
+            && self.adopt_committed_snapshot_for_clean_open(&uri)
+        {
+            // The open created the document already quarantined as never
+            // analyzed and the adoption lifted that. Report the lift so the
+            // committed diagnostics are re-served: a stale withdrawal marker
+            // from an earlier dirty episode may still be the last publish.
+            transition = QuarantineTransition::Exited {
+                was_disclosed: false,
+            };
+        }
         let open_matches_saved = self.open_document_matches_saved_content(&uri);
         let session_has_analysis = self.refresh_scheduler_has_analysis_state();
         self.handle_document_quarantine_transition(&uri, transition, decision_version)
@@ -7107,8 +7399,17 @@ fn analysis_pending_workspace_report(
 /// Disclosure emitted once per quarantine episode when a dirty document's
 /// line-local diagnostics are withdrawn (#1970).
 fn quarantine_withdrawal_log_message(path: &Path, reason: DocumentStalenessReason) -> String {
+    let recovery = match reason {
+        DocumentStalenessReason::InvalidIncrementalChange => {
+            "revert the file or close and reopen it so ripr receives the full document again"
+        }
+        DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent
+        | DocumentStalenessReason::NoAnalyzedSavedContent => {
+            "save the file to analyze the new saved state"
+        }
+    };
     format!(
-        "ripr: line-local diagnostics withdrawn for {}: {} ({}); save the file to analyze the new saved state",
+        "ripr: line-local diagnostics withdrawn for {}: {} ({}); {recovery}",
         path.display(),
         reason.description(),
         reason.as_str(),
@@ -7583,17 +7884,17 @@ fn top_limitation_dto(
             WorkspaceRootState::WorkspaceAmbiguous => (
                 "workspace_ambiguous",
                 "workspace root authority is ambiguous; analysis input is not selected",
-                "select_root_and_restart",
+                SINGLE_ROOT_RESTART_ROUTE,
             ),
             WorkspaceRootState::RootUnavailable => (
                 "input_invalid",
                 "workspace root authority is unavailable; analysis input is not selected",
-                "select_root_and_restart",
+                SINGLE_ROOT_RESTART_ROUTE,
             ),
             WorkspaceRootState::RootRemoved => (
                 "input_invalid",
                 "the selected workspace root was removed; analysis input is invalid",
-                "select_root_and_restart",
+                SINGLE_ROOT_RESTART_ROUTE,
             ),
             WorkspaceRootState::RootChanged => (
                 "snapshot_stale",
@@ -11748,6 +12049,22 @@ mod quarantine_message_tests {
         assert!(message.contains("/workspace/src/lib.rs"));
         assert!(message.contains("buffer_diverges_from_analyzed_saved_content"));
         assert!(message.contains("save the file"));
+    }
+
+    #[test]
+    fn quarantine_withdrawal_log_message_route_follows_reason() {
+        let path = Path::new("/workspace/src/lib.rs");
+        let unanalyzed = quarantine_withdrawal_log_message(
+            path,
+            DocumentStalenessReason::NoAnalyzedSavedContent,
+        );
+        assert!(unanalyzed.contains("save the file"));
+        let invalid = quarantine_withdrawal_log_message(
+            path,
+            DocumentStalenessReason::InvalidIncrementalChange,
+        );
+        assert!(invalid.contains("close and reopen"));
+        assert!(!invalid.contains("save the file"));
     }
 
     #[test]
