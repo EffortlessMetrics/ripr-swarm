@@ -26,7 +26,7 @@
 //! - workflow memberships: a closed tag set in [`WORKFLOW_TAGS`], promoted to
 //!   the typed workflow catalog by #4824
 //!   ([`crate::cli::workflow_catalog`]) and never re-derived from prose;
-//! - process exit contract: [`CommandExitContract`], projected into
+//! - ordinary command-completion exit contract: [`CommandExitContract`], projected into
 //!   `help --json` (RIPR-SPEC-0190 / #5066). Orchestrator-branching rows
 //!   must match the implemented `CommandError` / `gate evaluate` mapping
 //!   in `docs/EXIT_CODES.md`; other described rows are completed-or-failed
@@ -136,12 +136,13 @@ pub(crate) struct CommandOutputs {
     pub(crate) optional: &'static [&'static str],
 }
 
-/// Per-command process-exit contract projected into `help --json` (#5066).
+/// Ordinary command-completion contract projected into `help --json` (#5066).
 ///
 /// The numeric 0/2/3 mapping is owned by [`crate::cli::CommandError`] and
 /// `docs/EXIT_CODES.md`. This enum names which of those codes a command can
 /// emit and the stdout disclosure an orchestrator must know. It is not a
-/// runtime mutation of any command's exit path.
+/// runtime mutation of any command's exit path. External standalone interruption
+/// (130 or native signal termination) is separate; see `docs/EXIT_CODES.md`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CommandExitContract {
     /// Standard contract: `0` completed, `2` could not complete. Never `3`.

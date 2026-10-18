@@ -115,7 +115,10 @@ ripr reports gap-ledger \
 ```
 
 For presentation/output-text changes or scoped Python/TypeScript repair-card findings,
-derive the PR-local route from the checked JSON output:
+derive the PR-local route from the checked JSON output (this route projects
+presentation/output and Python/TypeScript/Perl findings only; a Rust-only
+finding produces no record; for Rust findings read `ripr check` and start
+`ripr repair` instead):
 
 ```bash
 ripr check --root . --format json > target/ripr/reports/check.json
@@ -292,6 +295,11 @@ Read the result conservatively:
 | `unchanged` | The test may be misplaced, too broad, stale, or beyond current static limits. |
 | `regressed` | Static evidence got weaker; inspect before continuing. |
 | `unknown` | Required before or after evidence is missing or not comparable. |
+
+`ripr outcome` names these buckets `moved`, `unchanged`, `regressed`, `new`,
+and `removed`, with gap movement `closed`, `opened`, `strengthened`, and
+`weakened`; `ripr agent verify` reports `improved` and `resolved` counts. The
+table above is the conservative reading of each.
 
 For output-contract repairs, run the verification command from the gap record,
 usually:

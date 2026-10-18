@@ -63,7 +63,9 @@ use crate::analysis::extract::{
 #[cfg(test)]
 use crate::analysis::facts::FileFactsView;
 use crate::analysis::facts::drop_in::DropInManifests;
-use crate::analysis::facts::{FunctionContainer, ModulePathTarget, SourceRoleProvenanceEdgeKind};
+use crate::analysis::facts::{
+    DOCTEST_FUNCTION_NAME, FunctionContainer, ModulePathTarget, SourceRoleProvenanceEdgeKind,
+};
 use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equality};
 use crate::analysis::syntax::{
     AssertionContextRefusal, GeneratedTestPins, HelperLoan, MacroBindingCandidates,
@@ -189,6 +191,11 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// run for an hour.
     test_file_macro_sites: RefCell<TestFileMacroSites>,
     by_file: RefCell<BTreeMap<PathBuf, OwnerPinAssertions>>,
+    /// #6648 (RIPR-SPEC-0279): per doc example test (file, start line), its
+    /// assertion admission read from its synthetic source, parsed once per
+    /// run. A doctest is its own crate, so the file holding the comment
+    /// declares no function its assertions could be read under.
+    doctest_pins: RefCell<BTreeMap<(PathBuf, usize), OwnerPinAssertions>>,
     /// Per file: the exact pattern pins of its tests through a verified
     /// local `assert_matches!` (#6616), parsed once per run.
     pattern_pins: RefCell<BTreeMap<PathBuf, PatternPins>>,
@@ -680,6 +687,17 @@ impl OwnerPinSyntax {
         if !self.admits(test, assertion, index) {
             return None;
         }
+        if index.doctest_source(test).is_some() {
+            return self
+                .doctest_pins
+                .borrow()
+                .get(&(test.file.clone(), test.start_line))?
+                .helper_loan(
+                    (test.start_line, test.end_line, DOCTEST_FUNCTION_NAME),
+                    (assertion.line, &assertion.text),
+                )
+                .cloned();
+        }
         self.by_file
             .borrow()
             .get(&test.file)?
@@ -1122,6 +1140,12 @@ impl OwnerPinSyntax {
         let Some(facts) = index.files().get(&test.file) else {
             return Some(AssertionRefusal::LexicalFallback);
         };
+        // #6648 (RIPR-SPEC-0279): a doc example is its own crate, so its
+        // assertions are read from its synthetic source under the synthetic
+        // name, never from the file that holds the comment.
+        if let Some(source) = index.doctest_source(test) {
+            return self.doctest_refusal(test, assertion, source, ambiguous, index);
+        }
         // #7857: a `std`/`core`-rooted `assert_eq!` needs the same root proof
         // as targeted call syntax (manifest, crate provenance) plus the
         // test's real file, which a generated test's expansion does not show.
@@ -1215,6 +1239,61 @@ impl OwnerPinSyntax {
             return Some(AssertionRefusal::Syntax(generated_refusal));
         }
         Some(AssertionRefusal::Syntax(file_refusal))
+    }
+}
+
+impl OwnerPinSyntax {
+    /// #6648 (RIPR-SPEC-0279): the shared admission over a doc example's
+    /// synthetic source. `ambiguous` already holds what the workspace and
+    /// the holding file may rebind (conservative: that file's items are not
+    /// in the example's scope, but its exported macros may be). The
+    /// example's own bindings are added on top; no module of it resolves
+    /// and no drop-in crate is verified for it, so each stays broad. A
+    /// `std::`/`core::`-rooted `assert_eq!` needs root proof this path does
+    /// not establish for the example's crate, so it refuses.
+    fn doctest_refusal(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        source: &str,
+        mut ambiguous: BTreeSet<String>,
+        index: &RustIndex,
+    ) -> Option<AssertionRefusal> {
+        let context_macros = assertion_context_macros();
+        ambiguous.extend(
+            trusted_macro_binding_sites(
+                source,
+                index.macro_scope_crates(),
+                &context_macros,
+                &|_, _| false,
+                &|_| false,
+            )
+            .into_iter()
+            .map(|(name, _)| name),
+        );
+        if let Some(path) = std_rooted_macro_path(&assertion.text, "assert_eq")
+            .or_else(|| StdRootedCalls::of(source).calls.into_iter().next())
+        {
+            return Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::OpaqueMacro(path),
+            ));
+        }
+        let guard_key = err_return_guard_twin(&assertion.text)
+            .map(|(condition, _)| err_return_guard_key(condition));
+        self.doctest_pins
+            .borrow_mut()
+            .entry((test.file.clone(), test.start_line))
+            .or_insert_with(|| owner_pin_assertions(source, &context_macros))
+            .refusal(
+                (test.start_line, test.end_line, DOCTEST_FUNCTION_NAME),
+                &test.body,
+                (
+                    assertion.line,
+                    guard_key.as_deref().unwrap_or(&assertion.text),
+                ),
+                &ambiguous,
+            )
+            .map(AssertionRefusal::Syntax)
     }
 }
 
@@ -2656,6 +2735,9 @@ impl OwnerReturnPin {
         if !self.drop_plain {
             return false;
         }
+        // #6648 (RIPR-SPEC-0279): a doc example's scope is its synthetic
+        // source, not the file that holds the comment.
+        let doctest = index.doctest_source(test);
         let condition;
         let matches_operands: [String; 2];
         let expect_operands: [String; 2];
@@ -2869,10 +2951,11 @@ impl OwnerReturnPin {
             let pattern = &matches_operands[1];
             if ["Some", "None", "Ok", "Err"].iter().any(|name| {
                 contains_as_whole_word(pattern, name)
-                    && index
+                    && (index
                         .files()
                         .get(&test.file)
                         .is_none_or(|facts| source_binds_value_name(&facts.source, name))
+                        || doctest.is_some_and(|source| source_binds_value_name(source, name)))
             }) {
                 return false;
             }
@@ -3087,10 +3170,12 @@ impl OwnerReturnPin {
                 // `source_declares_value_name`.
                 if ["Some", "None", "Ok", "Err"].iter().any(|name| {
                     starts_with_word(expected.trim(), name)
-                        && index
+                        && (index
                             .files()
                             .get(&test.file)
                             .is_none_or(|facts| source_declares_value_name(&facts.source, name))
+                            || doctest
+                                .is_some_and(|source| source_declares_value_name(source, name)))
                 }) {
                     return false;
                 }
@@ -3099,9 +3184,10 @@ impl OwnerReturnPin {
         // The expected literal's bare name must reach the workspace type in
         // the test's file too (`use external::Config;` there makes it another).
         if let ReturnPathGate::WholeValueField(gate) = &self.path
-            && index.files().get(&test.file).is_none_or(|facts| {
+            && (index.files().get(&test.file).is_none_or(|facts| {
                 declaring_file_rebinds(&facts.source, &gate.type_name, true, index)
-            })
+            }) || doctest
+                .is_some_and(|source| declaring_file_rebinds(source, &gate.type_name, true, index)))
         {
             return false;
         }
@@ -3114,10 +3200,26 @@ impl OwnerReturnPin {
         {
             return false;
         }
-        let test_source = index
-            .files()
-            .get(&test.file)
-            .map(|facts| facts.data().source.as_ref());
+        // #6648 (RIPR-SPEC-0279): a doc example reaches the owner only by a
+        // free call through the library's import name. A method or
+        // associated call types its receiver from file scopes, and a rival
+        // owner settles in the holding file's scopes; neither is the
+        // example's, so both refuse.
+        if doctest.is_some()
+            && (self.identity.is_some()
+                || !matches!(
+                    (&self.call, &call),
+                    (PinCall::Bare, CallShape::Bare | CallShape::Path(_))
+                ))
+        {
+            return false;
+        }
+        let test_source = doctest.or_else(|| {
+            index
+                .files()
+                .get(&test.file)
+                .map(|facts| facts.data().source.as_ref())
+        });
         // The single-file exemption resolves the owner's enclosing module
         // in the test file's own parse (#6957), while the parent-chain walk
         // resolves it in whichever chain file holds the owner (#6950); a
@@ -3452,6 +3554,11 @@ impl FreeOwnerBinding<'_> {
         let Some((root, rest)) = segments.split_first() else {
             return false;
         };
+        // #6648 (RIPR-SPEC-0279): in a doc example `crate`, `self` and
+        // `super` name the example's own crate, never the library.
+        if index.doctest_source(test).is_some() && matches!(*root, "self" | "super" | "crate") {
+            return false;
+        }
         let roots = syntax.target_roots(index);
         let Some(owner_root) = roots.root(self.owner_file, index) else {
             return false;
@@ -3584,6 +3691,15 @@ impl FreeOwnerBinding<'_> {
         else {
             return false;
         };
+        if let Some(source) = index.doctest_source(test) {
+            return self.doctest_bare_call_reaches_owner(
+                test,
+                source,
+                &owner_inline,
+                index,
+                syntax,
+            );
+        }
         let Some(scopes) = syntax.file_scopes(index, &test.file) else {
             return false;
         };
@@ -3648,6 +3764,52 @@ impl FreeOwnerBinding<'_> {
         // Anywhere else the bare name is unresolved, the prelude, or a
         // macro-emitted import ripr cannot see — never the owner.
         test.file == *self.owner_file && scope.stack == owner_inline
+    }
+
+    /// #6648 (RIPR-SPEC-0279): whether a doc example's bare `name(..)`
+    /// can only reach the owner. The example is its own crate, so the name
+    /// resolves only through the example's own `use`: exactly one binding
+    /// `use <krate>::..::name;`, or globs `use <krate>::..::*;` that each
+    /// deliver the owner, where `<krate>` is an import name of the owner's
+    /// library (a local `mod` or rename of that name in the example is
+    /// refused by the twin, rename and single-binding checks). A `crate`,
+    /// `self` or `super` root names the example's crate, a twin item in the
+    /// example takes the call, and with no `use` the name is not the
+    /// owner's.
+    fn doctest_bare_call_reaches_owner(
+        &self,
+        test: &TestSummary,
+        source: &str,
+        owner_inline: &[String],
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        if body_defines_value_twin(&test.body, self.name) {
+            return false;
+        }
+        let uses = flattened_use_paths(&test.body);
+        let (bindings, globs) = partition_name_uses(&uses, self.name);
+        let library_rooted = |path: &str| {
+            let stripped = path.strip_prefix("::").unwrap_or(path);
+            let first = stripped.split("::").next().map_or("", strip_raw);
+            !matches!(first, "" | "crate" | "self" | "super")
+        };
+        let context = ScopeContext {
+            file: &test.file,
+            source,
+            stack: &[],
+        };
+        if let [binding] = bindings.as_slice() {
+            return globs.is_empty()
+                && library_rooted(&binding.path)
+                && self.use_names_owner(binding, context, owner_inline, index, syntax);
+        }
+        bindings.is_empty()
+            && !globs.is_empty()
+            && globs.iter().all(|glob| {
+                library_rooted(&glob.path)
+                    && self.glob_delivers_owner(glob, context, owner_inline, index, syntax)
+            })
     }
 
     /// #7097: whether the binding `use_path` delivers the owner to
@@ -4215,6 +4377,13 @@ fn test_crate_binds_root(
     index: &RustIndex,
     syntax: &OwnerPinSyntax,
 ) -> bool {
+    // #6648 (RIPR-SPEC-0279): a doc example is its own crate; only its
+    // own source binds there.
+    if let Some(source) = index.doctest_source(test) {
+        return workspace_renames_to(index, root)
+            || workspace_mentions_raw(index, root)
+            || source_may_bind_root(source, root);
+    }
     let roots = syntax.target_roots(index);
     let Some(test_root) = roots.root(&test.file, index) else {
         return true;
@@ -4250,23 +4419,29 @@ fn test_crate_may_bind(
     roots: &TargetRoots,
 ) -> bool {
     index.files().iter().any(|(path, facts)| {
-        roots.root(path, index).as_deref() == Some(test_root) && {
-            let masked = mask_comments_and_strings(&facts.source);
-            declared_module_names(&masked).contains(&root)
-                // A type, trait or alias of the root's name shadows the
-                // extern prelude too, turning `root::name` into an
-                // associated item (#6974 rev-4 review).
-                || declares_type(&masked, root)
-                || ["trait", "type"].iter().any(|keyword| {
-                    whole_word_offsets(&masked, keyword).into_iter().any(|offset| {
-                        starts_with_word(masked[offset + keyword.len()..].trim_start(), root)
-                    })
-                })
-                || file_use_statements(&facts.source).iter().any(|statement| {
-                    use_statement_binds_name(statement, root) || statement.contains('*')
-                })
-        }
+        roots.root(path, index).as_deref() == Some(test_root)
+            && source_may_bind_root(&facts.source, root)
     })
+}
+
+/// Whether `source` may bind `root` before the extern prelude does: a
+/// `mod root`, a type, trait or alias of the name, a `use` binding it, or
+/// a glob.
+fn source_may_bind_root(source: &str, root: &str) -> bool {
+    let masked = mask_comments_and_strings(source);
+    declared_module_names(&masked).contains(&root)
+        // A type, trait or alias of the root's name shadows the
+        // extern prelude too, turning `root::name` into an
+        // associated item (#6974 rev-4 review).
+        || declares_type(&masked, root)
+        || ["trait", "type"].iter().any(|keyword| {
+            whole_word_offsets(&masked, keyword).into_iter().any(|offset| {
+                starts_with_word(masked[offset + keyword.len()..].trim_start(), root)
+            })
+        })
+        || file_use_statements(source).iter().any(|statement| {
+            use_statement_binds_name(statement, root) || statement.contains('*')
+        })
 }
 
 /// #6974: the inline modules enclosing the one `fn name` item that starts
@@ -7482,6 +7657,8 @@ fn rename_statement_spans(masked: &str) -> Vec<std::ops::Range<usize>> {
     let mut spans: Vec<std::ops::Range<usize>> = whole_word_offsets(masked, "use")
         .into_iter()
         .filter(|offset| !masked[offset + "use".len()..].trim_start().starts_with('<'))
+        // A raw identifier `r#use` is not the keyword (#7936).
+        .filter(|offset| !masked[..*offset].ends_with("r#"))
         .map(|offset| offset..item_end(offset))
         .collect();
     spans.extend(

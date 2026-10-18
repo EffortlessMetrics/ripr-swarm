@@ -4497,6 +4497,54 @@ fn bounded_failure_message(message: &str) -> String {
     super::component_outcome::bounded_message(message)
 }
 
+#[cfg(test)]
+mod bounded_failure_message_tests {
+    use super::bounded_failure_message;
+
+    /// #8584: `ripr/analysisStatus` copies `AnalysisFailure.message`, which
+    /// is bounded here. The wrapper must keep the truncation marker inside
+    /// the 240-character summary bound and still redact path tokens.
+    #[test]
+    fn analysis_status_failure_message_marks_truncation_inside_the_bound() {
+        let message = format!("cargo config error: {}", "x".repeat(400));
+        let bounded = bounded_failure_message(&message);
+        assert!(
+            bounded.ends_with('…'),
+            "truncated analysisStatus text must carry a marker: {bounded}"
+        );
+        assert_eq!(
+            bounded.chars().count(),
+            super::super::component_outcome::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND,
+            "the marker must stay inside the published bound: {bounded}"
+        );
+        assert_eq!(
+            bounded,
+            super::super::component_outcome::bounded_message(&message)
+        );
+    }
+
+    #[test]
+    fn analysis_status_failure_message_redacts_paths_before_the_cut() {
+        let message = format!(
+            "failed reading {} {}",
+            "/tmp/ripr-secret-config.toml",
+            "x".repeat(400)
+        );
+        let bounded = bounded_failure_message(&message);
+        assert!(bounded.contains("<path>"), "{bounded}");
+        assert!(
+            !bounded.contains("/tmp/ripr-secret-config.toml"),
+            "redaction must cover the remaining summary: {bounded}"
+        );
+        assert!(bounded.ends_with('…'), "{bounded}");
+        assert_eq!(
+            bounded.chars().count(),
+            super::super::component_outcome::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND,
+            "{bounded}"
+        );
+    }
+}
+
 /// #4860: whether a refresh analysis error is the attempt's cancellation.
 /// The attempt's token, not the error text, says whether the work stopped
 /// because a checkpoint handed it an abort. A wrapped cancellation is still a
@@ -7187,8 +7235,17 @@ fn analysis_pending_workspace_report(
 /// Disclosure emitted once per quarantine episode when a dirty document's
 /// line-local diagnostics are withdrawn (#1970).
 fn quarantine_withdrawal_log_message(path: &Path, reason: DocumentStalenessReason) -> String {
+    let recovery = match reason {
+        DocumentStalenessReason::InvalidIncrementalChange => {
+            "revert the file or close and reopen it so ripr receives the full document again"
+        }
+        DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent
+        | DocumentStalenessReason::NoAnalyzedSavedContent => {
+            "save the file to analyze the new saved state"
+        }
+    };
     format!(
-        "ripr: line-local diagnostics withdrawn for {}: {} ({}); save the file to analyze the new saved state",
+        "ripr: line-local diagnostics withdrawn for {}: {} ({}); {recovery}",
         path.display(),
         reason.description(),
         reason.as_str(),
@@ -11828,6 +11885,22 @@ mod quarantine_message_tests {
         assert!(message.contains("/workspace/src/lib.rs"));
         assert!(message.contains("buffer_diverges_from_analyzed_saved_content"));
         assert!(message.contains("save the file"));
+    }
+
+    #[test]
+    fn quarantine_withdrawal_log_message_route_follows_reason() {
+        let path = Path::new("/workspace/src/lib.rs");
+        let unanalyzed = quarantine_withdrawal_log_message(
+            path,
+            DocumentStalenessReason::NoAnalyzedSavedContent,
+        );
+        assert!(unanalyzed.contains("save the file"));
+        let invalid = quarantine_withdrawal_log_message(
+            path,
+            DocumentStalenessReason::InvalidIncrementalChange,
+        );
+        assert!(invalid.contains("close and reopen"));
+        assert!(!invalid.contains("save the file"));
     }
 
     #[test]

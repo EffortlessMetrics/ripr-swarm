@@ -149,6 +149,11 @@ pub struct RustIndex {
     /// facts), so the memos can never answer for sources other than the
     /// ones they were computed from; a cloned index starts empty.
     pub(crate) call_identity_memos: crate::analysis::classify::CallIdentityMemos,
+    /// The display name and synthetic source of each registered doc
+    /// example test, keyed by (file, start line) (#6648). A doctest is its
+    /// own crate: its scopes come from this text, not from the file that
+    /// holds the comment.
+    pub(super) doctest_sources: BTreeMap<(PathBuf, usize), (String, std::sync::Arc<str>)>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -463,6 +468,21 @@ impl RustIndex {
             order: Some(&self.function_order),
         }
     }
+    /// The synthetic source of `test` when it is a registered doc example
+    /// (`facts::doctests`), else `None`. The source declares one `#[test]`
+    /// function named [`super::DOCTEST_FUNCTION_NAME`] spanning the test's
+    /// lines; the name check keeps an ordinary test that happens to share
+    /// the key from borrowing it.
+    pub(crate) fn doctest_source(&self, test: &TestFact) -> Option<&str> {
+        if self.doctest_sources.is_empty() {
+            return None;
+        }
+        self.doctest_sources
+            .get(&(test.file.clone(), test.start_line))
+            .filter(|(name, _)| *name == test.name)
+            .map(|(_, source)| &**source)
+    }
+
     pub fn tests(&self) -> FactSlice<'_, TestFact> {
         FactSlice {
             arena: &self.test_facts,
