@@ -90,6 +90,7 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "pr-comments existing",
     "pr-comments plan",
     "pr-comments requests",
+    "pr-comments summary",
     "pr-evidence",
     "pr-ledger record",
     "pr-review front-panel",
@@ -165,7 +166,10 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         | "policy readiness"
         | "policy suppression-health"
         | "policy waiver-aging" => POLICY_HELP,
-        "pr-comments plan" | "pr-comments existing" | "pr-comments requests" => PR_COMMENTS_HELP,
+        "pr-comments plan"
+        | "pr-comments existing"
+        | "pr-comments requests"
+        | "pr-comments summary" => PR_COMMENTS_HELP,
         "pr-evidence" => PR_EVIDENCE_HELP,
         "pr-ledger record" => PR_LEDGER_HELP,
         "pr-review front-panel" => PR_REVIEW_HELP,
@@ -1390,6 +1394,11 @@ mod tests {
             "pr-comments requests",
             PR_COMMENTS_GITHUB_PARSER_RS,
             &["parse_pr_comments_requests_options"],
+        ),
+        (
+            "pr-comments summary",
+            PR_COMMENTS_GITHUB_PARSER_RS,
+            &["parse_pr_comments_summary_options"],
         ),
         (
             "pr-evidence",
