@@ -5,7 +5,8 @@ use super::arguments::{
     assertion_oracle_text, complete_block_body, delimited_contents_at, discarded_matcher_scrutinee,
     parenthesized_contents, starts_discarded_matcher_computation,
 };
-use super::classify::{classify_assertion, classify_assertion_in};
+use super::classify::{classify_assertion, classify_assertion_with};
+use super::pattern_admission::LocalDecls;
 use super::patterns::{
     ExpectErrForm, contains_macro_invocation, contains_named_enum_variant, has_argument_tokens,
     is_custom_assertion_helper, is_mock_expectation_line, is_side_effect_observer_assertion,
@@ -26,6 +27,9 @@ pub(crate) fn extract_assertions_in(
     decl_source: &str,
 ) -> Vec<OracleFact> {
     let bound_error_vars = unwrap_err_bound_variables(body);
+    // Reading the declarations scans `decl_source`, so read them once for
+    // every assertion in this body.
+    let decls = LocalDecls::from_source(decl_source);
     // #3709: the dedicated guarded-Result-match scanner owns every recognized
     // `match <direct-call> { Ok.. Err.. }` statement. Skipping its start lines
     // keeps the generic statement joiner from swallowing the whole match block
@@ -104,7 +108,7 @@ pub(crate) fn extract_assertions_in(
             }
             let preceding_lines = leading_blank_lines(&trimmed);
             trimmed = trimmed.trim().to_string();
-            let mut classification = classify_assertion_in(&trimmed, decl_source);
+            let mut classification = classify_assertion_with(&trimmed, &decls);
             // RIPR-SPEC-0106: upgrade exact assertions on unwrap_err-bound
             // variables to ExactErrorVariant so the ErrorVariant seam can credit
             // them as a kind-matching discriminator. Constructor-payload

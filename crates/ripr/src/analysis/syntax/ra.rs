@@ -34,11 +34,11 @@ use super::{
     rust_nesting_refusal,
 };
 use crate::analysis::rust_index::{
-    FunctionFact, OracleFact, ProbeShapeFact, ProbeShapeKind, SourceText, TestFact,
-    classify_assertion_in, err_return_guard_oracles, extract_call_facts, extract_identifier_tokens,
-    extract_line_scanned_oracles, extract_literal_facts, extract_return_facts,
-    guarded_result_match_scan_with_shadow_authority, is_unwrap_err_bound_error_assertion,
-    unwrap_err_bound_variables,
+    FunctionFact, LocalDecls, OracleFact, ProbeShapeFact, ProbeShapeKind, SourceText, TestFact,
+    classify_assertion_with, err_return_guard_oracles, extract_call_facts,
+    extract_identifier_tokens, extract_line_scanned_oracles, extract_literal_facts,
+    extract_return_facts, guarded_result_match_scan_with_shadow_authority,
+    is_unwrap_err_bound_error_assertion, unwrap_err_bound_variables,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -147,8 +147,14 @@ fn parser_oracles_for_function_uncached(
         .find_map(ast::Fn::cast)?;
     let line_index = LineIndex::new(function_text);
     // The re-parse holds only this function, so no file scope is visible.
-    let mut oracles =
-        extract_parser_oracles(&function, function_text, &line_index, DropInScope::Unknown);
+    let decls = LocalDecls::from_source(function_text);
+    let mut oracles = extract_parser_oracles(
+        &function,
+        function_text,
+        &decls,
+        &line_index,
+        DropInScope::Unknown,
+    );
     let line_offset = function_start_line.saturating_sub(1);
     for oracle in &mut oracles {
         oracle.line += line_offset;
@@ -537,6 +543,9 @@ fn summarize_file_with_collectors(
 
     let source = parse.tree();
     let line_index = LineIndex::new(text);
+    // Declarations are read from the whole file, so read them once here
+    // rather than once per assertion.
+    let file_decls = LocalDecls::from_source(text);
     // #5415 step 2: one allocation for the file; bodies and shape snippets
     // below share spans of it instead of copying substrings.
     let shared_source: Arc<str> = Arc::from(text);
@@ -645,6 +654,7 @@ fn summarize_file_with_collectors(
                 assertions: extract_parser_oracles(
                     &function,
                     text,
+                    &file_decls,
                     &line_index,
                     DropInScope::WholeFile,
                 ),
@@ -2189,6 +2199,7 @@ fn is_effect_call_name(name: &str) -> bool {
 fn extract_parser_oracles(
     function: &ast::Fn,
     text: &str,
+    decls: &LocalDecls,
     line_index: &LineIndex,
     drop_in_scope: DropInScope,
 ) -> Vec<OracleFact> {
@@ -2218,7 +2229,7 @@ fn extract_parser_oracles(
         }
         let range = macro_call.syntax().text_range();
         let assertion_text = slice_macro_call_text(text, range.start(), range.end());
-        let mut classification = classify_assertion_in(&assertion_text, text);
+        let mut classification = classify_assertion_with(&assertion_text, decls);
         // Upgrade exact assertions on unwrap_err-bound variables to
         // ExactErrorVariant when the assertion pins a specific error result
         // (RIPR-SPEC-0106, Part A). Constructor-payload equality reaches this
@@ -2349,7 +2360,7 @@ fn extract_parser_oracles(
         // call split across lines). That grade is a ceiling: a weaker
         // reading of the compared value (a tautology, a broad `is_err()`)
         // is kept, as the line scan keeps it.
-        let classification = classify_assertion_in(&assertion_text, text);
+        let classification = classify_assertion_with(&assertion_text, decls);
         let (kind, strength) = if matches!(
             classification.strength,
             OracleStrength::Weak | OracleStrength::Smoke | OracleStrength::None
@@ -4476,6 +4487,41 @@ mod shadow_fact_equivalence_tests {
     /// line — the same base `test.body` gives the lexical scanners — so a
     /// parser-backed summary and a lexical scan of the same body agree
     /// through the real summarizer, not just the descent helper.
+    fn declaration_reads_for_assertions_per_test(
+        assertions: usize,
+    ) -> Result<(usize, usize), String> {
+        let mut source = String::new();
+        for test in 0..3 {
+            source.push_str(&format!("#[test]\nfn t{test}() {{\n"));
+            for index in 0..assertions {
+                source.push_str(&format!("    assert_eq!(f({index}), {index});\n"));
+            }
+            source.push_str("    assert!(matches!(f(0), Some(_)));\n}\n");
+        }
+        crate::analysis::extract::DECLARATION_READS.with(|reads| reads.set(0));
+        let facts = summarize_file_with_parser(std::path::Path::new("tests/fixture.rs"), &source)
+            .map_err(|error| error.to_string())?;
+        let reads = crate::analysis::extract::DECLARATION_READS.with(|reads| reads.get());
+        let parsed: usize = facts.tests.iter().map(|test| test.assertions.len()).sum();
+        Ok((reads, parsed))
+    }
+
+    /// Reading the file's type declarations scans the whole file. Doing that
+    /// once per assertion made a file with many assertions quadratic (a
+    /// single line of 20k `assert!` calls ran for over 30 seconds).
+    #[test]
+    fn declarations_are_read_per_file_not_per_assertion() -> Result<(), String> {
+        let (few_reads, few_parsed) = declaration_reads_for_assertions_per_test(10)?;
+        let (many_reads, many_parsed) = declaration_reads_for_assertions_per_test(40)?;
+        assert_eq!(few_parsed, 3 * 11, "fixture must parse every assertion");
+        assert_eq!(many_parsed, 3 * 41, "fixture must parse every assertion");
+        assert_eq!(
+            few_reads, many_reads,
+            "declaration reads must not grow with the assertion count"
+        );
+        Ok(())
+    }
+
     #[test]
     fn summarizer_facts_decide_like_the_lexical_scanners_on_test_body() -> Result<(), String> {
         let source = concat!(

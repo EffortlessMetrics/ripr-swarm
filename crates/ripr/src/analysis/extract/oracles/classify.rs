@@ -50,8 +50,16 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
 /// declarations from the same source. A unique local `struct Cfg` or
 /// single-variant `enum Only { Value }` shows `Cfg { .. }` and `Only::Value`
 /// as `relational_check` / weak; unresolved paths keep today's exact reading.
+#[cfg(test)]
 pub(crate) fn classify_assertion_in(line: &str, decl_source: &str) -> OracleClassification {
     classify_assertion_against(line, &LocalDecls::from_source(decl_source))
+}
+
+/// [`classify_assertion_in`] with the declarations already read. Reading them
+/// scans the whole source, so a caller classifying many assertions from one
+/// source reads them once instead of once per assertion.
+pub(crate) fn classify_assertion_with(line: &str, decls: &LocalDecls) -> OracleClassification {
+    classify_assertion_against(line, decls)
 }
 
 fn classify_assertion_against(line: &str, decls: &LocalDecls) -> OracleClassification {

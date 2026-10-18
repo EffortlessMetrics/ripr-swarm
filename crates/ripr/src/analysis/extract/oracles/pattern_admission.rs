@@ -55,8 +55,17 @@ pub(crate) struct LocalDecls {
     single_variant_enums: BTreeMap<String, String>,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Whole-source declaration reads on this thread, so a test can pin that
+    /// they do not grow with the number of assertions.
+    pub(crate) static DECLARATION_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl LocalDecls {
     pub(crate) fn from_source(source: &str) -> Self {
+        #[cfg(test)]
+        DECLARATION_READS.with(|reads| reads.set(reads.get() + 1));
         if source.is_empty() {
             return Self::default();
         }
