@@ -70,6 +70,3 @@ Costs and limits:
 - **A signature system.** Not chosen here: the commitment is an
   integrity/currentness boundary, and signing is left to the follow-up
   contracts under #1941 (see Decision).
-- **Compute the commitment in memory.** Not chosen: the bounded-memory
-  two-pass writer keeps large repo-exposure artifacts streaming
-  (see Consequences).

@@ -59,9 +59,10 @@ authority for #1999 (implementation) and for any future partition continuation.
 - **Select the first N entries the filesystem or diff yields.** Rejected:
   results would depend on enumeration order, so repeated runs could differ
   (decision 2).
-- **Named partition continuation (partition N+1).** Deferred, not rejected on
-  merit: the only continuation in this revision is the explicit budget
-  override (decision 6). No retained source records a deliberation beyond this.
+- **Named partition continuation (partition N+1).** A non-goal of this
+  contract's first revision (decision 6; listed under non-goals): the only
+  continuation in this revision is the explicit budget override. No retained
+  source records a deliberation beyond this.
 
 ## Risks
 
