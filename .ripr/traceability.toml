@@ -15668,6 +15668,54 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0279"
+name = "Rust doc examples as tests"
+spec = "docs/specs/RIPR-SPEC-0279-rust-doc-examples-as-tests.md"
+tests = [
+  "crates/ripr/src/analysis/facts/doctests/tests.rs::a_plain_fence_on_a_function_is_one_example_at_its_lines",
+  "crates/ripr/src/analysis/facts/doctests/tests.rs::only_plain_rust_and_edition_fences_run",
+  "crates/ripr/src/analysis/facts/doctests/tests.rs::hidden_lines_are_restored_and_a_main_refuses",
+  "crates/ripr/src/analysis/facts/doctests/tests.rs::an_unclosed_fence_inner_docs_and_plain_comments_yield_nothing",
+  "crates/ripr/src/analysis/facts/doctests/tests.rs::the_synthetic_source_keeps_the_comment_lines",
+  "crates/ripr/src/analysis/facts/doctests/tests.rs::a_library_doc_example_is_indexed_as_a_test",
+  "crates/ripr/src/analysis/facts/doctests/tests.rs::a_module_of_the_library_runs_its_doc_examples",
+  "crates/ripr/src/analysis/facts/doctests/tests.rs::targets_rustdoc_does_not_test_register_nothing",
+  "crates/ripr/src/analysis/facts/doctests/tests.rs::doc_examples_in_test_code_or_on_non_functions_register_nothing",
+  "crates/ripr/src/analysis/facts/doctests/tests.rs::a_doctest_source_answers_only_for_the_registered_test",
+  "crates/ripr/src/analysis/facts/doctests/tests.rs::backticks_markdown_may_not_read_as_a_code_block_yield_nothing",
+  "crates/ripr/src/analysis/facts/doctests/tests.rs::html_blocks_and_split_doc_fragments_yield_nothing",
+  "crates/ripr/src/analysis/facts/doctests/tests.rs::a_one_line_attributed_item_keeps_its_own_comment",
+  "crates/ripr/src/analysis/facts/doctests/tests.rs::fences_need_matching_ticks_and_items_need_fn_qualifiers_only",
+  "crates/ripr/src/analysis/facts/doctests/tests.rs::a_file_reached_other_than_by_a_plain_mod_registers_nothing",
+  "crates/ripr/tests/doctest_owner_pins.rs::a_doc_example_exact_pin_through_the_crate_name_exposes_the_return",
+  "crates/ripr/tests/doctest_owner_pins.rs::a_doc_example_bare_call_imported_from_the_crate_exposes_the_return",
+  "crates/ripr/tests/doctest_owner_pins.rs::a_doc_example_rustdoc_does_not_run_pins_nothing",
+  "crates/ripr/tests/doctest_owner_pins.rs::crate_self_and_super_in_a_doc_example_name_the_example_not_the_library",
+  "crates/ripr/tests/doctest_owner_pins.rs::a_bare_call_the_example_does_not_import_pins_nothing",
+  "crates/ripr/tests/doctest_owner_pins.rs::an_example_that_binds_the_crate_name_or_the_owner_pins_nothing",
+  "crates/ripr/tests/doctest_owner_pins.rs::an_example_that_may_rebind_assert_eq_pins_nothing",
+  "crates/ripr/tests/doctest_owner_pins.rs::a_rival_owner_of_the_same_name_leaves_a_doc_example_unpinned",
+  "crates/ripr/tests/doctest_owner_pins.rs::a_method_call_in_a_doc_example_pins_nothing",
+  "crates/ripr/tests/unindexed_guidance.rs::a_runnable_doc_example_is_indexed_and_pins_the_owner",
+]
+fixtures = [
+  "fixtures/rust-verdict-corpus",
+]
+code = [
+  "crates/ripr/src/analysis/facts/doctests.rs",
+  "crates/ripr/src/analysis/facts/member_crates.rs",
+  "crates/ripr/src/analysis/facts/index.rs",
+  "crates/ripr/src/analysis/facts/mod.rs",
+  "crates/ripr/src/analysis/classify/owner_pin.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0279-rust-doc-examples-as-tests.md",
+]
+metrics = [
+  "rust_doc_example_mismatch",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0265"
 name = "Rust closures in iterator adaptors"
 spec = "docs/specs/RIPR-SPEC-0265-rust-closures-in-iterator-adaptors.md"

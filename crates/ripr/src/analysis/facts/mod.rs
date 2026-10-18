@@ -1,9 +1,11 @@
 mod build;
+mod doctests;
 pub(crate) use build::CachedRustIndex;
 use build::MissAttribution;
 #[cfg(test)]
 pub(crate) use build::streamed_source_bytes;
 pub(crate) use build::{RUST_SOURCE_NOT_UTF8_REASON, rust_source_text};
+pub(crate) use doctests::SYNTHETIC_NAME as DOCTEST_FUNCTION_NAME;
 pub(crate) mod cfg_predicates;
 pub(crate) mod drop_in;
 mod harness_registry;
@@ -90,6 +92,12 @@ pub fn build_index_with_test_harnesses(
     index_phase("index_harness_registry", || {
         harness_registry::apply_registrations(&mut index, root, registrations);
         Ok(())
+    })?;
+    // #6648: doc examples rustdoc runs. After composition, whose module
+    // edges decide which files belong to the library.
+    index_phase("index_doctests", || {
+        doctests::register_doctests(&mut index);
+        index.refresh_memberships()
     })?;
     // Helper crediting reads final roles, so it runs after every role
     // authority.
@@ -185,6 +193,12 @@ fn post_process_cached_index(
     index_phase("index_harness_registry", || {
         harness_registry::apply_registrations(&mut cached.index, root, registrations);
         Ok(())
+    })?;
+    // #6648: doc examples rustdoc runs. After composition, whose module
+    // edges decide which files belong to the library.
+    index_phase("index_doctests", || {
+        doctests::register_doctests(&mut cached.index);
+        cached.index.refresh_memberships()
     })?;
     // Helper crediting reads final roles, so it runs after every role
     // authority.
