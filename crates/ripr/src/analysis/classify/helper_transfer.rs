@@ -603,7 +603,7 @@ pub(crate) fn call_sites(
             continue;
         }
         let arguments = split_call_arguments_text(&call.text, callee_name)?;
-        sites.push((call.text.clone(), arguments));
+        sites.push((call.text.to_string(), arguments));
     }
     (!sites.is_empty()).then_some(sites)
 }
@@ -1928,7 +1928,7 @@ mod tests {
             calls: vec![CallFact {
                 name: name.to_string(),
                 line: 2,
-                text: text.to_string(),
+                text: text.to_string().into(),
             }],
             assertions: Vec::new(),
             literals: Vec::new(),
@@ -1951,7 +1951,7 @@ mod tests {
                 .map(|(callee, text)| CallFact {
                     line: 2,
                     name: callee.to_string(),
-                    text: text.to_string(),
+                    text: text.to_string().into(),
                 })
                 .collect(),
             returns: Vec::new(),
@@ -2971,13 +2971,13 @@ mod tests {
         let test_calls = vec![CallFact {
             line: 1,
             name: "classify".to_string(),
-            text: "classify(\" x\")".to_string(),
+            text: "classify(\" x\")".to_string().into(),
         }];
         assert!(test_reaches_through_chain(&test_calls, "is_word_start", &idx, true).is_some());
         let unrelated = vec![CallFact {
             line: 1,
             name: "other".to_string(),
-            text: "other()".to_string(),
+            text: "other()".to_string().into(),
         }];
         assert!(test_reaches_through_chain(&unrelated, "is_word_start", &idx, true).is_none());
         Ok(())

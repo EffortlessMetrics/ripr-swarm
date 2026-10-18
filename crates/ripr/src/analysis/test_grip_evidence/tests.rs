@@ -14649,7 +14649,7 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                 calls: vec![CallFact {
                     line: 11,
                     name: "discounted_total".to_string(),
-                    text: "discounted_total(100, 100)".to_string(),
+                    text: "discounted_total(100, 100)".to_string().into(),
                 }],
                 returns: Vec::new(),
                 literals: Vec::new(),
@@ -14670,7 +14670,7 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                 calls: vec![CallFact {
                     line: 21,
                     name: "case_at_threshold".to_string(),
-                    text: "case_at_threshold()".to_string(),
+                    text: "case_at_threshold()".to_string().into(),
                 }],
                 assertions: vec![OracleFact {
                     line: 21,

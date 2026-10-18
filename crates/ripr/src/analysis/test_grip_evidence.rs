@@ -890,7 +890,7 @@ fn observed_value_facts_for_test(
             for value in scalar_values(&arg) {
                 observed.push(ValueFact {
                     line: call.line,
-                    text: call.text.clone(),
+                    text: call.text.to_string(),
                     value,
                     context: ValueContext::FunctionArgument,
                 });
@@ -905,7 +905,7 @@ fn observed_value_facts_for_test(
             for (value, context) in env.resolve_at_call(&arg, call.line, &call.name, &call.text) {
                 observed.push(ValueFact {
                     line: call.line,
-                    text: call.text.clone(),
+                    text: call.text.to_string(),
                     value,
                     context,
                 });
