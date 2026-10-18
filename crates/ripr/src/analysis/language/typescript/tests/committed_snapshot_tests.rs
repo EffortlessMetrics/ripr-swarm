@@ -578,7 +578,7 @@ fn config_passed_by_path_or_custom_named_stays_medium() -> Result<(), String> {
         );
     }
     // A Vitest custom-named config that overrides nothing keeps the credit.
-    let vitest_snap = format!("{VITEST_HEADER}{}", entry("price > price 1", "140"));
+    let vitest_snap = format!("{VITEST_HEADER}{}", entry("price 1", "140"));
     assert_eq!(
         strengths(
             "snap-vitest-custom",
@@ -780,5 +780,34 @@ fn symlinked_snapshots_directory_stays_medium() -> Result<(), String> {
     swapped?;
     assert_eq!(plain, vec![OracleStrength::Strong]);
     assert_eq!(through_link, vec![OracleStrength::Medium]);
+    Ok(())
+}
+
+/// RIPR-SPEC-0258 example 7: with no repository marker and no filesystem root
+/// within the 16-level reach, the boundary is unknown and the credit is
+/// medium, end to end through `promote_committed_snapshots`.
+#[test]
+fn config_above_the_root_without_a_repository_boundary_is_not_read() -> Result<(), String> {
+    let outer = ts_unique_tempdir("snap-deep-no-marker")?;
+    let mut package_root = outer.clone();
+    for level in 0..18 {
+        package_root = package_root.join(format!("d{level}"));
+    }
+    let snap = jest_snap(&[("price 1", "140")]);
+    let written = ts_write_file(&package_root.join(SNAP_PATH), &snap)
+        .and_then(|()| ts_write_file(&package_root.join("test/price.test.ts"), PRICE_TEST));
+    let deep = strengths_at(&package_root);
+    // Positive control: the same package with a marker at its top is strong.
+    let marked = ts_write_file(&package_root.join(".git/HEAD"), "x\n");
+    let with_marker = strengths_at(&package_root);
+    let _ = std::fs::remove_dir_all(&outer);
+    written?;
+    marked?;
+    assert_eq!(
+        deep,
+        vec![OracleStrength::Medium],
+        "boundary unknown: medium"
+    );
+    assert_eq!(with_marker, vec![OracleStrength::Strong]);
     Ok(())
 }

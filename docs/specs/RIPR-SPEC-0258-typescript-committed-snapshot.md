@@ -177,6 +177,9 @@ RIPR-SPEC-0243 ladder, including the observation guard.
 - A runner config passed by path is not read; a `package.json` script that
   passes one refuses instead. A config above the repository boundary is not
   read.
+- The analysis root itself may be a symlink (it is the user's own checkout
+  path and is canonicalized), but every directory below it, and the
+  `__snapshots__` directory, must not be; the asymmetry is deliberate.
 - Only a `.git` entry is a recognized repository boundary. A Mercurial,
   Subversion, Jujutsu or pnpm-workspace root without `.git` is not one: the
   walk continues past it and reads ancestor configs, and refuses (medium) if
@@ -279,6 +282,7 @@ RIPR-SPEC-0243 ladder, including the observation guard.
   `symlinked_analysis_root_reads_the_real_parents`,
   `flags_and_keys_that_move_the_runner_config_stay_medium` and
   `walk_without_a_marker_ends_at_the_filesystem_root_or_is_unknown`,
+  `config_above_the_root_without_a_repository_boundary_is_not_read`,
   `directories_above_the_root_stop_at_the_repository_boundary`,
   `symlinked_snapshots_directory_stays_medium` and
   `symlinked_test_directory_stays_medium` pin example 7.
