@@ -883,6 +883,75 @@ mod tests {
         Ok(())
     }
 
+    /// The no-eligible message separates the zero-seam setup outcome from
+    /// the limitation outcome, pluralizes the noun, and carries the named
+    /// reasons only when there are some.
+    #[test]
+    fn no_eligible_seam_message_separates_setup_from_limitation() -> Result<(), String> {
+        let root = Path::new("/ripr-task-first-root");
+        let setup = no_eligible_seam_message(root, 0, &["ignored reason".to_string()]);
+        if !setup.starts_with("no seams visible under ")
+            || setup.contains("none repair-eligible")
+            || setup.contains("ignored reason")
+            || !setup.contains("`ripr pilot --root ")
+        {
+            return Err(format!("zero seams must be the setup outcome:\n{setup}"));
+        }
+        let one = no_eligible_seam_message(root, 1, &[]);
+        if !one.starts_with("1 visible seam under ") || one.contains("seams under") {
+            return Err(format!("one seam must be singular:\n{one}"));
+        }
+        if one.contains("none repair-eligible (") {
+            return Err(format!("no reasons must print no reason list:\n{one}"));
+        }
+        let several = no_eligible_seam_message(
+            root,
+            3,
+            &[
+                "repair route not ready".to_string(),
+                "configured off".to_string(),
+            ],
+        );
+        for expected in [
+            "3 visible seams under ",
+            "none repair-eligible (repair route not ready; configured off). Next:",
+            "`ripr check --root ",
+        ] {
+            if !several.contains(expected) {
+                return Err(format!("limitation must carry {expected:?}:\n{several}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// The count-only branches of the none-available detail, plus the
+    /// `; ` join when a trust-bound row accompanies the counts.
+    #[test]
+    fn none_available_detail_counts_unbound_attempts() -> Result<(), String> {
+        for (prepared, terminal, expected) in [
+            (2, 0, "2 prepared, none awaiting"),
+            (0, 3, "3 terminal, none awaiting"),
+        ] {
+            let detail = none_available_detail(prepared, terminal, 0, "ROOT");
+            if detail != expected {
+                return Err(format!("expected {expected:?}, got {detail:?}"));
+            }
+        }
+        let with_bound = none_available_detail(2, 0, 1, "ROOT");
+        if !with_bound.starts_with("2 prepared; 1 awaiting attempt requires") {
+            return Err(format!(
+                "prepared + bound must join with `; `:\n{with_bound}"
+            ));
+        }
+        let terminal_bound = none_available_detail(0, 3, 1, "ROOT");
+        if !terminal_bound.starts_with("3 terminal; 1 awaiting attempt requires") {
+            return Err(format!(
+                "terminal + bound must join with `; `:\n{terminal_bound}"
+            ));
+        }
+        Ok(())
+    }
+
     /// Owns a temp test root so a mid-test failure cleans up instead of
     /// leaking the directory; mirrors the app-level facade guard.
     struct TempRootGuard {

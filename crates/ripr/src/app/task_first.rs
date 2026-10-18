@@ -738,6 +738,170 @@ mod tests {
         }
     }
 
+    /// Several eligible seams never start: the shared selector binds a
+    /// bounded choice, and the offered command is ignored for a list.
+    #[test]
+    fn decide_several_candidates_select_instead_of_starting() -> Result<(), String> {
+        let eligible = vec!["seam:a".to_string(), "seam:b".to_string()];
+        let spec = repair_start_command_spec(".", "seam:a");
+        match decide_repair_start(&facts(&eligible, 2, &[], Some(&spec)))? {
+            RepairStartDecision::Action(action) => {
+                if action.action_class() != NextActionClass::ChooseItem {
+                    return Err("several candidates must choose, not run".to_string());
+                }
+                if action.is_executable() {
+                    return Err("a candidate list must not be executable".to_string());
+                }
+                Ok(())
+            }
+            RepairStartDecision::Start { .. } => {
+                Err("several eligible seams must not start implicitly".to_string())
+            }
+            RepairStartDecision::NoEligible { .. } => {
+                Err("eligible seams are not a zero outcome".to_string())
+            }
+        }
+    }
+
+    /// One candidate with its offered command and a readable HEAD starts
+    /// exactly that seam; an unreadable HEAD must not start.
+    #[test]
+    fn decide_single_candidate_starts_only_with_spec_and_head() -> Result<(), String> {
+        let eligible = vec!["seam:demo".to_string()];
+        let spec = repair_start_command_spec(".", "seam:demo");
+        match decide_repair_start(&facts(&eligible, 1, &[], Some(&spec)))? {
+            RepairStartDecision::Start { seam_id } if seam_id == "seam:demo" => {}
+            _ => return Err("one offered candidate at a fresh HEAD must start".to_string()),
+        }
+        let mut headless = facts(&eligible, 1, &[], Some(&spec));
+        headless.head = None;
+        if matches!(
+            decide_repair_start(&headless)?,
+            RepairStartDecision::Start { .. }
+        ) {
+            return Err("an unreadable HEAD must not start a repair".to_string());
+        }
+        Ok(())
+    }
+
+    /// Every ineligibility reason keeps its own distinct, human label.
+    #[test]
+    fn ineligibility_labels_are_distinct_and_exact() -> Result<(), String> {
+        let labels = [
+            (
+                RepairPacketIneligibility::ClassNotHeadlineEligible,
+                "not a headline repair target",
+            ),
+            (
+                RepairPacketIneligibility::CrossLanguageOracleVisibilityUnresolved,
+                "cross-language oracle visibility unresolved",
+            ),
+            (
+                RepairPacketIneligibility::CrossLanguageTestTargetUnresolved,
+                "cross-language test target unresolved",
+            ),
+            (
+                RepairPacketIneligibility::RouteNotReady,
+                "repair route not ready",
+            ),
+        ];
+        for (reason, expected) in labels {
+            if ineligibility_label(reason) != expected {
+                return Err(format!("{reason:?} must read {expected:?}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// An ambiguous item lists at most eight seams, sorted, and counts the
+    /// rest; the retry names the explicit seam form, never a pick.
+    #[test]
+    fn ambiguous_gap_item_sorts_and_bounds_the_listing() -> Result<(), String> {
+        let root = Path::new("/ripr-task-first-root");
+        let few = ambiguous_gap_item(root, "gap:x", &["seam:b", "seam:a"]);
+        if !few.contains("names 2 seams; select one explicitly: seam:a, seam:b.")
+            || few.contains("more)")
+        {
+            return Err(format!(
+                "two matches must list sorted without a tail:\n{few}"
+            ));
+        }
+        let ids: Vec<String> = (0..10).map(|n| format!("seam:{n}")).collect();
+        let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+        let many = ambiguous_gap_item(root, "gap:x", &refs);
+        for expected in [
+            "names 10 seams",
+            "seam:0, seam:1, seam:2, seam:3, seam:4, seam:5, seam:6, seam:7 (and 2 more).",
+            "ripr repair <seam-id> --root",
+        ] {
+            if !many.contains(expected) {
+                return Err(format!("bounded listing must carry {expected:?}:\n{many}"));
+            }
+        }
+        if many.contains("seam:8") || many.contains("seam:9") {
+            return Err(format!("listing must stop at eight seams:\n{many}"));
+        }
+        Ok(())
+    }
+
+    /// A stale check-printed finding ID is named as stale; any other
+    /// unknown item gets the plain no-seam message. Both route to pilot.
+    #[test]
+    fn unknown_repair_item_distinguishes_stale_finding_ids() -> Result<(), String> {
+        let root = Path::new("/ripr-task-first-root");
+        for item in ["probe:abc", "repo-probe:abc"] {
+            let message = unknown_repair_item(root, item);
+            if !message.contains("finding ID is stale or maps to no current seam")
+                || !message.contains("ripr pilot --root")
+            {
+                return Err(format!("{item} must be named stale:\n{message}"));
+            }
+        }
+        let plain = unknown_repair_item(root, "seam:ghost");
+        if plain.contains("stale")
+            || !plain.contains("repair item `seam:ghost` names no seam in the selected root")
+            || !plain.contains("ripr pilot --root")
+        {
+            return Err(format!("plain unknown item message drifted:\n{plain}"));
+        }
+        Ok(())
+    }
+
+    /// An ineligible subject names item, seam and reason, states that no
+    /// attempt started, and points at the seam listing.
+    #[test]
+    fn ineligible_repair_item_names_reason_and_no_attempt() -> Result<(), String> {
+        let message = ineligible_repair_item(
+            Path::new("/ripr-task-first-root"),
+            "gap:x",
+            "seam:y",
+            "configured off",
+        );
+        for expected in [
+            "repair item `gap:x` names seam `seam:y`",
+            "not repair-eligible: configured off",
+            "no repair attempt was started",
+            "ripr pilot --root",
+        ] {
+            if !message.contains(expected) {
+                return Err(format!("refusal must carry {expected:?}:\n{message}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// An explicit attempt ID that is not a valid ID refuses before any
+    /// store read, naming the flag; it never falls through to selection.
+    #[test]
+    fn explicit_invalid_attempt_id_is_refused_by_flag() -> Result<(), String> {
+        let root = Path::new("/ripr-task-first-root-missing");
+        match select_continue_attempt(root, Some("../escape")) {
+            Err(error) if error.starts_with("continue --attempt: ") => Ok(()),
+            Err(error) => Err(format!("refusal must name the flag, got: {error}")),
+            Ok(_) => Err("a path-shaped attempt ID must be refused".to_string()),
+        }
+    }
+
     /// A card failure after publication names the started attempt and its
     /// recovery: the message must never imply no attempt exists.
     #[test]
