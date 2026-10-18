@@ -12476,6 +12476,18 @@ async fn refresh_show_messages(
     base_ref: &str,
     refreshes: u64,
 ) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>), String> {
+    refresh_show_messages_with(root, capabilities, base_ref, refreshes, |_| Ok(())).await
+}
+
+/// [`refresh_show_messages`] with a hook that runs before each refresh
+/// (zero-based), so a test can change the workspace between refreshes.
+async fn refresh_show_messages_with(
+    root: &Path,
+    capabilities: serde_json::Value,
+    base_ref: &str,
+    refreshes: u64,
+    mut before_refresh: impl FnMut(u64) -> Result<(), String>,
+) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>), String> {
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
     let (mut reader, mut writer) = tokio::io::split(client_io);
     let (server_read, server_write) = tokio::io::split(server_io);
@@ -12516,6 +12528,7 @@ async fn refresh_show_messages(
         let mut shown = Vec::new();
         let mut statuses = Vec::new();
         for index in 0..refreshes {
+            before_refresh(index)?;
             let notifications =
                 run_wire_refresh_collecting(&mut reader, &mut writer, 2 + index).await?;
             shown.extend(
@@ -12610,6 +12623,84 @@ fn generic_client_analysis_failure_is_shown_once_and_only_to_generic_clients() -
             return Err(format!(
                 "a successful analysis must not be shown: {shown:?}"
             ));
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn generic_client_failure_warning_repeats_after_recovery() -> Result<(), String> {
+    // #8698: a succeeded analysis clears the shown-failure signature, so
+    // the same failure after a recovery is shown again; without the reset
+    // a generic editor would stay silent on a recurrence.
+    work_done_progress_runtime()?.block_on(async {
+        let root = boundary_gap_git_fixture_root("analysis-failure-recurrence")?;
+        let base_ref = "ripr-lsp-recovery-base";
+        let (shown, statuses) =
+            refresh_show_messages_with(root.path(), serde_json::json!({}), base_ref, 4, |index| {
+                // Refresh 0 and 1 fail (the ref is missing), refresh 2
+                // succeeds (the ref exists), refresh 3 fails again.
+                match index {
+                    2 => run_lsp_scope_git(root.path(), &["branch", base_ref, "HEAD"]),
+                    3 => run_lsp_scope_git(root.path(), &["branch", "-D", base_ref]),
+                    _ => Ok(()),
+                }
+            })
+            .await?;
+        let states = statuses
+            .iter()
+            .filter_map(|status| status["state"].as_str())
+            .collect::<Vec<_>>();
+        let succeeded = states.iter().position(|state| *state == "succeeded");
+        let failed_after = succeeded
+            .is_some_and(|at| states[at..].contains(&"failed"));
+        if !failed_after {
+            return Err(format!(
+                "the sequence must fail, succeed, then fail again: {states:?}"
+            ));
+        }
+        if shown.len() != 2 {
+            return Err(format!(
+                "the first failure and the recurrence after recovery must each be shown once: {shown:?}"
+            ));
+        }
+        if shown[0]["message"] != shown[1]["message"] {
+            return Err(format!(
+                "the recurrence must be the same failure, shown again: {shown:?}"
+            ));
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn generic_client_failure_warning_redacts_path_tokens() -> Result<(), String> {
+    // #8698: the on-screen warning passes through the same redaction as
+    // `ripr/analysisStatus`, so an absolute path in the failure never
+    // reaches a generic editor's message UI.
+    work_done_progress_runtime()?.block_on(async {
+        let root = boundary_gap_git_fixture_root("analysis-failure-redaction")?;
+        let root_text = root.path().display().to_string();
+        // Redaction is per whitespace token, and the failure quotes the ref
+        // in backticks, so a leading word keeps the path a bare token.
+        let base_ref = format!("missing {root_text}/base");
+        let (shown, statuses) =
+            refresh_show_messages(root.path(), serde_json::json!({}), &base_ref, 1).await?;
+        let status_message = statuses
+            .iter()
+            .find_map(|status| status["failure"]["message"].as_str())
+            .ok_or_else(|| format!("the forced failure must reach the status: {statuses:?}"))?;
+        if !status_message.contains("<path>") {
+            return Err(format!(
+                "the forced failure must carry a path for this test to discriminate: {status_message}"
+            ));
+        }
+        let [warning] = shown.as_slice() else {
+            return Err(format!("expected one shown warning: {shown:?}"));
+        };
+        let text = warning["message"].as_str().unwrap_or_default();
+        if text.contains(&root_text) || !text.contains("<path>") {
+            return Err(format!("the shown failure must redact paths: {text}"));
         }
         Ok(())
     })
