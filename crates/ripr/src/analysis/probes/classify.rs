@@ -511,6 +511,24 @@ pub fn should_ignore_changed_line(text: &str) -> bool {
         || text.starts_with("pub use ")
         || text.starts_with("mod ")
         || text.starts_with("#")
+        || is_item_header(text)
+}
+
+/// An `impl` header (`impl Tr for K where Self: Sized {`) opens an item and
+/// holds no expression: its `Self: Sized` text only looks like a field
+/// `name: Type`, so probing it reports a constructed-field gap that does not
+/// exist (#8389). A one-line `impl` whose body holds a `fn` keeps its probes.
+/// Function `where` bound lines stay probed as `static_unknown` on purpose, so
+/// a changed bound is never silently dropped.
+fn is_item_header(text: &str) -> bool {
+    let word_after = |word: &str| {
+        text.strip_prefix(word)
+            .is_some_and(|rest| rest.starts_with([' ', '<']) || rest.is_empty())
+    };
+    if text.contains("fn ") || text.contains(';') || text.contains('=') {
+        return false;
+    }
+    word_after("impl") && (text.ends_with('{') || text.contains(" where"))
 }
 
 /// A line that only opens or closes a block (`}`, `});`, `} else {`,
@@ -535,6 +553,31 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+
+    /// #8389: an `impl` header is not a behavior line, but a one-line `impl`,
+    /// a `fn` signature, an expression that merely contains the word and a
+    /// function `where` bound stay probed.
+    #[test]
+    fn impl_headers_are_ignored_but_behavior_and_bounds_are_not() {
+        for header in [
+            "impl Tr for K {",
+            "impl<T: Debug> Tr for K<T> where Self: Sized {",
+            "impl Tr for K where Self: Sized",
+        ] {
+            assert!(should_ignore_changed_line(header), "`{header}`");
+        }
+        for behavior in [
+            "impl K { fn go(&self) -> u32 { 1 } }",
+            "fn go() -> impl Iterator<Item = u32> {",
+            "implement(x);",
+            "let impl_len = 3;",
+            "where T: Debug,",
+            "impl Tr for K where Self: Sized;",
+            "T: Debug + Clone,",
+        ] {
+            assert!(!should_ignore_changed_line(behavior), "`{behavior}`");
+        }
+    }
 
     #[test]
     fn classify_functions_are_callable() {

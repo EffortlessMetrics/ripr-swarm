@@ -896,3 +896,16 @@ fn removed_inline_test_bound_preserves_old_test_exclusion() -> Result<(), String
     }
     Ok(())
 }
+
+/// #8389: an `impl` header holds no expression, so `Self: Sized` in it is not
+/// probed as a constructed field; the `fn` inside the same `impl` still is.
+#[test]
+fn impl_header_with_where_clause_seeds_no_probe_but_its_body_does() -> Result<(), String> {
+    let source =
+        "pub struct K;\nimpl Tr for K where Self: Sized {\n    fn go(&self) -> u32 { 1 }\n}\n";
+    let header = added(source, 2)?;
+    assert!(header.is_empty(), "impl header was probed: {header:?}");
+    let body = added(source, 3)?;
+    assert!(!body.is_empty(), "the fn inside the impl lost its probe");
+    Ok(())
+}
