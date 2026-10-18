@@ -9716,7 +9716,7 @@ fn written_by_test(masked: &str, name: &str) -> bool {
         // seeing them.
         before.ends_with("write!(")
             || before.ends_with("writeln!(")
-            || borrowed_into_path_call(before, name)
+            || borrowed_into_path_call(before)
             || place_is_written(&masked[offset + name.len()..])
             || destructured_into(&masked[offset + name.len()..])
     })
@@ -9726,7 +9726,7 @@ fn written_by_test(masked: &str, name: &str) -> bool {
 /// (`AtomicU32::store(&EXPECTED, ..)`, `write(&EXPECTED, ..)`,
 /// `Cell::set(&expected, ..)`) may be written by the callee. A plain reader
 /// callee and a macro (`assert_eq!(f(4), &EXPECTED)`) do not count.
-fn borrowed_into_path_call(before: &str, name: &str) -> bool {
+fn borrowed_into_path_call(before: &str) -> bool {
     let Some(head) = before.strip_suffix('&') else {
         return false;
     };
