@@ -12,8 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::time::{Duration, UNIX_EPOCH};
 
-#[path = "../source_identity.rs"]
-mod source_identity;
+use test_support::source_identity;
 
 const PROBE: &str = r#"#[path = "../source_identity.rs"]
 mod source_identity;

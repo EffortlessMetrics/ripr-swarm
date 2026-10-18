@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[path = "source_identity.rs"]
-mod source_identity;
+pub(crate) mod source_identity;
 
 pub fn workspace_root() -> Result<PathBuf, String> {
     let manifest = runtime_path(
@@ -38,12 +38,19 @@ fn workspace_from_manifest(manifest: &Path, expected: &str) -> Result<PathBuf, S
 pub fn policy_binary(compiled: &str) -> Result<PathBuf, String> {
     // Artifact custody is supplied by Cargo/nextest, not by searching PATH or
     // a default target. Production commands still verify source/compiler identity.
-    let path = runtime_path(
+    policy_binary_from_runtime(
         std::env::var_os("CARGO_BIN_EXE_repo-policy"),
         compiled,
         std::env::var_os("NEXTEST").is_some(),
-        "CARGO_BIN_EXE_repo-policy",
-    )?;
+    )
+}
+
+fn policy_binary_from_runtime(
+    runtime: Option<std::ffi::OsString>,
+    compiled: &str,
+    nextest: bool,
+) -> Result<PathBuf, String> {
+    let path = runtime_path(runtime, compiled, nextest, "CARGO_BIN_EXE_repo-policy")?;
     if !path.is_file() {
         return Err(format!(
             "policy test executable is missing: {}",
@@ -92,17 +99,32 @@ pub fn scratch(label: &str) -> Result<PathBuf, String> {
 mod tests {
     use super::*;
 
+    fn refusal<T>(result: Result<T, String>) -> Result<String, String> {
+        match result {
+            Err(error) => Ok(error),
+            Ok(_) => Err("expected policy runtime resource refusal".into()),
+        }
+    }
+
     #[test]
     fn runner_paths_never_fall_back_or_accept_relative_paths() -> Result<(), String> {
-        assert!(runtime_path(None, env!("CARGO_MANIFEST_DIR"), true, "manifest").is_err());
-        assert!(
-            runtime_path(
+        assert_eq!(
+            refusal(runtime_path(
+                None,
+                env!("CARGO_MANIFEST_DIR"),
+                true,
+                "manifest"
+            ))?,
+            "policy test runtime is missing manifest"
+        );
+        assert_eq!(
+            refusal(runtime_path(
                 Some("relative".into()),
                 env!("CARGO_MANIFEST_DIR"),
                 true,
                 "manifest"
-            )
-            .is_err()
+            ))?,
+            "policy test runtime manifest must be absolute"
         );
         let root = workspace_root()?;
         assert_eq!(
@@ -112,20 +134,46 @@ mod tests {
             )?,
             root
         );
-        assert!(workspace_from_manifest(&root.join("tools/repo-policy"), "wrong-source").is_err());
+        assert_eq!(
+            refusal(workspace_from_manifest(
+                &root.join("tools/repo-policy"),
+                "wrong-source"
+            ))?,
+            "policy test resource source identity differs from the built harness"
+        );
         assert!(
-            workspace_from_manifest(&root.join("missing"), env!("REPO_POLICY_SOURCE_ID")).is_err()
+            refusal(workspace_from_manifest(
+                &root.join("missing"),
+                env!("REPO_POLICY_SOURCE_ID")
+            ))?
+            .starts_with("policy test resource root ")
         );
         if std::env::var_os("CARGO_BIN_EXE_repo-policy").is_some() {
             assert!(policy_binary("unused-compiled-fallback")?.is_absolute());
         } else {
-            assert!(policy_binary("missing-policy-executable").is_err());
+            assert_eq!(
+                refusal(policy_binary("missing-policy-executable"))?,
+                if std::env::var_os("NEXTEST").is_some() {
+                    "policy test runtime is missing CARGO_BIN_EXE_repo-policy"
+                } else {
+                    "policy test runtime CARGO_BIN_EXE_repo-policy must be absolute"
+                }
+            );
         }
         let first = scratch("policy-resource-control")?;
         let second = scratch("policy-resource-control")?;
         assert_ne!(first, second);
         assert!(first.starts_with(std::env::temp_dir()));
         assert!(second.starts_with(std::env::temp_dir()));
+        let missing = first.join("missing-policy-executable");
+        assert_eq!(
+            refusal(policy_binary_from_runtime(
+                Some(missing.clone().into_os_string()),
+                "unused",
+                true
+            ))?,
+            format!("policy test executable is missing: {}", missing.display())
+        );
         std::fs::remove_dir(&first).map_err(|e| e.to_string())?;
         std::fs::remove_dir(&second).map_err(|e| e.to_string())?;
         Ok(())
