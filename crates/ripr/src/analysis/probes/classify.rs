@@ -513,7 +513,8 @@ pub fn should_ignore_changed_line(text: &str) -> bool {
         || text.starts_with("#")
 }
 
-/// An `impl` header (`impl Tr for K where Self: Sized {`) holds no expression:
+/// An `impl` header (`impl Tr for K where Self: Sized {`; other item headers
+/// such as `trait` or `struct` are not covered) holds no expression:
 /// its `Self: Sized` text only looks like a field `name: Type`, so a
 /// constructed-field probe on it reports a gap that does not exist (#8389).
 /// The header itself stays probed as `static_unknown`, so a changed bound is
@@ -558,7 +559,7 @@ mod tests {
     /// a `fn` signature, an expression that merely contains the word and a
     /// function `where` bound stay probed.
     #[test]
-    fn impl_headers_are_ignored_but_behavior_and_bounds_are_not() {
+    fn impl_headers_are_item_headers_but_behavior_is_not() {
         for header in [
             "impl Tr for K {",
             "impl<T: Debug> Tr for K<T> where Self: Sized {",
@@ -567,6 +568,11 @@ mod tests {
             "impl<T: Iterator<Item = u32>> Tr for K<T> {",
         ] {
             assert!(is_item_header(header), "`{header}`");
+            assert_eq!(
+                super::super::lexical::classify_changed_line(header),
+                vec![ProbeFamily::StaticUnknown],
+                "`{header}` must not classify as a field"
+            );
         }
         for behavior in [
             "impl K { fn go(&self) -> u32 { 1 } }",
