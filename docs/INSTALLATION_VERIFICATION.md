@@ -14,6 +14,14 @@ ripr agent verify --before <before.repo-exposure.json> --after <after.repo-expos
 ripr agent receipt --verify-json <agent-verify.json> --seam-id <seam_id> --json
 ```
 
+`cargo install ripr` installs the latest published release,
+[0.10.0](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.10.0), whose
+[versioned instructions](https://github.com/EffortlessMetrics/ripr/blob/v0.10.0/README.md)
+describe that workflow. The 0.11.0 steps in this checklist apply only after
+0.11.0 is published and verified; until then, do not expect 0.11 development
+behavior from an unversioned `cargo install ripr`. To verify a specific
+release, pin it as in the Public Cargo Install Proof below.
+
 `ripr init` may materialize repo policy, but it must not be required for the
 first useful CLI, editor, or CI experience.
 
@@ -172,21 +180,44 @@ target/ripr/install-smoke-path/bin/ripr pilot \
 target/ripr/install-smoke-path/bin/ripr outcome \
   --before fixtures/boundary_gap/calibration/before-targeted-test.repo-exposure.json \
   --after fixtures/boundary_gap/calibration/after-targeted-test.repo-exposure.json
-mkdir -p target/ripr/install-smoke-path/agent
-target/ripr/install-smoke-path/bin/ripr agent verify \
-  --root . \
-  --before fixtures/boundary_gap/calibration/before-targeted-test.repo-exposure.json \
-  --after fixtures/boundary_gap/calibration/after-targeted-test.repo-exposure.json \
-  --json > target/ripr/install-smoke-path/agent/agent-verify.json
-target/ripr/install-smoke-path/bin/ripr agent receipt \
-  --root . \
-  --verify-json target/ripr/install-smoke-path/agent/agent-verify.json \
-  --seam-id 67fc764ba37d77bd \
-  --json \
-  --out target/ripr/install-smoke-path/agent/agent-receipt.json
 ```
 
 On Windows, use `target\ripr\install-smoke-path\bin\ripr.exe`.
+
+The checked `fixtures/boundary_gap/calibration/*.repo-exposure.json` snapshots
+predate the RIPR producer envelope, so `ripr outcome` reads them (with a
+warning) but `ripr agent verify` rejects them as non-canonical. Exercise
+`agent verify` and `agent receipt` through the real loop instead: run
+`ripr agent repair --phase before` on a pilot seam, add the focused test,
+then run the `--phase after` command it prints. Both artifacts must live under
+`--root`; two identical snapshots exit 3 (no repository movement) by design.
+
+Run the generator self-pin smoke with the binary built from the release commit
+(#5245). `init --ci github` pins its own version only when
+`LATEST_RELEASED_VERSION` in `crates/ripr/src/cli/commands/init_workflow.rs` has
+been bumped with the package version; a forgotten bump makes the released binary
+warn and pin the previous release. `release-readiness` checks that constant from
+source (`init-pin-version`); this step checks the behavior of the built binary.
+
+```bash
+version=0.11.0
+smoke=target/ripr/install-smoke-path/init-pin
+rm -rf "$smoke" && mkdir -p "$smoke" && git init -q "$smoke"
+target/ripr/install-smoke-path/bin/ripr init --ci github --dry-run \
+  --root "$smoke" > "$smoke/stdout.txt" 2> "$smoke/stderr.txt" &&
+  test ! -s "$smoke/stderr.txt" &&
+  ! grep -q 'is unreleased' "$smoke/stdout.txt" &&
+  grep -q "cargo install ripr --version $version --locked" "$smoke/stdout.txt" &&
+  echo "init self-pin smoke: pass" || { echo "init self-pin smoke: FAIL" >&2; false; }
+```
+
+The step passes only when the dry run exits 0, prints no unreleased-generator
+warning on stderr, and pins `$version` in the rendered workflow. On a binary
+whose constant was not bumped it fails at the stderr check, because the warning
+is non-empty. To disprove the check, build a scratch binary from the release
+commit with `LATEST_RELEASED_VERSION` reverted to the previous release and
+confirm the step fails; do not commit that revert. This step applies to the
+release commit only: a development build is expected to fail it.
 
 Also confirm the generated CI and editor first-run front doors before release:
 
@@ -214,18 +245,6 @@ target/ripr/install-smoke-cratesio/bin/ripr pilot \
 target/ripr/install-smoke-cratesio/bin/ripr outcome \
   --before fixtures/boundary_gap/calibration/before-targeted-test.repo-exposure.json \
   --after fixtures/boundary_gap/calibration/after-targeted-test.repo-exposure.json
-mkdir -p target/ripr/install-smoke-cratesio/agent
-target/ripr/install-smoke-cratesio/bin/ripr agent verify \
-  --root . \
-  --before fixtures/boundary_gap/calibration/before-targeted-test.repo-exposure.json \
-  --after fixtures/boundary_gap/calibration/after-targeted-test.repo-exposure.json \
-  --json > target/ripr/install-smoke-cratesio/agent/agent-verify.json
-target/ripr/install-smoke-cratesio/bin/ripr agent receipt \
-  --root . \
-  --verify-json target/ripr/install-smoke-cratesio/agent/agent-verify.json \
-  --seam-id 67fc764ba37d77bd \
-  --json \
-  --out target/ripr/install-smoke-cratesio/agent/agent-receipt.json
 ```
 
 The installed version must be the release being verified. If crates.io still
@@ -259,18 +278,6 @@ ripr pilot --root fixtures/boundary_gap/input --out target/ripr/release-server-s
 ripr outcome \
   --before fixtures/boundary_gap/calibration/before-targeted-test.repo-exposure.json \
   --after fixtures/boundary_gap/calibration/after-targeted-test.repo-exposure.json
-mkdir -p target/ripr/release-server-smoke/agent
-ripr agent verify \
-  --root . \
-  --before fixtures/boundary_gap/calibration/before-targeted-test.repo-exposure.json \
-  --after fixtures/boundary_gap/calibration/after-targeted-test.repo-exposure.json \
-  --json > target/ripr/release-server-smoke/agent/agent-verify.json
-ripr agent receipt \
-  --root . \
-  --verify-json target/ripr/release-server-smoke/agent/agent-verify.json \
-  --seam-id 67fc764ba37d77bd \
-  --json \
-  --out target/ripr/release-server-smoke/agent/agent-receipt.json
 ```
 
 The VS Code extension relies on these assets for first-run self-provisioning.
@@ -291,8 +298,9 @@ available. The extension resolves the server in this order:
 ripr.server.path
 bundled server binary, if present
 downloaded cached server binary
+ripr on PATH, when ripr.server.version is empty
 verified first-run download from GitHub Releases
-ripr on PATH
+ripr on PATH, as the fallback when the download fails or a version is pinned
 actionable error
 ```
 

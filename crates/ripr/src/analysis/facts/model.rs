@@ -568,6 +568,13 @@ pub struct SourceRoleProvenance {
     /// `None` means every recorded edge resolved exactly. An unresolved edge
     /// fails closed: no composed role is granted from it.
     pub earliest_unresolved_reason: Option<String>,
+    /// True only when the file is positively outside every crate's module
+    /// tree (#7426): a plain `src/<name>.rs` that no resolved `mod <name>;`
+    /// or include reaches, in a package whose crate roots were parsed and
+    /// whose workspace has no unresolved include or `#[path]`. Cargo never
+    /// compiles such a file, so no test can import what it defines. Any doubt
+    /// leaves this `false`; it is never set from a missing or unparsed input.
+    pub outside_module_tree: bool,
 }
 
 /// One edge in a composed source-role provenance chain (#3533).
@@ -951,11 +958,11 @@ impl FileFacts {
 ///   repository-registered test-producing attribute (#3532 harness
 ///   registry); it registers a `TestFact` through this same role
 ///   authority.
-/// - `CfgTestModule` is evidence-only helper role: a function inside a
-///   test-required module (`#[cfg(test)]`, or a `test` conjunct in
-///   `cfg(all(...))` through the shared `cfg_predicates` authority). It
-///   stays evidence-capable without entering the executable-test
-///   denominator.
+/// - `CfgTestModule` is evidence-only role for a function gated directly
+///   on test or inside a test-required module (through the shared
+///   `cfg_predicates` authority). It also retains compiled-out test items.
+///   The historical serialized name stays unchanged; this role never
+///   adds a helper to the executable-test denominator.
 /// - `HarnessHelper` is evidence-only helper role inside a registered
 ///   custom test-harness target (#3532, e.g. a `[[test]]`
 ///   `harness = false` libtest-mimic suite): the custom harness never
@@ -986,10 +993,10 @@ pub enum FunctionSourceRole {
     /// fallback, the parser-fallback provenance stays on
     /// `FileFacts::used_lexical_fallback`.
     TestAttribute,
-    /// Member of a test-required module — classified by the parser through
-    /// the `cfg_predicates` authority (#3530) or preserved by the facts
-    /// normalizer's cfg-test walk. Evidence-role helper: no executable
-    /// `TestFact` is registered for this variant alone.
+    /// A test-required function or member of a test-required module,
+    /// including compiled-out test items. The historical serialized name
+    /// is retained. Parser and normalizer share `cfg_predicates` (#3530);
+    /// this evidence-only role does not register an executable `TestFact`.
     CfgTestModule,
     /// Promoted by the explicit test-case authority
     /// (`facts::parameterized_tests`) from an exact `#[test_case(...)]`
@@ -1359,11 +1366,97 @@ pub struct OracleFact {
     pub ok_value_observed: Option<bool>,
 }
 
+/// A call's source line, shared by every call fact on that line so a line
+/// with many calls holds one allocation instead of one copy per call.
+/// Compares, prints and serializes as the plain string.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct CallText(std::sync::Arc<str>);
+
+impl CallText {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Whether both values read the same allocation.
+    pub fn shares_allocation(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl std::ops::Deref for CallText {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for CallText {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for CallText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&*self.0, f)
+    }
+}
+
+impl std::fmt::Display for CallText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&*self.0, f)
+    }
+}
+
+impl From<String> for CallText {
+    fn from(text: String) -> Self {
+        Self(text.into())
+    }
+}
+
+impl From<&str> for CallText {
+    fn from(text: &str) -> Self {
+        Self(text.into())
+    }
+}
+
+impl From<&String> for CallText {
+    fn from(text: &String) -> Self {
+        Self(text.as_str().into())
+    }
+}
+
+impl From<CallText> for String {
+    fn from(text: CallText) -> Self {
+        text.0.to_string()
+    }
+}
+
+impl PartialEq<str> for CallText {
+    fn eq(&self, other: &str) -> bool {
+        &*self.0 == other
+    }
+}
+
+impl PartialEq<&str> for CallText {
+    fn eq(&self, other: &&str) -> bool {
+        &*self.0 == *other
+    }
+}
+
+impl PartialEq<String> for CallText {
+    fn eq(&self, other: &String) -> bool {
+        &*self.0 == other.as_str()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CallFact {
     pub line: usize,
     pub name: String,
-    pub text: String,
+    /// The call's source line, shared by every call fact on that line.
+    pub text: CallText,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -1921,7 +2014,7 @@ mod tests {
         let call = CallFact {
             line: 1,
             name: "test_fn".to_string(),
-            text: "test_fn()".to_string(),
+            text: "test_fn()".to_string().into(),
         };
         let call_cloned = call.clone();
         assert_eq!(call, call_cloned);
@@ -2127,7 +2220,7 @@ mod tests {
         let call = CallFact {
             line: 2,
             name: "helper".to_string(),
-            text: "helper()".to_string(),
+            text: "helper()".to_string().into(),
         };
         let facts = FileFacts {
             path: PathBuf::from("src/lib.rs"),

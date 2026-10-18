@@ -377,10 +377,13 @@ fn refuse_agent_packet(options: &AgentPacketOptions, error: CoreError, json: boo
     )
 }
 
-/// Recovery for an unknown `--seam-id`. Cold agents most often pass the
-/// `probe:...` finding ID that `ripr check` prints; the error must name where
-/// seam IDs come from instead of leaving "not found" as a dead end. The
-/// pilot command names the same root the failing call used.
+/// Recovery for an unknown `--seam-id`. Cold agents most often pass one of
+/// the IDs `ripr check` prints (`probe:...` finding ID, `gap:...` canonical
+/// gap ID); the error must name that family mismatch and the equivalent
+/// command that accepts the ID — `ripr repair` resolves both namespaces to
+/// the repair seam (#8166) — plus where seam IDs come from, instead of
+/// leaving "not found" as a dead end. The pilot command names the same root
+/// the failing call used.
 pub(super) fn unknown_seam_id_hint(root: &Path, seam_id: &str) -> String {
     // `bound_root` over the raw path, like the LSP routes: `display_path`
     // would turn a literal backslash in a Unix path into a separator (#4287).
@@ -391,9 +394,86 @@ pub(super) fn unknown_seam_id_hint(root: &Path, seam_id: &str) -> String {
         "`ripr pilot --root {root}` to list current seam IDs with their exact `ripr agent repair` commands."
     );
     if seam_id.starts_with("probe:") {
-        format!("`probe:...` is a `ripr check` finding ID, not a seam ID; run {pilot}")
+        format!(
+            "`probe:...` is a `ripr check` finding ID, not a seam ID; `ripr repair <finding-id> --root {root}` resolves it to its repair seam, or run {pilot}"
+        )
+    } else if seam_id.starts_with("repo-probe:") {
+        format!(
+            "`repo-probe:...` is a `ripr check` finding ID, not a seam ID; `ripr repair <finding-id> --root {root}` resolves it to its repair seam, or run {pilot}"
+        )
+    } else if seam_id.starts_with("gap:") {
+        format!(
+            "`gap:...` is a `ripr check` canonical gap ID, not a seam ID; `ripr repair <gap-id> --root {root}` resolves it to its repair seam, or run {pilot}"
+        )
     } else {
         format!("Run {pilot}")
+    }
+}
+
+/// Translate a cross-namespace `--seam-id` for `agent repair --phase
+/// before` (#8166 residual): a `probe:`/`repo-probe:` finding ID, a canonical
+/// `gap:` ID, or a `file:line` location that names exactly one seam through
+/// the shared repair resolver proceeds under that seam's ID. An exact seam
+/// ID (and any other shape) keeps the existing flow untouched, so its
+/// packet-owned not-found refusal is unchanged. Ambiguous and ineligible
+/// mappings are deliberate decisions naming the equivalent
+/// `ripr agent repair --seam-id` retry; a stale mapping keeps the existing
+/// wrong-namespace hint through [`unknown_seam_id_hint`], which is the
+/// packet surface's not-found wording and exit family.
+pub(in crate::cli) fn translate_agent_repair_seam_id(
+    root: &Path,
+    seam_id: &str,
+) -> Result<String, crate::cli::CommandError> {
+    let cross_namespace = seam_id.starts_with("probe:")
+        || seam_id.starts_with("repo-probe:")
+        || seam_id.starts_with("gap:")
+        || seam_id.contains(':');
+    if !cross_namespace {
+        return Ok(seam_id.to_string());
+    }
+    use crate::app::task_first::RepairSubjectOutcome;
+    match crate::app::task_first::resolve_repair_subject_outcome(root, seam_id) {
+        Ok(RepairSubjectOutcome::Seam(resolved)) => Ok(resolved),
+        Ok(RepairSubjectOutcome::Ineligible {
+            seam_id: resolved,
+            reason,
+        }) => {
+            let root_arg = crate::agent::loop_commands::shell_arg(
+                &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
+            );
+            Err(crate::cli::CommandError::Decision(format!(
+                "agent repair seam_id `{seam_id}` names seam `{resolved}`, which is not repair-eligible: {reason}; no repair attempt was started. Run `ripr pilot --root {root_arg}` to list current seam IDs"
+            )))
+        }
+        Ok(RepairSubjectOutcome::Ambiguous(seam_ids)) => {
+            const MAX_LISTED: usize = 8;
+            let mut listed: Vec<&str> = seam_ids
+                .iter()
+                .map(String::as_str)
+                .take(MAX_LISTED)
+                .collect();
+            listed.sort_unstable();
+            let mut message = format!(
+                "agent repair seam_id `{seam_id}` names {} seams; select one explicitly: {}",
+                seam_ids.len(),
+                listed.join(", ")
+            );
+            if seam_ids.len() > MAX_LISTED {
+                message.push_str(&format!(" (and {} more)", seam_ids.len() - MAX_LISTED));
+            }
+            let root_arg = crate::agent::loop_commands::shell_arg(
+                &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
+            );
+            message.push_str(&format!(
+                ". Retry: `ripr agent repair --seam-id <seam-id> --root {root_arg} --phase before`"
+            ));
+            Err(crate::cli::CommandError::Decision(message))
+        }
+        Ok(RepairSubjectOutcome::Unknown) => Err(crate::cli::CommandError::Failure(format!(
+            "agent packet seam_id {seam_id} was not found. {}",
+            unknown_seam_id_hint(root, seam_id)
+        ))),
+        Err(error) => Err(crate::cli::CommandError::Failure(error)),
     }
 }
 
@@ -552,7 +632,13 @@ fn agent_verify_error_is_typed_refusal(error: &str) -> bool {
 }
 
 fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), CommandError> {
-    ensure_command_root(&options.root, "agent verify-execute")?;
+    if let Err(error) = ensure_command_root(&options.root, "agent verify-execute") {
+        print!(
+            "{}",
+            app::verification_execution::render_unusable_root(&error)
+        );
+        return Err(CommandError::Failure(error));
+    }
     let outcome = app::verification_execution::execute_verify_packet(
         &options.root,
         &options.packet,
@@ -828,6 +914,35 @@ fn run_agent_review_summary(options: AgentReviewSummaryOptions) -> Result<(), St
 /// status` reports it instead of repeating the refused command unannotated.
 fn run_agent_repair(options: AgentRepairOptions) -> Result<(), CommandError> {
     run_agent_repair_with_identity(options, None)
+}
+
+/// Selection has not established that the attempt can resume. Offer only
+/// read-only inspection, preserving the authority's error and classification.
+pub(super) fn repair_attempt_input_error(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: Option<&str>,
+    error: String,
+) -> String {
+    let Some(id) = attempt_id else {
+        return error;
+    };
+    // State refusals (for example an ended attempt) already end with their own
+    // `ripr agent status` or façade `ripr status` next step; adding another
+    // would duplicate guidance.
+    if error.contains("ripr agent status") || error.contains("ripr status") {
+        return error;
+    }
+    if crate::app::repair_attempt::RepairAttemptId::parse(id.to_string()).is_err() {
+        return error;
+    }
+    use crate::agent::loop_commands::{bound_root, shell_arg};
+    let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
+    let store_flag = crate::app::repair_attempt::quoted_store_flag(store);
+    let attempt_arg = shell_arg(id);
+    format!(
+        "{error}. For repair attempt `{id}`, inspect it with `ripr agent status --root {root_arg}{store_flag} --attempt {attempt_arg}`. No new repair attempt was started."
+    )
 }
 
 pub(in crate::cli) fn run_before_repair_with_identity(
@@ -1359,14 +1474,18 @@ fn run_agent_repair_phase(
             if let Some(id) = attempt_id.as_deref() {
                 crate::app::repair_attempt::complete_pending_terminal_retention_from(
                     &root, store_ref, id,
-                )?;
+                )
+                .map_err(|error| repair_attempt_input_error(&root, store_ref, Some(id), error))?;
             }
             let attempt = crate::app::repair_attempt::resolve_awaiting_repair_attempt_from(
                 &root,
                 store_ref,
                 attempt_id.as_deref(),
                 seam_id.as_deref(),
-            )?;
+            )
+            .map_err(|error| {
+                repair_attempt_input_error(&root, store_ref, attempt_id.as_deref(), error)
+            })?;
             refusal.selected_attempt =
                 Some((root.clone(), store.clone(), attempt.attempt_id.clone()));
             eprintln!(
@@ -2654,6 +2773,34 @@ mod tests {
     use super::*;
     use crate::app::agent_brief::AgentBriefLine;
     use crate::cli::agent::AgentBriefWorkingSet;
+
+    /// #8222: an ended-attempt refusal already carries its own
+    /// `ripr agent status` next step; the retained-evidence wrapper must not
+    /// append a second one, while a bare read failure still gets guidance.
+    #[test]
+    fn repair_attempt_input_error_does_not_duplicate_state_refusal_guidance() {
+        let root = std::path::Path::new("repo");
+        let id = "repair-attempt-000000000000000000000001";
+        let refusal = "repair attempt x already finished. Next: `ripr agent status --root repo` reads the outcome".to_string();
+        assert_eq!(
+            repair_attempt_input_error(root, None, Some(id), refusal.clone()),
+            refusal
+        );
+        let facade_refusal =
+            "repair attempt x already finished. Inspect: `ripr status --attempt x --root repo`"
+                .to_string();
+        assert_eq!(
+            repair_attempt_input_error(root, None, Some(id), facade_refusal.clone()),
+            facade_refusal
+        );
+        assert!(
+            crate::app::repair_attempt::RepairAttemptId::parse(id.to_string()).is_ok(),
+            "fixture id must parse so the wrapping branch is exercised"
+        );
+        let read_failure = "canonicalize artifact a failed: missing".to_string();
+        let wrapped = repair_attempt_input_error(root, None, Some(id), read_failure);
+        assert_eq!(wrapped.matches("ripr agent status").count(), 1, "{wrapped}");
+    }
     use crate::cli::commands_agent_support::{
         agent_brief_lines_from_diff, agent_brief_owners_for_lines, normalize_agent_brief_path,
     };

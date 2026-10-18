@@ -1,5 +1,27 @@
 # Golden Output Changes
 
+## Pending — boundary_gap (9)
+
+Reason:
+RIPR-SPEC-0153 (#3213) advances the classified Rust corpus generation to 1.81
+when directly test-gated helpers become evidence-only. Keep the portable
+unchanged-attempt snapshots and their dependent content/file commitments in
+sync. Under RIPR-SPEC-0020 the scenario still has unchanged weak grip, an
+incomplete receipt, and the same fail-closed first-action route; no finding,
+movement, status, limit, or tamper assertion changes.
+
+Validation:
+The existing `first_useful_action_corpus_pins_routing_cases` CLI test passes
+with default features and with `--no-default-features --features lang-rust`.
+It compares snapshots with the production normalizer and verifies the receipt
+hash chain. Only the corpus version and its transitive commitments changed;
+no blanket fixture regeneration was used.
+
+Updated:
+- `first-useful-action/unchanged-after-attempt/{before,after}.repo-exposure.json`
+- `first-useful-action/unchanged-after-attempt/agent-verify.json`
+- `first-useful-action/unchanged-after-attempt/agent-receipt.json`
+
 ## Pending — boundary_gap (8)
 
 Reason:
@@ -877,3 +899,73 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — boundary_gap (22)
+
+Reason:
+RIPR-SPEC-0001: bounded human check drill-down prints the eligible seam repair line (ripr repair <seam-id>, #8166 Slice C); fixture seam is the repair-eligible weakly gripped boundary gap
+
+Command:
+`cargo xtask goldens bless --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — boundary_gap (23)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — boundary_gap (24)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+### #8479 — classified-cache generation parity
+
+The unchanged-after-attempt before/after corpus generation moves from 1.81 to
+1.82 for the metadata-only field-selector limitation (RIPR-SPEC-0229). Content
+commitments and dependent verify/receipt byte hashes follow that exact change.
+Routing, unchanged movement, incomplete receipt and all tamper controls remain.
+The live producer normalization test validates this bounded fixture update.
+
+### #5500 / #5502 — direct-record selector cache generation
+
+The unchanged-after-attempt portable snapshots follow the internal semantic
+cache generation from 1.82 to 1.83. Their content commitments, native verify
+commitments and receipt byte hashes bind that exact metadata change. Semantic
+evidence, historical/noncurrent status, weak/unchanged movement and incomplete
+receipt routing remain unchanged; the producer-equality and tamper tests remain
+strict. The receipt is an existing portable negative-control input, not a new
+receipt-presentation golden.

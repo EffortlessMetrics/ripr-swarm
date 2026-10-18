@@ -38,6 +38,9 @@ fn run_receipt_write(args: &[String]) -> Result<(), String> {
     }
 
     let opts = parse_receipt_write_options(args)?;
+    if let Some(root) = &opts.root {
+        crate::atomic_file::ensure_default_output_contained(root)?;
+    }
     let rendered = write_receipt(&opts)?;
 
     if opts.json || opts.out.is_none() {

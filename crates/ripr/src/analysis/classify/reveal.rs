@@ -1,3 +1,14 @@
+//! Reveal-stage classification: decides whether the related tests observe and
+//! discriminate the changed behavior.
+//!
+//! [`reveal_outcome`] is the entry point. It grades each related test's
+//! assertions against the probe (exact value, error variant, field, collection,
+//! effect observer) and reports the observe and discriminate [`StageEvidence`]
+//! plus whether the owner's return value was pinned. Reach, infect and
+//! propagate are owned by sibling modules; this file only judges the oracle.
+//! Evidence stays conservative: an assertion that cannot be tied to the
+//! changed behavior is withheld rather than credited.
+
 use super::super::rust_index::{
     OracleFact, OracleTextShape, TestSummary, extract_identifier_tokens, has_oracle_text_shape,
     is_inequality_assertion,
@@ -10,7 +21,7 @@ use super::builder_override::{
 };
 use super::propagation_witness::{
     assertion_field_collection_reads, assertion_keyed_getter_reads,
-    assertion_observes_direct_collection_in_test, direct_collection_mutation_receiver,
+    assertion_observes_direct_collection_in_test_for_probe, direct_collection_mutation_receiver,
     field_collection_insert_key, field_collection_write_appends, field_collection_write_path,
 };
 use super::reach::{invokes_opaque_macro, is_proximity_only};
@@ -205,6 +216,7 @@ fn reveal_evidence_with_expression(
         cross_package_name_defeats,
         return_admission,
         arm_selector,
+        None,
     );
     (
         outcome.observe,
@@ -241,6 +253,7 @@ pub(in crate::analysis) fn reveal_outcome(
     cross_package_name_defeats: &dyn Fn(&TestSummary, &str) -> bool,
     return_admission: &ReturnOracleAdmission<'_>,
     arm_selector: Option<&ArmSelector>,
+    diff_touched: Option<&super::DiffTouchedTests>,
 ) -> RevealOutcome {
     if related_tests.is_empty() {
         return RevealOutcome {
@@ -270,7 +283,7 @@ pub(in crate::analysis) fn reveal_outcome(
         return_admission,
         arm_selector,
     );
-    let (related, related_tests_total) = finalize_related_tests(analysis.related);
+    let (related, related_tests_total) = finalize_related_tests(analysis.related, diff_touched);
     let observe = build_observe_evidence(analysis.matched_any, analysis.refused_context);
     let discriminate = if analysis.refused_context && !analysis.matched_any {
         StageEvidence::new(
@@ -440,13 +453,19 @@ fn effect_observer_confirms(assertion: &OracleFact) -> bool {
 
 fn collection_observer_confirms(
     expression: &str,
+    count_reads: bool,
     test: &TestSummary,
     assertion: &OracleFact,
 ) -> bool {
     let Some(receiver) = direct_collection_mutation_receiver(expression) else {
         return false;
     };
-    assertion_observes_direct_collection_in_test(&assertion.text, receiver, &test.body)
+    assertion_observes_direct_collection_in_test_for_probe(
+        &assertion.text,
+        receiver,
+        &test.body,
+        count_reads,
+    )
 }
 
 /// RIPR-SPEC-0228: whether `assertion` observes the field collection `path`
@@ -2034,7 +2053,39 @@ fn analyze_related_assertions(
                 && (field_write.is_some()
                     || direct_collection_mutation_receiver(&probe.expression).is_some())
                 && super::propagation_witness::assertion_expects_empty_collection(&assertion.text);
-            let self_computed = self_computed || empty_after_skipped_push;
+            // #8205: the same cap applies when the assertion expects
+            // exactly the state the test seeded before the call. The
+            // skipped push never ran, so restating the pre-call state
+            // passes whether or not the push exists or is correct. An
+            // expectation that differs from the seeded state (including
+            // the seeded state plus the pushed element) keeps its credit.
+            let seeded_after_skipped_push = matched
+                && return_admission.owner_may_exit_before_probe
+                && is_effect_family(&probe.family)
+                && match (
+                    field_write,
+                    direct_collection_mutation_receiver(&probe.expression),
+                ) {
+                    (Some(path), _) => {
+                        super::propagation_witness::assertion_restates_seeded_collection(
+                            &assertion.text,
+                            &test.body,
+                            path,
+                            Some(path),
+                        )
+                    }
+                    (None, Some(receiver)) => {
+                        super::propagation_witness::assertion_restates_seeded_collection(
+                            &assertion.text,
+                            &test.body,
+                            receiver,
+                            None,
+                        )
+                    }
+                    (None, None) => false,
+                };
+            let self_computed =
+                self_computed || empty_after_skipped_push || seeded_after_skipped_push;
             // #6692: the owner pin is credited only through an assertion
             // that matched, from a test that may supply the oracle, with the
             // pin surviving the reveal-side defeats. The missing-field
@@ -2068,8 +2119,16 @@ fn analyze_related_assertions(
                 let observation_confirmed = !self_computed
                     && (!confirm_required
                         || (confirms_observation
-                            && (collection_observer_confirms(&probe.expression, test, assertion)
-                                || field_collection_read
+                            && (collection_observer_confirms(
+                                &probe.expression,
+                                // #6640: only a deleted push changes how
+                                // many elements the collection holds; a
+                                // changed pushed value does not, so a pure
+                                // count read confirms only CallDeletion.
+                                matches!(probe.family, ProbeFamily::CallDeletion),
+                                test,
+                                assertion,
+                            ) || field_collection_read
                                 || collection_argument_read
                                 || (direct_collection_mutation_receiver(&probe.expression)
                                     .is_none()
@@ -3800,6 +3859,9 @@ pub(in crate::analysis) fn file_imports_foreign_callee_name(
     crate_names: &std::collections::BTreeSet<String>,
 ) -> bool {
     use_statements_import_foreign_callee_name(&file_use_statements(source), callee, crate_names)
+        // #7985: a macro that may define an item of the name rebinds it as
+        // an import does, for every direct caller of this shared gate.
+        || super::macro_item_names::macro_may_define_item_named(source, callee)
 }
 
 /// The crate-identifier form of a manifest name: hyphens normalize to
@@ -3822,9 +3884,31 @@ fn crate_identifier(name: &str) -> String {
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct FileUseStatements {
     by_file: std::cell::RefCell<std::collections::BTreeMap<std::path::PathBuf, Vec<String>>>,
+    /// #7985: per file and name, whether a macro invocation may define an
+    /// item of that name.
+    macro_defined:
+        std::cell::RefCell<std::collections::BTreeMap<(std::path::PathBuf, String), bool>>,
 }
 
 impl FileUseStatements {
+    /// #7985: whether a macro in `source` may define an item named
+    /// `callee`, which makes a bare call of the name ambiguous exactly as a
+    /// foreign import does. Scanned once per file and name.
+    pub(in crate::analysis) fn macro_may_define_callee_name(
+        &self,
+        file: &std::path::Path,
+        source: &str,
+        callee: &str,
+    ) -> bool {
+        let key = (file.to_path_buf(), callee.to_string());
+        if let Some(known) = self.macro_defined.borrow().get(&key) {
+            return *known;
+        }
+        let defined = super::macro_item_names::macro_may_define_item_named(source, callee);
+        self.macro_defined.borrow_mut().insert(key, defined);
+        defined
+    }
+
     /// `use_statements_import_foreign_callee_name` over `source`'s statements,
     /// scanning `source` only on the first query for `file`. Every caller
     /// must pass the indexed source that `file` resolves to.
@@ -3865,6 +3949,8 @@ fn all_use_statements(masked: &str) -> Vec<String> {
             && bytes.get(index + 1) == Some(&b's')
             && bytes.get(index + 2) == Some(&b'e')
             && (index == 0 || !is_ident_byte(bytes[index - 1]))
+            // A raw identifier `r#use` is not the keyword (#7936).
+            && !(index >= 2 && bytes[index - 1] == b'#' && bytes[index - 2] == b'r')
             && bytes[index + 3..]
                 .first()
                 .is_some_and(|byte| byte.is_ascii_whitespace());
@@ -4212,13 +4298,31 @@ pub(in crate::analysis) fn contains_as_whole_word(text: &str, token: &str) -> bo
     false
 }
 
-fn finalize_related_tests(mut related: Vec<RelatedTest>) -> (Vec<RelatedTest>, usize) {
+/// Dedup, rank and cap the related-test rows.
+///
+/// #8387: tests the diff touches may now lead the capped render window ahead
+/// of untouched tests in the same confidence tier, so the primary related
+/// test and the repair target can change by design. No row is added or
+/// lifted a tier.
+fn finalize_related_tests(
+    mut related: Vec<RelatedTest>,
+    diff_touched: Option<&super::DiffTouchedTests>,
+) -> (Vec<RelatedTest>, usize) {
     related.sort_by(|a, b| a.name.cmp(&b.name).then(a.line.cmp(&b.line)));
     related.dedup_by(|a, b| a.name == b.name && a.oracle == b.oracle);
     // Renderers present the first entry as the primary related test, so the
     // strongest relation leads. The sort is stable: name and line order holds
     // within one confidence tier, and the dedup above is unchanged.
-    related.sort_by_key(|test| std::cmp::Reverse(related_test_rank(test)));
+    //
+    // #8387: within one confidence tier a test the diff itself adds or
+    // changes leads, ahead of name order and ahead of the render cap below.
+    // A test counts as touched when the diff adds a line inside its span
+    // (`line` is its start line; matching is span-aware). Ranking only: no
+    // row is added or lifted a tier.
+    let touched = |test: &RelatedTest| {
+        diff_touched.is_some_and(|touched| touched.touches(&test.file, test.line))
+    };
+    related.sort_by_key(|test| (std::cmp::Reverse(related_test_rank(test)), !touched(test)));
     // #5344: tests listed only as examined misses are packed separately and
     // only into slots the oracle rows leave free, so the oracle rows, their
     // order and their packing are exactly what they were before misses were
@@ -4226,6 +4330,12 @@ fn finalize_related_tests(mut related: Vec<RelatedTest>) -> (Vec<RelatedTest>, u
     // readiness) reads this window.
     let (mut oracle_rows, unmatched): (Vec<_>, Vec<_>) =
         related.into_iter().partition(|test| !test.is_unmatched());
+    // #8386: a bare `.unwrap()`/`.expect()` setup statement is not the
+    // decisive oracle when the same test also has a real matched assertion;
+    // listing both rows quoted the setup as a "smoke only" miss beside the
+    // test's actual assertion. The row is dropped only in that case, so a
+    // test whose sole oracle is the unwrap/expect stays listed as smoke.
+    drop_setup_unwrap_rows_beside_assertions(&mut oracle_rows);
     // Same post-dedup row unit as before; retain the total separately without
     // exposing discarded rows to downstream evidence/target selection.
     let matched_total = oracle_rows.len() + unmatched.len();
@@ -4241,6 +4351,51 @@ fn finalize_related_tests(mut related: Vec<RelatedTest>) -> (Vec<RelatedTest>, u
 }
 
 const RELATED_TESTS_RENDER_CAP: usize = 8;
+
+/// True for an extracted smoke row whose text is a bare `x.unwrap()` or
+/// `x.expect("..")` statement rather than an assertion macro. Such a row is
+/// test setup that the extractor counts as a smoke check (#8386).
+fn is_bare_unwrap_expect_row(test: &RelatedTest) -> bool {
+    if test.oracle_kind != OracleKind::SmokeOnly || test.oracle_strength != OracleStrength::Smoke {
+        return false;
+    }
+    let Some(text) = test.oracle.as_deref() else {
+        return false;
+    };
+    let text = text.trim().trim_end_matches(';').trim_end();
+    !text.contains("assert")
+        && !text.contains("matches!")
+        && !text.contains('\n')
+        && (text.ends_with(".unwrap()") || ends_with_expect_of_one_literal(text))
+}
+
+/// `recv.expect("message")`, where the argument is exactly one string
+/// literal. Anything else (a chained call, an escaped quote) stays a row.
+fn ends_with_expect_of_one_literal(text: &str) -> bool {
+    let Some((_, rest)) = text.rsplit_once(".expect(") else {
+        return false;
+    };
+    rest.strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix("\")"))
+        .is_some_and(|message| !message.contains(['"', '\\']))
+}
+
+/// Remove bare unwrap/expect setup rows from tests that also have another
+/// matched oracle row, so each such test reports its real assertion alone.
+fn drop_setup_unwrap_rows_beside_assertions(rows: &mut Vec<RelatedTest>) {
+    let with_real_oracle: std::collections::BTreeSet<(String, std::path::PathBuf, usize)> = rows
+        .iter()
+        .filter(|test| test.oracle.is_some() && !is_bare_unwrap_expect_row(test))
+        .map(|test| (test.name.clone(), test.file.clone(), test.line))
+        .collect();
+    if with_real_oracle.is_empty() {
+        return;
+    }
+    rows.retain(|test| {
+        !(is_bare_unwrap_expect_row(test)
+            && with_real_oracle.contains(&(test.name.clone(), test.file.clone(), test.line)))
+    });
+}
 
 fn pack_unique_tests_first(related: Vec<RelatedTest>, cap: usize) -> Vec<RelatedTest> {
     let mut packed = Vec::with_capacity(cap.min(related.len()));
@@ -4869,6 +5024,40 @@ mod tests {
         let value_side = "fn case() {\n    let mut shelf = Shelf::new();\n    shelf.stock = BTreeMap::from([(\"B\", \"A\")]);\n    shelf.restock(\"A\", 2);\n    assert_eq!(shelf.stock.len(), 2);\n}";
         assert!(confirms(value_side, "assert_eq!(shelf.stock.len(), 2);", 5));
     }
+
+    /// #6640 (spec0231-oracle-events-sent-len-eq): `send(&mut events, 7)`
+    /// followed by `assert_eq!(events.len(), 1)` pins the count, not the
+    /// pushed id — a `push(id + 1)` mutant passes it. The count read must
+    /// confirm only a deleted push, never the payload; payload reads and
+    /// wrong-receiver refusals are unchanged.
+    #[test]
+    fn direct_collection_count_read_confirms_only_call_deletion() {
+        let confirms = |count_reads: bool, assertion_text: &str| {
+            let test = test_with_body_assertions(
+                "send_records_one_event",
+                "fn send_records_one_event() {\n    let mut events = Vec::new();\n    send(&mut events, 7);\n}",
+                vec![oracle(
+                    assertion_text,
+                    OracleKind::ExactValue,
+                    OracleStrength::Strong,
+                )],
+            );
+            collection_observer_confirms(
+                "events.push(0 + id)",
+                count_reads,
+                &test,
+                &test.assertions[0],
+            )
+        };
+        assert!(!confirms(false, "assert_eq!(events.len(), 1);"));
+        assert!(!confirms(false, "assert!(events.is_empty());"));
+        assert!(confirms(true, "assert_eq!(events.len(), 1);"));
+        assert!(confirms(false, "assert_eq!(events, vec![7]);"));
+        assert!(confirms(false, "assert_eq!(events[0], 7);"));
+        assert!(confirms(false, "assert_eq!(events.contains(&7), true);"));
+        assert!(!confirms(true, "assert_eq!(other.len(), 1);"));
+        assert!(!confirms(false, "assert_eq!(other, vec![7]);"));
+    }
     /// RIPR-SPEC-0228 keyed reads: a `#[should_panic]` test passes when the
     /// compared values differ, so it never confirms a keyed read.
     #[test]
@@ -5228,34 +5417,141 @@ mod tests {
         }
     }
 
+    fn smoke_row(name: &str, line: usize, text: &str) -> RelatedTest {
+        RelatedTest {
+            oracle: Some(text.to_string()),
+            oracle_kind: OracleKind::SmokeOnly,
+            oracle_strength: OracleStrength::Smoke,
+            ..related(name, line, Some(RelationReason::DirectOwnerCall))
+        }
+    }
+
+    fn oracle_texts(rows: &[RelatedTest]) -> Vec<(&str, &str)> {
+        rows.iter()
+            .map(|row| (row.name.as_str(), row.oracle.as_deref().unwrap_or("")))
+            .collect()
+    }
+
+    /// #8386: `let v = f().unwrap(); assert_eq!(v, ..)` is one test; the
+    /// setup statement must not appear as a second, "smoke only" row.
+    #[test]
+    fn setup_unwrap_row_is_dropped_beside_the_same_tests_assertion() {
+        let (finalized, total) = finalize_related_tests(
+            vec![
+                smoke_row("parses_small", 3, "parse(\"5\").unwrap();"),
+                RelatedTest {
+                    oracle: Some("assert_eq!(v, 5);".to_string()),
+                    ..related("parses_small", 3, Some(RelationReason::DirectOwnerCall))
+                },
+                smoke_row("setup_expect", 9, "parse(\"5\").expect(\"parses\");"),
+                RelatedTest {
+                    oracle: Some("assert!(v.is_ok());".to_string()),
+                    oracle_kind: OracleKind::SmokeOnly,
+                    oracle_strength: OracleStrength::Smoke,
+                    ..related("setup_expect", 9, Some(RelationReason::DirectOwnerCall))
+                },
+            ],
+            None,
+        );
+        assert_eq!(
+            oracle_texts(&finalized),
+            vec![
+                ("parses_small", "assert_eq!(v, 5);"),
+                ("setup_expect", "assert!(v.is_ok());")
+            ]
+        );
+        assert_eq!(total, 2);
+    }
+
+    /// The drop is conditional: a test whose only oracle is the unwrap, a
+    /// same-named test elsewhere, a real smoke assertion and a chained call
+    /// all stay listed.
+    #[test]
+    fn setup_unwrap_row_stays_when_it_is_the_tests_only_oracle() {
+        let (finalized, total) = finalize_related_tests(
+            vec![
+                smoke_row("only_unwrap", 3, "parse(\"5\").unwrap();"),
+                smoke_row("other_test", 20, "parse(\"5\").unwrap();"),
+                RelatedTest {
+                    file: PathBuf::from("tests/other.rs"),
+                    oracle: Some("assert_eq!(v, 5);".to_string()),
+                    ..related("other_test", 20, Some(RelationReason::DirectOwnerCall))
+                },
+                smoke_row("chained", 30, "parse(\"5\").unwrap().len();"),
+                smoke_row(
+                    "chained",
+                    30,
+                    "parse(\"5\").expect(\"a\").expect(\"b\").len();",
+                ),
+                smoke_row("real_smoke", 40, "assert!(parse(\"5\").is_ok());"),
+                smoke_row("real_smoke", 40, "parse(\"5\").unwrap();"),
+            ],
+            None,
+        );
+        assert_eq!(total, 6);
+        let mut got: Vec<(String, String, String)> = finalized
+            .iter()
+            .map(|row| {
+                (
+                    row.name.clone(),
+                    row.file.display().to_string(),
+                    row.oracle.clone().unwrap_or_default(),
+                )
+            })
+            .collect();
+        got.sort();
+        let row = |n: &str, f: &str, o: &str| (n.to_string(), f.to_string(), o.to_string());
+        let mut want = vec![
+            row("only_unwrap", "tests/lib.rs", "parse(\"5\").unwrap();"),
+            row("other_test", "tests/lib.rs", "parse(\"5\").unwrap();"),
+            row("other_test", "tests/other.rs", "assert_eq!(v, 5);"),
+            row("chained", "tests/lib.rs", "parse(\"5\").unwrap().len();"),
+            row(
+                "chained",
+                "tests/lib.rs",
+                "parse(\"5\").expect(\"a\").expect(\"b\").len();",
+            ),
+            row(
+                "real_smoke",
+                "tests/lib.rs",
+                "assert!(parse(\"5\").is_ok());",
+            ),
+        ];
+        want.sort();
+        assert_eq!(got, want);
+    }
+
     /// Renderers show the first related test as the primary one, so the
     /// finalized order must lead with the strongest relation rather than
     /// the alphabetically first name.
     #[test]
     fn finalized_related_tests_lead_with_the_strongest_relation() {
-        let (finalized, _) = finalize_related_tests(vec![
-            related(
-                "a_same_file_neighbor",
-                3,
-                Some(RelationReason::SameTestFile),
-            ),
-            related("b_unknown_origin", 5, None),
-            related(
-                "c_direct_owner_call",
-                9,
-                Some(RelationReason::DirectOwnerCall),
-            ),
-            related(
-                "c_direct_owner_call",
-                9,
-                Some(RelationReason::DirectOwnerCall),
-            ),
-            related(
-                "d_direct_owner_call",
-                1,
-                Some(RelationReason::DirectOwnerCall),
-            ),
-        ]);
+        let (finalized, _) = finalize_related_tests(
+            vec![
+                related(
+                    "a_same_file_neighbor",
+                    3,
+                    Some(RelationReason::SameTestFile),
+                ),
+                related("b_unknown_origin", 5, None),
+                related(
+                    "c_direct_owner_call",
+                    9,
+                    Some(RelationReason::DirectOwnerCall),
+                ),
+                related(
+                    "c_direct_owner_call",
+                    9,
+                    Some(RelationReason::DirectOwnerCall),
+                ),
+                related(
+                    "d_direct_owner_call",
+                    1,
+                    Some(RelationReason::DirectOwnerCall),
+                ),
+            ],
+            None,
+        );
         let names: Vec<&str> = finalized.iter().map(|test| test.name.as_str()).collect();
         let ranks: Vec<u8> = finalized.iter().map(related_test_rank).collect();
         let mut descending = ranks.clone();
@@ -5264,6 +5560,66 @@ mod tests {
         assert_eq!(names.first(), Some(&"c_direct_owner_call"));
         assert_eq!(names.last(), Some(&"b_unknown_origin"));
         assert_eq!(names.len(), 4, "duplicate entries still dedup: {names:?}");
+    }
+
+    /// #8387: a test the diff adds or changes leads its confidence tier and
+    /// survives the render cap, but is never lifted above a higher tier.
+    #[test]
+    fn finalized_related_tests_lead_with_diff_touched_tests_within_a_tier() {
+        let mut input: Vec<_> = (0..10)
+            .map(|index| {
+                related(
+                    &format!("case_{index:02}"),
+                    10 + index,
+                    Some(RelationReason::WeakTokenSubstring),
+                )
+            })
+            .collect();
+        input.push(related(
+            "strong_direct_call",
+            1,
+            Some(RelationReason::DirectOwnerCall),
+        ));
+        let files = [crate::analysis::diff::ChangedFile {
+            path: input[9].file.clone(),
+            added_lines: vec![crate::analysis::diff::ChangedLine {
+                line: 19,
+                text: String::new(),
+                new_side_line: 19,
+            }],
+            removed_lines: Vec::new(),
+        }];
+        let tests = [TestSummary {
+            name: "case_09".to_string(),
+            file: input[9].file.clone(),
+            start_line: 19,
+            end_line: 25,
+            body: Default::default(),
+            calls: Vec::new(),
+            assertions: Vec::new(),
+            literals: Vec::new(),
+            attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+        }];
+        let touched =
+            crate::analysis::classify::DiffTouchedTests::from_changed_files(&files, &tests);
+        assert!(
+            touched.touches(&input[9].file, 19),
+            "setup: case_09 touched"
+        );
+
+        let (plain, _) = finalize_related_tests(input.clone(), None);
+        assert!(
+            plain.iter().all(|test| test.name != "case_09"),
+            "setup: without the diff signal the cap drops case_09: {plain:?}"
+        );
+
+        let (ranked, total) = finalize_related_tests(input, Some(&touched));
+        let names: Vec<&str> = ranked.iter().map(|test| test.name.as_str()).collect();
+        assert_eq!(total, 11);
+        assert_eq!(names[0], "strong_direct_call", "a higher tier still leads");
+        assert_eq!(names[1], "case_09", "the touched test leads its tier");
     }
 
     #[test]
@@ -5278,7 +5634,7 @@ mod tests {
                     )
                 })
                 .collect();
-            let (packed, total) = finalize_related_tests(input.clone());
+            let (packed, total) = finalize_related_tests(input.clone(), None);
             assert_eq!(total, count);
             assert_eq!(packed.len(), count.min(RELATED_TESTS_RENDER_CAP));
             let previous_prefix = if count > RELATED_TESTS_RENDER_CAP {
@@ -5306,7 +5662,7 @@ mod tests {
         let mut second_oracle = first;
         second_oracle.oracle = Some("assert_eq!(different_observer, 2);".to_string());
         input.push(second_oracle); // A distinct oracle row remains the count unit.
-        let (packed, total) = finalize_related_tests(input);
+        let (packed, total) = finalize_related_tests(input, None);
         assert_eq!(total, 10);
         assert_eq!(packed.len(), 8);
         assert_eq!(
@@ -5919,6 +6275,7 @@ mod tests {
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
                 },
+                None,
                 None,
             )
             .owner_pin_credited
@@ -8367,6 +8724,25 @@ return Err(\"typed pin\".into());
         );
     }
 
+    /// #7985: the shared gate (also read by the owner-pin callers) treats a
+    /// macro that may define the name as a rebind; an unrelated macro is not.
+    #[test]
+    fn macro_defined_same_name_is_a_foreign_rebind_for_every_gate_caller() {
+        let crate_names = std::collections::BTreeSet::new();
+        let defines = "macro_rules! fake {\n    () => { fn expect_response() {} };\n}\nfake!();\n";
+        assert!(file_imports_foreign_callee_name(
+            defines,
+            "expect_response",
+            &crate_names
+        ));
+        let unrelated = defines.replace("fn expect_response", "fn other_name");
+        assert!(!file_imports_foreign_callee_name(
+            &unrelated,
+            "expect_response",
+            &crate_names
+        ));
+    }
+
     /// #3731 review (G1): the cross-package same-name defeat threads
     /// through the same per-test path as the import defeat — when the
     /// test's own package defines the callee's name while the changed
@@ -9956,6 +10332,95 @@ return Err(\"typed pin\".into());
                 OracleStrength::Strong,
                 "a non-empty expectation against {family:?}"
             );
+        }
+    }
+
+    #[test]
+    fn seeded_collection_expectations_cap_effect_families_only_after_an_early_exit() {
+        for family in [ProbeFamily::SideEffect, ProbeFamily::CallDeletion] {
+            let probe = probe(family.clone(), "items.push(5)");
+            let seeded = test_with_body_assertions(
+                "keeps_seeded_items",
+                "let mut items = vec![9];\n    record(&mut items);\n    assert_eq!(items, vec![9]);",
+                vec![oracle(
+                    "assert_eq!(items, vec![9]);",
+                    OracleKind::WholeObjectEquality,
+                    OracleStrength::Strong,
+                )],
+            );
+            let (discriminate, strength) = reveal_evidence_with_exit(&probe, &seeded, true);
+            assert_eq!(
+                discriminate.state,
+                StageState::Weak,
+                "a seeded expectation against {family:?} must not read exposed after a skippable push"
+            );
+            assert_eq!(strength, OracleStrength::Weak, "{family:?}");
+            assert!(
+                discriminate.summary.contains("observation_unverified"),
+                "a seeded expectation against {family:?} must not confirm a skipped push: got `{}`",
+                discriminate.summary
+            );
+            // Without an earlier exit the push ran and the same seeded
+            // expectation keeps its strength.
+            let (discriminate, strength) = reveal_evidence_with_exit(&probe, &seeded, false);
+            assert_eq!(
+                discriminate.state,
+                StageState::Yes,
+                "a seeded expectation against {family:?} must stay exposed when the push cannot be skipped"
+            );
+            assert_eq!(strength, OracleStrength::Strong, "{family:?}");
+            // An expectation that includes the pushed value discriminates
+            // the push even when the owner may exit early.
+            let appended = test_with_assertions(
+                "logs_seed_and_push",
+                vec![oracle(
+                    "assert_eq!(items, vec![9, 5]);",
+                    OracleKind::WholeObjectEquality,
+                    OracleStrength::Strong,
+                )],
+            );
+            let (discriminate, strength) = reveal_evidence_with_exit(&probe, &appended, true);
+            assert_eq!(
+                discriminate.state,
+                StageState::Yes,
+                "an expectation holding the pushed value against {family:?} must stay exposed"
+            );
+            assert_eq!(strength, OracleStrength::Strong, "{family:?}");
+            // An expectation that differs from the seeded state
+            // discriminates the push: the skipped push leaves vec![8].
+            let differing = test_with_body_assertions(
+                "expects_more_than_the_seed",
+                "let mut items = vec![8];\n    record(&mut items);\n    assert_eq!(items, vec![9]);",
+                vec![oracle(
+                    "assert_eq!(items, vec![9]);",
+                    OracleKind::WholeObjectEquality,
+                    OracleStrength::Strong,
+                )],
+            );
+            let (discriminate, strength) = reveal_evidence_with_exit(&probe, &differing, true);
+            assert_eq!(
+                discriminate.state,
+                StageState::Yes,
+                "an expectation differing from the seed against {family:?} must stay exposed"
+            );
+            assert_eq!(strength, OracleStrength::Strong, "{family:?}");
+            // Without a spelled-out seed construction, an expectation
+            // that merely looks seeded keeps its credit.
+            let unseeded = test_with_assertions(
+                "expects_the_pushed_value",
+                vec![oracle(
+                    "assert_eq!(items, vec![9]);",
+                    OracleKind::WholeObjectEquality,
+                    OracleStrength::Strong,
+                )],
+            );
+            let (discriminate, strength) = reveal_evidence_with_exit(&probe, &unseeded, true);
+            assert_eq!(
+                discriminate.state,
+                StageState::Yes,
+                "an expectation with no seeded construction against {family:?} must stay exposed"
+            );
+            assert_eq!(strength, OracleStrength::Strong, "{family:?}");
         }
     }
 

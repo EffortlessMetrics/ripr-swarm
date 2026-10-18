@@ -162,6 +162,9 @@ impl LspSession {
         let binary = env!("CARGO_BIN_EXE_ripr");
         let mut child = Command::new(binary)
             .args(["lsp", "--stdio"])
+            // Cases already run in parallel. Keep a real multi-thread runtime
+            // without multiplying host-sized or inherited scheduler pools.
+            .env("TOKIO_WORKER_THREADS", "2")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             // Tracing output is not part of the wire contract; dropping
@@ -337,8 +340,14 @@ impl LspSession {
 
 impl Drop for LspSession {
     fn drop(&mut self) {
-        // An orphaned `ripr lsp --stdio` server holds file locks and breaks
-        // later builds; always kill and reap, ignoring "already exited".
+        // Closing stdin lets the server exit on its own; give an exiting
+        // instrumented process time to finish writing its coverage profile
+        // before the owned kill, which would otherwise truncate it (#4978).
+        self.stdin = None;
+        let grace = Instant::now() + Duration::from_secs(2);
+        while matches!(self.child.try_wait(), Ok(None)) && Instant::now() < grace {
+            std::thread::sleep(Duration::from_millis(10));
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -960,6 +969,31 @@ fn stdin_eof_before_initialize_still_exits() -> Result<(), String> {
     Err(format!(
         "expected exit code 0 when stdin closes before initialize, got: {status}"
     ))
+}
+
+#[test]
+fn zero_length_frame_does_not_delay_the_next_reply() -> Result<(), String> {
+    let mut session = LspSession::spawn()?;
+    // The tower-lsp codec treats an empty body as "no message" and leaves the
+    // bytes after it buffered; without the transport's read split, a request
+    // written in the same burst is answered only once more input or EOF
+    // arrives. Send the empty frame and a valid request in ONE write.
+    let id = session.next_id;
+    session.next_id += 1;
+    let init = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "initialize",
+        "params": initialize_params(),
+    })
+    .to_string();
+    let mut burst = b"Content-Length: 0\r\n\r\n".to_vec();
+    burst.extend_from_slice(format!("Content-Length: {}\r\n\r\n{init}", init.len()).as_bytes());
+    session.send_raw(&burst)?;
+    let response = session.await_response(id, RESPONSE_TIMEOUT)?;
+    expect_result(&response, "initialize")?;
+    session.notify("initialized", Some(serde_json::json!({})))?;
+    shutdown_exit_and_wait(&mut session)
 }
 
 #[test]

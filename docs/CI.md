@@ -38,6 +38,53 @@ workflow shell with the production policy binary and real Git histories, and
 exercise the checked-in job predicates and dependency wiring; they do not claim
 hosted Actions or wheel qualification.
 
+## Merge-ready label flow
+
+The non-required lanes gated by `merge-ready` do not run on a Draft or plain Ready
+PR without the label.
+Routed Rust Small, ub-review, the Python wheel workflow and source-of-truth still
+follow their own triggers until #4984/#8082 integrate them. Agents and authors prove
+the change locally ([validation](agent-context/validation.md#local-and-hosted-proof)),
+publish a Draft, and add the `merge-ready` label last. Adding `merge-ready`
+starts the non-required lanes once for the head it was applied to. A later push
+to a labeled PR does not rerun them: re-apply the label (remove it, then add it
+again) once the new head is ready to qualify. Removing the label does not cancel
+runs already in flight. Only a `merge-ready` labeled request shares a concurrency
+group, so re-applying the label supersedes the older run for that PR; a push or any
+other label event runs in its own group, skips its jobs, and neither cancels nor
+replaces a pending request. A push therefore does not cancel the older head's
+run: re-apply the label for the new head and let the older run finish or be
+superseded.
+
+- Auxiliary labels (`full-ci`, `windows-ci`, `vscode`, `coverage`,
+  `clippy-future`, `release-check`) still select extra lanes, but only together
+  with `merge-ready`. Add them first; one added after `merge-ready` takes effect
+  only when `merge-ready` is re-applied.
+- Gated: `ci.yml` jobs, `coverage`, `test-analytics`, `future-clippy`,
+  `windows-advisory` (both jobs), `macos-advisory`, `security`, `printed-command-paste`,
+  `npm-launcher`, `zed-extension`, `pilot-ranking` and `public-proof`. Push,
+  schedule and manual runs are unchanged.
+- Not changed here: the required `Ripr Rust Small Result` (still requested by
+  `ready_for_review`), `ub-review` (its triggers are pinned by
+  `pr_readiness_workflow_contract`), the Python wheel workflow, and
+  `source-of-truth`. Their cutover is tracked under #4984.
+
+### What starts what (until #8082 lands)
+
+| Action on a PR | Required `Ripr Rust Small Result` | Gated optional lanes |
+| --- | --- | --- |
+| Push to a Draft or Ready PR | no | no |
+| Draft -> Ready (`ready_for_review`) | yes, once for that head | no |
+| Add `merge-ready` (`labeled`) | no | yes, once for that head |
+| Push after Ready | no: re-toggle Draft -> Ready | no: re-apply `merge-ready` |
+| Any other label | no | no |
+
+The required check is still requested by Draft -> Ready, not by the label.
+Moving it onto `merge-ready` is the #8082 cutover (its admission job); gating the
+required job by label in a separate change would let a skipped required job
+report success. A brief Draft flip followed by Ready on a PR is this re-toggle,
+not an error.
+
 ## Verification Economics Policy
 
 CI is a product surface. A contributor should be able to tell what ran, why it
@@ -142,8 +189,10 @@ schedule/merge queue), not the default PR path.
 ### 4) Hosted fallback boundary
 
 - Do **not** remove, narrow, or relabel the current protected GitHub-hosted
-  Rust-small fallback without updating the routed-runner docs, active-goal
-  state, and branch-protection contract in the same PR.
+  Rust-small fallback without updating the routed-runner docs and the
+  branch-protection contract in the same PR (the retired active-goal state
+  left with the `.ripr/goals/` scheduler in #1701 and has no successor to
+  update).
 - The current routed Rust-small workflow may select GitHub-hosted when a PR is
   untrusted, runner state cannot be read, or no idle image-ready CX53/CX43
   runner is available. That result remains a valid protected-path success while
@@ -304,6 +353,7 @@ implement and validate the lane-selection logic.
 
 | Label | Effect |
 | --- | --- |
+| `merge-ready` | Start pull-request CI for the non-required lanes. The gated lanes do not run on a Draft or plain Ready PR without this label (Routed Rust Small, ub-review, wheel and source-of-truth keep their own triggers). It is a per-head request: a later push to a labeled PR does not rerun the lanes; remove and re-add the label for the new head. Add auxiliary labels (`full-ci`, `windows-ci`, ...) first, then `merge-ready`; they have no effect without it. Does not change the required `Ripr Rust Small Result` (#4984). |
 | `full-ci` | Run required, advisory, and release-like lanes. Demotes `ripr-waive` for this PR. Expected to cost more. For Routed Rust Small, read at the next Draft -> Ready transition. |
 | `release-check` | Run the currently wired release-surface proof without opting into every `full-ci` lane: package list, publish dry-run, unlocked install resolution, and release-readiness. |
 | `vscode` | Run editor extension lanes even when no editor path changed. |
@@ -356,9 +406,8 @@ and single-platform CI was the root cause enabling both.
   false-confidence condition it exists to prevent.
 - **Selection.** A daily schedule for standing signal, `workflow_dispatch`, and
   pull requests labeled `windows-ci` or `full-ci`.
-- **Always-on subset (#4938).** Every subscribed `pull_request` action
-  (`opened`, `synchronize`, `reopened`, `labeled`; `unlabeled` stays omitted
-  per #4380) also runs `windows-advisory-subset`, a fast advisory Windows job
+- **Merge-ready subset (#4938).** The `labeled` event for `merge-ready` on a
+  PR also runs `windows-advisory-subset`, a fast advisory Windows job
   (`lsp::gap_artifacts` and Cargo-home identity lib tests, the #4918 cache-warning smoke, and
   `cargo clippy -p ripr --all-targets`) under the same advisory contract as
   the lane. It does not gate merges; #4337, #4918, and #4921 were each caught
@@ -447,6 +496,25 @@ class, it reproduces on the hosted runner: two independent `windows-latest` runs
 produced the identical `timed out waiting for response id 3`, and it reproduces
 5 of 5 on a Windows developer host. That is the lane doing its job — a platform
 question that could not be settled from one machine, settled by CI.
+
+### Advisory macOS Lane
+
+`.github/workflows/macos-advisory.yml` (#8391) gives CI a native macOS cargo
+signal. Before it, the only macOS jobs built and archived the server or pasted
+printed commands, so macOS-only dead code behind `cfg(target_os = "linux")`
+gating (#8055, #8060), `/var` -> `/private/var` temp paths and APFS case or
+normalization behavior surfaced only on a maintainer's local run.
+
+- **What runs.** On `macos-15`: `cargo clippy -p ripr -p xtask --all-targets
+  -- -D warnings` and `cargo test -p ripr --lib --no-fail-fast`. The integration
+  suites are not part of this lane.
+- **Contract.** Clippy and test outcomes are advisory and appear in the job
+  summary. A missing log or exit status, or a library run that executed zero
+  tests, fails the job. It is not a required check.
+- **Selection.** A daily schedule, `workflow_dispatch`, and pull requests
+  labeled `macos-ci` or `full-ci` when `merge-ready` is applied (same guard
+  shape as the merge-ready label flow in #4984/#8327; add `macos-ci` first,
+  `merge-ready` last, and re-apply `merge-ready` for a later head).
 
 ### Advisory Printed-Command Paste Lane
 
@@ -603,13 +671,14 @@ allocate the heavy required gate (#4986):
 
 ```text
 opened / reopened / synchronize while Draft:
-  no Routed Rust Small run; existing early advisory events remain separate
+  no Routed Rust Small run; the merge-ready-gated lanes skip as well
 
 ready_for_review (Draft -> Ready):
   the sole pull-request qualification request; validates the exact Ready head
 
 labeled / unlabeled (any label):
   no Routed Rust Small run; labels never create or refresh the required context
+  (only `labeled` of `merge-ready` admits the gated non-required lanes)
 
 push to main / workflow_dispatch:
   launch under their own authorities, unchanged
@@ -729,12 +798,19 @@ cargo xtask release-readiness --version "$release_version"
 The unlocked install resolution step builds the packaged crate the way
 `cargo install ripr` without `--locked` does: it unpacks the `.crate`, deletes
 its `Cargo.lock`, re-resolves, and checks. It catches a dependency that only
-compiles under the committed lock (#3787):
+compiles under the committed lock (#3787). The Actions Bash step uses errexit;
+each prerequisite is a separate command so its failure stops the step before
+the final check (#8330):
 
 ```bash
 cargo package -p ripr --no-verify
-tar xzf "target/package/ripr-$release_version.crate" -C "$RUNNER_TEMP"
-cd "$RUNNER_TEMP/ripr-$release_version" && rm Cargo.lock && cargo generate-lockfile
+package_id="$(cargo pkgid -p ripr)"
+package_version="${package_id##*#}"
+test -n "$package_version"
+tar xzf "target/package/ripr-$package_version.crate" -C "$RUNNER_TEMP"
+cd "$RUNNER_TEMP/ripr-$package_version"
+rm Cargo.lock
+cargo generate-lockfile
 cargo check --target-dir "$RUNNER_TEMP/unlocked-target"
 ```
 
@@ -745,10 +821,12 @@ feature set (#2400, #3128) on Linux:
 cargo test -p ripr --locked --no-default-features --features lang-rust --no-fail-fast
 ```
 
-It runs on every push to `main` or `master`, on manual dispatch, and on pull
-request `opened`, `synchronize`, and `reopened` events whose diff touches
+It runs on every push to `main` or `master`, on manual dispatch, and on
+the `labeled` event for `merge-ready` on a pull request
+whose diff touches
 `crates/`, `fixtures/`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain*`, or
-`.cargo/`. Label events and other pull requests skip the compile. It is not
+`.cargo/`. Other label events, unlabeled pull requests and other pull requests
+skip the compile. It is not
 a required check. The Windows advisory lane runs the same command on Windows.
 The selector compares the immutable pull-request event base and head commits,
 not the synthetic merge checkout, so unrelated main-branch Rust changes do not
@@ -1138,7 +1216,7 @@ ripr init --ci github
 
 Copy the generated file, not a workflow from this page. Run
 `ripr init --ci github --dry-run` to print it without writing anything. It
-uploads the pilot, report, and agent artifact directories. The official GitHub
+uploads `target/ripr` (pilot, workflow, agent, report and review artifacts) and `target/ci` as the `ripr-reports` artifact. The official GitHub
 SARIF upload documentation uses `github/codeql-action/upload-sarif@v4`; keep
 the RIPR job, artifact upload, and optional SARIF steps advisory until the
 repository has chosen a baseline policy.
@@ -1336,15 +1414,25 @@ configure the workflow, so changing a mode never means editing the file:
   nothing and leaves findings in artifacts; `plan` computes and uploads a
   comment plan without posting; `inline` publishes inline review comments on
   changed lines.
+- `RIPR_SUMMARY_COMMENT` controls the one summary comment on the pull request
+  conversation. `true` (the default) posts a short digest of the changed-behavior
+  findings and updates that same comment on every push, so a reviewer sees the
+  result without opening the Actions run; `false` turns it off. A clean pull
+  request gets no comment, and a comment left by an earlier push is updated to
+  say the findings are gone. It is skipped for fork and Dependabot pull
+  requests, whose token cannot write; those still get the job summary, check
+  annotations and SARIF. Only the comment `github-actions[bot]` posted is ever
+  updated.
 - `RIPR_UPLOAD_SARIF` is set in the file, not as a variable. `"true"` uploads
   SARIF to the Security tab; set `"false"` if the repository does not use code
   scanning.
 
 Permissions and job settings:
 
-- `pull-requests: write` is used only when `RIPR_COMMENT_MODE` is `inline`.
-  With `off`, nothing writes to the pull request; set it to `read` if you keep
-  comments off.
+- `pull-requests: write` is used by the summary comment and by
+  `RIPR_COMMENT_MODE=inline`. If you set `RIPR_SUMMARY_COMMENT` to `false` and
+  keep `RIPR_COMMENT_MODE` at `off`, nothing writes to the pull request; set it
+  to `read` then.
 - `security-events: write` is used only for the SARIF upload. Remove it and set
   `RIPR_UPLOAD_SARIF` to `"false"` if the repository does not use code
   scanning.
@@ -1400,6 +1488,17 @@ Steps:
   another author must not suppress a RIPR card or be PATCHed by this job.
 - **Run RIPR** is the one command above. It reads no token; the comment steps
   around it hold that.
+- **Publish RIPR summary comment** pipes the pull request's conversation
+  comments into `ripr pr-comments summary`, which renders the digest and writes
+  one POST (or a PATCH of the bot's earlier comment); the step sends it with
+  `gh api`. It is `continue-on-error` and skips fork and Dependabot heads.
+  Two known limits: it runs only when `Run RIPR` left
+  `target/ripr/review/comments.json`, so if that step fails before writing it,
+  an earlier push's comment stays as it was (stale) rather than being marked
+  incomplete; and two overlapping runs can each find no earlier comment and
+  post two, after which the later runs update only the first. Concurrency
+  groups on the workflow narrow the race; neither is a correctness claim about
+  the code under review.
 - **Publish RIPR inline comments** runs `ripr pr-comments requests`, which turns
   the publish plan into an ordered list of GitHub API requests (updates first,
   then one review for new cards), and the step sends each one with `gh api`.

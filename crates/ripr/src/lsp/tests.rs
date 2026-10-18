@@ -404,6 +404,7 @@ where
 }
 
 #[test]
+#[serial]
 fn watched_diagnostics_inputs_register_root_anchored_and_refresh_over_the_wire()
 -> Result<(), String> {
     work_done_progress_runtime()?.block_on(async {
@@ -9398,6 +9399,12 @@ async fn did_open_matching_disk_bytes_with_stale_committed_snapshot_keeps_refres
             "a clean open over matching committed snapshot bytes reached the scheduler".into(),
         );
     }
+    if backend.document_quarantine(&uri).is_some() {
+        return Err(
+            "a clean open of bytes the committed snapshot analyzed must not be quarantined as never analyzed"
+                .into(),
+        );
+    }
 
     // The file changed on disk while it was closed and no watch event
     // arrived. The reopened buffer matches the new persisted bytes, so the
@@ -11854,6 +11861,56 @@ fn workspace_folder_transitions_second_folder_becomes_ambiguous_without_fallback
                     "an ambiguous workspace must block repair authority: {status}"
                 ));
             }
+            // #7461: the recovery route must name the end state the user can
+            // actually produce (one folder plus a restart), not a phantom
+            // root-selection step — no server command, setting, or request
+            // selects a root.
+            if status["root_recovery_route"].as_str()
+                != Some("use_single_workspace_root_and_restart")
+            {
+                return Err(format!(
+                    "an ambiguous workspace must route to a single-root restart: {status}"
+                ));
+            }
+            let full = client.run_command(COLLECT_WORKSPACE_STATUS_COMMAND).await?;
+            if full["top_limitation"]["recovery_route"].as_str()
+                != Some("use_single_workspace_root_and_restart")
+            {
+                return Err(format!(
+                    "the ambiguous top limitation must route to a single-root restart: {full}"
+                ));
+            }
+            // The hover carries the same actionable recovery: remove the
+            // extra folder (or give each repository its own window), then
+            // restart the server.
+            let hover_file = file_uri_for_path(&root_a.path().join("src").join("lib.rs"))?;
+            let id = client.request_id();
+            write_lsp_message(
+                &mut client.writer,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "method": "textDocument/hover",
+                    "params": {
+                        "textDocument": {"uri": hover_file.as_str()},
+                        "position": {"line": 0, "character": 0}
+                    }
+                }),
+            )
+            .await?;
+            let hover = read_lsp_response(&mut client.reader, id).await?;
+            let value = hover["result"]["contents"]["value"]
+                .as_str()
+                .unwrap_or_default();
+            if !value.contains("analysis is stopped (workspace_ambiguous)")
+                || !value.contains("Remove the extra folder")
+                || !value.contains("restart the language server")
+                || !value.contains("ripr: Select Workspace Root")
+            {
+                return Err(format!(
+                    "the ambiguous hover must name the real recovery: {hover}"
+                ));
+            }
             client.finish().await
         },
     )
@@ -12406,6 +12463,155 @@ fn a_reload_that_breaks_ripr_toml_is_shown_once_without_source_text() -> Result<
             serde_json::json!({"jsonrpc": "2.0", "method": "exit", "params": null}),
         )
         .await
+    })
+}
+
+/// Collect the `window/showMessage` params sent during `refreshes`
+/// explicit refreshes in one framed session (#8583). A `base_ref` that
+/// cannot resolve makes the real analysis fail fast, the same forcing the
+/// work-done-progress wire tests use.
+async fn refresh_show_messages(
+    root: &Path,
+    capabilities: serde_json::Value,
+    base_ref: &str,
+    refreshes: u64,
+) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>), String> {
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    let (mut reader, mut writer) = tokio::io::split(client_io);
+    let (server_read, server_write) = tokio::io::split(server_io);
+    let backend_root = root.to_path_buf();
+    let (service, socket) =
+        LspService::new(move |client| Backend::new(client, backend_root.clone()));
+    let mut server_task = tokio::spawn(async move {
+        Server::new(server_read, server_write, socket)
+            .serve(service)
+            .await;
+    });
+    let root_uri = file_uri_for_path(root)?;
+    let result = async {
+        write_lsp_message(
+            &mut writer,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": { "baseRef": base_ref, "checkMode": "instant" },
+                    "capabilities": capabilities
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut reader, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        write_lsp_message(
+            &mut writer,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+        let mut shown = Vec::new();
+        let mut statuses = Vec::new();
+        for index in 0..refreshes {
+            let notifications =
+                run_wire_refresh_collecting(&mut reader, &mut writer, 2 + index).await?;
+            shown.extend(
+                notifications
+                    .iter()
+                    .filter(|message| {
+                        message.get("method").and_then(serde_json::Value::as_str)
+                            == Some("window/showMessage")
+                    })
+                    .map(|message| message["params"].clone()),
+            );
+            statuses.extend(analysis_status_params(&notifications));
+        }
+        Ok::<_, String>((shown, statuses))
+    }
+    .await;
+    let shutdown =
+        shutdown_framed_session(&mut reader, &mut writer, &mut server_task, 2 + refreshes).await;
+    let (shown, statuses) = result?;
+    shutdown?;
+    Ok((shown, statuses))
+}
+
+#[test]
+fn generic_client_analysis_failure_is_shown_once_and_only_to_generic_clients() -> Result<(), String>
+{
+    // #8583: a generic editor renders neither the log nor
+    // `ripr/analysisStatus`, so a failed analysis must reach it on the
+    // standard channel, once per distinct failure. The VS Code
+    // integration renders the failure from its status, and a successful
+    // analysis shows nothing.
+    work_done_progress_runtime()?.block_on(async {
+        let root = boundary_gap_git_fixture_root("analysis-failure-shown")?;
+
+        let (shown, statuses) = refresh_show_messages(
+            root.path(),
+            serde_json::json!({}),
+            "ripr-lsp-progress-missing-base",
+            2,
+        )
+        .await?;
+        if !statuses
+            .iter()
+            .any(|status| status["state"] == "failed" && status["failure"]["message"].is_string())
+        {
+            return Err(format!(
+                "the forced failure must reach the status payload: {statuses:?}"
+            ));
+        }
+        if shown.len() != 1 {
+            return Err(format!(
+                "an unchanged failure must be shown exactly once to a generic client: {shown:?}"
+            ));
+        }
+        let text = shown[0]["message"].as_str().unwrap_or_default();
+        if shown[0]["type"].as_u64() != Some(2)
+            || !text.contains("workspace analysis failed")
+            || text.chars().count() > 241
+            || text.contains('\n')
+        {
+            return Err(format!(
+                "the shown failure must be a bounded one-line warning: {shown:?}"
+            ));
+        }
+
+        let (shown, statuses) = refresh_show_messages(
+            root.path(),
+            serde_json::json!({"experimental": {"riprEditor": {"version": "0.1", "commands": []}}}),
+            "ripr-lsp-progress-missing-base",
+            1,
+        )
+        .await?;
+        if !statuses.iter().any(|status| status["state"] == "failed") {
+            return Err(format!(
+                "the forced failure must reach the status payload: {statuses:?}"
+            ));
+        }
+        if !shown.is_empty() {
+            return Err(format!(
+                "the riprEditor integration renders the failure from its status: {shown:?}"
+            ));
+        }
+
+        let (shown, statuses) =
+            refresh_show_messages(root.path(), serde_json::json!({}), "HEAD", 1).await?;
+        if statuses.iter().any(|status| status["state"] == "failed") {
+            return Err(format!(
+                "a valid base ref must not fail the analysis: {statuses:?}"
+            ));
+        }
+        if !shown.is_empty() {
+            return Err(format!(
+                "a successful analysis must not be shown: {shown:?}"
+            ));
+        }
+        Ok(())
     })
 }
 
@@ -20457,6 +20663,7 @@ async fn run_wire_refresh_with_progress_capability(
 }
 
 #[test]
+#[serial]
 fn work_done_progress_failed_end_through_real_refresh_on_broken_workspace() -> Result<(), String> {
     work_done_progress_runtime()?.block_on(async {
         let root = unique_lsp_test_root("progress-analysis-error")?;
@@ -20566,6 +20773,7 @@ fn work_done_progress_failed_end_through_real_refresh_on_broken_workspace() -> R
 }
 
 #[test]
+#[serial]
 fn work_done_progress_capability_absent_refresh_emits_no_traffic() -> Result<(), String> {
     work_done_progress_runtime()?.block_on(async {
         let root = unique_lsp_test_root("progress-capability-absent")?;
@@ -22330,16 +22538,37 @@ async fn did_save_without_text_during_unknown_buffer_authority_holds_the_quarant
     // bookkeeping under test runs before and after each send regardless.
     drop(socket);
     let backend = service.inner();
+    // A selected workspace root is what lets a save schedule a refresh at all;
+    // without it the scheduling assertion below could not discriminate.
+    backend
+        .initialize(initialize_params(
+            None,
+            Some(file_uri_for_path(&fixture.root)?),
+        ))
+        .await
+        .map_err(|err| format!("initialize failed: {err}"))?;
     backend
         .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
         .await;
     commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
 
+    // Diverge the retained buffer from the persisted bytes first, so the
+    // buffer digest and the recorded saved digest are distinct. Without this
+    // the frozen buffer still equals the persisted text and an implementation
+    // that fell back to the buffer for the save identity would record the same
+    // digest, passing the assertions below vacuously.
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.uri_a,
+            2,
+            QUARANTINE_TEXT_A_DIRTY,
+        ))
+        .await;
     // A rejected incremental change (position past the line end) disowns the
     // retained buffer and enters the fail-closed quarantine.
     backend
         .did_change(DidChangeTextDocumentParams {
-            text_document: VersionedTextDocumentIdentifier::new(fixture.uri_a.clone(), 2),
+            text_document: VersionedTextDocumentIdentifier::new(fixture.uri_a.clone(), 3),
             content_changes: vec![TextDocumentContentChangeEvent {
                 range: Some(Range {
                     start: Position {
@@ -22372,6 +22601,10 @@ async fn did_save_without_text_during_unknown_buffer_authority_holds_the_quarant
     // observe the persisted bytes. It must adopt no save identity from the
     // disowned buffer and hold the quarantine across both the save and the
     // refresh commit the save schedules (#1746).
+    let saves_before = backend
+        .refresh_scheduler_for_test()
+        .telemetry()
+        .did_save_requests;
     backend
         .did_save(DidSaveTextDocumentParams {
             text_document: TextDocumentIdentifier {
@@ -22394,6 +22627,16 @@ async fn did_save_without_text_during_unknown_buffer_authority_holds_the_quarant
     if state.saved_digest.as_deref() != Some(content_digest(QUARANTINE_TEXT_A.as_bytes()).as_str())
     {
         return Err("saved identity must stay the persisted bytes".to_string());
+    }
+    if backend
+        .refresh_scheduler_for_test()
+        .telemetry()
+        .did_save_requests
+        != saves_before + 1
+    {
+        return Err(
+            "the unobserved save must still schedule the persisted-file re-analysis".to_string(),
+        );
     }
     commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
     let state = backend

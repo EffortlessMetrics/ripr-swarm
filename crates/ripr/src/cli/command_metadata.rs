@@ -26,7 +26,7 @@
 //! - workflow memberships: a closed tag set in [`WORKFLOW_TAGS`], promoted to
 //!   the typed workflow catalog by #4824
 //!   ([`crate::cli::workflow_catalog`]) and never re-derived from prose;
-//! - process exit contract: [`CommandExitContract`], projected into
+//! - ordinary command-completion exit contract: [`CommandExitContract`], projected into
 //!   `help --json` (RIPR-SPEC-0190 / #5066). Orchestrator-branching rows
 //!   must match the implemented `CommandError` / `gate evaluate` mapping
 //!   in `docs/EXIT_CODES.md`; other described rows are completed-or-failed
@@ -136,12 +136,13 @@ pub(crate) struct CommandOutputs {
     pub(crate) optional: &'static [&'static str],
 }
 
-/// Per-command process-exit contract projected into `help --json` (#5066).
+/// Ordinary command-completion contract projected into `help --json` (#5066).
 ///
 /// The numeric 0/2/3 mapping is owned by [`crate::cli::CommandError`] and
 /// `docs/EXIT_CODES.md`. This enum names which of those codes a command can
 /// emit and the stdout disclosure an orchestrator must know. It is not a
-/// runtime mutation of any command's exit path.
+/// runtime mutation of any command's exit path. External standalone interruption
+/// (130 or native signal termination) is separate; see `docs/EXIT_CODES.md`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CommandExitContract {
     /// Standard contract: `0` completed, `2` could not complete. Never `3`.
@@ -362,10 +363,13 @@ const METADATA: &[CommandMetadata] = &[
         primary_inputs: &["the selected repository root"],
         outputs: CommandOutputs {
             default: Some("ripr.toml"),
-            optional: &[".github/workflows/ripr.yml with --ci github"],
+            optional: &[
+                ".github/workflows/ripr.yml with --ci github",
+                ".mcp.json with --mcp",
+            ],
         },
         state_target: Some(
-            "ripr.toml, plus the repository's GitHub Actions workflow set with --ci",
+            "ripr.toml, plus the repository's GitHub Actions workflow set with --ci and .mcp.json with --mcp",
         ),
         json_support: false,
         example: "ripr init",
@@ -1031,6 +1035,30 @@ const METADATA: &[CommandMetadata] = &[
         stop_states: &["an unsafe plan writes no requests and prints why"],
         exit: EXIT_COMPLETED_OR_FAILED,
         limitations: "writes request files only; the workflow step that holds the token makes the calls.",
+        not_applicable_reason: None,
+    },
+    CommandMetadata {
+        id: "cmd:pr-comments.summary",
+        summary: "Write the request that posts or updates the one PR summary comment.",
+        task: "Compose PR evidence",
+        workflows: &["review"],
+        operation: CommandOperation::WritesArtifacts,
+        cost: CommandCost::Small,
+        effects: READS_ONLY,
+        primary_inputs: &["review-comments JSON and the PR conversation comments"],
+        outputs: CommandOutputs {
+            default: Some("target/ripr/review/summary/summary.tsv"),
+            optional: &[],
+        },
+        state_target: None,
+        json_support: true,
+        example: "ripr pr-comments summary --root . --pull-request 7 --head-sha 0123abcd --raw -",
+        next_routes: &[],
+        stop_states: &[
+            "a clean pull request with no earlier summary comment writes an empty manifest",
+        ],
+        exit: EXIT_COMPLETED_OR_FAILED,
+        limitations: "writes the request file only; the workflow step that holds the token makes the call.",
         not_applicable_reason: None,
     },
     CommandMetadata {

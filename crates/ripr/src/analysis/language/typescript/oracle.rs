@@ -347,8 +347,16 @@ pub(crate) fn collect_expect_assertions_in_statement(
         Statement::TryStatement(try_stmt) => {
             // A handler can swallow a synchronous assertion failure or an
             // awaited matcher rejection. Without proving that it rethrows,
-            // the protected body cannot supply a discriminator (#8242).
-            if try_stmt.handler.is_none() {
+            // the protected body cannot supply a discriminator (#8242). A
+            // finalizer that can return, throw, or break/continue out of the
+            // try replaces the body's and handler's completion, discarding
+            // their failure, so neither supplies one either (#8508). The
+            // finalizer's own assertions stay independent.
+            let finalizer_replaces = try_stmt
+                .finalizer
+                .as_ref()
+                .is_some_and(|finalizer| finalizer_can_replace_completion(&finalizer.body));
+            if try_stmt.handler.is_none() && !finalizer_replaces {
                 collect_expect_assertions_from_statement_vec(
                     &try_stmt.block.body,
                     source,
@@ -356,7 +364,9 @@ pub(crate) fn collect_expect_assertions_in_statement(
                     out,
                 );
             }
-            if let Some(handler) = &try_stmt.handler {
+            if let Some(handler) = &try_stmt.handler
+                && !finalizer_replaces
+            {
                 collect_expect_assertions_from_statement_vec(
                     &handler.body.body,
                     source,
@@ -373,6 +383,109 @@ pub(crate) fn collect_expect_assertions_in_statement(
         }
         _ => {}
     }
+}
+
+/// Jump targets open while walking a finalizer, so a `break`/`continue` that
+/// stays inside the finalizer is told apart from one that leaves the `try`.
+#[derive(Default)]
+struct FinalizerJumpScope<'s> {
+    loops: usize,
+    breakables: usize,
+    labels: Vec<&'s str>,
+}
+
+/// Whether a `finally` block can replace the completion of its `try`: any
+/// `return` or `throw` outside a nested function, or a `break`/`continue`
+/// whose target lies outside the block. Deliberately over-approximate (a
+/// `throw` caught inside the finalizer still counts): the answer only
+/// withholds oracle credit, never grants it (#8508).
+fn finalizer_can_replace_completion(statements: &[Statement<'_>]) -> bool {
+    let mut scope = FinalizerJumpScope::default();
+    statements
+        .iter()
+        .any(|stmt| statement_can_replace_completion(stmt, &mut scope))
+}
+
+fn statement_can_replace_completion<'s>(
+    stmt: &'s Statement<'_>,
+    scope: &mut FinalizerJumpScope<'s>,
+) -> bool {
+    match stmt {
+        Statement::ReturnStatement(_) | Statement::ThrowStatement(_) => true,
+        Statement::BreakStatement(jump) => match &jump.label {
+            Some(label) => !scope.labels.contains(&label.name.as_str()),
+            None => scope.breakables == 0,
+        },
+        Statement::ContinueStatement(jump) => match &jump.label {
+            Some(label) => !scope.labels.contains(&label.name.as_str()),
+            None => scope.loops == 0,
+        },
+        Statement::BlockStatement(block) => block
+            .body
+            .iter()
+            .any(|stmt| statement_can_replace_completion(stmt, scope)),
+        Statement::IfStatement(if_stmt) => {
+            statement_can_replace_completion(&if_stmt.consequent, scope)
+                || if_stmt
+                    .alternate
+                    .as_ref()
+                    .is_some_and(|alternate| statement_can_replace_completion(alternate, scope))
+        }
+        Statement::DoWhileStatement(inner) => in_loop(scope, &inner.body),
+        Statement::WhileStatement(inner) => in_loop(scope, &inner.body),
+        Statement::ForStatement(inner) => in_loop(scope, &inner.body),
+        Statement::ForInStatement(inner) => in_loop(scope, &inner.body),
+        Statement::ForOfStatement(inner) => in_loop(scope, &inner.body),
+        Statement::LabeledStatement(labeled) => {
+            scope.labels.push(labeled.label.name.as_str());
+            let escapes = statement_can_replace_completion(&labeled.body, scope);
+            scope.labels.pop();
+            escapes
+        }
+        Statement::SwitchStatement(switch_stmt) => {
+            scope.breakables += 1;
+            let escapes = switch_stmt.cases.iter().any(|case| {
+                case.consequent
+                    .iter()
+                    .any(|stmt| statement_can_replace_completion(stmt, scope))
+            });
+            scope.breakables -= 1;
+            escapes
+        }
+        Statement::TryStatement(try_stmt) => {
+            try_stmt
+                .block
+                .body
+                .iter()
+                .any(|stmt| statement_can_replace_completion(stmt, scope))
+                || try_stmt.handler.as_ref().is_some_and(|handler| {
+                    handler
+                        .body
+                        .body
+                        .iter()
+                        .any(|stmt| statement_can_replace_completion(stmt, scope))
+                })
+                || try_stmt.finalizer.as_ref().is_some_and(|finalizer| {
+                    finalizer
+                        .body
+                        .iter()
+                        .any(|stmt| statement_can_replace_completion(stmt, scope))
+                })
+        }
+        Statement::WithStatement(with_stmt) => {
+            statement_can_replace_completion(&with_stmt.body, scope)
+        }
+        _ => false,
+    }
+}
+
+fn in_loop<'s>(scope: &mut FinalizerJumpScope<'s>, body: &'s Statement<'_>) -> bool {
+    scope.loops += 1;
+    scope.breakables += 1;
+    let escapes = statement_can_replace_completion(body, scope);
+    scope.loops -= 1;
+    scope.breakables -= 1;
+    escapes
 }
 
 /// RIPR-SPEC-0250 rule 1: a Jest `toMatchObject(<name>)` whose argument
@@ -483,6 +596,11 @@ fn collect_nested_callback_assertions(
             let [callback] = call.arguments.as_slice() else {
                 return;
             };
+            // A generator callback only creates an iterator when invoked:
+            // its body never runs, so it cannot supply assertion credit.
+            if callback_is_generator(callback) {
+                return;
+            }
             let span = member.object().span();
             let Some(receiver) = text.get(span.start as usize..span.end as usize) else {
                 return;
@@ -603,6 +721,14 @@ fn callback_is_async_or_generator(callback: &oxc_ast::ast::Argument<'_>) -> bool
         }
         _ => true,
     }
+}
+
+/// `true` for a generator (or async generator) function callback.
+fn callback_is_generator(callback: &oxc_ast::ast::Argument<'_>) -> bool {
+    matches!(
+        callback,
+        oxc_ast::ast::Argument::FunctionExpression(function) if function.generator
+    )
 }
 
 /// The source text of an arrow or function callback's body.

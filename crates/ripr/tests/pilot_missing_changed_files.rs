@@ -19,6 +19,7 @@ const HIDDEN_BASE: &str = "pub fn hidden(n: u32) -> bool {\n    n > 10\n}\n";
 const HIDDEN_CHANGE: &str = "pub fn hidden(n: u32) -> bool {\n    n >= 10\n}\n";
 const PRESENT_BASE: &str = "pub fn present(n: u32) -> bool {\n    n > 20\n}\n";
 const PRESENT_CHANGE: &str = "pub fn present(n: u32) -> bool {\n    n >= 20\n}\n";
+const ABSENT_RECOVERY: &str = "Check out the missing file, disable sparse checkout for it, or restore a regular source file under real directories below the selected root, then re-run the analysis.";
 
 struct Fixture {
     root: PathBuf,
@@ -358,6 +359,7 @@ fn assert_absent(pilot: &Pilot) {
             text.lines().any(|line| {
                 line.contains("changed_file_absent_from_worktree")
                     && line.contains("src/z_hidden.rs")
+                    && line.contains(ABSENT_RECOVERY)
             }),
             "a named missing-file disclosure is required on both user surfaces: {text}"
         );
@@ -390,6 +392,7 @@ fn assert_restored(pilot: &Pilot) -> Result<(), String> {
             !text.contains("changed_file_absent_from_worktree"),
             "stale absence disclosure after restore: {text}"
         );
+        assert!(!text.contains(ABSENT_RECOVERY), "stale recovery: {text}");
         assert!(
             !text.contains("may have seams pilot did not see"),
             "successful full change recovery must clear change uncertainty: {text}"
@@ -799,7 +802,125 @@ fn assert_absent_paths(pilot: &Pilot, expected: &[&str]) {
         assert_eq!(paths.len(), warnings.len(), "unparsed warning: {text}");
         paths.sort_unstable();
         assert_eq!(paths, expected, "wrong human absence population: {text}");
+        for warning in warnings {
+            assert!(warning.contains(ABSENT_RECOVERY), "{warning}");
+        }
+        if expected.is_empty() {
+            assert!(!text.contains(ABSENT_RECOVERY), "stale recovery: {text}");
+        }
     }
+}
+
+#[test]
+fn pilot_partial_vendor_restoration_preserves_diff_policy_and_cache_identity() -> Result<(), String>
+{
+    let vendor = "src/third_party/dependency.rs";
+    let marker = "src/third_party/.cargo-checksum.json";
+    for capped in [false, true] {
+        let mut fixture = fixture("pilot-partial-vendor-restoration", false)?;
+        fixture.seam_limit = capped.then_some("1");
+        std::fs::create_dir_all(fixture.root.join("src/third_party"))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(fixture.root.join(vendor), HIDDEN_BASE)
+            .map_err(|error| error.to_string())?;
+        let lib = fixture.root.join("src/lib.rs");
+        let mut source = std::fs::read_to_string(&lib).map_err(|error| error.to_string())?;
+        source.push_str("#[path = \"third_party/dependency.rs\"] pub mod dependency;\n");
+        std::fs::write(lib, source).map_err(|error| error.to_string())?;
+        run_git(&fixture.root, &["add", "."])?;
+        run_git(&fixture.root, &["commit", "-m", "vendor baseline"])?;
+        run_git(
+            &fixture.root,
+            &["update-ref", "refs/remotes/origin/main", "HEAD"],
+        )?;
+        std::fs::write(fixture.root.join(vendor), HIDDEN_CHANGE)
+            .map_err(|error| error.to_string())?;
+        std::fs::write(fixture.root.join(marker), "{}\n").map_err(|error| error.to_string())?;
+        // Keep a real changed handwritten predicate as the positive ranking control.
+        std::fs::write(fixture.root.join("src/z_hidden.rs"), HIDDEN_BASE)
+            .map_err(|error| error.to_string())?;
+        run_git(&fixture.root, &["add", "."])?;
+        run_git(
+            &fixture.root,
+            &["commit", "-m", "vendor and handwritten change"],
+        )?;
+        let identity = committed_identity(&fixture.root)?;
+        assert!(identity.1.contains(vendor) && identity.1.contains(marker));
+        let cache = fixture.scratch.join("cache");
+        for stage in [
+            "regular",
+            "both-missing",
+            "source-restored",
+            "both-restored",
+        ] {
+            if stage == "both-missing" {
+                run_git(&fixture.root, &["sparse-checkout", "init", "--no-cone"])?;
+                run_git(
+                    &fixture.root,
+                    &[
+                        "sparse-checkout",
+                        "set",
+                        "--no-cone",
+                        "/*",
+                        "!/src/third_party/dependency.rs",
+                        "!/src/third_party/.cargo-checksum.json",
+                    ],
+                )?;
+            } else if stage == "source-restored" {
+                run_git(
+                    &fixture.root,
+                    &[
+                        "sparse-checkout",
+                        "set",
+                        "--no-cone",
+                        "/*",
+                        "!/src/third_party/.cargo-checksum.json",
+                    ],
+                )?;
+            } else if stage == "both-restored" {
+                run_git(&fixture.root, &["sparse-checkout", "disable"])?;
+            }
+            assert_eq!(fixture.root.join(vendor).is_file(), stage != "both-missing");
+            assert_eq!(
+                fixture.root.join(marker).is_file(),
+                matches!(stage, "regular" | "both-restored")
+            );
+            assert_eq!(committed_identity(&fixture.root)?, identity);
+            let ordinary_before = repo_inventory(&fixture, &cache)?;
+            let result = pilot(&fixture, &cache, 2)?;
+            assert_absent_paths(&result, &[]);
+            assert_restored(&result)?;
+            let report = read_json(&fixture.scratch.join("out/repo-exposure.json"))?;
+            let seams = report["seams"].as_array().ok_or("missing pilot subjects")?;
+            assert!(!seams.is_empty(), "{report:#}");
+            assert!(
+                seams.iter().all(|seam| seam["file"] != vendor),
+                "excluded vendor source re-entered pilot on {stage}, capped={capped}: {report:#}"
+            );
+            if !capped {
+                assert_eq!(
+                    report.get("artifact").is_some(),
+                    stage != "source-restored",
+                    "contextual corpus comparability on {stage}: {report:#}"
+                );
+            }
+            // Contextual selected bytes stay identical even as canonical membership changes.
+            assert_cache_hit(&result);
+            let warm = pilot(&fixture, &cache, 2)?;
+            assert_absent_paths(&warm, &[]);
+            assert_cache_hit(&warm);
+            assert_eq!(semantic_summary(&warm), semantic_summary(&result));
+            let cold = pilot(&fixture, &fixture.scratch.join(format!("cold-{stage}")), 2)?;
+            assert_absent_paths(&cold, &[]);
+            assert_eq!(semantic_summary(&cold), semantic_summary(&result));
+            assert_eq!(
+                repo_inventory(&fixture, &cache)?,
+                ordinary_before,
+                "pilot changed the ordinary classified cache on {stage}"
+            );
+        }
+    }
+    Ok(())
 }
 
 #[test]

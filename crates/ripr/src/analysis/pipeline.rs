@@ -10,7 +10,7 @@ use super::language::{
 };
 use super::{
     AnalysisOptions, AnalysisResult, LanguageRun, LanguageRunStatus, PreviewLanguageAdvisory, diff,
-    sort, summary,
+    preview_family_names, sort, summary,
 };
 use crate::analysis::cancellation;
 use crate::analysis::committed_source;
@@ -201,6 +201,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
         if let Some(overlay) = overlay {
             result.uncommitted_source_paths = overlay.dirty_source_paths();
             result.untracked_source_paths = overlay.untracked_source_paths();
+            result.ignored_source_paths = overlay.ignored_source_paths();
         }
         result.analyzed_revisions = analyzed_revisions;
         bind_effective_base(&mut result, loaded.effective_base)?;
@@ -348,9 +349,12 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
                 }
                 // RIPR-SPEC-0116: the working-tree diff covers tracked files
                 // only; name the untracked routed files it cannot contain so
-                // the output can say so.
-                let untracked =
-                    committed_source::untracked_routed_paths(&options.root, options.git_timeout);
+                // the output can say so. #7467: gitignored routed files are
+                // excluded from both diffs, so they are named the same way.
+                let excluded = committed_source::untracked_and_ignored_routed_paths(
+                    &options.root,
+                    options.git_timeout,
+                );
                 let analyzed = probe_base.as_deref().map(|base| {
                     // The loader already resolved the base commit and this
                     // diff's merge-base origin; reuse both instead of
@@ -364,7 +368,7 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
                         loaded_merge_base.as_deref(),
                     )
                 });
-                (untracked, analyzed)
+                (excluded, analyzed)
             })
         });
         #[cfg(test)]
@@ -377,10 +381,10 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
             language_config,
             &loaded.text,
         );
-        let (untracked, analyzed) = match probes.join() {
+        let (excluded, analyzed) = match probes.join() {
             Ok(pair) => pair,
             // A panicked probe worker fails closed exactly like a failed
-            // probe: the untracked disclosure refuses the run and the
+            // probe: the exclusion disclosure refuses the run and the
             // revision naming stays absent.
             Err(_) => (
                 Err("untracked-routed-files probe worker panicked"
@@ -390,7 +394,9 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
             ),
         };
         let mut result = result?;
-        result.untracked_source_paths = untracked?;
+        let (untracked, ignored) = excluded?;
+        result.untracked_source_paths = untracked;
+        result.ignored_source_paths = ignored;
         result.analyzed_revisions = analyzed;
         bind_effective_base(&mut result, loaded.effective_base)?;
         Ok(result)
@@ -1172,12 +1178,33 @@ fn run_pipeline_for_diff_text_with_language_config(
         if !advisory.enabled {
             // An adapter that is not compiled in cannot be enabled through
             // `ripr.toml`; the shared owner names the real prerequisites.
+            // A TypeScript-family advisory that routed JavaScript files says
+            // so: the same adapter analyzes both halves (#4908). TypeScript-
+            // only and other-language wording is unchanged.
+            let javascript_present =
+                advisory.language == "typescript" && advisory.javascript_file_count > 0;
+            let (adapter_name, files_name) = advisory.prose_names();
             let recovery = match advisory.unavailable_adapter_recovery() {
                 Some(recovery) => recovery,
+                None if javascript_present => format!(
+                    "Enable the {} preview adapter (the `typescript` entry in `[languages] enabled`) and re-run the analysis.",
+                    adapter_name
+                ),
                 None => format!(
                     "Enable the {} preview adapter and re-run the analysis.",
                     advisory.language
                 ),
+            };
+            let detail = if javascript_present {
+                format!(
+                    "{} changed {files_name} file(s), but the {adapter_name} preview adapter was not enabled or available",
+                    advisory.file_count
+                )
+            } else {
+                format!(
+                    "{} changed {} file(s), but the preview adapter was not enabled or available",
+                    advisory.language, advisory.file_count
+                )
             };
             limitations.push(
                 AnalysisLimitation::new(
@@ -1186,10 +1213,7 @@ fn run_pipeline_for_diff_text_with_language_config(
                     AnalysisRecovery::new(AnalysisRecoveryKind::EnableLanguage, recovery)?,
                 )
                 .with_affected_items(advisory.file_count as u64)?
-                .with_detail(format!(
-                    "{} changed {} file(s), but the preview adapter was not enabled or available",
-                    advisory.language, advisory.file_count
-                ))?,
+                .with_detail(detail)?,
             );
         }
     }
@@ -1210,7 +1234,12 @@ fn run_pipeline_for_diff_text_with_language_config(
         detect_preview_skipped_paths(languages, analysis_changed_files.iter(), language_config)
     {
         let listed = bounded_path_listing(&skipped);
-        let name = language.display_name();
+        let javascript_skipped = skipped
+            .iter()
+            .filter(|path| is_javascript_family_path(std::path::Path::new(path)))
+            .count();
+        let (name, files_name) =
+            preview_family_names(language.as_str(), skipped.len(), javascript_skipped);
         let config_section = match language {
             LanguageId::Python => "languages.python",
             _ => "languages.typescript",
@@ -1245,7 +1274,7 @@ fn run_pipeline_for_diff_text_with_language_config(
             )
             .with_affected_items(skipped.len() as u64)?
             .with_detail(format!(
-                "{} changed {name} file(s) were skipped by the preview adapter's generated \
+                "{} changed {files_name} file(s) were skipped by the preview adapter's generated \
                  or excluded-path rules: {listed}",
                 skipped.len()
             ))?,
@@ -1520,6 +1549,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         uncommitted_source_paths: Vec::new(),
         analyzed_revisions: None,
         untracked_source_paths: Vec::new(),
+        ignored_source_paths: Vec::new(),
         rust_diagnostic_origins,
         rust_consumed_sources,
     })
@@ -1738,6 +1768,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
         uncommitted_source_paths: Vec::new(),
         analyzed_revisions: None,
         untracked_source_paths: Vec::new(),
+        ignored_source_paths: Vec::new(),
         rust_diagnostic_origins,
         rust_consumed_sources,
     })
@@ -5352,6 +5383,65 @@ index 0000000..1111111 100644
         Ok(())
     }
 
+    /// #4908: the skipped-scope limitation names the files it skipped. A
+    /// JavaScript-only skip says JavaScript under the TypeScript/JavaScript
+    /// adapter, a mixed skip says TypeScript/JavaScript, and a TypeScript-only
+    /// skip keeps the exact existing wording.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn skipped_scope_limitation_names_javascript_only_when_javascript_files_are_skipped()
+    -> Result<(), String> {
+        let cases = [
+            (
+                "js-only",
+                vec!["vendor/a.js"],
+                "1 changed JavaScript file(s) were skipped",
+                "Not analyzed by the TypeScript/JavaScript preview adapter",
+            ),
+            (
+                "mixed",
+                vec!["vendor/a.js", "vendor/b.ts"],
+                "2 changed TypeScript/JavaScript file(s) were skipped",
+                "Not analyzed by the TypeScript/JavaScript preview adapter",
+            ),
+            (
+                "ts-only",
+                vec!["vendor/b.ts"],
+                "1 changed TypeScript file(s) were skipped",
+                "Not analyzed by the TypeScript preview adapter",
+            ),
+        ];
+        for (label, paths, expected_detail, expected_recovery) in cases {
+            let root = temp_root(&format!("issue-4908-skipped-{label}"))?;
+            let diff_file = root.join("change.diff");
+            write(&diff_file, &added_file_diff(&paths))?;
+            let result = run_diff_pipeline_with_oracle_policy(
+                &excluded_path_advisory_options(&root, diff_file),
+                &OraclePolicy::default(),
+                &[LanguageId::TypeScript],
+            )?;
+            let outcome = result
+                .analysis_outcome
+                .ok_or_else(|| format!("{label}: expected an analysis outcome"))?;
+            let limitation = outcome
+                .limitations
+                .iter()
+                .find(|limitation| {
+                    limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported
+                })
+                .ok_or_else(|| format!("{label}: expected the skipped-scope limitation"))?;
+            let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+            assert!(detail.starts_with(expected_detail), "{label}: {detail}");
+            assert!(
+                limitation.recovery.detail.starts_with(expected_recovery),
+                "{label}: {}",
+                limitation.recovery.detail
+            );
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        Ok(())
+    }
+
     /// #4372 (repo scope): the workspace-walk advisory applies the same
     /// authority. With TypeScript enabled, a vendored or `*.generated.*`
     /// file is not counted as analyzed; with it not enabled, the advisory
@@ -5680,6 +5770,115 @@ index 0000000..1111111 100644
                     .is_some_and(|detail| detail.contains("not enabled or available"))
         }));
         Ok(())
+    }
+
+    /// #4908: the not-enabled limitation names JavaScript when the routed
+    /// files are JavaScript, and keeps its exact TypeScript wording otherwise.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn not_enabled_limitation_names_javascript_only_when_javascript_files_are_present()
+    -> Result<(), String> {
+        let hunk = "@@ -1,0 +1,1 @@\n+export const value = 1;\n";
+        let file_diff = |path: &str| {
+            format!("diff --git a/{path} b/{path}\n--- /dev/null\n+++ b/{path}\n{hunk}")
+        };
+        let cases = [
+            ("js-only", vec!["src/a.js"], "1 changed JavaScript file(s)"),
+            (
+                "mixed",
+                vec!["src/a.js", "src/b.ts"],
+                "2 changed TypeScript/JavaScript file(s)",
+            ),
+            ("ts-only", vec!["src/b.ts"], "typescript changed 1 file(s)"),
+        ];
+        for (label, paths, expected_detail) in cases {
+            let root = temp_root(&format!("issue-4908-not-enabled-{label}"))?;
+            let diff_file = root.join("change.diff");
+            write(
+                &diff_file,
+                &paths.iter().map(|path| file_diff(path)).collect::<String>(),
+            )?;
+            let result = run_diff_pipeline_with_oracle_policy(
+                &AnalysisOptions {
+                    root,
+                    base: None,
+                    diff_file: Some(diff_file),
+                    mode: AnalysisMode::Draft,
+                    resolved_subject_identity: None,
+                    open_rust_index_paths: Default::default(),
+                    include_unchanged_tests: true,
+                    resolve_tsconfig_paths: false,
+                    perl_facts_path: None,
+                    perl_producer_failure: None,
+                    git_timeout: None,
+                    git_candidate: None,
+                    production_like_targets: Default::default(),
+                    test_harnesses: Vec::new(),
+                },
+                &OraclePolicy::default(),
+                &[LanguageId::Rust],
+            )?;
+            let outcome = result
+                .analysis_outcome
+                .ok_or_else(|| format!("{label}: expected an analysis outcome"))?;
+            let limitation = outcome
+                .limitations
+                .iter()
+                .find(|limitation| {
+                    limitation.kind == AnalysisLimitationKind::LanguageAdapterUnavailable
+                })
+                .ok_or_else(|| format!("{label}: expected the adapter limitation"))?;
+            let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+            assert!(detail.starts_with(expected_detail), "{label}: {detail}");
+            let recovery = &limitation.recovery.detail;
+            if label == "ts-only" {
+                assert_eq!(
+                    recovery, "Enable the typescript preview adapter and re-run the analysis.",
+                    "TypeScript-only wording must stay byte-identical"
+                );
+                assert!(
+                    detail.ends_with("but the preview adapter was not enabled or available"),
+                    "{label}: {detail}"
+                );
+            } else {
+                assert!(
+                    recovery.contains("TypeScript/JavaScript preview adapter"),
+                    "{label}: {recovery}"
+                );
+                assert!(
+                    detail.contains("TypeScript/JavaScript preview adapter was not enabled"),
+                    "{label}: {detail}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn preview_family_names_split_javascript_from_typescript() {
+        assert_eq!(
+            preview_family_names("typescript", 2, 0),
+            ("TypeScript".to_string(), "TypeScript".to_string())
+        );
+        assert_eq!(
+            preview_family_names("typescript", 2, 2),
+            (
+                "TypeScript/JavaScript".to_string(),
+                "JavaScript".to_string()
+            )
+        );
+        assert_eq!(
+            preview_family_names("typescript", 3, 1),
+            (
+                "TypeScript/JavaScript".to_string(),
+                "TypeScript/JavaScript".to_string()
+            )
+        );
+        assert_eq!(
+            preview_family_names("python", 2, 2),
+            ("Python".to_string(), "Python".to_string()),
+            "only the TypeScript family has a JavaScript half"
+        );
     }
 
     #[cfg(not(feature = "lang-perl"))]

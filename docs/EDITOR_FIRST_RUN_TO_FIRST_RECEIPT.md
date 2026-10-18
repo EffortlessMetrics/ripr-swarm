@@ -23,8 +23,9 @@ Open VSX, then open the repository root in VS Code.
 
 The normal editor install path should not require `cargo install ripr`. The
 extension resolves the server from, in order, `ripr.server.path`, a bundled
-server, a downloaded cached server, a verified first-run download, `ripr` on
-`PATH`, or an actionable error.
+server, a downloaded cached server, a compatible `ripr` on `PATH` (when
+`ripr.server.version` is empty), a verified first-run download, `ripr` on `PATH`
+as the fallback, or an actionable error.
 
 For a first Rust loop, no `ripr.toml` is required. Missing config is a normal
 first-run state; Rust remains enabled by default.

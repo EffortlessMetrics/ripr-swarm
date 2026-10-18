@@ -13,6 +13,60 @@ use crate::analysis::facts::RustIndex;
 use crate::analysis::probes::{BindingValueResolution, ChangedBindingPredicateUse};
 use crate::domain::{ExposureClass, Finding, Probe, StaticLimitKind, StopReason};
 
+/// #8479: disclose the field-selector boundary without altering any proof leg.
+pub(super) fn apply_rust_field_match_selector_limit(
+    finding: &mut Finding,
+    probe: &Probe,
+    index: &RustIndex,
+) {
+    use crate::domain::{OracleStrength, RelationReason, SourceCurrentness, StageState};
+    if finding.class != ExposureClass::WeaklyExposed
+        || finding.static_limit_kind.is_some()
+        || finding.source_currentness != SourceCurrentness::CandidateCurrent
+        || finding.ripr.reach.state != StageState::Yes
+        || finding.ripr.reveal.discriminate.state != StageState::Weak
+        // Exact supported sibling inputs already establish a real missing arm.
+        // Do not replace that producer evidence with an unresolved-value limit.
+        || crate::domain::input_boundary_fact(
+            &finding.activation.missing_discriminators,
+            &probe.family,
+        )
+        .is_some()
+        || !finding.oracle_related_tests().any(|test| {
+            test.relation_reason == Some(RelationReason::DirectOwnerCall)
+                && test.oracle_strength == OracleStrength::Strong
+                && test.oracle.is_some()
+        })
+    {
+        return;
+    }
+    let mut owners = index
+        .functions()
+        .iter()
+        .filter(|owner| probe.owner.as_ref() == Some(&owner.id));
+    let Some(owner) = owners.next() else {
+        return;
+    };
+    if owners.next().is_some() {
+        return;
+    }
+    let Some(selector) =
+        crate::analysis::classify::unresolved_parameter_field_selector(probe, owner)
+    else {
+        return;
+    };
+    finding.static_limit_kind = Some(StaticLimitKind::RustFieldMatchSelectorUnresolved);
+    finding.evidence.extend([
+        format!("limitation_last_established_edge: owner parameter field `{selector}` is the changed tail match selector"),
+        format!("limitation_first_unresolved_edge: `{selector}` value at the owner invocation and whether a related assertion observes that invocation's returned value"),
+        "limitation_analyzer_route: analysis/rust-field-match-selector".to_string(),
+        "limitation_non_claim: named analyzer limitation only; no coverage, test adequacy, gap absence, or same-invocation proof".to_string(),
+    ]);
+    finding.recommended_next_step = Some(format!(
+        "Inspect `{selector}` at the existing owner call and whether a related assertion observes that call's returned value; add or strengthen a test only if that inspection identifies a missing observation."
+    ));
+}
+
 /// Name the bounded value-propagation limitation from #3215 without
 /// pretending that syntax-first analysis proved the equality boundary.
 ///
@@ -569,6 +623,60 @@ mod tests {
             impl_context: Default::default(),
             item: Default::default(),
         }
+    }
+
+    #[test]
+    #[cfg(feature = "lang-rust")]
+    fn field_selector_metadata_preserves_facts_and_refuses_stale_or_prior_limits()
+    -> Result<(), String> {
+        use crate::domain::{RelationReason, SourceCurrentness};
+        let body = "fn charge(lease: &Lease) -> u64 {\n match lease.elapsed {\n Some(ms) => ms,\n None => 600,\n }\n}";
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner_function("src/lib.rs::charge", "charge", body)],
+            ..Default::default()
+        });
+        let mut original = static_unknown_finding("Some(ms) => ms,", "src/lib.rs::charge");
+        original.class = ExposureClass::WeaklyExposed;
+        original.probe.family = ProbeFamily::MatchArm;
+        original.probe.location.line = 3;
+        original.ripr.reveal.discriminate.state = StageState::Weak;
+        original.related_tests[0].relation_reason = Some(RelationReason::DirectOwnerCall);
+        original.related_tests[0].oracle_strength = OracleStrength::Strong;
+        original.related_tests[0].oracle = Some("assert_eq!(charge(&lease), 1)".to_string());
+        original.recommended_next_step = Some("old advice".to_string());
+        let probe = original.probe.clone();
+        let before = serde_json::to_value(&original).map_err(|err| err.to_string())?;
+        let mut named = original.clone();
+        super::apply_rust_field_match_selector_limit(&mut named, &probe, &index);
+        assert_eq!(
+            named.static_limit_kind,
+            Some(StaticLimitKind::RustFieldMatchSelectorUnresolved)
+        );
+        let mut after = serde_json::to_value(&named).map_err(|err| err.to_string())?;
+        for key in ["static_limit_kind", "evidence", "recommended_next_step"] {
+            after[key] = before[key].clone();
+        }
+        assert_eq!(after, before, "annotation must preserve every other fact");
+        for mode in 0..4 {
+            let mut refused = original.clone();
+            match mode {
+                0 => refused.source_currentness = SourceCurrentness::BaseDeleted,
+                1 => {
+                    refused.static_limit_kind =
+                        Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved)
+                }
+                2 => refused.related_tests[0].relation_reason = Some(RelationReason::SameTestFile),
+                _ => refused.related_tests[0].oracle_strength = OracleStrength::Weak,
+            }
+            let before = serde_json::to_value(&refused).map_err(|err| err.to_string())?;
+            super::apply_rust_field_match_selector_limit(&mut refused, &probe, &index);
+            assert_eq!(
+                serde_json::to_value(&refused).map_err(|err| err.to_string())?,
+                before,
+                "refusal mode {mode}"
+            );
+        }
+        Ok(())
     }
 
     #[test]

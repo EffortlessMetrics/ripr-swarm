@@ -118,7 +118,12 @@ pub(crate) fn collect_context_with_config_worktree_and_progress(
     } else {
         check_with_progress(input, config, AnalysisProgressScope::Diff, sink)?
     };
-    match select_finding(&output.findings, selector) {
+    match super::selector::select_finding_with_seam_reverse(
+        &output.findings,
+        &root,
+        config,
+        selector,
+    ) {
         FindingSelection::Unique(finding) => {
             Ok(output::json::render_context_packet_with_explain_command(
                 finding,

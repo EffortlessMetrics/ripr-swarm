@@ -596,6 +596,114 @@ fn a_match_pattern_bound_to_a_name_or_keyword_is_read() -> Result<(), String> {
 }
 
 #[test]
+fn a_literal_none_match_checks_no_message_in_either_framework() -> Result<(), String> {
+    // #7849: `match=None` and `assertRaisesRegex(E, None)` disable message
+    // matching, so only the exception class is pinned. Exact patterns and an
+    // omitted `match=` keep their existing verdicts.
+    assert_ne!(
+        parse_class(
+            "def test_parse():\n    with pytest.raises(ValueError, match=None):\n        parse(\"\")\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    let unittest = |pattern: &str| {
+        classify(
+            PARSE,
+            3,
+            PARSE_OLD,
+            &test_module(
+                "import unittest\n\nfrom src.shop import parse",
+                &format!(
+                    "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        with self.assertRaisesRegex(ValueError, {pattern}):\n            parse(\"\")\n"
+                ),
+            ),
+        )
+    };
+    // A name bound exactly once to `None` reads as `None`.
+    assert_ne!(
+        parse_class(
+            "def test_parse():\n    pattern = None\n    with pytest.raises(ValueError, match=pattern):\n        parse(\"\")\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // A second binding is not a single `None` assignment: the message
+    // stays checked.
+    assert_eq!(
+        parse_class(
+            "def test_parse():\n    pattern = None\n    pattern = \"empty\"\n    with pytest.raises(ValueError, match=pattern):\n        parse(\"\")\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    assert_ne!(unittest("None")?, ExposureClass::Exposed);
+    assert_ne!(unittest("expected_regex=None")?, ExposureClass::Exposed);
+    assert_eq!(unittest("\"empty\"")?, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn a_match_name_is_read_from_its_own_function_not_the_whole_file() -> Result<(), String> {
+    // The pattern name binds in the asserting function (plus module level),
+    // so a same-named assignment in another function neither hides it nor
+    // supplies it.
+    assert_ne!(
+        parse_class(
+            "def test_parse():\n    pattern = None\n    with pytest.raises(ValueError, match=pattern):\n        parse(\"\")\n\n\ndef test_other():\n    pattern = \"empty\"\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    let parametrized = |extra: &str| {
+        parse_class(&format!(
+            "@pytest.mark.parametrize(\"pattern\", [\"empty\"])\ndef test_parse(pattern):\n    with pytest.raises(ValueError, match=pattern):\n        parse(\"\")\n{extra}"
+        ))
+    };
+    assert_eq!(
+        parametrized("")?,
+        parametrized("\n\ndef test_other():\n    pattern = \".*\"\n")?
+    );
+    Ok(())
+}
+
+#[test]
+fn a_scoped_match_name_survives_signatures_line_endings_and_nesting() -> Result<(), String> {
+    let broad = |body: &str| -> Result<(), String> {
+        assert_ne!(parse_class(body)?, ExposureClass::Exposed, "{body}");
+        Ok(())
+    };
+    // A `#` inside a default string and a colon inside a default dict do not
+    // end the signature early and hide the body's binding.
+    broad(
+        "def test_parse(tag=\"#\", opts={\"k\": 1}):\n    pattern = \".*\"\n    with pytest.raises(ValueError, match=pattern):\n        parse(\"\")\n",
+    )?;
+    // CRLF line endings keep the byte offsets aligned.
+    broad(
+        &"def test_other():\n    pass\n\n\ndef test_parse():\n    pattern = \".*\"\n    with pytest.raises(ValueError, match=pattern):\n        parse(\"\")\n"
+            .replace('\n', "\r\n"),
+    )?;
+    // A nested def keeps reading the enclosing function's binding.
+    broad(
+        "def test_parse():\n    pattern = \".*\"\n\n    def check():\n        with pytest.raises(ValueError, match=pattern):\n            parse(\"\")\n\n    check()\n",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn a_unittest_method_reads_its_own_match_name_inside_its_class() -> Result<(), String> {
+    // A class body does not make a method nested, so the method's own
+    // binding is read and a sibling method's binding is not.
+    let class = classify(
+        PARSE,
+        3,
+        PARSE_OLD,
+        &test_module(
+            "import unittest\n\nfrom src.shop import parse",
+            "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        pattern = None\n        with self.assertRaisesRegex(ValueError, pattern):\n            parse(\"\")\n\n    def test_other(self):\n        pattern = \"empty\"\n",
+        ),
+    )?;
+    assert_ne!(class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
 fn a_parametrize_mark_does_not_stand_in_for_example_rows() -> Result<(), String> {
     assert_eq!(
         passed_class(
@@ -964,6 +1072,91 @@ fn a_removed_term_that_every_asserted_input_makes_zero_is_not_discriminated() ->
         quote_class(
             QUOTE_OLD_HANDLING,
             "def test_quote():\n    assert quote(50)[\"total_cents\"] == 50\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn an_unasserted_owner_call_does_not_block_an_inactive_term() -> Result<(), String> {
+    // #7562: `quote(1000)` is a discarded expression statement (fee 499), but
+    // the only strong assertion observes `quote(6000)` where the fee is 0.
+    // Removing the term still passes the test, so the finding should
+    // downgrade. An asserted nonzero fee must still block. Assigned, nested,
+    // or passed-on calls are unclear and still block.
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    quote(1000)\n    assert quote(6000)[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::WeaklyExposed
+    );
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    quote(1000)\n    result = quote(6000)\n    assert result[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::WeaklyExposed
+    );
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    assert quote(6000)[\"total_cents\"] == 6000\n    assert quote(1000)[\"total_cents\"] == 1499\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    unused = quote(1000)\n    assert quote(6000)[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    print(quote(1000))\n    assert quote(6000)[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    let assigned =
+        quote_module("    total = subtotal_cents\n    return {\"total_cents\": total}\n");
+    assert_eq!(
+        quote_module_class(
+            &assigned,
+            16,
+            "    total = subtotal_cents + shipping_fee(subtotal_cents)",
+            "def test_quote():\n    quote(1000)\n    assert quote(6000)[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // Two owner calls on one line: the covering statement cannot pick a
+    // single observation, so the nonzero call still blocks.
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    quote(6000); collected.append(quote(1000))\n    assert quote(6000)[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // An attribute that shares the bound local's name is not a local read.
+    // The assertion still observes `quote(6000)` so the finding would stay
+    // `exposed` unless `out = quote(6000)` were falsely marked observed.
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    quote(1000)\n    out = quote(6000)\n    assert quote(6000)[\"total_cents\"] == other.out\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    let nested_store = quote_module("    return sink.append(subtotal_cents)\n");
+    assert_eq!(
+        quote_module_class(
+            &nested_store,
+            16,
+            "    return sink.append(subtotal_cents + shipping_fee(subtotal_cents))",
+            "def test_quote():\n    quote(1000)\n    assert quote(6000)[\"total_cents\"] == 6000\n"
         )?,
         ExposureClass::Exposed
     );

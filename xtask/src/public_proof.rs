@@ -21,6 +21,9 @@ use serde_json::Value;
 
 const PAGE: &str = "docs/PUBLIC_PROOF.md";
 const RECEIPTS: &str = "metrics/public-proof";
+
+#[cfg(test)]
+mod required_fields_tests;
 const CORPUS_MANIFEST: &str = "benchmarks/rust_corpus/manifest.json";
 const CORPUS_RECEIPT: &str = "metrics/public-proof/corpus-manifest.json";
 
@@ -602,12 +605,13 @@ fn friction_of(step: &Value) -> &[Value] {
 
 /// First-run bars computed from a raw `first_run.v1` receipt, so they stay
 /// comparable across the two receipts the page shows.
-fn first_run_value(id: &str, receipt: &Value) -> Option<f64> {
-    let steps = all_steps(receipt);
+fn first_run_value(id: &str, receipt: &Value, ctx: &str) -> Result<Option<f64>, String> {
+    let cases = req_arr(receipt, "cases", ctx)?;
+    let steps: Vec<&Value> = cases.iter().flat_map(steps_of).collect();
     let count = |n: usize| -> Option<f64> { u32::try_from(n).ok().map(f64::from) };
-    match id {
+    Ok(match id {
         "first_run.unknown_verdicts" => count(
-            items(receipt, "cases")
+            cases
                 .iter()
                 .filter(|case| is_unknown_verdict(&text(case, "verdict")))
                 .count(),
@@ -623,15 +627,30 @@ fn first_run_value(id: &str, receipt: &Value) -> Option<f64> {
             steps
                 .iter()
                 .filter(|s| {
-                    friction_of(s)
-                        .iter()
-                        .any(|f| f.as_str().is_some_and(|t| t.contains("budget")))
+                    friction_of(s).iter().any(|f| {
+                        f.as_str().is_some_and(|t| {
+                            t.contains("budget")
+                                && !t.contains(crate::first_run::GENERATED_WORKFLOW_BUDGET_FLAG)
+                        })
+                    })
+                })
+                .count(),
+        ),
+        "first_run.over_budget_workflows" => count(
+            steps
+                .iter()
+                .filter(|s| {
+                    friction_of(s).iter().any(|f| {
+                        f.as_str().is_some_and(|t| {
+                            t.contains(crate::first_run::GENERATED_WORKFLOW_BUDGET_FLAG)
+                        })
+                    })
                 })
                 .count(),
         ),
         // A step with no numeric duration makes the walk's total unknowable, so the
         // metric is not measured rather than summed over the steps that were timed.
-        "first_run.walk_secs" => items(receipt, "cases")
+        "first_run.walk_secs" => cases
             .iter()
             .map(|case| {
                 let steps = steps_of(case);
@@ -643,11 +662,10 @@ fn first_run_value(id: &str, receipt: &Value) -> Option<f64> {
                     .map(|s| field(s, "secs").as_f64())
                     .sum::<Option<f64>>()
             })
-            .collect::<Option<Vec<f64>>>()?
-            .into_iter()
-            .reduce(f64::max),
+            .collect::<Option<Vec<f64>>>()
+            .and_then(|totals| totals.into_iter().reduce(f64::max)),
         _ => None,
-    }
+    })
 }
 
 struct Derived {
@@ -657,9 +675,9 @@ struct Derived {
 }
 
 fn derived(id: &str, r: &Receipts) -> Result<Option<Derived>, String> {
-    let first_run = |basis: &str| -> Derived {
-        let value = first_run_value(id, &r.first_current);
-        let previous = first_run_value(id, &r.first_previous);
+    let first_run = |basis: &str| -> Result<Derived, String> {
+        let value = first_run_value(id, &r.first_current, "first-run-current")?;
+        let previous = first_run_value(id, &r.first_previous, "first-run-previous")?;
         let before_label = short_version(&text(&r.first_previous, "ripr"));
         let trend = match (value, previous) {
             (Some(now), Some(before)) if (now - before).abs() < 1e-9 => {
@@ -670,11 +688,11 @@ fn derived(id: &str, r: &Receipts) -> Result<Option<Derived>, String> {
             }
             _ => "no earlier receipt".to_string(),
         };
-        Derived {
+        Ok(Derived {
             value,
             trend,
             basis: basis.to_string(),
-        }
+        })
     };
     let first_receipt = |value: f64, basis: &str| -> Option<Derived> {
         Some(Derived {
@@ -733,24 +751,25 @@ fn derived(id: &str, r: &Receipts) -> Result<Option<Derived>, String> {
         | "first_run.friction_events"
         | "first_run.failed_steps"
         | "first_run.over_budget_steps"
-        | "first_run.walk_secs" => Some(first_run("first-run receipts")),
+        | "first_run.over_budget_workflows"
+        | "first_run.walk_secs" => Some(first_run("first-run receipts")?),
         _ => None,
     })
 }
 
-/// Seam-precise joins and total mutants across the spot-check repositories.
+/// Canonical-precise joins and total mutants across the spot-check repositories.
 fn mutation_join_totals(mutation: &Value) -> Result<(f64, f64), String> {
     let mut precise = 0.0;
     let mut mutants = 0.0;
     for repo in req_arr(mutation, "repos", "mutation-spot-check")? {
         let ctx = "mutation-spot-check repo";
-        precise += req_f64(field(repo, "pairings"), "seam_precise", ctx)?;
+        precise += req_f64(field(repo, "pairings"), "canonical_precise", ctx)?;
         mutants += req_f64(field(repo, "calibration_metrics"), "mutants_total", ctx)?;
     }
     Ok((precise, mutants))
 }
 
-/// Basis text for an agreement bar: how many seam-precise mutants of the
+/// Basis text for an agreement bar: how many canonical-precise mutants of the
 /// grip class the rate actually scored, so an excluded outcome is visible.
 fn scored_basis(mutation: &Value, family: &str, grip_class: &str) -> Result<String, String> {
     let scored = req_f64(
@@ -760,19 +779,19 @@ fn scored_basis(mutation: &Value, family: &str, grip_class: &str) -> Result<Stri
     )?;
     let class = field(
         field(
-            field(mutation, "outcomes_by_pairing_and_grip_class"),
-            "seam_precise",
+            field(mutation, "outcomes_by_disposition_and_grip_class"),
+            "canonical_precise",
         ),
         grip_class,
     );
     let Some(counts) = class.as_object() else {
         return Err(format!(
-            "mutation-spot-check is missing seam_precise outcomes for {grip_class}"
+            "mutation-spot-check is missing canonical_precise outcomes for {grip_class}"
         ));
     };
     let total: f64 = counts.values().filter_map(Value::as_f64).sum();
     Ok(format!(
-        "mutation spot check, {} of {} seam-precise `{grip_class}` mutants scored; {} unscored",
+        "mutation spot check, {} of {} canonical-precise `{grip_class}` mutants scored; {} unscored",
         num(scored),
         num(total),
         num(total - scored)
@@ -914,9 +933,10 @@ fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
     let mut out = Vec::new();
     for metric in req_arr(&r.dx, "metrics", "dx-scoreboard")? {
         let id = req_str(metric, "id", "dx-scoreboard metric")?;
-        let mut unit = text(metric, "unit");
+        let mut unit = req_str(metric, "unit", &id)?;
+        let mut title = req_str(metric, "title", &id)?;
         let mut target = req_f64(metric, "target", &id)?;
-        let mut lower_is_better = text(metric, "direction") != "higher_is_better";
+        let mut lower_is_better = req_str(metric, "direction", &id)? != "higher_is_better";
         let mut value = field(metric, "value").as_f64();
         let mut trend = with_observation_revision(scoreboard_trend(metric, &baseline_rev), metric);
         let mut basis = text(metric, "source");
@@ -930,9 +950,10 @@ fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
         } else if metric_lacks_number(metric) {
             if let Some((lane_metric, lane)) = lane_measurement(&id, r) {
                 status_src = lane_metric;
-                unit = text(lane_metric, "unit");
+                unit = req_str(lane_metric, "unit", &id)?;
+                title = req_str(lane_metric, "title", &id)?;
                 target = req_f64(lane_metric, "target", &id)?;
-                lower_is_better = text(lane_metric, "direction") != "higher_is_better";
+                lower_is_better = req_str(lane_metric, "direction", &id)? != "higher_is_better";
                 value = field(lane_metric, "value").as_f64();
                 let lane_rev = short(&text(field(&lane.value, "gate"), "baseline_revision"), 7);
                 trend = scoreboard_trend(lane_metric, &lane_rev);
@@ -977,10 +998,15 @@ fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
                 num(scored),
                 num(mutants)
             )
+        } else if id == "first_run.over_budget_steps" && is_derived {
+            // The committed dx receipt predates the #8491 split, so its title
+            // still describes the old combined meaning while the derived value
+            // excludes workflow size. Mirrors the scoreboards.toml wording.
+            "First-run steps over their own time or output-length budget".to_string()
         } else if id == "trust.false_verdict_rate" {
             "Wrong verdicts on hand-checked changes from real repositories".to_string()
         } else {
-            text(status_src, "title")
+            title
         };
         out.push(Bar {
             board: board_name(&text(status_src, "board")).to_string(),
@@ -993,6 +1019,35 @@ fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
             status,
             trend,
             basis,
+        });
+    }
+    // The committed dx receipt predates the #8491 metric, so the loop above
+    // never sees `first_run.over_budget_workflows`; derive it from the raw
+    // first-run receipts rather than leaving the split half-done. Once a
+    // scoreboard receipt ingests the metric, the loop owns the bar and this
+    // fallback stays out of the way. Target and wording mirror scoreboards.toml.
+    if !out
+        .iter()
+        .any(|bar| bar.id == "first_run.over_budget_workflows")
+        && let Some(derived) = derived("first_run.over_budget_workflows", r)?
+    {
+        let value = derived.value;
+        let status = match value {
+            Some(v) if meets(v, 0.0, true) => Status::Meets,
+            Some(_) => Status::Below,
+            None => Status::NotMeasured,
+        };
+        out.push(Bar {
+            board: board_name("first_run").to_string(),
+            id: "first_run.over_budget_workflows".to_string(),
+            title: "Generated CI workflows over their line budget".to_string(),
+            value,
+            unit: "workflows".to_string(),
+            target: 0.0,
+            lower_is_better: true,
+            status,
+            trend: derived.trend,
+            basis: derived.basis,
         });
     }
     Ok(out)
@@ -1187,6 +1242,12 @@ fn scoreboard(page: &mut Page, bars: &[Bar]) {
         bars,
     ));
     page.blank();
+    page.line("By board, so the weak areas show before the full table:");
+    page.blank();
+    page.table(
+        &["Board", "Meets", "Below", "Not measured", "Failed"],
+        &board_tally(bars),
+    );
     let rows: Vec<Vec<String>> = bars.iter().map(bar_row).collect();
     page.table(&["Board", "Bar", "Now", "Target", "Status", "Trend"], &rows);
     let unmeasured_rows: Vec<&Bar> = bars
@@ -1205,6 +1266,34 @@ fn scoreboard(page: &mut Page, bars: &[Bar]) {
         }
         page.blank();
     }
+}
+
+/// One row per board, in first-seen order, counting bars by status.
+fn board_tally(bars: &[Bar]) -> Vec<Vec<String>> {
+    let mut order: Vec<&str> = Vec::new();
+    for bar in bars {
+        if !order.contains(&bar.board.as_str()) {
+            order.push(bar.board.as_str());
+        }
+    }
+    order
+        .into_iter()
+        .map(|board| {
+            let count = |status: Status| {
+                bars.iter()
+                    .filter(|b| b.board == board && b.status == status)
+                    .count()
+                    .to_string()
+            };
+            vec![
+                board.to_string(),
+                count(Status::Meets),
+                count(Status::Below),
+                count(Status::NotMeasured),
+                count(Status::Failed),
+            ]
+        })
+        .collect()
 }
 
 /// A verdict-corpus rate for one case origin ("upstream" or "authored").
@@ -1281,17 +1370,20 @@ fn shortfalls(page: &mut Page, r: &Receipts, bars: &[Bar]) -> Result<(), String>
         }
         seen
     };
+    let false_gap_examples = items(field(&r.mutation, "disagreement_examples"), "false_gap").len();
+    let example_note = if false_gap_repos.is_empty() {
+        "No false-gap examples are recorded.".to_string()
+    } else {
+        format!(
+            "The {false_gap_examples} recorded examples are all in: {}.",
+            false_gap_repos.join(", ")
+        )
+    };
     page.line(format!(
-        "- **Real mutants disagree with \"no test would notice\".** Of {} mutants on seams ripr called ungripped, real mutation testing caught {} that ripr said nothing would catch; ripr agreed on {}. The {} recorded examples are all in: {}.",
+        "- **Real mutants disagree with \"no test would notice\".** Of {} mutants on seams ripr called ungripped, real mutation testing caught {} that ripr said nothing would catch; ripr agreed on {}. {example_note}",
         agree + false_gap,
         false_gap,
         agree,
-        items(field(&r.mutation, "disagreement_examples"), "false_gap").len(),
-        if false_gap_repos.is_empty() {
-            "none recorded".to_string()
-        } else {
-            false_gap_repos.join(", ")
-        }
     ));
 
     let (precise, mutants) = mutation_join_totals(&r.mutation)?;
@@ -1345,8 +1437,12 @@ fn shortfalls(page: &mut Page, r: &Receipts, bars: &[Bar]) -> Result<(), String>
         .and_then(|b| b.value);
     let cases_now = items(&r.first_current, "cases").len();
     if let Some(unknown) = unknown_now {
-        let unknown_before = first_run_value("first_run.unknown_verdicts", &r.first_previous)
-            .ok_or("first-run-previous: no unknown-verdict count")?;
+        let unknown_before = first_run_value(
+            "first_run.unknown_verdicts",
+            &r.first_previous,
+            "first-run-previous",
+        )?
+        .ok_or("first-run-previous: no unknown-verdict count")?;
         page.line(format!(
             "- **First-run verdicts are unresolved.** {} of {} first-run crates ended in an `*_unknown` verdict on {}; {} of {} did on {}.",
             num(unknown),
@@ -1518,9 +1614,11 @@ fn mutation_section(page: &mut Page, mutation: &Value) -> Result<(), String> {
             req_str(repo, "cargo_mutants_version", &rctx)?,
             req_u64(metrics, "mutants_total", &rctx)?.to_string(),
             req_u64(metrics, "matched_total", &rctx)?.to_string(),
-            req_u64(metrics, "ambiguous_file_line_total", &rctx)?.to_string(),
+            (req_u64(metrics, "ambiguous_file_line_total", &rctx)?
+                + req_u64(metrics, "ambiguous_span_overlap_total", &rctx)?)
+            .to_string(),
             req_u64(metrics, "unmatched_mutants_total", &rctx)?.to_string(),
-            req_u64(field(repo, "pairings"), "seam_precise", &rctx)?.to_string(),
+            req_u64(field(repo, "pairings"), "canonical_precise", &rctx)?.to_string(),
         ]);
     }
     page.table(
@@ -1532,14 +1630,14 @@ fn mutation_section(page: &mut Page, mutation: &Value) -> Result<(), String> {
             "Joined",
             "Ambiguous",
             "Unmatched",
-            "Seam-precise",
+            "Canonical-precise",
         ],
         &repo_rows,
     );
 
     let grip = field(
-        field(mutation, "outcomes_by_pairing_and_grip_class"),
-        "seam_precise",
+        field(mutation, "outcomes_by_disposition_and_grip_class"),
+        "canonical_precise",
     );
     let mut grip_rows: Vec<Vec<String>> = Vec::new();
     for (class, outcomes) in grip.as_object().into_iter().flatten() {
@@ -1554,19 +1652,25 @@ fn mutation_section(page: &mut Page, mutation: &Value) -> Result<(), String> {
     }
     if grip_rows.is_empty() {
         return Err(format!(
-            "{ctx}: `outcomes_by_pairing_and_grip_class.seam_precise` is missing or empty"
+            "{ctx}: `outcomes_by_disposition_and_grip_class.canonical_precise` is missing or empty"
         ));
     }
-    page.line("Real mutation outcomes by ripr grip class, seam-precise joins only:");
+    page.line("Real mutation outcomes by ripr grip class, canonical-precise joins only:");
     page.blank();
     page.table(&["Grip class", "Mutation outcomes"], &grip_rows);
 
-    let examples = items(field(mutation, "disagreement_examples"), "false_gap");
-    if !examples.is_empty() {
-        page.line("False-gap examples, as recorded:");
+    for (key, heading, label) in [
+        ("false_gap", "False-gap examples, as recorded:", "false-gap"),
+        ("overclaim", "Overclaim examples, as recorded:", "overclaim"),
+    ] {
+        let examples = items(field(mutation, "disagreement_examples"), key);
+        if examples.is_empty() {
+            continue;
+        }
+        page.line(heading);
         page.blank();
         for example in examples {
-            let ectx = format!("{ctx} false-gap example");
+            let ectx = format!("{ctx} {label} example");
             let mutant = req_str(example, "mutant", &ectx)?;
             page.line(format!(
                 "- {} `{}:{}` {} `{}` is `{}`; mutant `{}` was {}.",
@@ -2041,7 +2145,7 @@ fn reproduce(page: &mut Page) {
     page.line("cargo xtask public-proof --check             # fail if this page is stale");
     page.line("```");
     page.blank();
-    page.line("Receipts live in `metrics/public-proof/`. `dx-scoreboard.json`, `verdict-corpus.json` and `corpus-manifest.json` are copies of `metrics/dx-scoreboard/baseline.json`, the report `fixtures/rust-verdict-corpus/expected/rows/` describes (its summary derived from the row files, then the rows in file-name order) and `benchmarks/rust_corpus/manifest.json`; `--check` fails when a source moves ahead of its copy, and `--refresh-receipts` re-copies them. Verdict corpus case PRs do not refresh this page, so its corpus section is a snapshot that can trail the committed rows until the next refresh. Corpus and ranking scoreboard rows are read from `metrics/dx-scoreboard/corpus-full-baseline.json` (falling back to `corpus-fast-baseline.json`) and `metrics/dx-scoreboard/pilot-ranking-baseline.json` when the copied scoreboard receipt did not ingest those boards. The mutation, first-run, agent and install receipts have no in-repo source to compare against: they are committed copies of harness output from the revisions named in their sections, and `--check` cannot detect a hand edit to them. The mutation spot-check has no command in this repository yet.");
+    page.line("Receipts live in `metrics/public-proof/`. `dx-scoreboard.json`, `verdict-corpus.json` and `corpus-manifest.json` are copies of `metrics/dx-scoreboard/baseline.json`, the report `fixtures/rust-verdict-corpus/expected/rows/` describes (its summary derived from the row files, then the rows in file-name order) and `benchmarks/rust_corpus/manifest.json`; `--check` fails when a source moves ahead of its copy, and `--refresh-receipts` re-copies them. Verdict corpus case PRs do not refresh this page, so its corpus section is a snapshot that can trail the committed rows until the next refresh. Corpus and ranking scoreboard rows are read from `metrics/dx-scoreboard/corpus-full-baseline.json` (falling back to `corpus-fast-baseline.json`) and `metrics/dx-scoreboard/pilot-ranking-baseline.json` when the copied scoreboard receipt did not ingest those boards. The mutation, first-run, agent and install receipts have no in-repo source to compare against: they are committed copies of harness output from the revisions named in their sections, and `--check` cannot detect a hand edit to them. The mutation spot-check receipt is harness output from `cargo xtask mutation-spot-check`.");
 }
 
 fn lane_revision(receipt: &Value) -> String {
@@ -2168,13 +2272,13 @@ mod tests {
             .and_then(|repos| repos.get_mut(0))
             .and_then(|repo| repo.get_mut("pairings"))
             .and_then(Value::as_object_mut)
-            .and_then(|pairings| pairings.remove("seam_precise"));
-        assert!(removed.is_some(), "fixture lost seam_precise");
+            .and_then(|pairings| pairings.remove("canonical_precise"));
+        assert!(removed.is_some(), "fixture lost canonical_precise");
         let result = mutation_join_totals(&receipts.mutation);
-        assert!(result.is_err_and(|err| err.contains("seam_precise")));
+        assert!(result.is_err_and(|err| err.contains("canonical_precise")));
         let mut page = Page(String::new());
         let section = mutation_section(&mut page, &receipts.mutation);
-        assert!(section.is_err_and(|err| err.contains("seam_precise")));
+        assert!(section.is_err_and(|err| err.contains("canonical_precise")));
         Ok(())
     }
 
@@ -2201,20 +2305,25 @@ mod tests {
     #[test]
     fn mutation_section_says_when_the_analyzer_build_is_unrecorded() -> Result<(), String> {
         let receipts = load(&workspace_root())?;
+        let version = receipts
+            .mutation
+            .get("analyzer_version")
+            .and_then(Value::as_str)
+            .ok_or("committed mutation spot-check receipt must record analyzer_version")?
+            .to_string();
         let mut page = Page(String::new());
         mutation_section(&mut page, &receipts.mutation)?;
-        assert!(page.0.contains("does not record which ripr build produced"));
-        let mut recorded = receipts.mutation.clone();
-        if let Some(object) = recorded.as_object_mut() {
-            object.insert(
-                "analyzer_version".to_string(),
-                Value::from("ripr 0.11.0 (abc1234)"),
-            );
-        }
-        let mut page = Page(String::new());
-        mutation_section(&mut page, &recorded)?;
-        assert!(page.0.contains("produced by ripr 0.11.0 (abc1234)"));
+        assert!(page.0.contains(&format!("were produced by {version}")));
         assert!(!page.0.contains("does not record which ripr build"));
+        let mut unrecorded = receipts.mutation.clone();
+        let removed = unrecorded
+            .as_object_mut()
+            .and_then(|object| object.remove("analyzer_version"));
+        assert!(removed.is_some(), "fixture lost analyzer_version");
+        let mut page = Page(String::new());
+        mutation_section(&mut page, &unrecorded)?;
+        assert!(page.0.contains("does not record which ripr build produced"));
+        assert!(!page.0.contains("were produced by"));
         Ok(())
     }
 
@@ -2400,6 +2509,62 @@ mod tests {
             .find(|bar| bar.id == "first_run.walk_secs")
             .ok_or_else(|| "no first_run.walk_secs bar".to_string())?;
         assert!(bar.status == Status::NotMeasured);
+        Ok(())
+    }
+
+    #[test]
+    fn workflow_size_flag_splits_from_over_budget_steps() -> Result<(), String> {
+        // The workflow-size review-budget flag counts toward
+        // over_budget_workflows, never over_budget_steps; a time-budget flag
+        // still counts toward over_budget_steps (#8492).
+        let flag = format!(
+            "{} 2374 lines, over the 1500-line review budget",
+            crate::first_run::GENERATED_WORKFLOW_BUDGET_FLAG
+        );
+        let receipt = serde_json::json!({
+            "cases": [{
+                "case": "demo",
+                "steps": [
+                    {"step": "init_ci", "friction": [flag]},
+                    {"step": "check", "friction": ["45.2s, over the 30s budget"]},
+                ],
+            }],
+        });
+        let steps = first_run_value("first_run.over_budget_steps", &receipt, "test")?;
+        let workflows = first_run_value("first_run.over_budget_workflows", &receipt, "test")?;
+        assert_eq!(steps, Some(1.0), "only the time-budget step counts");
+        assert_eq!(workflows, Some(1.0), "only the workflow-size step counts");
+        Ok(())
+    }
+
+    #[test]
+    fn page_shows_over_budget_workflows_as_its_own_bar() -> Result<(), String> {
+        // The committed dx receipt predates the #8491 metric, so the page must
+        // derive this bar from the raw first-run receipts: the steps arm drops
+        // to zero while the workflow-size flags surface here instead.
+        let receipts = load(&workspace_root())?;
+        let steps_now = first_run_value(
+            "first_run.over_budget_steps",
+            &receipts.first_current,
+            "first-run-current",
+        )?;
+        assert_eq!(
+            steps_now,
+            Some(0.0),
+            "every current budget flag is workflow-size and must leave over_budget_steps at zero"
+        );
+        let workflows_now = first_run_value(
+            "first_run.over_budget_workflows",
+            &receipts.first_current,
+            "first-run-current",
+        )?;
+        assert_eq!(workflows_now, Some(3.0));
+        let bar = bars(&receipts)?
+            .into_iter()
+            .find(|bar| bar.id == "first_run.over_budget_workflows")
+            .ok_or_else(|| "no first_run.over_budget_workflows bar".to_string())?;
+        assert_eq!(bar.value, workflows_now);
+        assert_eq!(bar.board, "First run");
         Ok(())
     }
 

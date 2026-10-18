@@ -163,9 +163,13 @@ one changed behavior
 For maintainers and agents, `ripr` should carry its own operating truth:
 
 ```text
-proposal/spec/ADR/campaign/active goal/support tier/policy/evidence/closeout
+proposal/spec/ADR/campaign/selected work/support tier/policy/evidence/closeout
 -> linked and checked PR by PR
 ```
+
+`selected work` is the root-selected transition bound to a portfolio basis
+(RIPR-SPEC-0244); it replaced the retired singleton active-goal authority
+(#1701/#1706) and names no repository-wide current campaign.
 
 The CLI discoverability slice for that target is now closed: the default human
 `check` output routes findings to executable `explain` and `context` commands

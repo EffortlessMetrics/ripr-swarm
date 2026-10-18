@@ -471,7 +471,11 @@ pub(crate) fn render_with_config(
                 &mut out,
                 3,
                 "why",
-                "no analysis scope provided; ripr check is diff-first; empty result does not mean changed behavior is covered; run ripr check --base BASE with BASE set to an existing ref or ripr check --root . --format repo-exposure-md",
+                &format!(
+                    "no analysis scope provided; ripr check is diff-first; empty result does not mean changed behavior is covered; run {} with BASE set to an existing ref or {} for whole-repository exploration",
+                    crate::domain::NO_SCOPE_BASE_COMMAND,
+                    crate::domain::WHOLE_REPO_PILOT_COMMAND,
+                ),
                 false,
             );
         }
@@ -499,6 +503,24 @@ pub(crate) fn render_with_config(
             1,
             "untracked_working_tree_source_paths",
             &output.untracked_working_tree_source_paths,
+            false,
+        );
+    }
+    // Additive advisory field: emitted when routed source or test files are
+    // gitignored in the live repository (#7467), on both committed-history
+    // and working-tree reads, since neither read analyzes them — and plain
+    // `git add -N` refuses them, so the human/GitHub notes name the force
+    // intent-to-add repair. Absent when the list is empty. This is the
+    // machine-readable form of the human/GitHub gitignored-files notes;
+    // without it a zero-finding JSON report reads as complete while routed
+    // files were silently excluded.
+    if !output.ignored_working_tree_source_paths.is_empty() {
+        out.push_str(",\n");
+        array_field(
+            &mut out,
+            1,
+            "ignored_working_tree_source_paths",
+            &output.ignored_working_tree_source_paths,
             false,
         );
     }
@@ -1824,6 +1846,7 @@ mod harness_projection_tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             partial_scope: None,

@@ -2,20 +2,20 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/currentness_matrix_tail/input
 
-Summary: 3 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 3 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 3 of 3 finding(s) unsuppressed
+Summary: 3 probes (0 exposed, 0 weak, 0 unrevealed, 3 no path); 3 of 3 findings unsuppressed (3 base-side evidence, not candidate edit targets)
 
-Analysis outcome: findings below (analysis complete; complete_with_findings)
+Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 5 changed line(s), 1 candidate line(s), 3 probe(s), 3 finding(s)
 
 Start here:
-  State: no gap selected for repair (no_actionable_gap)
+  State: no gap selected for repair
   Safe next action: all findings are base-side evidence, not candidate edit targets; rerun with --format human-full to inspect the full evidence before treating this run as actionable
 
 Hidden:
   All 3 finding(s) are base-side evidence, not candidate edit targets — rerun with --format human-full for the full evidence.
-    - ./src/lib.rs:13 (no_static_path)
-    - ./src/lib.rs:13 (no_static_path)
-    - ./src/lib.rs:13 (no_static_path)
+    - ./src/lib.rs:13 (no path)
+    - ./src/lib.rs:13 (no path)
+    - ./src/lib.rs:13 (no path)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

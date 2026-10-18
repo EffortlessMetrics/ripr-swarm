@@ -20,6 +20,8 @@ use std::time::Instant;
 
 use serde_json::{Value, json};
 
+mod archive;
+
 use crate::run::{CapturedOutput, capture_output_in_dir, capture_output_in_dir_with_envs};
 
 const DEFAULT_OUT: &str = "target/ripr/first-run";
@@ -28,7 +30,12 @@ const ROW_SCHEMA: &str = "first_run_row.v1";
 const ROWS_FILE: &str = "first-run-rows.jsonl";
 /// A developer is asked to review the generated workflow before committing it.
 const MAX_WORKFLOW_LINES: usize = 1500;
+/// Marker for the friction flag emitted when the generated workflow exceeds
+/// `MAX_WORKFLOW_LINES`. The public-proof page matches on this text to keep
+/// the workflow-size flag in its own metric, so the wording has one owner.
+pub(crate) const GENERATED_WORKFLOW_BUDGET_FLAG: &str = "generated workflow is";
 const INSTALL_STDERR_LOG: &str = "install_published.stderr.log";
+const ARCHIVE_STDERR_LOG: &str = "install_archive.stderr.log";
 const OUT_MARKER: &str = ".first-run-output";
 const PROGRESS_PREFIX: &str = "ripr progress:";
 const VERDICT_CLASSES: [&str; 7] = [
@@ -139,6 +146,9 @@ struct Options {
     ripr: String,
     out: PathBuf,
     install_published: bool,
+    /// Release version whose prebuilt server archive is installed instead of
+    /// compiling (`--install-archive VERSION`).
+    install_archive: Option<String>,
 }
 
 fn parse_options(args: &[String]) -> Result<Options, String> {
@@ -146,11 +156,14 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         ripr: "ripr".to_string(),
         out: PathBuf::from(DEFAULT_OUT),
         install_published: false,
+        install_archive: None,
     };
+    let mut ripr_given = false;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--ripr" => {
+                ripr_given = true;
                 options.ripr = iter
                     .next()
                     .ok_or_else(|| "--ripr needs a path to the ripr binary".to_string())?
@@ -163,12 +176,35 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                 );
             }
             "--install-published" => options.install_published = true,
+            "--install-archive" => {
+                let version = iter
+                    .next()
+                    .ok_or_else(|| "--install-archive needs a release version".to_string())?;
+                if version.is_empty()
+                    || !version
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+                {
+                    return Err(format!(
+                        "--install-archive version `{version}` is not a release version such as 0.10.0"
+                    ));
+                }
+                options.install_archive = Some(version.clone());
+            }
             other => {
                 return Err(format!(
-                    "unknown first-run argument `{other}`\nusage: cargo xtask first-run [--ripr <path>] [--out <dir>] [--install-published]"
+                    "unknown first-run argument `{other}`\nusage: cargo xtask first-run [--ripr <path>] [--out <dir>] [--install-published | --install-archive <version>]"
                 ));
             }
         }
+    }
+    let routes = usize::from(options.install_published)
+        + usize::from(options.install_archive.is_some())
+        + usize::from(ripr_given);
+    if routes > 1 {
+        return Err(
+            "choose one route: --ripr, --install-published or --install-archive".to_string(),
+        );
     }
     Ok(options)
 }
@@ -219,7 +255,21 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     prepare_out_dir(&out)?;
 
     let mut setup_steps = Vec::new();
-    let ripr = if options.install_published {
+    let mut archive_install = None;
+    let ripr = if let Some(version) = &options.install_archive {
+        let (step, installed) = install_archive_route(&out, version);
+        setup_steps.push(step);
+        let Some(installed) = installed else {
+            if let Some(failed) = setup_steps.last() {
+                fs::write(out.join(ARCHIVE_STDERR_LOG), &failed.stderr)
+                    .map_err(|err| format!("failed to write {ARCHIVE_STDERR_LOG}: {err}"))?;
+            }
+            return finish(&options, &out, "unavailable", setup_steps, Vec::new(), None);
+        };
+        let executable = installed.executable.display().to_string();
+        archive_install = Some(installed);
+        executable
+    } else if options.install_published {
         // Outside the repository so its rust-toolchain and cargo config do not
         // decide how the published crate builds. A fresh CARGO_HOME keeps the
         // crates `cargo xtask` already downloaded for xtask out of the timing,
@@ -235,7 +285,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         }
         setup_steps.push(step);
         if failed {
-            return finish(&options, &out, "unavailable", setup_steps, Vec::new());
+            return finish(&options, &out, "unavailable", setup_steps, Vec::new(), None);
         }
         spec.install_root
             .join("bin")
@@ -246,11 +296,46 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         resolve_ripr(&options.ripr)?
     };
 
-    let version = capture_output_in_dir(&ripr, &["--version".to_string()], &out, "ripr --version")
+    let version_run =
+        capture_output_in_dir(&ripr, &["--version".to_string()], &out, "ripr --version");
+
+    if let Some(installed) = &archive_install {
+        let verdict = match &version_run {
+            Ok(captured) if captured.status.success() => {
+                archive::check_reported_version(&captured.stdout, &installed.version)
+            }
+            Ok(captured) => Err(format!(
+                "the extracted executable's --version exited {:?}",
+                captured.status.code()
+            )),
+            Err(err) => Err(err.clone()),
+        };
+        if let Err(reason) = verdict {
+            // The executable the archive emitted is not the release asked for
+            // (or cannot run), so the install is a failure however fast it
+            // ran. The receipt and diagnostics are kept.
+            if let Some(step) = setup_steps.last_mut() {
+                step.exit = Some(1);
+                step.stderr.push_str(&format!("{reason}\n"));
+                fs::write(out.join(ARCHIVE_STDERR_LOG), &step.stderr)
+                    .map_err(|err| format!("failed to write {ARCHIVE_STDERR_LOG}: {err}"))?;
+            }
+            return finish(
+                &options,
+                &out,
+                "unavailable",
+                setup_steps,
+                Vec::new(),
+                archive_install.as_ref(),
+            );
+        }
+    }
+
+    let version = version_run
         .map(|captured| captured.stdout.trim().to_string())
         .map_err(|err| {
             format!(
-                "{err}\nbuild or install ripr first, or pass --ripr <path> / --install-published"
+                "{err}\nbuild or install ripr first, or pass --ripr <path> / --install-published / --install-archive <version>"
             )
         })?;
 
@@ -259,7 +344,79 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     for case in &CASES {
         cases.push(walk_case(&out, &ripr, case)?);
     }
-    finish(&options, &out, &version, setup_steps, cases)
+    finish(
+        &options,
+        &out,
+        &version,
+        setup_steps,
+        cases,
+        archive_install.as_ref(),
+    )
+}
+
+/// Acquire the released archive as one timed step: download, checksum, extract.
+/// A failure keeps its timing and reason (in `stderr`) rather than dropping the
+/// sample, and never yields an executable.
+fn install_archive_route(
+    out: &Path,
+    version: &str,
+) -> (StepResult, Option<archive::ArchiveInstall>) {
+    let started = Instant::now();
+    let work = out.join("archive-install");
+    let result = archive::target_for(std::env::consts::OS, std::env::consts::ARCH)
+        .and_then(|target| archive::install(version, target, &work, &fetch_with_curl));
+    let command = format!("download, verify and extract the ripr {version} server archive");
+    let secs = started.elapsed().as_secs_f64();
+    match result {
+        Ok(installed) => (
+            StepResult {
+                name: archive::STEP.to_string(),
+                command,
+                exit: Some(0),
+                secs,
+                stdout: String::new(),
+                stderr: String::new(),
+            },
+            Some(installed),
+        ),
+        Err(reason) => (
+            StepResult {
+                name: archive::STEP.to_string(),
+                command,
+                exit: Some(1),
+                secs,
+                stdout: String::new(),
+                stderr: format!("{reason}\n"),
+            },
+            None,
+        ),
+    }
+}
+
+fn fetch_with_curl(url: &str, dest: &Path) -> Result<(), String> {
+    let args = [
+        "--fail".to_string(),
+        "--silent".to_string(),
+        "--show-error".to_string(),
+        "--location".to_string(),
+        "--proto".to_string(),
+        "=https".to_string(),
+        "--proto-redir".to_string(),
+        "=https".to_string(),
+        "--output".to_string(),
+        dest.display().to_string(),
+        url.to_string(),
+    ];
+    let cwd = dest.parent().unwrap_or_else(|| Path::new("."));
+    let captured = capture_output_in_dir("curl", &args, cwd, "curl")?;
+    if captured.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "download of {url} failed: {}",
+            captured.stderr.trim()
+        ))
+    }
 }
 
 /// A stale tree would let one release's leftovers pass for the next one's run,
@@ -618,6 +775,7 @@ struct CaseResult {
     name: String,
     steps: Vec<(StepResult, Vec<String>)>,
     verdict: Option<&'static str>,
+    verdict_reason: Option<String>,
     caught_by: &'static [&'static str],
     workflow_lines: Option<usize>,
     workflow_installs_with_cargo: Option<bool>,
@@ -660,6 +818,14 @@ fn walk_case(out: &Path, ripr: &str, case: &Case) -> Result<CaseResult, String> 
     )?;
     push_step(&mut steps, &work, ripr, "doctor_after", &["doctor"])?;
 
+    let verdict_reason = verdict_reason_of(
+        verdict,
+        &steps[check].stdout.clone(),
+        steps
+            .iter()
+            .find(|step| step.name == "explain")
+            .map(|step| step.stdout.as_str()),
+    );
     let workflow = fs::read_to_string(work.join(".github").join("workflows").join("ripr.yml")).ok();
     let workflow_lines = workflow.as_ref().map(|text| text.lines().count());
     let workflow_installs_with_cargo = workflow
@@ -678,6 +844,7 @@ fn walk_case(out: &Path, ripr: &str, case: &Case) -> Result<CaseResult, String> 
         name,
         steps: annotated,
         verdict,
+        verdict_reason,
         caught_by: case.caught_by,
         workflow_lines,
         workflow_installs_with_cargo,
@@ -701,11 +868,89 @@ fn push_step(
 fn verdict_of(check_stdout: &str) -> Option<&'static str> {
     let start = check_stdout.find("Static exposure")?;
     let tail = &check_stdout[start..];
+    // The bounded default render speaks plain words (#8165), so the label line
+    // names the class without a wire token.
+    if let Some(plain) = tail
+        .strip_prefix("Static exposure: ")
+        .and_then(|rest| rest.lines().next())
+    {
+        let class = [
+            ("exposed", "exposed"),
+            ("weak", "weakly_exposed"),
+            ("unrevealed", "reachable_unrevealed"),
+            ("no path", "no_static_path"),
+            ("unknown", "static_unknown"),
+        ]
+        .into_iter()
+        .find(|(word, _)| {
+            plain
+                .strip_prefix(word)
+                .is_some_and(|after| after.is_empty() || after.starts_with(" ("))
+        });
+        // `unknown` covers three wire classes, so a token that follows still wins.
+        if let Some((_, class)) = class.filter(|(word, _)| *word != "unknown") {
+            return Some(class);
+        }
+    }
     VERDICT_CLASSES
         .iter()
         .filter_map(|class| tail.find(class).map(|at| (at, *class)))
         .min_by_key(|(at, _)| *at)
         .map(|(_, class)| class)
+        .or_else(|| {
+            tail.strip_prefix("Static exposure: unknown")
+                .map(|_| "static_unknown")
+        })
+}
+
+/// Reason evidence for an unknown verdict, taken only from output the walk
+/// already produced: the `Stop reasons:` list in the captured `ripr explain`
+/// output, falling back to the `Why unknown:` / `Analyzer limit:` line next to
+/// the verdict in the captured `ripr check` output. Specific verdicts and
+/// outputs with no such line record no reason rather than a fabricated one.
+fn verdict_reason_of(
+    verdict: Option<&str>,
+    check_stdout: &str,
+    explain_stdout: Option<&str>,
+) -> Option<String> {
+    if !matches!(
+        verdict,
+        Some("infection_unknown" | "propagation_unknown" | "static_unknown")
+    ) {
+        return None;
+    }
+    if let Some(explain) = explain_stdout
+        && let Some(reasons) = stop_reasons_of(explain)
+    {
+        return Some(reasons);
+    }
+    check_stdout.lines().map(str::trim).find_map(|line| {
+        line.strip_prefix("Why unknown:")
+            .or_else(|| line.strip_prefix("Analyzer limit:"))
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty())
+            .map(str::to_string)
+    })
+}
+
+/// The bullet lines under the first `Stop reasons:` heading, joined as one
+/// recorded reason. Both explain forms use `- ` bullets (`token: meaning` in
+/// the verdict explanation, `token — meaning` in the finding block).
+fn stop_reasons_of(output: &str) -> Option<String> {
+    let mut lines = output.lines();
+    lines.find(|line| line.trim() == "Stop reasons:")?;
+    let reasons: Vec<String> = lines
+        .map(str::trim)
+        .take_while(|line| line.starts_with("- "))
+        .map(|line| {
+            line.trim_start_matches("- ")
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .filter(|reason| !reason.is_empty())
+        .collect();
+    (!reasons.is_empty()).then(|| reasons.join("; "))
 }
 
 fn friction(result: &StepResult, workflow: Option<&str>) -> Vec<String> {
@@ -749,7 +994,7 @@ fn friction(result: &StepResult, workflow: Option<&str>) -> Vec<String> {
                 let lines = text.lines().count();
                 if lines > MAX_WORKFLOW_LINES {
                     flags.push(format!(
-                        "generated workflow is {lines} lines, over the {MAX_WORKFLOW_LINES}-line review budget"
+                        "{GENERATED_WORKFLOW_BUDGET_FLAG} {lines} lines, over the {MAX_WORKFLOW_LINES}-line review budget"
                     ));
                 }
                 if text.contains("cargo install ripr") && !text.contains("sha256") {
@@ -769,6 +1014,7 @@ fn finish(
     version: &str,
     setup: Vec<StepResult>,
     cases: Vec<CaseResult>,
+    archive: Option<&archive::ArchiveInstall>,
 ) -> Result<(), String> {
     let step_json = |result: &StepResult, flags: &[String]| {
         json!({
@@ -784,17 +1030,21 @@ fn finish(
     let document = json!({
         "schema_version": SCHEMA_VERSION,
         "ripr": version,
-        "binary": if options.install_published { "cargo install ripr --locked".to_string() } else { options.ripr.clone() },
+        "binary": if options.install_published { "cargo install ripr --locked".to_string() } else if let Some(installed) = archive { installed.executable.display().to_string() } else { options.ripr.clone() },
+        "install": install_json(options, archive),
         "setup": setup.iter().map(|s| {
             let mut entry = step_json(s, &setup_friction(s));
-            if s.name == "install_published" && s.exit != Some(0) {
-                entry["stderr_log"] = json!(INSTALL_STDERR_LOG);
+            if s.exit != Some(0)
+                && let Some(log) = install_log(&s.name)
+            {
+                entry["stderr_log"] = json!(log);
             }
             entry
         }).collect::<Vec<Value>>(),
         "cases": cases.iter().map(|case| json!({
             "case": case.name,
             "verdict": case.verdict,
+            "verdict_reason": case.verdict_reason,
             "caught_by": case.caught_by,
             "verdict_reading": verdict_reading(case.verdict, !case.caught_by.is_empty()),
             "workflow_lines": case.workflow_lines,
@@ -813,7 +1063,7 @@ fn finish(
     }
     fs::write(out.join(ROWS_FILE), rows)
         .map_err(|err| format!("failed to write {ROWS_FILE}: {err}"))?;
-    let markdown = render_markdown(version, &setup, &cases);
+    let markdown = render_markdown(version, &setup, &cases, archive);
     fs::write(out.join("first-run.md"), &markdown)
         .map_err(|err| format!("failed to write first-run.md: {err}"))?;
     print!("{markdown}");
@@ -943,8 +1193,53 @@ fn setup_friction(step: &StepResult) -> Vec<String> {
     }
 }
 
-fn render_markdown(version: &str, setup: &[StepResult], cases: &[CaseResult]) -> String {
-    let mut text = format!("# ripr first-run walk\n\nripr: `{version}`\n\n## Setup\n\n");
+/// The install route and, for the archive route, the identity of what ran.
+/// Source and archive samples stay distinguishable by `route`.
+fn install_json(options: &Options, archive: Option<&archive::ArchiveInstall>) -> Value {
+    if let Some(installed) = archive {
+        json!({
+            "route": "released_archive",
+            "version": installed.version,
+            "target": installed.target,
+            "asset": installed.asset,
+            "archive_sha256": installed.sha256,
+            "executable": installed.executable.display().to_string(),
+            "executable_bytes": installed.executable_bytes,
+        })
+    } else if let Some(version) = &options.install_archive {
+        json!({"route": "released_archive", "version": version, "failed": true})
+    } else if options.install_published {
+        json!({"route": "source_cargo_install"})
+    } else {
+        json!({"route": "caller_supplied_executable"})
+    }
+}
+
+fn install_log(step: &str) -> Option<&'static str> {
+    match step {
+        "install_published" => Some(INSTALL_STDERR_LOG),
+        archive::STEP => Some(ARCHIVE_STDERR_LOG),
+        _ => None,
+    }
+}
+
+fn render_markdown(
+    version: &str,
+    setup: &[StepResult],
+    cases: &[CaseResult],
+    archive: Option<&archive::ArchiveInstall>,
+) -> String {
+    let mut text = format!("# ripr first-run walk\n\nripr: `{version}`\n\n");
+    if let Some(installed) = archive {
+        text.push_str(&format!(
+            "install route: released archive `{}` ({}, sha256 `{}`), executable `{}`\n\n",
+            installed.asset,
+            installed.target,
+            installed.sha256,
+            installed.executable.display()
+        ));
+    }
+    text.push_str("## Setup\n\n");
     let mut friction_total = 0usize;
     for step in setup {
         friction_total += setup_friction(step).len();
@@ -952,8 +1247,10 @@ fn render_markdown(version: &str, setup: &[StepResult], cases: &[CaseResult]) ->
             "- `{}`: {:.1}s, exit {:?}\n",
             step.name, step.secs, step.exit
         ));
-        if step.name == "install_published" && step.exit != Some(0) {
-            text.push_str(&format!("  stderr: `{INSTALL_STDERR_LOG}`\n"));
+        if step.exit != Some(0)
+            && let Some(log) = install_log(&step.name)
+        {
+            text.push_str(&format!("  stderr: `{log}`\n"));
         }
     }
     for case in cases {
@@ -972,6 +1269,9 @@ fn render_markdown(version: &str, setup: &[StepResult], cases: &[CaseResult]) ->
             case.workflow_installs_with_cargo
                 .map_or_else(|| "unknown".to_string(), |flag| flag.to_string()),
         ));
+        if let Some(reason) = &case.verdict_reason {
+            text.push_str(&format!("verdict reason: {reason}\n\n"));
+        }
         for (step, flags) in &case.steps {
             friction_total += flags.len();
             text.push_str(&format!(
@@ -1035,6 +1335,7 @@ mod tests {
                 (step("init_ci", 0, "", "", 0.1), vec!["x".to_string()]),
             ],
             verdict: Some("weakly_exposed"),
+            verdict_reason: None,
             caught_by: &[],
             workflow_lines: Some(321),
             workflow_installs_with_cargo: Some(false),
@@ -1090,7 +1391,96 @@ mod tests {
         let development = "Summary: 0 exposed, 1 infection_unknown\nStatic exposure: unknown (infection_unknown, warning)\n";
         assert_eq!(verdict_of(published), Some("reachable_unrevealed"));
         assert_eq!(verdict_of(development), Some("infection_unknown"));
+        // The bounded default render (#8165) leaves no wire token on the label line,
+        // and the summary line before it must not decide the verdict.
+        let plain = "Summary: 1 probe (0 exposed, 1 weak, 0 unrevealed, 0 no path)\n\nStart here:\n  Static exposure: weak (severity: warning, confidence 0.40)\n  Why: exposed to the next test\n";
+        assert_eq!(verdict_of(plain), Some("weakly_exposed"));
+        assert_eq!(
+            verdict_of("Static exposure: unrevealed (severity: warning)\n"),
+            Some("reachable_unrevealed")
+        );
         assert_eq!(verdict_of("No findings"), None);
+    }
+
+    #[test]
+    fn an_unknown_verdict_records_its_reason_and_a_specific_verdict_does_not() -> Result<(), String>
+    {
+        let check = "Static exposure: unknown (severity: warning, confidence 0.40)\n  Why unknown: infection could not be determined statically\n";
+        let explain = "Why this verdict\n  Stop reasons:\n  - infection_evidence_unknown: infection evidence is unknown\n";
+        assert_eq!(
+            verdict_reason_of(Some("infection_unknown"), check, Some(explain)).as_deref(),
+            Some("infection_evidence_unknown: infection evidence is unknown")
+        );
+        // Without explain output the check line next to the verdict is the reason.
+        assert_eq!(
+            verdict_reason_of(Some("infection_unknown"), check, None).as_deref(),
+            Some("infection could not be determined statically")
+        );
+        // A specific verdict never fabricates a reason, even if the same
+        // explain text were present.
+        assert_eq!(
+            verdict_reason_of(Some("exposed"), check, Some(explain)),
+            None
+        );
+        assert_eq!(
+            verdict_reason_of(Some("infection_unknown"), "No findings", None),
+            None
+        );
+
+        let out =
+            std::env::temp_dir().join(format!("first-run-verdict-reason-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&out);
+        fs::create_dir_all(&out).map_err(|err| err.to_string())?;
+        let options = Options {
+            ripr: "ripr".into(),
+            out: out.clone(),
+            install_published: false,
+            install_archive: None,
+        };
+        let unknown = CaseResult {
+            name: "demo-1.0.0".to_string(),
+            steps: vec![(step("check", 0, check, "", 0.1), vec![])],
+            verdict: Some("infection_unknown"),
+            verdict_reason: verdict_reason_of(Some("infection_unknown"), check, Some(explain)),
+            caught_by: &[],
+            workflow_lines: None,
+            workflow_installs_with_cargo: None,
+        };
+        let exposed = CaseResult {
+            name: "demo-2.0.0".to_string(),
+            steps: vec![(step("check", 0, check, "", 0.1), vec![])],
+            verdict: Some("exposed"),
+            verdict_reason: verdict_reason_of(Some("exposed"), check, Some(explain)),
+            caught_by: &[],
+            workflow_lines: None,
+            workflow_installs_with_cargo: None,
+        };
+        finish(
+            &options,
+            &out,
+            "ripr 0.0.0",
+            Vec::new(),
+            vec![unknown, exposed],
+            None,
+        )?;
+        let report: Value = serde_json::from_str(
+            &fs::read_to_string(out.join("first-run.json")).map_err(|err| err.to_string())?,
+        )
+        .map_err(|err| err.to_string())?;
+        assert_eq!(report["schema_version"], "first_run.v1");
+        assert_eq!(
+            report["cases"][0]["verdict_reason"],
+            json!("infection_evidence_unknown: infection evidence is unknown")
+        );
+        assert_eq!(report["cases"][1]["verdict_reason"], Value::Null);
+        let markdown =
+            fs::read_to_string(out.join("first-run.md")).map_err(|err| err.to_string())?;
+        assert!(
+            markdown.contains("verdict reason: infection_evidence_unknown"),
+            "{markdown}"
+        );
+        let _ = fs::remove_dir_all(&out);
+        Ok(())
     }
 
     #[test]
@@ -1176,7 +1566,7 @@ mod tests {
         assert!(setup_friction(&slow_install).is_empty());
         let failed = step("install_published", 101, "", "error\n", 3.0);
         assert_eq!(setup_friction(&failed), vec!["exit Some(101), expected 0"]);
-        let report = render_markdown("v", &[failed], &[]);
+        let report = render_markdown("v", &[failed], &[], None);
         assert!(report.contains("Friction flags: 1"), "{report}");
     }
 
@@ -1247,15 +1637,104 @@ mod tests {
             name: "demo-1.0.0".to_string(),
             steps: vec![(step("check", 0, "", "", 0.1), vec![])],
             verdict: Some("reachable_unrevealed"),
+            verdict_reason: None,
             caught_by: &["tests::boundary", "tests::equal"],
             workflow_lines: None,
             workflow_installs_with_cargo: None,
         };
-        let text = render_markdown("ripr 0.0.0", &[], &[case]);
+        let text = render_markdown("ripr 0.0.0", &[], &[case], None);
         assert!(
             text.contains("verdict: `reachable_unrevealed` (false gap; tests that notice the edit: tests::boundary, tests::equal)"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn the_archive_route_needs_a_version_and_excludes_the_other_routes() {
+        let args = |list: &[&str]| list.iter().map(|a| a.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            parse_options(&args(&["--install-archive", "0.10.0"]))
+                .map(|o| o.install_archive)
+                .unwrap_or_default(),
+            Some("0.10.0".to_string())
+        );
+        for bad in [
+            args(&["--install-archive"]),
+            args(&["--install-archive", "../x"]),
+            args(&["--install-archive", "0.10.0", "--install-published"]),
+            args(&["--install-archive", "0.10.0", "--ripr", "ripr"]),
+        ] {
+            assert!(parse_options(&bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn the_report_names_the_install_route() {
+        let options = |archive: Option<&str>, published: bool| Options {
+            ripr: "ripr".into(),
+            out: PathBuf::from("x"),
+            install_published: published,
+            install_archive: archive.map(str::to_string),
+        };
+        assert_eq!(
+            install_json(&options(None, false), None)["route"],
+            "caller_supplied_executable"
+        );
+        assert_eq!(
+            install_json(&options(None, true), None)["route"],
+            "source_cargo_install"
+        );
+        let failed = install_json(&options(Some("0.10.0"), false), None);
+        assert_eq!(failed["route"], "released_archive");
+        assert_eq!(failed["failed"], true);
+    }
+
+    #[test]
+    fn a_failed_archive_install_reports_unavailable_with_no_executable_identity()
+    -> Result<(), String> {
+        let out =
+            std::env::temp_dir().join(format!("first-run-failed-archive-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&out);
+        fs::create_dir_all(&out).map_err(|err| err.to_string())?;
+        let options = Options {
+            ripr: "ripr".into(),
+            out: out.clone(),
+            install_published: false,
+            install_archive: Some("0.10.0".into()),
+        };
+        let failed = StepResult {
+            exit: Some(1),
+            stderr: "checksum mismatch\n".into(),
+            ..step(archive::STEP, 0, "", "", 1.25)
+        };
+        finish(
+            &options,
+            &out,
+            "unavailable",
+            vec![failed],
+            Vec::new(),
+            None,
+        )?;
+        let report: Value = serde_json::from_str(
+            &fs::read_to_string(out.join("first-run.json")).map_err(|err| err.to_string())?,
+        )
+        .map_err(|err| err.to_string())?;
+        assert_eq!(report["ripr"], "unavailable");
+        assert_eq!(report["install"]["route"], "released_archive");
+        assert_eq!(report["install"]["failed"], true);
+        for key in ["archive_sha256", "asset", "executable", "target"] {
+            assert!(
+                report["install"].get(key).is_none(),
+                "{key} leaked into a failed install"
+            );
+        }
+        assert_eq!(report["cases"], json!([]));
+        assert_eq!(report["setup"][0]["step"], "install_archive");
+        assert_eq!(report["setup"][0]["exit"], 1);
+        assert_eq!(report["setup"][0]["secs"], 1.25);
+        assert_eq!(report["setup"][0]["stderr_log"], ARCHIVE_STDERR_LOG);
+        let _ = fs::remove_dir_all(&out);
+        Ok(())
     }
 
     #[test]

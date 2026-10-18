@@ -182,6 +182,14 @@ assertion-only callback with no nested test call. This does not expand aliases.
   an enclosing caught try still withholds those nested assertions. This is
   not general analysis of abrupt completion in finally blocks. Withheld
   assertion-like syntax remains unresolved admission, not established absence.
+- (Amended 2026-10-17, #8508.) A `finally` that can replace its `try`'s
+  completion withholds the try body's and catch handler's assertions: any
+  `return` or `throw` outside a nested function, or a `break`/`continue`
+  whose target lies outside the finalizer, discards a rejected awaited
+  matcher. The test is over-approximate (a `throw` the finalizer itself
+  catches still withholds). The finalizer's own assertions, assertions
+  outside the `try`, and benign finalizers keep collection. This is not
+  general promise dataflow or runner semantics.
 - An assertion inside a nested callback (`forEach`, `waitFor`, `act`, a
   subtest) or inside a declaration initializer is not collected, except
   the three forms RIPR-SPEC-0246 rule 2 names.
@@ -491,8 +499,8 @@ Relation rank, `uses_oracle` and reason:
 
 Specifier resolution: a relative specifier joins lexically, with the
 directory `main`, `index` and `outDir` rules of RIPR-SPEC-0099. A
-non-relative specifier resolves only through tsconfig `paths` (when
-`[typescript] resolve_tsconfig_paths = true`) or through a workspace
+non-relative specifier resolves only through tsconfig `paths` (unless
+`[typescript] resolve_tsconfig_paths = false`) or through a workspace
 package name, which is always on. Anything else is unresolved, and an
 owner import through an unresolved alias reports
 `typescript_path_alias_unresolved`.
@@ -847,8 +855,8 @@ to `amount - 20`, and `tests/lib.test.ts` has
 28. `packages/a/package.json` is `{ "name": "a", "main": "src/lib.ts" }`
     with the base `src/lib.ts`; `packages/b/tests/x.test.ts` imports
     `{ price }` from `"a"` and asserts `toBe(130)`: `exposed` with no
-    tsconfig flag (unchanged).
-29. `import { price } from "@/lib"` with `resolve_tsconfig_paths` off:
+    tsconfig flag, via the workspace package name (unchanged).
+29. `import { price } from "@/lib"` with `resolve_tsconfig_paths = false` set explicitly (the default is on):
     `no_static_path`, `typescript_path_alias_unresolved` (unchanged).
 30. `src/lib.ts` is `export function save(db: Db, v: number) {
     db.write(v + 1); }`, changed to `v + 2`; test

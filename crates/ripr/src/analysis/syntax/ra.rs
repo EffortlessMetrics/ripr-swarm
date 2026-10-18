@@ -5,6 +5,8 @@ use ra_ap_syntax::{
     AstNode, SourceFile, TextSize,
     ast::{self, HasAttrs, HasGenericArgs, HasGenericParams, HasName},
 };
+#[cfg(test)]
+mod module_scope_walk_tests;
 mod probe_shapes;
 mod property_macros;
 use probe_shapes::extract_parser_probe_shapes;
@@ -33,7 +35,7 @@ use super::{
 };
 use crate::analysis::rust_index::{
     FunctionFact, OracleFact, ProbeShapeFact, ProbeShapeKind, SourceText, TestFact,
-    classify_assertion, err_return_guard_oracles, extract_call_facts, extract_identifier_tokens,
+    classify_assertion_in, err_return_guard_oracles, extract_call_facts, extract_identifier_tokens,
     extract_line_scanned_oracles, extract_literal_facts, extract_return_facts,
     guarded_result_match_scan_with_shadow_authority, is_unwrap_err_bound_error_assertion,
     unwrap_err_bound_variables,
@@ -120,6 +122,20 @@ pub(crate) fn rust_include_directives(
 /// become assertion evidence. `None` means the function text was not
 /// parser-valid; callers may use their existing lexical fallback then.
 pub(crate) fn parser_oracles_for_function(
+    function_text: &str,
+    function_start_line: usize,
+) -> Option<Vec<OracleFact>> {
+    // Pure in the text and start line; overlapping indexes of one diff run
+    // re-extract the same helpers (#5363).
+    super::run_memo::memoize(
+        super::run_memo::Product::FunctionOracles,
+        function_start_line,
+        function_text,
+        || parser_oracles_for_function_uncached(function_text, function_start_line),
+    )
+}
+
+fn parser_oracles_for_function_uncached(
     function_text: &str,
     function_start_line: usize,
 ) -> Option<Vec<OracleFact>> {
@@ -303,11 +319,19 @@ pub(crate) fn module_item_scopes_in(
             line_index.line(fn_token.text_range().start()),
             name.text().to_string(),
         );
-        if function
-            .syntax()
-            .descendants()
-            .filter_map(ast::Attr::cast)
-            .any(|attribute| {
+        let body = function.body();
+        let body_range = body.as_ref().map(|body| body.syntax().text_range());
+        let mut has_cfg = false;
+        let mut bound = Vec::new();
+        let mut local_use = false;
+        let mut deferred = body.is_some() && function.async_token().is_some();
+        let mut called = Vec::new();
+        // Keep descendant (not just immediate-child) semantics: nested
+        // attributes and bindings still belong to the enclosing summary.
+        // Body-only facts exclude signature nodes. Direct calls retain the
+        // existing nested-fn/closure/async boundary check below.
+        for node in function.syntax().descendants() {
+            if !has_cfg && let Some(attribute) = ast::Attr::cast(node.clone()) {
                 let compact: String = attribute
                     .syntax()
                     .text()
@@ -315,58 +339,49 @@ pub(crate) fn module_item_scopes_in(
                     .chars()
                     .filter(|character| !character.is_whitespace())
                     .collect();
-                compact.starts_with("#[cfg") || compact.starts_with("#![cfg")
-            })
-        {
+                has_cfg = compact.starts_with("#[cfg") || compact.starts_with("#![cfg");
+            }
+            if &node != function.syntax()
+                && let Some(name) =
+                    ast::AnyHasName::cast(node.clone()).and_then(|named| named.name())
+            {
+                bound.push(name.text().to_string());
+            }
+            if body_range.is_none_or(|range| !range.contains_range(node.text_range())) {
+                continue;
+            }
+            local_use |= ast::Use::can_cast(node.kind());
+            if !deferred {
+                deferred = ast::ClosureExpr::can_cast(node.kind())
+                    || ast::BlockExpr::cast(node.clone())
+                        .is_some_and(|block| block.async_token().is_some());
+            }
+            if let (Some(body), Some(call)) = (&body, ast::CallExpr::cast(node))
+                && !enclosed_by_nested_fn_like(call.syntax(), body)
+                && let Some(ast::Expr::PathExpr(path)) = call.expr()
+                && let Some(path) = path.path()
+                && path.qualifier().is_none()
+                && let Some(name) = path.segment().and_then(|segment| segment.name_ref())
+            {
+                called.push(name.text().to_string());
+            }
+        }
+        if has_cfg {
             scopes.fns_with_cfg.insert(key.clone());
         }
-        let bound = function
-            .syntax()
-            .descendants()
-            .filter(|node| node != function.syntax())
-            .filter_map(|node| {
-                ast::AnyHasName::cast(node)
-                    .and_then(|named| named.name())
-                    .map(|name| name.text().to_string())
-            })
-            .collect();
-        scopes.bound_names.insert(key.clone(), bound);
-        if let Some(body) = function.body() {
-            if body
-                .syntax()
-                .descendants()
-                .any(|node| ast::Use::can_cast(node.kind()))
-            {
+        scopes
+            .bound_names
+            .insert(key.clone(), bound.into_iter().collect());
+        if body.is_some() {
+            if local_use {
                 scopes.fns_with_local_use.insert(key.clone());
             }
-            if function.async_token().is_some()
-                || body.syntax().descendants().any(|node| {
-                    ast::ClosureExpr::can_cast(node.kind())
-                        || ast::BlockExpr::cast(node)
-                            .is_some_and(|block| block.async_token().is_some())
-                })
-            {
+            if deferred {
                 scopes.fns_with_deferred_code.insert(key.clone());
             }
-            let called = body
-                .syntax()
-                .descendants()
-                .filter_map(ast::CallExpr::cast)
-                // A call inside a closure, `async` block or nested `fn` may
-                // never run.
-                .filter(|call| !enclosed_by_nested_fn_like(call.syntax(), &body))
-                .filter_map(|call| match call.expr()? {
-                    ast::Expr::PathExpr(path) => {
-                        let path = path.path()?;
-                        if path.qualifier().is_some() {
-                            return None;
-                        }
-                        Some(path.segment()?.name_ref()?.text().to_string())
-                    }
-                    _ => None,
-                })
-                .collect();
-            scopes.direct_calls.insert(key.clone(), called);
+            scopes
+                .direct_calls
+                .insert(key.clone(), called.into_iter().collect());
         }
         let Some(parent) = function.syntax().parent() else {
             continue;
@@ -479,12 +494,36 @@ impl RustSyntaxAdapter for RaRustSyntaxAdapter {
 }
 
 pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, String> {
-    summarize_file_with_probe_shapes(path, text, extract_parser_probe_shapes)
+    summarize_file_with_collectors(
+        path,
+        text,
+        module_item_scopes_in,
+        extract_parser_probe_shapes,
+    )
 }
 
+#[cfg(test)]
+fn summarize_file_with_item_scopes(
+    path: &Path,
+    text: &str,
+    collect_scopes: impl FnOnce(&ast::SourceFile, &LineIndex) -> ModuleItemScopes,
+) -> Result<FileFacts, String> {
+    summarize_file_with_collectors(path, text, collect_scopes, extract_parser_probe_shapes)
+}
+
+#[cfg(test)]
 fn summarize_file_with_probe_shapes(
     path: &Path,
     text: &str,
+    extract_probe_shapes: impl Fn(&ast::Fn, &str, &Arc<str>, &LineIndex) -> Vec<ProbeShapeFact>,
+) -> Result<FileFacts, String> {
+    summarize_file_with_collectors(path, text, module_item_scopes_in, extract_probe_shapes)
+}
+
+fn summarize_file_with_collectors(
+    path: &Path,
+    text: &str,
+    collect_scopes: impl FnOnce(&ast::SourceFile, &LineIndex) -> ModuleItemScopes,
     extract_probe_shapes: impl Fn(&ast::Fn, &str, &Arc<str>, &LineIndex) -> Vec<ProbeShapeFact>,
 ) -> Result<FileFacts, String> {
     if let Some(reason) = rust_nesting_refusal(text) {
@@ -538,7 +577,7 @@ fn summarize_file_with_probe_shapes(
         let returns = extract_return_facts(&body, start_line);
         let literals = extract_literal_facts(&body, start_line);
         let probe_shapes = extract_probe_shapes(&function, text, &shared_source, &line_index);
-        // A plain helper inside an inline `#[cfg(test)]` module is test
+        // A helper gated directly on test or inside a test-required module is test
         // infrastructure even when it has no `#[test]` attribute. Classify
         // that role at the producer boundary so diff probes, seam inventory,
         // evidence relation, and every downstream renderer consume the same
@@ -548,7 +587,12 @@ fn summarize_file_with_probe_shapes(
         let has_test_attribute = has_test_attribute(&function);
         let source_role = if has_test_attribute {
             FunctionSourceRole::TestAttribute
-        } else if is_cfg_test_module_member(&function) {
+        } else if cfg_predicates::attributes_require_test(
+            function
+                .attrs()
+                .map(|attr| attr.syntax().text().to_string()),
+        ) || is_cfg_test_module_member(&function)
+        {
             FunctionSourceRole::CfgTestModule
         } else {
             FunctionSourceRole::Production
@@ -634,7 +678,7 @@ fn summarize_file_with_probe_shapes(
             && a.text == b.text
     });
 
-    let mut item_scopes = module_item_scopes_in(&source, &line_index);
+    let mut item_scopes = collect_scopes(&source, &line_index);
     let keep: std::collections::BTreeSet<&str> = functions
         .iter()
         .flat_map(|function: &FunctionFact| {
@@ -2174,7 +2218,7 @@ fn extract_parser_oracles(
         }
         let range = macro_call.syntax().text_range();
         let assertion_text = slice_macro_call_text(text, range.start(), range.end());
-        let mut classification = classify_assertion(&assertion_text);
+        let mut classification = classify_assertion_in(&assertion_text, text);
         // Upgrade exact assertions on unwrap_err-bound variables to
         // ExactErrorVariant when the assertion pins a specific error result
         // (RIPR-SPEC-0106, Part A). Constructor-payload equality reaches this
@@ -2238,13 +2282,39 @@ fn extract_parser_oracles(
         });
     }
 
+    for call in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::CallExpr::cast)
+        .filter(is_result_expect_err_ufcs)
+    {
+        if !uncompared_unwrap_err_statement(&call, text) {
+            continue;
+        }
+        let range = call.syntax().text_range();
+        let call_text = slice_text(text, range.start(), range.end())
+            .trim()
+            .trim_end_matches(';')
+            .to_string();
+        assertions.push(OracleFact {
+            line: line_index.line(range.start()),
+            kind: OracleKind::BroadError,
+            strength: OracleStrength::Weak,
+            observed_tokens: extract_identifier_tokens(&call_text),
+            text: call_text,
+            ok_value_observed: None,
+        });
+    }
+
     // #6578: an expect-test comparison (`expect![[..]].assert_eq(actual)`)
     // is a method call on the macro's value, which the macro walk above never
     // sees. Its whole expression is the oracle, graded `snapshot` / medium
     // (RIPR-SPEC-0231 step 6); the line scan below must
     // not also read the `.assert_debug_eq(..)` continuation of a multi-line
-    // expectation as an assertion of its own.
-    let mut expect_test_lines = Vec::new();
+    // expectation as an assertion of its own. #7911: drop only that
+    // continuation (or a duplicate of the comparison), not a sibling
+    // oracle that shares a line.
+    let mut expect_test_comparisons = Vec::new();
     for method_call in function
         .syntax()
         .descendants()
@@ -2279,7 +2349,7 @@ fn extract_parser_oracles(
         // call split across lines). That grade is a ceiling: a weaker
         // reading of the compared value (a tautology, a broad `is_err()`)
         // is kept, as the line scan keeps it.
-        let classification = classify_assertion(&assertion_text);
+        let classification = classify_assertion_in(&assertion_text, text);
         let (kind, strength) = if matches!(
             classification.strength,
             OracleStrength::Weak | OracleStrength::Smoke | OracleStrength::None
@@ -2289,7 +2359,10 @@ fn extract_parser_oracles(
             (OracleKind::Snapshot, OracleStrength::Medium)
         };
         let line = line_index.line(range.start());
-        expect_test_lines.push(line..=line_index.line_for_range_end(range.end()));
+        expect_test_comparisons.push((
+            line..=line_index.line_for_range_end(range.end()),
+            assertion_text.clone(),
+        ));
         assertions.push(OracleFact {
             line,
             kind,
@@ -2339,9 +2412,10 @@ fn extract_parser_oracles(
         .into_iter()
         .filter(|oracle| !guarded_matches.match_start_lines.contains(&oracle.line))
         .filter(|oracle| {
-            !expect_test_lines
-                .iter()
-                .any(|lines| lines.contains(&oracle.line))
+            !expect_test_comparisons.iter().any(|(lines, comparison)| {
+                lines.contains(&oracle.line)
+                    && is_expect_test_continuation(&oracle.text, comparison)
+            })
         })
     {
         assertions.push(oracle);
@@ -2355,12 +2429,34 @@ fn extract_parser_oracles(
     assertions
 }
 
-/// Whether this `unwrap_err()` call is the whole value of a statement that
-/// never compares it (RIPR-SPEC-0227 decision 2): the statement text and the
-/// rest of the enclosing block go through `uncompared_unwrap_err`, so both
-/// adapters admit the same shapes.
-fn uncompared_unwrap_err_statement(method_call: &ast::MethodCallExpr, text: &str) -> bool {
-    let Some(statement) = method_call.syntax().parent() else {
+/// True when a line-scanned oracle is the parsed expect-test comparison
+/// itself or only its `.assert_*` continuation, not a sibling assertion
+/// sharing a line (#7911). A custom helper such as `assert_eq(&render(4))`
+/// can be a text suffix of the comparison without being that continuation.
+fn is_expect_test_continuation(oracle_text: &str, comparison_text: &str) -> bool {
+    let oracle = oracle_text.trim().trim_end_matches(';').trim();
+    let comparison = comparison_text.trim().trim_end_matches(';').trim();
+    if oracle.is_empty() {
+        return false;
+    }
+    if comparison == oracle {
+        return true;
+    }
+    comparison.ends_with(oracle)
+        && oracle.strip_prefix('.').is_some_and(|rest| {
+            EXPECT_TEST_COMPARISONS
+                .iter()
+                .any(|name| rest.starts_with(name))
+        })
+}
+
+/// Whether this `unwrap_err()` / `expect_err(..)` call is the whole value of
+/// a statement that never compares it (RIPR-SPEC-0227 decision 2): the
+/// statement text and the rest of the enclosing block go through
+/// `uncompared_unwrap_err`, so both adapters admit the same shapes. Method
+/// calls and UFCS `Result::expect_err(<call>, <msg>)` share this gate.
+fn uncompared_unwrap_err_statement(expr: &impl AstNode, text: &str) -> bool {
+    let Some(statement) = expr.syntax().parent() else {
         return false;
     };
     if ast::LetStmt::cast(statement.clone()).is_none()
@@ -2375,9 +2471,27 @@ fn uncompared_unwrap_err_statement(method_call: &ast::MethodCallExpr, text: &str
         .map_or(range.end(), |block| block.text_range().end());
     let rest = slice_text(text, range.end(), block_end);
     crate::analysis::extract::uncompared_unwrap_err(&statement_text, &rest).is_some_and(|value| {
-        let call = method_call.syntax().text().to_string();
+        let call = expr.syntax().text().to_string();
         value.split_whitespace().eq(call.split_whitespace())
     })
+}
+
+fn is_result_expect_err_ufcs(call: &ast::CallExpr) -> bool {
+    let Some(ast::Expr::PathExpr(path_expr)) = call.expr() else {
+        return false;
+    };
+    let Some(path) = path_expr.path() else {
+        return false;
+    };
+    let Some(name) = path.segment().and_then(|segment| segment.name_ref()) else {
+        return false;
+    };
+    name.text() == "expect_err"
+        && path
+            .qualifier()
+            .and_then(|qualifier| qualifier.segment())
+            .and_then(|segment| segment.name_ref())
+            .is_some_and(|qualifier| qualifier.text() == "Result")
 }
 
 /// Token-local leaf form of [`is_assertion_macro`] for scanners that see
@@ -2985,6 +3099,38 @@ mod tests {
     }
 
     #[test]
+    fn ra_adapter_marks_direct_cfg_helpers_without_registering_tests() -> Result<(), Box<dyn Error>>
+    {
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/data/source-role-corpus/cases/direct_cfg_helpers/src/lib.rs"
+        ));
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
+        assert_eq!(facts.tests.len(), 1);
+        for name in [
+            "production_lease",
+            "alternative_control",
+            "nontest_control",
+            "lookalike_control",
+        ] {
+            assert!(
+                facts.functions.iter().any(|function| function.name == name
+                    && function.source_role == FunctionSourceRole::Production),
+                "production control: {name}"
+            );
+        }
+        for name in ["standalone_helper", "conjunct_helper", "inline_helper"] {
+            assert!(
+                facts.functions.iter().any(|function| function.name == name
+                    && function.source_role == FunctionSourceRole::CfgTestModule),
+                "evidence-only helper: {name}"
+            );
+            assert!(facts.tests.iter().all(|test| test.name != name));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn ra_adapter_extracts_probe_shapes() -> Result<(), Box<dyn Error>> {
         let root = temp_dir("ra_probe_shapes")?;
         fs::create_dir_all(root.join("src"))?;
@@ -3522,6 +3668,145 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
         );
 
         assert!(nodes.is_empty());
+    }
+
+    /// #7911: a parsed expect-test comparison must not drop a sibling
+    /// `assert_eq!` that shares its line. The line-scan filter exists to
+    /// hide the comparison's own `.assert_*` continuation, not every
+    /// oracle on that line.
+    #[test]
+    fn a_same_line_assert_eq_beside_an_expect_test_comparison_is_kept() {
+        let function = "fn scores() {\n    expect![[\"w12\"]].assert_eq(&render(4)); assert_eq!(other(), 2);\n}\n";
+        let oracles = parser_oracles_for_function(function, 1).unwrap_or_default();
+        assert!(
+            oracles.iter().any(|oracle| {
+                oracle.text.contains("expect![[") && oracle.text.contains("assert_eq(&render(4))")
+            }),
+            "parsed expect-test comparison must remain: {oracles:?}"
+        );
+        assert!(
+            oracles
+                .iter()
+                .any(|oracle| oracle.text.contains("assert_eq!(other(), 2)")),
+            "sibling assert_eq on the same line must remain: {oracles:?}"
+        );
+    }
+
+    /// #7911: `ensure!` is line-scanned, not a parser assertion macro, so
+    /// the expect-test line filter is the only thing that can drop it.
+    #[test]
+    fn a_same_line_line_scanned_oracle_beside_an_expect_test_comparison_is_kept() {
+        let function = "fn scores() {\n    expect![[\"w12\"]].assert_eq(&render(4)); ensure!(other() == 2, \"must be two\");\n}\n";
+        let oracles = parser_oracles_for_function(function, 1).unwrap_or_default();
+        assert!(
+            oracles.iter().any(|oracle| {
+                oracle.text.contains("expect![[") && oracle.text.contains("assert_eq(&render(4))")
+            }),
+            "parsed expect-test comparison must remain: {oracles:?}"
+        );
+        assert!(
+            oracles
+                .iter()
+                .any(|oracle| oracle.text.contains("ensure!(other() == 2")),
+            "sibling line-scanned ensure! on the same line must remain: {oracles:?}"
+        );
+    }
+
+    /// Control: the filter must still hide a multi-line comparison's
+    /// `.assert_debug_eq(..)` continuation, which the line scanner would
+    /// otherwise read as its own custom `assert_*` helper.
+    #[test]
+    fn a_multiline_expect_test_continuation_is_not_a_second_oracle() {
+        let function = "fn renders() {\n    expect![[r#\"\n        Row { w: 12 }\n    \"#]]\n    .assert_debug_eq(&row(4));\n}\n";
+        let oracles = parser_oracles_for_function(function, 1).unwrap_or_default();
+        let expect_oracles: Vec<_> = oracles
+            .iter()
+            .filter(|oracle| {
+                oracle.text.contains("expect![[") || oracle.text.contains(".assert_debug_eq")
+            })
+            .collect();
+        assert_eq!(
+            expect_oracles.len(),
+            1,
+            "multi-line expect-test comparison must stay one oracle: {oracles:?}"
+        );
+        assert!(
+            expect_oracles[0].text.contains("expect![[")
+                && expect_oracles[0].text.contains(".assert_debug_eq"),
+            "the one oracle must be the whole comparison: {oracles:?}"
+        );
+        assert_eq!(expect_oracles[0].kind, OracleKind::Snapshot, "{oracles:?}");
+        assert_eq!(
+            expect_oracles[0].strength,
+            OracleStrength::Medium,
+            "{oracles:?}"
+        );
+    }
+
+    /// #7911: a line-scanned sibling on the comparison's continuation
+    /// line is not itself that continuation, so it must stay.
+    #[test]
+    fn a_line_scanned_oracle_on_an_expect_test_continuation_line_is_kept() {
+        let function = "fn renders() {\n    expect![[r#\"\n        Row { w: 12 }\n    \"#]]\n    .assert_debug_eq(&row(4)); ensure!(other() == 2, \"must be two\");\n}\n";
+        let oracles = parser_oracles_for_function(function, 1).unwrap_or_default();
+        assert!(
+            oracles.iter().any(|oracle| {
+                oracle.text.contains("expect![[") && oracle.text.contains(".assert_debug_eq")
+            }),
+            "parsed expect-test comparison must remain: {oracles:?}"
+        );
+        assert!(
+            oracles
+                .iter()
+                .any(|oracle| oracle.text.contains("ensure!(other() == 2")),
+            "sibling ensure! on the continuation line must remain: {oracles:?}"
+        );
+    }
+
+    /// A later custom `assert_eq(` helper can be a text suffix of a parsed
+    /// comparison without being that comparison's continuation.
+    #[test]
+    fn a_later_custom_assert_helper_is_not_treated_as_expect_test_continuation() {
+        let function = "fn scores() {\n    expect![[\"w12\"]].assert_eq(&render(4));\n    assert_eq(&render(4));\n}\n";
+        let oracles = parser_oracles_for_function(function, 1).unwrap_or_default();
+        assert!(
+            oracles.iter().any(|oracle| {
+                oracle.text.contains("expect![[") && oracle.text.contains("assert_eq(&render(4))")
+            }),
+            "parsed expect-test comparison must remain: {oracles:?}"
+        );
+        assert!(
+            oracles.iter().any(|oracle| {
+                oracle.text.contains("assert_eq(&render(4))") && !oracle.text.contains("expect![[")
+            }),
+            "later custom assert_eq helper must remain: {oracles:?}"
+        );
+    }
+
+    /// #7911 review: any non-empty suffix of the comparison is not the
+    /// continuation. Only the comparison itself or a leading `.assert_eq` /
+    /// `.assert_debug_eq` method call is.
+    #[test]
+    fn expect_test_continuation_is_the_comparison_or_its_assert_method() {
+        let comparison = "expect![[\"w12\"]].assert_eq(&render(4));";
+        assert!(is_expect_test_continuation(comparison, comparison));
+        assert!(is_expect_test_continuation(
+            ".assert_eq(&render(4));",
+            comparison
+        ));
+        assert!(is_expect_test_continuation(
+            "    .assert_debug_eq(&row(4));",
+            "expect![[r#\"x\"#]]\n    .assert_debug_eq(&row(4));"
+        ));
+        assert!(!is_expect_test_continuation(
+            "assert_eq(&render(4));",
+            comparison
+        ));
+        assert!(!is_expect_test_continuation(
+            "ensure!(other() == 2, \"must be two\");",
+            comparison
+        ));
+        assert!(!is_expect_test_continuation("", comparison));
     }
 }
 

@@ -18,6 +18,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const CACHE_DIR_ENV: &str = "RIPR_CACHE_DIR";
+/// The interrupted children are terminated at arbitrary points, including while an
+/// instrumented process writes its coverage profile at exit. A terminated writer
+/// leaves a truncated `.profraw` that makes `llvm-profdata merge` fail the whole
+/// coverage run (#4978), so these children discard their profile. This keeps
+/// these two tests from producing truncated profiles; other kill sites remain.
+const TERMINATED_CHILD_PROFILE_ENV: &str = "LLVM_PROFILE_FILE";
+const TERMINATED_CHILD_PROFILE: &str = "/dev/null";
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 const LIB_RS: &str = "pub fn discount(price: u32, qty: u32) -> u32 {\n    if qty >= 10 { price * qty * 9 / 10 } else { price * qty }\n}\n";
@@ -28,6 +35,12 @@ const DIFF_GE_12: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs
 const DIFF_GE_11: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn discount(price: u32, qty: u32) -> u32 {\n-    if qty >= 10 { price * qty * 9 / 10 } else { price * qty }\n+    if qty >= 11 { price * qty * 9 / 10 } else { price * qty }\n }\n";
 
 type Corruption = fn(&Path) -> std::io::Result<()>;
+
+// Exact product binary or this developer-owned test executable only. No
+// repository-provided executable or command enters this construction site.
+fn owned_test_command(executable: &Path) -> Command {
+    Command::new(executable)
+}
 
 struct Fixture {
     base: PathBuf,
@@ -64,7 +77,7 @@ impl Fixture {
     }
 
     fn command(&self, diff: &str, extra: &[&str]) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+        let mut command = owned_test_command(Path::new(env!("CARGO_BIN_EXE_ripr")));
         command
             .args(["check", "--root"])
             .arg(&self.root)
@@ -261,6 +274,7 @@ fn terminated_runs_leave_a_cache_every_later_run_agrees_with() -> Result<(), Str
             .command("ge12.diff", &[])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
+            .env(TERMINATED_CHILD_PROFILE_ENV, TERMINATED_CHILD_PROFILE)
             .spawn()
             .map_err(|error| format!("spawn ripr check: {error}"))?;
         std::thread::sleep(Duration::from_micros(delay_micros));
@@ -321,6 +335,7 @@ fn interrupted_artifact_write_keeps_the_previous_artifact_or_a_complete_new_one(
             .command("ge11.diff", &["--write-artifact", &artifact_arg])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
+            .env(TERMINATED_CHILD_PROFILE_ENV, TERMINATED_CHILD_PROFILE)
             .spawn()
             .map_err(|error| format!("spawn ripr check: {error}"))?;
         std::thread::sleep(Duration::from_micros(delay_micros));
@@ -536,13 +551,14 @@ case $RIPR_LIFECYCLE_MODE in
         printf '%s\n' "$RIPR_LIFECYCLE_PACKET" > "$out"
         printf '%s' "$RIPR_LIFECYCLE_SIDECAR" > "${out%/*}/exporter-sidecar"
         ;;
-    partial|nonzero)
+    partial|nonzero|ignore)
         printf '%s' '{"interrupted_export":' > "$out"
         printf '%s' '{"interrupted_export":' > "${RIPR_LIFECYCLE_MARKER}.partial"
         ;;
     absent|directory) ;;
     *) exit 65 ;;
 esac
+[[ $RIPR_LIFECYCLE_MODE != ignore ]] || trap '' INT
 printf '%s\n' "$BASHPID" > "${RIPR_LIFECYCLE_MARKER}.pid"
 printf 'ready\n' > "${RIPR_LIFECYCLE_MARKER}.ready"
 case $RIPR_LIFECYCLE_MODE in
@@ -644,11 +660,15 @@ exit 66
     }
 
     fn temporary_path(fixture: &Fixture, marker: &Path) -> Result<PathBuf, String> {
-        let tmp = PathBuf::from(
+        let reported = PathBuf::from(
             fs::read_to_string(marker.with_extension("path"))
                 .map_err(|error| error.to_string())?
                 .trim_end(),
         );
+        // The exporter runs in the fixture root and is handed a root-relative
+        // output path, so a relative report names a file under that root; `join` keeps an
+        // absolute report as is.
+        let tmp = fixture.root.join(reported);
         let cache = fixture.root.join("managed-packets");
         let parent = tmp.parent().ok_or("packet temporary path has no parent")?;
         // Accept the old shared location so baseline/wrong-implementation
@@ -673,6 +693,15 @@ exit 66
     }
 
     fn start_attempt(fixture: &Fixture, label: &str, mode: &str) -> Result<RunningAttempt, String> {
+        start_attempt_with_stderr(fixture, label, mode, None)
+    }
+
+    fn start_attempt_with_stderr(
+        fixture: &Fixture,
+        label: &str,
+        mode: &str,
+        stderr: Option<Stdio>,
+    ) -> Result<RunningAttempt, String> {
         let marker = fixture.base.join(format!("attempt-{label}"));
         let exclusive = |extension: &str| {
             fs::OpenOptions::new()
@@ -682,6 +711,9 @@ exit 66
                 .map_err(|error| format!("create {label} {extension} capture: {error}"))
         };
         let mut command = fixture.command("managed.diff", &[]);
+        if stderr.is_some() {
+            command.arg("--quiet");
+        }
         let packet = if mode == "sidecar" {
             EMPTY_PACKET.replace("lifecycle-empty", "lifecycle-sidecar")
         } else {
@@ -695,7 +727,7 @@ exit 66
             .env("RIPR_LIFECYCLE_SIDECAR", SIDECAR)
             .stdin(Stdio::null())
             .stdout(exclusive("stdout")?)
-            .stderr(exclusive("stderr")?)
+            .stderr(stderr.unwrap_or(Stdio::from(exclusive("stderr")?)))
             .process_group(0);
         let child = ripr::process_owner::OwnedProcess::spawn(command)
             .map_err(|error| format!("spawn owned lifecycle check: {error}"))?;
@@ -1260,5 +1292,499 @@ exit 66
         // Retain the unique sidecar witness for the proof owner on success.
         fixture.preserve_on_drop = true;
         Ok(())
+    }
+    // Linux observations distinguish stopped execution from application-owned
+    // reaping. The test subreaper only settles failed-test witnesses, after
+    // the assertion; it cannot supply the product's success observation.
+    #[cfg(target_os = "linux")]
+    mod interruption {
+        use super::*;
+        use nix::sys::signal::{Signal, kill, killpg, raise};
+        use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
+        use nix::unistd::Pid;
+        use std::io::Read;
+        use std::os::unix::process::ExitStatusExt;
+        use std::sync::Mutex;
+
+        static SUBREAPER: Mutex<()> = Mutex::new(());
+
+        struct Reaper {
+            prior: bool,
+            producer: Option<Pid>,
+        }
+
+        impl Reaper {
+            fn new() -> Result<Self, String> {
+                let prior = nix::sys::prctl::get_child_subreaper().map_err(|e| e.to_string())?;
+                nix::sys::prctl::set_child_subreaper(true).map_err(|e| e.to_string())?;
+                Ok(Self {
+                    prior,
+                    producer: None,
+                })
+            }
+        }
+
+        impl Drop for Reaper {
+            fn drop(&mut self) {
+                if let Some(pid) = self.producer {
+                    // StillAlive proves this exact PID is our adopted child.
+                    // ECHILD means the CLI already reaped it; never signal an
+                    // unowned PID merely because its integer was recorded.
+                    match waitpid(pid, Some(WaitPidFlag::WNOHANG)) {
+                        Ok(WaitStatus::StillAlive) => {
+                            let _ = kill(pid, Signal::SIGKILL);
+                            let _ = waitpid(pid, None);
+                        }
+                        Ok(_) | Err(nix::errno::Errno::ECHILD) => {}
+                        Err(error) => eprintln!("owned failed-test witness reap: {error}"),
+                    }
+                }
+                if let Err(error) = nix::sys::prctl::set_child_subreaper(self.prior) {
+                    eprintln!("restore test subreaper: {error}");
+                }
+            }
+        }
+
+        fn pid(value: u32) -> Result<Pid, String> {
+            i32::try_from(value)
+                .map(Pid::from_raw)
+                .map_err(|e| e.to_string())
+        }
+
+        fn normalized(fixture: &Fixture, bytes: &[u8]) -> Result<String, String> {
+            String::from_utf8(bytes.to_vec())
+                .map(|text| text.replace(&fixture.base.display().to_string(), "<fixture>"))
+                .map_err(|e| e.to_string())
+        }
+
+        fn assert_sigint(mode: &str) -> Result<(), String> {
+            let _serial = SUBREAPER.lock().map_err(|e| e.to_string())?;
+            let mut reaper = Reaper::new()?;
+            let fixture = setup(&format!("sigint-{mode}"))?;
+            let config = fixture.root.join("ripr.toml");
+            let text = fs::read_to_string(&config).map_err(|e| e.to_string())?;
+            let long_timeout = text.replace("timeout_ms = 1000", "timeout_ms = 30000");
+            if long_timeout == text || !long_timeout.contains("timeout_ms = 30000") {
+                return Err("30s timeout setup did not take effect".to_string());
+            }
+            write(&config, &long_timeout)?;
+            let seed = attempt(&fixture, "seed", "healthy")?;
+            healthy(&seed)?;
+            let published_path = published_path(&fixture, &seed.tmp)?;
+            let published = fs::read(&published_path).map_err(|e| e.to_string())?;
+            let source = fs::read(fixture.root.join("src/lib.rs")).map_err(|e| e.to_string())?;
+            let prior = fixture
+                .root
+                .join("managed-packets/prior-staging/unique-evidence");
+            fs::create_dir_all(prior.parent().ok_or("prior evidence parent")?)
+                .map_err(|e| e.to_string())?;
+            write(&prior, "prior user evidence")?;
+            let mut running = start_attempt(&fixture, "interrupt", mode)?;
+            let (producer, tmp) = running.wait_ready(&fixture)?;
+            reaper.producer = Some(pid(producer)?);
+            if mode != "directory"
+                && fs::read(&tmp).map_err(|e| e.to_string())? != PARTIAL.as_bytes()
+            {
+                return Err("SIGINT setup did not produce real partial bytes".to_string());
+            }
+            if running
+                .child
+                .try_wait()
+                .map_err(|e| e.to_string())?
+                .is_some()
+            {
+                return Err("SIGINT setup CLI was not live".to_string());
+            }
+            if nix::unistd::getpgid(Some(pid(producer)?)).map_err(|e| e.to_string())?
+                != pid(running.child.id())?
+            {
+                return Err("exporter escaped the owned CLI process group".to_string());
+            }
+            let signalled = Instant::now();
+            killpg(pid(running.child.id())?, Signal::SIGINT).map_err(|e| e.to_string())?;
+            let status = loop {
+                if let Some(status) = running.child.try_wait().map_err(|e| e.to_string())? {
+                    break status;
+                }
+                if signalled.elapsed() >= Duration::from_secs(5) {
+                    return Err(
+                        "first SIGINT exceeded 5s, below 30s timeout and 8s safety exit"
+                            .to_string(),
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            };
+            // Observe before any test-side waitpid or emergency cleanup.
+            let producer_exists = primary_exists(producer)?;
+            running.settled = true;
+            let stdout =
+                fs::read(running.marker.with_extension("stdout")).map_err(|e| e.to_string())?;
+            let stderr = fs::read_to_string(running.marker.with_extension("stderr"))
+                .map_err(|e| e.to_string())?;
+            eprintln!(
+                "SIGINT receipt mode={mode} cli={} producer={producer} status={status:?} producer_exists={producer_exists} elapsed_ms={} tmp={} fixture={}",
+                running.child.id(),
+                signalled.elapsed().as_millis(),
+                tmp.display(),
+                fixture.base.display()
+            );
+            if producer_exists {
+                return Err(format!(
+                    "producer {producer} still exists, including zombie, after CLI exit; application reaping absent"
+                ));
+            }
+            if status.code() != Some(130) || !stdout.is_empty() {
+                return Err(format!(
+                    "interruption status/stdout dishonest: {status:?}, {} bytes",
+                    stdout.len()
+                ));
+            }
+            if !stderr.contains("check interrupted")
+                || !stderr.contains("rerun the same command")
+                || !stderr.contains("staging")
+                || !stderr.contains("analysis cancelled: Cancelled")
+                || stderr.contains("exited with status")
+                || stderr.contains("timed out")
+                || stderr.contains("other languages continue")
+                || stderr.contains("non-zero")
+            {
+                return Err(format!(
+                    "interruption recovery guidance/degradation: {stderr}"
+                ));
+            }
+            if mode == "directory" {
+                if !stderr.contains(&tmp.display().to_string())
+                    || fs::read_to_string(tmp.join("unique-evidence")).map_err(|e| e.to_string())?
+                        != "directory must survive partial-file cleanup"
+                    || !stderr.contains("cleanup")
+                {
+                    return Err("cleanup blocker was not preserved and named".to_string());
+                }
+            } else {
+                if tmp.exists() {
+                    return Err("own interrupted partial was retained".to_string());
+                }
+                staging_removed(&fixture, &tmp)?;
+            }
+            if fs::read(&published_path).map_err(|e| e.to_string())? != published
+                || fs::read_to_string(&prior).map_err(|e| e.to_string())? != "prior user evidence"
+                || fs::read(fixture.root.join("src/lib.rs")).map_err(|e| e.to_string())? != source
+            {
+                return Err(
+                    "interruption changed prior packet, evidence, or user source".to_string(),
+                );
+            }
+            let repeat = attempt(&fixture, "repeat", "healthy")?;
+            healthy(&repeat)?;
+            if repeat.output.stdout != seed.output.stdout {
+                return Err("repeat differs from same-root healthy seed".to_string());
+            }
+            if fs::read(&published_path).map_err(|e| e.to_string())? != published
+                || fs::read_to_string(&prior).map_err(|e| e.to_string())? != "prior user evidence"
+                || fs::read(fixture.root.join("src/lib.rs")).map_err(|e| e.to_string())? != source
+            {
+                return Err("healthy repeat changed prior packet, evidence, or source".to_string());
+            }
+            if mode == "directory"
+                && fs::read_to_string(tmp.join("unique-evidence")).map_err(|e| e.to_string())?
+                    != "directory must survive partial-file cleanup"
+            {
+                return Err("healthy repeat changed cleanup blocker evidence".to_string());
+            }
+            let cold = setup(&format!("sigint-cold-{mode}"))?;
+            let cold_config = cold.root.join("ripr.toml");
+            // Same trusted exporter and exact config; root/cache/output are
+            // independently created, so the comparison cannot reuse packets.
+            write(&cold_config, &long_timeout)?;
+            let cold_output = attempt(&cold, "cold", "healthy")?;
+            healthy(&cold_output)?;
+            if normalized(&fixture, &repeat.output.stdout)?
+                != normalized(&cold, &cold_output.output.stdout)?
+            {
+                return Err(
+                    "healthy repeat differs from independent cold JSON after root normalization"
+                        .to_string(),
+                );
+            }
+            Ok(())
+        }
+
+        #[test]
+        fn managed_sigint_reaps_partial_and_repeats() -> Result<(), String> {
+            assert_sigint("partial")
+        }
+        #[test]
+        fn managed_sigint_reaps_ignoring_exporter() -> Result<(), String> {
+            assert_sigint("ignore")
+        }
+        #[test]
+        fn managed_sigint_names_retained_directory() -> Result<(), String> {
+            assert_sigint("directory")
+        }
+
+        fn wait_blocked(
+            child: &mut ripr::process_owner::OwnedProcess,
+            operation: &str,
+        ) -> Result<(), String> {
+            let started = Instant::now();
+            loop {
+                if child.try_wait().map_err(|e| e.to_string())?.is_some() {
+                    return Err("CLI exited before blocked-I/O observation".to_string());
+                }
+                let wait = fs::read_to_string(format!("/proc/{}/wchan", child.id()))
+                    .map_err(|e| format!("observe Linux blocked-I/O instrument: {e}"))?;
+                if wait.contains(operation) {
+                    return Ok(());
+                }
+                if started.elapsed() > Duration::from_secs(5) {
+                    return Err(format!("CLI did not reach {operation}; last wchan={wait}"));
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+
+        fn native_interrupt(child: &mut ripr::process_owner::OwnedProcess) -> Result<(), String> {
+            kill(pid(child.id())?, Signal::SIGINT).map_err(|e| e.to_string())?;
+            let started = Instant::now();
+            loop {
+                if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+                    if status.signal() != Some(2) {
+                        return Err(format!("expected native first SIGINT, got {status:?}"));
+                    }
+                    return Ok(());
+                }
+                if started.elapsed() > Duration::from_secs(5) {
+                    child.terminate_tree()?;
+                    return Err("first SIGINT swallowed during blocking I/O".to_string());
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+
+        fn held_input(fifo: bool) -> Result<(), String> {
+            let mut fixture = Fixture::new("native-input")?;
+            fixture.preserve_on_drop = true;
+            let input = fixture.base.join(if fifo { "held.fifo" } else { "-" });
+            if fifo {
+                nix::unistd::mkfifo(
+                    &input,
+                    nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            let capture = fixture.base.join("native-stdout");
+            let mut command = owned_test_command(Path::new(env!("CARGO_BIN_EXE_ripr")));
+            command
+                .args(["check", "--root"])
+                .arg(&fixture.root)
+                .arg("--diff")
+                .arg(if fifo {
+                    input.as_os_str()
+                } else {
+                    std::ffi::OsStr::new("-")
+                })
+                .args(["--format", "json"])
+                .stdin(Stdio::piped())
+                .stdout(fs::File::create(&capture).map_err(|e| e.to_string())?)
+                .stderr(Stdio::null());
+            let mut child =
+                ripr::process_owner::OwnedProcess::spawn(command).map_err(|e| e.to_string())?;
+            let _writer = child
+                .stdin_pipe()
+                .take()
+                .ok_or("missing held stdin writer")?;
+            wait_blocked(
+                &mut child,
+                if fifo {
+                    "wait_for_partner"
+                } else {
+                    "pipe_read"
+                },
+            )?;
+            native_interrupt(&mut child)?;
+            if fs::metadata(&capture).map_err(|e| e.to_string())?.len() != 0
+                || fs::read_to_string(fixture.root.join("src/lib.rs")).map_err(|e| e.to_string())?
+                    != LIB_RS
+            {
+                return Err("native input interrupt changed output/source".to_string());
+            }
+            Ok(())
+        }
+        #[test]
+        fn native_sigint_interrupts_held_stdin() -> Result<(), String> {
+            held_input(false)
+        }
+        #[test]
+        fn native_sigint_interrupts_unopened_fifo() -> Result<(), String> {
+            held_input(true)
+        }
+
+        #[test]
+        fn native_sigint_interrupts_unread_stdout() -> Result<(), String> {
+            let mut fixture = Fixture::new("native-stdout")?;
+            fixture.preserve_on_drop = true;
+            let full = fixture.result("ge12.diff")?;
+            let (read, writer) = nix::unistd::pipe().map_err(|e| e.to_string())?;
+            let capacity = nix::fcntl::fcntl(&writer, nix::fcntl::FcntlArg::F_SETPIPE_SZ(4096))
+                .map_err(|e| e.to_string())?;
+            if full.len() <= usize::try_from(capacity).map_err(|e| e.to_string())? {
+                return Err("stdout fixture does not exceed pipe capacity".to_string());
+            }
+            let mut command = fixture.command("ge12.diff", &[]);
+            command
+                .stdin(Stdio::null())
+                .stdout(fs::File::from(writer))
+                .stderr(Stdio::null());
+            let mut child =
+                ripr::process_owner::OwnedProcess::spawn(command).map_err(|e| e.to_string())?;
+            wait_blocked(&mut child, "pipe_write")?;
+            native_interrupt(&mut child)?;
+            let mut partial = Vec::new();
+            fs::File::from(read)
+                .read_to_end(&mut partial)
+                .map_err(|e| e.to_string())?;
+            if partial.is_empty() || partial.len() >= full.len() {
+                return Err("stdout was drained or never reached before interruption".to_string());
+            }
+            Ok(())
+        }
+
+        #[test]
+        fn second_sigint_escapes_blocked_interruption_diagnostics() -> Result<(), String> {
+            use std::io::Write;
+            let _serial = SUBREAPER.lock().map_err(|e| e.to_string())?;
+            let mut reaper = Reaper::new()?;
+            let fixture = setup("second-sigint")?;
+            let config = fixture.root.join("ripr.toml");
+            let text = fs::read_to_string(&config).map_err(|e| e.to_string())?;
+            write(
+                &config,
+                &text.replace("timeout_ms = 1000", "timeout_ms = 30000"),
+            )?;
+            let (reader, writer) = nix::unistd::pipe().map_err(|e| e.to_string())?;
+            let capacity = nix::fcntl::fcntl(&writer, nix::fcntl::FcntlArg::F_SETPIPE_SZ(4096))
+                .map_err(|e| e.to_string())?;
+            let mut writer = fs::File::from(writer);
+            writer
+                .write_all(&vec![
+                    b'x';
+                    usize::try_from(capacity).map_err(|e| e.to_string())?
+                ])
+                .map_err(|e| e.to_string())?;
+            let _unread = reader;
+            let mut running =
+                start_attempt_with_stderr(&fixture, "force", "partial", Some(Stdio::from(writer)))?;
+            let (producer, tmp) = running.wait_ready(&fixture)?;
+            reaper.producer = Some(pid(producer)?);
+            if fs::read(&tmp).map_err(|e| e.to_string())? != PARTIAL.as_bytes() {
+                return Err("force control missing partial witness".to_string());
+            }
+            if nix::unistd::getpgid(Some(pid(producer)?)).map_err(|e| e.to_string())?
+                != pid(running.child.id())?
+            {
+                return Err("force exporter group mismatch".to_string());
+            }
+            killpg(pid(running.child.id())?, Signal::SIGINT).map_err(|e| e.to_string())?;
+            wait_blocked(&mut running.child, "pipe_write")?;
+            if primary_exists(producer)? {
+                return Err(
+                    "first SIGINT did not reap producer before diagnostic block".to_string()
+                );
+            }
+            native_interrupt(&mut running.child)?;
+            running.settled = true;
+            if fs::metadata(running.marker.with_extension("stdout"))
+                .map_err(|e| e.to_string())?
+                .len()
+                != 0
+            {
+                return Err("forced interruption emitted stdout".to_string());
+            }
+            Ok(())
+        }
+
+        #[test]
+        fn library_cli_retains_native_signal_policy() -> Result<(), String> {
+            const CHILD: &str = "RIPR_7618_LIBRARY_SIGNAL_CHILD";
+            if let Ok(mode) = std::env::var(CHILD) {
+                let observed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let handler = if mode == "caller" {
+                    Some(
+                        signal_hook::flag::register(signal_hook::consts::SIGINT, observed.clone())
+                            .map_err(|e| e.to_string())?,
+                    )
+                } else {
+                    None
+                };
+                let fixture = Fixture::new("library-signal-policy")?;
+                ripr::cli::run(vec![
+                    "ripr".to_string(),
+                    "check".to_string(),
+                    "--root".to_string(),
+                    fixture.root.display().to_string(),
+                    "--diff".to_string(),
+                    fixture.base.join("ge12.diff").display().to_string(),
+                    "--format".to_string(),
+                    "json".to_string(),
+                ])
+                .map_err(|e| e.to_string())?;
+                // Isolated wrong-policy control: unregistering a signal-hook
+                // flag leaves an empty OS handler, unlike the default policy.
+                if mode == "swallowed" {
+                    let bad =
+                        signal_hook::flag::register(signal_hook::consts::SIGINT, observed.clone())
+                            .map_err(|e| e.to_string())?;
+                    signal_hook::low_level::unregister(bad);
+                }
+                raise(Signal::SIGINT).map_err(|e| e.to_string())?;
+                let Some(handler) = handler else {
+                    return Err(
+                        "default native SIGINT was swallowed after ordinary cli::run".to_string(),
+                    );
+                };
+                signal_hook::low_level::unregister(handler);
+                if !observed.load(Ordering::SeqCst) {
+                    return Err("library CLI displaced the caller's signal policy".to_string());
+                }
+                return Ok(());
+            }
+            let test = "managed_producer::interruption::library_cli_retains_native_signal_policy";
+            for mode in ["caller", "native"] {
+                let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+                let mut command = owned_test_command(&executable);
+                let fixture = Fixture::new("library-signal-controller")?;
+                let capture = fixture.base.join("child.stderr");
+                command
+                    .args(["--exact", test, "--nocapture"])
+                    .env(CHILD, mode)
+                    .stdout(
+                        fs::File::create(fixture.base.join("child.stdout"))
+                            .map_err(|e| e.to_string())?,
+                    )
+                    .stderr(fs::File::create(&capture).map_err(|e| e.to_string())?);
+                let mut child =
+                    ripr::process_owner::OwnedProcess::spawn(command).map_err(|e| e.to_string())?;
+                let started = Instant::now();
+                let status = loop {
+                    if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+                        break status;
+                    }
+                    if started.elapsed() > Duration::from_secs(5) {
+                        child.terminate_tree()?;
+                        return Err("library signal child exceeded5s".to_string());
+                    }
+                    std::thread::sleep(Duration::from_millis(2));
+                };
+                if (mode == "caller" && !status.success())
+                    || (mode == "native" && status.signal() != Some(2))
+                {
+                    return Err(format!(
+                        "library signal child displaced caller SIGINT policy: {status:?}, {}",
+                        fs::read_to_string(&capture).map_err(|e| e.to_string())?
+                    ));
+                }
+            }
+            Ok(())
+        }
     }
 }

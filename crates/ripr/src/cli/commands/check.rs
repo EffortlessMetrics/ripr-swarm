@@ -290,6 +290,7 @@ const CHECK_VALUE_OPTIONS: &[&str] = &[
     "--output-dir",
     "--write-artifact",
     "--git-timeout",
+    "--timeout",
 ];
 
 /// Value-taking options whose values are enumerated names (never flag-shaped).
@@ -340,6 +341,32 @@ fn parse_git_timeout_from(
         ));
     }
     Ok((secs > 0).then_some(timeout))
+}
+
+/// `--timeout` / `RIPR_CHECK_TIMEOUT`: the whole-run analysis wall-clock
+/// budget in seconds, `0` disabling it (#5369). Same shape as the git
+/// deadline, so a typo never runs with a silently different bound.
+fn parse_check_timeout_from(
+    source: &str,
+    value: &str,
+) -> Result<Option<std::time::Duration>, String> {
+    parse_git_timeout_from(source, value)
+}
+
+fn check_timeout_from_env(
+    explicit: bool,
+    env_value: Result<String, std::env::VarError>,
+) -> Result<Option<Option<std::time::Duration>>, String> {
+    if explicit {
+        return Ok(None);
+    }
+    match env_value {
+        Ok(value) => parse_check_timeout_from("RIPR_CHECK_TIMEOUT", &value).map(Some),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err("RIPR_CHECK_TIMEOUT must be valid UTF-8".to_string())
+        }
+    }
 }
 
 pub(super) fn git_timeout_from_env(
@@ -472,6 +499,23 @@ pub(super) fn machine_refusal_document(
 }
 
 pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
+    check_inner(args, None)
+}
+
+#[cfg(unix)]
+pub(in crate::cli) fn check_with_interrupt_flags(
+    args: &[String],
+    flags: crate::cli::interrupt::InterruptFlags,
+) -> Result<(), String> {
+    check_inner(args, Some(flags))
+}
+
+fn check_inner(
+    args: &[String],
+    interrupt_flags: Option<crate::cli::interrupt::InterruptFlags>,
+) -> Result<(), String> {
+    #[cfg(not(unix))]
+    let _ = interrupt_flags;
     let mut input = CheckInput {
         git_timeout: Some(app::default_cli_git_timeout()),
         ..CheckInput::default()
@@ -504,6 +548,8 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // pair. No implicit cache: the user names the artifact path.
     let mut write_artifact: Option<PathBuf> = None;
     let mut git_timeout_explicitly_provided = false;
+    let mut check_timeout = super::check_budget::default_check_timeout();
+    let mut check_timeout_explicitly_provided = false;
     let mut candidate_tree: Option<String> = None;
     let mut candidate_base: Option<String> = None;
     let mut quiet = false;
@@ -619,6 +665,12 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                 input.git_timeout = parse_git_timeout(value)?;
                 git_timeout_explicitly_provided = true;
             }
+            "--timeout" => {
+                i += 1;
+                let value = expect_value(args, i, "--timeout")?;
+                check_timeout = parse_check_timeout_from("--timeout", value)?;
+                check_timeout_explicitly_provided = true;
+            }
             "--quiet" => {
                 quiet = true;
             }
@@ -723,6 +775,23 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         )
     })? {
         input.git_timeout = timeout;
+    }
+    if let Some(timeout) = check_timeout_from_env(
+        check_timeout_explicitly_provided,
+        std::env::var("RIPR_CHECK_TIMEOUT"),
+    )
+    .map_err(|err| {
+        super::check_fanout::refuse(
+            super::check_fanout::refusal_destination(
+                fanout_custody.as_ref(),
+                output_dir.as_deref(),
+            ),
+            &envelope_input,
+            effective_format,
+            err,
+        )
+    })? {
+        check_timeout = timeout;
     }
     if worktree_explicitly_provided && input.diff_file.is_some() {
         return Err(super::check_fanout::refuse(
@@ -1093,6 +1162,22 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             )
         })?;
     }
+    // Blocking diff readers and separate file/fanout publication paths retain
+    // native interruption. Only ordinary resolved regular-file/live-Git input
+    // opts into cooperative analysis settlement (#7618).
+    #[cfg(unix)]
+    let _interrupt = if output_dir.is_none()
+        && write_artifact.is_none()
+        && gap_ledger.is_none()
+        && input.diff_file.as_deref().is_none_or(|path| {
+            path != Path::new("-") && std::fs::metadata(path).is_ok_and(|meta| meta.is_file())
+        }) {
+        interrupt_flags
+            .map(crate::cli::interrupt::SignalRegistration::create)
+            .transpose()?
+    } else {
+        None
+    };
     // #2644: `fast` is currently behaviorally identical to `draft`. The notice
     // fires on the EFFECTIVE mode after `apply_to_check_input`, not on argv
     // position, so a repo `ripr.toml` with `mode = "fast"` is disclosed too,
@@ -1231,14 +1316,14 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // throttled heartbeats included). Both the audit-path disclosure and the
     // stage lines are stderr-only and cannot change machine stdout.
     let progress = (!quiet).then(|| {
-        crate::cli::progress::CliProgressSink::for_stderr(
+        std::sync::Arc::new(crate::cli::progress::CliProgressSink::for_stderr(
             std::io::stderr().is_terminal(),
             crate::cli::progress::ProgressPolicy::STANDARD,
-        )
+        ))
     });
     let progress_sink = progress
         .as_ref()
-        .map(|sink| sink as &dyn crate::app::AnalysisProgressSink);
+        .map(|sink| &**sink as &dyn crate::app::AnalysisProgressSink);
     // #4945: invocation-time cost disclosure for the full-repo audit-path
     // formats. One line, before the run begins, naming the expected cost
     // class (cold full-corpus walk; the warm-rerun clause is honest per
@@ -1249,6 +1334,9 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         eprintln!("{disclosure}");
     }
     if matches!(format, OutputFormat::RepoExposureJson) {
+        // #7781: this path never reaches `check_with_progress`, so it needs
+        // its own containment check before the inventory caches write.
+        crate::atomic_file::ensure_default_output_contained(&input.root)?;
         // #4945: this early return renders straight from the inventory, so it
         // brackets the walk itself with repo-scope stage boundaries instead of
         // relying on `check_with_progress` (which this path never reaches).
@@ -1276,6 +1364,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                         &config,
                     )?
                     .with_rust_corpus_key(report.corpus_key.as_ref());
+                analysis::cancellation::begin_cli_publication()?;
                 let stdout = std::io::stdout();
                 let mut handle = stdout.lock();
                 output::repo_exposure::write_repo_exposure_json_with_context(
@@ -1362,7 +1451,28 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         // `CheckOutput` carries only the fields these renderers read.
         Ok(app::repo_seam_inventory_input(input))
     } else {
-        app::check_with_progress_core(input, &config, progress_scope, progress_sink)
+        // #5369: bound the diff/worktree analysis by the wall-clock budget.
+        let worker_config = config.clone();
+        let worker_sink = progress.clone();
+        let abandon_sink = progress.clone();
+        super::check_budget::run_with_budget(
+            check_timeout,
+            move || {
+                if let Some(sink) = &abandon_sink {
+                    sink.abandon();
+                }
+            },
+            move || {
+                app::check_with_progress_core(
+                    input,
+                    &worker_config,
+                    progress_scope,
+                    worker_sink
+                        .as_ref()
+                        .map(|sink| &**sink as &dyn crate::app::AnalysisProgressSink),
+                )
+            },
+        )
     };
     let mut output = match output_result {
         Ok(output) => output,
@@ -1455,15 +1565,17 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             let base_commit = analysis::resolve_base_commit(root, Some(base), timeout);
             let head_commit = analysis::resolve_base_commit(root, Some("HEAD"), timeout);
             // The candidate probe spawns Git subprocesses; only an equal
-            // resolution can use its answer (#7644).
-            let another_ref_available = base_commit.is_some()
-                && base_commit == head_commit
-                && analysis::another_base_candidate_exists(root, timeout);
+            // resolution can use its answer (#7644). Name the probed
+            // candidate, never the current base itself.
+            let candidate = (base_commit.is_some() && base_commit == head_commit)
+                .then(|| analysis::another_base_candidate(root, timeout))
+                .flatten()
+                .filter(|candidate| candidate != base);
             if let Some(hedge) = default_base_is_head_hedge(
                 base,
                 base_commit.as_deref(),
                 head_commit.as_deref(),
-                another_ref_available,
+                candidate.as_deref(),
             ) {
                 eprintln!("{}", terminal_safe(hedge));
             }
@@ -1514,9 +1626,12 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         // mode that is neither committed history nor a working-tree read
         // must not inherit it. A working-tree read keeps it: its diff covers
         // tracked files only, so the untracked routed files are named in a
-        // note of their own (RIPR-SPEC-0116).
+        // note of their own (RIPR-SPEC-0116). #7467: the gitignored list
+        // drives the same family and follows the same rule — neither diff
+        // analyzes it.
         if !worktree_run {
             output.untracked_working_tree_source_paths.clear();
+            output.ignored_working_tree_source_paths.clear();
         }
     }
     // A working-tree run (explicit `--worktree`, or the dirty-tree default)
@@ -1539,11 +1654,21 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         .as_ref()
         .map(|_| app::FindingDrillIn::Commands(navigation.clone()));
     let navigation = if matches!(format, OutputFormat::Human) && analyzed_live_files {
-        navigation.with_stub_route(app::test_stub::check_stub_route(
-            &limited_check_input.root,
-            &config,
-            &output,
-        ))
+        navigation
+            .with_stub_route(app::test_stub::check_stub_route(
+                &limited_check_input.root,
+                &config,
+                &output,
+            ))
+            // #8166 Slice C: the repair line reuses the producer-owned
+            // admission gate over the live seam inventory, for the same
+            // live-files reason as the stub route above. Other formats
+            // keep their existing next-step contracts unchanged.
+            .with_repair_route(crate::app::task_first::check_repair_route(
+                &limited_check_input.root,
+                &config,
+                &output,
+            ))
     } else {
         navigation
     };
@@ -1663,22 +1788,28 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
 /// The stderr warning for an empty default-base result when the default base
 /// and HEAD each resolve to the same commit after analysis. It states those
 /// two later observations only; it does not attribute the analyzed range.
-/// `None` unless both commits resolved and are equal, and some other branch
-/// could actually serve as the advised `--base` (#7644): in a single-branch
-/// repository the Start-here action (commit a change, or `--worktree`) is
-/// the only actionable remediation, so the `--base` advice stays silent.
+/// `None` unless both commits resolved and are equal, and the probed
+/// `candidate` could actually serve as the advised `--base` (#7644): in a
+/// single-branch repository the Start-here action (commit a change, or
+/// `--worktree`) is the only actionable remediation, so the `--base`
+/// advice stays silent. The candidate is the ref
+/// `analysis::another_base_candidate` actually probed — never a hardcoded
+/// example and never the current `base`, which would loop to the same
+/// empty result. Its `--base {candidate}` remediation is the same one
+/// the human Start-here line names for this state, so stderr and stdout
+/// do not diverge.
 fn default_base_is_head_hedge(
     base: &str,
     base_commit: Option<&str>,
     head_commit: Option<&str>,
-    another_ref_available: bool,
+    candidate: Option<&str>,
 ) -> Option<String> {
-    match (base_commit, head_commit) {
-        (Some(base_commit), Some(head_commit))
-            if base_commit == head_commit && another_ref_available =>
+    match (base_commit, head_commit, candidate) {
+        (Some(base_commit), Some(head_commit), Some(candidate))
+            if base_commit == head_commit && !candidate.is_empty() && candidate != base =>
         {
             Some(format!(
-                "ripr: after analysis, the default base `{base}` and HEAD each resolved to the same commit. This empty result alone is not a clean pass. Pass `--base <ref>` for the branch your change should be compared against (for example `--base origin/main`)."
+                "ripr: after analysis, the default base `{base}` and HEAD each resolved to the same commit. This empty result alone is not a clean pass. Pass `--base {candidate}` to compare against `{candidate}` instead."
             ))
         }
         _ => None,
@@ -2058,23 +2189,52 @@ mod tests {
 
     #[test]
     fn default_base_equal_to_head_is_named_and_distinct_commits_stay_silent() {
-        let hedge = default_base_is_head_hedge("origin/feat", Some("abc"), Some("abc"), true);
+        let hedge =
+            default_base_is_head_hedge("origin/feat", Some("abc"), Some("abc"), Some("main"));
         assert!(
-            hedge
-                .as_deref()
-                .is_some_and(|text| text.contains("`origin/feat`")
+            hedge.as_deref().is_some_and(|text| {
+                text.contains("`origin/feat`")
                     && text.contains("each resolved to the same commit")
-                    && text.contains("--base")),
+                    && text.contains("--base main")
+                    && !text.contains("origin/main")
+            }),
             "{hedge:?}"
         );
         assert_eq!(
-            default_base_is_head_hedge("origin/main", Some("abc"), Some("def"), true),
+            default_base_is_head_hedge("origin/main", Some("abc"), Some("def"), Some("main")),
             None
         );
         // An unresolved side is never asserted equal.
-        assert_eq!(default_base_is_head_hedge("main", None, None, true), None);
         assert_eq!(
-            default_base_is_head_hedge("main", Some("abc"), None, true),
+            default_base_is_head_hedge("main", None, None, Some("other")),
+            None
+        );
+        assert_eq!(
+            default_base_is_head_hedge("main", Some("abc"), None, Some("other")),
+            None
+        );
+    }
+
+    #[test]
+    fn default_base_hedge_names_the_probed_candidate_never_the_current_base() {
+        // HEAD == `origin/main` is the reported loop: the old hardcoded
+        // `--base origin/main` example re-ran the same empty comparison.
+        let hedge =
+            default_base_is_head_hedge("origin/main", Some("abc"), Some("abc"), Some("main"));
+        assert!(
+            hedge.as_deref().is_some_and(
+                |text| text.contains("--base main") && !text.contains("--base origin/main")
+            ),
+            "{hedge:?}"
+        );
+        // A candidate equal to the current base is no remediation at all.
+        assert_eq!(
+            default_base_is_head_hedge(
+                "origin/main",
+                Some("abc"),
+                Some("abc"),
+                Some("origin/main")
+            ),
             None
         );
     }
@@ -2084,7 +2244,7 @@ mod tests {
         // #7644: a fresh single-branch repository has no ref the `--base`
         // advice could name, so the Start-here action owns the remediation.
         assert_eq!(
-            default_base_is_head_hedge("master", Some("abc"), Some("abc"), false),
+            default_base_is_head_hedge("master", Some("abc"), Some("abc"), None),
             None
         );
     }

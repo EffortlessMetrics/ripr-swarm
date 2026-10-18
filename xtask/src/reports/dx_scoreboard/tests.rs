@@ -463,6 +463,43 @@ fn parse_options_rejects_unknown_boards() {
     assert!(parsed.is_ok_and(|options| options.boards == vec!["ci", "paste"]));
 }
 
+fn first_run_config() -> Result<Config, String> {
+    parse_config(&MINIMAL.replace(
+        "[[metric]]\nid = \"first_run.friction_events\"",
+        "[[metric]]\nid = \"first_run.install_seconds\"\nboard = \"first_run\"\ntitle = \"i\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 120\nregression_pct = 25\nregression_floor = 30\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.time_to_first_useful_result_s\"\nboard = \"first_run\"\ntitle = \"t\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 300\nregression_pct = 25\nregression_floor = 60\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.unknown_verdicts\"\nboard = \"first_run\"\ntitle = \"u\"\nunit = \"cases\"\ndirection = \"lower_is_better\"\ntarget = 0\nregression_pct = 0\nregression_floor = 0\nrunner_dependent = false\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.friction_events\"",
+    ))
+}
+
+#[test]
+fn the_archive_install_route_never_feeds_the_source_install_metric() -> Result<(), String> {
+    let config = first_run_config()?;
+    let mut receipt = first_run_receipt(false);
+    if let Some(setup) = receipt["setup"].as_array_mut() {
+        setup.push(json!({"step": "install_archive", "secs": 1.5, "exit": 0, "friction": []}));
+    }
+    let samples = parse_ingest(&receipt, &config)?;
+    // A 1.5 s download must not become the source-install sample or start the
+    // time-to-first-result clock that a compile baseline is compared against.
+    assert!(
+        !samples
+            .iter()
+            .any(|s| s.metric == "first_run.install_seconds"
+                || s.metric == "first_run.time_to_first_useful_result_s")
+    );
+
+    // With both routes in one receipt only the source install is counted.
+    if let Some(setup) = receipt["setup"].as_array_mut() {
+        setup.push(json!({"step": "install_published", "secs": 128.0, "exit": 0, "friction": []}));
+    }
+    let samples = parse_ingest(&receipt, &config)?;
+    let install = samples
+        .iter()
+        .find(|s| s.metric == "first_run.install_seconds")
+        .map(|s| s.outcome.clone());
+    assert_eq!(install, Some(SampleOutcome::Value(128.0)));
+    Ok(())
+}
+
 fn first_run_receipt(with_install: bool) -> Value {
     let mut setup = vec![json!({"step": "fetch_sources", "secs": 0.2, "exit": 0, "friction": []})];
     if with_install {
@@ -487,10 +524,7 @@ fn first_run_receipt(with_install: bool) -> Value {
 
 #[test]
 fn first_run_receipt_counts_install_through_first_successful_check() -> Result<(), String> {
-    let config = parse_config(&MINIMAL.replace(
-        "[[metric]]\nid = \"first_run.friction_events\"",
-        "[[metric]]\nid = \"first_run.install_seconds\"\nboard = \"first_run\"\ntitle = \"i\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 120\nregression_pct = 25\nregression_floor = 30\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.time_to_first_useful_result_s\"\nboard = \"first_run\"\ntitle = \"t\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 300\nregression_pct = 25\nregression_floor = 60\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.unknown_verdicts\"\nboard = \"first_run\"\ntitle = \"u\"\nunit = \"cases\"\ndirection = \"lower_is_better\"\ntarget = 0\nregression_pct = 0\nregression_floor = 0\nrunner_dependent = false\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.friction_events\"",
-    ))?;
+    let config = first_run_config()?;
     let samples = parse_ingest(&first_run_receipt(true), &config)?;
     let find = |metric: &str, repo: Option<&str>| {
         samples
@@ -1168,7 +1202,18 @@ fn first_run_rows_map_to_gates_and_list_verdicts() {
             .collect()
     };
     assert_eq!(get("first_run.failed_steps")[0]["value"], json!(1));
-    assert_eq!(get("first_run.over_budget_steps")[0]["value"], json!(2));
+    // Only the slow `check` step is over its time budget; the 2374-line
+    // workflow is counted on its own metric.
+    assert_eq!(get("first_run.over_budget_steps")[0]["value"], json!(1));
+    assert_eq!(
+        get("first_run.over_budget_steps")[0]["evidence"],
+        json!("a/check secs 12 > 10")
+    );
+    assert_eq!(get("first_run.over_budget_workflows")[0]["value"], json!(1));
+    assert_eq!(
+        get("first_run.over_budget_workflows")[0]["evidence"],
+        json!("a/init_ci workflow_lines 2374 > 1500")
+    );
     assert_eq!(get("first_run.friction_events")[0]["value"], json!(2.0));
     assert_eq!(get("first_run.unknown_verdicts")[0]["value"], json!(1));
     assert_eq!(
@@ -1382,6 +1427,34 @@ fn manifest_corpus_entries_must_pin_full_shas_and_unique_ids() {
         validate_corpus(&[entry("a", full), entry("a", full)])
             .is_err_and(|e| e.contains("duplicate"))
     );
+}
+
+#[test]
+fn archive_install_rows_do_not_become_the_source_install_metric() -> Result<(), String> {
+    let row = |case: &str, step: &str, metric: &str, value: &str| {
+        format!(
+            r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.10.0","case":"{case}","step":"{step}","metric":"{metric}","value":{value},"budget":null,"better":"lower"}}"#
+        )
+    };
+    let text = [
+        row("_setup", "install_archive", "secs", "1.5"),
+        row("_setup", "install_archive", "exit", "0"),
+        row("semver", "check", "secs", "0.5"),
+        row("semver", "check", "exit", "0"),
+    ]
+    .join("\n");
+    let input = first_run_rows_to_input(&parse_ingest_text(&text)?)?;
+    let ids: Vec<&str> = input["metrics"]
+        .as_array()
+        .map(|metrics| metrics.iter().filter_map(|m| m["id"].as_str()).collect())
+        .unwrap_or_default();
+    assert!(!ids.contains(&"first_run.install_seconds"), "{ids:?}");
+    assert!(
+        !ids.contains(&"first_run.time_to_first_useful_result_s"),
+        "{ids:?}"
+    );
+    assert!(ids.contains(&"first_run.walk_secs"), "{ids:?}");
+    Ok(())
 }
 
 #[test]
@@ -3523,5 +3596,99 @@ fn a_non_draft_checkout_config_still_produces_a_draft_warm_check_sample() -> Res
         "{}",
         admit_check_document(&draft_document, &wrong_subject).reason()
     );
+    Ok(())
+}
+
+#[test]
+fn ingested_first_run_rows_name_the_ripr_build_and_install_route() -> Result<(), String> {
+    let row = |ripr: &str, step: &str| {
+        format!(
+            r#"{{"schema":"first_run_row.v1","ripr":"{ripr}","case":"_setup","step":"{step}","metric":"secs","value":40.0,"budget":null,"better":"lower"}}"#
+        )
+    };
+    let published = parse_ingest_text(&row("ripr 0.10.0", "install_published"))?;
+    assert_eq!(
+        ingested_identity(&published),
+        Some((
+            "ripr 0.10.0".to_string(),
+            "cargo install ripr --locked".to_string()
+        ))
+    );
+    let archive = parse_ingest_text(&row("ripr 0.10.0", "install_archive"))?;
+    assert_eq!(
+        ingested_identity(&archive),
+        Some((
+            "ripr 0.10.0".to_string(),
+            "prebuilt release archive".to_string()
+        ))
+    );
+    // Without an install step the route is unknown, so no identity is invented.
+    let walk_only = parse_ingest_text(&row("ripr 0.10.0", "check"))?;
+    assert_eq!(ingested_identity(&walk_only), None);
+    Ok(())
+}
+
+#[test]
+fn ingested_receipt_and_failed_install_identities() -> Result<(), String> {
+    let receipt = |ripr: &str, step: &str| {
+        json!({
+            "schema_version": FIRST_RUN_SCHEMA_VERSION,
+            "ripr": ripr,
+            "binary": "/tmp/run-specific/ripr",
+            "setup": [{"step": step, "secs": 3.0}],
+            "cases": [],
+        })
+    };
+    assert_eq!(
+        ingested_identity(&receipt("ripr 0.10.0", "install_archive")),
+        Some((
+            "ripr 0.10.0".to_string(),
+            "prebuilt release archive".to_string()
+        ))
+    );
+    // A failed install writes `unavailable`, which names no ripr.
+    assert_eq!(
+        ingested_identity(&receipt("unavailable", "install_published")),
+        None
+    );
+    Ok(())
+}
+
+#[test]
+fn ingested_identity_fills_an_empty_context_and_never_replaces_a_measured_one() -> Result<(), String>
+{
+    let dir = crate::tests::temp_dir("dx-ingested-identity");
+    let unusable = dir.join("walk-only.jsonl");
+    let usable = dir.join("rows.jsonl");
+    let row = |step: &str| {
+        format!(
+            r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.10.0","case":"_setup","step":"{step}","metric":"secs","value":40.0,"budget":null,"better":"lower"}}"#
+        )
+    };
+    fs::write(&unusable, row("check")).map_err(|err| err.to_string())?;
+    fs::write(&usable, row("install_published")).map_err(|err| err.to_string())?;
+    let files = [dir.join("missing.jsonl"), unusable, usable];
+
+    let mut empty = RunContext::default();
+    record_ingested_identity(&mut empty, &files);
+    assert_eq!(empty.analyzer_version, "ripr 0.10.0");
+    assert_eq!(empty.binary, "cargo install ripr --locked");
+
+    let mut measured = RunContext {
+        analyzer_version: "ripr 0.11.0".to_string(),
+        binary: "target/release/ripr".to_string(),
+        ..RunContext::default()
+    };
+    record_ingested_identity(&mut measured, &files);
+    assert_eq!(measured.analyzer_version, "ripr 0.11.0");
+    assert_eq!(measured.binary, "target/release/ripr");
+
+    let mut partial = RunContext {
+        binary: "target/release/ripr".to_string(),
+        ..RunContext::default()
+    };
+    record_ingested_identity(&mut partial, &files);
+    assert!(partial.analyzer_version.is_empty());
+    assert_eq!(partial.binary, "target/release/ripr");
     Ok(())
 }

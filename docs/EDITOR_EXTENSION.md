@@ -97,10 +97,14 @@ selected source in the `ripr` output channel:
 1. ripr.server.path
 2. bundled server binary, if present
 3. downloaded cached server binary
-4. verified first-run download from GitHub Releases
-5. ripr on PATH
-6. actionable error
+4. ripr on PATH, when ripr.server.version is empty (before any download)
+5. verified first-run download from GitHub Releases
+6. ripr on PATH, when ripr.server.version is set or the download failed
+7. actionable error
 ```
+
+A compatible `ripr` already on `PATH` therefore avoids a network call on first
+use; pin `ripr.server.version` to prefer the managed release instead.
 
 Normal Marketplace and Open VSX installs should not require Cargo. For offline,
 pinned, or controlled environments, manual installation remains available:
@@ -499,18 +503,42 @@ static-limit bounded, and not Rust-level confidence.
 If no usable server can be resolved, the extension shows:
 
 ```text
-ripr server is not available: <cause>. Install with cargo install ripr or set ripr.server.path (ripr.server.downloadBaseUrl for a mirror).
+ripr server is not available: <cause>. <guidance>
 ```
 
-With `ripr.server.autoDownload` set to `false`, the remedy instead reads
+When the failure is a missing binary, `<guidance>` is the install remedy:
+
+```text
+Install with cargo install ripr or set ripr.server.path (ripr.server.downloadBaseUrl for a mirror).
+```
+
+With `ripr.server.autoDownload` set to `false`, that missing-binary remedy
+instead reads
 `Enable ripr.server.autoDownload, install with cargo install ripr, or set ripr.server.path.`
 
-Actions:
+Download, HTTP, checksum, and manifest failures use diagnostic/retry
+guidance instead of `cargo install ripr`.
+
+Actions depend on the resolution failure kind.
+
+Missing binary:
 
 - Open Settings
 - Copy Diagnostic
 - Copy Install Command
 - Retry
+
+Download, HTTP, checksum, or manifest failure:
+
+- Open Settings
+- Copy Diagnostic
+- Show Output
+- Retry
+
+Copy Install Command is not offered for download, HTTP, checksum, or
+manifest failures: `cargo install ripr` does not repair those. A resolved
+binary that fails to start is a separate `ripr: server failed` status and
+uses Show Output (#8587).
 
 The extension does not auto-install Rust or Cargo. It only downloads verified
 release archives when `ripr.server.autoDownload` is enabled.

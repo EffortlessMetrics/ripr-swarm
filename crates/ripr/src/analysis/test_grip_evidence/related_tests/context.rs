@@ -82,6 +82,20 @@ pub(crate) struct CompactGripContext<'a> {
     /// Records are immutable, so sharing one does not couple seams. Window
     /// boundaries drop only the records no seam holds any more.
     shared_grips: Mutex<SharedGrips>,
+    /// Run-scoped owner-pin syntax shared by every seam this context
+    /// serves (#8282). A fresh instance per seam re-paid the lazily
+    /// computed whole-index facts — the trusted-macro ambiguity pass,
+    /// target roots, resolved module declarations — once per seam, so a
+    /// repo walk re-paid the first full-index pass O(seams) times and a
+    /// ripr-swarm-sized scan never converged. Every cache inside is keyed
+    /// by the immutable index this context borrows, so one seam's
+    /// answers cannot alias another's. `Mutex` because `EvidencePass`
+    /// serves seams from the rayon pool: the walk locks it per syntax
+    /// query, so the `RefCell` interiority the #8262 per-run single-pass
+    /// bounds rely on stays single-threaded while parse-heavy segments
+    /// between queries run in parallel. Not window-cleared: nothing in
+    /// here derives from bytes a window can change, only from the index.
+    pin_syntax: Mutex<crate::analysis::classify::OwnerPinSyntax>,
 }
 
 /// Candidate generation only: the existing `contains` and `same_module`
@@ -246,6 +260,24 @@ impl<'a> CompactGripContext<'a> {
         grip: RelatedTestGrip,
     ) -> Arc<RelatedTestGrip> {
         memo(&self.shared_grips).share(grip)
+    }
+
+    /// The run-scoped owner-pin syntax every seam of this context shares
+    /// (#8282). Callers pass the mutex down the evidence stages and lock
+    /// it per syntax query; the parse-heavy segments between queries run
+    /// outside the lock, so the shared instance bounds the walk without
+    /// serializing it.
+    pub(in crate::analysis::test_grip_evidence) fn pin_syntax_mutex(
+        &self,
+    ) -> &Mutex<crate::analysis::classify::OwnerPinSyntax> {
+        &self.pin_syntax
+    }
+
+    /// #8282 test witness: full-index macro-site passes the shared
+    /// seam-walk instance paid.
+    #[cfg(test)]
+    pub(in crate::analysis) fn workspace_scan_passes(&self) -> u32 {
+        memo(&self.pin_syntax).workspace_scan_passes()
     }
 
     /// Number of indexed functions with exactly `name`; 0 for unknown or
@@ -602,6 +634,7 @@ impl<'a> CompactGripContext<'a> {
             unresolved_reach: Mutex::new(BTreeMap::new()),
             unseen_reach_names: OnceLock::new(),
             shared_grips: Mutex::new(SharedGrips::default()),
+            pin_syntax: Mutex::new(crate::analysis::classify::OwnerPinSyntax::default()),
         })
     }
 
@@ -3777,7 +3810,7 @@ mod tests {
         let call = CallFact {
             line: 8,
             name: "wrapper".to_string(),
-            text: "wrapper()".to_string(),
+            text: "wrapper()".to_string().into(),
         };
         assert!(!same_file_unit_production_helper_call_is_allowed(
             &call,
@@ -3811,7 +3844,7 @@ mod tests {
             let call = CallFact {
                 line: 2,
                 name: "target".to_string(),
-                text: text.to_string(),
+                text: text.to_string().into(),
             };
             assert!(
                 helper_owner_call_names_from_qualified_calls(&[call], &modules, None).is_empty()
@@ -3865,7 +3898,7 @@ mod tests {
             let call = CallFact {
                 line: 2,
                 name: "target".to_string(),
-                text: text.to_string(),
+                text: text.to_string().into(),
             };
             let old = unbounded_qualified_helper_names(
                 std::slice::from_ref(&call),

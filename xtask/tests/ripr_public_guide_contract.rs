@@ -153,8 +153,15 @@ fn doc_section(doc: &str, heading: &str) -> Result<String, String> {
 #[test]
 fn docs_keep_the_canonical_role_vocabulary() -> Result<(), String> {
     assert_doc_command_routes(COMMAND_HIERARCHY_DOC)?;
-    if first_bash_block(ROOT_README)? != "cargo install ripr ripr check" {
-        return Err("README first run must install ripr and inspect a change".to_string());
+    // The lead install is the checksummed prebuilt archive (no Rust toolchain,
+    // #5311); `cargo install ripr` is the documented compile-from-source
+    // alternative below it. The block must verify the download and end by
+    // inspecting a change.
+    let first_run = first_bash_block(ROOT_README)?;
+    if !first_run.contains("sha256sum -c") || !first_run.ends_with(" ripr check") {
+        return Err(
+            "README first run must install a checksummed ripr and inspect a change".to_string(),
+        );
     }
     for target in [
         "docs/QUICKSTART.md#cli-first-hour",
@@ -186,6 +193,66 @@ fn docs_keep_the_canonical_role_vocabulary() -> Result<(), String> {
         "REPAIR_ATTEMPT.md#governed-python-sequence",
     ] {
         assert_contains("Quickstart repair continuation", &repair, target)?;
+    }
+    Ok(())
+}
+
+/// Both docs say the release has macOS archives, and stock macOS has `shasum`
+/// but no `sha256sum`. A verify step that only names `sha256sum` fails there
+/// before extraction, so the copy-paste block must keep the `shasum` fallback
+/// and the docs must name the macOS target triples.
+#[test]
+fn prebuilt_install_block_verifies_on_macos() -> Result<(), String> {
+    for (name, doc) in [
+        ("README.md", ROOT_README),
+        ("docs/QUICKSTART.md", QUICKSTART_DOC),
+    ] {
+        let block = first_bash_block(doc)?;
+        assert_contains(name, &block, "sha256sum -c - || shasum -a 256 -c -")?;
+        let flat = doc.replace('\n', " ");
+        for triple in ["aarch64-apple-darwin", "x86_64-apple-darwin"] {
+            assert_contains(name, &flat, triple)?;
+        }
+    }
+    Ok(())
+}
+
+/// The macOS archives are unsigned. Browser, AirDrop or mail downloads are
+/// quarantined and Gatekeeper blocks the binary, so both install docs must say
+/// so, point at the checksum-first `xattr` remedy, and keep the claim that
+/// command-line downloads are normally not quarantined.
+#[test]
+fn install_docs_explain_macos_gatekeeper_quarantine() -> Result<(), String> {
+    for (name, doc) in [
+        ("README.md", ROOT_README),
+        ("docs/QUICKSTART.md", QUICKSTART_DOC),
+    ] {
+        let flat = doc.split_whitespace().collect::<Vec<_>>().join(" ");
+        for needle in [
+            "not signed or notarized",
+            "Gatekeeper",
+            "normally carries no quarantine attribute",
+            "xattr -d com.apple.quarantine",
+            "whose `.sha256` matched",
+        ] {
+            assert_contains(name, &flat, needle)?;
+        }
+        let paired = match (
+            flat.find("xattr -d com.apple.quarantine"),
+            flat.find("whose `.sha256` matched"),
+        ) {
+            (Some(remedy), Some(check)) => remedy < check,
+            _ => false,
+        };
+        if !paired {
+            return Err(format!(
+                "{name} must pair the xattr remedy with the checksum condition"
+            ));
+        }
+        let removed = flat.replace("xattr -d com.apple.quarantine", "");
+        if assert_contains(name, &removed, "xattr -d com.apple.quarantine").is_ok() {
+            return Err(format!("{name} negative control kept the xattr remedy"));
+        }
     }
     Ok(())
 }

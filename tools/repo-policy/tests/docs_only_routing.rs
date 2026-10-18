@@ -487,6 +487,26 @@ fn routed_result(
     docs_gate: &str,
     heavy: &str,
 ) -> TestResult<bool> {
+    routed_result_admitted(
+        fixture,
+        event,
+        detector,
+        docs,
+        docs_gate,
+        heavy,
+        ("success", "admitted"),
+    )
+}
+
+fn routed_result_admitted(
+    fixture: &Fixture,
+    event: &str,
+    detector: &str,
+    docs: &str,
+    docs_gate: &str,
+    heavy: &str,
+    (admission_result, admission_status): (&str, &str),
+) -> TestResult<bool> {
     let source = job("result")?;
     let (setup, _) = source.split_once("        run: |\n").ok_or("result step")?;
     let (_, bindings) = setup.split_once("        env:\n").ok_or("result env")?;
@@ -507,6 +527,8 @@ fn routed_result(
         ("TARGET", "github"),
         ("ROUTE_RESULT", "success"),
         ("GITHUB_RESULT", heavy),
+        ("ADMISSION_RESULT", admission_result),
+        ("ADMISSION_STATUS", admission_status),
     ]);
     let output = fixture.run(&shell("result")?, &env, None)?;
     let summary = fs::read_to_string(fixture.root.join(".git/actions-summary"))?;
@@ -551,6 +573,33 @@ fn actual_result_block_requires_successful_detection_and_selected_proof() -> Tes
             "success"
         )?);
     }
+    // Candidate admission is a required input: a refused, missing or failed
+    // admission cannot be rescued by a green selected proof.
+    for (result, status) in [
+        ("success", "refused"),
+        ("success", ""),
+        ("failure", "admitted"),
+        ("skipped", "admitted"),
+    ] {
+        assert!(!routed_result_admitted(
+            &fixture,
+            "pull_request",
+            "success",
+            "false",
+            "skipped",
+            "success",
+            (result, status)
+        )?);
+    }
+    assert!(routed_result_admitted(
+        &fixture,
+        "pull_request",
+        "success",
+        "false",
+        "skipped",
+        "success",
+        ("success", "not_applicable")
+    )?);
     for event in ["push", "workflow_dispatch"] {
         for docs in ["false", "true"] {
             assert!(!routed_result(

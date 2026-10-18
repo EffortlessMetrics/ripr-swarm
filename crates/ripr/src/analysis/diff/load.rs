@@ -504,6 +504,13 @@ pub(crate) fn resolve_effective_base_core_with_commit(
              did not run). Pass `--base <ref>` for a ref this repository has."
         )));
     }
+    if explicit.trim().is_empty() {
+        return Err(CoreError::base_unresolvable(
+            "the base is empty (the analysis did not run). Pass `--base <ref>` with a branch, \
+             tag or commit hash, or omit `--base` to use the default base."
+                .to_string(),
+        ));
+    }
     let commit = format!("{explicit}^{{commit}}");
     match git_ref_output(root, &commit, git_timeout) {
         Some(output) if !output.status.success() => {
@@ -606,9 +613,10 @@ fn not_a_work_tree_message(root: &Path) -> String {
     format!(
         "`{}` is not inside a Git work tree (the analysis did not run). ripr diffs \
          committed history, so run it from inside your repository, or pass `--root <path>` \
-         pointing at one. For a repository-free scan of the current sources, use \
-         `ripr check --root . --format repo-exposure-md`.",
-        root.display()
+         pointing at one. For whole-repository exploration of the current sources \
+         without Git history, use `{}`.",
+        root.display(),
+        crate::domain::WHOLE_REPO_PILOT_COMMAND,
     )
 }
 
@@ -913,8 +921,9 @@ fn resolve_default_base(root: &Path, git_timeout: Option<Duration>) -> Result<St
     Err(format!(
         "could not resolve a default base (no origin/main, origin/master, or local main/master \
          found).{} Pass `--base <ref>` to diff against a specific ref, or run \
-         `ripr check --root . --format repo-exposure-md` for a full-repo scan.",
-        default_base_failure_context(root, git_timeout)
+         `{}` for whole-repository exploration.",
+        default_base_failure_context(root, git_timeout),
+        crate::domain::WHOLE_REPO_PILOT_COMMAND,
     ))
 }
 
@@ -1124,10 +1133,15 @@ pub fn resolve_base_commit(
 /// to `<branch>`, or a `git branch` copy) is not a candidate, and neither
 /// is a branch whose resulting tree matches `HEAD`'s despite distinct
 /// commits: advising either would reproduce the empty result. Bounded like
-/// the default-base failure context; any Git failure answers `false`, so
+/// the default-base failure context; any Git failure answers `None`, so
 /// callers never advise a `--base` repair that this probe could not
 /// support (#7644).
-pub fn another_base_candidate_exists(root: &Path, git_timeout: Option<Duration>) -> bool {
+/// The first branch (in `for-each-ref` order) that
+/// could serve as one, named as a usable
+/// `--base` value (`main`, `origin/main`). Callers that advise a
+/// `--base` repair must name this probed ref, never a hardcoded
+/// example, and must not name the base already in use.
+pub fn another_base_candidate(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
     let git_lines = |args: &[&str]| -> Vec<String> {
         crate::git::run_git_output_with_deadline(root, args, git_timeout)
             .ok()
@@ -1157,11 +1171,9 @@ pub fn another_base_candidate_exists(root: &Path, git_timeout: Option<Duration>)
             .map(str::to_string)
     })
     .filter(|name| !current.contains(name));
-    let Some(head_commit) = resolve_base_commit(root, Some("HEAD"), git_timeout) else {
-        return false;
-    };
+    let head_commit = resolve_base_commit(root, Some("HEAD"), git_timeout)?;
     const MERGE_BASE_PROBE_CAP: usize = 64;
-    others.take(MERGE_BASE_PROBE_CAP).any(|name| {
+    others.take(MERGE_BASE_PROBE_CAP).find(|name| {
         let merge_base_differs = crate::git::run_git_output_with_deadline(
             root,
             &["merge-base", name.as_str(), "HEAD"],
@@ -1307,13 +1319,23 @@ fn missing_ref_repair(root: &Path, missing_ref: &str, git_timeout: Option<Durati
          --unshallow` (in GitHub Actions, set `fetch-depth: 0` on actions/checkout)"
             .to_string();
     }
+    if ancestor_anchor(missing_ref).is_some_and(|anchor| {
+        git_ref_output(root, &format!("{anchor}^{{commit}}"), git_timeout)
+            .is_some_and(|output| output.status.success())
+    }) {
+        return format!(
+            "`{missing_ref}` is relative to a commit, so fetching cannot supply it: this \
+             repository's history is shorter than that. Run `git log --oneline` to see how \
+             many commits it has and use a smaller offset"
+        );
+    }
     let remotes = configured_remotes(root, git_timeout);
     if let Some(advice) = qualified_remote_advice(missing_ref, remotes.as_deref()) {
         return advice;
     }
     match remotes.as_deref() {
         Some([]) => format!(
-            "No git remote is configured: add the remote hosting `{missing_ref}` (for example `git remote add <name> <url>`), then fetch it"
+            "Check the spelling of `{missing_ref}` (`git branch --list` shows this repository's local branches). No git remote is configured: if it lives on a remote, add that remote (for example `git remote add <name> <url>`), then fetch it"
         ),
         Some([only]) if remote_name_is_plain(only) => {
             format!("Fetch the ref (for example `git fetch {only}`)")
@@ -1326,6 +1348,16 @@ fn missing_ref_repair(root: &Path, missing_ref: &str, git_timeout: Option<Durati
             "Fetch the ref (for example `git fetch`)".to_string()
         }
     }
+}
+
+/// The anchor of a revision spelled relative to another commit (`HEAD` in
+/// `HEAD~5`, `origin/main` in `origin/main^`). The caller must still confirm
+/// the anchor resolves: when it does, the offset overshoots a short history,
+/// which a fetch cannot fix; when it does not, the anchor itself is the
+/// missing ref. Reflog and upstream forms (`@{...}`) are not offsets.
+fn ancestor_anchor(missing_ref: &str) -> Option<&str> {
+    let anchor = &missing_ref[..missing_ref.find(['~', '^'])?];
+    (!anchor.is_empty() && !anchor.contains("@{")).then_some(anchor)
 }
 
 /// Advice for a remote-qualified missing ref (`origin/main`). The qualifier
@@ -2483,20 +2515,26 @@ mod tests {
         ignore_remove_dir_all(&dir);
         init_git_repo(&dir, "master")?;
         assert!(
-            !another_base_candidate_exists(&dir, None),
+            another_base_candidate(&dir, None).is_none(),
             "a lone branch must not count as its own --base candidate"
         );
+        assert_eq!(another_base_candidate(&dir, None), None);
         run_git_checked(&dir, &["branch", "base-candidate"])?;
         assert!(
-            !another_base_candidate_exists(&dir, None),
+            another_base_candidate(&dir, None).is_none(),
             "an alias at HEAD's own commit must not count as a --base candidate"
         );
         fs::write(dir.join("README"), "second")?;
         run_git_checked(&dir, &["add", "."])?;
         run_git_checked(&dir, &["commit", "-m", "second"])?;
         assert!(
-            another_base_candidate_exists(&dir, None),
+            another_base_candidate(&dir, None).is_some(),
             "an ancestor branch sharing history must count as a --base candidate"
+        );
+        assert_eq!(
+            another_base_candidate(&dir, None).as_deref(),
+            Some("base-candidate"),
+            "the probe must name the actual candidate a --base repair would use"
         );
         // A descendant branch has HEAD as its merge base: not a candidate.
         run_git_checked(&dir, &["checkout", "-b", "descendant"])?;
@@ -2506,7 +2544,7 @@ mod tests {
         run_git_checked(&dir, &["checkout", "master"])?;
         run_git_checked(&dir, &["branch", "-D", "base-candidate"])?;
         assert!(
-            !another_base_candidate_exists(&dir, None),
+            another_base_candidate(&dir, None).is_none(),
             "a descendant of HEAD must not count as a --base candidate"
         );
         ignore_remove_dir_all(&dir);
@@ -2528,7 +2566,7 @@ mod tests {
         run_git_checked(&dir, &["add", "."])?;
         run_git_checked(&dir, &["commit", "-m", "restore"])?;
         assert!(
-            !another_base_candidate_exists(&dir, None),
+            another_base_candidate(&dir, None).is_none(),
             "a range restoring the merge-base tree must not count as a --base candidate"
         );
         ignore_remove_dir_all(&dir);
@@ -2555,7 +2593,7 @@ mod tests {
         run_git_checked(&dir, &["add", "."])?;
         run_git_checked(&dir, &["commit", "-m", "outside sub"])?;
         assert!(
-            !another_base_candidate_exists(&sub, None),
+            another_base_candidate(&sub, None).is_none(),
             "a branch differing only outside the analysis root must not count"
         );
         // A later change inside `sub` makes the same branch a candidate.
@@ -2563,7 +2601,7 @@ mod tests {
         run_git_checked(&dir, &["add", "."])?;
         run_git_checked(&dir, &["commit", "-m", "inside sub"])?;
         assert!(
-            another_base_candidate_exists(&sub, None),
+            another_base_candidate(&sub, None).is_some(),
             "a branch differing inside the analysis root must count"
         );
         ignore_remove_dir_all(&dir);
@@ -2955,8 +2993,8 @@ mod tests {
             "expected --base guidance in message, got: {err}"
         );
         assert!(
-            err.contains("--format repo-exposure-md"),
-            "expected --format repo-exposure-md guidance in message, got: {err}"
+            err.contains("ripr pilot --root ."),
+            "expected pilot guidance in message, got: {err}"
         );
         assert!(
             err.contains("no commits yet"),
@@ -3217,6 +3255,32 @@ mod tests {
     }
 
     #[test]
+    fn ancestor_anchor_extracts_the_revision_a_suffix_is_relative_to() {
+        for (relative, anchor) in [
+            ("HEAD~1", "HEAD"),
+            ("main^", "main"),
+            ("main~2", "main"),
+            ("origin/main~3", "origin/main"),
+            ("feature/x^2", "feature/x"),
+        ] {
+            assert_eq!(ancestor_anchor(relative), Some(anchor), "{relative}");
+        }
+        // Plain refs, hashes, reflog/upstream forms and anchorless suffixes
+        // keep the existing advice.
+        for other in [
+            "main",
+            "origin/main",
+            "abc1234",
+            "HEAD@{1}",
+            "@{u}",
+            "~2",
+            "^HEAD",
+        ] {
+            assert_eq!(ancestor_anchor(other), None, "{other}");
+        }
+    }
+
+    #[test]
     fn remote_name_is_plain_allows_plain_names_and_denies_hostile_ones() {
         for plain in ["origin", "fork", "upstream-1", "my.remote_name"] {
             assert!(remote_name_is_plain(plain), "{plain}");
@@ -3252,8 +3316,9 @@ mod tests {
         assert!(
             repair.contains("No git remote is configured")
                 && repair.contains("`no-such-ref-5252`")
-                && repair.contains("git remote add"),
-            "a remote-less repo must get the add-remote step naming the ref, got: {repair}"
+                && repair.contains("git remote add")
+                && repair.contains("Check the spelling of `no-such-ref-5252`"),
+            "a remote-less repo must get the spelling check and add-remote step naming the ref, got: {repair}"
         );
         assert!(
             !repair.contains("git fetch origin"),

@@ -1,6 +1,6 @@
 pub(super) const INIT_HELP: &str = r#"Write an optional repo policy file (ripr.toml) and, with --ci github, a non-blocking advisory workflow.
 
-Usage: ripr init [--root PATH] [--ci github] [--dry-run] [--force]
+Usage: ripr init [--root PATH] [--ci github] [--mcp] [--dry-run] [--force]
 
 `ripr init` is optional. It writes the built-in defaults to a repo-local
 ripr.toml so teams can commit, review, and tune policy. Missing ripr.toml is
@@ -10,11 +10,19 @@ not unlock basic CLI, editor, or pilot usefulness.
 Options:
   --root PATH      Workspace root where ripr.toml should be written. Defaults to current directory.
   --ci github      Also write .github/workflows/ripr.yml with advisory reports and optional SARIF rendering/upload.
+  --mcp            Also add the ripr MCP server to .mcp.json (Claude Code project config).
+                   Other servers in an existing file are kept; an existing
+                   `ripr` entry is kept unless --force; a symlink or a file
+                   that is not a JSON object is refused. The file is rewritten
+                   with sorted keys. Like --ci, --mcp keeps an existing
+                   ripr.toml and --force does not reset it. Codex config is
+                   user-global and is never written: init prints the
+                   `codex mcp add` command.
   --dry-run        Show the plan and the file bodies without writing anything.
                    Resolves the same preconditions as the real run, so it
                    fails the same way (existing file without --force, root
                    that is not a directory) instead of reporting success.
-  --force          Overwrite an existing ripr.toml or generated workflow.
+  --force          Overwrite an existing ripr.toml, generated workflow, or ripr MCP entry.
 
 Generated config:
   - uses draft analysis mode and includes unchanged tests
@@ -140,8 +148,8 @@ Common options:
   --format FORMAT   human (default); human-full lists every finding with
                     drill-in commands; json (or --json) for scripts and CI;
                     github for Actions annotations; sarif for code scanning.
-  --mode MODE       instant, draft (default), or deep: how much of the
-                    workspace is indexed (never changes what a class means).
+  --mode MODE       instant, draft (default), fast, deep, or ready: how much
+                    of the workspace is indexed (never changes a class).
   --root PATH       Workspace root. Defaults to the current directory, then
                     walks up to the enclosing workspace or package, or the git
                     top level (never past the repository); `--root .` pins
@@ -298,6 +306,14 @@ Options:
                            error names git_invocation_timeout. 0 disables
                            the deadline. Default: 300 (5 minutes). Also
                            settable via RIPR_GIT_TIMEOUT env var.
+  --timeout SECS           Wall-clock budget in seconds for the whole
+                           diff or worktree analysis (not the repo-wide
+                           repo-exposure and seam formats). When it runs out, check stops
+                           and refuses with analysis_timeout: no findings
+                           are produced and the result is never a clean
+                           pass. 0 disables the budget. Default: 600 (10
+                           minutes). Also settable via RIPR_CHECK_TIMEOUT
+                           env var.
   --quiet                  Suppress analysis progress and heartbeats on
                            stderr. Does not change machine stdout, exit
                            codes, or error reporting.
@@ -423,9 +439,12 @@ Exit status:
 "#;
 pub(super) const EXPLAIN_HELP: &str = r#"Print why ripr flagged a specific change.
 
-Usage: ripr explain [--root PATH] [--base REV] [--worktree|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] <finding-id|file:line>
+Usage: ripr explain [--root PATH] [--base REV] [--worktree|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] [--quiet] <finding-id|file:line>
 
 Options:
+  --quiet      Suppress analysis progress and heartbeats on stderr, like
+               `ripr check --quiet`. Does not change stdout, exit codes, or
+               error reporting.
   --worktree   Analyze staged and unstaged tracked edits, like
                `ripr check --worktree`, so a finding listed from uncommitted
                edits can be selected. Not combinable with --diff or --from.
@@ -464,11 +483,14 @@ The packet is always JSON, for an agent or tool to consume; `--json` is
 accepted and changes nothing. To read the same finding as prose, run
 `ripr explain` with the same selector.
 
-Usage: ripr context [--root PATH] [--base REV] [--worktree|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json]
+Usage: ripr context [--root PATH] [--base REV] [--worktree|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json] [--quiet]
 
 Options:
   --finding ID
                Select the finding by id or `file:line`, like `--at`.
+  --quiet      Suppress analysis progress and heartbeats on stderr, like
+               `ripr check --quiet`. Does not change stdout, exit codes, or
+               error reporting.
   --worktree   Analyze staged and unstaged tracked edits, like
                `ripr check --worktree` (see `ripr explain --help`).
   --from PATH  Load findings from a check artifact written by

@@ -340,6 +340,19 @@ fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
         "{}",
         start_here_cli_summary(&packet, &json_path, &markdown_path)
     );
+    // A valid packet can still record a fail-closed state (wrong root, missing,
+    // stale or malformed artifacts). `--check` is the gate, so it must not
+    // pass such a packet (#7373); write mode still exits 0 because it wrote
+    // the packet it was asked to compose.
+    if packet.get("status").and_then(Value::as_str) == Some("blocked") {
+        let state = packet["selected"]["output_state"]
+            .as_str()
+            .unwrap_or("blocked");
+        return Err(format!(
+            "first-pr --check: the start-here packet is current but records the blocked state `{state}`; follow its safe next action before repair work ({})",
+            json_path.display()
+        ));
+    }
     println!("First PR start-here packet ok: {}", json_path.display());
     Ok(())
 }
@@ -1246,11 +1259,11 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
         // blocked state offers; the ledger's own warning names the coverage.
         let message = first_string_array_item(gap_ledger, &["warnings"]).map_or_else(
             || {
-                "The check-output gap ledger parsed but projected no records for this PR's language; regenerate the ledger from the workspace evidence.".to_string()
+                "The check-output gap ledger parsed but projected no records. The --check-output route covers presentation/output-text and Python/TypeScript/Perl findings only; if this PR changes Rust behavior, use `ripr check` to read the Rust findings and `ripr repair` to start a repair, otherwise regenerate the ledger from the workspace evidence.".to_string()
             },
             |warning| {
                 format!(
-                    "The check-output gap ledger parsed but projected no records: {warning}. Regenerate the ledger from the workspace evidence."
+                    "The check-output gap ledger parsed but projected no records: {warning}. If the warning points to `ripr check`/`ripr repair`, follow it; otherwise regenerate the ledger from the workspace evidence."
                 )
             },
         );
@@ -3350,7 +3363,7 @@ mod tests {
                 "status": status,
                 "inputs": {"source_kind": source_kind},
                 "records": [],
-                "warnings": ["check output contained 3 findings, but the --check-output route projects Python/TypeScript/Perl findings only; no gap records were derived from them"]
+                "warnings": ["check output contained 3 findings, but the --check-output route projects presentation/output-text and Python/TypeScript/Perl findings only; no gap records were derived from them. For Rust findings, use `ripr check` to read them and `ripr repair` to start a repair"]
             })
         };
         let root = temp_repo("first-pr-no-records-recovery")?;
@@ -3362,15 +3375,43 @@ mod tests {
             Selection::Blocked {
                 state,
                 next_command,
+                message,
                 ..
             } => {
                 assert_eq!(state, "blocked_artifact");
+                assert!(
+                    message.contains("ripr check") && message.contains("ripr repair"),
+                    "the projection-miss message must point Rust findings to the working commands: {message}"
+                );
                 let command = next_command
                     .as_deref()
                     .ok_or("the projection-miss recovery must carry a next command")?;
                 assert!(
                     command.contains("repo-exposure"),
                     "the Rust-root recovery compound regenerates repo-exposure evidence: {command}"
+                );
+            }
+            other => return Err(format!("expected a blocked recovery, got {other:?}")),
+        }
+
+        // A valid check output with zero findings yields `no_records` with no
+        // warning; the fallback must not claim Rust findings went unprojected.
+        let no_warning = select_from_gap_ledger(
+            &serde_json::json!({
+                "status": "no_records",
+                "inputs": {"source_kind": "check_output"},
+                "records": [],
+                "warnings": []
+            }),
+            &root,
+            &options,
+        );
+        match &no_warning {
+            Selection::Blocked { message, .. } => {
+                assert!(
+                    message.contains("if this PR changes Rust behavior")
+                        && !message.contains("Rust-only predicate findings are not projected"),
+                    "the no-warning fallback must stay conditional: {message}"
                 );
             }
             other => return Err(format!("expected a blocked recovery, got {other:?}")),
@@ -3459,7 +3500,7 @@ mod tests {
         );
         let markdown = render_start_here_markdown(&packet);
         assert!(markdown.contains("- Also missing: Gap decision ledger"));
-        check_first_pr(&repo, &options)?;
+        check_blocked_packet_is_current(&repo, &options)?;
         cleanup(&repo)
     }
 
@@ -3495,7 +3536,7 @@ mod tests {
         );
         assert!(summary.contains("Recovery reason: Repo exposure report is missing"));
         assert!(summary.contains("Next command: `cargo xtask repo-exposure-latency-report`"));
-        check_first_pr(&repo, &options)?;
+        check_blocked_packet_is_current(&repo, &options)?;
         cleanup(&repo)
     }
 
@@ -3610,7 +3651,7 @@ mod tests {
         );
         assert!(summary.contains("Recovery reason: Repo exposure report is missing"));
         assert!(summary.contains("evidence_for_seams_progress"));
-        check_first_pr(&repo, &options)?;
+        check_blocked_packet_is_current(&repo, &options)?;
         cleanup(&repo)
     }
 
@@ -3655,7 +3696,7 @@ mod tests {
         assert!(message.contains(DEFAULT_REPO_EXPOSURE_LATENCY_JSON));
         assert!(message.contains(DEFAULT_REPO_EXPOSURE_LATENCY_REPORT));
         assert!(message.contains("fail"));
-        check_first_pr(&repo, &options)?;
+        check_blocked_packet_is_current(&repo, &options)?;
         cleanup(&repo)
     }
 
@@ -3703,7 +3744,7 @@ mod tests {
         assert!(message.contains("run the bounded repo-exposure latency report"));
         assert!(!message.contains("untrusted_phase"));
         assert!(!message.contains("untrusted_status"));
-        check_first_pr(&repo, &options)?;
+        check_blocked_packet_is_current(&repo, &options)?;
         cleanup(&repo)
     }
 
@@ -3733,7 +3774,7 @@ mod tests {
                 shell_arg(&manifest_path)
             )
         );
-        check_first_pr(&invocation_root, &options)?;
+        check_blocked_packet_is_current(&invocation_root, &options)?;
         cleanup(&repo)?;
         cleanup(&invocation_root)
     }
@@ -3768,7 +3809,7 @@ mod tests {
             "Missing artifact: Gap decision ledger at `target/ripr/reports/gap-decision-ledger.json`"
         ));
         assert!(summary.contains("Regeneration command: `ripr reports gap-ledger"));
-        check_first_pr(&repo, &options)?;
+        check_blocked_packet_is_current(&repo, &options)?;
         cleanup(&repo)
     }
 
@@ -3806,7 +3847,7 @@ mod tests {
         assert!(!command.contains("--repo-exposure"));
         assert_eq!(packet["commands"]["regenerate_gap_ledger"], command);
         assert_eq!(packet["artifacts"][0]["regeneration_command"], command);
-        check_first_pr(&repo, &options)?;
+        check_blocked_packet_is_current(&repo, &options)?;
         cleanup(&repo)
     }
 
@@ -3898,7 +3939,7 @@ mod tests {
             !repo.join("missing-workspace").exists(),
             "first-pr must not create a typo root while writing a recovery packet"
         );
-        check_first_pr(&repo, &options)?;
+        check_blocked_packet_is_current(&repo, &options)?;
         cleanup(&repo)
     }
 
@@ -3976,7 +4017,7 @@ mod tests {
             !non_workspace.join(DEFAULT_OUT_DIR).exists(),
             "first-pr must not write recovery artifacts under a non-Cargo root"
         );
-        check_first_pr(&repo, &options)?;
+        check_blocked_packet_is_current(&repo, &options)?;
         cleanup(&repo)
     }
 
@@ -5970,7 +6011,7 @@ mod tests {
             "stale refresh must read the working tree: {next}"
         );
         assert!(packet["selected"].get("verify_command").is_none());
-        check_first_pr(&repo, &options)?;
+        check_blocked_packet_is_current(&repo, &options)?;
         cleanup(&repo)
     }
 
@@ -6527,6 +6568,18 @@ mod tests {
                     "{markdown}"
                 );
                 assert!(markdown.contains("--base HEAD~1"), "{markdown}");
+                let next = check["next_command"]
+                    .as_str()
+                    .ok_or("git_diff next_command missing")?;
+                let suggested_base = shell_arg(&format!("{head}~1"));
+                assert!(
+                    next.contains(&format!("--base {suggested_base}")),
+                    "no-diff next_command must shell_arg <head>~1, got {next}"
+                );
+                assert!(
+                    next.contains(&format!("--head {}", shell_arg(head))),
+                    "no-diff next_command must shell_arg --head, got {next}"
+                );
             }
             for (index, command) in commands.iter().enumerate() {
                 let bash = command.as_str().ok_or("recovery command is not a string")?;
@@ -7231,6 +7284,20 @@ mod tests {
             .and_then(Path::parent)
             .map(Path::to_path_buf)
             .ok_or_else(|| "failed to resolve fixture repo root".to_string())
+    }
+
+    /// `--check` validates a recovery packet as current and then fails the gate
+    /// because it records a blocked state (#7373). Currentness is what these
+    /// tests pin; the gate result is asserted once in cli_smoke.
+    fn check_blocked_packet_is_current(
+        repo: &Path,
+        options: &FirstPrOptions,
+    ) -> Result<(), String> {
+        match check_first_pr(repo, options) {
+            Err(error) if error.contains("records the blocked state") => Ok(()),
+            Err(error) => Err(error),
+            Ok(()) => Err("a blocked packet must fail the --check gate".to_string()),
+        }
     }
 
     fn first_pr_args(root: &str, out: &str) -> Vec<String> {

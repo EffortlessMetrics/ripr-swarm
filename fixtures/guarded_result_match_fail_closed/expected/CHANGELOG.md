@@ -344,3 +344,42 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — guarded_result_match_fail_closed (26)
+
+Reason:
+RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless guarded_result_match_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — guarded_result_match_fail_closed (27)
+
+Reason:
+RIPR-SPEC-0002: #8386 drop a bare unwrap/expect setup row listed beside the same test's real assertion row; classification unchanged
+
+Command:
+`cargo xtask goldens bless guarded_result_match_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — guarded_result_match_fail_closed (28)
+
+Reason:
+RIPR-SPEC-0093: #7840 wrapped-signature parameter names now label observed function-argument values; classification unchanged
+
+Command:
+`cargo xtask goldens bless guarded_result_match_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

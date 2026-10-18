@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 39acc66..3181196 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -12,7 +12,7 @@ impl Drop for Cfg {
+ pub fn make(x: u32) -> Cfg {
+     let low = Cfg { n: 2 };
+     let high = Cfg { n: 1 };
+-    if x > 10 { high } else { low }
++    if x >= 10 { high } else { low }
+ }
+ 
+ #[cfg(test)]

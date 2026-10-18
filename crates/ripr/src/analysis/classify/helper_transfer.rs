@@ -603,7 +603,7 @@ pub(crate) fn call_sites(
             continue;
         }
         let arguments = split_call_arguments_text(&call.text, callee_name)?;
-        sites.push((call.text.clone(), arguments));
+        sites.push((call.text.to_string(), arguments));
     }
     (!sites.is_empty()).then_some(sites)
 }
@@ -1928,7 +1928,7 @@ mod tests {
             calls: vec![CallFact {
                 name: name.to_string(),
                 line: 2,
-                text: text.to_string(),
+                text: text.to_string().into(),
             }],
             assertions: Vec::new(),
             literals: Vec::new(),
@@ -1951,7 +1951,7 @@ mod tests {
                 .map(|(callee, text)| CallFact {
                     line: 2,
                     name: callee.to_string(),
-                    text: text.to_string(),
+                    text: text.to_string().into(),
                 })
                 .collect(),
             returns: Vec::new(),
@@ -2813,6 +2813,33 @@ mod tests {
         assert!(test_call_is_shadowed(&twins, &test, "order_discount", 11));
     }
 
+    // #7985: the shared import gate also treats a macro that may define the
+    // callee's name as a shadow, on the helper-hop path too.
+    #[test]
+    fn test_call_is_shadowed_by_a_macro_defined_same_named_fn() {
+        let wrapper = function("src/lib.rs", "order_discount", &[]);
+        let idx = index(vec![wrapper]);
+        let mut test = test_summary_calling("order_discount", "order_discount(10)");
+        test.start_line = 10;
+        test.end_line = 14;
+        // The macro names the fn through its `$n:ident` binder, so neither
+        // `fn order_discount` nor a `let` appears in the body: only the
+        // macro rule can shadow the call, not the lexical body scan.
+        let shadow = "macro_rules! make {\n    ($n:ident) => { fn $n(_: u32) -> u32 { 5 } };\n}\nmake!(order_discount);\n";
+        let tail = "fn t() {\n    assert_eq!(order_discount(10), 5);\n}";
+        test.body = format!("{shadow}{tail}").into();
+        assert!(idx.files().get(&test.file).is_none(), "fallback path only");
+        assert!(test_call_is_shadowed(&idx, &test, "order_discount", 11));
+        // Control: the same macro defining another name leaves the call
+        // unshadowed through the same entry point.
+        test.body = format!(
+            "{}{tail}",
+            shadow.replace("make!(order_discount)", "make!(other_name)")
+        )
+        .into();
+        assert!(!test_call_is_shadowed(&idx, &test, "order_discount", 11));
+    }
+
     // #6780 review round 3: the abstention applies only when every
     // owner-reaching relation is the chain; one direct owner call lifts it.
     #[test]
@@ -2944,13 +2971,13 @@ mod tests {
         let test_calls = vec![CallFact {
             line: 1,
             name: "classify".to_string(),
-            text: "classify(\" x\")".to_string(),
+            text: "classify(\" x\")".to_string().into(),
         }];
         assert!(test_reaches_through_chain(&test_calls, "is_word_start", &idx, true).is_some());
         let unrelated = vec![CallFact {
             line: 1,
             name: "other".to_string(),
-            text: "other()".to_string(),
+            text: "other()".to_string().into(),
         }];
         assert!(test_reaches_through_chain(&unrelated, "is_word_start", &idx, true).is_none());
         Ok(())
