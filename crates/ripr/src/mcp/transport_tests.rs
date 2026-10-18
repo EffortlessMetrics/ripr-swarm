@@ -292,7 +292,7 @@ async fn typed_shape_error_keeps_a_recoverable_request_id() -> Result<(), String
     // JSON-RPC: the error id is the request id when it can be detected. A
     // request whose `params` is the wrong shape still names its id; frames
     // with no readable request id keep the explicit null.
-    let cases: [(&[u8], Value); 5] = [
+    let cases: [(&[u8], Value); 9] = [
         (
             b"{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/list\",\"params\":[]}\n",
             json!(5),
@@ -310,6 +310,28 @@ async fn typed_shape_error_keeps_a_recoverable_request_id() -> Result<(), String
             Value::Null,
         ),
         (b"{\"jsonrpc\":\"2.0\",\"id\":7}\n", Value::Null),
+        // A notification (method, no id) has no request to correlate.
+        (
+            b"{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"params\":[]}\n",
+            Value::Null,
+        ),
+        // An explicit null id names no request.
+        (
+            b"{\"jsonrpc\":\"2.0\",\"id\":null,\"method\":\"tools/list\",\"params\":[]}\n",
+            Value::Null,
+        ),
+        // A boolean is not a JSON-RPC id.
+        (
+            b"{\"jsonrpc\":\"2.0\",\"id\":true,\"method\":\"tools/list\",\"params\":[]}\n",
+            Value::Null,
+        ),
+        // A u64 above i64::MAX is a valid JSON integer id the client sent but
+        // outside the SDK's i64 `RequestId`; the transport echoes the client's
+        // own id verbatim rather than leaving the reply unmatchable.
+        (
+            b"{\"jsonrpc\":\"2.0\",\"id\":18446744073709551615,\"method\":\"tools/list\",\"params\":[]}\n",
+            json!(18446744073709551615_u64),
+        ),
     ];
     for (input, expected_id) in cases {
         let writer = Arc::new(Mutex::new(FrameWriter::new(Vec::<u8>::new())));

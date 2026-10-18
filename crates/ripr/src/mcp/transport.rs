@@ -109,9 +109,11 @@ fn protocol_error_frame_with_id(
 ///
 /// JSON-RPC 2.0 says the error id is the request's id when it can be
 /// detected, and null only otherwise. A frame that is a JSON object with a
-/// `method` and a string or integer `id` (the SDK's `RequestId` domain) names
-/// its request even when `params` or `_meta` is the wrong shape, so the
-/// client can correlate the rejection. Anything else stays null.
+/// `method` and a string or integer `id` names its request even when `params`
+/// or `_meta` is the wrong shape, so the client can correlate the rejection.
+/// The id is echoed verbatim: any JSON integer is accepted, a superset of the
+/// SDK's i64 `RequestId` (a u64 above `i64::MAX` is the client's own id).
+/// Notifications, null, boolean, float and structured ids stay null.
 fn recoverable_request_id(frame: &[u8]) -> Option<serde_json::Value> {
     let value: serde_json::Value = serde_json::from_slice(frame).ok()?;
     let object = value.as_object()?;
