@@ -939,6 +939,15 @@ fn percent_decode_uri_recovers_expanded_template_ids_and_nothing_else() {
         percent_decode_uri("ripr://gap/a%3a%3A").as_deref(),
         Some("ripr://gap/a::")
     );
+    // Hex digits are case-insensitive: %3a and %3A decode identically.
+    assert_eq!(
+        percent_decode_uri("ripr://gap/x%3a%2f%3d"),
+        percent_decode_uri("ripr://gap/x%3A%2F%3D")
+    );
+    assert_eq!(
+        percent_decode_uri("ripr://gap/x%3a%2f%3d").as_deref(),
+        Some("ripr://gap/x:/=")
+    );
     for unchanged in [
         "ripr://gap/a:b",
         "ripr://gap/100%",

@@ -3318,6 +3318,11 @@ fn percent_encoded_resource_uris_resolve_like_their_raw_links() -> Result<(), St
     ] {
         let raw_uri = format!("ripr://{family}/{raw_id}");
         let encoded_uri = format!("ripr://{family}/{}", encode(raw_id));
+        // The fallback is only exercised when encoding changes the URI;
+        // snapshot ids carry ':' so they qualify too.
+        if encoded_uri == raw_uri {
+            return Err(format!("{family} id has no reserved characters: {raw_id}"));
+        }
         let raw = read_resource_document(&mut session, "raw", &raw_uri, REPLY_TIMEOUT)?;
         let encoded_reply = session.call(
             "encoded",
