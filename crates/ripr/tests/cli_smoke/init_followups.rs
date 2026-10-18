@@ -493,7 +493,7 @@ fn init_followups_replay_utf8_targets_from_a_non_utf8_cwd() -> TestResult {
 /// against the caller would otherwise look indistinguishable from success.
 fn workflow_refresh_replays_selected_root(doctor: bool) -> TestResult {
     let scratch = unique_temp_workspace("workflow-refresh-root");
-    let selected = scratch.join("selected répo it's");
+    let selected = scratch.join("selected répo it's $");
     let decoy = scratch.join("decoy");
     let config = "[analysis]\nmode = \"deep\"\n";
     let sentinel = "name: caller sentinel\n";
@@ -507,7 +507,7 @@ fn workflow_refresh_replays_selected_root(doctor: bool) -> TestResult {
         let absolute = selected.to_str().ok_or("UTF-8 fixture root")?;
         for (cwd, root_args) in [
             (&decoy, vec!["--root", absolute]),
-            (&scratch, vec!["--root", "selected répo it's"]),
+            (&scratch, vec!["--root", "selected répo it's $"]),
             (&selected, vec![]),
         ] {
             for preview in [false, true] {
@@ -622,6 +622,105 @@ fn workflow_warning_omits_refresh_for_unrepresentable_root() -> TestResult {
         assert!(line.contains("refresh command omitted"), "{line}");
         assert!(line.contains("UTF-8"), "{line}");
         assert!(!line.contains("`ripr init"), "{line}");
+        Ok(())
+    })();
+    std::fs::remove_dir_all(&scratch)?;
+    result
+}
+
+/// Doctor sanitizes terminal controls after constructing advisory text. A real
+/// shell replay must still target the literal-control root, even when its
+/// escaped display spelling also names a valid repository.
+#[cfg(unix)]
+#[test]
+fn workflow_refresh_control_roots_replay_without_touching_escaped_siblings() -> TestResult {
+    let scratch = unique_temp_workspace("workflow-refresh-controls");
+    let decoy = scratch.join("caller");
+    let config = "[analysis]\nmode = \"deep\"\n";
+    let sentinel = "name: untouched sentinel\n";
+    let result: TestResult = (|| {
+        rust_repo(&decoy)?;
+        for (name, escaped) in [
+            ("line\nroot", "line\\u{0a}root"),
+            ("tab\troot", "tab\\u{09}root"),
+            ("trailing\n", "trailing\\u{0a}"),
+        ] {
+            let selected = scratch.join(name);
+            let sibling = scratch.join(escaped);
+            for root in [&selected, &sibling, &decoy] {
+                std::fs::create_dir_all(root.join(".github/workflows"))?;
+                std::fs::write(root.join("ripr.toml"), config)?;
+            }
+            rust_repo(&selected)?;
+            for doctor in [false, true] {
+                std::fs::write(
+                    selected.join(".github/workflows/ripr.yml"),
+                    "run: cargo install ripr --locked\n",
+                )?;
+                let root_arg = selected.to_str().ok_or("UTF-8 fixture root")?;
+                let args = if doctor {
+                    vec!["doctor", "--root", root_arg]
+                } else {
+                    vec![
+                        "init",
+                        "--root",
+                        root_arg,
+                        "--ci",
+                        "github",
+                        "--force",
+                        "--dry-run",
+                    ]
+                };
+                let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&decoy), &args)?;
+                assert!(output.status.success(), "{output:?}");
+                let text = String::from_utf8(if doctor { output.stdout } else { output.stderr })?;
+                if !doctor && !text.contains("is not released") {
+                    continue; // A released generator has no upgrade warning.
+                }
+                let command = text
+                    .split('`')
+                    .find(|part| part.starts_with("ripr init"))
+                    .ok_or_else(|| format!("missing refresh command: {text}"))?;
+                assert!(
+                    !command.chars().any(|ch| matches!(ch, '\n' | '\t')),
+                    "{command:?}"
+                );
+                for root in [&selected, &sibling, &decoy] {
+                    std::fs::write(root.join(".github/workflows/ripr.yml"), sentinel)?;
+                }
+                // The existing word-only replay helper deliberately refuses
+                // command substitutions. Exercise the retained POSIX encoder
+                // through a real shell, with the binary supplied as data.
+                let script = command.replacen("ripr", "\"$RIPR_TEST_BINARY\"", 1);
+                let replay = super::run_command_with_env(
+                    "sh",
+                    &decoy,
+                    &["-c", &script],
+                    &[("RIPR_TEST_BINARY", env!("CARGO_BIN_EXE_ripr"))],
+                )?;
+                assert!(replay.status.success(), "{command}: {replay:?}");
+                assert!(
+                    std::fs::read_to_string(selected.join(".github/workflows/ripr.yml"))?
+                        .starts_with("name: RIPR\n")
+                );
+                for root in [&sibling, &decoy] {
+                    assert_eq!(
+                        std::fs::read_to_string(root.join(".github/workflows/ripr.yml"))?,
+                        sentinel
+                    );
+                }
+                for root in [&selected, &sibling, &decoy] {
+                    assert_eq!(std::fs::read_to_string(root.join("ripr.toml"))?, config);
+                }
+                let powershell = text
+                    .split('`')
+                    .find(|part| part.starts_with("ripr init") && part.contains("[char]"));
+                assert!(
+                    powershell.is_some(),
+                    "missing reconstructing PowerShell form: {text}"
+                );
+            }
+        }
         Ok(())
     })();
     std::fs::remove_dir_all(&scratch)?;

@@ -528,6 +528,22 @@ pub(crate) fn shell_arg(value: &str) -> String {
     shell_arg_for(value, cfg!(windows))
 }
 
+/// A directory argument for single-line displays that escape raw LF/TAB.
+/// Encode the whole spelling together: command substitution strips trailing
+/// newlines, so a directory-equivalent `/.` suffix keeps the final byte non-LF.
+/// The existing PowerShell projection decodes the same octal argument.
+pub(crate) fn shell_directory_arg_single_line(value: &str) -> String {
+    if !value.chars().any(|ch| matches!(ch, '\n' | '\t')) {
+        return shell_arg(value);
+    }
+    let octal: String = value
+        .bytes()
+        .chain(b"/.".iter().copied())
+        .map(|byte| format!("\\{byte:03o}"))
+        .collect();
+    format!("\"$(printf '{octal}')\"")
+}
+
 /// Pure host-parameterised core of [`shell_arg`], so both hosts' quoting forms
 /// are testable on any machine (the `human_path_text` pattern, #4378).
 pub(crate) fn shell_arg_for(value: &str, windows: bool) -> String {

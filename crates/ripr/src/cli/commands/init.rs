@@ -419,7 +419,7 @@ pub(super) fn workflow_refresh_guidance(root: &Path) -> String {
         Ok(root) => root,
         Err(error) => return format!("refresh command omitted: {error}."),
     };
-    let root_arg = crate::agent::loop_commands::shell_arg(&root_display);
+    let root_arg = crate::agent::loop_commands::shell_directory_arg_single_line(&root_display);
     let command = format!("ripr init --ci github --force --root {root_arg}");
     let mut guidance = format!("refresh with `{command}` and review the diff before committing.");
     if let Some(powershell) = output::markdown::powershell_text_variant(&command) {
