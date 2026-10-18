@@ -10049,6 +10049,48 @@
         { "type": "expected_class", "class": "weakly_exposed" },
         { "type": "expected_oracle", "kind": "unknown", "strength": "unknown" }
       ]
+    },
+    {
+      "id": "rust_field_match_helper_mutable",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/field_match_helper_mutable",
+      "vector": "helper_returned_mutable_field_exact_call_preserves_option_constructor",
+      "probe_family": "match_arm",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ],
+      "control": "must_stay_exposed"
+    },
+    {
+      "id": "rust_field_match_helper_taken",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/field_match_helper_taken",
+      "vector": "helper_returned_mutable_field_implicit_borrow_refuses_stale_selection",
+      "probe_family": "match_arm",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
     }
   ]
 }

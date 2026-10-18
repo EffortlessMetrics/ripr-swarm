@@ -780,3 +780,48 @@ assertion execution admission. A parsed equality under `if false`, or another
 unestablished execution path, is not an admitted oracle. This bounded producer
 consumes the shared authority rather than adding a second path evaluator.
 `fixtures/field_match_unexecuted_assertion` and the native API regression pin it.
+
+## Helper-returned mutable local field inputs (#5500 / #5502)
+
+The same-file field slice delegates local binding and source-ordered field writes
+to `ValueEnvFacts`, preserving `None` and `Some(literal)` rather than unwrapping
+them as scalar arguments. A local can come from a direct record literal or at
+most two synchronous, nongeneric, statement-free helper tails returning the
+exact admitted record type. Helper declarations must be unique, unconditionally
+available in the caller's own scope or its directly imported parent scope, and
+free of local/import/module callable-binding ambiguity. Other fields and helper arguments are limited
+to literals or the helper's `u64`/`u128` parameters; the selected field is closed.
+
+The latest local binding and selected-field write before the exact call govern
+selection. Whole-object replacement, moves, mutable alias escape, conditional or
+uncalled writes, attributed test-body syntax, and implicit field-method borrows
+such as `take()` (including through parentheses) refuse proof.
+Other field place uses (including implicit `ref mut` pattern borrows) remain
+unresolved; the admitted local shape needs only exact tracked writes and shared
+whole-record borrows. The same check inspects assertion macro expression arguments;
+field writes inside those opaque macro arguments refuse projection.
+Repeated identical calls on one line remain unresolved. An assertion must still
+pass the shared execution admission and compare that exact owner invocation;
+discarded or overwritten results supply no credit. Known `None` sibling inputs
+retain a real missing-`Some` gap; unsupported helper shapes retain the named
+field-selector limitation. The positive and implicit-borrow negative fixtures
+are `field_match_helper_mutable` and `field_match_helper_taken`.
+
+This does not establish a newly introduced whole match's before-side arm
+provenance. The retained broad-match `field_match_selector` API fixture still
+has three named unresolved rows because its paired old expression is not an
+arm. Imported record declarations, serde/JSON round trips and the full UB
+consumer remain outside this same-file capability; this is partial delivery of
+#5500 / #5502, not completion of the consumer gap.
+
+The new projection also requires exact source-coordinate fidelity for its
+shared binding facts: test-body comments or stripped string contents that change
+line widths are unsupported. The chosen binding and write must be actual direct
+statements in that test's parsed body, and the AST field/value must agree with
+the retained write. Conditional, parenthesized, destructuring and multiline writes
+that the shared authority did not retain are not reconstructed by a new tracker.
+
+The retained full UB PR1503 consumer (source `278253a`) produced the same 52
+finding objects before and after this repair, including 18 current weak rows and
+the same three current charge-selector limitations. This is executable evidence
+of nonregression and of the remaining consumer gap; it does not clear PR1503.

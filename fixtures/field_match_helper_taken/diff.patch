@@ -1,0 +1,5 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -7 +7 @@
+-        Some(ms) => 0,
++        Some(ms) => ms as u64,
