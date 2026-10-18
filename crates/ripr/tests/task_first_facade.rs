@@ -910,7 +910,7 @@ fn explain_and_context_accept_the_hash_form_gap_id_rerun_emits() -> Result<(), S
     // The producer's `probe:` ID names the finding both drill-ins must hit.
     let check = run_worktree_check(root, &root_arg)?;
     let probe_id = printed_probe_identity(&stdout_text(&check))
-        .ok_or_else(|| format!("check must print a probe finding ID"))?;
+        .ok_or_else(|| "check must print a probe finding ID".to_string())?;
     let explained = run_ripr(
         root,
         &[
