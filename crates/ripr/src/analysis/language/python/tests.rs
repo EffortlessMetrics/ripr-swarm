@@ -7155,7 +7155,7 @@ fn boundary_call_rows_of_one_long_assert_chain_stay_linear() -> Result<(), Strin
         .max()
         .unwrap_or(0);
     assert!(
-        longest <= 400,
+        longest <= 400, // 246-byte excerpt plus the bounded provenance suffix
         "a fact's text must not carry the whole {}-byte line, longest was {longest}",
         chain.len()
     );
@@ -7167,6 +7167,32 @@ fn boundary_call_rows_of_one_long_assert_chain_stay_linear() -> Result<(), Strin
             .iter()
             .any(|fact| fact.text.contains("price(700,2)==1")),
         "the window keeps the call it evidences"
+    );
+    Ok(())
+}
+
+#[test]
+fn boundary_call_row_window_keeps_a_call_that_fits_whole() -> Result<(), String> {
+    // A 181-240 byte call on a cut line must keep its closing parenthesis, or
+    // the value facts would name bindings the excerpt does not show.
+    let argument = "x".repeat(200);
+    let lead = "price(0,2)==1 and ".repeat(10);
+    let line = format!("    assert {lead}price(5,'{argument}')==1");
+    assert!(line.len() > 240, "fixture line must be cut: {}", line.len());
+    let finding = classify_price_boundary_with_test_body(&line)?;
+    let call = format!("price(5,'{argument}')");
+    assert!(
+        (181..=240).contains(&call.len()),
+        "fixture call length {}",
+        call.len()
+    );
+    assert!(
+        finding
+            .activation
+            .observed_values
+            .iter()
+            .any(|fact| fact.text.contains(&call)),
+        "the excerpt keeps the whole call"
     );
     Ok(())
 }

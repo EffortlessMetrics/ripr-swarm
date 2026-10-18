@@ -1144,6 +1144,18 @@ fn an_unasserted_owner_call_does_not_block_an_inactive_term() -> Result<(), Stri
     // window): the call count reads the full line, so the nonzero call still
     // blocks. The control with one call on the long line downgrades.
     let padding = "# pad ".repeat(60);
+    // The fixture line must exceed the 240-byte row-text window, and its
+    // second owner call must lie beyond that window.
+    let long_line = format!("    quote(6000); collected.append(['{padding}', quote(1000)])");
+    assert!(
+        long_line.len() > 240,
+        "fixture line must be cut: {}",
+        long_line.len()
+    );
+    assert!(
+        long_line.rfind("quote(1000)").is_some_and(|at| at > 240),
+        "the second owner call must sit outside the window"
+    );
     assert_eq!(
         quote_class(
             QUOTE_OLD_SHIPPING,
