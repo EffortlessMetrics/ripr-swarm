@@ -997,15 +997,13 @@ mod tests {
         }
     }
 
-    /// Rule 2 reads a borrowed helper assertion's argument at each of the
-    /// test's eager helper calls.
     #[test]
     fn table_column_is_read_only_for_a_call_inside_its_loop() {
         // #8012: the call after the loop names the module `const x`, not the
         // loop's rows, so the closure is not credited as run.
         let off_loop = test_body(
             10,
-            "fn t() {\n    for (x, want) in [(Some(2), 6)] { let _ = (x, want); }\n    assert_eq!(f(x), 0);\n}",
+            "fn t() {\n    for (x, want) in [(&[2], 6)] { let _ = (x, want); }\n    assert_eq!(f(x), 0);\n}",
         );
         assert!(!pinned_call_runs_closure(&off_loop, None, "f(x)", "f", 0));
         let in_loop = test_body(
@@ -1013,8 +1011,17 @@ mod tests {
             "fn t() {\n    for (x, want) in [(&[1], 6)] {\n        assert_eq!(f(x), want);\n    }\n}",
         );
         assert!(pinned_call_runs_closure(&in_loop, None, "f(x)", "f", 0));
+        // A call text that occurs twice cannot be told apart by position, so
+        // it is not read from the table either (old code credited it).
+        let twice = test_body(
+            10,
+            "fn t() {\n    for (x, want) in [(&[1], 6)] {\n        assert_eq!(f(x), want);\n        assert_eq!(f(x), want);\n    }\n}",
+        );
+        assert!(!pinned_call_runs_closure(&twice, None, "f(x)", "f", 0));
     }
 
+    /// Rule 2 reads a borrowed helper assertion's argument at each of the
+    /// test's eager helper calls.
     #[test]
     fn helper_parameter_runs_are_read_at_each_helper_call() {
         let test = test_body(
