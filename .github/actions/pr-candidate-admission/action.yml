@@ -178,8 +178,10 @@ runs:
           packet_err="$RUNNER_TEMP/packet-err.$$"
           if gh api "repos/${ADMISSION_REPOSITORY}/contents/${packet_path}?ref=${base_sha}" > "$packet_meta" 2>"$packet_err"; then
             jq -r '.content' "$packet_meta" | tr -d '\n' | base64 --decode > "$packet"
+            packet_from_base=1
           elif grep -q 'HTTP 404' "$packet_err"; then
             cp "$local_packet" "$packet"
+            packet_from_base=0
           else
             echo '::error::hard-cut packet read from the live base failed for a reason other than absence'
             exit 1
@@ -215,9 +217,15 @@ runs:
           set -e
 
           base_sha_after="$(gh api "repos/${ADMISSION_REPOSITORY}/git/ref/heads/${base_ref}" --jq '.object.sha // empty')"
-          if [ "$base_sha_after" != "$base_sha" ] && [ "$(jq -r '.state' "$packet")" != "inactive" ]; then
-            echo "::error::candidate admission base moved during evaluation ($base_sha -> $base_sha_after)"
-            exit 1
+          if [ "$base_sha_after" != "$base_sha" ]; then
+            # Movement is harmless only when both the evaluated and the newly
+            # observed base carry an inactive packet; any other state refuses.
+            moved_state="$(gh api "repos/${ADMISSION_REPOSITORY}/contents/${packet_path}?ref=${base_sha_after}" --jq '.content' 2>/dev/null | tr -d '\n' | base64 --decode 2>/dev/null | jq -r '.state' 2>/dev/null || true)"
+            [ "$packet_from_base" = "0" ] && [ -z "$moved_state" ] && moved_state=inactive
+            if [ "$(jq -r '.state' "$packet")" != "inactive" ] || [ "$moved_state" != "inactive" ]; then
+              echo "::error::candidate admission base moved during evaluation ($base_sha -> $base_sha_after)"
+              exit 1
+            fi
           fi
         fi
 
