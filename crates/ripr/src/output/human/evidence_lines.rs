@@ -172,12 +172,14 @@ fn evidence_path<T>(
         }
         let oracle_kind = display_label(test.oracle_kind.as_str());
         let mut line = format!(
-            "related test {}:{} {} uses {} {} oracle",
+            "related test {}:{} {} uses {} oracle",
             display_path(&test.file),
             test.line,
             test.name,
-            test.oracle_strength.as_str(),
-            oracle_kind
+            crate::output::oracle_phrase::oracle_phrase(
+                test.oracle_strength.as_str(),
+                &oracle_kind
+            )
         );
         if let Some(oracle) = &test.oracle {
             line.push_str(&format!(": {oracle}"));

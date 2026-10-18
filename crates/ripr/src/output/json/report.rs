@@ -1148,12 +1148,14 @@ fn evidence_path_values(finding: &Finding) -> Vec<String> {
     values.extend(finding.related_tests.iter().take(5).map(|test| {
         let oracle_kind = display_label(test.oracle_kind.as_str());
         let mut value = format!(
-            "related test {}:{} {} uses {} {} oracle",
+            "related test {}:{} {} uses {} oracle",
             crate::output::path::display_path(&test.file),
             test.line,
             test.name,
-            test.oracle_strength.as_str(),
-            oracle_kind
+            crate::output::oracle_phrase::oracle_phrase(
+                test.oracle_strength.as_str(),
+                &oracle_kind
+            )
         );
         if let Some(oracle) = &test.oracle {
             value.push_str(&format!(": {oracle}"));

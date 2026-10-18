@@ -109,9 +109,11 @@ fn row_verdict(row: &RelatedTest, finding: &Finding) -> String {
         ),
         None => match &row.oracle {
             Some(_) => format!(
-                "{} {} oracle",
-                row.oracle_strength.as_str(),
-                row.oracle_kind.as_str().replace('_', " ")
+                "{} oracle",
+                crate::output::oracle_phrase::oracle_phrase(
+                    row.oracle_strength.as_str(),
+                    &row.oracle_kind.as_str().replace('_', " ")
+                )
             ),
             None => "no oracle row".to_string(),
         },

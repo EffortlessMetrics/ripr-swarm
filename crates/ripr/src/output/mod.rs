@@ -39,6 +39,7 @@ pub mod json;
 pub(crate) mod limited_check;
 pub(crate) mod markdown;
 pub(crate) mod mutation_calibration;
+pub(crate) mod oracle_phrase;
 pub use mutation_calibration::{CargoMutantsOutcomeRecord, parse_cargo_mutants_outcomes_json};
 pub(crate) mod next_action;
 pub(crate) mod next_step;
