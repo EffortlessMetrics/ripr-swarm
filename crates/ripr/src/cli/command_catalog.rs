@@ -1087,36 +1087,39 @@ mod tests {
     }
 
     #[test]
-    fn expected_subcommands_mine_backtick_expected_lists() {
+    fn expected_subcommands_mine_backtick_expected_lists() -> Result<(), String> {
         let message =
             "unknown policy subcommand \"x\"; expected `readiness`, `operations`, or `history`";
         assert_eq!(
-            expected_subcommands_from_unknown_error(message).expect("parse expected list"),
+            expected_subcommands_from_unknown_error(message)?,
             vec!["readiness", "operations", "history"]
         );
+        Ok(())
     }
 
     #[test]
-    fn expected_subcommands_mine_unknown_value_accepted_lists() {
+    fn expected_subcommands_mine_unknown_value_accepted_lists() -> Result<(), String> {
         let far =
             "unknown cache subcommand \"__catalog_probe__\". Accepted: status, export, clear.";
         assert_eq!(
-            expected_subcommands_from_unknown_error(far).expect("parse Accepted list"),
+            expected_subcommands_from_unknown_error(far)?,
             vec!["status", "export", "clear"]
         );
         let near = "unknown cache subcommand \"stat\". Did you mean `status`? Accepted: status, export, clear.";
         assert_eq!(
-            expected_subcommands_from_unknown_error(near)
-                .expect("parse Accepted list with suggestion"),
+            expected_subcommands_from_unknown_error(near)?,
             vec!["status", "export", "clear"]
         );
+        Ok(())
     }
 
     #[test]
     fn expected_subcommands_reject_a_message_without_a_list() {
-        let error = expected_subcommands_from_unknown_error("unknown cache subcommand \"x\"")
-            .expect_err("missing list must fail");
-        assert!(error.contains("did not list expected tokens"), "{error}");
+        let result = expected_subcommands_from_unknown_error("unknown cache subcommand \"x\"");
+        assert!(
+            matches!(result, Err(ref error) if error.contains("did not list expected tokens")),
+            "missing list must fail, got {result:?}"
+        );
     }
 
     #[test]
