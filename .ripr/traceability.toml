@@ -13738,6 +13738,8 @@ id = "RIPR-SPEC-0211"
 name = "MCP workspace session evidence"
 spec = "docs/specs/RIPR-SPEC-0211-mcp-workspace-session-evidence.md"
 tests = [
+  "crates/ripr/tests/mcp_stdio.rs::unusable_root_warns_once_on_stderr_and_keeps_stdout_clean",
+  "crates/ripr/tests/mcp_stdio.rs::unwritable_stderr_does_not_abort_unusable_root_session",
   "crates/ripr/tests/mcp_stdio.rs::rejection_arms_survive_the_stdio_transport",
   "crates/ripr/tests/mcp_sdk.rs::official_sdk_legacy_client_lists_calls_and_reads_status",
   "crates/ripr/tests/mcp_sdk.rs::official_sdk_discovery_client_lists_calls_and_reads_status",

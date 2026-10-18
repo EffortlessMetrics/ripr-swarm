@@ -232,6 +232,11 @@ official SDK transport:
   a root resolved unavailable at startup fail closed with
   `workspace_unavailable` and the same restart-with-root recovery as
   `ripr_refresh`; the adapter does not discover or recheck the root again.
+  A root resolved unavailable at startup also prints exactly one
+  operator-facing warning line on stderr before serving (no path; stdout
+  stays protocol-only, and a usable root stays silent). The write is
+  fallible and ignored: an unwritable stderr never aborts startup, and the typed
+  `workspace_unavailable` replies still arrive.
   On a usable root, reads before the first successful refresh fail closed
   with `no_snapshot`; reads during an
   attempt report `analysis_in_flight`; unknown item ids fail closed with
@@ -391,6 +396,15 @@ is not evidence that a resource with a particular identity exists.
   same literal recovery contract through the official SDK lifecycles,
   preserving the SDK-owned negotiated resource-miss code.
 
+- `crates/ripr/tests/mcp_stdio.rs::unusable_root_warns_once_on_stderr_and_keeps_stdout_clean`
+  — nonexistent, file and non-git roots each print exactly one stderr warning
+  with empty stdout; a usable root stays silent. The unavailable-root session
+  tests (`unavailable_workspace_evidence_names_restart_before_any_refresh`,
+  `current_discovery_requires_metadata_and_rejects_legacy_ping`) assert stderr
+  is exactly that one warning while keeping every protocol assertion.
+- `crates/ripr/tests/mcp_stdio.rs::unwritable_stderr_does_not_abort_unusable_root_session`
+  — stderr failing every write (`/dev/full`), unusable root: startup survives and typed
+  `workspace_unavailable` replies still arrive over stdout.
 - `crates/ripr/tests/mcp_stdio.rs::refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation`
   — actual committed multi-item analysis over raw stdio: literal IDs, counts,
   class/language/readiness exclusion, conjunction, unknown-value empty sets,

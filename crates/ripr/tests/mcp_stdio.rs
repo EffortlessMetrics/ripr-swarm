@@ -280,7 +280,23 @@ fn run_mcp_with_input_custody(
     })
 }
 
+/// Expected single operator warning for an unusable root (RIPR-SPEC-0211).
+const UNUSABLE_ROOT_WARNING: &str = "ripr mcp: warning: workspace root unavailable (not a usable repository root); tools will fail closed with workspace_unavailable. Restart with `--root <repository>`.\n";
+
 fn response_lines(output: &Output) -> Result<Vec<Value>, String> {
+    response_lines_expecting_stderr(output, "")
+}
+
+/// Like `response_lines`, but for a session started on an unusable root: stderr
+/// must be exactly the one startup warning, nothing more.
+fn response_lines_with_root_warning(output: &Output) -> Result<Vec<Value>, String> {
+    response_lines_expecting_stderr(output, UNUSABLE_ROOT_WARNING)
+}
+
+fn response_lines_expecting_stderr(
+    output: &Output,
+    expected_stderr: &str,
+) -> Result<Vec<Value>, String> {
     if !output.status.success() {
         return Err(format!(
             "ripr mcp failed\nstdout:\n{}\nstderr:\n{}",
@@ -288,9 +304,9 @@ fn response_lines(output: &Output) -> Result<Vec<Value>, String> {
             String::from_utf8_lossy(&output.stderr)
         ));
     }
-    if !output.stderr.is_empty() {
+    if output.stderr != expected_stderr.as_bytes() {
         return Err(format!(
-            "successful MCP session contaminated stderr:\n{}",
+            "successful MCP session stderr differs from the expected {expected_stderr:?}:\n{}",
             String::from_utf8_lossy(&output.stderr)
         ));
     }
@@ -1201,7 +1217,7 @@ fn current_discovery_requires_metadata_and_rejects_legacy_ping() -> Result<(), S
     ]
     .concat();
     let output = run_mcp(&root, &[&request_bytes])?;
-    let responses = response_lines(&output)?;
+    let responses = response_lines_with_root_warning(&output)?;
     if responses.len() != 5 {
         return Err(format!(
             "cancellation notification must not emit a response; got {} lines",
@@ -1397,7 +1413,7 @@ fn unavailable_workspace_evidence_names_restart_before_any_refresh() -> Result<(
             "params": { "_meta": current_meta(), "name": "ripr_workspace_status", "arguments": {} }
         }))?);
         let output = run_mcp(root, &[&requests.concat()])?;
-        let responses = response_lines(&output)?;
+        let responses = response_lines_with_root_warning(&output)?;
         if responses.len() != 18 {
             return Err(format!(
                 "expected 18 replies for {root_error}, got {}",
@@ -3332,4 +3348,56 @@ fn unusable_root_warns_once_on_stderr_and_keeps_stdout_clean() -> Result<(), Str
     } else {
         Err(failures.join("\n"))
     }
+}
+
+/// An unwritable stderr must not abort startup: the warning write is fallible
+/// and ignored, and the typed `workspace_unavailable` replies still arrive.
+/// `/dev/full` fails every write with ENOSPC, which makes `eprintln!` panic
+/// (a merely closed fd is swallowed by std, so it would not discriminate).
+#[cfg(target_os = "linux")]
+#[test]
+fn unwritable_stderr_does_not_abort_unusable_root_session() -> Result<(), String> {
+    let missing = std::env::temp_dir().join(format!(
+        "ripr-mcp-unwritable-stderr-{}-missing",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&missing);
+    let mut requests = line(json!({
+        "jsonrpc": "2.0", "id": "status", "method": "tools/call",
+        "params": { "_meta": current_meta(), "name": "ripr_workspace_status", "arguments": {} }
+    }))?;
+    requests.extend(line(json!({
+        "jsonrpc": "2.0", "id": "gaps", "method": "tools/call",
+        "params": { "_meta": current_meta(), "name": "ripr_list_gaps", "arguments": {} }
+    }))?);
+    // Every stderr write to /dev/full fails with ENOSPC.
+    let full = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .map_err(|error| format!("open /dev/full: {error}"))?;
+    let mut child = worktree_ripr()
+        .args(["mcp", "--stdio", "--root"])
+        .arg(&missing)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::from(full))
+        .spawn()
+        .map_err(|error| format!("spawn ripr mcp with unwritable stderr: {error}"))?;
+    {
+        let mut stdin = child.stdin.take().ok_or("stdin was not piped")?;
+        std::io::Write::write_all(&mut stdin, &requests)
+            .map_err(|error| format!("write requests: {error}"))?;
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("wait for ripr mcp: {error}"))?;
+    let responses = response_lines(&output)?;
+    if responses.len() != 2 {
+        return Err(format!("expected 2 replies, got {responses:?}"));
+    }
+    let text = serde_json::to_string(&responses).map_err(|error| error.to_string())?;
+    if !text.contains("workspace_unavailable") {
+        return Err(format!("replies lost workspace_unavailable: {text}"));
+    }
+    Ok(())
 }

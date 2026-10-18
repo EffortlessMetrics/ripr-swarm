@@ -14,7 +14,7 @@ use rmcp::{
 };
 use serde_json::json;
 use std::{
-    io::Error,
+    io::{Error, Write},
     path::PathBuf,
     sync::{Arc, Mutex as StdMutex},
 };
@@ -304,7 +304,10 @@ pub(super) async fn serve_stdio(explicit_root: Option<PathBuf>) -> Result<(), St
     let (status, analysis_root) = WorkspaceStatus::resolve_with_root(explicit_root);
     if let Some(warning) = startup_warning(&status) {
         // Stdout is protocol-only; an operational failure belongs on stderr.
-        eprintln!("{warning}");
+        // Fallible write: `eprintln!` panics when a stderr write fails, which
+        // would abort startup before `serve`. A lost warning is acceptable;
+        // the typed `workspace_unavailable` replies still carry the failure.
+        let _ = writeln!(std::io::stderr(), "{warning}");
     }
     serve(
         tokio::io::stdin(),
