@@ -2454,9 +2454,10 @@ This removes only the foreign-glob wrapper; it does not prove an assertion
 macro standard by spelling. The immutable indexed namespace must be fully
 source-visible, without withheld files, lexical fallback, non-UTF-8 sources,
 unresolved provenance or includes. The existing full module-tree scan and
-attribute source-preservation authority reject hidden item/body expansions
+attribute source-preservation authority (with the existing plain test gate
+and exact builtin harness marker) reject hidden item/body expansions
 and derives. Every name that the module-tree scanner treats as a standard
-body/item macro must also have no non-glob binding site in the existing
+body/item macro or prelude attribute must also have no non-glob binding site in the existing
 binding scanner. Qualified body macro roots remain outside this proof.
 All visible definitions, imports and remaining foreign globs still pass through
 the ordinary macro-binding authority. A known empty custom assertion remains

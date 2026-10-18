@@ -36,7 +36,10 @@ fn classification(
     let findings = output
         .findings
         .iter()
-        .filter(|finding| finding.id == "probe:src_proof.rs:return_value:d87248f4")
+        .filter(|finding| {
+            finding.probe.family == ripr::ProbeFamily::ReturnValue
+                && finding.probe.expression == "600"
+        })
         .collect::<Vec<_>>();
     assert_eq!(findings.len(), 1, "exact changed return subject survives");
     let class = findings[0].class.clone();

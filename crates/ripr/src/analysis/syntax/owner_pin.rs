@@ -292,6 +292,7 @@ pub(in crate::analysis) fn module_export_source_is_visible(
     let mut names = super::module_tree::BODY_MACROS_WITHOUT_MODULES.to_vec();
     names.extend(super::module_tree::ITEM_MACROS_WITHOUT_MODULES);
     names.extend(TRUSTED_MACRO_NAMES);
+    names.extend(PRELUDE_MACROS);
     if trusted_macro_binding_sites(source, &BTreeSet::new(), &names, module_resolved, &|_| {
         false
     })
@@ -314,9 +315,19 @@ pub(in crate::analysis) fn module_export_source_is_visible(
         }
 
         if let Some(attr) = ast::Attr::cast(node.clone()) {
-            return crate::analysis::facts::cfg_predicates::attribute_preserves_source_items(
-                &attr.syntax().text().to_string(),
-            );
+            let text = attr.syntax().text().to_string();
+            // The index and assertion reader operate in a test build. Borrow
+            // only their plain test gate and exact builtin harness marker;
+            // prelude-name rebinding was refused by the scan above.
+            let harness = attr.simple_name().as_deref() == Some("test")
+                && matches!(attr.meta(), Some(ast::Meta::PathMeta(_)))
+                && attr
+                    .syntax()
+                    .parent()
+                    .is_some_and(|parent| ast::Fn::can_cast(parent.kind()));
+            return harness
+                || crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate(&text)
+                || crate::analysis::facts::cfg_predicates::attribute_preserves_source_items(&text);
         }
         if let Some(module) = ast::Module::cast(node) {
             if module.item_list().is_some() {
