@@ -100,6 +100,8 @@ struct StructFieldBinding {
 struct FieldAssignmentBinding {
     position: SourcePosition,
     values: Vec<String>,
+    #[cfg(feature = "lang-rust")]
+    option_value: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -172,6 +174,52 @@ impl ValueEnvFacts {
     }
 }
 
+impl ValueEnvFacts {
+    fn field_assignment_candidate_at(
+        &self,
+        object: &str,
+        field: &str,
+        call_position: SourcePosition,
+    ) -> Option<&FieldAssignmentBinding> {
+        let local_binding = self
+            .local_binding_positions
+            .get(object)?
+            .iter()
+            .copied()
+            .filter(|position| position.at_or_before(call_position))
+            .max_by_key(|position| (position.line, position.column))?;
+        let assignment = self
+            .field_assignments
+            .get(&(object.to_string(), field.to_string()))?
+            .iter()
+            .filter(|assignment| {
+                local_binding.at_or_before(assignment.position)
+                    && assignment.position.at_or_before(call_position)
+            })
+            .max_by_key(|assignment| (assignment.position.line, assignment.position.column))?;
+        Some(assignment)
+    }
+
+    fn field_assignment_is_invalidated(
+        &self,
+        object: &str,
+        assignment_position: SourcePosition,
+        call_position: SourcePosition,
+    ) -> bool {
+        self.field_assignment_invalidations
+            .get(object)
+            .is_some_and(|positions| {
+                positions.iter().any(|position| {
+                    assignment_position.at_or_before(*position)
+                        && position.at_or_before(call_position)
+                })
+            })
+    }
+}
+
+#[cfg(feature = "lang-rust")]
+mod option_field;
+
 /// Per-test, per-seam resolution environment. The expensive
 /// seam-independent scans live in [`ValueEnvFacts`]; each call-arg
 /// lookup is a `BTreeMap` lookup plus a small list scan.
@@ -236,12 +284,18 @@ impl<'a> ValueEnv<'a> {
         let Some((object, field)) = field_projection(arg) else {
             return false;
         };
-        let Some(assignment) = self.field_assignment_candidate_at(object, field, call_position)
+        let Some(assignment) =
+            self.facts
+                .field_assignment_candidate_at(object, field, call_position)
         else {
             return false;
         };
         assignment.values.is_empty()
-            || self.field_assignment_is_invalidated(object, assignment.position, call_position)
+            || self.facts.field_assignment_is_invalidated(
+                object,
+                assignment.position,
+                call_position,
+            )
     }
 
     fn resolve_at_position(
@@ -287,9 +341,14 @@ impl<'a> ValueEnv<'a> {
         }
         if let Some((object, field)) = field_projection(expr)
             && let Some(assignment) =
-                self.field_assignment_candidate_at(object, field, call_position)
+                self.facts
+                    .field_assignment_candidate_at(object, field, call_position)
         {
-            if self.field_assignment_is_invalidated(object, assignment.position, call_position) {
+            if self.facts.field_assignment_is_invalidated(
+                object,
+                assignment.position,
+                call_position,
+            ) {
                 return Vec::new();
             }
             return assignment
@@ -347,50 +406,6 @@ impl<'a> ValueEnv<'a> {
             return vec![(value.clone(), ValueContext::FunctionArgument)];
         }
         Vec::new()
-    }
-
-    fn field_assignment_candidate_at(
-        &self,
-        object: &str,
-        field: &str,
-        call_position: SourcePosition,
-    ) -> Option<&FieldAssignmentBinding> {
-        let local_binding = self
-            .facts
-            .local_binding_positions
-            .get(object)?
-            .iter()
-            .copied()
-            .filter(|position| position.at_or_before(call_position))
-            .max_by_key(|position| (position.line, position.column))?;
-        let assignment = self
-            .facts
-            .field_assignments
-            .get(&(object.to_string(), field.to_string()))?
-            .iter()
-            .filter(|assignment| {
-                local_binding.at_or_before(assignment.position)
-                    && assignment.position.at_or_before(call_position)
-            })
-            .max_by_key(|assignment| (assignment.position.line, assignment.position.column))?;
-        Some(assignment)
-    }
-
-    fn field_assignment_is_invalidated(
-        &self,
-        object: &str,
-        assignment_position: SourcePosition,
-        call_position: SourcePosition,
-    ) -> bool {
-        self.facts
-            .field_assignment_invalidations
-            .get(object)
-            .is_some_and(|positions| {
-                positions.iter().any(|position| {
-                    assignment_position.at_or_before(*position)
-                        && position.at_or_before(call_position)
-                })
-            })
     }
 
     /// Builder-method facts for the test body. The method name must
@@ -1006,6 +1021,10 @@ fn extract_field_assignments(
                 .push(FieldAssignmentBinding {
                     position: position_at_offset(body, assignment_offset, start_line),
                     values,
+                    #[cfg(feature = "lang-rust")]
+                    option_value: is_unconditional_test_statement(body, assignment_offset)
+                        .then(|| option_field::closed_option(rhs))
+                        .flatten(),
                 });
             segment_offset += segment.len() + 1;
         }

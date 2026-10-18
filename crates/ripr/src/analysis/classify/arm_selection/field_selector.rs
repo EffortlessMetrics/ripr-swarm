@@ -1,6 +1,6 @@
 //! A direct record literal supplies one field to the canonical arm selector.
-//! No local alias, field write, helper result, coercion or computed input is
-//! resolved here. Those require the existing value/binding authority.
+//! Local helper results and field writes delegate to the existing value/binding
+//! authority; coercions and computed inputs remain unresolved.
 
 use super::is_identifier;
 #[cfg(feature = "lang-rust")]
@@ -13,6 +13,7 @@ pub(super) struct FieldSelector {
     owner_body: String,
     original_pattern_admitted: bool,
     admitted: bool,
+    source: Option<String>,
 }
 
 impl FieldSelector {
@@ -23,6 +24,7 @@ impl FieldSelector {
             owner_body: owner_body.to_string(),
             original_pattern_admitted: true,
             admitted: false,
+            source: None,
         })
     }
 
@@ -57,6 +59,7 @@ impl FieldSelector {
             ast::{self, HasAttrs, HasGenericParams, HasName},
         };
         self.admitted = false;
+        self.source = None;
         let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
             return;
         };
@@ -266,6 +269,9 @@ impl FieldSelector {
             .filter(|ch| !ch.is_whitespace())
             .collect::<String>();
         self.admitted = matches!(ty.as_str(), "Option<u64>" | "Option<u128>");
+        if self.admitted {
+            self.source = Some(source.to_string());
+        }
     }
 
     #[cfg(not(feature = "lang-rust"))]
@@ -273,6 +279,43 @@ impl FieldSelector {
 
     pub(super) fn source_is_admitted(&self) -> bool {
         self.admitted
+    }
+
+    #[cfg(feature = "lang-rust")]
+    pub(super) fn project_at_call(
+        &self,
+        input: &str,
+        test: &crate::analysis::rust_index::TestSummary,
+        call_line: usize,
+        call_text: &str,
+    ) -> Option<String> {
+        if let Some(value) = self.project(input) {
+            return Some(value.to_string());
+        }
+        let source = self.source.as_deref()?;
+        let facts = crate::analysis::value_resolution::ValueEnvFacts::build(
+            test,
+            &crate::analysis::value_resolution::FileValueScan::default(),
+        );
+        facts.option_field_at_call(
+            test,
+            source,
+            input,
+            &self.record_type,
+            &self.field,
+            (call_line, call_text),
+        )
+    }
+
+    #[cfg(not(feature = "lang-rust"))]
+    pub(super) fn project_at_call(
+        &self,
+        _input: &str,
+        _test: &crate::analysis::rust_index::TestSummary,
+        _call_line: usize,
+        _call_text: &str,
+    ) -> Option<String> {
+        None
     }
 
     /// Return a slice of this exact call's field initializer, preserving its

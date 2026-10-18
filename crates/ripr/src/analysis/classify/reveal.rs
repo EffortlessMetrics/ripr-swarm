@@ -1636,6 +1636,7 @@ fn analyze_related_assertions(
         Vec::new()
     };
     let match_context = RevealMatchContext {
+        test: None,
         probe_tokens: &probe_tokens,
         effect_literals: &effect_literals,
         match_arm_variants: &match_arm_variants,
@@ -1845,6 +1846,7 @@ fn analyze_related_assertions(
             .arm_selector
             .filter(|selector| selector.mentioned_by(test));
         let match_context = RevealMatchContext {
+            test: Some(test),
             arm_selector,
             arm_inputs_readable: arm_selector.is_some_and(|selector| {
                 selector.observed_inputs(test).is_some() && !selector.binds_owner_result(test)
@@ -2460,6 +2462,8 @@ fn identifier_names_error_observer(token: &str) -> bool {
 /// Probe-side matching inputs shared by every assertion of one probe
 /// (grouped so the per-assertion matcher stays under the argument limit).
 struct RevealMatchContext<'a> {
+    /// Exact test context for source-ordered field projection.
+    test: Option<&'a TestSummary>,
     probe_tokens: &'a [String],
     effect_literals: &'a [String],
     match_arm_variants: &'a [String],
@@ -3413,6 +3417,7 @@ fn assertion_matches_probe_detail_with_literals(
     owner_bound: bool,
 ) -> (bool, bool) {
     let RevealMatchContext {
+        test,
         probe_tokens,
         effect_literals,
         match_arm_variants,
@@ -3570,7 +3575,10 @@ fn assertion_matches_probe_detail_with_literals(
         arm_inputs_readable
             && !import_defeats_owner
             && !cross_package_defeats_owner
-            && (selector.assertion_selects(&assertion.text) || arm_pattern_pinned)
+            && (test.map_or_else(
+                || selector.assertion_selects(&assertion.text),
+                |test| selector.assertion_selects_at(test, assertion),
+            ) || arm_pattern_pinned)
     } else if matches!(family, ProbeFamily::MatchArm) {
         !match_arm_guarded
             && (match_arm_variants
@@ -3696,6 +3704,7 @@ fn assertion_matches_probe_detail(
 ) -> (bool, bool) {
     assertion_matches_probe_detail_with_literals(
         &RevealMatchContext {
+            test: None,
             probe_tokens,
             effect_literals: &[],
             match_arm_variants,
@@ -6980,6 +6989,7 @@ mod tests {
             (false, true, true, false),
         ] {
             let context = RevealMatchContext {
+                test: None,
                 probe_tokens: &empty,
                 effect_literals: &empty,
                 match_arm_variants: &empty,

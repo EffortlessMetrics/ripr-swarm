@@ -89,7 +89,15 @@ impl Drop for Fixture {
 fn a_helper_returned_mutable_record_selects_its_exact_asserted_call()
 -> Result<(), Box<dyn std::error::Error>> {
     let diff = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -11 +11 @@\n-        Some(ms) => 1,\n+        Some(ms) => u64::try_from(ms.div_ceil(1000)).unwrap_or(u64::MAX).max(1),\n";
-    let fixture = Fixture::new(SOURCE, diff)?;
+    let original = concat!(
+        "        let mut lease = fixture();\n",
+        "        assert_eq!(charge(&lease), 600);\n",
+        "        lease.settled_elapsed_ms = Some(1001);\n",
+        "        assert_eq!(charge(&lease), 2);",
+    );
+    for source in [SOURCE.to_string(), SOURCE.replace(original,
+        "        let lease = Lease { timeout_sec: 600, settled_elapsed_ms: Some(1001) };\n        assert_eq!(charge(&lease), 2);") ] {
+    let fixture = Fixture::new(&source, diff)?;
     let output = fixture.check()?;
     let arms = output.findings.iter().filter(|finding|
         finding.probe.family == ripr::ProbeFamily::MatchArm && finding.probe.location.line == 11
@@ -98,6 +106,7 @@ fn a_helper_returned_mutable_record_selects_its_exact_asserted_call()
     for arm in arms {
         assert_eq!(arm.class, ExposureClass::Exposed, "{}", arm.id);
         assert!(arm.static_limit_kind.is_none());
+    }
     }
     Ok(())
 }
@@ -349,7 +358,6 @@ fn a_direct_record_sibling_names_the_missing_arm_and_wrong_calls_never_credit_it
     for (case, body) in [
         "        assert_eq!(charge(&Lease { timeout_sec: 1001, settled_elapsed_ms: None }), 1001);",
         "        let _ = charge(&Lease { timeout_sec: 600, settled_elapsed_ms: Some(1001) });\n        assert_eq!(charge(&Lease { timeout_sec: 600, settled_elapsed_ms: None }), 600);",
-        "        let lease = Lease { timeout_sec: 600, settled_elapsed_ms: Some(1001) };\n        assert_eq!(charge(&lease), 2);",
         "        assert_eq!(charge(&Lease { timeout_sec: 600, settled_elapsed_ms: Some(1000 + 1) }), 2);",
     ].into_iter().enumerate() {
         let source = SOURCE.replace(original, body);
@@ -489,6 +497,128 @@ fn a_field_selector_cannot_credit_an_assertion_that_does_not_execute()
             ExposureClass::Exposed,
             "an unreachable assertion is not same-invocation proof: {}",
             arm.id
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn helper_mutable_field_projection_refuses_unrelated_or_invalidated_values()
+-> Result<(), Box<dyn std::error::Error>> {
+    let original = concat!(
+        "        let mut lease = fixture();\n",
+        "        assert_eq!(charge(&lease), 600);\n",
+        "        lease.settled_elapsed_ms = Some(1001);\n",
+        "        assert_eq!(charge(&lease), 2);",
+    );
+    let diff = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -11 +11 @@\n-        Some(ms) => 1,\n+        Some(ms) => u64::try_from(ms.div_ceil(1000)).unwrap_or(u64::MAX).max(1),\n";
+    let cases = [
+        (
+            "wrong field",
+            "let mut lease = fixture(); lease.timeout_sec = 1001; assert_eq!(charge(&lease), 1001);",
+        ),
+        (
+            "wrong receiver",
+            "let mut changed = fixture(); changed.settled_elapsed_ms = Some(1001); let lease = fixture(); assert_eq!(charge(&lease), 600);",
+        ),
+        (
+            "discarded selecting call",
+            "let mut lease = fixture(); lease.settled_elapsed_ms = Some(1001); let _ = charge(&lease); lease.settled_elapsed_ms = None; assert_eq!(charge(&lease), 600);",
+        ),
+        (
+            "write after call",
+            "let mut lease = fixture(); let result = charge(&lease); lease.settled_elapsed_ms = Some(1001); assert_eq!(result, 600);",
+        ),
+        (
+            "overwritten result",
+            "let mut lease = fixture(); lease.settled_elapsed_ms = Some(1001); let result = charge(&lease); let result = 600; assert_eq!(result, 600);",
+        ),
+        (
+            "uncalled helper",
+            "fn unused() -> Lease { Lease { timeout_sec: 600, settled_elapsed_ms: Some(1001) } } let lease = fixture(); assert_eq!(charge(&lease), 600);",
+        ),
+        (
+            "mutable alias",
+            "let mut lease = fixture(); lease.settled_elapsed_ms = Some(1001); let alias = &mut lease; alias.settled_elapsed_ms = None; assert_eq!(charge(&lease), 600);",
+        ),
+        (
+            "implicit field borrow",
+            "let mut lease = fixture(); lease.settled_elapsed_ms = Some(1001); lease.settled_elapsed_ms.take(); assert_eq!(charge(&lease), 600);",
+        ),
+        (
+            "implicit borrow in macro",
+            "let mut lease = fixture(); lease.settled_elapsed_ms = Some(1001); assert_eq!(lease.settled_elapsed_ms.take(), Some(1001)); assert_eq!(charge(&lease), 600);",
+        ),
+        (
+            "conditional write",
+            "let mut lease = fixture(); if false { lease.settled_elapsed_ms = Some(1001); } assert_eq!(charge(&lease), 600);",
+        ),
+        (
+            "uncalled closure write",
+            "let mut lease = fixture(); let _unused = || { lease.settled_elapsed_ms = Some(1001); }; assert_eq!(charge(&lease), 600);",
+        ),
+        (
+            "whole object overwrite",
+            "let mut lease = fixture(); lease.settled_elapsed_ms = Some(1001); lease = fixture(); assert_eq!(charge(&lease), 600);",
+        ),
+        (
+            "whole object shadow",
+            "let mut lease = fixture(); lease.settled_elapsed_ms = Some(1001); let lease = fixture(); assert_eq!(charge(&lease), 600);",
+        ),
+        (
+            "shadowed helper",
+            "let fixture = || new_lease(600); let mut lease = fixture(); lease.settled_elapsed_ms = Some(1001); assert_eq!(charge(&lease), 2);",
+        ),
+        (
+            "same line earlier call",
+            "let mut lease = fixture(); assert_eq!(charge(&lease), 600); lease.settled_elapsed_ms = Some(1001);",
+        ),
+    ];
+    assert!(SOURCE.contains(original));
+    for (case, body) in cases {
+        let fixture = Fixture::new(&SOURCE.replace(original, body), diff)?;
+        let output = fixture.check()?;
+        let arms = output
+            .findings
+            .iter()
+            .filter(|finding| {
+                finding.probe.family == ripr::ProbeFamily::MatchArm
+                    && finding.probe.location.line == 11
+            })
+            .collect::<Vec<_>>();
+        assert!(!arms.is_empty(), "{case}: changed arm must survive");
+        assert!(
+            arms.iter().all(|arm| arm.class != ExposureClass::Exposed),
+            "{case}"
+        );
+    }
+    for (case, helper) in [
+        (
+            "unreachable helper record",
+            "fn fixture() -> Lease { if false { return Lease { timeout_sec: 600, settled_elapsed_ms: Some(1001) }; } new_lease(600) }",
+        ),
+        (
+            "conditional helper declaration",
+            "#[cfg(all())] fn fixture() -> Lease { new_lease(600) }",
+        ),
+    ] {
+        let source = SOURCE.replace("fn fixture() -> Lease { new_lease(600) }", helper);
+        let fixture = Fixture::new(&source, diff)?;
+        let output = fixture.check()?;
+        assert!(
+            output
+                .findings
+                .iter()
+                .all(|finding| finding.class != ExposureClass::Exposed),
+            "{case}"
+        );
+        assert!(
+            output
+                .findings
+                .iter()
+                .any(|finding| finding.static_limit_kind
+                    == Some(ripr::domain::StaticLimitKind::RustFieldMatchSelectorUnresolved)),
+            "{case}: unsupported input stays named"
         );
     }
     Ok(())

@@ -866,6 +866,40 @@ impl ArmSelector {
         operands.iter().any(|operand| self.operand_selects(operand))
     }
 
+    /// Field bindings are interpreted at the compared call's position, never
+    /// at a later write or an unrelated call elsewhere in the test.
+    pub(in crate::analysis) fn assertion_selects_at(
+        &self,
+        test: &TestSummary,
+        assertion: &crate::analysis::facts::OracleFact,
+    ) -> bool {
+        if self.field_selector.is_none() {
+            return self.assertion_selects(&assertion.text);
+        }
+        if mask_comments_and_strings(&assertion.text).contains("assert_ne") {
+            return false;
+        }
+        let Some(operands) = assertion_comparison_operands(&assertion.text) else {
+            return false;
+        };
+        if operands.iter().all(|operand| {
+            !whole_word_offsets(&mask_comments_and_strings(operand), &self.owner).is_empty()
+        }) {
+            return false;
+        }
+        operands.iter().any(|operand| {
+            let operand = operand.trim();
+            owner_calls_in(operand, &self.owner, self.method, &self.local_roots)
+                .into_iter()
+                .any(|call| {
+                    call.span == (0, operand.len())
+                        && self
+                            .call_input_at(&call, test, assertion.line, operand)
+                            .is_some_and(|input| self.judge(&input) == ArmSelection::Selects)
+                })
+        })
+    }
+
     /// Whether `operand` is exactly a direct owner call whose scrutinee
     /// input selects this arm.
     fn operand_selects(&self, operand: &str) -> bool {
@@ -1138,12 +1172,18 @@ impl ArmSelector {
                 return None;
             }
             for call in calls {
-                let input = self.call_input(&call)?;
-                if self.input_import_ambiguous(test, input) {
+                let call_line = test.start_line
+                    + test.body[..line_start]
+                        .bytes()
+                        .filter(|b| *b == b'\n')
+                        .count();
+                let input =
+                    self.call_input_at(&call, test, call_line, &line[call.span.0..call.span.1])?;
+                if self.input_import_ambiguous(test, &input) {
                     return None;
                 }
-                inputs.push(input.to_string());
-                selection = combine(selection, self.judge(input));
+                selection = combine(selection, self.judge(&input));
+                inputs.push(input);
             }
         }
         Some(ObservedArmInputs { inputs, selection })
@@ -1157,6 +1197,24 @@ impl ArmSelector {
         match &self.field_selector {
             Some(field) => field.project(input),
             None => Some(input),
+        }
+    }
+
+    fn call_input_at(
+        &self,
+        call: &OwnerCall<'_>,
+        test: &TestSummary,
+        call_line: usize,
+        call_text: &str,
+    ) -> Option<String> {
+        match &self.field_selector {
+            Some(field) => {
+                let ScrutineeBinding::Parameter(index) = self.binding else {
+                    return None;
+                };
+                field.project_at_call(call.arguments.get(index)?, test, call_line, call_text)
+            }
+            None => self.call_input(call).map(str::to_string),
         }
     }
 
