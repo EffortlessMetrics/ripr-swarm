@@ -355,7 +355,7 @@ Renders a single finding in human format.
 ```text
 ripr explain [--root PATH] [--base REV] [--worktree | --diff PATH] [--from PATH]
              [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH]
-             [--suppression-policy PATH] <finding-id | file:line>
+             [--suppression-policy PATH] [--quiet] <finding-id | file:line>
 ```
 
 The trailing positional argument selects the finding. Either form works:
@@ -381,7 +381,7 @@ ripr context [--root PATH] [--base REV] [--worktree | --diff PATH] [--from PATH]
              [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH]
              [--suppression-policy PATH]
              (--at | --finding) <finding-id | file:line>
-             [--max-related-tests N] [--json]
+             [--max-related-tests N] [--json] [--quiet]
 ```
 
 | Flag | Default | Notes |
@@ -389,6 +389,7 @@ ripr context [--root PATH] [--base REV] [--worktree | --diff PATH] [--from PATH]
 | `--at SELECTOR` | _(required)_ | Same selector grammar as `explain`. `--finding` is an alias. |
 | `--max-related-tests N` | `ripr.toml` `reports.max_related_tests`, otherwise `5` | Caps the number of related tests embedded in the packet. |
 | `--json` | _(off)_ | Forces JSON; `context` already returns JSON-shaped output, this flag is for parity with `check`. |
+| `--quiet` | _(off)_ | Suppresses the stderr progress stream, like `ripr check --quiet`. `explain` accepts it too. Stdout, exit codes and errors are unchanged. |
 
 ### `ripr doctor`
 
