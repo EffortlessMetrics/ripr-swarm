@@ -221,7 +221,12 @@ fn unknown_command_error(command: &str) -> String {
         return "unknown command \"version\". Did you mean `--version`? Run `ripr --help`."
             .to_string();
     }
-    match closest_command(command) {
+    let suggestion = if command.starts_with('-') {
+        closest_of(command, &["--version", "--help"])
+    } else {
+        closest_command(command)
+    };
+    match suggestion {
         Some(suggestion) => {
             format!("unknown command {command:?}. Did you mean `{suggestion}`? Run `ripr --help`.")
         }
@@ -230,6 +235,10 @@ fn unknown_command_error(command: &str) -> String {
 }
 
 fn closest_command(command: &str) -> Option<&'static str> {
+    closest_of(command, &known_commands())
+}
+
+fn closest_of(command: &str, candidates: &[&'static str]) -> Option<&'static str> {
     // Scale the budget with length so short unrelated names (`bogus`) do not
     // match a command three edits away.
     let typo_budget = match command.chars().count() {
@@ -237,8 +246,9 @@ fn closest_command(command: &str) -> Option<&'static str> {
         5..=7 => 2,
         _ => 3,
     };
-    known_commands()
-        .into_iter()
+    candidates
+        .iter()
+        .copied()
         .map(|known| (known, edit_distance(command, known)))
         .filter(|(_, distance)| *distance <= typo_budget)
         .min_by_key(|(known, distance)| (*distance, *known))
@@ -424,6 +434,29 @@ mod tests {
         assert_eq!(
             CliCommand::from_parts(Some("unknown"), Vec::new()),
             Err("unknown command \"unknown\". Run `ripr --help`.".to_string())
+        );
+    }
+
+    #[test]
+    fn cli_command_from_parts_suggests_the_nearest_top_level_flag() {
+        assert_eq!(
+            CliCommand::from_parts(Some("--versoin"), Vec::new()),
+            Err(
+                "unknown command \"--versoin\". Did you mean `--version`? Run `ripr --help`."
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            CliCommand::from_parts(Some("-version"), Vec::new()),
+            Err(
+                "unknown command \"-version\". Did you mean `--version`? Run `ripr --help`."
+                    .to_string()
+            )
+        );
+        // A flag nowhere near a top-level flag gets no invented suggestion.
+        assert_eq!(
+            CliCommand::from_parts(Some("--bogus"), Vec::new()),
+            Err("unknown command \"--bogus\". Run `ripr --help`.".to_string())
         );
     }
 
