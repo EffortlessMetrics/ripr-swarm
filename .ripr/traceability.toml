@@ -15280,6 +15280,7 @@ id = "RIPR-SPEC-0229"
 name = "Match-arm selection names the unselected arm"
 spec = "docs/specs/RIPR-SPEC-0229-match-arm-selection-discriminator.md"
 tests = [
+  "crates/ripr/tests/whole_tail_match_observation.rs::ancestor_macro_prelude_cannot_supply_primitive_derive_identity",
   "crates/ripr/tests/whole_tail_match_observation.rs::external_item_macro_cannot_supply_primitive_expected_identity",
   "crates/ripr/tests/whole_tail_match_observation.rs::external_item_macro_cannot_supply_primitive_return_identity",
   "crates/ripr/tests/whole_tail_match_observation.rs::added_documented_owner_header_observes_its_whole_return",

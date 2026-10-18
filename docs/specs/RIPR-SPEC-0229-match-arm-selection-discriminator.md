@@ -861,6 +861,11 @@ A match header is not an individual arm. A separate internal
    macro definitions, macro-use preludes, opaque attributes/derives and imports
    that can supply the primitive or shadow trusted derives refuse. An external
    macro expansion is not evidence for the spelling of its generated type.
+   The workspace must also have readable (non-wildcard) parser-produced macro
+   candidate facts: an ancestor macro-use can rebind a builtin-looking derive
+   in an out-of-line owner even when a qualified assertion is trusted. Wildcard
+   or absent facts refuse this adapter only; named candidates do not establish
+   primitive identity and all namespace/assertion guards remain required.
    The synchronous function returns an unshadowed primitive scalar and its
    statement-free body has exactly this `MatchExpr` as its tail. A nested match,
    discarded match or match following a statement receives no receipt. Explicit
@@ -902,3 +907,9 @@ its whole-tail header must remain uncredited despite the apparent scalar name.
 `fixtures/whole_tail_match_macro_expected` retains the analogous test-module
 expansion of a custom MAX with always-true primitive equality. A closed owner
 namespace does not prove the expected operand namespace; both remain required.
+
+The retained ancestor-control beside the scalar fixture supplies a native
+external Debug derive via explicit --extern/compiler flags. It emits a custom
+u64 in an out-of-line owner; a qualified standard assertion still passes after
+zeroing the selected result. Assertion macro identity does not prove the
+owner's derive prelude. The unexpanded workspace context must remain refused.

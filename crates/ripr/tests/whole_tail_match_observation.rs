@@ -573,3 +573,63 @@ fn external_item_macro_cannot_supply_primitive_expected_identity()
     }
     Ok(())
 }
+
+#[test]
+fn ancestor_macro_prelude_cannot_supply_primitive_derive_identity()
+-> Result<(), Box<dyn std::error::Error>> {
+    // Native provider controls supply opaque through --extern (also valid
+    // Cargo RUSTFLAGS/RUSTDOCFLAGS); no declaration expansion is assumed here.
+    let root =
+        include_str!("../../../fixtures/whole_tail_match_macro_scalar/ancestor-control/src/lib.rs");
+    let owner = include_str!(
+        "../../../fixtures/whole_tail_match_macro_scalar/ancestor-control/src/owned.rs"
+    );
+    for (case, root, owner, expected) in [
+        (
+            "ancestor prelude",
+            root.to_string(),
+            owner.to_string(),
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            "selected arm zero",
+            root.to_string(),
+            owner.replace("true => u64(600)", "true => u64(0)"),
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            "raw macro-use attribute",
+            root.replace("#[macro_use]", "#[r#macro_use]"),
+            owner.to_string(),
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            "ordinary primitive",
+            "mod owned;\n".to_string(),
+            owner.replace("u64(600)", "600").replace("u64(2)", "2"),
+            ExposureClass::Exposed,
+        ),
+    ] {
+        let diff = format!(
+            "--- /dev/null\n+++ b/src/owned.rs\n@@ -0,0 +1,{} @@\n{}",
+            owner.lines().count(),
+            owner
+                .lines()
+                .map(|line| format!("+{line}\n"))
+                .collect::<String>()
+        );
+        let fixture = Fixture::new(&root, &diff)?;
+        std::fs::write(fixture.0.join("src/owned.rs"), owner)?;
+        let output = fixture.check()?;
+        let headers = output
+            .findings
+            .iter()
+            .filter(|f| {
+                f.probe.family == ripr::ProbeFamily::MatchArm && f.probe.expression == "match input"
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(headers.len(), 1, "retained out-of-line header: {case}");
+        assert_eq!(headers[0].class, expected, "{case}: {}", headers[0].id);
+    }
+    Ok(())
+}

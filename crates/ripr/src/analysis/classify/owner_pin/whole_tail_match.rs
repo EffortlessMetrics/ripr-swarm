@@ -36,6 +36,19 @@ impl WholeTailMatchObservation {
         {
             return None;
         }
+        // A qualified assertion proves its own macro, not the owner's
+        // derive prelude. An ancestor macro-use can replace a builtin-looking
+        // derive in another file and generate the apparent primitive type.
+        // The existing parser producer's wildcard/absent candidate facts only
+        // refuse this adapter; a readable name set is not primitive evidence.
+        if index.files().values().any(|facts| {
+            !matches!(
+                facts.data().macro_candidates.as_deref(),
+                Some(MacroBindingCandidates::Names(_))
+            )
+        }) {
+            return None;
+        }
         let facts = index.files().get(&owner.file)?;
         if facts.used_lexical_fallback {
             return None;
