@@ -1,0 +1,8 @@
+{
+  "head": "8a8ade0fdeda1eee0972c3e53900f826ac84df48",
+  "base": "006eaf853fce5713a2e9044ba9c8d6a9a873f3d0",
+  "reconstruction": true,
+  "stage": "fresh test-only checkpoint; successful RED6fail/2pass; proposed repair scripts not yet executed",
+  "old_candidate_unrecoverable": "fc18360e9a50eb94b194fa38ba2f89e34d19fa82",
+  "timestamp": "2026-10-18T07:10:41.186930+00:00"
+}

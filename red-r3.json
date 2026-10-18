@@ -1,0 +1,26 @@
+{
+  "argv": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--no-default-features",
+    "--features",
+    "lang-rust",
+    "--lib",
+    "reconstructed_parity",
+    "--message-format=json",
+    "--",
+    "--nocapture"
+  ],
+  "head": "8a8ade0fdeda1eee0972c3e53900f826ac84df48",
+  "tree": "4bcb58d44851bfbf4af1df88b12459f5b5cb9ef5",
+  "started_utc": "2026-10-18T07:04:09.659848+00:00",
+  "finished_utc": "2026-10-18T07:06:51.707268+00:00",
+  "elapsed_s": 162.04743324699984,
+  "exit": 101,
+  "abort": null,
+  "process_group": 4526,
+  "free_after": 29792845824
+}

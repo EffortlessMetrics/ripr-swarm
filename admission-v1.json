@@ -1,0 +1,10 @@
+{
+  "initial_free": 31848247296,
+  "reserve": 10737418240,
+  "peak_additional": 2147483648,
+  "worktree": "/workspace/macro-site-parity",
+  "target": "/workspace/ripr-swarm/target",
+  "retention": "source remotely preserved; new receipts and distinct RED/GREEN witnesses retained; shared target untouched except ordinary Cargo writes; no destructive cleanup",
+  "base": "006eaf853fce5713a2e9044ba9c8d6a9a873f3d0",
+  "reconstruction": true
+}

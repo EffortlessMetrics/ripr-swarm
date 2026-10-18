@@ -1,0 +1,143 @@
+diff --git a/crates/ripr/src/analysis/classify/owner_pin/tests.rs b/crates/ripr/src/analysis/classify/owner_pin/tests.rs
+index f3a2021f0..1352f71f1 100644
+--- a/crates/ripr/src/analysis/classify/owner_pin/tests.rs
++++ b/crates/ripr/src/analysis/classify/owner_pin/tests.rs
+@@ -1,4 +1,5 @@
+ mod json_construction;
++mod retention_parity;
+ 
+ use super::*;
+ use crate::analysis::facts::{FunctionItemFact, SourceRoleProvenance, SourceRoleProvenanceEdge};
+diff --git a/crates/ripr/src/analysis/classify/owner_pin/tests/retention_parity.rs b/crates/ripr/src/analysis/classify/owner_pin/tests/retention_parity.rs
+new file mode 100644
+index 000000000..70923e5b4
+--- /dev/null
++++ b/crates/ripr/src/analysis/classify/owner_pin/tests/retention_parity.rs
+@@ -0,0 +1,127 @@
++use super::*;
++
++const GATE: &str = "pub fn gate(value: u32) -> bool {\n    10 <= value\n}\n";
++const PINS: &str = "use demo::gate;\n\n#[test]\nfn pins() {\n    assert_eq!(gate(10), true);\n}\n";
++
++fn parity(files: &[(&str, &str)]) {
++    let index = index(files);
++    let syntax = OwnerPinSyntax::default();
++    let _ = syntax.trusted_macro_ambiguities(&index);
++    assert!(
++        syntax
++            .workspace_site_scan
++            .borrow()
++            .as_ref()
++            .is_some_and(|scan| !scan.complete)
++    );
++    let names = assertion_context_macros();
++    assert!(!names.is_empty());
++    let roots = syntax.target_roots(&index);
++    let modules = syntax.resolved_module_declarations(&index);
++    let resolved = |path: &Path, line: usize, declaration: &str| {
++        modules.contains(&(path.to_path_buf(), line, declaration.to_string()))
++    };
++    let mut failures = Vec::new();
++    let mut count = 0;
++    for name in &names {
++        for root in [None, Some(Path::new(LIB)), Some(Path::new(TESTS))] {
++            let expected = workspace_macro_binding_site(name, root, &index, roots, &resolved);
++            let actual = syntax.workspace_macro_site(name, root, &index);
++            if actual != expected {
++                failures.push(format!(
++                    "{name} at {root:?}: expected={expected:?}, actual={actual:?}"
++                ));
++            }
++            count += 1;
++        }
++    }
++    assert_eq!(count, names.len() * 3);
++    assert_eq!(syntax.workspace_scan_passes(), 2);
++    assert!(failures.is_empty(), "retention parity: {failures:#?}");
++}
++
++fn scoped(container: &str) {
++    let tests = format!(
++        "{container} {{\n    macro_rules! assert_eq {{\n        ($($tokens:tt)*) => {{}};\n    }}\n}}\n\n{PINS}"
++    );
++    let files = [
++        (CONVERGENCE_GLOB, "pub use std::io::prelude::*;\n"),
++        (LIB, GATE),
++        (TESTS, tests.as_str()),
++    ];
++    let index = index(&files);
++    let syntax = OwnerPinSyntax::default();
++    let selected = syntax.workspace_macro_site("assert_eq", None, &index);
++    assert!(
++        matches!(selected, Some((path, site)) if path == Path::new(CONVERGENCE_GLOB)
++        && site.scope.is_none() && matches!(site.kind, MacroBindingKind::ForeignGlob(_)))
++    );
++    parity(&files);
++}
++
++#[test]
++fn reconstructed_parity_inline_scope() {
++    scoped("mod unrelated");
++}
++
++#[test]
++fn reconstructed_parity_function_scope() {
++    scoped("fn unrelated()");
++}
++
++#[test]
++fn reconstructed_parity_singleton_arguments() {
++    parity(&[
++        (
++            "src/a.rs",
++            "pub fn noise() { let _ = stringify!(assert_eq); }\n",
++        ),
++        ("src/z.rs", "pub use std::fmt::*;\n"),
++        (LIB, GATE),
++        (TESTS, PINS),
++    ]);
++}
++
++#[test]
++fn reconstructed_parity_unparsed_prefilter() {
++    parity(&[
++        ("src/a.rs", "serde_json ???"),
++        ("src/z.rs", "pub use std::fmt::*;\n"),
++        (LIB, GATE),
++        (TESTS, PINS),
++    ]);
++}
++
++fn ordered(imports: &str) {
++    parity(&[(LIB, &format!("{imports}{GATE}")), (TESTS, PINS)]);
++}
++
++#[test]
++fn reconstructed_parity_newline_private_first() {
++    ordered("use std::io::prelude::*;\npub use std::fmt::*;\n");
++}
++
++#[test]
++fn reconstructed_parity_same_line_private_first() {
++    ordered("use std::io::prelude::*; pub use std::fmt::*;\n");
++}
++
++#[test]
++fn reconstructed_parity_same_line_public_first() {
++    ordered("pub use std::fmt::*; use std::io::prelude::*;\n");
++}
++
++#[test]
++fn reconstructed_parity_rebinding_and_root_control() {
++    let index = convergence_index();
++    let syntax = OwnerPinSyntax::default();
++    assert!(
++        matches!(syntax.workspace_macro_site("matches", None, &index),
++        Some((path, MacroBindingSite { kind: MacroBindingKind::Definition, .. })) if path == Path::new(LIB))
++    );
++    assert!(
++        matches!(syntax.workspace_macro_site("matches", Some(Path::new(TESTS)), &index),
++        Some((path, MacroBindingSite { kind: MacroBindingKind::ForeignGlob(_), .. })) if path == Path::new(CONVERGENCE_GLOB))
++    );
++    assert!(syntax.workspace_scan_passes() <= 2);
++}

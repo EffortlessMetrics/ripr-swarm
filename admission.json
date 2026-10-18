@@ -1,0 +1,20 @@
+{
+  "initial_free": 31848247296,
+  "reserve": 10737418240,
+  "peak_additional": 4294967296,
+  "worktree": "/workspace/macro-site-parity",
+  "target": "/workspace/ripr-swarm/target",
+  "retention": "source remotely preserved; new receipts and distinct RED/GREEN witnesses retained; shared target untouched except ordinary Cargo writes; no destructive cleanup",
+  "base": "006eaf853fce5713a2e9044ba9c8d6a9a873f3d0",
+  "reconstruction": true,
+  "revision_utc": "2026-10-18T07:04:06.126316+00:00",
+  "revision_reason": "cold current-main dependencies exceeded the initial development-storage projection; analyzer budgets and reserve unchanged",
+  "previous_groups": [
+    {
+      "pid": 4444,
+      "state": "Z",
+      "ppid": 1
+    }
+  ],
+  "preflight_error": "first check treated a defunct adopted compiler as active; accidental retry was guard-stopped in4ms before compilation"
+}

@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "cargo",
+    "check",
+    "--locked",
+    "-p",
+    "ripr",
+    "--all-targets"
+  ],
+  "head": "006eaf853fce5713a2e9044ba9c8d6a9a873f3d0",
+  "tree": "04c46674cd658ed5102e26973910964332ea1c12",
+  "started_utc": "2026-10-18T06:55:30.543658+00:00",
+  "finished_utc": "2026-10-18T06:57:16.569214+00:00",
+  "elapsed_s": 106.025561885,
+  "exit": 0,
+  "abort": null,
+  "process_group": 2370,
+  "free_after": 30503800832
+}

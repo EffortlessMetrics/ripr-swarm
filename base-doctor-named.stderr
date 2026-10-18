@@ -1,0 +1,4 @@
+   Compiling ripr v0.11.0 (/workspace/macro-site-parity/crates/ripr)
+   Compiling xtask v0.1.0 (/workspace/macro-site-parity/xtask)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2m 08s
+     Running `/workspace/ripr-swarm/target/debug/xtask worktree doctor`

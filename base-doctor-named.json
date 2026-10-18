@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "cargo",
+    "xtask",
+    "worktree",
+    "doctor"
+  ],
+  "head": "006eaf853fce5713a2e9044ba9c8d6a9a873f3d0",
+  "tree": "04c46674cd658ed5102e26973910964332ea1c12",
+  "started_utc": "2026-10-18T06:53:00.449010+00:00",
+  "finished_utc": "2026-10-18T06:55:10.481977+00:00",
+  "elapsed_s": 130.03298672200003,
+  "exit": 0,
+  "abort": null,
+  "process_group": 2133,
+  "free_after": 30656241664
+}

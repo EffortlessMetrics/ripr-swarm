@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "/workspace/ripr-swarm/target/debug/xtask",
+    "check-fixture-contracts"
+  ],
+  "head": "8a8ade0fdeda1eee0972c3e53900f826ac84df48",
+  "tree": "4bcb58d44851bfbf4af1df88b12459f5b5cb9ef5",
+  "started_utc": "2026-10-18T07:06:16.057763+00:00",
+  "finished_utc": "2026-10-18T07:06:18.061527+00:00",
+  "elapsed_s": 2.0037060110000766,
+  "exit": 0,
+  "abort": null,
+  "process_group": 4584,
+  "free_after": 29629456384
+}
