@@ -201,6 +201,7 @@ machine-readable `check` formats carry their own refusal documents:
 | `check_artifact_unusable` | `analysis/check-artifact` | A named `ripr context --from` check artifact is unreadable, malformed, foreign, or identity-mismatched. |
 | `gap_ledger_unusable` | `analysis/gap-ledger` | A named `ripr rerun --gap-ledger` file cannot be read or parsed. |
 | `seam_id_unknown` | `analysis/seam-inventory` | A named `ripr agent packet --seam-id` matches no current seam. |
+| `analysis_timeout` | `analysis/timeout` | The `ripr check` wall-clock budget (`--timeout SECS`, `RIPR_CHECK_TIMEOUT`) ran out before analysis finished (#5369). No findings are produced and the result is never a clean pass. |
 
 - For `ripr check`, the machine-readable formats `sarif`, `github`,
   `badge-json`, `repo-exposure-json`, and `agent-seam-packets-json` render a

@@ -216,6 +216,7 @@ pub(super) fn load_root_input_and_config(root: &Path) -> Result<(CheckInput, Rip
 /// returned as `Err` rather than panicking, so a failed write surfaces as
 /// a normal CLI error instead of aborting the process.
 pub(super) fn write_stdout_chunked(text: &str) -> Result<(), String> {
+    crate::analysis::cancellation::begin_cli_publication()?;
     use std::io::Write;
     const CHUNK: usize = 16 * 1024;
     let stdout = std::io::stdout();

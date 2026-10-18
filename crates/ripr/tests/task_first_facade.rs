@@ -140,6 +140,29 @@ fn populate_duplicate_expression_fixture(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+const TRIPLE_LIB: &str = "pub fn tiered(amount: i32, threshold: i32) -> i32 {\n    let base = if amount >= threshold {\n        10\n    } else {\n        0\n    };\n    let bonus = if amount >= threshold {\n        5\n    } else {\n        0\n    };\n    let extra = if amount >= threshold {\n        2\n    } else {\n        0\n    };\n    base + bonus + extra\n}\n";
+/// The triple fixture after weakening only occurrences 1 and 3
+/// (`>=` -> `>` on lines 2 and 12; line 7 is unchanged).
+const TRIPLE_LIB_WEAKENED_1_AND_3: &str = "pub fn tiered(amount: i32, threshold: i32) -> i32 {\n    let base = if amount > threshold {\n        10\n    } else {\n        0\n    };\n    let bonus = if amount >= threshold {\n        5\n    } else {\n        0\n    };\n    let extra = if amount > threshold {\n        2\n    } else {\n        0\n    };\n    base + bonus + extra\n}\n";
+
+/// Populate a committed workspace whose one function holds three boundary
+/// seams with the same file, owner, kind and expression (lines 2, 7, 12).
+fn populate_triple_expression_fixture(root: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), TRIPLE_LIB).map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        "use boundary_gap_fixture::tiered;\n\n#[test]\nfn below_threshold_pays_nothing() {\n    assert_eq!(tiered(50, 100), 0);\n}\n\n#[test]\nfn far_above_threshold_pays() {\n    assert_eq!(tiered(10_000, 100), 17);\n}\n",
+    )
+    .map_err(|e| e.to_string())?;
+    init_repo(root)?;
+    run_git(root, &["add", "Cargo.toml", "src", "tests"])?;
+    git_commit(root, "triple-expression fixture source")?;
+    Ok(())
+}
+
 /// Populate a committed workspace with no actionable seam: an empty
 /// library. Takes the root instead of minting it so the [`Fixture`]
 /// guard owns the directory before any fallible step can leak it.
@@ -783,6 +806,417 @@ fn repair_refuses_a_producer_gap_id_that_names_several_seams() -> Result<(), Str
     assert!(
         attempt_ids(root).is_empty(),
         "an ambiguous producer gap must create no attempt"
+    );
+    Ok(())
+}
+
+/// The `probe:` finding ID a printed check drill-down line names, when the
+/// bounded check output offers one.
+fn printed_probe_identity(check_stdout: &str) -> Option<String> {
+    check_stdout.split_whitespace().find_map(|word| {
+        word.starts_with("probe:")
+            .then(|| word.trim_matches(|c| c == '"' || c == '\'').to_string())
+    })
+}
+
+/// #8166 residual (F1/F2): the three IDs one check screen prints for one
+/// finding must each work in the surface that names them — the `probe:`
+/// finding ID in `ripr repair` and `ripr agent repair`, and the seam ID in
+/// `ripr explain`. Stale cross-namespace IDs refuse with no attempt, and a
+/// truly unknown agent `--seam-id` keeps its wrong-namespace hint.
+#[test]
+fn cross_namespace_ids_round_trip_between_check_explain_and_repair() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-cross-namespace")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    weaken_boundary_predicate(root)?;
+    let check = run_worktree_check(root, &root_arg)?;
+    let stdout = stdout_text(&check);
+    let seam_id = printed_repair_identity(&stdout)
+        .ok_or_else(|| format!("eligible top finding must print a repair line:\n{stdout}"))?;
+    let probe_id = printed_probe_identity(&stdout)
+        .ok_or_else(|| format!("check must print a probe finding ID:\n{stdout}"))?;
+
+    // Reverse direction: the seam ID explains the same finding.
+    let explained = run_ripr(
+        root,
+        &[
+            "explain",
+            "--root",
+            &root_arg,
+            "--base",
+            "HEAD",
+            "--worktree",
+            &seam_id,
+        ],
+    )?;
+    assert_exit(&explained, 0, "explain with the seam ID check printed");
+    assert!(
+        stdout_text(&explained).contains(&probe_id),
+        "explain by seam ID must render the same finding:\n{}",
+        stdout_text(&explained)
+    );
+
+    // Stale probe ID: no seam carries its fingerprint, so both repair
+    // surfaces refuse and start nothing.
+    let stale = "probe:src_lib.rs:predicate:00000000";
+    let repair_stale = run_ripr(root, &["repair", stale, "--root", &root_arg])?;
+    assert_exit(&repair_stale, 3, "repair with a stale probe ID");
+    let stale_stderr = stderr_text(&repair_stale);
+    assert!(
+        stale_stderr.contains("names no seam") && stale_stderr.contains("stale"),
+        "stale probe refusal must name the stale mapping:\n{stale_stderr}"
+    );
+    assert!(
+        !stale_stderr.contains("not a repair subject"),
+        "stale probe refusal must not use the legacy blanket rejection:\n{stale_stderr}"
+    );
+    let agent_stale = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            stale,
+            "--phase",
+            "before",
+        ],
+    )?;
+    assert_exit(&agent_stale, 2, "agent repair with a stale probe ID");
+    assert!(
+        stderr_text(&agent_stale).contains("not a seam ID"),
+        "truly unknown agent seam ID keeps the wrong-namespace hint:\n{}",
+        stderr_text(&agent_stale)
+    );
+    assert!(
+        attempt_ids(root).is_empty(),
+        "stale cross-namespace IDs must create no attempt"
+    );
+
+    // Forward direction: commit the weakened predicate (the before phase
+    // pins HEAD), then the probe ID starts the same seam check printed.
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "weaken the boundary predicate")?;
+    let repair = run_ripr(root, &["repair", &probe_id, "--root", &root_arg])?;
+    assert_exit(&repair, 0, "repair with the probe ID check printed");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1, "exactly one attempt must be created");
+    assert_eq!(read_manifest(root, &ids[0])?["seam_id"], seam_id);
+    Ok(())
+}
+
+/// #8166 review: an invented probe ordinal (`.999` on the valid fingerprint
+/// of the sole seam) and a `.2` whose second occurrence is not among the
+/// remaining seams are both stale: they refuse with no attempt instead of
+/// resolving to the sole remaining seam.
+#[test]
+fn repair_refuses_unassignable_probe_ordinals() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-probe-ordinal")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    weaken_boundary_predicate(root)?;
+    let check = run_worktree_check(root, &root_arg)?;
+    let probe_id = printed_probe_identity(&stdout_text(&check)).ok_or_else(|| {
+        format!(
+            "check must print a probe finding ID:\n{}",
+            stdout_text(&check)
+        )
+    })?;
+    for forged in [format!("{probe_id}.999"), format!("{probe_id}.2")] {
+        let repair = run_ripr(root, &["repair", &forged, "--root", &root_arg])?;
+        assert_exit(&repair, 3, "repair with an unassignable probe ordinal");
+        let stderr = stderr_text(&repair);
+        assert!(
+            stderr.contains("names no seam") && stderr.contains("stale"),
+            "an unassignable ordinal must refuse as stale ({forged}):\n{stderr}"
+        );
+    }
+    assert!(
+        attempt_ids(root).is_empty(),
+        "unassignable probe ordinals must create no attempt"
+    );
+    Ok(())
+}
+
+/// #8166 round 3: a diff `probe:` `.2` with two changed duplicates is
+/// NOT rank-bound to the second seam. The diff producer ranked only the
+/// changed-line probes, so from the full inventory the ordinal cannot be
+/// distinguished from an unchanged-between case: it refuses as ambiguous
+/// (bounded seam list, no attempt). Seam IDs are learned through the
+/// public `file:line` surface on separate committed fixtures.
+#[test]
+fn repair_with_second_occurrence_probe_id_refuses_as_ambiguous() -> Result<(), String> {
+    let seam_at_line = |label: &str, location: &str| -> Result<String, String> {
+        let fixture = Fixture::dir(label)?;
+        let root = &fixture.root;
+        populate_duplicate_expression_fixture(root)?;
+        let lib = root.join("src/lib.rs");
+        let source = std::fs::read_to_string(&lib).map_err(|e| e.to_string())?;
+        std::fs::write(
+            &lib,
+            source.replace("amount >= threshold", "amount > threshold"),
+        )
+        .map_err(|e| e.to_string())?;
+        run_git(root, &["add", "src/lib.rs"])?;
+        git_commit(root, "weaken both duplicate predicates")?;
+        let root_arg = root.to_string_lossy().into_owned();
+        let repair = run_ripr(root, &["repair", location, "--root", &root_arg])?;
+        assert_exit(&repair, 0, "repair learning a duplicate seam by file:line");
+        let ids = attempt_ids(root);
+        assert_eq!(ids.len(), 1, "exactly one learning attempt must be created");
+        read_manifest(root, &ids[0])?["seam_id"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| "learning attempt must name its seam".to_string())
+    };
+    let first_seam = seam_at_line("facade-probe-ordinal-first", "src/lib.rs:2")?;
+    let second_seam = seam_at_line("facade-probe-ordinal-second", "src/lib.rs:7")?;
+    assert_ne!(first_seam, second_seam);
+
+    let fixture = Fixture::dir("facade-probe-ordinal-second-target")?;
+    let root = &fixture.root;
+    populate_duplicate_expression_fixture(root)?;
+    let lib = root.join("src/lib.rs");
+    let source = std::fs::read_to_string(&lib).map_err(|e| e.to_string())?;
+    std::fs::write(
+        &lib,
+        source.replace("amount >= threshold", "amount > threshold"),
+    )
+    .map_err(|e| e.to_string())?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let check = run_worktree_check(root, &root_arg)?;
+    let probe_id = printed_probe_identity(&stdout_text(&check))
+        .ok_or_else(|| format!("check must print a probe ID:\n{}", stdout_text(&check)))?;
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "weaken both duplicate predicates")?;
+    for forged in [format!("{probe_id}.999"), format!("{probe_id}.2")] {
+        let repair = run_ripr(root, &["repair", &forged, "--root", &root_arg])?;
+        assert_exit(&repair, 3, "repair with a diff probe ordinal");
+        let stderr = stderr_text(&repair);
+        assert!(
+            stderr.contains("names 2 seams; select one explicitly")
+                && stderr.contains(&first_seam)
+                && stderr.contains(&second_seam),
+            "a diff probe ordinal must refuse as ambiguous listing both seams ({forged}):\n{stderr}"
+        );
+    }
+    assert!(
+        attempt_ids(root).is_empty(),
+        "a diff probe ordinal must create no attempt"
+    );
+    Ok(())
+}
+
+/// #8166 round 3 (reviewer case): three identical predicates where the
+/// diff touches only occurrences 1 and 3, so the second changed probe is
+/// `.2`. Inventory rank 2 is the unchanged middle seam; `.2` must not
+/// bind it. It refuses as ambiguous listing the real (changed) seams
+/// 1 and 3, excludes the middle seam, and creates no attempt.
+#[test]
+fn repair_with_diff_probe_ordinal_does_not_bind_unchanged_middle_seam() -> Result<(), String> {
+    let seam_at_line = |label: &str, location: &str| -> Result<String, String> {
+        let fixture = Fixture::dir(label)?;
+        let root = &fixture.root;
+        populate_triple_expression_fixture(root)?;
+        std::fs::write(root.join("src/lib.rs"), TRIPLE_LIB_WEAKENED_1_AND_3)
+            .map_err(|e| e.to_string())?;
+        run_git(root, &["add", "src/lib.rs"])?;
+        git_commit(root, "weaken occurrences 1 and 3")?;
+        let root_arg = root.to_string_lossy().into_owned();
+        let repair = run_ripr(root, &["repair", location, "--root", &root_arg])?;
+        assert_exit(&repair, 0, "repair learning a triple seam by file:line");
+        let ids = attempt_ids(root);
+        assert_eq!(ids.len(), 1, "exactly one learning attempt must be created");
+        read_manifest(root, &ids[0])?["seam_id"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| "learning attempt must name its seam".to_string())
+    };
+    let first_seam = seam_at_line("facade-triple-first", "src/lib.rs:2")?;
+    let middle_seam = seam_at_line("facade-triple-middle", "src/lib.rs:7")?;
+    let third_seam = seam_at_line("facade-triple-third", "src/lib.rs:12")?;
+    assert_ne!(first_seam, middle_seam);
+    assert_ne!(middle_seam, third_seam);
+
+    let fixture = Fixture::dir("facade-triple-diff-ordinal")?;
+    let root = &fixture.root;
+    populate_triple_expression_fixture(root)?;
+    // Diff touches only occurrences 1 and 3.
+    std::fs::write(root.join("src/lib.rs"), TRIPLE_LIB_WEAKENED_1_AND_3)
+        .map_err(|e| e.to_string())?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let check = run_worktree_check(root, &root_arg)?;
+    let probe_id = printed_probe_identity(&stdout_text(&check))
+        .ok_or_else(|| format!("check must print a probe ID:\n{}", stdout_text(&check)))?;
+    assert!(
+        !probe_id.contains(".2"),
+        "the printed top probe ID must be the bare base ID: {probe_id}"
+    );
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "weaken occurrences 1 and 3")?;
+    let second_id = format!("{probe_id}.2");
+    let repair = run_ripr(root, &["repair", &second_id, "--root", &root_arg])?;
+    assert_exit(
+        &repair,
+        3,
+        "repair with diff probe .2 over occurrences 1 and 3",
+    );
+    let stderr = stderr_text(&repair);
+    assert!(
+        stderr.contains("names 2 seams; select one explicitly"),
+        "diff .2 must refuse as ambiguous, not bind the middle seam:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(&first_seam) && stderr.contains(&third_seam),
+        "ambiguous refusal must list the real changed seams 1 and 3:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains(&middle_seam),
+        "ambiguous refusal must not list/bind the unchanged middle seam:\n{stderr}"
+    );
+    assert!(
+        attempt_ids(root).is_empty(),
+        "diff .2 must not start an attempt (in particular not on the middle seam)"
+    );
+    Ok(())
+}
+
+/// #8166 residual (F1): `ripr agent repair --seam-id` accepts the `probe:`
+/// finding ID when it uniquely maps to an eligible seam.
+#[test]
+fn agent_repair_accepts_the_probe_id_check_prints() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-agent-probe")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    weaken_boundary_predicate(root)?;
+    let check = run_worktree_check(root, &root_arg)?;
+    let stdout = stdout_text(&check);
+    let seam_id = printed_repair_identity(&stdout)
+        .ok_or_else(|| format!("eligible top finding must print a repair line:\n{stdout}"))?;
+    let probe_id = printed_probe_identity(&stdout)
+        .ok_or_else(|| format!("check must print a probe finding ID:\n{stdout}"))?;
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "weaken the boundary predicate")?;
+    let repair = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            &probe_id,
+            "--phase",
+            "before",
+        ],
+    )?;
+    assert_exit(&repair, 0, "agent repair with the probe ID check printed");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1, "exactly one attempt must be created");
+    assert_eq!(read_manifest(root, &ids[0])?["seam_id"], seam_id);
+    Ok(())
+}
+
+/// #8166 residual (F2): a `file:line` location naming exactly one seam is a
+/// repair subject; one naming no seam refuses with no attempt.
+#[test]
+fn repair_accepts_a_unique_file_line_location() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-repair-file-line")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let stale = run_ripr(root, &["repair", "src/lib.rs:99", "--root", &root_arg])?;
+    assert_exit(&stale, 3, "repair with a file:line naming no seam");
+    assert!(
+        stderr_text(&stale).contains("names no seam"),
+        "stale location refusal must name the miss:\n{}",
+        stderr_text(&stale)
+    );
+    assert!(
+        attempt_ids(root).is_empty(),
+        "a stale location starts nothing"
+    );
+    let repair = run_ripr(root, &["repair", "src/lib.rs:2", "--root", &root_arg])?;
+    assert_exit(&repair, 0, "repair with a unique file:line location");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1, "exactly one attempt must be created");
+    assert_eq!(read_manifest(root, &ids[0])?["seam_id"], FIXTURE_SEAM);
+    Ok(())
+}
+
+/// #8166 residual: two seams sharing file, owner, kind and expression share
+/// one re-minted probe ID; it must refuse with the bounded candidate list
+/// and start nothing, never pick the first seam. (The same
+/// several-matches branch refuses an ambiguous `file:line` location.)
+#[test]
+fn repair_refuses_an_ambiguous_probe_id() -> Result<(), String> {
+    let fixture = Fixture::dir("facade-repair-probe-ambiguous")?;
+    let root = &fixture.root;
+    populate_duplicate_expression_fixture(root)?;
+    // Weaken both duplicate predicates identically, so check mints one probe
+    // ID that both seams still re-mint.
+    let lib = root.join("src/lib.rs");
+    let source = std::fs::read_to_string(&lib).map_err(|e| e.to_string())?;
+    std::fs::write(
+        &lib,
+        source.replace("amount >= threshold", "amount > threshold"),
+    )
+    .map_err(|e| e.to_string())?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let check = run_worktree_check(root, &root_arg)?;
+    let probe_id = printed_probe_identity(&stdout_text(&check))
+        .ok_or_else(|| format!("check must print a probe ID:\n{}", stdout_text(&check)))?;
+    let repair = run_ripr(root, &["repair", &probe_id, "--root", &root_arg])?;
+    assert_exit(&repair, 3, "repair with an ambiguous probe ID");
+    let stderr = stderr_text(&repair);
+    assert!(
+        stderr.contains("names 2 seams; select one explicitly"),
+        "ambiguous probe ID must refuse with the candidate list:\n{stderr}"
+    );
+    assert!(
+        attempt_ids(root).is_empty(),
+        "an ambiguous probe ID must create no attempt"
+    );
+    Ok(())
+}
+
+/// #8166 residual (F3): a static-limited top finding (no static test path)
+/// keeps its limitation guidance and prints no runnable `ripr repair` line,
+/// while its explain/context drill-down stays.
+#[test]
+fn check_drill_down_omits_repair_for_a_static_limited_finding() -> Result<(), String> {
+    let fixture = Fixture::dir("facade-check-drilldown-static-limited")?;
+    let root = &fixture.root;
+    std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        "#[test]\nfn unrelated() {\n    assert_eq!(1 + 1, 2);\n}\n",
+    )
+    .map_err(|e| e.to_string())?;
+    init_repo(root)?;
+    run_git(root, &["add", "Cargo.toml", "src", "tests"])?;
+    git_commit(root, "fixture source")?;
+    weaken_boundary_predicate(root)?;
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "weaken the boundary predicate")?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let check = run_ripr(root, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+    let stdout = stdout_text(&check);
+    assert!(
+        stdout.contains("limited by static analysis"),
+        "the finding must be static-limited:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Next: drill into the top finding:") && stdout.contains("ripr explain"),
+        "explain/context drill-down must stay:\n{stdout}"
+    );
+    assert!(
+        printed_repair_identity(&stdout).is_none() && !stdout.contains("ripr repair"),
+        "a static-limited finding must print no runnable repair line:\n{stdout}"
     );
     Ok(())
 }
@@ -2226,134 +2660,3 @@ fn repair_skips_severity_off_seams_with_named_omission() -> Result<(), String> {
 // not here: the attempt commitment forbids staging a binding by editing
 // a manifest, and the full trust ceremony belongs to the binding
 // authority's own suite (`python_repair_attempt.rs`).
-
-/// The `probe:` finding ID the bounded check drill-down names for
-/// `ripr explain` — the canonical finding identity this issue makes
-/// repair-compatible.
-fn printed_finding_identity(check_stdout: &str) -> Option<String> {
-    check_stdout.lines().find_map(|line| {
-        line.trim()
-            .strip_prefix("ripr explain ")
-            .and_then(|tail| tail.split_whitespace().last())
-            .map(str::to_string)
-    })
-}
-
-/// A committed feature-branch workspace whose default check (master...HEAD)
-/// sees the weakened boundary with a clean tree, so `ripr check` and
-/// `ripr repair` analyze the same finding and the before phase can pin
-/// the repository. Returns the printed `probe:` finding ID.
-fn branch_finding_fixture(label: &str) -> Result<(Fixture, String, String), String> {
-    let fixture = Fixture::boundary(label)?;
-    let root = fixture.root.clone();
-    let root_arg = root.to_string_lossy().into_owned();
-    run_git(&root, &["checkout", "-q", "-b", "change"])?;
-    weaken_boundary_predicate(&root)?;
-    run_git(&root, &["add", "src/lib.rs"])?;
-    git_commit(&root, "weaken the boundary predicate")?;
-    let check = run_ripr(&root, &["check", "--root", &root_arg])?;
-    let stdout = stdout_text(&check);
-    let finding_id = printed_finding_identity(&stdout)
-        .ok_or_else(|| format!("check must print a `ripr explain` drill-down:\n{stdout}"))?;
-    if !finding_id.starts_with("probe:") {
-        return Err(format!(
-            "the drill-down must name a `probe:` finding ID, got {finding_id}"
-        ));
-    }
-    Ok((fixture, root_arg, finding_id))
-}
-
-/// #8166 reopen (positive control): the `probe:` finding ID `ripr check`
-/// prints is itself a repair subject. `ripr repair <finding-id>` resolves it
-/// to the same seam the check drill-down names and starts the before phase
-/// for that seam — one canonical finding ID from check to repair.
-#[test]
-fn repair_accepts_check_finding_id_and_starts_the_same_seam() -> Result<(), String> {
-    let (fixture, root_arg, finding_id) = branch_finding_fixture("facade-repair-finding-id")?;
-    let root = &fixture.root;
-    let repair = run_ripr(root, &["repair", &finding_id, "--root", &root_arg])?;
-    assert_exit(&repair, 0, "repair with the check finding ID");
-    let ids = attempt_ids(root);
-    assert_eq!(ids.len(), 1, "exactly one attempt must be created");
-    assert_eq!(
-        read_manifest(root, &ids[0])?["seam_id"],
-        FIXTURE_SEAM,
-        "the finding ID must resolve to the drill-down seam"
-    );
-    Ok(())
-}
-
-/// #8166 reopen (advanced-spelling control): `ripr agent repair
-/// --seam-id <finding-id> --phase before` accepts the same canonical
-/// finding ID and starts the before phase for the same seam.
-#[test]
-fn agent_repair_before_accepts_check_finding_id() -> Result<(), String> {
-    let (fixture, root_arg, finding_id) = branch_finding_fixture("facade-agent-repair-finding-id")?;
-    let root = &fixture.root;
-    let repair = run_ripr(
-        root,
-        &[
-            "agent",
-            "repair",
-            "--seam-id",
-            &finding_id,
-            "--phase",
-            "before",
-            "--root",
-            &root_arg,
-        ],
-    )?;
-    assert_exit(&repair, 0, "agent repair with the check finding ID");
-    let ids = attempt_ids(root);
-    assert_eq!(ids.len(), 1, "exactly one attempt must be created");
-    assert_eq!(
-        read_manifest(root, &ids[0])?["seam_id"],
-        FIXTURE_SEAM,
-        "the finding ID must resolve to the drill-down seam"
-    );
-    Ok(())
-}
-
-/// #8166 reopen (negative controls): a finding ID the current analysis does
-/// not produce — never printed, or stale after the diff changed — refuses as
-/// a named decision naming the recovery route, and writes no attempt.
-#[test]
-fn repair_refuses_unknown_or_stale_finding_id_without_an_attempt() -> Result<(), String> {
-    let (fixture, root_arg, finding_id) =
-        branch_finding_fixture("facade-repair-finding-id-refused")?;
-    let root = &fixture.root;
-
-    let unknown = run_ripr(
-        root,
-        &[
-            "repair",
-            "probe:src_lib.rs:predicate:00000000",
-            "--root",
-            &root_arg,
-        ],
-    )?;
-    assert_exit(&unknown, 3, "repair with an unknown finding ID");
-    let stderr = stderr_text(&unknown);
-    assert!(
-        stderr.contains("names no finding in the current analysis"),
-        "unknown finding ID must refuse with the no-finding decision:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("ripr check"),
-        "the refusal must name the recovery route:\n{stderr}"
-    );
-    assert_no_repair_attempt_side_effects(root);
-
-    // Stale: on master the printed diff no longer exists, so the same ID
-    // must refuse instead of guessing a seam.
-    run_git(root, &["checkout", "-q", "master"])?;
-    let stale = run_ripr(root, &["repair", &finding_id, "--root", &root_arg])?;
-    assert_exit(&stale, 3, "repair with a stale finding ID");
-    let stderr = stderr_text(&stale);
-    assert!(
-        stderr.contains("names no finding in the current analysis"),
-        "stale finding ID must refuse with the no-finding decision:\n{stderr}"
-    );
-    assert_no_repair_attempt_side_effects(root);
-    Ok(())
-}

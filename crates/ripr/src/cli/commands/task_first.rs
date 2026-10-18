@@ -33,11 +33,11 @@ Without an item, repair starts only when exactly one repair-eligible seam
 is visible under the selected root. Several eligible seams print a bounded
 selection list with a retry command instead of selecting one implicitly;
 no eligible seam prints the honest setup or limitation action. With an
-item — a seam ID, a `ripr check` finding ID (`probe:...`) resolving to
-exactly one repair-eligible seam, or a canonical gap ID naming exactly one
-seam — repair starts the before phase for that exact subject. A finding ID
-the current analysis no longer produces refuses with the recovery route
-instead of guessing a seam.
+item — a seam ID, a `ripr check` finding ID (`probe:` / `repo-probe:`), a
+canonical gap ID, or a `file:line` location naming exactly one
+repair-eligible seam — repair starts the before phase for that exact
+subject. A cross-namespace ID the current seams no longer map refuses with
+the recovery route instead of guessing a seam.
 
 A successful start prints the before-phase summary and the compact repair
 card for the seam. If the card cannot render after the start published,

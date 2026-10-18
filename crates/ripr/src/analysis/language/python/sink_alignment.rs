@@ -9,8 +9,9 @@ use super::related_tests::{
 };
 use super::source_facts::parse_module_result;
 use super::{
-    PythonOwner, PythonTest, has_identifier_boundary, import_source_module_matches_owner,
-    parse_attribute_assignment, python_dict_field_segment_parts, significant_change_tokens,
+    PythonOwner, PythonTest, assertion_calls_method_only_on_foreign_receiver,
+    has_identifier_boundary, import_source_module_matches_owner, parse_attribute_assignment,
+    python_dict_field_segment_parts, significant_change_tokens,
     strong_test_calls_owner_method_on_bound_receiver, strong_test_imports_owner_from_module,
     strong_tests_import_only_rival_modules, top_level_python_segments,
 };
@@ -758,6 +759,18 @@ pub(super) fn classify_sink_alignment_with_old(
             all_tests,
         )
     });
+    // The relation above reads the whole test body; the assertion itself must
+    // not call the method only on some other receiver (#8247).
+    let asserts_foreign_receiver = |unit: &AlignmentUnit<'_>| match (
+        unit.test,
+        owner_class_token.as_ref(),
+        method_name_token.as_ref(),
+    ) {
+        (Some(test), Some(class), Some(method)) => {
+            assertion_calls_method_only_on_foreign_receiver(test, owner, class, method, &unit.text)
+        }
+        _ => false,
+    };
     // Free-function module identity: a non-method owner's bare function-name token
     // credits `direct` only when the test holding the assertion imports it from
     // the owner's module. A same-named free function imported from a different
@@ -922,6 +935,7 @@ pub(super) fn classify_sink_alignment_with_old(
                     .as_ref()
                     .is_some_and(|token| observes(unit, std::slice::from_ref(token)))
                     && binds_method_receiver(unit)
+                    && !asserts_foreign_receiver(unit)
                     && gates_ok(unit)
             },
         ),
@@ -1126,6 +1140,51 @@ fn function_scope_stand_in(test: &PythonTest, name: &str, owner: &PythonOwner) -
     };
     parameter_names.iter().any(|parameter| parameter == name)
         || suite_binds_stand_in(&body, name, test, owner)
+        || binds_by_walrus(&test.body_text, name)
+        || test.constant_rebinding.module_rebinds(name)
+}
+
+/// Whether `body_text` binds `name` with an assignment expression
+/// (`name := ...`), which binds in the enclosing function scope wherever the
+/// expression sits. Textual on purpose: a comment or string match only
+/// withholds credit.
+fn binds_by_walrus(body_text: &str, name: &str) -> bool {
+    body_text.match_indices(name).any(|(idx, _)| {
+        let before_ok = body_text[..idx]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_' || ch == '.'));
+        let rest = &body_text[idx + name.len()..];
+        let after_ok = rest
+            .chars()
+            .next()
+            .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'));
+        before_ok && after_ok && rest.trim_start().starts_with(":=")
+    })
+}
+
+/// Whether a `match` case pattern captures `name` (`case fee:`,
+/// `case [*fee]`, `case {**fee}`, `case Cls() as fee`).
+fn pattern_binds_name(pattern: &ast::Pattern, name: &str) -> bool {
+    let named =
+        |bound: &Option<ast::Identifier>| bound.as_ref().is_some_and(|id| id.as_str() == name);
+    let any =
+        |patterns: &[ast::Pattern]| patterns.iter().any(|inner| pattern_binds_name(inner, name));
+    match pattern {
+        ast::Pattern::MatchValue(_) | ast::Pattern::MatchSingleton(_) => false,
+        ast::Pattern::MatchSequence(sequence) => any(&sequence.patterns),
+        ast::Pattern::MatchMapping(mapping) => named(&mapping.rest) || any(&mapping.patterns),
+        ast::Pattern::MatchClass(class) => any(&class.patterns) || any(&class.kwd_patterns),
+        ast::Pattern::MatchStar(star) => named(&star.name),
+        ast::Pattern::MatchAs(alias) => {
+            named(&alias.name)
+                || alias
+                    .pattern
+                    .as_ref()
+                    .is_some_and(|inner| pattern_binds_name(inner, name))
+        }
+        ast::Pattern::MatchOr(or) => any(&or.patterns),
+    }
 }
 
 fn parse_test_function_scope(test: &PythonTest) -> Option<(Vec<String>, Vec<Stmt>)> {
@@ -1228,10 +1287,10 @@ fn suite_binds_stand_in(
             test,
             owner,
         ),
-        Stmt::Match(stmt) => stmt
-            .cases
-            .iter()
-            .any(|case| suite_binds_stand_in(&case.body, name, test, owner)),
+        Stmt::Match(stmt) => stmt.cases.iter().any(|case| {
+            pattern_binds_name(&case.pattern, name)
+                || suite_binds_stand_in(&case.body, name, test, owner)
+        }),
         Stmt::Import(_) | Stmt::ImportFrom(_) => {
             let imports = collect_imports_from_statements(&test.file, std::slice::from_ref(stmt));
             imports.iter().any(|import| {
