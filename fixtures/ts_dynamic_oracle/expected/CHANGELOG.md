@@ -445,3 +445,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_dynamic_oracle (20)
+
+Reason:
+RIPR-SPEC-0088: retain the named limitation and give a terminal manual observation check instead of asking for internal packet fields (#8630); verdict, JSON and packet eligibility unchanged.
+
+Command:
+`cargo xtask goldens bless ts_dynamic_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
