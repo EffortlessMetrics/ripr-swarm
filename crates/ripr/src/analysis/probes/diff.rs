@@ -53,11 +53,15 @@ pub(crate) fn probes_for_file_with_relations(
     // Inline test-module scopes are file structure, not per-line evidence:
     // build once per file so ownerless-line checks stay linear (#3718).
     let test_module_ranges = test_module_ranges_for(index, &changed.path);
+    // Added-run starts once per file: `added_run_start` used to scan every
+    // added line at every step of the run, once per added line (#7524).
+    let added_run_starts = changed.added_run_starts();
     let build_context = ProbeBuildContext {
         root,
         changed,
         index,
         changed_nodes: &changed_nodes,
+        added_run_starts: &added_run_starts,
     };
     let mut emitted_parser_shapes = std::collections::BTreeMap::<(usize, String), usize>::new();
     let propagation_subjects = super::propagation_boundary::closing_propagation_subjects(
@@ -258,7 +262,12 @@ pub(crate) fn probes_for_file_with_relations(
                     new_side_line: shape.start_line,
                     text: canonical_text.clone(),
                 };
-                let before = removed_before(shape.start_line, &canonical_text, changed);
+                let before = removed_before(
+                    shape.start_line,
+                    &canonical_text,
+                    changed,
+                    &added_run_starts,
+                );
                 // #5312 (widening #6995): a canonical shape's `after` is the
                 // parser shape, not the whole line, so cut the same span from
                 // the old line for every family. #7020: the arm consumers that
@@ -319,7 +328,7 @@ pub(crate) fn probes_for_file_with_relations(
         }
         if !parser_shapes.is_empty() {
             for shape in parser_shapes {
-                let before = removed_before(added.new_side_line, text, changed)
+                let before = removed_before(added.new_side_line, text, changed, &added_run_starts)
                     .map(|line| arm_before(&shape.family, line, changed, old_source));
                 probes.push(SeededProbe::from_probe(build_probe(
                     &build_context,
@@ -349,7 +358,7 @@ pub(crate) fn probes_for_file_with_relations(
             continue;
         }
         for family in families {
-            let before = removed_before(added.new_side_line, text, changed)
+            let before = removed_before(added.new_side_line, text, changed, &added_run_starts)
                 .map(|line| arm_before(&family, line, changed, old_source));
             probes.push(SeededProbe::from_probe(build_probe(
                 &build_context,
@@ -410,8 +419,13 @@ pub(crate) fn probes_for_file_with_relations(
             // A bound replacement may collapse several old predicates into one.
             // Shared identifiers alone do not establish that the old subject
             // remained in the replacement's evidence.
-            if (has_matching_added_line(removed, &family, changed, &added_bounds)
-                || represented_short_lines.contains(&(removed.line, family.as_str())))
+            if (has_matching_added_line(
+                removed,
+                &family,
+                changed,
+                &added_bounds,
+                &added_run_starts,
+            ) || represented_short_lines.contains(&(removed.line, family.as_str())))
                 && (!removed_bounds.lines[removed_index]
                     || probes
                         .iter()
@@ -420,7 +434,7 @@ pub(crate) fn probes_for_file_with_relations(
                 continue;
             }
             if family == ProbeFamily::StaticUnknown
-                && has_adjacent_reordered_added_line(removed, changed)
+                && has_adjacent_reordered_added_line(removed, changed, &added_run_starts)
                 && probes
                     .iter()
                     .any(|seeded| seeded.probe.before.as_deref() == Some(text))
@@ -525,15 +539,20 @@ fn retarget_changed_binding_predicates(
     };
     // The removed counterpart of this replacement, when it is the same
     // binding's old initializer, becomes the probe's `before` evidence.
-    let before_initializer = nearby_removed_line(added.new_side_line, text, context.changed)
-        .and_then(|removed_text| {
-            changed_let_binding(&removed_text).map(|(removed_binding, removed_initializer)| {
-                (removed_binding.to_string(), removed_initializer.to_string())
-            })
+    let before_initializer = nearby_removed_line(
+        added.new_side_line,
+        text,
+        context.changed,
+        context.added_run_starts,
+    )
+    .and_then(|removed_text| {
+        changed_let_binding(&removed_text).map(|(removed_binding, removed_initializer)| {
+            (removed_binding.to_string(), removed_initializer.to_string())
         })
-        .and_then(|(removed_binding, removed_initializer)| {
-            (removed_binding == binding).then_some(removed_initializer)
-        });
+    })
+    .and_then(|(removed_binding, removed_initializer)| {
+        (removed_binding == binding).then_some(removed_initializer)
+    });
     let mut retargeted = Vec::new();
     for use_site in uses {
         if changed_lines.contains(&use_site.predicate_line) {
@@ -893,6 +912,7 @@ struct ProbeBuildContext<'a> {
     changed: &'a ChangedFile,
     index: &'a RustIndex,
     changed_nodes: &'a [SyntaxNodeFact],
+    added_run_starts: &'a std::collections::BTreeMap<usize, usize>,
 }
 
 fn build_probe(
@@ -1001,8 +1021,11 @@ fn lines_are_adjacent(removed_new_side_line: usize, added_new_side_line: usize) 
     removed_new_side_line.abs_diff(added_new_side_line) <= 1
 }
 
-fn added_run_start(added_new_side_line: usize, changed: &ChangedFile) -> usize {
-    changed.added_run_start(added_new_side_line)
+fn added_run_start(
+    added_new_side_line: usize,
+    starts: &std::collections::BTreeMap<usize, usize>,
+) -> usize {
+    ChangedFile::added_run_start_from(starts, added_new_side_line)
 }
 
 fn has_matching_added_line(
@@ -1010,11 +1033,12 @@ fn has_matching_added_line(
     removed_family: &ProbeFamily,
     changed: &ChangedFile,
     added_bounds: &[bool],
+    added_run_starts: &std::collections::BTreeMap<usize, usize>,
 ) -> bool {
     let removed_tokens = extract_identifier_tokens(&removed_line.text);
     !removed_tokens.is_empty()
         && changed.added_lines.iter().enumerate().any(|(index, line)| {
-            let run_start = added_run_start(line.new_side_line, changed);
+            let run_start = added_run_start(line.new_side_line, added_run_starts);
             if !lines_are_adjacent(removed_line.new_side_line, line.new_side_line)
                 && !lines_are_adjacent(removed_line.new_side_line, run_start)
             {
@@ -1098,14 +1122,18 @@ fn represented_short_replacements(
 /// The character comparison reads only plain `".."` strings: a line with a
 /// raw string (`r#"a" b"#`) or a `'"'` char literal is never read as a
 /// reorder (fail closed: the removed probe stays).
-fn has_adjacent_reordered_added_line(removed_line: &ChangedLine, changed: &ChangedFile) -> bool {
+fn has_adjacent_reordered_added_line(
+    removed_line: &ChangedLine,
+    changed: &ChangedFile,
+    added_run_starts: &std::collections::BTreeMap<usize, usize>,
+) -> bool {
     if has_unpaired_quote_literal(&removed_line.text) {
         return false;
     }
     let removed = sorted_code_characters(&removed_line.text);
     !removed.is_empty()
         && changed.added_lines.iter().any(|line| {
-            let run_start = added_run_start(line.new_side_line, changed);
+            let run_start = added_run_start(line.new_side_line, added_run_starts);
             (lines_are_adjacent(removed_line.new_side_line, line.new_side_line)
                 || lines_are_adjacent(removed_line.new_side_line, run_start))
                 && !has_unpaired_quote_literal(&line.text)
@@ -1300,9 +1328,10 @@ fn removed_before(
     added_new_side_line: usize,
     added: &str,
     changed: &ChangedFile,
+    added_run_starts: &std::collections::BTreeMap<usize, usize>,
 ) -> Option<String> {
     replaced_line_counterpart(added_new_side_line, changed)
-        .or_else(|| nearby_removed_line(added_new_side_line, added, changed))
+        .or_else(|| nearby_removed_line(added_new_side_line, added, changed, added_run_starts))
 }
 
 /// A match-arm probe's whole old line, with an uncut arm head joined to
@@ -1429,6 +1458,7 @@ fn nearby_removed_line(
     added_new_side_line: usize,
     added: &str,
     changed: &ChangedFile,
+    added_run_starts: &std::collections::BTreeMap<usize, usize>,
 ) -> Option<String> {
     let added_tokens = extract_identifier_tokens(added);
     // Only consider removed lines adjacent to this added line, or to the
@@ -1438,7 +1468,7 @@ fn nearby_removed_line(
     // the file (regardless of hunk or position) previously produced a
     // `before` value taken from an unrelated hunk whenever no removed line
     // shared a token with the added line.
-    let run_start = added_run_start(added_new_side_line, changed);
+    let run_start = added_run_start(added_new_side_line, added_run_starts);
     let nearby = changed
         .removed_lines
         .iter()
@@ -3292,13 +3322,14 @@ mod tests {
         };
         // Every removed arm shares `Kind`; the arm with the same pattern is
         // the original, whatever its position or spacing.
+        let starts = changed.added_run_starts();
         assert_eq!(
-            nearby_removed_line(4, "        Kind::Beta => 5,", &changed),
+            nearby_removed_line(4, "        Kind::Beta => 5,", &changed, &starts),
             Some("Kind::Beta  =>  2,".to_string())
         );
         // A changed pattern keeps the token rule.
         assert_eq!(
-            nearby_removed_line(4, "        Kind::Delta => 5,", &changed),
+            nearby_removed_line(4, "        Kind::Delta => 5,", &changed, &starts),
             Some("Kind::Alpha => 1,".to_string())
         );
     }
@@ -3403,10 +3434,13 @@ mod tests {
         );
         let raw_swapped = swap(raw, raw_changed);
         assert!(
-            raw_swapped
-                .removed_lines
-                .first()
-                .is_some_and(|line| !has_adjacent_reordered_added_line(line, &raw_swapped)),
+            raw_swapped.removed_lines.first().is_some_and(|line| {
+                !has_adjacent_reordered_added_line(
+                    line,
+                    &raw_swapped,
+                    &raw_swapped.added_run_starts(),
+                )
+            }),
             "a raw-string line is never read as a reorder"
         );
         // An adjacent character-equal added line whose probe does not carry
@@ -3440,10 +3474,13 @@ mod tests {
             ],
         };
         assert!(
-            paired_elsewhere
-                .removed_lines
-                .get(1)
-                .is_some_and(|line| has_adjacent_reordered_added_line(line, &paired_elsewhere)),
+            paired_elsewhere.removed_lines.get(1).is_some_and(|line| {
+                has_adjacent_reordered_added_line(
+                    line,
+                    &paired_elsewhere,
+                    &paired_elsewhere.added_run_starts(),
+                )
+            }),
             "premise: the added line is an adjacent reorder of the removed one"
         );
         let paired_probes = probes_for_file(
