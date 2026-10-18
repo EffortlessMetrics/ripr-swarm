@@ -227,6 +227,24 @@ fn ts_radix_numeric_zero_is_falsy() {
     }
 }
 
+/// A template literal with no interpolations is truthy exactly when its
+/// cooked text is non-empty (review on #8714): `if (`abc`)` always runs its
+/// consequent, `if (``) ` never does.
+#[test]
+fn ts_template_literal_truthiness_not_inverted() {
+    let truthy = extracted_assertions("  if (`abc`) {\n    expect(price(150)).toBe(130);\n  }");
+    assert_eq!(
+        truthy.len(),
+        1,
+        "non-empty template must keep its assertion: {truthy:?}"
+    );
+    let falsy = extracted_assertions("  if (``) {\n    expect(price(150)).toBe(130);\n  }");
+    assert!(
+        falsy.is_empty(),
+        "empty template must withhold its branch: {falsy:?}"
+    );
+}
+
 /// Consulted conditional-credit gaps are scoped to the test files this
 /// diff's findings actually credited (review on #8714): the credit
 /// consumption happens in the test file holding the related test, which the

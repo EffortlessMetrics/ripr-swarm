@@ -2153,8 +2153,11 @@ pub(crate) fn constant_condition_value(expr: &Expression<'_>) -> Option<bool> {
             bigint.value.as_str().trim_end_matches('n'),
         )),
         Expression::StringLiteral(string) => Some(!string.value.is_empty()),
+        // A template with no interpolations is truthy exactly when its cooked
+        // text is non-empty (review on #8714): `if (`abc`)` always runs,
+        // `if (``) ` never does.
         Expression::TemplateLiteral(template) if template.expressions.is_empty() => {
-            Some(!template.quasis.iter().any(|quasi| {
+            Some(template.quasis.iter().any(|quasi| {
                 quasi
                     .value
                     .cooked
