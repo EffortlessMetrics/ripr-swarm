@@ -8353,19 +8353,19 @@ fn unit_tests(prelude: &str, body: &str) -> String {
 #[test]
 fn an_expected_value_a_macro_or_a_static_rebinds_from_the_owner_is_not_a_pin() {
     let macro_prelude =
-        "macro_rules! s {\n    ($i:ident) => {\n        let $i = weight(4);\n    };\n}\n\n";
+        "macro_rules! s {\n    ($i:ident) => {\n        let $i = crate::weight(4);\n    };\n}\n\n";
     for (prelude, body) in [
         (
             macro_prelude,
-            "s!(expected);\n        assert_eq!(weight(4), expected);",
+            "s!(expected);\n        assert_eq!(crate::weight(4), expected);",
         ),
         (
             "static EXPECTED: AtomicU32 = AtomicU32::new(0);\n\n",
-            "EXPECTED.store(weight(4), Ordering::SeqCst);\n        assert_eq!(weight(4), EXPECTED.load(Ordering::SeqCst));",
+            "EXPECTED.store(crate::weight(4), Ordering::SeqCst);\n        assert_eq!(crate::weight(4), EXPECTED.load(Ordering::SeqCst));",
         ),
         (
             "static mut EXPECTED: u32 = 0;\n\n",
-            "EXPECTED = weight(4);\n        assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED = crate::weight(4);\n        assert_eq!(crate::weight(4), EXPECTED);",
         ),
     ] {
         let lib = unit_tests(prelude, body);
@@ -8375,11 +8375,15 @@ fn an_expected_value_a_macro_or_a_static_rebinds_from_the_owner_is_not_a_pin() {
     for (prelude, body) in [
         (
             "",
-            "let expected = 12;\n        assert_eq!(weight(4), expected);",
+            "let expected = 12;\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        (
+            "",
+            "let expected: u32 = 12;\n        assert_eq!(crate::weight(4), expected);",
         ),
         (
             "static EXPECTED: u32 = 12;\n\n",
-            "assert_eq!(weight(4), EXPECTED);",
+            "assert_eq!(crate::weight(4), EXPECTED);",
         ),
     ] {
         let lib = unit_tests(prelude, body);

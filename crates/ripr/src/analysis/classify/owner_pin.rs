@@ -9727,6 +9727,11 @@ fn written_by_test(masked: &str, name: &str) -> bool {
         if before.ends_with("let") || before.ends_with("mut") {
             return false;
         }
+        // `let e: Config = ..` annotates a type: the `=` after it assigns the
+        // binding, not the type name.
+        if before.ends_with(':') && !before.ends_with("::") {
+            return false;
+        }
         let after = masked[offset + name.len()..].trim_start();
         if let Some(call) = after.strip_prefix('.') {
             let method: String = call
