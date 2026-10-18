@@ -473,6 +473,27 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                     Confidence::Low,
                     "Changed value is bound to a discard pattern; it cannot infect a sink",
                 )
+            } else if matches!(probe.family, ProbeFamily::ReturnValue)
+                && !owner_has_other_callers
+                && owner
+                    .zip(probe.before.as_deref())
+                    .is_some_and(|(owner, before)| {
+                        crate::analysis::test_grip_evidence::change_is_invisible_to_every_assertion(
+                            owner,
+                            before,
+                            &probe.expression,
+                            related_tests,
+                        )
+                    })
+            {
+                // #8659: every related test calls the owner with literal
+                // inputs at which the changed expression and its baseline
+                // fold to the same value, so no test input tells them apart.
+                StageEvidence::new(
+                    StageState::Weak,
+                    Confidence::Medium,
+                    "Every related test calls the owner with literal inputs at which the changed expression and its baseline evaluate to the same value, so no test input reaches a difference",
+                )
             } else {
                 StageEvidence::new(
                     StageState::Yes,

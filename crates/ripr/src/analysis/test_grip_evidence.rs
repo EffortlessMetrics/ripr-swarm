@@ -19,6 +19,7 @@ mod snapshot_owner_binding;
 mod value_contradiction;
 
 pub(crate) use value_contradiction::CONTRADICTION_DISCLOSURE;
+pub(in crate::analysis) use value_contradiction::change_is_invisible_to_every_assertion;
 use value_contradiction::{
     ExactValueVerdict, contradiction_summary, exact_value_assertion_verdict_for_test,
 };

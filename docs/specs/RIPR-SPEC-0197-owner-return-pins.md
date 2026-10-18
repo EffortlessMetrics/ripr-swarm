@@ -2440,3 +2440,32 @@ existing owner-call argument pin is unavailable; this leaf does not relax that
 authority. Withheld diff-index source bindings receive the same constructor scan.
 Full frozen consumer replay is separate from fixture admission and never clears
 consumer gates, missing IDs or unrelated propagation residuals by absence.
+
+### Changes the asserted inputs cannot tell apart (#8659)
+
+An exact pin shows the test checks the owner's value, not that the checked
+input reaches the change. `base * 2u64.pow(attempt)` changed to
+`3u64.pow(attempt)` with `assert_eq!(backoff_ms(0, 100), 100)` passes on both
+versions (`3^0 == 2^0`), as does `attempt.min(5)` raised to `min(6)` with
+`assert_eq!(capped(3), 3)`. A `return_value` probe's infection stage therefore
+reads `weak` instead of `yes` when all of the following hold, and every
+unmet condition keeps today's reading:
+
+1. The owner is a free function the integer constant fold can evaluate (the
+   #6026 fold, which also evaluates `.pow(n)`, `.min(n)` and `.max(n)` on
+   integer values), the probe carries its `before` text, and that text
+   replaces the current text exactly once in the owner's body.
+2. No other function calls the owner by name (the same guard the `&&`/`||`
+   skipped-operand reading uses).
+3. At least one related test names the owner, and every such test is a plain
+   test (no case table, no local shadow of the owner's name) whose
+   assertions are all equality assertions whose first operand is one bare
+   owner call with literal arguments that fold.
+4. At every such call the owner folds to the same value under the current and
+   the baseline body.
+
+A related test that never names the owner is ignored: a helper that calls the
+owner would already make condition 2 fail. The reading only downgrades; a
+fold that fails, overflows the declared width or meets a float, an unsupported
+method or a `let` is not evaluable and changes nothing. It asks nothing of
+the oracle's strength and is not a runtime claim.
