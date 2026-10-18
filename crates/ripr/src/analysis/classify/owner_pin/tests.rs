@@ -1,4 +1,5 @@
 mod json_construction;
+mod retention_parity;
 
 use super::*;
 use crate::analysis::facts::{FunctionItemFact, SourceRoleProvenance, SourceRoleProvenanceEdge};
