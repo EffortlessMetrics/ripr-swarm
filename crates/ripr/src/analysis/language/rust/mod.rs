@@ -39,6 +39,16 @@ use crate::domain::{
     ExposureClass, Finding, Probe, SourceCurrentness, StaticLimitKind, StopReason,
 };
 use rayon::prelude::*;
+
+/// Stack of a classify worker; matches the `--budget` analysis thread.
+const CLASSIFY_WORKER_STACK_BYTES: usize = 16 * 1024 * 1024;
+
+#[cfg(test)]
+thread_local! {
+    /// Worker count a test pins for the classify pool on this thread.
+    static CLASSIFY_THREADS_FOR_TEST: std::cell::Cell<Option<usize>> =
+        const { std::cell::Cell::new(None) };
+}
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -2326,30 +2336,51 @@ impl RustAdapter {
             let token = cancellation::current_token();
             let overlay = committed_source::current_overlay();
             let graph_counter = classify::InheritedGraphCounter::capture();
-            seeded_probes
-                .par_iter()
-                .map_init(
-                    crate::analysis::syntax::run_memo::enter,
-                    |_, (_, seeded)| {
-                        cancellation::with_optional_token(token.as_ref(), || {
-                            committed_source::with_overlay(overlay.clone(), || {
-                                graph_counter.run(|| {
-                                    cancellation::checkpoint().ok()?;
-                                    Some(classifier::classify_probe_with_candidate_index(
-                                        &seeded.probe,
-                                        &index,
-                                        workspace_index_complete,
-                                        dependency_edges.as_ref(),
-                                        &related_test_candidate_index,
-                                        &transitive_reach,
-                                        seeded.propagation_origin.as_ref(),
-                                    ))
-                                })
+            let classify_one =
+                |(_, seeded): &(&ChangedFile, crate::analysis::probes::SeededProbe)| {
+                    cancellation::with_optional_token(token.as_ref(), || {
+                        committed_source::with_overlay(overlay.clone(), || {
+                            graph_counter.run(|| {
+                                cancellation::checkpoint().ok()?;
+                                Some(classifier::classify_probe_with_candidate_index(
+                                    &seeded.probe,
+                                    &index,
+                                    workspace_index_complete,
+                                    dependency_edges.as_ref(),
+                                    &related_test_candidate_index,
+                                    &transitive_reach,
+                                    seeded.propagation_origin.as_ref(),
+                                ))
                             })
                         })
-                    },
-                )
-                .collect()
+                    })
+                };
+            // Classification recurses over source nesting, so it runs on a
+            // pool with the stack the `--budget` analysis thread gets, not
+            // the 2 MiB default of the global pool's workers. If the pool
+            // cannot be built, the probes run in line on this thread.
+            let builder = rayon::ThreadPoolBuilder::new()
+                .stack_size(CLASSIFY_WORKER_STACK_BYTES)
+                .thread_name(|worker| format!("ripr-classify-{worker}"));
+            #[cfg(test)]
+            let builder = match CLASSIFY_THREADS_FOR_TEST.with(std::cell::Cell::get) {
+                Some(threads) => builder.num_threads(threads),
+                None => builder,
+            };
+            match builder.build() {
+                Ok(pool) => pool.install(|| {
+                    seeded_probes
+                        .par_iter()
+                        .map_init(crate::analysis::syntax::run_memo::enter, |_, probe| {
+                            classify_one(probe)
+                        })
+                        .collect()
+                }),
+                Err(_) => {
+                    let _run_memo = crate::analysis::syntax::run_memo::enter();
+                    seeded_probes.iter().map(classify_one).collect()
+                }
+            }
         };
         cancellation::checkpoint()?;
 

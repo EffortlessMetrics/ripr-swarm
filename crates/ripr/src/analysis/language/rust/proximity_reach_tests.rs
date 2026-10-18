@@ -946,3 +946,73 @@ fn proximity_graph_rebuilds_after_a_same_path_helper_edit() -> Result<(), String
     );
     Ok(())
 }
+
+/// Runs `work` with the classify pool pinned to `threads` workers.
+fn with_classify_threads<T>(threads: usize, work: impl FnOnce() -> T) -> T {
+    super::CLASSIFY_THREADS_FOR_TEST.with(|pinned| pinned.set(Some(threads)));
+    let out = work();
+    super::CLASSIFY_THREADS_FOR_TEST.with(|pinned| pinned.set(None));
+    out
+}
+
+#[test]
+fn classified_findings_are_identical_in_order_on_one_and_many_threads() -> Result<(), String> {
+    let fixture = Fixture::new("thread-parity", &shared_reach_source())?;
+    let encode = |findings: &[Finding]| serde_json::to_string(findings).map_err(|e| e.to_string());
+    let serial = encode(&with_classify_threads(1, || fixture.arm_findings())?)?;
+    // Repeated so a fill-order race between workers has several chances to
+    // change a memo-dependent verdict.
+    for threads in [2, 4, 8] {
+        for round in 0..5 {
+            let parallel = encode(&with_classify_threads(threads, || fixture.arm_findings())?)?;
+            if serial != parallel {
+                return Err(format!(
+                    "{threads} classify threads differ from one thread (round {round})"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn classify_workers_follow_the_callers_cancellation() -> Result<(), String> {
+    use crate::analysis::cancellation::{self, AnalysisAbortKind, AnalysisCancellationToken};
+
+    let fixture = Fixture::new("cancel", &shared_reach_source())?;
+    let live = AnalysisCancellationToken::new();
+    let completed = cancellation::with_token(&live, || {
+        with_classify_threads(4, || fixture.arm_findings())
+    })?;
+    assert_eq!(completed.len(), 2, "a live token must not drop a probe");
+
+    let cancelled = AnalysisCancellationToken::new();
+    cancelled.cancel(AnalysisAbortKind::Cancelled);
+    let outcome = cancellation::with_token(&cancelled, || {
+        with_classify_threads(4, || fixture.arm_findings())
+    });
+    assert!(
+        outcome.is_err(),
+        "a cancelled run must fail, not return partial findings"
+    );
+    Ok(())
+}
+
+#[test]
+fn nested_scans_run_in_line_on_a_pool_worker_only() -> Result<(), String> {
+    use crate::analysis::classify::nested_parallelism_allowed;
+
+    assert!(
+        nested_parallelism_allowed(),
+        "the caller thread may fan out"
+    );
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(2)
+        .build()
+        .map_err(|e| e.to_string())?;
+    assert!(
+        !pool.install(nested_parallelism_allowed),
+        "a worker must not block in a nested par_iter while it can hold a memo lock"
+    );
+    Ok(())
+}

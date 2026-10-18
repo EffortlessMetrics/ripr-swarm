@@ -1788,7 +1788,7 @@ fn workspace_macro_binding_site(
     // is independent, so files are scanned on the rayon pool in path-ordered
     // batches: the earliest file still wins, and a rebinding in an early
     // batch still stops the scan before later files are parsed.
-    // Roots memoize in a `RefCell`, so they are resolved before the pool.
+    // Roots memoize behind a lock, so they are resolved before the pool.
     let files: Vec<_> = index
         .files()
         .iter()
@@ -1830,7 +1830,11 @@ fn workspace_macro_binding_site(
     let batch = rayon::current_num_threads().max(1) * 32;
     let mut first = None;
     for chunk in files.chunks(batch) {
-        let per_file: Vec<_> = chunk.par_iter().map(scan).collect();
+        let per_file: Vec<_> = if nested_parallelism_allowed() {
+            chunk.par_iter().map(scan).collect()
+        } else {
+            chunk.iter().map(scan).collect()
+        };
         for ((path, _, _), (rebinding, site)) in chunk.iter().zip(per_file) {
             if let Some(site) = rebinding {
                 return Some(((*path).clone(), site));
@@ -1999,31 +2003,43 @@ fn scan_macro_sites(
     module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
 ) -> Vec<(PathBuf, String, MacroBindingSite)> {
     let context_macros = assertion_context_macros();
-    files
-        .par_iter()
+    let scan_file = |(path, source, candidates): &MacroScanFile<'_>| {
         // A file whose stored candidates rule out every trusted name
         // reports no site, so it is not parsed.
-        .filter(|(_, _, candidates)| {
-            candidates.is_none_or(MacroBindingCandidates::may_bind_any_trusted)
-        })
-        .flat_map_iter(|(path, source, _)| {
-            trusted_macro_binding_sites(
-                source,
-                index.macro_scope_crates(),
-                &context_macros,
-                &|line, declaration| module_resolved(path, line, declaration),
-                &|krate| {
-                    if krate == "serde_json" {
-                        index.drop_in_manifests.verified_literal_json(path)
-                    } else {
-                        index.drop_in_manifests.verified(path, krate)
-                    }
-                },
-            )
-            .into_iter()
-            .map(|(name, site)| ((*path).clone(), name, site))
-        })
-        .collect()
+        if !candidates.is_none_or(MacroBindingCandidates::may_bind_any_trusted) {
+            return Vec::new();
+        }
+        trusted_macro_binding_sites(
+            source,
+            index.macro_scope_crates(),
+            &context_macros,
+            &|line, declaration| module_resolved(path, line, declaration),
+            &|krate| {
+                if krate == "serde_json" {
+                    index.drop_in_manifests.verified_literal_json(path)
+                } else {
+                    index.drop_in_manifests.verified(path, krate)
+                }
+            },
+        )
+        .into_iter()
+        .map(|(name, site)| ((*path).clone(), name, site))
+        .collect::<Vec<_>>()
+    };
+    if nested_parallelism_allowed() {
+        files.par_iter().flat_map_iter(scan_file).collect()
+    } else {
+        files.iter().flat_map(scan_file).collect()
+    }
+}
+
+/// Whether a scan may fan out on the rayon pool. A probe classified on a pool
+/// worker already runs beside its siblings, and a worker blocked in a nested
+/// `par_iter` steals sibling probes onto its own stack while it may hold a
+/// memo lock that those probes need (#8756), which `SyncMemo` cannot survive.
+/// Scans reached from classification therefore run in line.
+pub(in crate::analysis) fn nested_parallelism_allowed() -> bool {
+    rayon::current_thread_index().is_none()
 }
 
 /// Route scanned sites into the ambiguity name sets, the scoped-site map,

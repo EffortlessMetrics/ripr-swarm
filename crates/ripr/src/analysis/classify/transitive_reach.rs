@@ -336,11 +336,22 @@ impl InheritedGraphCounter {
     pub(in crate::analysis) fn run<T>(&self, work: impl FnOnce() -> T) -> T {
         #[cfg(test)]
         {
-            let previous =
-                GRAPH_BUILD_COUNT.with(|count| count.replace(std::sync::Arc::clone(&self.counter)));
-            let out = work();
-            GRAPH_BUILD_COUNT.with(|count| count.replace(previous));
-            out
+            /// Restores the worker's own counter even if `work` unwinds, so a
+            /// panicking probe cannot leave a pool thread counting into a
+            /// finished run's cell.
+            struct Restore(Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>);
+            impl Drop for Restore {
+                fn drop(&mut self) {
+                    if let Some(previous) = self.0.take() {
+                        GRAPH_BUILD_COUNT.with(|count| count.replace(previous));
+                    }
+                }
+            }
+            let _restore =
+                Restore(Some(GRAPH_BUILD_COUNT.with(|count| {
+                    count.replace(std::sync::Arc::clone(&self.counter))
+                })));
+            work()
         }
         #[cfg(not(test))]
         work()

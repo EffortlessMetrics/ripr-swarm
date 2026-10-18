@@ -1317,8 +1317,9 @@ impl OwnerCallerNames {
         callers
     }
 
-    /// The cache cells, so tests can hold a shared borrow across a repeat
-    /// query: a hit only borrows, while a recompute's `borrow_mut` panics.
+    /// The cache cells, so tests can inspect them between queries. A guard
+    /// must not be held across a query: the memo is a lock, and re-entry
+    /// panics in test builds.
     #[cfg(test)]
     pub(in crate::analysis) fn slots_for_test(&self) -> &SyncMemo<OwnerCallerSets> {
         &self.by_owner_slot
