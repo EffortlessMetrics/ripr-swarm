@@ -1389,6 +1389,14 @@ owner = "product-analysis"
 standalone_reason = "Extends the RIPR-SPEC-0247 literal mock-payload credit to a mock passed in an inline object and to owners with nested functions away from the changed line, from corpus mutation evidence."
 
 [[artifact]]
+id = "RIPR-SPEC-0279"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0279-rust-doc-examples-as-tests.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Registers each runnable fenced example in a Rust library's function docs as a test of its file, read from its own synthetic source: its exact assertion on the owner, called through the library's import name, pins the owner's return; ignored and non-running fences, crate-relative paths and method calls are refused."
+
+[[artifact]]
 id = "RIPR-SPEC-0265"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0265-rust-closures-in-iterator-adaptors.md"

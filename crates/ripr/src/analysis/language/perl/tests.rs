@@ -5196,6 +5196,79 @@ pub(crate) fn only_finding(text: &str) -> Result<crate::domain::Finding, String>
         .ok_or_else(|| "expected one finding".to_string())
 }
 
+/// #6583 / RIPR-SPEC-0235 examples 13 and 14: a reachable
+/// `method_receiver` or `helper_call` relation bound to an owner-targeted
+/// strong oracle earns the same weak credit as a direct owner call. The
+/// credit is per-relation and identity-bound: a wrong-owner oracle, a weak
+/// oracle, an unreachable hint, or a relation bound to another owner earns
+/// nothing, and sink alignment stays direct-only (never `Exposed`).
+#[test]
+fn perl_method_receiver_and_helper_call_bound_strong_oracle_earns_weak_credit() -> Result<(), String>
+{
+    use crate::domain::ExposureClass;
+    for kind in ["method_receiver", "helper_call"] {
+        let packet = edited_packet(EXACT_RETURN_PACKET, |packet| {
+            set_first(packet, "relations", "relation_kind", kind.into())
+        })?;
+        assert_eq!(
+            first_finding_misses(&packet)?.0,
+            ExposureClass::WeaklyExposed,
+            "{kind} bound to the owner-targeted strong oracle must be credited"
+        );
+        // Weak oracle: no credit.
+        let weak = edited_packet(EXACT_RETURN_PACKET, |packet| {
+            set_first(packet, "relations", "relation_kind", kind.into())?;
+            set_first(packet, "oracles", "strength", "weak_broad".into())
+        })?;
+        assert_eq!(
+            first_finding_misses(&weak)?.0,
+            ExposureClass::ReachableUnrevealed,
+            "{kind} with a weak oracle must not be credited"
+        );
+        // Wrong receiver: the oracle targets another owner.
+        let wrong_owner = edited_packet(EXACT_RETURN_PACKET, |packet| {
+            set_first(packet, "relations", "relation_kind", kind.into())?;
+            set_first(
+                packet,
+                "oracles",
+                "target_owner_id",
+                "perl:lib/My/App.pm::My::App::other".into(),
+            )
+        })?;
+        assert_eq!(
+            first_finding_misses(&wrong_owner)?.0,
+            ExposureClass::ReachableUnrevealed,
+            "{kind} whose oracle targets another owner must not be credited"
+        );
+        // Unreachable helper/receiver: no credit.
+        let unreachable = edited_packet(EXACT_RETURN_PACKET, |packet| {
+            set_first(packet, "relations", "relation_kind", kind.into())?;
+            set_first(
+                packet,
+                "relations",
+                "reachability_hint",
+                "weakly_reachable".into(),
+            )
+        })?;
+        assert_eq!(
+            first_finding_misses(&unreachable)?.0,
+            ExposureClass::ReachableUnrevealed,
+            "{kind} without reachable hint must not be credited"
+        );
+        // Aligned sink text still does not promote these kinds to Exposed.
+        let aligned = with_sinks("$amount * 0.9", Some("$amount * 0.9")).replace(
+            "\"relation_kind\": \"direct_owner_call\"",
+            &format!("\"relation_kind\": \"{kind}\""),
+        );
+        assert_eq!(
+            first_finding_misses(&aligned)?.0,
+            ExposureClass::WeaklyExposed,
+            "{kind} with aligned sink stays weakly exposed, not exposed"
+        );
+    }
+    Ok(())
+}
+
 /// Cases 7 and 8: advisory and deferred relation kinds never earn a row
 /// miss, even when the linked oracle is the strong exact owner oracle. Alone
 /// they cap the class; beside a direct row on a weakly exposed finding, with
@@ -5209,8 +5282,6 @@ fn perl_advisory_and_deferred_relation_kinds_keep_no_miss() -> Result<(), String
         "file_proximity",
         "fixture_setup",
         "unknown",
-        "helper_call",
-        "method_receiver",
     ] {
         let packet = edited_packet(EXACT_RETURN_PACKET, |packet| {
             set_first(packet, "relations", "relation_kind", kind.into())
