@@ -9757,7 +9757,7 @@ fn borrowed_into_path_call(before: &str) -> bool {
         return false;
     }
     // A turbofish callee (`store::<u32>(&X, ..)`) is unreadable: refuse.
-    if callee.ends_with('>') {
+    if callee.ends_with(['>', ')', ']', '}']) {
         return true;
     }
     let path: String = callee
@@ -9917,6 +9917,8 @@ fn is_mutating_method(method: &str) -> bool {
         "next",
         "next_back",
         "next_chunk",
+        "resize_with",
+        "compare_and_swap",
         "try_lock",
         "try_write",
         "as_mut_ptr",
@@ -9947,6 +9949,8 @@ fn is_mutating_method(method: &str) -> bool {
             "write_",
             "make_ascii_",
             "compare_exchange",
+            "next_if",
+            "peek",
             "fetch_",
             "set_",
         ]
