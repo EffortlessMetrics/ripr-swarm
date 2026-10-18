@@ -144,9 +144,9 @@ pub(crate) fn mask_comments_and_strings(text: &str) -> String {
 /// Whole-file callers mask the same few files once per probe or per
 /// assertion; below this size a scan is cheaper than the lookup. The memo is
 /// content-compared and works on every thread, unlike the run-scoped
-/// `syntax::run_memo`: the callers include the parallel fact-building
-/// workers, which run without a scope, and a digest of the whole file per
-/// call would cost as much as the scan it saves in a debug build.
+/// `syntax::run_memo`, which workers run without (`facts/build.rs` summarizes
+/// files on rayon threads). It compares bytes instead of hashing the file on
+/// every call.
 const MEMO_MIN_BYTES: usize = 16 * 1024;
 
 /// Larger inputs are scanned every time, so a long-lived thread (the LSP
