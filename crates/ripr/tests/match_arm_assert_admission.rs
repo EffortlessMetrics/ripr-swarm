@@ -148,6 +148,12 @@ fn shadowed_and_deferred_helper_assertions_are_refused() -> Result<(), String> {
     )
 }
 #[test]
+fn standard_library_glob_keeps_plain_assertion_credit() -> Result<(), String> {
+    let body = "assert!(matches!(actual, super::SelectionRequest::Unresolved(_)));";
+    check("use std::prelude::v1::*;", body, true)?;
+    check("use other::prelude::*;", body, false)
+}
+#[test]
 fn unrelated_assertion_remains_unconfirmed() -> Result<(), String> {
     let finding = analyze("", "assert!(true);")?;
     assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");

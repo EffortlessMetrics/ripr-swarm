@@ -5474,6 +5474,16 @@ fn standard_library_globs_are_not_foreign_macro_binding_sites() {
             "{source}"
         );
     }
+    // Anything in the file that takes the root name keeps the glob foreign.
+    for source in [
+        "mod a {\n    use crate::other::std;\n    use std::*;\n}\n",
+        "use other::core;\nuse core::*;\n",
+        "use x as std;\nuse std::*;\n",
+        "use {std::*, other::*};\n",
+        "extern crate std as core;\nuse core::*;\n",
+    ] {
+        assert!(!sites(source).is_empty(), "{source}");
+    }
     // An alias taking the root is itself a site, wherever the glob is.
     assert!(
         sites("extern crate other as std;\nuse std::prelude::*;\n")
