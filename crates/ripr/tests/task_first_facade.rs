@@ -885,10 +885,19 @@ fn cross_namespace_ids_round_trip_between_check_explain_and_repair() -> Result<(
         ],
     )?;
     assert_exit(&agent_stale, 2, "agent repair with a stale probe ID");
+    let agent_stale_stderr = stderr_text(&agent_stale);
     assert!(
-        stderr_text(&agent_stale).contains("not a seam ID"),
-        "truly unknown agent seam ID keeps the wrong-namespace hint:\n{}",
-        stderr_text(&agent_stale)
+        agent_stale_stderr.contains("agent repair --seam-id")
+            && agent_stale_stderr.contains("stale"),
+        "stale probe refusal must name this command and the stale mapping:\n{agent_stale_stderr}"
+    );
+    assert!(
+        !agent_stale_stderr.contains("agent packet seam_id"),
+        "the translating surface must not name the packet surface the user did not run:\n{agent_stale_stderr}"
+    );
+    assert!(
+        !agent_stale_stderr.contains("resolves it to its repair seam"),
+        "the translating surface must not promise the resolution that just failed:\n{agent_stale_stderr}"
     );
     assert!(
         attempt_ids(root).is_empty(),

@@ -417,9 +417,11 @@ pub(super) fn unknown_seam_id_hint(root: &Path, seam_id: &str) -> String {
 /// ID (and any other shape) keeps the existing flow untouched, so its
 /// packet-owned not-found refusal is unchanged. Ambiguous and ineligible
 /// mappings are deliberate decisions naming the equivalent
-/// `ripr agent repair --seam-id` retry; a stale mapping keeps the existing
-/// wrong-namespace hint through [`unknown_seam_id_hint`], which is the
-/// packet surface's not-found wording and exit family.
+/// `ripr agent repair --seam-id` retry; a stale mapping is a deliberate
+/// refusal in this command's own terms — the shared resolver has just run
+/// and returned `Unknown`, so promising the `ripr repair` route again would
+/// be circular. The packet surface's not-found wording
+/// ([`unknown_seam_id_hint`]) stays for the surfaces that do not translate.
 pub(in crate::cli) fn translate_agent_repair_seam_id(
     root: &Path,
     seam_id: &str,
@@ -469,10 +471,26 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
             ));
             Err(crate::cli::CommandError::Decision(message))
         }
-        Ok(RepairSubjectOutcome::Unknown) => Err(crate::cli::CommandError::Failure(format!(
-            "agent packet seam_id {seam_id} was not found. {}",
-            unknown_seam_id_hint(root, seam_id)
-        ))),
+        Ok(RepairSubjectOutcome::Unknown) => {
+            let root_arg = crate::agent::loop_commands::shell_arg(
+                &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
+            );
+            let list = format!("`ripr pilot --root {root_arg}` to list current seam IDs");
+            // The shared resolver just ran and returned `Unknown`, so the
+            // packet surface's `ripr repair <finding-id>` recovery route
+            // would repeat the refusal that failed; name the stale state in
+            // this command's terms instead (#8685).
+            let message = if seam_id.starts_with("probe:") || seam_id.starts_with("repo-probe:") {
+                format!(
+                    "agent repair --seam-id `{seam_id}` names no current seam in the selected root; the `ripr check` finding ID is stale or maps to no current seam; run {list}"
+                )
+            } else {
+                format!(
+                    "agent repair --seam-id `{seam_id}` names no current seam in the selected root; run {list}"
+                )
+            };
+            Err(crate::cli::CommandError::Failure(message))
+        }
         Err(error) => Err(crate::cli::CommandError::Failure(error)),
     }
 }
