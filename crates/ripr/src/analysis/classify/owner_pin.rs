@@ -2666,8 +2666,8 @@ impl OwnerReturnPin {
         let is_guard = err_return_guard_twin(&assertion.text).is_some();
         // A nested `format!` is read only as a rendered scalar pin, and a
         // nested `vec!` only as a single-element index.
-        let renders = !is_guard && is_assert_eq_over(&assertion.text, "format");
-        let indexes = !is_guard && is_assert_eq_over(&assertion.text, "vec");
+        let renders = !is_guard && is_assert_eq_over(&assertion.text, spelling, "format");
+        let indexes = !is_guard && is_assert_eq_over(&assertion.text, spelling, "vec");
         let reads_assert_eq = renders
             || indexes
             || (!is_guard
@@ -7373,20 +7373,20 @@ fn std_rooted_macro_path(text: &str, macro_name: &str) -> Option<String> {
         .then(|| format!("{root}{macro_name}"))
 }
 
-/// `assert_eq!` whose only nested macros are `expansion` (`format!`, which
+/// `spelling` (`assert_eq` or `debug_assert_eq`) whose only nested macros are `expansion` (`format!`, which
 /// [`rendered_scalar_operand`] reads, or `vec!`, which
 /// [`single_element_index`] reads).
-fn is_assert_eq_over(text: &str, expansion: &str) -> bool {
+fn is_assert_eq_over(text: &str, spelling: &str, expansion: &str) -> bool {
     let masked = mask_comments_and_strings(text);
     let invocations = macro_invocations(&masked);
     let [(first, _), nested @ ..] = invocations.as_slice() else {
         return false;
     };
-    *first == "assert_eq"
+    *first == spelling
         && !nested.is_empty()
         && nested.iter().all(|(name, _)| *name == expansion)
         && masked
-            .find("assert_eq")
+            .find(spelling)
             .is_some_and(|offset| !masked[..offset].trim_end().ends_with(':'))
 }
 

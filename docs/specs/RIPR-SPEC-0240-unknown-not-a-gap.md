@@ -244,8 +244,11 @@ checks after an earlier `return`, `#[should_panic]` tests, `Some(..)` tails,
 `async` owners), withholding gaps the `assert_eq!` twin keeps. The
 `debug_assertion_limit` tests pin the twin contract: for each body, the
 `debug_assert_eq!` spelling reads as a profile limit exactly where the
-`assert_eq!` twin is credited, and keeps a gap otherwise. `debug_assert_ne!`
-and `debug_assert!` in any form are not read.
+`assert_eq!` twin is credited, and keeps a gap otherwise, with one declared
+exception: a `std::`/`core::`-qualified `debug_assert_eq!` is not recognized,
+because the `std`-root proof (#7857) is spelled for `assert_eq` only, so it
+keeps its gap (#8637). `debug_assert_ne!` and `debug_assert!` in any form are
+not read.
 
 ## Scope boundary
 

@@ -156,17 +156,21 @@ const TWIN_BODIES: &[(&str, &str)] = &[
     ("", "return; ASSERT!(one(), 1);"),
     ("", "let v = one(); ASSERT!(one(), v);"),
     ("", "ASSERT![one(), 1];"),
+    ("", "ASSERT!(format!(\"{}\", one()), \"1\");"),
+    ("", "ASSERT!(vec![one()][0], 1);"),
     ("#[should_panic]", "ASSERT!(one(), 2);"),
     ("#[ignore]", "ASSERT!(one(), 1);"),
 ];
 
 #[test]
 fn a_debug_assert_eq_reads_as_its_assert_eq_twin_or_a_profile_limit() -> Result<(), String> {
+    let mut credited_twins = 0;
     for (attrs, template) in TWIN_BODIES {
         let standard = return_finding(attrs, &template.replace("ASSERT", "assert_eq"))?;
         let debug = return_finding(attrs, &template.replace("ASSERT", "debug_assert_eq"))?;
         assert_ne!(debug.class, ExposureClass::Exposed, "{attrs} {template}");
         if standard.class == ExposureClass::Exposed {
+            credited_twins += 1;
             assert_eq!(
                 debug.class,
                 ExposureClass::StaticUnknown,
@@ -194,6 +198,9 @@ fn a_debug_assert_eq_reads_as_its_assert_eq_twin_or_a_profile_limit() -> Result<
             );
         }
     }
+    // The credited branch must not be vacuous: the plain, reversed, format
+    // and vec shapes are all credited twins.
+    assert!(credited_twins >= 4, "credited twins: {credited_twins}");
     Ok(())
 }
 
