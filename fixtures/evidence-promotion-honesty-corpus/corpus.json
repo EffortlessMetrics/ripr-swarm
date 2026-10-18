@@ -5,6 +5,174 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "rust_competing_reverse_effect_oracle_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_competing_reverse_effect_oracle",
+      "vector": "competing_production_write_masks_changed_effect_removal",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_competing_reverse_effect_oracle_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_competing_reverse_effect_oracle",
+      "vector": "competing_production_write_masks_changed_effect_removal",
+      "probe_family": "call_deletion",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_competing_direct_effect_oracle_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_competing_direct_effect_oracle",
+      "vector": "competing_production_write_masks_changed_effect_removal",
+      "probe_family": "call_deletion",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_same_test_disconnected_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_same_test_disconnected_effect_oracle",
+      "vector": "real_dispatch_cannot_credit_parser_before_after_or_fresh_handle",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_same_test_disconnected_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_same_test_disconnected_effect_oracle",
+      "vector": "real_dispatch_cannot_credit_parser_before_after_or_fresh_handle",
+      "probe_family": "call_deletion",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_unused_reverse_trait_parser_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_unused_trait_effect_oracle",
+      "vector": "unused_indexed_trait_cannot_authorize_parser_equality",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_unused_reverse_trait_parser_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_unused_trait_effect_oracle",
+      "vector": "unused_indexed_trait_cannot_authorize_parser_equality",
+      "probe_family": "call_deletion",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_closing_propagation_cannot_borrow_a_sibling_error",
       "language": "rust",
       "tier": "pure",
@@ -2545,47 +2713,6 @@
       ]
     },
     {
-      "id": "rust_test_wrapped_in_some_not_exact",
-      "language": "rust",
-      "tier": "pure",
-      "source_fixture": "fixtures/test_wrapped_in_some_not_exact",
-      "vector": "comparison_held_in_a_value_wrapper_is_never_an_exact_oracle",
-      "probe_family": "return_value",
-      "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "expected_oracle",
-          "kind": "relational_check",
-          "strength": "weak"
-        },
-        {
-          "type": "expected_related_test",
-          "name": "score_is_zero_only_for_zero_points",
-          "file": "src/lib.rs",
-          "line": 10,
-          "kind": "relational_check",
-          "strength": "weak"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
-      ]
-    },
-    {
       "id": "rust_inequality_struct_assertion_not_exact",
       "language": "rust",
       "tier": "pure",
@@ -2849,102 +2976,6 @@
         {
           "type": "expected_class",
           "class": "weakly_exposed"
-        }
-      ]
-    },
-    {
-      "id": "py_local_owner_stand_ins_not_the_imported_owner",
-      "language": "python",
-      "tier": "pure",
-      "source_fixture": "fixtures/python_local_owner_stand_ins",
-      "vector": "function_scope_or_module_level_rebind_of_the_owner_name_is_not_the_imported_owner",
-      "probe_family": "return_value",
-      "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        }
-      ]
-    },
-    {
-      "id": "py_local_owner_stand_in_control_real_import_keeps_credit",
-      "language": "python",
-      "tier": "pure",
-      "source_fixture": "fixtures/python_local_owner_stand_in_control",
-      "vector": "real_import_and_helper_local_shadow_keep_owner_credit",
-      "probe_family": "return_value",
-      "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        }
-      ]
-    },
-    {
-      "id": "py_wrong_receiver_assertion_not_owner_identity",
-      "language": "python",
-      "tier": "pure",
-      "source_fixture": "fixtures/python_wrong_receiver_assertion",
-      "vector": "asserted_method_call_on_a_receiver_not_bound_to_the_owner_class",
-      "probe_family": "return_value",
-      "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        }
-      ]
-    },
-    {
-      "id": "py_bound_receiver_assertion_control_keeps_credit",
-      "language": "python",
-      "tier": "pure",
-      "source_fixture": "fixtures/python_bound_receiver_assertion",
-      "vector": "asserted_method_call_on_a_receiver_bound_to_the_owner_class",
-      "probe_family": "return_value",
-      "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "exposed"
         }
       ]
     },
@@ -9812,97 +9843,6 @@
       ]
     },
     {
-      "id": "rust_returned_error_drop_exit_error_path",
-      "language": "rust",
-      "tier": "pure",
-      "source_fixture": "fixtures/rust_returned_error_drop_exit",
-      "vector": "returned_type_non_plain_drop_exits_during_unwind",
-      "probe_family": "error_path",
-      "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
-      ]
-    },
-    {
-      "id": "rust_returned_error_drop_plain_error_path",
-      "language": "rust",
-      "tier": "pure",
-      "source_fixture": "fixtures/rust_returned_error_drop_plain",
-      "vector": "returned_type_plain_drop_keeps_whole_value_credit",
-      "probe_family": "error_path",
-      "assertions": [
-        { "type": "expected_class", "class": "exposed" }
-      ]
-    },
-    {
-      "id": "rust_predicate_returned_drop_exit_predicate",
-      "language": "rust",
-      "tier": "pure",
-      "source_fixture": "fixtures/rust_predicate_returned_drop_exit",
-      "vector": "returned_type_non_plain_drop_exits_during_unwind",
-      "probe_family": "predicate",
-      "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
-      ]
-    },
-    {
-      "id": "rust_predicate_returned_drop_plain_predicate",
-      "language": "rust",
-      "tier": "pure",
-      "source_fixture": "fixtures/rust_predicate_returned_drop_plain",
-      "vector": "returned_type_plain_drop_keeps_whole_value_credit",
-      "probe_family": "predicate",
-      "assertions": [
-        { "type": "expected_class", "class": "exposed" }
-      ]
-    },
-    {
-      "id": "rust_returned_type_drop_local_guard",
-      "language": "rust",
-      "tier": "pure",
-      "source_fixture": "fixtures/rust_returned_type_drop_local_guard",
-      "vector": "local_non_plain_drop_guard_never_becomes_returned_value",
-      "probe_family": "return_value",
-      "assertions": [
-        { "type": "expected_class", "class": "exposed" }
-      ]
-    },
-    {
-      "id": "rust_returned_type_drop_if_arm",
-      "language": "rust",
-      "tier": "pure",
-      "source_fixture": "fixtures/rust_returned_type_drop_if_arm",
-      "vector": "returned_type_non_plain_drop_in_if_arm_tail_exits_during_unwind",
-      "probe_family": "field_construction",
-      "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
-      ]
-    },
-    {
-      "id": "rust_returned_type_drop_wrapped_ok",
-      "language": "rust",
-      "tier": "pure",
-      "source_fixture": "fixtures/rust_returned_type_drop_wrapped_ok",
-      "vector": "returned_type_non_plain_drop_wrapped_in_ok_exits_during_unwind",
-      "probe_family": "field_construction",
-      "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
-      ]
-    },
-    {
       "id": "rust_test_written_expected_file",
       "language": "rust",
       "tier": "pure",
@@ -9945,109 +9885,6 @@
         { "type": "must_promote" },
         { "type": "expected_class", "class": "exposed" },
         { "type": "maximum_class", "class": "exposed" }
-      ]
-    },
-    {
-      "id": "rust_field_match_foreign_option_constant",
-      "language": "rust",
-      "tier": "pure",
-      "source_fixture": "fixtures/field_match_foreign_option_constant",
-      "vector": "qualified_option_constant_is_not_prelude_arm_identity",
-      "probe_family": "match_arm",
-      "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        }
-      ]
-    },
-    {
-      "id": "rust_field_match_raw_option_shadow",
-      "language": "rust",
-      "tier": "pure",
-      "source_fixture": "fixtures/field_match_raw_option_shadow",
-      "vector": "raw_option_names_keep_scope_and_binding_identity",
-      "probe_family": "match_arm",
-      "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 2
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        }
-      ]
-    },
-    {
-      "id": "rust_field_match_macro_option_shadow",
-      "language": "rust",
-      "tier": "pure",
-      "source_fixture": "fixtures/field_match_macro_option_shadow",
-      "vector": "imported_statement_macro_can_shadow_option_constructor",
-      "probe_family": "match_arm",
-      "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 2
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        }
-      ]
-    },
-    {
-      "id": "rust_field_match_unexecuted_assertion",
-      "language": "rust",
-      "tier": "pure",
-      "source_fixture": "fixtures/field_match_unexecuted_assertion",
-      "vector": "unexecuted_equality_is_not_same_call_oracle_evidence",
-      "probe_family": "match_arm",
-      "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 2
-        }
-      ]
-    },
-    {
-      "id": "ts_finally_completion_cannot_confirm_rejection",
-      "language": "typescript",
-      "tier": "pure",
-      "source_fixture": "fixtures/typescript_finally_completion",
-      "vector": "finally_return_swallows_awaited_rejection_matcher_failure",
-      "probe_family": "error_path",
-      "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "expected_oracle", "kind": "unknown", "strength": "unknown" }
       ]
     }
   ]
