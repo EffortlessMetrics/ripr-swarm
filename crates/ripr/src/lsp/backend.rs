@@ -1054,9 +1054,14 @@ impl Backend {
             )
             .await;
         self.mark_attempt_failed(request, kind, &message);
-        self.publish_analysis_status().await;
+        // The refresh path owns the on-screen warning for this failure
+        // (once per transition into failure). Record its signature before
+        // the status publication so the generic analysis-failure
+        // disclosure does not show the same failure a second time (#8583).
         self.disclose_refresh_failure_to_generic_client(&message)
             .await;
+        self.note_analysis_failure_disclosed();
+        self.publish_analysis_status().await;
     }
 
     /// The warning always goes to the log and `ripr/analysisStatus`; clients
