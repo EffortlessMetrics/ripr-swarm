@@ -1178,12 +1178,20 @@ fn canonical_repository_root(root: &Path) -> Result<PathBuf, String> {
         fs::canonicalize(&top).map_err(|err| format!("canonicalize Git top-level {top}: {err}"))?;
     if requested != top {
         return Err(format!(
-            "attempt root {} is not the exact Git top-level {}",
+            "attempt root {} is not the exact Git top-level {}; repair attempts bind to the repository top-level, so rerun with `--root {}`",
             requested.display(),
+            top.display(),
             top.display()
         ));
     }
     Ok(requested)
+}
+
+/// Refuses a root that is not the exact Git top-level, before a caller
+/// writes any artifact under it. Same authority as the baseline capture, so
+/// the before phase cannot leave files in a subdirectory it then refuses.
+pub(crate) fn require_repository_top_level(root: &Path) -> Result<(), String> {
+    canonical_repository_root(root).map(|_| ())
 }
 
 fn writable_path_components_are_safe(root: &Path, relative: &str) -> Result<bool, String> {

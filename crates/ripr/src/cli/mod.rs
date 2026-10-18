@@ -202,6 +202,9 @@ pub(in crate::cli) fn drive_before_phase_deferring_stdout(
             &seam_id,
         )?);
     }
+    // The attempt binds to the exact Git top-level; refuse a subdirectory
+    // root before the lock or any workflow artifact is written beneath it.
+    crate::edit_cage::require_repository_top_level(&options.root)?;
     let _before_lock = lock_before_repair_attempt(&options.root)?;
     let seam_id = options
         .seam_id

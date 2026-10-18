@@ -435,6 +435,46 @@ fn assert_no_repair_attempt_side_effects(root: &Path) {
     );
 }
 
+/// A repair attempt binds to the exact repository top-level. A `--root` that
+/// is a subdirectory of the checkout (a workspace member, for example)
+/// refuses before the before phase writes anything under it, and the refusal
+/// names the top-level to pass as `--root` instead of a bare path mismatch.
+#[test]
+fn before_phase_from_a_subdirectory_root_names_the_top_level_and_writes_nothing()
+-> Result<(), String> {
+    let fixture = Fixture::boundary("before-subdirectory-root")?;
+    let root = &fixture.root;
+    let sub = root.join("member");
+    std::fs::create_dir_all(&sub).map_err(|e| e.to_string())?;
+    let sub_arg = sub.to_string_lossy().into_owned();
+    let top = std::fs::canonicalize(root).map_err(|e| e.to_string())?;
+    let before = run_ripr(
+        &sub,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &sub_arg,
+            "--seam-id",
+            FIXTURE_SEAM,
+            "--phase",
+            "before",
+        ],
+    )?;
+    assert_exit(&before, 2, "before phase from a subdirectory root");
+    let stderr = stderr_text(&before);
+    assert!(
+        stderr.contains("is not the exact Git top-level")
+            && stderr.contains(&format!("--root {}", top.display())),
+        "the refusal must name the top-level root to pass:\n{stderr}"
+    );
+    assert!(
+        !sub.join("target").exists(),
+        "the refused before phase must not write artifacts or a lock under the subdirectory"
+    );
+    Ok(())
+}
+
 /// #8166 Slice A (positive control): an explicit eligible seam still
 /// starts exactly one before-phase attempt through the façade.
 #[test]
