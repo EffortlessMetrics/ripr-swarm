@@ -881,7 +881,24 @@ fn macro_binding_ambiguities(
             // alias taking the root's name can, which `drop_in_shadowed`
             // already answers for the drop-in crates; that case, and every
             // glob from any other root, stays a foreign glob.
-            let standard_root = matches!(root, "std" | "core" | "alloc");
+            // A plain import that binds the root name (`use crate::other::std;`)
+            // also takes it over for the module; `use x as std` is a rename
+            // and is caught by `drop_in_shadowed`.
+            let root_imported = || {
+                parse
+                    .tree()
+                    .syntax()
+                    .descendants()
+                    .filter_map(ast::UseTree::cast)
+                    .filter(|item| item.use_tree_list().is_none() && item.star_token().is_none())
+                    .any(|item| {
+                        item.path()
+                            .and_then(|path| path.segment())
+                            .and_then(|segment| segment.name_ref())
+                            .is_some_and(|name| name.text().trim_start_matches("r#") == root)
+                    })
+            };
+            let standard_root = matches!(root, "std" | "core" | "alloc") && !root_imported();
             for item in tree.syntax().descendants().filter_map(ast::UseTree::cast) {
                 if item.star_token().is_some()
                     && standard_root
