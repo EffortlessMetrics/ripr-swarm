@@ -995,6 +995,39 @@ fn classify_workers_follow_the_callers_cancellation() -> Result<(), String> {
         outcome.is_err(),
         "a cancelled run must fail, not return partial findings"
     );
+
+    // A budget that only a classify worker sees as spent: the caller thread's
+    // seeding checkpoints pass, so the abort can only come from a worker that
+    // installed the caller's token. A worker that ignored the token would
+    // finish every probe and this run would succeed.
+    let started = std::time::Instant::now();
+    let worker_sees_spent_budget: cancellation::AnalysisClock = std::sync::Arc::new(move || {
+        let on_worker = std::thread::current()
+            .name()
+            .is_some_and(|name| name.starts_with("ripr-classify-"));
+        if on_worker {
+            started + std::time::Duration::from_secs(120)
+        } else {
+            started
+        }
+    });
+    let budgeted = AnalysisCancellationToken::with_budget(
+        started,
+        std::time::Duration::from_secs(60),
+        worker_sees_spent_budget,
+    );
+    let outcome = cancellation::with_token(&budgeted, || {
+        with_classify_threads(4, || fixture.arm_findings())
+    });
+    assert!(
+        outcome.is_err(),
+        "a budget spent on a worker must fail the run, not publish a partial result"
+    );
+    assert_eq!(
+        budgeted.abort_kind(),
+        Some(AnalysisAbortKind::DeadlineExceeded),
+        "the worker's checkpoint must be what recorded the abort"
+    );
     Ok(())
 }
 
