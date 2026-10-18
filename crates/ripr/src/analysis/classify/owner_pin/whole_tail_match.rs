@@ -188,7 +188,7 @@ fn independent_expected(
     let Some(expression) = function.body().and_then(|body| body.tail_expr()) else {
         return false;
     };
-    if expression.syntax().text().to_string() != operand {
+    if expression.syntax().text() != operand {
         return false;
     }
     if matches!(expression, ast::Expr::Literal(_))
