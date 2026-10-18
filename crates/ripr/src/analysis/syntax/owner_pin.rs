@@ -312,7 +312,9 @@ pub(crate) enum MacroBindingKind {
     /// `#[macro_use]` on an `extern crate` or a module ripr did not resolve
     /// to an indexed file; the text is the item it is attached to.
     MacroUse(String),
-    /// A glob import from outside the workspace; the text is its path.
+    /// A glob import from outside the workspace and the manifest-verified
+    /// standard crates (`std`, `core`; `alloc` stays foreign, #8388); the
+    /// text is its path.
     ForeignGlob(String),
     /// A `macro_rules!` or `macro` definition with the trusted name.
     Definition,
@@ -472,6 +474,9 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
         if json_namespace_rebound(&node) {
             names.insert("json".to_string());
         }
+        if renames_standard_crate(&node) {
+            return MacroBindingCandidates::Any;
+        }
         if let Some(name) = ast::MacroRules::cast(node.clone())
             .and_then(|item| item.name())
             .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()))
@@ -547,6 +552,19 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
     MacroBindingCandidates::Names(names)
 }
 
+/// An `extern crate other as std;` (or `core`, `alloc`) alias.
+fn renames_standard_crate(node: &SyntaxNode) -> bool {
+    ast::ExternCrate::cast(node.clone())
+        .and_then(|item| item.rename())
+        .and_then(|rename| rename.name())
+        .is_some_and(|name| {
+            matches!(
+                name.text().trim_start_matches("r#"),
+                "std" | "core" | "alloc"
+            )
+        })
+}
+
 // [`macro_binding_candidates`] is a stored over-approximation of this scan:
 // a new site kind, or a wider existing one, must widen it too and bump
 // `FILE_FACT_CACHE_SCHEMA_VERSION`, or cached candidates hide the new sites.
@@ -554,6 +572,7 @@ fn macro_binding_scan_needed(source: &str, trusted: &[&str]) -> bool {
     trusted.contains(&"json") && source.contains("serde_json")
         || source.contains("macro")
         || source.contains("use")
+        || source.contains("extern")
         || source.contains("no_implicit_prelude")
         || source.contains('!')
 }
@@ -662,7 +681,7 @@ fn macro_binding_sites_in_tree(
     allowed_empty: &BTreeSet<String>,
     module_resolved: &dyn Fn(usize, &str) -> bool,
     drop_in_verified: &dyn Fn(&str) -> bool,
-    (tree, binding_free): (&ast::SourceFile, &BindingFreeFileIndex),
+    (file_tree, binding_free): (&ast::SourceFile, &BindingFreeFileIndex),
 ) -> NamedMacroSites {
     let mut ambiguous = Vec::new();
     let all = |line: usize, kind: MacroBindingKind, crate_local: bool| {
@@ -707,7 +726,7 @@ fn macro_binding_sites_in_tree(
         packages
             .iter()
             .any(|package| package.replace('-', "_") == root)
-            || tree.syntax().descendants().any(|node| {
+            || file_tree.syntax().descendants().any(|node| {
                 ast::Rename::cast(node.clone())
                     .and_then(|rename| rename.name())
                     .is_some_and(named)
@@ -717,7 +736,19 @@ fn macro_binding_sites_in_tree(
                             .is_some_and(named)
             })
     };
-    for node in tree.syntax().descendants() {
+    for node in file_tree.syntax().descendants() {
+        // `extern crate other as std;` at a crate root rebinds the name for
+        // every file, so a standard-root glob elsewhere cannot be trusted.
+        if let Some(rename) = ast::ExternCrate::cast(node.clone()).and_then(|k| k.rename())
+            && rename.name().is_some_and(|name| {
+                matches!(
+                    name.text().trim_start_matches("r#"),
+                    "std" | "core" | "alloc"
+                )
+            })
+        {
+            ambiguous.extend(all(line_of(&node), MacroBindingKind::Import, false));
+        }
         // An extern-crate alias or module in another file can defeat this
         // import's root even when that file never mentions `json` itself.
         if trusted.contains(&"json") && json_namespace_rebound(&node) {
@@ -934,7 +965,45 @@ fn macro_binding_sites_in_tree(
                 || packages
                     .iter()
                     .any(|package| package.replace('-', "_") == root);
+            // #8388: a glob rooted at the standard crates (`use
+            // core::simd::prelude::*`) names only items the standard library
+            // defines, and its one `assert_eq!` is the standard macro, so it
+            // cannot rebind a trusted name. A workspace package, module or
+            // alias taking the root's name can, which `drop_in_shadowed`
+            // already answers for the drop-in crates; that case, and every
+            // glob from any other root, stays a foreign glob.
+            // A plain import that binds the root name (`use crate::other::std;`)
+            // also takes it over for the module; `use x as std` is a rename
+            // and is caught by `drop_in_shadowed`.
+            let root_imported = || {
+                file_tree
+                    .syntax()
+                    .descendants()
+                    .filter_map(ast::UseTree::cast)
+                    .filter(|item| {
+                        item.star_token().is_none()
+                            && item.use_tree_list().is_none_or(|list| {
+                                // `use other::std::{self}` binds `std` too.
+                                list.use_trees()
+                                    .any(|leaf| leaf.syntax().text().to_string().trim() == "self")
+                            })
+                    })
+                    .any(|item| {
+                        item.path()
+                            .and_then(|path| path.segment())
+                            .and_then(|segment| segment.name_ref())
+                            .is_some_and(|name| name.text().trim_start_matches("r#") == root)
+                    })
+            };
+            let standard_root = matches!(root, "std" | "core" | "alloc") && !root_imported();
             for item in tree.syntax().descendants().filter_map(ast::UseTree::cast) {
+                if item.star_token().is_some()
+                    && standard_root
+                    && !drop_in_shadowed(root, external)
+                    && drop_in_verified(root)
+                {
+                    continue;
+                }
                 if item.star_token().is_some() && !own {
                     let path = import.syntax().text().to_string();
                     let line = line_of(&node);
@@ -1006,7 +1075,7 @@ fn macro_binding_sites_in_tree(
     // are no `MacroCall` nodes: the parser keeps `vec ! (..)` flat beside a
     // nested tree. They count as calls of their bare name too (#8446).
     let mut sites = Vec::new();
-    for node in tree.syntax().descendants() {
+    for node in file_tree.syntax().descendants() {
         if let Some(call) = ast::MacroCall::cast(node.clone()) {
             if let (Some(path), Some(tree)) = (call.path(), call.token_tree()) {
                 sites.push((

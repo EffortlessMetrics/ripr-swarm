@@ -530,6 +530,16 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
                 "Claude Code reads `{MCP_CONFIG_FILE_NAME}` and asks you to approve the project server before its tools appear. For Codex run `codex mcp add {MCP_SERVER_NAME} -- ripr mcp --stdio`."
             );
         }
+        if let Some(workflow) = plan
+            .iter()
+            .find(|target| target.path == init_ci_workflow_path(root, &InitCi::Github))
+        {
+            println!();
+            println!(
+                "CI next: review `{}` (advisory by default; blocking gates are opt-in via the RIPR_GATE_MODE repository variable), commit the generated files, then open or update a pull request and read the workflow's job summary.",
+                output::path::human_path(&workflow.path)
+            );
+        }
         println!();
         println!(
             "Next: run `{doctor}` to verify your setup, then `{check}` to analyze your branch against its default branch."

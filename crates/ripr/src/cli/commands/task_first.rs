@@ -315,6 +315,15 @@ fn run_facade_repair(options: RepairFacadeOptions) -> Result<(), CommandError> {
             }
         },
     };
+    // A repeated start (a retried or context-lost agent re-running the
+    // printed command) resumes the attempt already awaiting its edit at
+    // this HEAD instead of preparing a duplicate that would make
+    // `ripr continue` ambiguous (#8742).
+    if let Some(existing) =
+        crate::app::task_first::reusable_awaiting_attempt(&options.root, &seam_id)
+    {
+        return resume_awaiting_attempt(&options.root, &seam_id, &existing);
+    }
     // The start's stdout is held until the handoff card renders too:
     // `cmd:repair` declares `EXIT_TYPED_REFUSAL_EMPTY_STDOUT`, so a card
     // failure after publication must leave stdout empty — a refusal
@@ -343,6 +352,39 @@ fn run_facade_repair(options: RepairFacadeOptions) -> Result<(), CommandError> {
         ))
     })?;
     print!("{before_stdout}");
+    print!("{card_stdout}");
+    Ok(())
+}
+
+/// Report the attempt a repeated `ripr repair` resumed (#8742): the same
+/// narration the before phase ends with, naming the existing attempt, then
+/// the same handoff card. Nothing is written.
+fn resume_awaiting_attempt(
+    root: &std::path::Path,
+    seam_id: &str,
+    existing: &crate::app::task_first::ReusableAttempt,
+) -> Result<(), CommandError> {
+    let follow_up = crate::agent::human_after_phase_follow_up(&existing.next_command);
+    let card_stdout = super::agent_card::agent_card_stdout(AgentCardOptions {
+        root: root.to_path_buf(),
+        seam_id: seam_id.to_string(),
+        json: false,
+    })
+    .map_err(|error| {
+        CommandError::Decision(format!(
+            "repair attempt `{}` for seam `{seam_id}` is already awaiting the focused test edit, but the handoff card is unavailable: {}; continue after editing with `{follow_up}`",
+            existing.attempt_id,
+            error.message()
+        ))
+    })?;
+    eprintln!(
+        "ripr: repair attempt {} for seam `{seam_id}` is already awaiting the focused test edit at this HEAD; no second attempt was started",
+        existing.attempt_id
+    );
+    eprintln!("ripr: attempt next command: {follow_up}");
+    if let Some(form) = crate::output::markdown::powershell_text_variant(&follow_up) {
+        eprintln!("ripr: attempt next command (PowerShell): {form}");
+    }
     print!("{card_stdout}");
     Ok(())
 }

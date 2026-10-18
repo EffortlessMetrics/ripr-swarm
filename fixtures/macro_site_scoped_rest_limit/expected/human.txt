@@ -10,10 +10,10 @@ Analysis outcome: findings below (analysis complete)
 Start here:
   State: limited by static analysis
   Safe next action: inspect the named static limitation before treating this as repair-ready
-  File: ./src/lib.rs:3
+  File: ./src/lib.rs:4
   Static exposure: unknown (severity: note, confidence 0.64)
   Why unknown: the analysis could not determine a static exposure state
-  Not credited: `assert_eq!` in pins at tests/buf_tests.rs:11: `pub use std::io::prelude::*;` at
+  Not credited: `assert_eq!` in pins at tests/buf_tests.rs:11: `pub use alloc::vec::*;` at
     src/globs.rs:1 glob-imports from outside the workspace, which may bring in a different
     `assert_eq!`
   Changed behavior: 10 <= value
@@ -33,6 +33,6 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:3 (unknown)
+    - ./src/lib.rs:4 (unknown)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

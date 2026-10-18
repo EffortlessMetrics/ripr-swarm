@@ -45,7 +45,7 @@ fn scoped(container: &str) {
         "{container} {{\n    macro_rules! assert_eq {{\n        ($($tokens:tt)*) => {{}};\n    }}\n}}\n\n{PINS}"
     );
     let files = [
-        (CONVERGENCE_GLOB, "pub use std::io::prelude::*;\n"),
+        (CONVERGENCE_GLOB, "pub use rayon::prelude::*;\n"),
         (LIB, GATE),
         (TESTS, tests.as_str()),
     ];
@@ -76,7 +76,7 @@ fn reconstructed_parity_singleton_arguments() {
             "src/a.rs",
             "pub fn noise() { let _ = stringify!(assert_eq); }\n",
         ),
-        ("src/z.rs", "pub use std::fmt::*;\n"),
+        ("src/z.rs", "pub use foreign::fmt::*;\n"),
         (LIB, GATE),
         (TESTS, PINS),
     ]);
@@ -86,7 +86,7 @@ fn reconstructed_parity_singleton_arguments() {
 fn reconstructed_parity_unparsed_prefilter() {
     parity(&[
         ("src/a.rs", "serde_json ???"),
-        ("src/z.rs", "pub use std::fmt::*;\n"),
+        ("src/z.rs", "pub use foreign::fmt::*;\n"),
         (LIB, GATE),
         (TESTS, PINS),
     ]);
@@ -98,17 +98,17 @@ fn ordered(imports: &str) {
 
 #[test]
 fn reconstructed_parity_newline_private_first() {
-    ordered("use std::io::prelude::*;\npub use std::fmt::*;\n");
+    ordered("use rayon::prelude::*;\npub use foreign::fmt::*;\n");
 }
 
 #[test]
 fn reconstructed_parity_same_line_private_first() {
-    ordered("use std::io::prelude::*; pub use std::fmt::*;\n");
+    ordered("use rayon::prelude::*; pub use foreign::fmt::*;\n");
 }
 
 #[test]
 fn reconstructed_parity_same_line_public_first() {
-    ordered("pub use std::fmt::*; use std::io::prelude::*;\n");
+    ordered("pub use foreign::fmt::*; use rayon::prelude::*;\n");
 }
 
 #[test]

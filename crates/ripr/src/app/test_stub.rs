@@ -904,7 +904,8 @@ pub(crate) fn write_test_stub(
                     relative.display()
                 )
             })?;
-            let updated = format!("{head}{}{tail}", stub.text);
+            let text = match_line_endings(&stub.text, &current);
+            let updated = format!("{head}{text}{tail}");
             crate::atomic_file::write(&path, updated.as_bytes(), "test stub")?;
         }
         TestStubPlacement::NewIntegrationFile { .. } => {
@@ -922,6 +923,19 @@ pub(crate) fn write_test_stub(
         }
     }
     Ok(relative.to_path_buf())
+}
+
+/// The stub is produced with `\n` line breaks. Splice it into a file that
+/// is predominantly CRLF with CRLF breaks so the write does not leave mixed
+/// line endings behind.
+fn match_line_endings(text: &str, file: &str) -> String {
+    let crlf = file.matches("\r\n").count();
+    let lf = file.matches('\n').count();
+    if crlf > 0 && crlf * 2 > lf {
+        text.replace("\r\n", "\n").replace('\n', "\r\n")
+    } else {
+        text.to_string()
+    }
 }
 
 /// The root-relative manifest of the Cargo package that will own the stub:

@@ -1737,6 +1737,65 @@ fn continue_two_attempts_requires_explicit_selection() -> Result<(), String> {
     Ok(())
 }
 
+/// #8742: a repeated `ripr repair` for the seam that already has an attempt
+/// awaiting its edit at this HEAD resumes it. No second attempt is prepared,
+/// the printed `continue` command names the existing attempt, and a bare
+/// `ripr continue` still selects it after the focused edit.
+#[test]
+fn repeated_repair_resumes_the_awaiting_attempt_instead_of_duplicating() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-repair-twice")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let first = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&first, 0, "first repair");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1, "the first repair prepares one attempt");
+    let manifest_before = manifest_bytes(root, &ids[0])?;
+
+    let second = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&second, 0, "repeated repair");
+    assert_eq!(
+        attempt_ids(root),
+        ids,
+        "a repeated repair must not prepare a second attempt"
+    );
+    assert_eq!(
+        manifest_bytes(root, &ids[0])?,
+        manifest_before,
+        "resuming must not rewrite the awaiting attempt"
+    );
+    let stderr = stderr_text(&second);
+    assert!(
+        stderr.contains(&ids[0]) && stderr.contains("already awaiting"),
+        "must name the resumed attempt:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "ripr continue --root {root_arg} --attempt {}",
+            ids[0]
+        )),
+        "must print the continue command for the existing attempt:\n{stderr}"
+    );
+    assert!(
+        stdout_text(&second).contains(&ids[0]),
+        "the handoff card must still render:\n{}",
+        stdout_text(&second)
+    );
+
+    // The bare continue is unambiguous and finishes that same attempt.
+    let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+        .map_err(|error| format!("read pricing tests: {error}"))?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{pricing}{FIXTURE_BOUNDARY_TEST}"),
+    )
+    .map_err(|error| format!("write focused edit: {error}"))?;
+    let continued = run_ripr(root, &["continue", "--root", &root_arg])?;
+    assert_exit(&continued, 0, "bare continue after a repeated repair");
+    assert_eq!(read_manifest(root, &ids[0])?["state"], "ready_to_finish");
+    Ok(())
+}
+
 /// Control 6: stale head — continue refuses with the canonical
 /// restart/recompute route and leaves the attempt awaiting its edit.
 #[test]

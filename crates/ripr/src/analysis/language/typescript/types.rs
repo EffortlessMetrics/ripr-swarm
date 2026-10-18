@@ -247,6 +247,12 @@ pub(crate) enum TypeScriptRelationKind {
     /// Admitted only when no test calls the owner itself. Reach is real but
     /// indirect, so the classifier never promotes it to `exposed`.
     ModuleEntryCall,
+    /// Test imports a module-level value (`export const stop =
+    /// Symbol('stop')`) from the owner's module and uses it as a value
+    /// outside a direct `expect(...)` subject (#8568). Heuristic: the use
+    /// shows the test consumes the binding, not that an assertion observes
+    /// its initializer, so it never lends oracle credit.
+    ModuleValueUse,
     SameFileProximity,
     DescribeName,
     TestName,
@@ -266,6 +272,7 @@ impl TypeScriptRelationKind {
             // Below every relation that calls the owner itself.
             Self::ModuleEntryCall => 3,
             Self::SameFileProximity => 3,
+            Self::ModuleValueUse => 2,
             Self::DescribeName => 2,
             Self::TestName => 1,
         }
@@ -299,6 +306,7 @@ impl TypeScriptRelationKind {
             Self::ClassMethodCall => "class_method_call",
             Self::ReExportChainFollowed => "re_export_chain_followed",
             Self::ModuleEntryCall => "module_entry_call",
+            Self::ModuleValueUse => "module_value_use",
             Self::SameFileProximity => "same_file_proximity",
             Self::DescribeName => "describe_name",
             Self::TestName => "test_name",
