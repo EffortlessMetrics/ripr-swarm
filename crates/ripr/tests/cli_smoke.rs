@@ -29113,7 +29113,7 @@ fn check_rejects_invalid_check_timeout_flag_and_env() -> Result<(), String> {
         &[("RIPR_CHECK_TIMEOUT", "abc")],
     );
     let stderr = String::from_utf8_lossy(&explicit.stderr);
-    if stderr.contains("RIPR_CHECK_TIMEOUT") {
+    if stderr.contains("RIPR_CHECK_TIMEOUT requires a non-negative integer") {
         return Err(format!(
             "--timeout should take precedence over the env var: {stderr}"
         ));
