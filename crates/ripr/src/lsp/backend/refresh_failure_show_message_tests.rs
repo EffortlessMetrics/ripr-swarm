@@ -54,14 +54,9 @@ fn spawn_harness() -> Result<ShowMessageHarness, String> {
     });
     runtime.spawn(async move {
         let mut reader = client_read;
-        loop {
-            match read_lsp_message(&mut reader).await {
-                Ok(message) => {
-                    if let Ok(mut messages) = collected.lock() {
-                        messages.push(message);
-                    }
-                }
-                Err(_) => break,
+        while let Ok(message) = read_lsp_message(&mut reader).await {
+            if let Ok(mut messages) = collected.lock() {
+                messages.push(message);
             }
         }
     });
