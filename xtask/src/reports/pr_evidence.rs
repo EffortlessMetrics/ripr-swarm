@@ -23,6 +23,7 @@ const PR_DIFF: &str = "target/ripr/pr/pr.diff";
 const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 120;
 const PR_EVIDENCE_TIMEOUT_ENV: &str = "RIPR_PR_EVIDENCE_TIMEOUT_SECS";
 const DIFF_SCOPE_OVERSIZED_GUARD: &str = "diff_scope_oversized:";
+const ANALYSIS_TIMEOUT_GUARD: &str = "analysis_timeout:";
 const CHILD_DIAGNOSTIC_MAX_CHARS: usize = 2048;
 const CHILD_DIAGNOSTIC_MAX_LINES: usize = 12;
 const TOOL_ERROR_MAX_CHARS: usize = 4096;
@@ -352,17 +353,8 @@ fn run_ripr_check(repo: &Path, options: &PrEvidenceOptions) -> Result<String, St
     let diff_path = repo.join(PR_DIFF);
     let diff_arg = diff_path.display().to_string();
     let root_arg = command_root_arg(repo, &options.root);
-    let ripr_args = vec![
-        "check".to_string(),
-        "--root".to_string(),
-        root_arg,
-        "--base".to_string(),
-        options.base.clone(),
-        "--diff".to_string(),
-        diff_arg,
-        "--format".to_string(),
-        "json".to_string(),
-    ];
+    let timeout = Duration::from_secs(pr_evidence_timeout_secs()?);
+    let ripr_args = ripr_check_command_args(root_arg, options.base.clone(), diff_arg, timeout);
     let binary = match env::var("RIPR_BIN") {
         Ok(binary) => {
             if binary.trim().is_empty() {
@@ -388,8 +380,31 @@ fn run_ripr_check(repo: &Path, options: &PrEvidenceOptions) -> Result<String, St
             built_ripr_binary_path(repo)?.display().to_string()
         }
     };
-    let timeout = Duration::from_secs(pr_evidence_timeout_secs()?);
     run_ripr_check_binary(&binary, ripr_args, options, timeout)
+}
+
+fn ripr_check_command_args(
+    root: String,
+    base: String,
+    diff: String,
+    timeout: Duration,
+) -> Vec<String> {
+    vec![
+        "check".to_string(),
+        "--root".to_string(),
+        root,
+        "--base".to_string(),
+        base,
+        "--diff".to_string(),
+        diff,
+        "--format".to_string(),
+        "json".to_string(),
+        // `ripr check` has its own 600s default (`RIPR_CHECK_TIMEOUT`). Without
+        // this, CI's 3600s producer wrapper still loses to that inner budget
+        // and reports only truncated progress lines.
+        "--timeout".to_string(),
+        timeout.as_secs().to_string(),
+    ]
 }
 
 fn run_ripr_check_binary(
@@ -492,6 +507,7 @@ fn is_named_guard_line(line: &str) -> bool {
     let trimmed = line.trim();
     let without_reporter = trimmed.strip_prefix("ripr: ").unwrap_or(trimmed);
     without_reporter.starts_with(DIFF_SCOPE_OVERSIZED_GUARD)
+        || without_reporter.starts_with(ANALYSIS_TIMEOUT_GUARD)
 }
 
 fn bounded_text(text: &str, max_chars: usize, max_lines: usize) -> String {
@@ -1745,6 +1761,43 @@ mod tests {
             !empty_stderr.contains("stdout:"),
             "empty stderr must not dump stdout labels: {empty_stderr}"
         );
+    }
+
+    #[test]
+    fn child_failure_prefers_analysis_timeout_over_progress_heartbeats() {
+        let mut noisy = String::from("ripr progress: loading_input [diff]\n");
+        for _ in 0..12 {
+            noisy.push_str("ripr progress: analyzing still active after 1m\n");
+        }
+        noisy.push_str(
+            "analysis_timeout: ripr check exceeded its 600s wall-clock budget and was stopped.\n",
+        );
+        let reason = actionable_child_reason("{\"schema_version\":\"0.2\"}", &noisy);
+        assert!(
+            reason.contains("analysis_timeout:"),
+            "progress heartbeats must not hide the timeout identity: {reason}"
+        );
+        assert!(!reason.contains("loading_input"));
+    }
+
+    #[test]
+    fn ripr_pr_forwards_the_producer_timeout_to_check() {
+        let args = ripr_check_command_args(
+            ".".to_string(),
+            "origin/main".to_string(),
+            "target/ripr/pr/pr.diff".to_string(),
+            Duration::from_secs(3600),
+        );
+        let timeout = args
+            .windows(2)
+            .find(|pair| pair[0] == "--timeout")
+            .map(|pair| pair[1].as_str());
+        assert_eq!(
+            timeout,
+            Some("3600"),
+            "producer budget must reach ripr check: {args:?}"
+        );
+        assert!(args.windows(2).any(|pair| pair == ["--format", "json"]));
     }
 
     #[test]
