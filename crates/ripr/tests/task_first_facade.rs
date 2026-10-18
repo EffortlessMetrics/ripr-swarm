@@ -858,6 +858,89 @@ fn repair_refuses_a_producer_gap_id_that_names_several_seams() -> Result<(), Str
     Ok(())
 }
 
+/// #8688: the seam-derived hash-form canonical gap ID (`gap:<16hex>`) that
+/// `ripr rerun --json` carries must resolve in `ripr explain` and
+/// `ripr context` to the same finding `ripr check` prints, exactly like the
+/// producer form, so one gap identity works across check → explain →
+/// context → repair.
+#[test]
+fn explain_and_context_accept_the_hash_form_gap_id_rerun_emits() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-gap-hash-rerun")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    weaken_boundary_predicate(root)?;
+    let rerun = run_ripr(
+        root,
+        &[
+            "rerun",
+            "--root",
+            &root_arg,
+            "--changed-test",
+            "tests/pricing.rs",
+            "--json",
+        ],
+    )?;
+    assert_exit(&rerun, 0, "changed-test rerun for the hash-form gap id");
+    let rerun_json: serde_json::Value =
+        serde_json::from_slice(&rerun.stdout).map_err(|err| format!("parse rerun JSON: {err}"))?;
+    let gap_hash = rerun_json["seams"]
+        .as_array()
+        .and_then(|seams| {
+            seams
+                .iter()
+                .find_map(|seam| seam["canonical_gap_id"].as_str().map(str::to_string))
+        })
+        .ok_or_else(|| "rerun seam rows must carry canonical_gap_id".to_string())?;
+    assert!(
+        gap_hash.starts_with("gap:"),
+        "rerun emits the hash form the explain/context surfaces must accept: {gap_hash}"
+    );
+    // The producer's `probe:` ID names the finding both drill-ins must hit.
+    let check = run_worktree_check(root, &root_arg)?;
+    let probe_id = printed_probe_identity(&stdout_text(&check))
+        .ok_or_else(|| format!("check must print a probe finding ID"))?;
+    let explained = run_ripr(
+        root,
+        &[
+            "explain",
+            "--root",
+            &root_arg,
+            "--base",
+            "HEAD",
+            "--worktree",
+            &gap_hash,
+        ],
+    )?;
+    assert_exit(&explained, 0, "explain with the hash-form gap ID");
+    assert!(
+        stdout_text(&explained).contains(&probe_id),
+        "explain by hash-form gap ID must render the same finding check printed:\n{}",
+        stdout_text(&explained)
+    );
+    let context = run_ripr(
+        root,
+        &[
+            "context",
+            "--root",
+            &root_arg,
+            "--base",
+            "HEAD",
+            "--worktree",
+            "--at",
+            &gap_hash,
+        ],
+    )?;
+    assert_exit(&context, 0, "context with the hash-form gap ID");
+    let packet: serde_json::Value = serde_json::from_slice(&context.stdout)
+        .map_err(|err| format!("parse context packet: {err}"))?;
+    assert_eq!(
+        packet["probe"]["id"].as_str(),
+        Some(probe_id.as_str()),
+        "context by hash-form gap ID must select the same finding"
+    );
+    Ok(())
+}
+
 /// The `probe:` finding ID a printed check drill-down line names, when the
 /// bounded check output offers one.
 fn printed_probe_identity(check_stdout: &str) -> Option<String> {

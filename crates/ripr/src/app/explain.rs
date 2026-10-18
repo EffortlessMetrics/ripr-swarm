@@ -1,7 +1,7 @@
 use super::CheckInput;
 use super::check::check_with_progress;
 use super::progress::{AnalysisProgressScope, AnalysisProgressSink};
-use super::selector::{FindingSelection, select_finding};
+use super::selector::FindingSelection;
 use crate::config::RiprConfig;
 use crate::output;
 use std::path::Path;
@@ -270,7 +270,16 @@ pub(crate) fn explain_finding_from_artifact_with_navigation_mode(
         config,
         asserted_base,
     )?;
-    match select_finding(&findings, selector) {
+    // The artifact path reuses the same seam-side reverse lookups as the
+    // fresh path: seam IDs and hash-form canonical gap IDs bind through the
+    // current root's classified seams, so one ID spells the same finding on
+    // every explain surface (#8688).
+    match super::selector::select_finding_with_seam_reverse(
+        &findings,
+        &input.root,
+        config,
+        selector,
+    ) {
         FindingSelection::Unique(finding) => {
             Ok(output::human::render_finding_with_context_command(
                 finding,

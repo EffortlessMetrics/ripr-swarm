@@ -66,6 +66,21 @@ pub(in crate::app) fn is_seam_id_selector(selector: &str) -> bool {
             .all(|character| character.is_ascii_digit() || ('a'..='f').contains(&character))
 }
 
+/// Whether `selector` has the shape of the seam-derived hash-form canonical
+/// gap ID `ripr rerun --json` and `ripr repo-exposure` JSON emit:
+/// `gap:` followed by exactly 16 lowercase hex characters (#8688). The
+/// producer form `ripr check` prints (`gap:rust:...`) is longer and names a
+/// colon-separated body, so this shape check cannot confuse the two.
+pub(in crate::app) fn is_gap_hash_selector(selector: &str) -> bool {
+    let Some(hash) = selector.strip_prefix("gap:") else {
+        return false;
+    };
+    hash.len() == 16
+        && hash
+            .chars()
+            .all(|character| character.is_ascii_digit() || ('a'..='f').contains(&character))
+}
+
 /// Resolve a seam ID against the finding set through the shared
 /// seam-to-finding binding (#8166 residual): the seam named by `seam_id`
 /// binds at most one finding via
@@ -97,12 +112,53 @@ pub(in crate::app) fn select_finding_for_seam<'a>(
     }
 }
 
-/// [`select_finding`] plus the seam-ID reverse lookup for a fresh run
-/// (#8166 residual): a direct hit keeps the existing result; only a
-/// seam-shaped miss inventories the root's classified seams and binds the
-/// named seam back to its finding. An unreadable or truncated inventory
-/// is `Undecided` rather than a miss (#8689): the lookup checked nothing,
-/// so claiming "no finding matched" would overstate what was established.
+/// Resolve the seam-derived hash-form canonical gap ID (`gap:<16hex>`,
+/// #8688) against the finding set through the same seam-to-finding binding
+/// as the seam-ID reverse lookup. The hash form is minted from the seam's
+/// owner, kind, flow sink, missing discriminator and assertion shape, so it
+/// is read from the seam side: every headline-eligible seam whose
+/// [`canonical_gap_identity`] recomputes to the selector is bound back to
+/// its finding. Several seams can group under one gap; distinct bound
+/// findings make the selector ambiguous, never a silent first match, and a
+/// gap no seam carries is `NoMatch`.
+pub(in crate::app) fn select_finding_for_gap_hash<'a>(
+    findings: &'a [Finding],
+    classified: &[crate::analysis::ClassifiedSeam],
+    selector: &str,
+) -> FindingSelection<'a> {
+    let mut bound: Vec<&Finding> = Vec::new();
+    for entry in classified.iter().filter(|entry| {
+        crate::analysis::canonical_gap::canonical_gap_identity(entry)
+            .is_some_and(|identity| identity.id == selector)
+    }) {
+        let canonical_gap_id = crate::analysis::canonical_gap::canonical_gap_identity(entry)
+            .map(|identity| identity.id);
+        let Some(finding) = super::repair_card_handoff::finding_for_seam(
+            findings,
+            entry,
+            canonical_gap_id.as_deref(),
+            classified,
+        ) else {
+            continue;
+        };
+        if !bound.contains(&finding) {
+            bound.push(finding);
+        }
+    }
+    match bound.len() {
+        0 => FindingSelection::NoMatch,
+        1 => FindingSelection::Unique(bound[0]),
+        _ => FindingSelection::Ambiguous(bound),
+    }
+}
+
+/// [`select_finding`] plus the seam-side reverse lookups for a fresh run
+/// (#8166 residual, #8688): a direct hit keeps the existing result; only a
+/// miss shaped like a seam ID or a hash-form canonical gap ID inventories
+/// the root's classified seams and binds the named identity back to its
+/// finding. An unreadable or truncated inventory is `Undecided` rather than
+/// a miss (#8689): the lookup checked nothing, so claiming "no finding
+/// matched" would overstate what was established.
 pub(in crate::app) fn select_finding_with_seam_reverse<'a>(
     findings: &'a [Finding],
     root: &std::path::Path,
@@ -110,9 +166,16 @@ pub(in crate::app) fn select_finding_with_seam_reverse<'a>(
     selector: &str,
 ) -> FindingSelection<'a> {
     let direct = select_finding(findings, selector);
-    if !matches!(direct, FindingSelection::NoMatch) || !is_seam_id_selector(selector) {
+    if !matches!(direct, FindingSelection::NoMatch) {
         return direct;
     }
+    let seam_lookup = if is_seam_id_selector(selector) {
+        true
+    } else if is_gap_hash_selector(selector) {
+        false
+    } else {
+        return direct;
+    };
     let (classified, limit_info) =
         match crate::analysis::inventory_classified_seams_at_with_config(root, config) {
             Ok(inventory) => inventory,
@@ -128,7 +191,11 @@ pub(in crate::app) fn select_finding_with_seam_reverse<'a>(
             total: info.total,
         });
     }
-    select_finding_for_seam(findings, &classified, selector)
+    if seam_lookup {
+        select_finding_for_seam(findings, &classified, selector)
+    } else {
+        select_finding_for_gap_hash(findings, &classified, selector)
+    }
 }
 
 /// Add location syntax guidance only after selection misses. Finding IDs are
@@ -376,6 +443,11 @@ mod tests {
         ));
     }
 
+    /// #8688: the seam-derived hash-form canonical gap ID (`gap:<16hex>`)
+    /// that `ripr rerun --json` and repo-exposure JSON carry resolves
+    /// through the seam binding to the same finding the seam ID resolves
+    /// to; a hash no seam carries stays `NoMatch`, and the producer form
+    /// `ripr check` prints is not mistaken for the hash shape.
     #[test]
     fn gap_hash_selector_resolves_through_the_seam_binding() {
         use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
