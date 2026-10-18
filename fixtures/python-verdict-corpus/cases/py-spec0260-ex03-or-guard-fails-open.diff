@@ -1,0 +1,9 @@
+diff --git a/guards/quote_force.py b/guards/quote_force.py
+--- a/guards/quote_force.py
++++ b/guards/quote_force.py
+@@ -1,4 +1,4 @@
+ def quote_force(total, force=False):
+     if total > 1000 or force:
+-        return round(total * 1.02, 2)
++        return round(total * 1.03, 2)
+     return round(total * 1.05, 2)
