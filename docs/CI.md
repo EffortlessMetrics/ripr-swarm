@@ -85,6 +85,28 @@ required job by label in a separate change would let a skipped required job
 report success. A brief Draft flip followed by Ready on a PR is this re-toggle,
 not an error.
 
+### Which state is my PR in, and what is next?
+
+The words below name the state, not a label. Only the two GitHub events in the
+third column spend heavy CI; every earlier state is cheap candidate work.
+
+| State | How to read it on the PR | Next action |
+| --- | --- | --- |
+| Candidate | Draft; only `ub-review` and light checks run on push | Finish review, repair findings, run focused local proof |
+| Qualification requested | Draft -> Ready just happened for this head | Wait; do not push, re-toggle or relabel |
+| Qualifying | `Ripr Rust Small Result` absent or pending; a routed-rust run is queued or in progress | Wait for the run; the watchdog reports it as in flight |
+| Qualified | `Ripr Rust Small Result` succeeded on the current head SHA | Confirm the head SHA still matches, inspect the results, merge |
+| Not qualified | Ready with no required check, or a push landed after Ready | Return to Draft, repair, then Draft -> Ready again |
+
+`merge-ready` is not a state in this table: it is today's label spelling for
+"also start the optional lanes for this head" (see above) and does not request
+the required check. Do not apply it to mean "please spend CI". A skipped job in
+the check list on a Draft is the cheap-candidate state working as intended, not
+a failure. An `ub-review` result that is green is advisory: read its review and
+sensor output, not only the wrapper conclusion (see the `ub-review` notes
+below), and treat a cancelled run as superseded by a newer push, not as a
+result.
+
 ## Verification Economics Policy
 
 CI is a product surface. A contributor should be able to tell what ran, why it
