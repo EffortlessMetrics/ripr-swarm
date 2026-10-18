@@ -71,7 +71,10 @@ can only hint that a caller "may lead here" without changing anything.
   closed. The callee name must still be unique in the workspace.
   Forwarding accepts a caller tail that is exactly the identity-bound
   hop call, optionally wrapped in one constructor
-  (`Some(Parser { .. }.parse())`); a caller body containing `?` or an
+  (`Some(Parser { .. }.parse())`); the tail's receiver must itself
+  bind to the same impl type as the recorded hop site, so a tail call
+  on a different owner (`Other { .. }.parse()`) forwards nothing; a
+  caller body containing `?` or an
   early `return` still refuses forwarding. An exact assertion on the
   entry's result pins a `return_value` owner through the chain under
   the same conditions as forwarding to the observed hops, with
@@ -373,7 +376,8 @@ call operand); fixtures `helper_chain_{one_hop,multi_hop,controls}`;
 `crates/ripr/tests/helper_wrapper_reach.rs` (relation precedence, hop
 propagation stop, rebinding stop);
 `crates/ripr/tests/method_helper_reach.rs` (#5352 method hops: public
-entry credit, smoke/wrong-owner/variable-receiver controls, and the
+entry credit, smoke/wrong-owner/variable-receiver controls, the
+wrong-receiver tail-forwarding control, and the
 unselected `match_arm` control).
 
 ## Non-Goals

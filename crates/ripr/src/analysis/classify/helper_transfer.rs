@@ -667,6 +667,19 @@ fn method_call_site(text: &str, callee_name: &str) -> Option<(usize, MethodRecei
     None
 }
 
+/// Whether `receiver` in `caller` denotes a value of `callee_type`:
+/// identity is the shared impl type, never the bare name (#5352).
+fn receiver_binds_to_type(
+    caller: &FunctionSummary,
+    receiver: &MethodReceiver,
+    callee_type: &str,
+) -> bool {
+    match receiver {
+        MethodReceiver::SelfReceiver => impl_self_type(caller).as_deref() == Some(callee_type),
+        MethodReceiver::Constructed(ty) => ty == callee_type,
+    }
+}
+
 /// Whether `caller` may invoke the method `callee` at this receiver:
 /// identity is the shared impl type, never the bare name (#5352).
 fn method_site_binds(
@@ -677,12 +690,7 @@ fn method_site_binds(
     let Some(callee_type) = impl_self_type(callee) else {
         return false;
     };
-    match receiver {
-        MethodReceiver::SelfReceiver => {
-            impl_self_type(caller).as_deref() == Some(callee_type.as_str())
-        }
-        MethodReceiver::Constructed(ty) => ty == &callee_type,
-    }
+    receiver_binds_to_type(caller, receiver, &callee_type)
 }
 
 /// The call sites in `caller` that invoke `callee_name`, with their
@@ -1843,7 +1851,7 @@ fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {
                     None => return false,
                 },
             };
-            caller_tail_forwards_call(&hop.caller.body, callee, &hop.call_text)
+            caller_tail_forwards_call(&hop.caller, callee, &hop.call_text)
                 && hop.arguments.iter().all(|argument| {
                     !is_identifier(argument.trim())
                         || !caller_rebinds_parameter(&hop.caller.body, argument.trim())
@@ -1851,7 +1859,8 @@ fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {
         })
 }
 
-fn caller_tail_forwards_call(body: &str, callee: &str, call_text: &str) -> bool {
+fn caller_tail_forwards_call(caller: &FunctionSummary, callee: &str, call_text: &str) -> bool {
+    let body: &str = &caller.body;
     let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
     if masked.len() != body.len() || callee.is_empty() {
         return false;
@@ -1902,9 +1911,19 @@ fn caller_tail_forwards_call(body: &str, callee: &str, call_text: &str) -> bool 
     // (`Some(Parser { .. }.parse())`). The hop's recorded call text
     // must itself be a method call site: a direct-call hop whose tail
     // merely contains the call (`unit_cents(qty) + 1`) never forwards
-    // through this branch.
-    if method_call_site(call_text, callee).is_some()
-        && let Some((paren, _receiver)) = method_call_site(tail, callee)
+    // through this branch. The tail receiver must bind to the same
+    // owner type the recorded site binds to: the recorded receiver
+    // already passed `method_site_binds`, so it names that type
+    // (`self` in the callee's impl, or the constructed type itself);
+    // a tail call on any other receiver forwards a different owner's
+    // result and earns no credit (#8633 review).
+    if let Some((_, recorded_receiver)) = method_call_site(call_text, callee)
+        && let Some(callee_type) = match &recorded_receiver {
+            MethodReceiver::SelfReceiver => impl_self_type(caller),
+            MethodReceiver::Constructed(ty) => Some(ty.clone()),
+        }
+        && let Some((paren, tail_receiver)) = method_call_site(tail, callee)
+        && receiver_binds_to_type(caller, &tail_receiver, &callee_type)
         && let Some(close) = matching_close(tail, paren)
     {
         let after = tail[close + 1..].trim();
@@ -3214,6 +3233,48 @@ mod tests {
             "is_bulk",
             &chain,
             &related(&[&middle_test, &unknown])
+        ));
+    }
+
+    // #8633 review: a method hop's tail forwards only on the receiver
+    // the site binding admits. A tail call on a different owner must
+    // not inherit the bound `self.` hop's credit.
+    #[test]
+    fn method_tail_forwarding_binds_to_the_recorded_receiver() {
+        let method_chain = |body: &str, call_text: &str| {
+            let mut caller = function("src/lib.rs", "total", &[("secs", call_text)]);
+            caller.impl_context = FunctionImplContext::Impl {
+                self_type: "Parser".to_string(),
+            };
+            caller.body = body.to_string().into();
+            HelperChain {
+                hops: vec![HelperHop {
+                    caller,
+                    call_text: call_text.to_string(),
+                    arguments: Vec::new(),
+                    through_macro: false,
+                }],
+                stop_above: None,
+            }
+        };
+        // Same owner through `self`, and through a constructed value of
+        // the same type, forwards.
+        for body in [
+            "fn total(&self) -> u64 {\n    self.secs()\n}",
+            "fn total(&self) -> u64 {\n    Parser { n: 1 }.secs()\n}",
+        ] {
+            assert!(
+                chain_forwards_owner_result("secs", &method_chain(body, "self.secs()")),
+                "{body}"
+            );
+        }
+        // A different constructed owner in the tail does not forward.
+        assert!(!chain_forwards_owner_result(
+            "secs",
+            &method_chain(
+                "fn total(&self) -> u64 {\n    let _bound = self.secs();\n    Other { n: 1 }.secs()\n}",
+                "self.secs()"
+            )
         ));
     }
 

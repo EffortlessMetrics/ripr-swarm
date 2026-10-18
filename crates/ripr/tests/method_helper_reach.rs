@@ -125,6 +125,19 @@ fn variable_receiver_entry_is_not_credited() -> Result<(), String> {
 }
 
 #[test]
+fn wrong_receiver_tail_forwarding_is_not_credited() -> Result<(), String> {
+    // The bound hop is `self.secs()` inside `Parser::total`, but the
+    // tail `total` actually returns forwards a call on a different
+    // owner (`Other`). That tail must not inherit the hop's credit:
+    // no `exposed` — propagation through the chain is unconfirmed.
+    let source = "struct Parser { n: u64 }\nstruct Other { n: u64 }\nimpl Parser {\n    fn secs(&self) -> u64 {\n        self.n * 1_209_600\n    }\n    fn total(&self) -> u64 {\n        let _bound = self.secs();\n        Other { n: self.n }.secs()\n    }\n}\npub fn entry(n: u64) -> u64 {\n    Parser { n }.total()\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn fortnight_total() {\n        assert_eq!(entry(1), 1_209_600);\n    }\n}\n";
+    let f = finding(source, SECS_DIFF, "return_value")?;
+    assert_ne!(f["classification"], "exposed", "{f}");
+    assert_eq!(f["classification"], "propagation_unknown", "{f}");
+    Ok(())
+}
+
+#[test]
 fn match_arm_through_entry_is_not_credited_without_selection() -> Result<(), String> {
     // Humantime shape (#5352): the arm's scrutinee is `self.unit`, set
     // from a string through `Unit::from_str` behind `?`. Selection is
