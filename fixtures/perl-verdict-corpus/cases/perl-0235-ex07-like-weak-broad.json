@@ -1,0 +1,60 @@
+{
+  "case_id": "perl-0235-ex07-like-weak-broad",
+  "subject_id": "authored-perl-test2-ledger",
+  "diff": "cases/perl-0235-ex07-like-weak-broad.diff",
+  "anchor": {
+    "file": "lib/Ledger.pm",
+    "line": 18
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_format",
+  "test_shape": "test2_like_prefix_regex",
+  "hard_case": "RIPR-SPEC-0235 example 7: an exact_return_assertion at weak_broad, the shape of a like() call on the owner.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "return sprintf(\"%s %d\", $date, $amount);",
+        "mutated_line": "return sprintf(\"%s %d\", $date, $amount);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the sign is dropped"
+      },
+      {
+        "replacement": "return sprintf(\"%s %+d\", $date, -$amount);",
+        "mutated_line": "return sprintf(\"%s %+d\", $date, -$amount);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the sign flips"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0235 example 7: an exact_return_assertion at weak_broad, the shape of a like() call on the owner. The rewrite and run truth are those of perl-test2-format-entry-like (not_discriminated); the packet edit changes which facts ripr reads, not what prove -l t does with the rewrite.",
+  "labeling_observation": {
+    "ripr_commit": "4f48195",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-0235-ex07-like-weak-broad.json",
+    "sha256": "d7eb0ecbf2b1b044e1eab8d7a904464d99104298c2ca3385bb56cc4f737d46cf",
+    "provenance": "edited_producer",
+    "edits": "Started from the producer packet of perl-test2-format-entry-like, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"kind\": \"exact_return_assertion\"}; the packet fingerprint was recomputed."
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0235#7"
+  ]
+}
