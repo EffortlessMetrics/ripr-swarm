@@ -2783,6 +2783,107 @@ test("mocked owner module", () => {
 }
 
 #[test]
+fn find_related_tests_module_value_use_namespace_import_positive_and_negatives() {
+    let owner = module_value_owner("stop");
+    let positive = extract_tests(
+        Path::new("tests/ns.test.ts"),
+        r#"import * as ns from "../src/owners";
+
+test("namespace member used as a value", () => {
+    expect(ns.run([ns.stop])).toEqual([]);
+});
+"#,
+    );
+    assert_eq!(positive.len(), 1);
+    let candidates =
+        related_test_candidates(&owner, &positive, None, &ReExportIndex::empty(), None);
+    assert_eq!(candidates.len(), 1, "{candidates:?}");
+    assert_eq!(
+        candidates[0].relation,
+        TypeScriptRelationKind::ModuleValueUse
+    );
+
+    let negatives = extract_tests(
+        Path::new("tests/ns_neg.test.ts"),
+        r#"import * as ns from "../src/owners";
+
+test("namespace redeclared locally", () => {
+    const ns = { run: (v: unknown[]) => v, stop: 1 };
+    expect(ns.run([ns.stop])).toEqual([1]);
+});
+
+test("namespace member only in a string", () => {
+    expect(ns.run(["ns.stop"])).toEqual(["ns.stop"]);
+});
+
+test("block comment and template literal mentions", () => {
+    /* stop */
+    expect(ns.run([`${"stop"}`])).toEqual(["stop"]);
+});
+"#,
+    );
+    assert_eq!(negatives.len(), 3);
+    let candidates =
+        related_test_candidates(&owner, &negatives, None, &ReExportIndex::empty(), None);
+    assert!(candidates.is_empty(), "{candidates:?}");
+
+    let mocked = extract_tests(
+        Path::new("tests/ns_mock.test.ts"),
+        r#"import * as ns from "../src/owners";
+jest.mock("../src/owners");
+
+test("mocked namespace", () => {
+    expect(ns.run([ns.stop])).toEqual([]);
+});
+"#,
+    );
+    assert_eq!(mocked.len(), 1);
+    let candidates = related_test_candidates(&owner, &mocked, None, &ReExportIndex::empty(), None);
+    assert!(candidates.is_empty(), "{candidates:?}");
+}
+
+#[test]
+fn find_related_tests_module_value_use_block_comment_and_template_negatives() {
+    let owner = module_value_owner("stop");
+    let tests = extract_tests(
+        Path::new("tests/named_neg.test.ts"),
+        r#"import { run, stop } from "../src/owners";
+
+test("block comment mention", () => {
+    /* stop */
+    expect(run([1])).toEqual([1]);
+});
+
+test("template literal mention", () => {
+    expect(run([`stop`])).toEqual(["stop"]);
+});
+
+test("plain third mention", () => {
+    expect(run([1])).toEqual([1]);
+});
+"#,
+    );
+    assert_eq!(tests.len(), 3);
+    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    assert!(candidates.is_empty(), "{candidates:?}");
+
+    let type_only = extract_tests(
+        Path::new("tests/type_only.test.ts"),
+        r#"import type { stop } from "../src/owners";
+
+test("type-only import never binds the runtime value", () => {
+    const marker: typeof stop = undefined as never;
+    expect(marker).toBeUndefined();
+});
+"#,
+    );
+    assert_eq!(type_only.len(), 1);
+    let candidates =
+        related_test_candidates(&owner, &type_only, None, &ReExportIndex::empty(), None);
+    assert!(candidates.is_empty(), "{candidates:?}");
+}
+
+#[test]
 fn find_related_tests_matches_named_import_alias_calls() {
     let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
