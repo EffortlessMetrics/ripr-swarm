@@ -148,8 +148,8 @@ Common options:
   --format FORMAT   human (default); human-full lists every finding with
                     drill-in commands; json (or --json) for scripts and CI;
                     github for Actions annotations; sarif for code scanning.
-  --mode MODE       instant, draft (default), or deep: how much of the
-                    workspace is indexed (never changes what a class means).
+  --mode MODE       instant, draft (default), fast, deep, or ready: how much
+                    of the workspace is indexed (never changes a class).
   --root PATH       Workspace root. Defaults to the current directory, then
                     walks up to the enclosing workspace or package, or the git
                     top level (never past the repository); `--root .` pins
@@ -306,6 +306,14 @@ Options:
                            error names git_invocation_timeout. 0 disables
                            the deadline. Default: 300 (5 minutes). Also
                            settable via RIPR_GIT_TIMEOUT env var.
+  --timeout SECS           Wall-clock budget in seconds for the whole
+                           diff or worktree analysis (not the repo-wide
+                           repo-exposure and seam formats). When it runs out, check stops
+                           and refuses with analysis_timeout: no findings
+                           are produced and the result is never a clean
+                           pass. 0 disables the budget. Default: 600 (10
+                           minutes). Also settable via RIPR_CHECK_TIMEOUT
+                           env var.
   --quiet                  Suppress analysis progress and heartbeats on
                            stderr. Does not change machine stdout, exit
                            codes, or error reporting.

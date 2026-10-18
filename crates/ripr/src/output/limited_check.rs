@@ -531,6 +531,13 @@ mod tests {
                 "seam_id_unknown",
                 "analysis/seam-inventory",
             ),
+            (
+                CoreError::analysis_timeout(
+                    "analysis_timeout: ripr check exceeded its 600s wall-clock budget",
+                ),
+                "analysis_timeout",
+                "analysis/timeout",
+            ),
         ];
         for (error, identity, route) in cases {
             let rendered = render_check_failure_json(&input(), &error)?;

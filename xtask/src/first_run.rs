@@ -30,6 +30,10 @@ const ROW_SCHEMA: &str = "first_run_row.v1";
 const ROWS_FILE: &str = "first-run-rows.jsonl";
 /// A developer is asked to review the generated workflow before committing it.
 const MAX_WORKFLOW_LINES: usize = 1500;
+/// Marker for the friction flag emitted when the generated workflow exceeds
+/// `MAX_WORKFLOW_LINES`. The public-proof page matches on this text to keep
+/// the workflow-size flag in its own metric, so the wording has one owner.
+pub(crate) const GENERATED_WORKFLOW_BUDGET_FLAG: &str = "generated workflow is";
 const INSTALL_STDERR_LOG: &str = "install_published.stderr.log";
 const ARCHIVE_STDERR_LOG: &str = "install_archive.stderr.log";
 const OUT_MARKER: &str = ".first-run-output";
@@ -771,6 +775,7 @@ struct CaseResult {
     name: String,
     steps: Vec<(StepResult, Vec<String>)>,
     verdict: Option<&'static str>,
+    verdict_reason: Option<String>,
     caught_by: &'static [&'static str],
     workflow_lines: Option<usize>,
     workflow_installs_with_cargo: Option<bool>,
@@ -813,6 +818,14 @@ fn walk_case(out: &Path, ripr: &str, case: &Case) -> Result<CaseResult, String> 
     )?;
     push_step(&mut steps, &work, ripr, "doctor_after", &["doctor"])?;
 
+    let verdict_reason = verdict_reason_of(
+        verdict,
+        &steps[check].stdout.clone(),
+        steps
+            .iter()
+            .find(|step| step.name == "explain")
+            .map(|step| step.stdout.as_str()),
+    );
     let workflow = fs::read_to_string(work.join(".github").join("workflows").join("ripr.yml")).ok();
     let workflow_lines = workflow.as_ref().map(|text| text.lines().count());
     let workflow_installs_with_cargo = workflow
@@ -831,6 +844,7 @@ fn walk_case(out: &Path, ripr: &str, case: &Case) -> Result<CaseResult, String> 
         name,
         steps: annotated,
         verdict,
+        verdict_reason,
         caught_by: case.caught_by,
         workflow_lines,
         workflow_installs_with_cargo,
@@ -889,6 +903,56 @@ fn verdict_of(check_stdout: &str) -> Option<&'static str> {
         })
 }
 
+/// Reason evidence for an unknown verdict, taken only from output the walk
+/// already produced: the `Stop reasons:` list in the captured `ripr explain`
+/// output, falling back to the `Why unknown:` / `Analyzer limit:` line next to
+/// the verdict in the captured `ripr check` output. Specific verdicts and
+/// outputs with no such line record no reason rather than a fabricated one.
+fn verdict_reason_of(
+    verdict: Option<&str>,
+    check_stdout: &str,
+    explain_stdout: Option<&str>,
+) -> Option<String> {
+    if !matches!(
+        verdict,
+        Some("infection_unknown" | "propagation_unknown" | "static_unknown")
+    ) {
+        return None;
+    }
+    if let Some(explain) = explain_stdout
+        && let Some(reasons) = stop_reasons_of(explain)
+    {
+        return Some(reasons);
+    }
+    check_stdout.lines().map(str::trim).find_map(|line| {
+        line.strip_prefix("Why unknown:")
+            .or_else(|| line.strip_prefix("Analyzer limit:"))
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty())
+            .map(str::to_string)
+    })
+}
+
+/// The bullet lines under the first `Stop reasons:` heading, joined as one
+/// recorded reason. Both explain forms use `- ` bullets (`token: meaning` in
+/// the verdict explanation, `token — meaning` in the finding block).
+fn stop_reasons_of(output: &str) -> Option<String> {
+    let mut lines = output.lines();
+    lines.find(|line| line.trim() == "Stop reasons:")?;
+    let reasons: Vec<String> = lines
+        .map(str::trim)
+        .take_while(|line| line.starts_with("- "))
+        .map(|line| {
+            line.trim_start_matches("- ")
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .filter(|reason| !reason.is_empty())
+        .collect();
+    (!reasons.is_empty()).then(|| reasons.join("; "))
+}
+
 fn friction(result: &StepResult, workflow: Option<&str>) -> Vec<String> {
     let mut flags = Vec::new();
     if result.exit != Some(0) {
@@ -930,7 +994,7 @@ fn friction(result: &StepResult, workflow: Option<&str>) -> Vec<String> {
                 let lines = text.lines().count();
                 if lines > MAX_WORKFLOW_LINES {
                     flags.push(format!(
-                        "generated workflow is {lines} lines, over the {MAX_WORKFLOW_LINES}-line review budget"
+                        "{GENERATED_WORKFLOW_BUDGET_FLAG} {lines} lines, over the {MAX_WORKFLOW_LINES}-line review budget"
                     ));
                 }
                 if text.contains("cargo install ripr") && !text.contains("sha256") {
@@ -980,6 +1044,7 @@ fn finish(
         "cases": cases.iter().map(|case| json!({
             "case": case.name,
             "verdict": case.verdict,
+            "verdict_reason": case.verdict_reason,
             "caught_by": case.caught_by,
             "verdict_reading": verdict_reading(case.verdict, !case.caught_by.is_empty()),
             "workflow_lines": case.workflow_lines,
@@ -1204,6 +1269,9 @@ fn render_markdown(
             case.workflow_installs_with_cargo
                 .map_or_else(|| "unknown".to_string(), |flag| flag.to_string()),
         ));
+        if let Some(reason) = &case.verdict_reason {
+            text.push_str(&format!("verdict reason: {reason}\n\n"));
+        }
         for (step, flags) in &case.steps {
             friction_total += flags.len();
             text.push_str(&format!(
@@ -1267,6 +1335,7 @@ mod tests {
                 (step("init_ci", 0, "", "", 0.1), vec!["x".to_string()]),
             ],
             verdict: Some("weakly_exposed"),
+            verdict_reason: None,
             caught_by: &[],
             workflow_lines: Some(321),
             workflow_installs_with_cargo: Some(false),
@@ -1331,6 +1400,87 @@ mod tests {
             Some("reachable_unrevealed")
         );
         assert_eq!(verdict_of("No findings"), None);
+    }
+
+    #[test]
+    fn an_unknown_verdict_records_its_reason_and_a_specific_verdict_does_not() -> Result<(), String>
+    {
+        let check = "Static exposure: unknown (severity: warning, confidence 0.40)\n  Why unknown: infection could not be determined statically\n";
+        let explain = "Why this verdict\n  Stop reasons:\n  - infection_evidence_unknown: infection evidence is unknown\n";
+        assert_eq!(
+            verdict_reason_of(Some("infection_unknown"), check, Some(explain)).as_deref(),
+            Some("infection_evidence_unknown: infection evidence is unknown")
+        );
+        // Without explain output the check line next to the verdict is the reason.
+        assert_eq!(
+            verdict_reason_of(Some("infection_unknown"), check, None).as_deref(),
+            Some("infection could not be determined statically")
+        );
+        // A specific verdict never fabricates a reason, even if the same
+        // explain text were present.
+        assert_eq!(
+            verdict_reason_of(Some("exposed"), check, Some(explain)),
+            None
+        );
+        assert_eq!(
+            verdict_reason_of(Some("infection_unknown"), "No findings", None),
+            None
+        );
+
+        let out =
+            std::env::temp_dir().join(format!("first-run-verdict-reason-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&out);
+        fs::create_dir_all(&out).map_err(|err| err.to_string())?;
+        let options = Options {
+            ripr: "ripr".into(),
+            out: out.clone(),
+            install_published: false,
+            install_archive: None,
+        };
+        let unknown = CaseResult {
+            name: "demo-1.0.0".to_string(),
+            steps: vec![(step("check", 0, check, "", 0.1), vec![])],
+            verdict: Some("infection_unknown"),
+            verdict_reason: verdict_reason_of(Some("infection_unknown"), check, Some(explain)),
+            caught_by: &[],
+            workflow_lines: None,
+            workflow_installs_with_cargo: None,
+        };
+        let exposed = CaseResult {
+            name: "demo-2.0.0".to_string(),
+            steps: vec![(step("check", 0, check, "", 0.1), vec![])],
+            verdict: Some("exposed"),
+            verdict_reason: verdict_reason_of(Some("exposed"), check, Some(explain)),
+            caught_by: &[],
+            workflow_lines: None,
+            workflow_installs_with_cargo: None,
+        };
+        finish(
+            &options,
+            &out,
+            "ripr 0.0.0",
+            Vec::new(),
+            vec![unknown, exposed],
+            None,
+        )?;
+        let report: Value = serde_json::from_str(
+            &fs::read_to_string(out.join("first-run.json")).map_err(|err| err.to_string())?,
+        )
+        .map_err(|err| err.to_string())?;
+        assert_eq!(report["schema_version"], "first_run.v1");
+        assert_eq!(
+            report["cases"][0]["verdict_reason"],
+            json!("infection_evidence_unknown: infection evidence is unknown")
+        );
+        assert_eq!(report["cases"][1]["verdict_reason"], Value::Null);
+        let markdown =
+            fs::read_to_string(out.join("first-run.md")).map_err(|err| err.to_string())?;
+        assert!(
+            markdown.contains("verdict reason: infection_evidence_unknown"),
+            "{markdown}"
+        );
+        let _ = fs::remove_dir_all(&out);
+        Ok(())
     }
 
     #[test]
@@ -1487,6 +1637,7 @@ mod tests {
             name: "demo-1.0.0".to_string(),
             steps: vec![(step("check", 0, "", "", 0.1), vec![])],
             verdict: Some("reachable_unrevealed"),
+            verdict_reason: None,
             caught_by: &["tests::boundary", "tests::equal"],
             workflow_lines: None,
             workflow_installs_with_cargo: None,

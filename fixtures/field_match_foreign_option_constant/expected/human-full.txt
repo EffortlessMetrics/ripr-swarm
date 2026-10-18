@@ -1,0 +1,52 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/field_match_foreign_option_constant/input
+
+Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+WARNING ./src/lib.rs:5
+  id: probe:src_lib.rs:match_arm:c8726ad2
+
+Changed
+  before: foreign::None => 0,
+  after:  foreign::None =>
+
+Probe
+  family: match_arm
+  delta:  control
+  owner:  src/lib.rs::charge
+
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+
+Evidence
+  - reach yes: Related tests appear to reach charge: legacy_only
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Changed behavior appears to influence match arm result: foreign::None =>
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - local flow reaches match arm result: foreign::None => (line 5)
+  - related test src/lib.rs:12 legacy_only uses strong whole object equality oracle: assert_eq!(charge(&Lease { settled_elapsed_ms: None, timeout_sec: 600 }), 600); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - source assertion argument value 600 at line 13
+  - source function argument value lease = 600 at line 13
+
+Weakness
+  - No strong discriminator was detected
+
+Static limitation
+  rust_field_match_selector_unresolved — A plain owner-parameter field selects this match, but ripr cannot align its value at the owner invocation or establish whether an assertion observes that invocation's return. This names an analyzer limitation without changing classification or claiming coverage.
+
+Limitation detail
+  last established edge: owner parameter field `lease.settled_elapsed_ms` is the changed tail match selector
+  first unresolved edge: `lease.settled_elapsed_ms` value at the owner invocation and whether a related assertion observes that invocation's returned value
+  analyzer route: analysis/rust-field-match-selector
+  non-claim: named analyzer limitation only; no coverage, test adequacy, gap absence, or same-invocation proof
+
+Next step
+  Inspect `lease.settled_elapsed_ms` at the existing owner call and whether a related assertion observes that call's returned value; add or strengthen a test only if that inspection identifies a missing observation
+Drill in:
+  ripr explain --root <cwd>/fixtures/field_match_foreign_option_constant/input --diff <cwd>/fixtures/field_match_foreign_option_constant/diff.patch --mode fast probe:src_lib.rs:match_arm:c8726ad2
+  ripr context --root <cwd>/fixtures/field_match_foreign_option_constant/input --diff <cwd>/fixtures/field_match_foreign_option_constant/diff.patch --mode fast --at probe:src_lib.rs:match_arm:c8726ad2

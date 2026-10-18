@@ -2783,7 +2783,7 @@ mod declaration_tests {
         CallFact {
             line,
             name: name.to_string(),
-            text: text.to_string(),
+            text: text.to_string().into(),
         }
     }
 
@@ -2844,7 +2844,7 @@ mod tests {
                 .map(|c| CallFact {
                     line: 2,
                     name: c.to_string(),
-                    text: format!("{c}()"),
+                    text: format!("{c}()").into(),
                 })
                 .collect(),
             returns: Vec::new(),
@@ -2875,7 +2875,7 @@ mod tests {
                 .map(|c| CallFact {
                     line: 2,
                     name: c.to_string(),
-                    text: format!("{c}()"),
+                    text: format!("{c}()").into(),
                 })
                 .collect(),
             assertions: Vec::new(),
@@ -3035,7 +3035,7 @@ mod tests {
             CallFact {
                 line: 1,
                 name: function.name.clone(),
-                text: format!("fn {}(&mut self) {{", function.name),
+                text: format!("fn {}(&mut self) {{", function.name).into(),
             },
         );
         function
@@ -3044,7 +3044,7 @@ mod tests {
     fn with_call_text(mut function: FunctionSummary, name: &str, text: &str) -> FunctionSummary {
         for call in &mut function.calls {
             if call.name == name {
-                call.text = text.to_string();
+                call.text = text.to_string().into();
             }
         }
         function
@@ -3432,7 +3432,7 @@ mod tests {
         cyclic[2].calls.push(CallFact {
             line: 2,
             name: "g9".to_string(),
-            text: "g9()".to_string(),
+            text: "g9()".to_string().into(),
         });
         let looped = index_with(cyclic, vec![make_test("test_none", vec!["unrelated"])]);
         assert!(find_transitive_witness("inner", &looped).is_none());
@@ -3443,7 +3443,7 @@ mod tests {
         // A test named `g6` records its own `fn g6()` line as a call fact.
         // That level is not entered, so the walk goes on to `real`.
         let mut declared = make_test_at("g6", "tests/it.rs", 1, vec!["g6"]);
-        declared.calls[0].text = "fn g6() {".to_string();
+        declared.calls[0].text = "fn g6() {".to_string().into();
         let real = make_test_at("real", "tests/it.rs", 10, vec!["g7"]);
         let index = index_with(hop_chain(7), vec![declared, real]);
         assert_eq!(
@@ -3535,7 +3535,7 @@ mod tests {
                 test.calls = vec![CallFact {
                     line: index * 10 + 2,
                     name: "render".to_string(),
-                    text,
+                    text: text.into(),
                 }];
                 test
             })
@@ -3700,7 +3700,7 @@ mod tests {
             let calls = vec![CallFact {
                 line: 1,
                 name: start.to_string(),
-                text: format!("{start}()"),
+                text: format!("{start}()").into(),
             }];
             for depth in 0..=7 {
                 assert_eq!(
@@ -3714,7 +3714,7 @@ mod tests {
         let call = |name: &str| CallFact {
             line: 1,
             name: name.to_string(),
-            text: format!("{name}()"),
+            text: format!("{name}()").into(),
         };
         let repeated = vec![call("a1"), call("a1"), call("decode")];
         assert_eq!(
@@ -3726,7 +3726,7 @@ mod tests {
         let a1 = vec![CallFact {
             line: 1,
             name: "a1".to_string(),
-            text: "a1()".to_string(),
+            text: "a1()".to_string().into(),
         }];
         assert_eq!(
             ids(reach.functions_reached_from(&a1, 5)),
@@ -4221,7 +4221,7 @@ mod tests {
         own.calls.push(CallFact {
             line: 1,
             name: "from_str_fortnight".to_string(),
-            text: "fn from_str_fortnight() {".to_string(),
+            text: "fn from_str_fortnight() {".to_string().into(),
         });
         assert!(!reach.test_may_reach(&own));
 
@@ -4391,7 +4391,9 @@ mod tests {
             CallFact {
                 line: 2,
                 name: "derive_error".to_string(),
-                text: "pub fn derive_error(input: TokenStream) -> TokenStream {".to_string(),
+                text: "pub fn derive_error(input: TokenStream) -> TokenStream {"
+                    .to_string()
+                    .into(),
             },
         );
         let mut expand = make_fn("expand", vec!["fmt_impl"]);

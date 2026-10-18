@@ -5064,7 +5064,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             summary.calls = vec![CallFact {
                 line: 1,
                 name: "render".to_string(),
-                text: line.to_string(),
+                text: line.to_string().into(),
             }];
             assert!(
                 !method_call_resolves_to_impl(&summary, "render", "f64", Some("Render")),
@@ -5247,7 +5247,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             self_type: "ByteSize".to_string(),
         };
         let mut test = test_with_call("tests/units.rs", "test_comparison", &body, "kb");
-        test.calls[0].text = assertion_line.to_string();
+        test.calls[0].text = assertion_line.to_string().into();
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone(), method],
             tests: vec![test],
@@ -5278,7 +5278,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
         let mut test = test_with_call("tests/units.rs", "test_comparison", body, "kb");
         // No captured free-call fact: the captured line is the associated
         // call, so the fallback must find the later genuine bare call.
-        test.calls[0].text = "let _ = ByteSize::kb(1);".to_string();
+        test.calls[0].text = "let _ = ByteSize::kb(1);".to_string().into();
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone(), method],
             tests: vec![test],
@@ -8579,7 +8579,7 @@ fn crate_c_score_test() {
             calls: vec![CallFact {
                 line: 1,
                 name: "call_inner".to_string(),
-                text: "call_inner!(10, 3)".to_string(),
+                text: "call_inner!(10, 3)".to_string().into(),
             }],
             assertions: Vec::new(),
             literals: Vec::new(),
@@ -9207,7 +9207,7 @@ fn crate_c_score_test() {
             calls: vec![CallFact {
                 line: 1,
                 name: "score".to_string(),
-                text: body.to_string(),
+                text: body.to_string().into(),
             }],
             assertions: Vec::new(),
             literals: Vec::new(),
@@ -9862,7 +9862,7 @@ let r = try_parse_summary(\"x\");",
             summary.calls = vec![CallFact {
                 line: 1,
                 name: "render".to_string(),
-                text: line.to_string(),
+                text: line.to_string().into(),
             }];
             assert!(
                 !method_call_resolves_to_impl_type(&summary, "render", "u8"),
@@ -9928,7 +9928,7 @@ let r = try_parse_summary(\"x\");",
             summary.calls = vec![CallFact {
                 line: 1,
                 name: "build".to_string(),
-                text: line.to_string(),
+                text: line.to_string().into(),
             }];
             assert!(
                 !method_call_resolves_to_impl_type(&summary, "build", "Site"),
@@ -10197,7 +10197,7 @@ try_parse_summary(raw).map_err(Into::into)"
             calls: vec![CallFact {
                 line: 1,
                 name: call_name.to_string(),
-                text: body.to_string(),
+                text: body.to_string().into(),
             }],
             assertions: Vec::new(),
             literals: Vec::new(),
@@ -10942,7 +10942,7 @@ quickcheck! {
                 summary.calls = vec![CallFact {
                     line: 1,
                     name: owner,
-                    text: body,
+                    text: body.into(),
                 }];
                 summaries.push(summary);
             }
