@@ -9719,7 +9719,67 @@ fn immutable_let_value(test: &TestSummary, binding: &str) -> Option<String> {
     {
         return None;
     }
-    assigned_value(&mask_comments_and_strings(binding)).map(str::to_string)
+    let binding = mask_comments_and_strings(binding);
+    let value = assigned_value(&binding)?;
+    // #8112: an immutable binding of an interior-mutable value
+    // (`let e = Cell::new(f(2)); e.set(6);`) can change after its initializer.
+    if has_interior_mutability(value) {
+        return None;
+    }
+    Some(value.to_string())
+}
+
+/// #8112: whether an initializer names a type that allows mutation through
+/// a shared binding, so the value the binding holds at the assertion may
+/// differ from its initializer.
+fn has_interior_mutability(initializer: &str) -> bool {
+    [
+        "Cell",
+        "RefCell",
+        "UnsafeCell",
+        "OnceCell",
+        "OnceLock",
+        "LazyCell",
+        "LazyLock",
+        "Mutex",
+        "RwLock",
+        "AtomicBool",
+        "AtomicI8",
+        "AtomicI16",
+        "AtomicI32",
+        "AtomicI64",
+        "AtomicIsize",
+        "AtomicU8",
+        "AtomicU16",
+        "AtomicU32",
+        "AtomicU64",
+        "AtomicUsize",
+        "AtomicPtr",
+    ]
+    .iter()
+    .any(|word| contains_as_whole_word(initializer, word))
+}
+
+/// #8112: whether `file` declares `static mut name`, whose value the test
+/// may have assigned before the assertion reads it.
+fn declares_static_mut(index: &RustIndex, file: &Path, name: &str) -> bool {
+    let Some(facts) = index.files().get(file) else {
+        return false;
+    };
+    let masked = mask_comments_and_strings(&facts.source);
+    whole_word_offsets(&masked, "static")
+        .into_iter()
+        .any(|offset| {
+            let rest = masked[offset + "static".len()..].trim_start();
+            rest.strip_prefix("mut")
+                .filter(|after| after.starts_with(char::is_whitespace))
+                .is_some_and(|after| {
+                    let after = after.trim_start();
+                    after.strip_prefix(name).is_some_and(|tail| {
+                        !tail.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
+                    })
+                })
+        })
 }
 
 /// The initializer of the one in-scope workspace constant named `name`.
@@ -9736,8 +9796,8 @@ fn single_constant_value(
         .get(name)?
         .iter()
         .filter(|(file, _)| in_scope(file));
-    let (_, initializer) = matches.next()?;
-    if matches.next().is_some() {
+    let (file, initializer) = matches.next()?;
+    if matches.next().is_some() || declares_static_mut(index, file, name) {
         return None;
     }
     let initializer_text = initializer.trim_start();

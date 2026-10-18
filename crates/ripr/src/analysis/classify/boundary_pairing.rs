@@ -318,6 +318,9 @@ fn loan_pairs_boundary_call(
         // Every call fact on the line is the helper call: a call buried in a
         // macro (`assert!(passes(50) || true)`) or chained after it is
         // another source of the line's `==` fact.
+        if crate::analysis::extract::line_at_call_budget(test.calls.iter(), *line) {
+            return false;
+        }
         let mut on_line = test.calls.iter().filter(|call| call.line == *line);
         let Some(helper_call) = on_line.next() else {
             return false;
@@ -392,7 +395,9 @@ fn test_pairs_boundary_element(
         }
         whole_owner_call_operands(test, &assertion.text, owner)
             .iter()
-            .any(|arguments| arguments_feed_boundary_element(test, None, arguments, element))
+            .any(|arguments| {
+                arguments_feed_boundary_element(test, None, arguments, &assertion.text, element)
+            })
     })
 }
 
@@ -402,11 +407,12 @@ fn arguments_feed_boundary_element(
     test: &TestSummary,
     loan: Option<&HelperLoan>,
     arguments: &[String],
+    site: &str,
     (tail, boundary): &(AdaptorTail, String),
 ) -> bool {
     arguments
         .get(tail.position)
-        .and_then(|argument| argument_sequences(test, loan, argument))
+        .and_then(|argument| argument_sequences(test, loan, argument, site))
         .is_some_and(|runs| {
             runs.iter()
                 .any(|run| tail.run_reaches_boundary(run, boundary))
@@ -429,7 +435,9 @@ fn loan_pairs_boundary_element(
     }
     whole_owner_call_operands(test, assertion_text, owner)
         .iter()
-        .any(|arguments| arguments_feed_boundary_element(test, Some(loan), arguments, element))
+        .any(|arguments| {
+            arguments_feed_boundary_element(test, Some(loan), arguments, assertion_text, element)
+        })
 }
 
 /// The argument lists of the asserted operands that are exactly one whole
@@ -622,6 +630,7 @@ fn assertion_observes_boundary_owner_call(
     // `value.name(..)` call is never the owner's (#6713).
     lists.len() == 1
         && owner_call_sites(&assertion.text, owner).len() == 1
+        && !crate::analysis::extract::line_at_call_budget(test.calls.iter(), assertion.line)
         && line_owner_call_count(test, assertion.line, owner) <= 1
         && owner_call_arguments_admit_activation_fallback(probe, owner, &lists[0])
         && activation_marks_boundary_call(
