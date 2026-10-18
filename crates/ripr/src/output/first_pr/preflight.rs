@@ -437,10 +437,10 @@ fn preflight_diff_check(root: &Path, options: &FirstPrOptions, checks: &mut Vec<
                 "Git diff",
                 format!("No file diff was found for `{range}`."),
                 Some(format!(
-                    "Pass the real PR base and rerun: `ripr first-pr --root {} --base {}~1 --head {}` (replace `{}~1` with the commit before the work).",
+                    "Pass the real PR base and rerun: `ripr first-pr --root {} --base {} --head {}` (replace `{}~1` with the commit before the work).",
                     shell_arg(&options.command_root()),
-                    options.head,
-                    options.head,
+                    shell_arg(&format!("{}~1", options.head)),
+                    shell_arg(&options.head),
                     options.head
                 )),
             ).with_recovery_commands(vec![rerun_command(options)])
