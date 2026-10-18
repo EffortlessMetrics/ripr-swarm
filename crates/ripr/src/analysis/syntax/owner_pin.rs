@@ -3079,6 +3079,25 @@ fn crate_attribute_appears(module: &SyntaxNode, krate: &str) -> bool {
         })
 }
 
+/// The whole-tail scalar adapter requires a closed module namespace, rather
+/// than treating an apparent primitive spelling as resolved through expansions.
+/// Reuse the same item-macro, attribute/derive and import authority as external
+/// crate identity. No imported binding or macro-use prelude may supply the name.
+pub(in crate::analysis) fn primitive_namespace_is_closed(
+    module: &SyntaxNode,
+    primitive: &str,
+) -> bool {
+    extern_crate_holds_trusting(module, primitive, &[])
+        && !module_use_leaves(module)
+            .iter()
+            .any(|leaf| matches!(&leaf.binding, UseBinding::Name(name) if unraw(name) == primitive))
+        && !module.children().filter_map(ast::Item::cast).any(|item| {
+            item.attrs()
+                .any(|attr| attr.simple_name().as_deref() == Some("macro_use"))
+                || matches!(item, ast::Item::MacroRules(_) | ast::Item::MacroDef(_))
+        })
+}
+
 fn extern_crate_holds_trusting(module: &SyntaxNode, krate: &str, trusted: &[&str]) -> bool {
     for item in module.children().filter_map(ast::Item::cast) {
         if item

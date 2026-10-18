@@ -856,7 +856,12 @@ A match header is not an individual arm. A separate internal
    custody refuse the receipt. Nearby `probe.before` text can describe a
    different changed owner in the same added run; it neither admits nor refuses
    this receipt. Validated old-source/declaration custody is the authority.
-3. The synchronous function returns an unshadowed primitive scalar and its
+3. Primitive identity additionally requires a closed owner-module namespace through
+   the existing parser-backed item/import/attribute authority: item macro calls,
+   macro definitions, macro-use preludes, opaque attributes/derives and imports
+   that can supply the primitive or shadow trusted derives refuse. An external
+   macro expansion is not evidence for the spelling of its generated type.
+   The synchronous function returns an unshadowed primitive scalar and its
    statement-free body has exactly this `MatchExpr` as its tail. A nested match,
    discarded match or match following a statement receives no receipt. Explicit
    exits (`return`, `?`, `break`, `continue`, `yield`) and macro invocations
@@ -887,3 +892,7 @@ binding does not receive this receipt.
 counterexample: a scrutinee returns before selection, so the original and all
 arm-zero mutants pass the same pin. Its header and individual arms must remain
 uncredited; the whole-result receipt cannot claim their result was observed.
+
+`fixtures/whole_tail_match_macro_scalar` retains the external macro-defined `u64`
+with always-true equality. Its original and all arm-zero variants pass natively;
+its whole-tail header must remain uncredited despite the apparent scalar name.

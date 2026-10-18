@@ -421,3 +421,77 @@ fn neighboring_old_text_does_not_replace_validated_new_owner_custody()
     );
     Ok(())
 }
+
+#[test]
+fn external_item_macro_cannot_supply_primitive_return_identity()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!("../../../fixtures/whole_tail_match_macro_scalar/input/src/lib.rs");
+    let foreign =
+        include_str!("../../../fixtures/whole_tail_match_macro_scalar/input/src/foreign.rs");
+    let direct = source
+        .replace("fn input() -> bool { true }\n", "")
+        .replace("charge(input())", "charge(true)");
+    for (case, source) in [
+        ("direct original", direct.clone()),
+        (
+            "direct selected arm zero",
+            direct.replace("true => u64(600)", "true => u64(0)"),
+        ),
+        (
+            "renamed item macro",
+            direct.replace(
+                "crate::define_scalar!();",
+                "use crate::define_scalar as opaque_scalar;\nopaque_scalar!();",
+            ),
+        ),
+        ("original", source.to_string()),
+        (
+            "selected arm zero",
+            source.replace("true => u64(600)", "true => u64(0)"),
+        ),
+        (
+            "other arm zero",
+            source.replace("false => u64(2)", "false => u64(0)"),
+        ),
+        (
+            "both arms zero",
+            source
+                .replace("u64(600)", "u64(0)")
+                .replace("u64(2)", "u64(0)"),
+        ),
+    ] {
+        let diff = format!(
+            "--- /dev/null\n+++ b/src/lib.rs\n@@ -0,0 +1,{} @@\n{}",
+            source.lines().count(),
+            source
+                .lines()
+                .map(|line| format!("+{line}\n"))
+                .collect::<String>()
+        );
+        let fixture = Fixture::new(&source, &diff)?;
+        std::fs::write(fixture.0.join("src/foreign.rs"), foreign)?;
+        let output = fixture.check()?;
+        let headers = output
+            .findings
+            .iter()
+            .filter(|f| {
+                f.probe.family == ripr::ProbeFamily::MatchArm && f.probe.expression == "match input"
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(headers.len(), 1, "retained header: {case}");
+        assert_eq!(
+            headers[0].class,
+            ExposureClass::WeaklyExposed,
+            "{case}: {}",
+            headers[0].id
+        );
+        assert!(
+            !headers[0]
+                .evidence_path
+                .iter()
+                .any(|e| e.contains("whole_tail_match_return_observation")),
+            "{case}"
+        );
+    }
+    Ok(())
+}

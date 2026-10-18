@@ -47,6 +47,10 @@ impl WholeTailMatchObservation {
         if tree.attrs().next().is_some() {
             return None;
         }
+        let returned = declared_return_type(&owner.body)?;
+        if !crate::analysis::syntax::primitive_namespace_is_closed(tree.syntax(), &returned) {
+            return None;
+        }
         let functions = tree
             .syntax()
             .children()

@@ -6,6 +6,7 @@ mod module_tree;
 mod name_scope;
 mod nesting;
 mod owner_pin;
+pub(in crate::analysis) use owner_pin::primitive_namespace_is_closed;
 mod pattern_pin;
 pub(crate) mod run_memo;
 pub(crate) use owner_pin::macro_binding_candidates;
