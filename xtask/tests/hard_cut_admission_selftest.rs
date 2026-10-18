@@ -39,7 +39,7 @@ fn release_cut_admission_self_test_passes() -> Result<(), String> {
 
 /// Executes the real action shell with a stubbed read-only `gh` so the
 /// wrapper boundary (live-ref re-read) is exercised, not only the pure scripts.
-fn run_wrapper(second_ref_packet_state: &str) -> Result<i32, String> {
+fn run_wrapper(second_ref_packet_state: &str, initial_absent: bool) -> Result<i32, String> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     let action_dir = root.join(".github/actions/pr-candidate-admission");
     let yaml = std::fs::read_to_string(action_dir.join("action.yml")).map_err(|e| e.to_string())?;
@@ -50,7 +50,7 @@ fn run_wrapper(second_ref_packet_state: &str) -> Result<i32, String> {
         .map(|line| line.strip_prefix("        ").unwrap_or(line))
         .collect();
     let tmp = std::env::temp_dir().join(format!(
-        "ripr-wrapper-{second_ref_packet_state}-{}",
+        "ripr-wrapper-{second_ref_packet_state}-{initial_absent}-{}",
         std::process::id()
     ));
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
@@ -66,18 +66,29 @@ fn run_wrapper(second_ref_packet_state: &str) -> Result<i32, String> {
     let inactive = std::fs::read_to_string(root.join("policy/release-hard-cut-admission.json"))
         .map_err(|e| e.to_string())?;
     std::fs::write(tmp.join("inactive.json"), &inactive).map_err(|e| e.to_string())?;
-    std::fs::write(
-        tmp.join("moved_packet.b64"),
-        packet(second_ref_packet_state),
-    )
-    .map_err(|e| e.to_string())?;
+    let (mode, moved) = match second_ref_packet_state {
+        "http403" | "http404" => (second_ref_packet_state, String::new()),
+        state => ("packet", packet(state)),
+    };
+    std::fs::write(tmp.join("second_mode"), mode).map_err(|e| e.to_string())?;
+    std::fs::write(tmp.join("moved_packet.b64"), moved).map_err(|e| e.to_string())?;
+    if initial_absent {
+        std::fs::write(tmp.join("initial_absent"), "1").map_err(|e| e.to_string())?;
+    }
     let gh = r#"#!/usr/bin/env bash
 url=""; for a in "$@"; do case "$a" in repos/*) url="$a";; esac; done
 case "$url" in
   */git/ref/*) if [ -e "$CONTROL_TMP/seen" ]; then echo ffffffffffffffffffffffffffffffffffffffff; else touch "$CONTROL_TMP/seen"; echo dddddddddddddddddddddddddddddddddddddddd; fi ;;
   */git/commits/*) echo '{"sha":"dddddddddddddddddddddddddddddddddddddddd","tree":{"sha":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},"parents":[]}' ;;
-  */contents/*ref=ffff*) cat "$CONTROL_TMP/moved_packet.b64" ;;
-  */contents/*) base64 -w0 "$CONTROL_TMP/inactive.json" | jq -R '{content: .}' ;;
+  */contents/*ref=ffff*)
+    case "$(cat "$CONTROL_TMP/second_mode")" in
+      http403) echo "gh: Forbidden (HTTP 403)" >&2; exit 1 ;;
+      http404) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+      *) jq -n --arg c "$(cat "$CONTROL_TMP/moved_packet.b64")" '{content: $c}' ;;
+    esac ;;
+  */contents/*)
+    if [ -e "$CONTROL_TMP/initial_absent" ]; then echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi
+    base64 -w0 "$CONTROL_TMP/inactive.json" | jq -R '{content: .}' ;;
   */files?*) echo '[{"filename":"src/lib.rs","status":"modified"}]' ;;
   */pulls\?state*) echo '[]' ;;
   *) echo '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"o/r"}},"base":{"ref":"main"},"changed_files":1,"additions":1,"deletions":0,"body":"Governing issue or accepted claim: #5391\nAcceptance delta (one sentence): race control"}' ;;
@@ -110,7 +121,9 @@ esac
         .env("ADMISSION_MODE", "admit")
         .status()
         .map_err(|e| e.to_string())?;
-    let _ = std::fs::remove_dir_all(&tmp);
+    if std::env::var_os("KEEP_WRAPPER_TMP").is_none() {
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
     status
         .code()
         .ok_or_else(|| "wrapper ended by signal".to_string())
@@ -136,7 +149,7 @@ fn base64_encode(bytes: &[u8]) -> String {
 
 #[test]
 fn wrapper_refuses_activation_observed_after_an_inactive_snapshot() -> Result<(), String> {
-    let code = run_wrapper("active")?;
+    let code = run_wrapper("active", false)?;
     if code == 0 {
         return Err("inactive->active movement during admission must not admit".to_string());
     }
@@ -145,10 +158,35 @@ fn wrapper_refuses_activation_observed_after_an_inactive_snapshot() -> Result<()
 
 #[test]
 fn wrapper_tolerates_main_moving_between_inactive_snapshots() -> Result<(), String> {
-    let code = run_wrapper("inactive")?;
+    let code = run_wrapper("inactive", false)?;
     if code != 0 {
         return Err(format!(
             "inactive->inactive movement must admit, got exit {code}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn wrapper_refuses_unreadable_packet_after_bootstrap_movement() -> Result<(), String> {
+    if run_wrapper("http403", true)? == 0 {
+        return Err("404 then 403 after base movement must not admit".to_string());
+    }
+    if run_wrapper("http403", false)? == 0 {
+        return Err("a 403 on the moved base must not admit".to_string());
+    }
+    if run_wrapper("active", true)? == 0 {
+        return Err("bootstrap then activation must not admit".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn wrapper_admits_bootstrap_when_the_moved_base_also_has_no_packet() -> Result<(), String> {
+    let code = run_wrapper("http404", true)?;
+    if code != 0 {
+        return Err(format!(
+            "404 then 404 must admit the bootstrap PR, got exit {code}"
         ));
     }
     Ok(())

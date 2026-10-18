@@ -12,7 +12,7 @@
 
 .github/actions/ci-scratch-lease/action.yml|86|Shared self-hosted scratch ownership authority (#3841): acquire/release a kernel flock lease per job, self-check it at reclaim and release, and reclaim only terminal trees this repository owns while holding that lease. It must run before the Rust toolchain exists and on the toolchain-free scheduled GC lane, so it cannot be an xtask command; the executed behavior harness lives in tools/repo-policy/src/ci_scratch/tests.rs.
 .github/actions/ripr-check/action.yml|7|Adoption composite action installs ripr when missing and runs one ripr check command (#2626).
-.github/actions/pr-candidate-admission/action.yml|270|Candidate and hard-cut admission (#2022, #4987, #5391): bounded read-only GitHub snapshots feed two self-tested pure Python decisions; the wrapper validates status/exit agreement, reads the release packet from the exact live base commit, and fails if the base moves before product allocation.
+.github/actions/pr-candidate-admission/action.yml|281|Candidate and hard-cut admission (#2022, #4987, #5391): bounded read-only GitHub snapshots feed two self-tested pure Python decisions; the wrapper validates status/exit agreement, reads the release packet from the exact live base commit, and fails if the base moves before product allocation.
 
 .github/workflows/badge-endpoints.yml|1|Badge endpoint refresh delegates generation to cargo xtask and opens a PR.
 .github/workflows/ci.yml|38|#4987: bounded event-head Rust surface detection; remaining CI blocks call direct Cargo or npm commands.
