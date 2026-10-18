@@ -36,6 +36,11 @@ The default contract is:
   conservative defaults and is reported as such by `ripr doctor`.
 - `ripr init` materializes repo policy. It does not unlock the useful
   experience.
+- With a lossless root, successful `ripr init --ci github` names the generated
+  workflow and tells the adopter to review and commit it, then open or update
+  a pull request and read the advisory job summary. Blocking gates remain opt-in through the
+  `RIPR_GATE_MODE` repository variable. Config-only and dry-run output must
+  not imply that a workflow was adopted.
 - Successful `ripr init` follow-up commands for `doctor` and `check` bind
   the selected root, including a relative or implicit root, so copying them
   from another directory still inspects the repository that was configured.
@@ -719,6 +724,8 @@ Current tests and reports that support the contract:
 - `crates/ripr/src/cli/commands.rs::tests::init_ci_github_writes_workflow_and_preserves_existing_config`
 - `crates/ripr/src/cli/commands.rs::tests::init_ci_github_refuses_existing_workflow_without_force`
 - `crates/ripr/tests/cli_smoke.rs::init_writes_conservative_config_and_doctor_loads_it`
+- `crates/ripr/tests/cli_smoke/init_ci_guidance.rs::init_ci_followup_explains_adoption_for_created_and_refreshed_workflows`
+- `crates/ripr/tests/cli_smoke/init_ci_guidance.rs::init_ci_followup_does_not_claim_adoption_for_config_only_or_preview`
 - `crates/ripr/tests/cli_smoke/init_followups.rs::init_followups_replay_the_selected_root_from_foreign_cwd`
 - `crates/ripr/tests/cli_smoke/init_followups.rs::init_refusal_retries_replay_the_selected_root`
 - `crates/ripr/tests/cli_smoke/init_followups.rs::init_refusal_omits_retries_for_an_unrepresentable_root`

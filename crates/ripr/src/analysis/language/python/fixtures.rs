@@ -44,6 +44,15 @@ pub(super) fn collect_fixture_defs(
             _ => continue,
         };
         if !is_plain_fixture(source, decorators) {
+            // A later ordinary `def` of the same name replaces the fixture
+            // as the module attribute pytest collects.
+            if !decorators.iter().any(|decorator| {
+                decorator_names(std::slice::from_ref(decorator))
+                    .iter()
+                    .any(|name| name == "fixture" || name.ends_with(".fixture"))
+            }) {
+                defs.retain(|def: &PythonFixtureDef| def.name != name);
+            }
             continue;
         }
         defs.push(PythonFixtureDef {
@@ -80,7 +89,12 @@ pub(super) fn attach_fixture_defs(
     }
     for test in tests {
         let mut attached: Vec<PythonFixtureDef> = Vec::new();
+        // A direct (non-indirect) parametrize argname is supplied by pytest,
+        // not resolved as a fixture.
         for parameter in &test.fixtures {
+            if test.direct_parametrized.contains(parameter) {
+                continue;
+            }
             if attached.len() >= MAX_FIXTURE_DEFS_PER_TEST {
                 break;
             }
@@ -100,7 +114,8 @@ fn resolve<'a>(
     let find = |file: &Path| {
         defs_by_file
             .get(file)
-            .and_then(|defs| defs.iter().find(|def| def.name == name))
+            // The last same-name definition in a file is the one pytest binds.
+            .and_then(|defs| defs.iter().rev().find(|def| def.name == name))
     };
     if let Some(def) = find(test_file) {
         return Some(def);

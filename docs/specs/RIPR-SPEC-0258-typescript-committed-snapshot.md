@@ -85,8 +85,22 @@ runner's entry for it can be named and is committed:
   to the root mentions `snapshotResolver`, `resolveSnapshotPath`,
   `snapshotEnvironment`, `updateSnapshot`, `--update`, ` -u` or `"-u"`, no
   runner config holds an `update` key (`update:`, `update :`,
-  `"update":`), and each such file reads; a moved file or a run that
-  rewrites snapshots no longer fails on a changed value;
+  `"update":`), no `package.json` passes a config, project list or root
+  by path (a script flag `--config`, `--config=`, `-c`, `-cx`, `--projects`,
+  `--rootDir`, `--root`, `-r`, `--dir` or `--workspace`, or a `"projects"` or
+  `"rootDir"` key), and each such file reads; a `<stem>.config.<ext>` whose
+  stem has a `.`, `-` or `_` separated part `jest`, `vitest` or `vite`
+  (`jest.unit.config.js`) is read the same way; a moved file or a run that
+  rewrites snapshots no longer fails on a changed value. The walk continues
+  above the analysis root, starting from the canonicalized root so a
+  symlinked root climbs its real parents, up to the first directory holding
+  a repository marker (at most 16 levels), or to the filesystem root when
+  that is within 16 levels and no marker is found (nothing above is a
+  repository, and any config there is still read). When 16 levels pass with
+  neither a marker nor the filesystem root, the repository boundary is
+  unknown (an export without `.git` inside a larger tree, or a deep nest) and
+  the reader refuses. A symlinked directory inside the root, and a symlinked
+  `__snapshots__` directory, are refused;
 - the header agrees with the runner those files name: a Vitest header
   needs a `vite*` config or a mention of `vitest`, and a Jest header needs
   neither. The header names the runner that wrote the file, and the other
@@ -160,8 +174,34 @@ RIPR-SPEC-0243 ladder, including the observation guard.
 - A test registered from a template title (`%s`, `%#`, a non-literal
   describe title) has no matching entry and stays medium. A `test.each`
   with one row and a literal title runs once and can read strong.
-- A runner config passed by path (`--config config/jest.js`) or kept above
-  the analysis root is not read.
+- A runner config passed by path is not read; a `package.json` script that
+  passes one refuses instead. A config above the repository boundary is not
+  read.
+- The analysis root itself may be a symlink (it is the user's own checkout
+  path and is canonicalized), but every directory below it, and the
+  `__snapshots__` directory, must not be; the asymmetry is deliberate.
+- Only a `.git` entry is a recognized repository boundary. A Mercurial,
+  Subversion, Jujutsu or pnpm-workspace root without `.git` is not one: the
+  walk continues past it and reads ancestor configs, and refuses (medium) if
+  16 levels pass without a `.git` or the filesystem root.
+- The 16-level reach is a bound on the filesystem reads per file, chosen to
+  exceed the depth of ordinary monorepo package nesting (`packages/x/y/src`)
+  while keeping the walk cheap; deeper nests refuse rather than read on.
+- `passes_config_by_path` over-matches (`--configdir`, a `node -r` preload);
+  over-matching only refuses, so it costs credit, never adds it.
+- Windows junctions and `\\?\` extended paths are untested; the symlink
+  checks are `lstat`-based and a junction may not read as a symlink there.
+- Configs reached through environment variables or `.yarnrc` indirection are
+  not seen.
+- Configs above the analysis root are read from the working tree, including
+  in a committed-history run.
+- Scripts that call a shell script or Makefile, and configs reached
+  through them, are not seen.
+- A committed-history run does not compare configs above the analysis root
+  with `HEAD`.
+- An untracked or ignored `.snap` file is refused only in a
+  committed-history run; a `--worktree` run still reads the working tree
+  (#7708 item 3).
 - A stale entry (one that no longer matches the base behavior) already
   fails the test; the reader does not compare entry and behavior.
 
@@ -214,6 +254,15 @@ RIPR-SPEC-0243 ladder, including the observation guard.
    edited `package.json` or runner config in the test's directory or an
    ancestor: medium. A `toMatchSnapshot ()` call with a space before `(`
    counts as a snapshot call.
+7. A `package.json` script `jest --config config/jest.js` (or `-c`,
+   `--config=`), or a `jest.unit.config.js` with a `snapshotResolver`: medium.
+   A `jest.unit.config.js` that overrides nothing, or a `jest --ci
+   --coverage` script: strong. A `jest.config.js` with a `snapshotResolver`
+   above the analysis root, inside the repository: medium; the same file
+   when no repository marker and no filesystem root is within 16 levels
+   above the root: medium (boundary unknown); a Vitest `vitest.unit.config.ts`
+   that overrides nothing: strong; a symlinked test directory or symlinked
+   `__snapshots__` directory: medium.
 
 ## Test Mapping
 
@@ -226,7 +275,17 @@ RIPR-SPEC-0243 ladder, including the observation guard.
   `hinted_snapshot_without_its_exact_entry_stays_medium` and
   `hinted_snapshot_sharing_its_counter_stays_medium` pin example 4;
   `snapshot_location_or_update_override_stays_medium` pins example 5;
-  `snapshot_input_differing_from_head_stays_medium` pins example 6.
+  `snapshot_input_differing_from_head_stays_medium` pins example 6;
+  `config_passed_by_path_or_custom_named_stays_medium`,
+  `config_above_the_analysis_root_is_read_up_to_the_repository`,
+  `config_above_the_root_is_read_only_within_reach_of_the_marker`,
+  `symlinked_analysis_root_reads_the_real_parents`,
+  `flags_and_keys_that_move_the_runner_config_stay_medium` and
+  `walk_without_a_marker_ends_at_the_filesystem_root_or_is_unknown`,
+  `config_above_the_root_without_a_repository_boundary_is_not_read`,
+  `directories_above_the_root_stop_at_the_repository_boundary`,
+  `symlinked_snapshots_directory_stays_medium` and
+  `symlinked_test_directory_stays_medium` pin example 7.
 - `crates/ripr/src/analysis/committed_source/tests.rs`:
   `porcelain_parser_records_unrouted_snapshot_inputs` and
   `snapshot_inputs_differ_only_in_their_own_directory` pin the

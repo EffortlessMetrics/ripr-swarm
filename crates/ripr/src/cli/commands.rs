@@ -3098,10 +3098,13 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // `--worktree` matches `ripr check --worktree`: the finding may come
     // from uncommitted edits the committed-history diff never sees.
     let mut worktree = false;
+    // #8739: same meaning as `ripr check --quiet`: stderr progress only.
+    let mut quiet = false;
     let mut root_explicitly_provided = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
+            "--quiet" => quiet = true,
             "--root" => {
                 i += 1;
                 input.root = PathBuf::from(expect_value(args, i, "--root")?);
@@ -3209,11 +3212,15 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // looked like a hang. The same stderr-only stage lines `ripr check`
     // projects disclose the work without touching machine stdout. The
     // `--from` artifact path runs no pipeline and wires no sink.
-    let progress = crate::cli::progress::CliProgressSink::for_stderr(
-        std::io::IsTerminal::is_terminal(&std::io::stderr()),
-        crate::cli::progress::ProgressPolicy::STANDARD,
-    );
-    let progress_sink = Some(&progress as &dyn app::AnalysisProgressSink);
+    let progress = (!quiet).then(|| {
+        crate::cli::progress::CliProgressSink::for_stderr(
+            std::io::IsTerminal::is_terminal(&std::io::stderr()),
+            crate::cli::progress::ProgressPolicy::STANDARD,
+        )
+    });
+    let progress_sink = progress
+        .as_ref()
+        .map(|sink| sink as &dyn app::AnalysisProgressSink);
     let rendered = match from_artifact.as_deref() {
         Some(artifact_path) => app::explain_finding_from_artifact_with_navigation_mode(
             input,
@@ -3239,7 +3246,9 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // without this call the dropped sink projects `ripr progress: failed`
     // despite the successful render, exactly the `ripr check` contract the
     // stage lines borrow.
-    progress.commit_success();
+    if let Some(progress) = &progress {
+        progress.commit_success();
+    }
     println!("{rendered}");
     Ok(())
 }

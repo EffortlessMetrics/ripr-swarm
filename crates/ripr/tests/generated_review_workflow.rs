@@ -3929,6 +3929,7 @@ fn ci_summary_reads_the_workflow_settings_from_the_environment() -> Result<(), B
                 "RIPR_UPLOAD_SARIF",
                 "RIPR_COMMENT_MODE",
                 "RIPR_GATE_BASELINE",
+                "RIPR_GATE_MODE",
             ],
             settings,
         )?;

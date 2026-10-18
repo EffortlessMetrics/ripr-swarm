@@ -1247,6 +1247,8 @@ tests = [
   "crates/ripr/src/cli/commands.rs::tests::init_ci_github_writes_workflow_and_preserves_existing_config",
   "crates/ripr/src/cli/commands.rs::tests::init_ci_github_refuses_existing_workflow_without_force",
   "crates/ripr/tests/cli_smoke.rs::init_writes_conservative_config_and_doctor_loads_it",
+  "crates/ripr/tests/cli_smoke/init_ci_guidance.rs::init_ci_followup_explains_adoption_for_created_and_refreshed_workflows",
+  "crates/ripr/tests/cli_smoke/init_ci_guidance.rs::init_ci_followup_does_not_claim_adoption_for_config_only_or_preview",
   "crates/ripr/tests/cli_smoke/init_followups.rs::init_followups_replay_the_selected_root_from_foreign_cwd",
   "crates/ripr/tests/cli_smoke/init_followups.rs::init_refusal_retries_replay_the_selected_root",
   "crates/ripr/tests/cli_smoke/init_followups.rs::init_refusal_omits_retries_for_an_unrepresentable_root",
@@ -3143,6 +3145,8 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::find_related_tests_matches_module_initializer_named_import_observer",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::find_related_tests_matches_module_initializer_namespace_observer",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::find_related_tests_keeps_module_initializer_shadow_and_non_expect_references_unrelated",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::tests::find_related_tests_module_value_use_enclosing_scope_shadow_negatives",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::tests::find_related_tests_module_value_use_masking_only_negatives",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::find_related_tests_matches_bounded_class_method_calls",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::find_related_tests_keeps_shadowed_class_method_calls_unrelated",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::same_stem_tests_that_only_call_a_sibling_owner_are_not_related",
@@ -15997,6 +16001,9 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/typescript_finally_completion.rs::completion_replacing_finalizers_cannot_confirm_the_changed_throw",
+  "crates/ripr/tests/cli_smoke/typescript_finally_completion.rs::benign_and_independent_finalizers_keep_credit",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::extract_tests_withholds_assertions_a_finalizer_completion_can_replace",
   "crates/ripr/tests/cli_smoke/typescript_caught_assertions.rs::caught_rejection_assertions_cannot_confirm_the_changed_throw",
   "crates/ripr/tests/cli_smoke/typescript_caught_assertions.rs::independently_propagating_rejection_assertions_keep_credit",
   "crates/ripr/tests/cli_smoke/typescript_caught_assertions.rs::an_enclosing_catch_also_withholds_inner_finally_assertions",
