@@ -312,8 +312,9 @@ pub(crate) enum MacroBindingKind {
     /// `#[macro_use]` on an `extern crate` or a module ripr did not resolve
     /// to an indexed file; the text is the item it is attached to.
     MacroUse(String),
-    /// A glob import from outside the workspace and the unshadowed standard
-    /// crates (`std`, `core`, `alloc`, #8388); the text is its path.
+    /// A glob import from outside the workspace and the manifest-proven
+    /// standard crates (`std`, `core`; `alloc` stays foreign, #8388); the
+    /// text is its path.
     ForeignGlob(String),
     /// A `macro_rules!` or `macro` definition with the trusted name.
     Definition,
