@@ -678,6 +678,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn frames_packed_behind_an_empty_frame_survive_small_reads_and_eof() -> Result<(), String>
+    {
+        // Several non-empty frames behind an empty one, drained through tiny
+        // read buffers (so the carry is served in pieces and re-observed),
+        // then EOF: no carried byte may be dropped or reordered.
+        let mut payload = b"Content-Length: 0\r\n\r\n".to_vec();
+        for _ in 0..5 {
+            payload.extend_from_slice(b"Content-Length: 2\r\n\r\n{}");
+        }
+        payload.extend_from_slice(b"Content-Length: 0\r\n\r\nContent-Length: 2\r\n\r\n{}");
+        for size in [1_usize, 5, 7, 64] {
+            let (mut reader, _writer) = bounds().wrap(&payload[..], tokio::io::sink());
+            let mut out = Vec::new();
+            let mut chunk = vec![0_u8; size];
+            loop {
+                let read = reader
+                    .read(&mut chunk)
+                    .await
+                    .map_err(|err| format!("read failed at size {size}: {err}"))?;
+                if read == 0 {
+                    break;
+                }
+                out.extend_from_slice(&chunk[..read]);
+            }
+            assert_eq!(out, payload, "bytes changed with read size {size}");
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn body_bytes_that_look_like_headers_do_not_desync() -> Result<(), String> {
         // A body containing the header terminator bytes must be consumed as
         // body, never scanned as a header.
