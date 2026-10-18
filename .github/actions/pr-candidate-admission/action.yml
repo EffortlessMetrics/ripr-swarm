@@ -83,7 +83,7 @@ runs:
       run: |
         set -euo pipefail
         action_root="${GITHUB_ACTION_PATH}"
-        packet_path="docs/release-candidates/0.11.0-hard-cut-admission.json"
+        packet_path="policy/release-hard-cut-admission.json"
         local_packet="${GITHUB_WORKSPACE}/${packet_path}"
         tmp="$(mktemp -d)"
         trap 'rm -rf "$tmp"' EXIT

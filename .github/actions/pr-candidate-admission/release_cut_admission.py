@@ -25,7 +25,7 @@ from typing import Any
 SCHEMA_VERSION = "1"
 KIND = "ripr_release_cut_admission"
 RELEASE = "0.11.0"
-PACKET_PATH = "docs/release-candidates/0.11.0-hard-cut-admission.json"
+PACKET_PATH = "policy/release-hard-cut-admission.json"
 STATES = {"inactive", "active", "candidate_pinned"}
 DENIED_DISPOSITIONS = {
     "accepted_defer_with_non_claim",
