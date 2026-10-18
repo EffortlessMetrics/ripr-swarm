@@ -28,6 +28,7 @@ pub use super::facts::{
 };
 pub(crate) use super::facts::{
     build_analysis_index_from_loaded_files, build_index_from_paths_with_cache_and_test_harnesses,
+    reuse_cached_index_with_loaded_files,
 };
 #[cfg(test)]
 use super::syntax::LexicalRustSyntaxAdapter;

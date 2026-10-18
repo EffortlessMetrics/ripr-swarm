@@ -138,6 +138,72 @@ pub(crate) fn build_analysis_index_from_loaded_files(
     build_cached_index_with_test_harnesses(root, files, registrations, MissAttribution::Skipped)
 }
 
+/// Reuse an already-built cached index as the index for `files` (#8547):
+/// files whose indexed source still matches the loaded bytes are kept
+/// as-is, new or changed files are parsed through the file-fact cache and
+/// inserted, files no longer in the list are removed, and the shared
+/// post-parse phases re-run once over the merged index. When nothing
+/// changed, the index is returned untouched, so one check invocation
+/// builds its workspace index once and reuses it instead of re-decoding
+/// the fact cache and re-running post-processing per consumer.
+pub(crate) fn reuse_cached_index_with_loaded_files(
+    mut cached: build::CachedRustIndex,
+    root: &Path,
+    files: &[(PathBuf, Vec<u8>)],
+    registrations: &[TestHarnessRegistration],
+) -> Result<build::CachedRustIndex, String> {
+    let kept: std::collections::BTreeSet<&Path> =
+        files.iter().map(|(path, _)| path.as_path()).collect();
+    let mut extras: Vec<(PathBuf, Vec<u8>)> = Vec::new();
+    for (path, bytes) in files {
+        let current = cached.index.files().get(path).is_some_and(|facts| {
+            let source: &str = facts.data().source.as_ref();
+            source.as_bytes() == bytes.as_slice()
+        });
+        if !current {
+            extras.push((path.clone(), bytes.clone()));
+        }
+    }
+    let dropped: Vec<PathBuf> = cached
+        .index
+        .files()
+        .iter()
+        .map(|(path, _)| path.clone())
+        .filter(|path| !kept.contains(path.as_path()))
+        .collect();
+    if extras.is_empty() && dropped.is_empty() {
+        return Ok(cached);
+    }
+    for path in &dropped {
+        cached.index.remove_file(path);
+    }
+    if !extras.is_empty() {
+        let stats = index_phase("index_cached_parse", || {
+            build::extend_index_from_loaded_files_with_cache(&mut cached.index, root, &extras)
+        })?;
+        cached.file_fact_cache.hits += stats.hits;
+        cached.file_fact_cache.misses += stats.misses;
+        cached.file_fact_cache.corrupt_ignored += stats.corrupt_ignored;
+        cached.file_fact_cache.stores += stats.stores;
+        cached.file_fact_cache.store_errors += stats.store_errors;
+        cached
+            .file_fact_cache
+            .invalidated_files
+            .extend(stats.invalidated_files);
+        cached
+            .file_fact_cache
+            .store_failures
+            .extend(stats.store_failures);
+        cached.file_fact_cache.store_failures_dropped += stats.store_failures_dropped;
+    }
+    let mut hash = crate::analysis::seam_cache::FilesContentHashBuilder::new();
+    for (path, bytes) in files {
+        hash.push(path, bytes);
+    }
+    cached.files_content_hash = hash.finish();
+    post_process_cached_index(cached, root, registrations)
+}
+
 fn build_cached_index_with_test_harnesses(
     root: &Path,
     files: &[(PathBuf, Vec<u8>)],

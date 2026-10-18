@@ -572,8 +572,7 @@ impl RustIndex {
         self.test_positions[id.offset] = self.test_order.len();
         self.test_order.push(id);
     }
-    #[cfg(test)]
-    pub fn remove_file(&mut self, path: &Path) -> bool {
+    pub(crate) fn remove_file(&mut self, path: &Path) -> bool {
         self.bump_membership_revision();
         self.files.remove(path).is_some()
     }
@@ -720,7 +719,6 @@ impl RustIndex {
         }
         index
     }
-    #[cfg(test)]
     pub(crate) fn owned_file(&self, path: &Path) -> Option<FileFacts> {
         let file = self.files().get(path)?;
         let FileData {

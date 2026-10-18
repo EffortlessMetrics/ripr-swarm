@@ -2700,25 +2700,83 @@ pub(crate) fn inventory_seams_from_index(
     seams_from_index_files(production_files, index)
 }
 
+/// One bounded seam index over a caller-named file set (#8547), built
+/// once through the file-fact cache and shared by the consumers that
+/// would otherwise each rebuild it (the `ripr check` stub and repair
+/// routes, and the stub resolver's repeated consumer probes). Seam
+/// shapes and classification read the same post-processed facts the
+/// per-consumer builders produced; only the build is shared, and it is
+/// scoped to one invocation: nothing is retained across runs.
+pub(crate) struct FileSeamIndex {
+    index: RustIndex,
+    files: std::collections::BTreeSet<PathBuf>,
+}
+
+impl FileSeamIndex {
+    pub(crate) fn build(
+        root: &Path,
+        config: &RiprConfig,
+        files: &[PathBuf],
+    ) -> Result<Self, String> {
+        let cached = rust_index::build_index_from_paths_with_cache_and_test_harnesses(
+            root,
+            files,
+            harness_registrations(config),
+        )?;
+        let mut index = cached.index;
+        rust_index::apply_oracle_policy(&mut index, config.oracles());
+        Ok(Self {
+            index,
+            files: files.iter().cloned().collect(),
+        })
+    }
+
+    pub(crate) fn covers(&self, files: &[PathBuf]) -> bool {
+        files.iter().all(|file| self.files.contains(file))
+    }
+
+    pub(crate) fn seams_in_file(&self, file: &Path) -> Vec<RepoSeam> {
+        seams_from_index_files(std::slice::from_ref(&file.to_path_buf()), &self.index)
+    }
+
+    pub(crate) fn classify_in_file(&self, file: &Path) -> Vec<ClassifiedSeam> {
+        let seams = self.seams_in_file(file);
+        let evidence = test_grip_evidence::evidence_for_seams(&seams, &self.index);
+        seam_classification::classify_seams(&seams, &evidence)
+    }
+}
+
 /// The seams of one Rust file from a parse of that file alone, with no
-/// workspace index, test evidence, or classification (#5471). The seam
-/// fields (file, owner, kind, offset, expression) come from the file's own
-/// facts, so they and the seam ids match the workspace inventory's. A file
-/// that does not seed production findings has no seams here, as in the
-/// workspace inventory.
-pub(crate) fn file_seams_without_evidence_at_with_config(
+/// workspace index, test evidence, or classification (#5471), over a
+/// shared invocation-scoped [`FileSeamIndex`] (#8547). The seam fields
+/// (file, owner, kind, offset, expression) come from the file's own
+/// facts, so they and the seam ids match the workspace inventory's. A
+/// file that does not seed production findings has no seams here, as in
+/// the workspace inventory. The production-role gate runs exactly as
+/// the unshared builder's, and the index is built (and stored for the
+/// next consumer) only when the shared one does not already cover
+/// `file`; with no shared index this is the historical single-file
+/// builder.
+pub(crate) fn scoped_file_seams(
     root: &Path,
     config: &RiprConfig,
     file: &Path,
+    seam_index: &mut Option<FileSeamIndex>,
 ) -> Result<Vec<RepoSeam>, String> {
     let context = production_role_context(root, config, std::iter::once(file));
     if !workspace::classify_with(file, &context).seeds_production_findings() {
         return Ok(Vec::new());
     }
-    let files = [file.to_path_buf()];
-    let index =
-        rust_index::build_index_with_test_harnesses(root, &files, harness_registrations(config))?;
-    Ok(seams_from_index_files(&files, &index))
+    if let Some(index) = seam_index
+        .as_ref()
+        .filter(|index| index.covers(std::slice::from_ref(&file.to_path_buf())))
+    {
+        return Ok(index.seams_in_file(file));
+    }
+    let built = FileSeamIndex::build(root, config, std::slice::from_ref(&file.to_path_buf()))?;
+    let seams = built.seams_in_file(file);
+    *seam_index = Some(built);
+    Ok(seams)
 }
 
 /// Classify only the seams in `file`, gathering test-grip evidence from a
@@ -2731,11 +2789,17 @@ pub(crate) fn file_seams_without_evidence_at_with_config(
 /// must therefore treat a route admitted from this scope as bounded
 /// evidence and fail closed when the scope cannot decide, never as a
 /// workspace-wide eligibility proof.
-pub(crate) fn classify_seams_in_file_with_related_at_with_config(
+/// The shared-index form of the bounded classification above (#8547):
+/// gate and file set are identical to the unshared builder's; the index
+/// is built (and stored for the next consumer) only when the shared one
+/// does not already cover the whole set. With no shared index this is
+/// the historical bounded builder.
+pub(crate) fn classify_seams_in_file_with_shared_index(
     root: &Path,
     config: &RiprConfig,
     file: &Path,
     evidence_files: &[PathBuf],
+    seam_index: &mut Option<FileSeamIndex>,
 ) -> Result<Vec<ClassifiedSeam>, String> {
     let context = production_role_context(root, config, std::iter::once(file));
     if !workspace::classify_with(file, &context).seeds_production_findings() {
@@ -2747,12 +2811,13 @@ pub(crate) fn classify_seams_in_file_with_related_at_with_config(
             files.push(evidence_file.clone());
         }
     }
-    let mut index =
-        rust_index::build_index_with_test_harnesses(root, &files, harness_registrations(config))?;
-    rust_index::apply_oracle_policy(&mut index, config.oracles());
-    let seams = seams_from_index_files(&[file.to_path_buf()], &index);
-    let evidence = test_grip_evidence::evidence_for_seams(&seams, &index);
-    Ok(seam_classification::classify_seams(&seams, &evidence))
+    if let Some(index) = seam_index.as_ref().filter(|index| index.covers(&files)) {
+        return Ok(index.classify_in_file(file));
+    }
+    let built = FileSeamIndex::build(root, config, &files)?;
+    let classified = built.classify_in_file(file);
+    *seam_index = Some(built);
+    Ok(classified)
 }
 
 fn seams_from_index_files(production_files: &[PathBuf], index: &RustIndex) -> Vec<RepoSeam> {
@@ -5339,6 +5404,157 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             return Err("probe fixture must yield at least one seam".into());
         }
 
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #8547: extending the admission probe's core index with the
+    /// admitted extras must produce the same index facts (and therefore
+    /// the same seams) as one fresh build over the whole file set, and
+    /// reusing it with an unchanged file list must be a no-op.
+    #[test]
+    fn reused_core_index_matches_fresh_main_build() -> Result<(), String> {
+        let root = make_tempdir("reuse-core-index")?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"reuse8547\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub mod other;\n\npub fn discount(total: i32) -> i32 {\n    if total >= 100 { total / 10 } else { 0 }\n}\n\nfn check_discount() -> bool {\n    discount(200) == 20\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn high_total_gets_discount() {\n        assert_eq!(discount(200), 20);\n    }\n}\n",
+        )?;
+        write_file(
+            &root.join("src/other.rs"),
+            "pub fn shipping(total: i32) -> i32 {\n    if total >= 50 { 0 } else { 5 }\n}\n",
+        )?;
+        write_file(
+            &root.join("tests/it.rs"),
+            "use reuse8547::discount;\n\n#[test]\nfn discount_from_integration() {\n    assert_eq!(discount(50), 0);\n}\n",
+        )?;
+        let loaded = |paths: &[&str]| -> Vec<(PathBuf, Vec<u8>)> {
+            paths
+                .iter()
+                .map(|path| {
+                    (
+                        PathBuf::from(path),
+                        std::fs::read(root.join(path)).unwrap_or_default(),
+                    )
+                })
+                .collect()
+        };
+        let core_files = loaded(&["src/lib.rs", "src/other.rs"]);
+        let all_files = loaded(&["src/lib.rs", "src/other.rs", "tests/it.rs"]);
+
+        let core = rust_index::build_analysis_index_from_loaded_files(&root, &core_files, &[])?;
+        let reused =
+            rust_index::reuse_cached_index_with_loaded_files(core, &root, &all_files, &[])?;
+        let fresh = rust_index::build_analysis_index_from_loaded_files(&root, &all_files, &[])?;
+
+        let facts_of = |index: &RustIndex| {
+            let mut tests: Vec<String> = index
+                .tests()
+                .iter()
+                .map(|test| format!("{}:{}:{}", test.file.display(), test.name, test.start_line))
+                .collect();
+            tests.sort();
+            let mut functions: Vec<String> = index
+                .functions()
+                .iter()
+                .map(|function| {
+                    format!(
+                        "{}:{}:{}:{}",
+                        function.file.display(),
+                        function.name,
+                        function.start_line,
+                        function.end_line
+                    )
+                })
+                .collect();
+            functions.sort();
+            (tests, functions)
+        };
+        if facts_of(&reused.index) != facts_of(&fresh.index) {
+            return Err(
+                "reused core index must carry the fresh build's test/function facts".into(),
+            );
+        }
+        let production = vec![PathBuf::from("src/lib.rs"), PathBuf::from("src/other.rs")];
+        let reused_seams = inventory_seams_from_index(&production, &reused.index);
+        let fresh_seams = inventory_seams_from_index(&production, &fresh.index);
+        if reused_seams != fresh_seams {
+            return Err("reused core index must yield the fresh build's seams".into());
+        }
+        if reused_seams.is_empty() {
+            return Err("reuse fixture must yield at least one seam".into());
+        }
+        // An unchanged file list reuses the built index untouched: no
+        // file is re-parsed, re-decoded, or dropped.
+        let file_count = reused.index.files().len();
+        let again =
+            rust_index::reuse_cached_index_with_loaded_files(reused, &root, &all_files, &[])?;
+        if again.index.files().len() != file_count {
+            return Err("unchanged reuse must keep every indexed file".into());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #8547: one shared bounded seam index serves both check routes:
+    /// classification populates it once, and the seam-shape consumer
+    /// reuses it instead of building a second index, with results
+    /// identical to the unshared builders.
+    #[test]
+    fn shared_file_seam_index_serves_both_route_consumers() -> Result<(), String> {
+        let root = make_tempdir("shared-seam-index")?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"shared8547\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub fn discount(total: i32) -> i32 {\n    if total >= 100 { total / 10 } else { 0 }\n}\n",
+        )?;
+        write_file(
+            &root.join("tests/it.rs"),
+            "use shared8547::discount;\n\n#[test]\nfn discount_from_integration() {\n    assert_eq!(discount(50), 0);\n}\n",
+        )?;
+        let config = RiprConfig::default();
+        let lib = PathBuf::from("src/lib.rs");
+        let evidence = vec![PathBuf::from("tests/it.rs")];
+
+        let mut shared: Option<FileSeamIndex> = None;
+        let classified_shared =
+            classify_seams_in_file_with_shared_index(&root, &config, &lib, &evidence, &mut shared)?;
+        if shared
+            .as_ref()
+            .is_none_or(|index| !index.covers(&[lib.clone(), evidence[0].clone()]))
+        {
+            return Err("classification must populate the shared seam index".into());
+        }
+        let seams_shared = scoped_file_seams(&root, &config, &lib, &mut shared)?;
+
+        let classified_fresh =
+            classify_seams_in_file_with_shared_index(&root, &config, &lib, &evidence, &mut None)?;
+        let seams_fresh = scoped_file_seams(&root, &config, &lib, &mut None)?;
+
+        let seam_ids = |seams: &[RepoSeam]| {
+            seams
+                .iter()
+                .map(|seam| seam.id().as_str().to_string())
+                .collect::<Vec<_>>()
+        };
+        if seam_ids(&seams_shared) != seam_ids(&seams_fresh) || seams_shared.is_empty() {
+            return Err("shared seam shapes must match the unshared builder".into());
+        }
+        let classified_ids = |classified: &[ClassifiedSeam]| {
+            classified
+                .iter()
+                .map(|entry| format!("{}:{:?}", entry.seam.id().as_str(), entry.class))
+                .collect::<Vec<_>>()
+        };
+        if classified_ids(&classified_shared) != classified_ids(&classified_fresh) {
+            return Err("shared classification must match the unshared builder".into());
+        }
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }

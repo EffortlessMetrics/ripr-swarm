@@ -309,7 +309,7 @@ pub(crate) fn resolve_repair_subject(root: &Path, item: &str) -> Result<RepairSu
 /// file, and its related tests name the files that carry their evidence.
 /// Only that file's seams are classified, with test-grip evidence from
 /// the finding's own related-test files
-/// ([`classify_seams_in_file_with_related_at_with_config`](crate::analysis::classify_seams_in_file_with_related_at_with_config)).
+/// ([`classify_seams_in_file_with_shared_index`](crate::analysis::classify_seams_in_file_with_shared_index)).
 /// A fresh workspace inventory — full or diff-scoped — is never built
 /// here: on a large workspace either one builds a workspace-wide index
 /// and evidence context, and the full inventory additionally classified
@@ -327,6 +327,7 @@ pub(crate) fn check_repair_route(
     root: &Path,
     check_config: &crate::config::RiprConfig,
     output: &super::CheckOutput,
+    seam_index: &mut Option<crate::analysis::FileSeamIndex>,
 ) -> Option<crate::app::RepairRoute> {
     let finding = crate::output::human::selected_triage_finding(output, check_config)?;
     let gap = finding.canonical_gap.as_ref()?;
@@ -344,11 +345,12 @@ pub(crate) fn check_repair_route(
                 .then_some(relative)
         })
         .collect();
-    let classified = crate::analysis::classify_seams_in_file_with_related_at_with_config(
+    let classified = crate::analysis::classify_seams_in_file_with_shared_index(
         root,
         &config,
         Path::new(&gap.file),
         &evidence_files,
+        seam_index,
     )
     .ok()?;
     match crate::analysis::repo_exposure_seam_limit() {

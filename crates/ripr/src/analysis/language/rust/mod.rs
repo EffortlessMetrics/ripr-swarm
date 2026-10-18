@@ -1999,6 +1999,9 @@ impl RustAdapter {
         let mut rust_consumed_sources =
             crate::analysis::consumed_source::ConsumedRustSources::default();
         let mut dependent_scope = None;
+        // #8547: the admission probe's core index, reused as the main
+        // index below instead of building the same files a second time.
+        let mut admission_core: Option<crate::analysis::facts::CachedRustIndex> = None;
         let mut withheld_macro_bindings = classify::WithheldMacroBindings::default();
         let scope_limit = diff_index_file_limit()?;
         let narrow_limit = diff_narrow_index_files(scope_limit)?;
@@ -2047,13 +2050,14 @@ impl RustAdapter {
                     return Err(diff_scope_oversized_error(core_files.len(), scope_limit));
                 }
                 if core_files.len() < index_files.len() {
-                    let query = dependent_scope::admission_query(
+                    let (query, core_index) = dependent_scope::admission_query(
                         &options.root,
                         &core_files,
                         &seeded_changed_files,
                         &options.test_harnesses,
                         &mut rust_consumed_sources,
                     )?;
+                    admission_core = Some(core_index);
                     let admission = dependent_scope::admit_dependents(
                         &options.root,
                         &analyzable_rust_files,
@@ -2118,11 +2122,25 @@ impl RustAdapter {
             &options.test_harnesses,
             loaded_files,
         );
-        let cached = rust_index::build_analysis_index_from_loaded_files(
-            &options.root,
-            &loaded_files,
-            &options.test_harnesses,
-        )?;
+        // #8547: when the dependent-scope admission probe already built
+        // the changed packages' index, reuse it as the main index: only
+        // the admitted extras (and any file whose bytes moved since the
+        // probe read them) are parsed, through the same fact cache, and
+        // post-processing re-runs once over the merged index. Without an
+        // admission probe the main build is the only build, as before.
+        let cached = match admission_core {
+            Some(core) => rust_index::reuse_cached_index_with_loaded_files(
+                core,
+                &options.root,
+                &loaded_files,
+                &options.test_harnesses,
+            )?,
+            None => rust_index::build_analysis_index_from_loaded_files(
+                &options.root,
+                &loaded_files,
+                &options.test_harnesses,
+            )?,
+        };
         #[cfg(test)]
         {
             rust_consumed_sources.file_fact_cache = cached.file_fact_cache.clone();
