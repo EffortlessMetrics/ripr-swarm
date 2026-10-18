@@ -609,3 +609,270 @@ fn conventional_package_root(owner_file: &Path) -> Option<PathBuf> {
     }
     Some(root)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Parse `expression` as the initializer of a single `let` in a function.
+    fn expr(expression: &str) -> Option<ast::Expr> {
+        let source = format!("fn probe() {{ let value = {expression}; }}");
+        let root = parsed(&source)?;
+        let function = named_function(&root, "probe")?;
+        let statement = function.body()?.stmt_list()?.statements().next()?;
+        match statement {
+            ast::Stmt::LetStmt(binding) => binding.initializer(),
+            _ => None,
+        }
+    }
+
+    fn standalone(owner: &str, test: &str) -> bool {
+        assertion_namespace_is_standalone(Path::new(owner), Path::new(test))
+    }
+
+    #[test]
+    fn identifiers_must_start_with_a_letter_or_underscore() {
+        for accepted in ["receipt", "_receipt", "r2", "_"] {
+            assert!(valid_identifier(accepted), "{accepted}");
+        }
+        for rejected in ["", "2r", "a-b", "a.b", "a b", "r#type", "é"] {
+            assert!(!valid_identifier(rejected), "{rejected}");
+        }
+    }
+
+    #[test]
+    fn closure_parameter_requires_one_plain_identifier() {
+        let parameter = |source: &str| {
+            expr(source)
+                .and_then(|value| ast::ClosureExpr::cast(value.syntax().clone()))
+                .and_then(|closure| closure_parameter(&closure))
+        };
+        assert_eq!(parameter("|receipt| 1"), Some("receipt".to_string()));
+        assert_eq!(parameter("| receipt | 1"), Some("receipt".to_string()));
+        for source in [
+            "|&receipt| 1",
+            "|(a, b)| 1",
+            "|a, b| 1",
+            "|| 1",
+            "|receipt: &R| 1",
+        ] {
+            assert_eq!(parameter(source), None, "{source}");
+        }
+    }
+
+    #[test]
+    fn task_identity_needs_exactly_one_positive_comparison_with_the_receipt_id() {
+        let supported = |source: &str| {
+            expr(source).is_some_and(|value| supported_task_identity(&value, "receipt"))
+        };
+        assert!(supported("receipt.id == task_id"));
+        assert!(supported("task_id == receipt.id"));
+        for source in [
+            "receipt.id != task_id",
+            "receipt.id == task_id && flag == other",
+            "other.id == task_id",
+            "receipt.id == task.id",
+            "receipt.id",
+        ] {
+            assert!(expr(source).is_some(), "control must parse: {source}");
+            assert!(!supported(source), "{source}");
+        }
+    }
+
+    #[test]
+    fn request_membership_needs_a_positive_receipt_lookup_over_the_request_set() {
+        let supported = |source: &str| {
+            expr(source).is_some_and(|value| supported_request_membership(&value, "receipt"))
+        };
+        assert!(supported(
+            "requests.iter().any(|id| records.get(&receipt.id).is_some_and(|set| set.contains(id)))"
+        ));
+        for source in [
+            // Negated, inequality, or lookup keyed by some other binding.
+            "!requests.iter().any(|id| records.get(&receipt.id).is_some_and(|set| set.contains(id)))",
+            "requests.iter().any(|id| records.get(&receipt.id).is_some_and(|set| id != set))",
+            "requests.iter().any(|id| records.get(&other.id).is_some_and(|set| set.contains(id)))",
+            "records.get(&receipt.id).is_some_and(|set| set.contains(id))",
+        ] {
+            assert!(expr(source).is_some(), "control must parse: {source}");
+            assert!(!supported(source), "{source}");
+        }
+    }
+
+    #[test]
+    fn closure_tail_must_return_some_of_the_receipt_and_relation_pair() {
+        let returns = |source: &str| {
+            expr(source).is_some_and(|value| returns_relation(&value, "receipt", "relation"))
+        };
+        assert!(returns("Some((receipt, relation))"));
+        for source in [
+            "Some((relation, receipt))",
+            "Some((receipt, other))",
+            "Some((receipt, relation, extra))",
+            "Some(receipt)",
+            "Ok((receipt, relation))",
+            "(receipt, relation)",
+        ] {
+            assert!(expr(source).is_some(), "control must parse: {source}");
+            assert!(!returns(source), "{source}");
+        }
+    }
+
+    #[test]
+    fn none_arm_must_return_the_bare_none_path() {
+        let none_arm = |source: &str| expr(source).is_some_and(|value| returns_none(&value));
+        assert!(none_arm("return None"));
+        for source in ["None", "return Some(1)", "return", "return other::None"] {
+            assert!(!none_arm(source), "{source}");
+        }
+    }
+
+    #[test]
+    fn tuple_patterns_are_exactly_two_boolean_literals() {
+        let pattern = |source: &str| {
+            let text = format!("fn probe() {{ match (a, b) {{ {source} => 1, _ => 2 }} }}");
+            let root = parsed(&text)?;
+            let function = named_function(&root, "probe")?;
+            let tail = function.body()?.stmt_list()?.tail_expr()?;
+            let arm = ast::MatchExpr::cast(tail.syntax().clone())?
+                .match_arm_list()?
+                .arms()
+                .next()?;
+            bool_pattern(&arm.pat()?)
+        };
+        assert_eq!(pattern("(true, false)"), Some([true, false]));
+        assert_eq!(pattern("(false, true)"), Some([false, true]));
+        for source in [
+            "(true, _)",
+            "(true,)",
+            "(true, false, true)",
+            "true",
+            "(1, 0)",
+        ] {
+            assert_eq!(pattern(source), None, "{source}");
+        }
+    }
+
+    #[test]
+    fn plain_strings_exclude_escapes_quotes_and_raw_or_non_string_literals() {
+        let plain = |source: &str| expr(source).and_then(|value| plain_string(&value));
+        assert_eq!(
+            plain(r#""request_identity_v2""#),
+            Some("request_identity_v2".to_string())
+        );
+        assert_eq!(plain(r#""""#), Some(String::new()));
+        for source in [r#""a\nb""#, r##"r#"raw"#"##, "1", "true", "name"] {
+            assert!(expr(source).is_some(), "control must parse: {source}");
+            assert_eq!(plain(source), None, "{source}");
+        }
+    }
+
+    #[test]
+    fn derived_arm_text_matches_with_or_without_trailing_comma_or_by_pattern() {
+        let selected = single_arm(r#"(true, false) => "join","#);
+        assert!(selected.is_some());
+        let matches = |claimed: &str| {
+            selected
+                .as_ref()
+                .and_then(|value| arm_source_matches(value, claimed))
+        };
+        assert_eq!(matches(r#"(true, false) => "join""#), Some(true));
+        assert_eq!(matches(r#"  (true, false) => "join" , "#), Some(true));
+        // The pattern prefix alone is an accepted claim; a different arm is not.
+        assert_eq!(matches("(true, false) =>"), Some(true));
+        assert_eq!(matches(r#"(true, false) => "other""#), Some(false));
+        assert_eq!(matches(r#"(false, true) => "join""#), Some(false));
+        // `single_arm` rejects zero or several arms.
+        assert!(single_arm("").is_none());
+        assert!(single_arm(r#"(true, true) => "a", (true, false) => "b""#).is_none());
+    }
+
+    #[test]
+    fn test_namespace_rejects_glob_alias_and_foreign_items() {
+        let plain =
+            |source: &str| parsed(source).is_some_and(|root| test_namespace_is_plain(&root));
+        assert!(plain("use crate::terminalize_proof; #[test] fn t() {}"));
+        for source in [
+            "use crate::*; fn t() {}",
+            "use crate::terminalize_proof as other; fn t() {}",
+            "use std::assert_eq; fn t() {}",
+            "macro_rules! m { () => {}; } fn t() {}",
+            "struct Receipt; fn t() {}",
+            "const X: u8 = 1; fn t() {}",
+        ] {
+            assert!(parsed(source).is_some(), "control must parse: {source}");
+            assert!(!plain(source), "{source}");
+        }
+    }
+
+    #[test]
+    fn package_root_is_everything_before_the_last_src_component() {
+        let root = |path: &str| conventional_package_root(Path::new(path));
+        assert_eq!(
+            root("crates/ripr/src/lib.rs"),
+            Some(PathBuf::from("crates/ripr"))
+        );
+        assert_eq!(root("src/lib.rs"), Some(PathBuf::new()));
+        // The last `src` wins, and a trailing `src` has no file under it.
+        assert_eq!(root("a/src/b/src/x.rs"), Some(PathBuf::from("a/src/b")));
+        assert_eq!(root("a/src"), None);
+        assert_eq!(root("a/lib.rs"), None);
+        assert_eq!(root("../a/src/lib.rs"), None);
+        assert_eq!(root("/abs/src/lib.rs"), None);
+    }
+
+    #[test]
+    fn crate_root_files_are_lib_main_or_direct_bin_sources_only() {
+        let root = |path: &str| conventional_source_crate_root(Path::new(path));
+        for path in [
+            "src/lib.rs",
+            "src/main.rs",
+            "src/bin/tool.rs",
+            "crates/ripr/src/lib.rs",
+            "crates/ripr/src/bin/tool.rs",
+        ] {
+            assert!(root(path), "{path}");
+        }
+        for path in [
+            "src/other.rs",
+            "src/bin/tool.txt",
+            "src/bin/nested/tool.rs",
+            "src/nested/lib.rs",
+            "lib.rs",
+            "crates/ripr/lib.rs",
+        ] {
+            assert!(!root(path), "{path}");
+        }
+    }
+
+    #[test]
+    fn assertions_stay_in_the_owner_crate_root_or_its_flat_tests_directory() {
+        // Same-file tests only count when the file is itself a crate root.
+        assert!(standalone(
+            "crates/ripr/src/lib.rs",
+            "crates/ripr/src/lib.rs"
+        ));
+        assert!(!standalone(
+            "crates/ripr/src/inner.rs",
+            "crates/ripr/src/inner.rs"
+        ));
+        // Flat `tests/*.rs` of the same package are standalone.
+        assert!(standalone(
+            "crates/ripr/src/inner.rs",
+            "crates/ripr/tests/derived.rs"
+        ));
+        assert!(standalone("src/inner.rs", "tests/derived.rs"));
+        for test in [
+            "crates/ripr/tests/nested/derived.rs",
+            "crates/ripr/tests/derived.txt",
+            "crates/ripr/tests",
+            "crates/other/tests/derived.rs",
+            "crates/ripr/src/derived.rs",
+            "crates/ripr/benches/derived.rs",
+        ] {
+            assert!(!standalone("crates/ripr/src/inner.rs", test), "{test}");
+        }
+        // An owner outside any `src` directory has no package to anchor to.
+        assert!(!standalone("scripts/inner.rs", "tests/derived.rs"));
+    }
+}
