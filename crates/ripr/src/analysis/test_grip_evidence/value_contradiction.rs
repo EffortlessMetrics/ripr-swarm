@@ -401,7 +401,7 @@ const INTEGER_SUFFIXES: [&str; 12] = [
 ];
 
 /// Tokenize masked Rust expression text. Any byte the fold grammar cannot
-/// mean (`?`, `|`, `.`, `:`), a non-suffix identifier glued to a number, or
+/// mean (`?`, `|`, `:`), a float literal, a non-suffix identifier glued to a number, or
 /// a non-ASCII byte fails the whole fold.
 fn tokenize(text: &str) -> Option<Vec<Token>> {
     let bytes = text.as_bytes();
@@ -432,6 +432,16 @@ fn tokenize(text: &str) -> Option<Vec<Token>> {
             }
             let digits = text[start..digits_end].replace('_', "");
             let value = digits.parse::<i128>().ok()?;
+            // `2u64.pow(..)` is a method call; a dot followed by anything
+            // else after the digits is a float literal or a range, which
+            // the integer fold must not read as two integers.
+            if bytes.get(index) == Some(&b'.')
+                && !bytes
+                    .get(index + 1)
+                    .is_some_and(|next| next.is_ascii_alphabetic() || *next == b'_')
+            {
+                return None;
+            }
             tokens.push(Token::Int(value));
             continue;
         }
@@ -479,6 +489,7 @@ fn tokenize(text: &str) -> Option<Vec<Token>> {
                 b'}' => "}",
                 b',' => ",",
                 b';' => ";",
+                b'.' => ".",
                 _ => return None,
             }
         };
@@ -665,7 +676,16 @@ impl<'a> Parser<'a> {
             self.position += 1;
             return self.skip_unary();
         }
-        self.skip_primary()
+        self.skip_primary()?;
+        // The same method suffixes the fold reads; skipped unevaluated.
+        while self.eat_symbol(".") {
+            self.peek_ident()?;
+            self.position += 1;
+            self.expect_symbol("(")?;
+            self.skip_or()?;
+            self.expect_symbol(")")?;
+        }
+        Some(())
     }
 
     fn skip_primary(&mut self) -> Option<()> {
@@ -812,6 +832,38 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_primary(&mut self) -> Option<Value> {
+        let mut value = self.parse_atom()?;
+        while self.eat_symbol(".") {
+            value = self.parse_integer_method(value)?;
+        }
+        Some(value)
+    }
+
+    /// The `.pow(e)`, `.min(o)` or `.max(o)` call on an integer receiver
+    /// (the `.` already consumed). Any other method, a boolean receiver or
+    /// an argument that does not fold leaves the whole fold unevaluated; a
+    /// result outside the declared width does too, like every operator.
+    fn parse_integer_method(&mut self, receiver: Value) -> Option<Value> {
+        let Value::Int(receiver) = receiver else {
+            return None;
+        };
+        let name = self.peek_ident()?.to_string();
+        self.position += 1;
+        self.expect_symbol("(")?;
+        let Value::Int(argument) = self.parse_expression()? else {
+            return None;
+        };
+        self.expect_symbol(")")?;
+        let result = match name.as_str() {
+            "pow" => receiver.checked_pow(u32::try_from(argument).ok()?)?,
+            "min" => receiver.min(argument),
+            "max" => receiver.max(argument),
+            _ => return None,
+        };
+        Some(Value::Int(self.check_range(result)?))
+    }
+
+    fn parse_atom(&mut self) -> Option<Value> {
         match self.tokens.get(self.position) {
             Some(Token::Symbol("(")) => {
                 self.position += 1;
@@ -839,10 +891,11 @@ impl<'a> Parser<'a> {
                     "false" => return Some(Value::Bool(false)),
                     _ => {}
                 }
-                // Calls, method chains, paths and field access are outside
-                // the fold's scope; only bound parameters evaluate.
+                // Calls, paths and field access are outside the fold's
+                // scope; only bound parameters evaluate, and the integer
+                // methods of [`Self::parse_integer_method`] may follow.
                 match self.peek_symbol() {
-                    Some("(" | "." | "::") => None,
+                    Some("(" | "::") => None,
                     _ => self.environment.get(&name).copied().map(Value::Int),
                 }
             }
@@ -1305,6 +1358,89 @@ pub fn discounted_total(amount_cents: i64, discount_threshold_cents: i64) -> i64
         assert!(matches!(verdict, ExactValueVerdict::Contradicted { .. }));
         let verdict = verdict_for_owner(owner, "assert_eq!(discounted_total(5, 5), 2);")?;
         assert_eq!(verdict, ExactValueVerdict::Consistent);
+        Ok(())
+    }
+
+    // #8659: the integer methods the shipped shapes use.
+    #[test]
+    fn integer_pow_min_and_max_fold() -> Result<(), String> {
+        let pow =
+            "pub fn discounted_total(attempt: u32, base: u64) -> u64 { base * 2u64.pow(attempt) }";
+        let consistent = verdict_for_owner(pow, "assert_eq!(discounted_total(3, 100), 800);")?;
+        assert_eq!(consistent, ExactValueVerdict::Consistent);
+        let contradicted = verdict_for_owner(pow, "assert_eq!(discounted_total(3, 100), 300);")?;
+        assert_eq!(
+            contradicted,
+            ExactValueVerdict::Contradicted {
+                expected: "300".to_string(),
+                evaluated: 800
+            }
+        );
+        let min = "pub fn discounted_total(attempt: u32) -> u32 { attempt.min(5) }";
+        assert_eq!(
+            verdict_for_owner(min, "assert_eq!(discounted_total(3), 3);")?,
+            ExactValueVerdict::Consistent
+        );
+        assert!(matches!(
+            verdict_for_owner(min, "assert_eq!(discounted_total(9), 9);")?,
+            ExactValueVerdict::Contradicted { evaluated: 5, .. }
+        ));
+        let max = "pub fn discounted_total(attempt: i64) -> i64 { (attempt - 4).max(0) }";
+        assert_eq!(
+            verdict_for_owner(max, "assert_eq!(discounted_total(2), 0);")?,
+            ExactValueVerdict::Consistent
+        );
+        // Unary minus binds looser than the method: -(2^2).
+        let neg = "pub fn discounted_total(x: i64) -> i64 { -x.pow(2) }";
+        assert_eq!(
+            verdict_for_owner(neg, "assert_eq!(discounted_total(2), -4);")?,
+            ExactValueVerdict::Consistent
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unsupported_methods_floats_and_overflow_stay_not_evaluable() -> Result<(), String> {
+        for owner in [
+            // Any other method.
+            "pub fn discounted_total(x: u64) -> u64 { x.abs_diff(3) }",
+            // A float literal is not two integers around a dot.
+            "pub fn discounted_total(x: u64) -> u64 { x * 2.5 }",
+            "pub fn discounted_total(x: u64) -> u64 { x + 1. }",
+            // Exponent overflow of the declared width.
+            "pub fn discounted_total(x: u64) -> u64 { x.pow(70) }",
+            // A negative exponent has no `u32`.
+            "pub fn discounted_total(x: i64) -> i64 { x.pow(-1) }",
+            // A boolean receiver.
+            "pub fn discounted_total(x: i64) -> i64 { (x > 1).min(true) }",
+            // A field access is no method.
+            "pub fn discounted_total(x: u64) -> u64 { x.0 }",
+        ] {
+            let verdict = verdict_for_owner(owner, "assert_eq!(discounted_total(4), 4);")?;
+            assert_eq!(verdict, ExactValueVerdict::NotEvaluable, "{owner}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_method_in_an_untaken_branch_does_not_silence_the_fold() -> Result<(), String> {
+        let owner = r#"
+pub fn discounted_total(x: u64) -> u64 {
+    if x == 0 { 7 } else if x.min(3) == 3 { 8 } else { 9 }
+}
+"#;
+        assert_eq!(
+            verdict_for_owner(owner, "assert_eq!(discounted_total(0), 7);")?,
+            ExactValueVerdict::Consistent
+        );
+        assert!(matches!(
+            verdict_for_owner(owner, "assert_eq!(discounted_total(0), 8);")?,
+            ExactValueVerdict::Contradicted { evaluated: 7, .. }
+        ));
+        assert_eq!(
+            verdict_for_owner(owner, "assert_eq!(discounted_total(5), 8);")?,
+            ExactValueVerdict::Consistent
+        );
         Ok(())
     }
 
