@@ -413,36 +413,46 @@ fn inline_target_copies_at_head(
 /// because its worktree or index copy differs from HEAD. Uses the same
 /// predicate as the attempt's baseline capture ([`require_inline_target_at_head`])
 /// so `ripr check` can withhold a repair start the attempt would refuse.
-/// Fails open when git cannot establish HEAD (no HEAD, not a repository),
-/// reporting `false`; the attempt's own refusal remains the authority.
+/// Fails open (`false`, leaving the attempt's own refusal authoritative)
+/// whenever the answer is not positively established: `root` is not the exact
+/// Git top-level (the attempt refuses that root itself, and `<rev>:<path>`
+/// would resolve from the top-level rather than `root`), HEAD is unborn, or
+/// any git command fails for a reason other than the file being absent.
 pub(crate) fn inline_target_is_uncommitted(root: &Path, path: &str) -> bool {
-    let Some(head) = git_text(root, &["rev-parse", "--verify", "--quiet", "HEAD"])
+    let Ok(root) = canonical_repository_root(root) else {
+        return false;
+    };
+    let Some(head) = git_text(&root, &["rev-parse", "--verify", "--quiet", "HEAD"])
         .ok()
         .filter(|head| !head.is_empty())
     else {
         return false;
     };
-    let Some(committed) = git_text(
-        root,
-        &[
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            &format!("{head}:{path}"),
-        ],
-    )
-    .ok()
-    .filter(|object| !object.is_empty()) else {
+    // `ls-tree` succeeds with empty output for a path HEAD does not carry,
+    // so that case stays distinct from a git failure.
+    let Ok(listing) = git_text(&root, &["ls-tree", &head, "--", path]) else {
+        return false;
+    };
+    let Some(committed) = listing
+        .split_ascii_whitespace()
+        .nth(2)
+        .map(str::to_string)
+        .filter(|_| !listing.is_empty())
+    else {
         // HEAD exists but does not carry the file: the attempt refuses it too.
         return true;
     };
-    let Ok(worktree) = git_text(root, &["hash-object", "--", path]) else {
-        // HEAD carries the file but the worktree copy cannot be hashed
-        // (deleted or unreadable): it differs from HEAD, and the attempt
+    let worktree = match fs::symlink_metadata(root.join(path)) {
+        // Deleted from the worktree: differs from HEAD, and the attempt
         // refuses it as well.
-        return true;
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return true,
+        Err(_) => return false,
+        Ok(_) => match git_text(&root, &["hash-object", "--", path]) {
+            Ok(object) => object,
+            Err(_) => return false,
+        },
     };
-    let staged = git_text(root, &["ls-files", "--stage", "--", path])
+    let staged = git_text(&root, &["ls-files", "--stage", "--", path])
         .ok()
         .and_then(|entry| entry.split_ascii_whitespace().nth(1).map(str::to_string));
     !inline_target_copies_at_head(Some(&committed), Some(&worktree), staged.as_deref())
@@ -2620,6 +2630,14 @@ mod tests {
         // A path HEAD does not carry is uncommitted; a repository with no
         // HEAD fails open to the attempt's own refusal.
         assert!(inline_target_is_uncommitted(&fixture.root, "src/new.rs"));
+        // A subdirectory of the top-level is not an attempt root: defer to the
+        // attempt (false) rather than resolving HEAD paths from the wrong base.
+        fs::create_dir_all(fixture.root.join("sub"))
+            .map_err(|err| format!("create subdirectory: {err}"))?;
+        assert!(!inline_target_is_uncommitted(
+            &fixture.root.join("sub"),
+            "src/pricing.rs"
+        ));
         // A tracked file deleted from the worktree differs from HEAD too.
         git_ok(&fixture.root, &["reset", "-q", "--hard"])?;
         assert!(!inline_target_is_uncommitted(

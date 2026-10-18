@@ -2134,6 +2134,10 @@ mod tests {
             "a dirty inline target must state the commit-or-stash requirement:\n{rendered_held}"
         );
         assert!(
+            !rendered_held.contains("test route below"),
+            "no stub is rendered here, so the test route must not be named:\n{rendered_held}"
+        );
+        assert!(
             !rendered_held.contains("\n  ripr repair 67fc764ba37d77bd\n"),
             "a refused start must not be a bare runnable line:\n{rendered_held}"
         );

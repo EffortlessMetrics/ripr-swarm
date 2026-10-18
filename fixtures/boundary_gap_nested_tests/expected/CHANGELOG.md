@@ -453,15 +453,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — boundary_gap_nested_tests (18)
-
-Reason:
-RIPR-SPEC-0181: check withholds a bare repair start when the inline-test target has uncommitted changes (#8738)
-
-Command:
-`cargo xtask goldens bless boundary_gap_nested_tests --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

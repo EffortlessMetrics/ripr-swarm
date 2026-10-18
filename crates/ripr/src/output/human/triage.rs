@@ -299,6 +299,25 @@ pub(crate) fn render_human_triage(
                 out.push_str(&format!("  {command}\n"));
                 super::push_powershell_variant(out, "  ", &command);
             }
+            let stub_eligible = finding.class != ExposureClass::Exposed
+                && finding.static_limit_kind
+                    != Some(StaticLimitKind::RustAssertionContextUnresolved)
+                && !super::sections::untraced_reach_weak_finding(finding)
+                && finding.probe.offers_stub_route()
+                && finding
+                    .probe
+                    .location
+                    .file
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    == Some("rs");
+            // The test route is mentioned beside a held repair start only
+            // when a runnable stub is actually rendered below.
+            let stub_rendered = stub_eligible
+                && matches!(
+                    navigation.stub_route_for(&finding.id),
+                    Some(StubRouteDecision::Stub { .. })
+                );
             // #8166 Slice C: an eligible top finding also gets the repair
             // start, naming the seam identity the check pipeline's
             // producer-owned gate established. No route, no line: an
@@ -314,8 +333,13 @@ pub(crate) fn render_human_triage(
                     // `ripr repair` would refuse this start: its inline test
                     // module target begins from the committed file. State the
                     // requirement instead of a command that exits 2.
+                    let alternative = if stub_rendered {
+                        ", or use the test route below"
+                    } else {
+                        ""
+                    };
                     out.push_str(&format!(
-                        "  Repair start (needs a committed `{file}`; it has uncommitted changes, so commit or stash it first, or use the test route below): {command}\n"
+                        "  Repair start (needs a committed `{file}`; it has uncommitted changes, so commit or stash it first{alternative}): {command}\n"
                     ));
                 } else {
                     out.push_str(&format!("  {command}\n"));
@@ -327,19 +351,7 @@ pub(crate) fn render_human_triage(
             // assertions (RIPR-SPEC-0240) claims no missing test, so it gets
             // no test-writing route either, and neither does a weak finding
             // whose reach witness ripr could not trace (#7071).
-            if finding.class != ExposureClass::Exposed
-                && finding.static_limit_kind
-                    != Some(StaticLimitKind::RustAssertionContextUnresolved)
-                && !super::sections::untraced_reach_weak_finding(finding)
-                && finding.probe.offers_stub_route()
-                && finding
-                    .probe
-                    .location
-                    .file
-                    .extension()
-                    .and_then(|ext| ext.to_str())
-                    == Some("rs")
-            {
+            if stub_eligible {
                 // #5471: only when the check pipeline ran the stub's own
                 // resolver for this finding and it produced a stub; a refusal
                 // prints its reason, and no decision prints nothing.
