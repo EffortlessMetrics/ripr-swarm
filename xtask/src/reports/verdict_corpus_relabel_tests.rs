@@ -801,6 +801,13 @@ const TOY_DIFF: &str = "\
 fn relabel_reports_drift_for_exactly_the_mislabelled_toy_case() -> Result<(), String> {
     let toolchain = host_rustc_label()?;
     let dir = crate::tests::temp_dir("relabel-e2e-toy");
+    struct RemoveOnDrop(PathBuf);
+    impl Drop for RemoveOnDrop {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    let _cleanup = RemoveOnDrop(dir.clone());
     crate::tests::write(
         &dir.join("subjects").join(TOY_SUBJECT_ID).join("Cargo.toml"),
         TOY_MANIFEST,
@@ -841,7 +848,6 @@ fn relabel_reports_drift_for_exactly_the_mislabelled_toy_case() -> Result<(), St
     let json: serde_json::Value =
         serde_json::from_str(&text).map_err(|err| format!("parse relabel.json: {err}"))?;
     let drifted = drifted_case_ids(&json)?;
-    fs::remove_dir_all(&dir).map_err(|err| err.to_string())?;
 
     match replayed {
         Err(err) if err.contains("1 case(s) drifted from their labels") => {}
