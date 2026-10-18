@@ -28,6 +28,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/field_match_unexecuted_assertion/input --diff <cwd>/fixtures/field_match_unexecuted_assertion/diff.patch --mode fast probe:src_lib.rs:match_arm:afe43b21
   ripr context --root <cwd>/fixtures/field_match_unexecuted_assertion/input --diff <cwd>/fixtures/field_match_unexecuted_assertion/diff.patch --mode fast --at probe:src_lib.rs:match_arm:afe43b21
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:match_arm:afe43b21 --root <cwd>/fixtures/field_match_unexecuted_assertion/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/field_match_unexecuted_assertion/input --at src/lib.rs:4 --kind match_arm
 

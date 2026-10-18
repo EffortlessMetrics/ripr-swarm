@@ -23,6 +23,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/owner_return_pin_json_real_literal/input --diff <cwd>/fixtures/owner_return_pin_json_real_literal/diff.patch --mode fast probe:src_lib.rs:return_value:9659b9fa
   ripr context --root <cwd>/fixtures/owner_return_pin_json_real_literal/input --diff <cwd>/fixtures/owner_return_pin_json_real_literal/diff.patch --mode fast --at probe:src_lib.rs:return_value:9659b9fa
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:return_value:9659b9fa --root <cwd>/fixtures/owner_return_pin_json_real_literal/input` for the full gate's answer
 
 Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets.
