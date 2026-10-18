@@ -40,6 +40,22 @@ fn release_cut_admission_self_test_passes() -> Result<(), String> {
 /// Executes the real action shell with a stubbed read-only `gh` so the
 /// wrapper boundary (live-ref re-read) is exercised, not only the pure scripts.
 fn run_wrapper(second_ref_packet_state: &str, initial_absent: bool) -> Result<i32, String> {
+    run_scenario(second_ref_packet_state, initial_absent, None)
+}
+
+/// The base carries an `active` packet bound to the product cut `b…b`; the
+/// live ref does not move. `base_parent` is the first parent of the base commit.
+fn run_active_wrapper(files_json: &str, base_parent: &str) -> Result<i32, String> {
+    run_scenario("active", false, Some((files_json, base_parent)))
+}
+
+static NEXT_SCENARIO: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn run_scenario(
+    second_ref_packet_state: &str,
+    initial_absent: bool,
+    active: Option<(&str, &str)>,
+) -> Result<i32, String> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     let action_dir = root.join(".github/actions/pr-candidate-admission");
     let yaml = std::fs::read_to_string(action_dir.join("action.yml")).map_err(|e| e.to_string())?;
@@ -50,8 +66,9 @@ fn run_wrapper(second_ref_packet_state: &str, initial_absent: bool) -> Result<i3
         .map(|line| line.strip_prefix("        ").unwrap_or(line))
         .collect();
     let tmp = std::env::temp_dir().join(format!(
-        "ripr-wrapper-{second_ref_packet_state}-{initial_absent}-{}",
-        std::process::id()
+        "ripr-wrapper-{second_ref_packet_state}-{initial_absent}-{}-{}",
+        std::process::id(),
+        NEXT_SCENARIO.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     std::fs::write(tmp.join("action.sh"), body.join("\n")).map_err(|e| e.to_string())?;
@@ -75,11 +92,37 @@ fn run_wrapper(second_ref_packet_state: &str, initial_absent: bool) -> Result<i3
     if initial_absent {
         std::fs::write(tmp.join("initial_absent"), "1").map_err(|e| e.to_string())?;
     }
+    if let Some((files_json, base_parent)) = active {
+        let packet = serde_json::json!({
+            "schema_version": "1",
+            "kind": "ripr_release_cut_admission",
+            "release": "0.11.0",
+            "state": "active",
+            "generation": "cut-1",
+            "controller_issue": 5114,
+            "selection_issue": 2766,
+            "observed_main": {"sha": "b".repeat(40), "tree": "c".repeat(40)},
+            "admitted": [{
+                "pr": 9,
+                "head_sha": "9".repeat(40),
+                "admission": "admitted",
+                "disposition": "release_required_product",
+                "owner_issue": 99,
+                "release_effect": "landed before the final cut",
+                "proof_refs": ["#99"]
+            }],
+            "non_claims": ["Admission is not product qualification or merge authority."]
+        });
+        std::fs::write(tmp.join("active.json"), packet.to_string()).map_err(|e| e.to_string())?;
+        std::fs::write(tmp.join("files.json"), files_json).map_err(|e| e.to_string())?;
+        std::fs::write(tmp.join("base_parent"), base_parent).map_err(|e| e.to_string())?;
+    }
     let gh = r#"#!/usr/bin/env bash
 url=""; for a in "$@"; do case "$a" in repos/*) url="$a";; esac; done
 case "$url" in
-  */git/ref/*) if [ -e "$CONTROL_TMP/seen" ]; then echo ffffffffffffffffffffffffffffffffffffffff; else touch "$CONTROL_TMP/seen"; echo dddddddddddddddddddddddddddddddddddddddd; fi ;;
-  */git/commits/*) echo '{"sha":"dddddddddddddddddddddddddddddddddddddddd","tree":{"sha":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},"parents":[]}' ;;
+  */git/ref/*) if [ -e "$CONTROL_TMP/active.json" ]; then echo dddddddddddddddddddddddddddddddddddddddd; elif [ -e "$CONTROL_TMP/seen" ]; then echo ffffffffffffffffffffffffffffffffffffffff; else touch "$CONTROL_TMP/seen"; echo dddddddddddddddddddddddddddddddddddddddd; fi ;;
+  */git/commits/bbbb*) echo '{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","tree":{"sha":"cccccccccccccccccccccccccccccccccccccccc"},"parents":[]}' ;;
+  */git/commits/*) if [ -e "$CONTROL_TMP/base_parent" ]; then jq -n --arg p "$(cat "$CONTROL_TMP/base_parent")" '{sha:"dddddddddddddddddddddddddddddddddddddddd",tree:{sha:"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},parents:[{sha:$p}]}'; else echo '{"sha":"dddddddddddddddddddddddddddddddddddddddd","tree":{"sha":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},"parents":[]}'; fi ;;
   */contents/*ref=ffff*)
     case "$(cat "$CONTROL_TMP/second_mode")" in
       http403) echo "gh: Forbidden (HTTP 403)" >&2; exit 1 ;;
@@ -88,8 +131,9 @@ case "$url" in
     esac ;;
   */contents/*)
     if [ -e "$CONTROL_TMP/initial_absent" ]; then echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi
+    if [ -e "$CONTROL_TMP/active.json" ]; then base64 -w0 "$CONTROL_TMP/active.json" | jq -R '{content: .}'; exit 0; fi
     base64 -w0 "$CONTROL_TMP/inactive.json" | jq -R '{content: .}' ;;
-  */files?*) echo '[{"filename":"src/lib.rs","status":"modified"}]' ;;
+  */files?*) if [ -e "$CONTROL_TMP/files.json" ]; then cat "$CONTROL_TMP/files.json"; else echo '[{"filename":"src/lib.rs","status":"modified"}]'; fi ;;
   */pulls\?state*) echo '[]' ;;
   *) echo '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"o/r"}},"base":{"ref":"main"},"changed_files":1,"additions":1,"deletions":0,"body":"Governing issue or accepted claim: #5391\nAcceptance delta (one sentence): race control"}' ;;
 esac
@@ -187,6 +231,42 @@ fn wrapper_admits_bootstrap_when_the_moved_base_also_has_no_packet() -> Result<(
     if code != 0 {
         return Err(format!(
             "404 then 404 must admit the bootstrap PR, got exit {code}"
+        ));
+    }
+    Ok(())
+}
+
+const PACKET_ONLY: &str =
+    r#"[{"filename":"policy/release-hard-cut-admission.json","status":"modified"}]"#;
+const PRODUCT_ONLY: &str = r#"[{"filename":"src/lib.rs","status":"modified"}]"#;
+
+#[test]
+fn wrapper_refuses_ordinary_pr_while_the_packet_is_active() -> Result<(), String> {
+    let cut = "b".repeat(40);
+    if run_active_wrapper(PRODUCT_ONLY, &cut)? == 0 {
+        return Err("an ordinary PR must be refused while the cut is active".to_string());
+    }
+    let moved = "9".repeat(40);
+    if run_active_wrapper(PRODUCT_ONLY, &moved)? == 0 {
+        return Err("an ordinary PR must be refused after main moved past the cut".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn wrapper_admits_packet_only_pr_while_the_packet_is_active() -> Result<(), String> {
+    let cut = "b".repeat(40);
+    let code = run_active_wrapper(PACKET_ONLY, &cut)?;
+    if code != 0 {
+        return Err(format!(
+            "a packet-only PR must admit under an active cut, got exit {code}"
+        ));
+    }
+    let moved = "9".repeat(40);
+    let code = run_active_wrapper(PACKET_ONLY, &moved)?;
+    if code != 0 {
+        return Err(format!(
+            "a packet-only PR must admit after main moved, got exit {code}"
         ));
     }
     Ok(())
