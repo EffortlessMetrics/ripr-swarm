@@ -13,7 +13,8 @@ fn entry(key: &str, value: &str) -> String {
     format!("exports[`{key}`] = `{value}`;\n\n")
 }
 
-/// Write `files` under a fresh root, extract `test/price.test.ts`, promote,
+/// Write `files` under a fresh root (with a `.git` marker, so the config walk
+/// has a repository boundary), extract `test/price.test.ts`, promote,
 /// and return each `toMatchSnapshot` assertion's strength in test order.
 fn strengths(
     label: &str,
@@ -24,6 +25,7 @@ fn strengths(
     let written = files
         .iter()
         .try_for_each(|(path, contents)| ts_write_file(&root.join(path), contents))
+        .and_then(|()| ts_write_file(&root.join(".git/HEAD"), "x\n"))
         .and_then(|()| ts_write_file(&root.join("test/price.test.ts"), test_source));
     let relative = Path::new("test/price.test.ts");
     let mut tests = extract_tests(relative, test_source);
@@ -202,6 +204,7 @@ fn snapshot_input_differing_from_head_stays_medium() -> Result<(), String> {
     ] {
         let root = ts_unique_tempdir(label)?;
         let written = ts_write_file(&root.join(SNAP_PATH), &snap)
+            .and_then(|()| ts_write_file(&root.join(".git/HEAD"), "x\n"))
             .and_then(|()| ts_write_file(&root.join("test/price.test.ts"), PRICE_TEST));
         let relative = Path::new("test/price.test.ts");
         let mut tests = extract_tests(relative, PRICE_TEST);
@@ -552,6 +555,19 @@ fn config_passed_by_path_or_custom_named_stays_medium() -> Result<(), String> {
             "{config}: {text}"
         );
     }
+    // A Vitest custom-named config that overrides nothing keeps the credit.
+    let vitest_snap = format!("{VITEST_HEADER}{}", entry("price > price 1", "140"));
+    assert_eq!(
+        strengths(
+            "snap-vitest-custom",
+            PRICE_TEST,
+            &[
+                (SNAP_PATH, &vitest_snap),
+                ("vitest.unit.config.ts", "export default { test: {} };")
+            ]
+        )?,
+        vec![OracleStrength::Strong]
+    );
     Ok(())
 }
 
@@ -587,37 +603,59 @@ fn directories_above_the_root_stop_at_the_repository_boundary() -> Result<(), St
     let (outer, package_root) = monorepo("snap-boundary", Some(".git/HEAD"))?;
     let outer = outer.canonicalize().map_err(|err| err.to_string())?;
     let reached = directories_above_root(&package_root, 16);
-    // A marker beyond the look-up limit is not in reach, so nothing is read.
+    // A marker beyond the look-up limit, with the filesystem root also
+    // beyond it, leaves the boundary unknown.
     let beyond = directories_above_root(&package_root, 1);
     // The repository top itself has nothing above it to read.
-    let top = directories_above_root(&outer, 16).len();
+    let top = directories_above_root(&outer, 16);
     let _ = std::fs::remove_dir_all(&outer);
-    assert_eq!(reached, vec![outer.join("packages"), outer.clone()]);
-    assert!(beyond.is_empty(), "{beyond:?}");
-    assert_eq!(top, 0);
+    assert_eq!(reached, Some(vec![outer.join("packages"), outer.clone()]));
+    assert_eq!(beyond, None);
+    assert_eq!(top, Some(Vec::new()));
+    Ok(())
+}
+
+/// With no marker anywhere, a walk that reaches the filesystem root within
+/// the limit returns every ancestor (nothing above is a repository); one that
+/// runs out of limit first has no known boundary.
+#[test]
+fn walk_without_a_marker_ends_at_the_filesystem_root_or_is_unknown() -> Result<(), String> {
+    let (outer, package_root) = monorepo("snap-no-marker", None)?;
+    let real = package_root.canonicalize().map_err(|err| err.to_string())?;
+    let expected: Vec<PathBuf> = real.ancestors().skip(1).map(Path::to_path_buf).collect();
+    let all = directories_above_root(&package_root, 4096);
+    let short = directories_above_root(&package_root, 1);
+    let _ = std::fs::remove_dir_all(&outer);
+    // A marker on the machine above the temp dir would end the walk early;
+    // either way the filesystem-root case is `Some`, never `None`.
+    assert!(all.is_some(), "{all:?}");
+    if !expected.iter().any(|dir| dir.join(".git").exists()) {
+        assert_eq!(all, Some(expected));
+    }
+    assert_eq!(short, None);
     Ok(())
 }
 
 /// The credit for `test/price.test.ts` under `package_root` when the walk
 /// above the root may climb `limit` levels.
-fn strengths_within(package_root: &Path, limit: usize) -> Option<()> {
+fn configs_readable_within(package_root: &Path, limit: usize) -> Option<()> {
     runner_configs_within(package_root, Path::new("test"), limit).map(|_| ())
 }
 
 /// RIPR-SPEC-0258 example 7, end to end through the config walk: a monorepo
 /// config with a `snapshotResolver` above the root refuses when the walk
-/// reaches the repository marker, and is not read (credit is kept, as the
-/// spec states) when the marker is beyond the look-up limit.
+/// reaches the repository marker, and refuses too when the marker and the
+/// filesystem root are both beyond the look-up limit (boundary unknown).
 #[test]
 fn config_above_the_root_is_read_only_within_reach_of_the_marker() -> Result<(), String> {
     let (outer, package_root) = monorepo("snap-reach", Some(".git/HEAD"))?;
     let written = ts_write_file(&outer.join("jest.config.js"), RESOLVER_CONFIG);
-    let reached = strengths_within(&package_root, 16);
-    let out_of_reach = strengths_within(&package_root, 1);
+    let reached = configs_readable_within(&package_root, 16);
+    let out_of_reach = configs_readable_within(&package_root, 1);
     let _ = std::fs::remove_dir_all(&outer);
     written?;
     assert!(reached.is_none(), "boundary in reach: refuse");
-    assert!(out_of_reach.is_some(), "boundary out of reach: not read");
+    assert!(out_of_reach.is_none(), "boundary unknown: refuse");
     Ok(())
 }
 
@@ -682,7 +720,7 @@ fn flags_and_keys_that_move_the_runner_config_stay_medium() -> Result<(), String
 #[cfg(unix)]
 #[test]
 fn symlinked_test_directory_stays_medium() -> Result<(), String> {
-    let (outer, package_root) = monorepo("snap-symlink-dir", None)?;
+    let (outer, package_root) = monorepo("snap-symlink-dir", Some(".git/HEAD"))?;
     let plain = strengths_at(&package_root);
     // A symlinked analysis root is the user's own checkout path and is kept.
     let root_link = outer.join("pkg-link");
@@ -702,5 +740,23 @@ fn symlinked_test_directory_stays_medium() -> Result<(), String> {
     assert_eq!(plain, vec![OracleStrength::Strong]);
     assert_eq!(through_root_link, vec![OracleStrength::Strong]);
     assert_eq!(through_test_link, vec![OracleStrength::Medium]);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_snapshots_directory_stays_medium() -> Result<(), String> {
+    let (outer, package_root) = monorepo("snap-symlink-snapdir", Some(".git/HEAD"))?;
+    let plain = strengths_at(&package_root);
+    let snapshots = package_root.join("test/__snapshots__");
+    let real_snapshots = outer.join("real-snapshots");
+    let swapped = std::fs::rename(&snapshots, &real_snapshots)
+        .and_then(|()| std::os::unix::fs::symlink(&real_snapshots, &snapshots))
+        .map_err(|err| err.to_string());
+    let through_link = strengths_at(&package_root);
+    let _ = std::fs::remove_dir_all(&outer);
+    swapped?;
+    assert_eq!(plain, vec![OracleStrength::Strong]);
+    assert_eq!(through_link, vec![OracleStrength::Medium]);
     Ok(())
 }

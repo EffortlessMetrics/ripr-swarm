@@ -157,6 +157,15 @@ fn committed_snapshot_file(root: &Path, test_file: &Path) -> Option<CommittedSna
     if crate::analysis::committed_source::snapshot_inputs_differ_in(root, &snapshots) {
         return None;
     }
+    // `read_config_capped` refuses a symlinked `.snap` leaf only; a linked
+    // `__snapshots__` directory could point at a tree no review judged.
+    if std::fs::symlink_metadata(root.join(&snapshots))
+        .ok()?
+        .file_type()
+        .is_symlink()
+    {
+        return None;
+    }
     let path = root.join(&snapshots).join(format!("{name}.snap"));
     let text = read_config_capped(&path).ok()?;
     let header = text.lines().next()?;
@@ -302,36 +311,44 @@ fn scan_config_directory(
 /// repository boundary.
 const ABOVE_ROOT_LIMIT: usize = 16;
 
-/// The directories above `root` up to and including the first one that holds
-/// a repository marker, looking at most `limit` levels up. The root is
-/// canonicalized first so a symlinked analysis root climbs its real parents.
-/// Empty when `root` is itself the repository top, and when no marker is in
-/// reach (a tree exported without one, or one nested deeper than `limit`):
-/// without a boundary there is no monorepo this tree can be known to sit in,
-/// so nothing above the root is read.
-pub(super) fn directories_above_root(root: &Path, limit: usize) -> Vec<PathBuf> {
+/// The directories above `root` to read, or `None` when the repository
+/// boundary cannot be established.
+///
+/// The root is canonicalized first so a symlinked analysis root climbs its
+/// real parents. The walk stops at (and includes) the first directory holding
+/// a repository marker, looking at most `limit` levels up. Empty when `root`
+/// is itself the repository top. When no marker is found and the walk reaches
+/// the filesystem root within `limit`, every ancestor is returned: nothing
+/// above is a repository, and the caller still reads any config there. When
+/// the limit is hit before a marker or the filesystem root, the boundary is
+/// unknown (a deep nest, or an export without `.git` inside a larger tree), so
+/// `None` makes the caller refuse rather than guess.
+pub(super) fn directories_above_root(root: &Path, limit: usize) -> Option<Vec<PathBuf>> {
     let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     if root.join(".git").exists() {
-        return Vec::new();
+        return Some(Vec::new());
     }
-    let above: Vec<&Path> = root.ancestors().skip(1).take(limit).collect();
+    let all: Vec<&Path> = root.ancestors().skip(1).collect();
+    let above: Vec<&Path> = all.iter().copied().take(limit).collect();
     match above.iter().position(|dir| dir.join(".git").exists()) {
-        Some(boundary) => above
-            .into_iter()
-            .take(boundary + 1)
-            .map(Path::to_path_buf)
-            .collect(),
-        None => Vec::new(),
+        Some(boundary) => Some(
+            above
+                .into_iter()
+                .take(boundary + 1)
+                .map(Path::to_path_buf)
+                .collect(),
+        ),
+        None if all.len() <= limit => Some(above.into_iter().map(Path::to_path_buf).collect()),
+        None => None,
     }
 }
 
 /// The runner configs and `package.json` files in the test's directory and
 /// every ancestor up to `root`, then above `root` up to the repository
-/// boundary (the first directory holding `.git`), or `None` when one
-/// mentions a snapshot override, passes a config by path, cannot be read, or
-/// (in a committed-history run) differs from `HEAD`. Without a repository
-/// boundary within reach nothing above `root` is read: a monorepo config
-/// there cannot be told from an unrelated file.
+/// boundary (the first directory holding `.git`, or the filesystem root), or
+/// `None` when one mentions a snapshot override, passes a config by path,
+/// cannot be read, (in a committed-history run) differs from `HEAD`, or the
+/// boundary is not found within reach.
 fn runner_configs(root: &Path, directory: &Path) -> Option<RunnerConfigs> {
     runner_configs_within(root, directory, ABOVE_ROOT_LIMIT)
 }
@@ -357,7 +374,7 @@ pub(super) fn runner_configs_within(
         )?;
         current = relative.parent();
     }
-    for dir in directories_above_root(root, above_root_limit) {
+    for dir in directories_above_root(root, above_root_limit)? {
         scan_config_directory(&dir, false, &mut configs)?;
     }
     Some(configs)

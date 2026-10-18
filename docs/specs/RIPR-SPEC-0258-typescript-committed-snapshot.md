@@ -94,10 +94,13 @@ runner's entry for it can be named and is committed:
   rewrites snapshots no longer fails on a changed value. The walk continues
   above the analysis root, starting from the canonicalized root so a
   symlinked root climbs its real parents, up to the first directory holding
-  a repository marker (at most 16 levels). With no marker in reach (a tree
-  exported without one, or nested deeper than 16 levels) nothing above the
-  root is read and credit is kept: that case has no known monorepo. A
-  symlinked directory inside the root is refused;
+  a repository marker (at most 16 levels), or to the filesystem root when
+  that is within 16 levels and no marker is found (nothing above is a
+  repository, and any config there is still read). When 16 levels pass with
+  neither a marker nor the filesystem root, the repository boundary is
+  unknown (an export without `.git` inside a larger tree, or a deep nest) and
+  the reader refuses. A symlinked directory inside the root, and a symlinked
+  `__snapshots__` directory, are refused;
 - the header agrees with the runner those files name: a Vitest header
   needs a `vite*` config or a mention of `vitest`, and a Jest header needs
   neither. The header names the runner that wrote the file, and the other
@@ -172,8 +175,14 @@ RIPR-SPEC-0243 ladder, including the observation guard.
   describe title) has no matching entry and stays medium. A `test.each`
   with one row and a literal title runs once and can read strong.
 - A runner config passed by path is not read; a `package.json` script that
-  passes one refuses instead. A config above the repository boundary, or
-  above the root when no boundary is in reach, is not read.
+  passes one refuses instead. A config above the repository boundary is not
+  read.
+- Windows junctions and `\\?\` extended paths are untested; the symlink
+  checks are `lstat`-based and a junction may not read as a symlink there.
+- Configs reached through environment variables or `.yarnrc` indirection are
+  not seen.
+- Configs above the analysis root are read from the working tree, including
+  in a committed-history run.
 - Scripts that call a shell script or Makefile, and configs reached
   through them, are not seen.
 - A committed-history run does not compare configs above the analysis root
@@ -237,9 +246,11 @@ RIPR-SPEC-0243 ladder, including the observation guard.
    `--config=`), or a `jest.unit.config.js` with a `snapshotResolver`: medium.
    A `jest.unit.config.js` that overrides nothing, or a `jest --ci
    --coverage` script: strong. A `jest.config.js` with a `snapshotResolver`
-   above the analysis root, inside the repository: medium; the same file with
-   no repository marker above the root: strong; a symlinked test directory:
-   medium.
+   above the analysis root, inside the repository: medium; the same file
+   when no repository marker and no filesystem root is within 16 levels
+   above the root: medium (boundary unknown); a Vitest `vitest.unit.config.ts`
+   that overrides nothing: strong; a symlinked test directory or symlinked
+   `__snapshots__` directory: medium.
 
 ## Test Mapping
 
@@ -258,6 +269,9 @@ RIPR-SPEC-0243 ladder, including the observation guard.
   `config_above_the_root_is_read_only_within_reach_of_the_marker`,
   `symlinked_analysis_root_reads_the_real_parents`,
   `flags_and_keys_that_move_the_runner_config_stay_medium` and
+  `walk_without_a_marker_ends_at_the_filesystem_root_or_is_unknown`,
+  `directories_above_the_root_stop_at_the_repository_boundary`,
+  `symlinked_snapshots_directory_stays_medium` and
   `symlinked_test_directory_stays_medium` pin example 7.
 - `crates/ripr/src/analysis/committed_source/tests.rs`:
   `porcelain_parser_records_unrouted_snapshot_inputs` and
