@@ -127,6 +127,15 @@ fn owner_from_function(
     is_async: bool,
 ) -> PythonOwner {
     let decorator_names = decorator_names(decorators);
+    // Only bare `classmethod` / `staticmethod` / `property` names are known
+    // not to wrap the call; any other decorator (unreadable, call form,
+    // attribute) may not call the function, so it yields no helper edges.
+    let transparent_decorators = decorators.iter().all(|decorator| {
+        matches!(decorator, Expr::Name(_))
+            && expr_full_name(decorator).is_some_and(|name| {
+                matches!(name.as_str(), "classmethod" | "staticmethod" | "property")
+            })
+    });
     // A decorator whose name cannot be read still wraps the call.
     let binding_only = !is_async
         && decorator_names.len() == decorators.len()
@@ -166,8 +175,11 @@ fn owner_from_function(
         body,
         super::same_class_callees::method_receiver_name(&parameters, &decorators),
     );
-    let module_callees =
-        super::module_callees::bare_callees(&text_for_range(context.source, range), &parameters);
+    let module_callees = if transparent_decorators {
+        super::module_callees::bare_callees(&text_for_range(context.source, range), &parameters)
+    } else {
+        Vec::new()
+    };
     PythonOwner {
         name: name.to_string(),
         qualified_name,

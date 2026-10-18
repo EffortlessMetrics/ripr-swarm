@@ -2641,10 +2641,9 @@ test("rate value observes namespace initializer", () => {
     assert_eq!(related[0].oracle_kind, OracleKind::ExactValue);
 }
 
-#[test]
-fn find_related_tests_keeps_module_initializer_shadow_and_non_expect_references_unrelated() {
-    let owner = TypeScriptOwner {
-        name: "DEFAULT_RATE".to_string(),
+fn module_value_owner(name: &str) -> TypeScriptOwner {
+    TypeScriptOwner {
+        name: name.to_string(),
         file: PathBuf::from("src/owners.ts"),
         start_line: 15,
         end_line: 15,
@@ -2659,7 +2658,12 @@ fn find_related_tests_keeps_module_initializer_shadow_and_non_expect_references_
         source_text: None,
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
-    };
+    }
+}
+
+#[test]
+fn find_related_tests_keeps_module_initializer_shadow_and_string_references_unrelated() {
+    let owner = module_value_owner("DEFAULT_RATE");
     let tests = extract_tests(
         Path::new("tests/owners.test.ts"),
         r#"import { DEFAULT_RATE } from "../src/owners";
@@ -2667,11 +2671,6 @@ fn find_related_tests_keeps_module_initializer_shadow_and_non_expect_references_
 test("shadowed rate stays ambiguous", () => {
     const DEFAULT_RATE = 0.1;
     expect(DEFAULT_RATE).toBe(0.1);
-});
-
-test("derived rate stays ambiguous", () => {
-    const actual = DEFAULT_RATE;
-    expect(actual).toBe(0.09);
 });
 
 test("string mention stays ambiguous", () => {
@@ -2683,6 +2682,234 @@ test("string mention stays ambiguous", () => {
     let related = find_related_tests(&owner, &tests, None, &ReExportIndex::empty(), None);
 
     assert!(related.is_empty());
+}
+
+/// #8568: an imported module value used as a plain value (an argument, an
+/// array element) outside `expect(IMPORTED)` relates the test, but only
+/// through the uncertain `ModuleValueUse` relation, which lends no oracle.
+#[test]
+fn find_related_tests_relates_imported_module_value_used_as_a_value_without_oracle_credit() {
+    let owner = module_value_owner("stop");
+    let tests = extract_tests(
+        Path::new("tests/owners.test.ts"),
+        r#"import { run, stop } from "../src/owners";
+import { stop as halt } from "../src/owners";
+
+test("argument use", () => {
+    expect(run([1, stop, 3])).toEqual([1]);
+});
+
+test("derived use", () => {
+    const actual = stop;
+    expect(actual).toBe(stop);
+});
+
+test("aliased use", () => {
+    expect(run([halt])).toEqual([]);
+});
+"#,
+    );
+
+    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+
+    assert_eq!(candidates.len(), 3);
+    for candidate in &candidates {
+        assert_eq!(candidate.relation, TypeScriptRelationKind::ModuleValueUse);
+        assert!(!candidate.relation.uses_oracle());
+        assert!(candidate.relation.is_uncertain());
+    }
+}
+
+#[test]
+fn find_related_tests_module_value_use_negative_controls_stay_unrelated() {
+    let owner = module_value_owner("stop");
+    let tests = extract_tests(
+        Path::new("tests/owners.test.ts"),
+        r#"import { run, stop } from "../src/owners";
+
+test("unused import", () => {
+    expect(run([1, 2])).toEqual([1, 2]);
+});
+
+test("shadowed local", () => {
+    const stop = Symbol("other");
+    expect(run([stop])).toEqual([stop]);
+});
+
+test("comment and string mention only", () => {
+    // stop is mentioned here
+    expect(run(["stop"])).toEqual(["stop"]);
+});
+
+test("object key and member property are not the binding", () => {
+    const options = { stop: 1 };
+    expect(options.stop).toBe(1);
+});
+"#,
+    );
+    assert_eq!(tests.len(), 4);
+    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    assert!(candidates.is_empty(), "{candidates:?}");
+
+    // Same name imported from a different module is not the owner.
+    let other_module = extract_tests(
+        Path::new("tests/other.test.ts"),
+        r#"import { stop } from "../src/other";
+
+test("foreign stop", () => {
+    expect(run([stop])).toEqual([]);
+});
+"#,
+    );
+    assert_eq!(other_module.len(), 1);
+    let candidates =
+        related_test_candidates(&owner, &other_module, None, &ReExportIndex::empty(), None);
+    assert!(candidates.is_empty(), "{candidates:?}");
+
+    // A test that mocks the owner module does not consume the real value.
+    let mocked = extract_tests(
+        Path::new("tests/mocked.test.ts"),
+        r#"import { run, stop } from "../src/owners";
+jest.mock("../src/owners");
+
+test("mocked owner module", () => {
+    expect(run([stop])).toEqual([]);
+});
+"#,
+    );
+    assert_eq!(mocked.len(), 1);
+    let candidates = related_test_candidates(&owner, &mocked, None, &ReExportIndex::empty(), None);
+    assert!(candidates.is_empty(), "{candidates:?}");
+}
+
+#[test]
+fn find_related_tests_module_value_use_namespace_import_positive_and_negatives() {
+    let owner = module_value_owner("stop");
+    let positive = extract_tests(
+        Path::new("tests/ns.test.ts"),
+        r#"import * as ns from "../src/owners";
+
+test("namespace member used as a value", () => {
+    expect(ns.run([ns.stop])).toEqual([]);
+});
+"#,
+    );
+    assert_eq!(positive.len(), 1);
+    let candidates =
+        related_test_candidates(&owner, &positive, None, &ReExportIndex::empty(), None);
+    assert_eq!(candidates.len(), 1, "{candidates:?}");
+    assert_eq!(
+        candidates[0].relation,
+        TypeScriptRelationKind::ModuleValueUse
+    );
+
+    let negatives = extract_tests(
+        Path::new("tests/ns_neg.test.ts"),
+        r#"import * as ns from "../src/owners";
+
+test("namespace redeclared locally", () => {
+    const ns = { run: (v: unknown[]) => v, stop: 1 };
+    expect(ns.run([ns.stop])).toEqual([1]);
+});
+
+test("namespace member only in a string", () => {
+    expect(ns.run(["ns.stop"])).toEqual(["ns.stop"]);
+});
+
+test("block comment and template literal mentions", () => {
+    /* stop */
+    expect(ns.run([`${"stop"}`])).toEqual(["stop"]);
+});
+"#,
+    );
+    assert_eq!(negatives.len(), 3);
+    let candidates =
+        related_test_candidates(&owner, &negatives, None, &ReExportIndex::empty(), None);
+    assert!(candidates.is_empty(), "{candidates:?}");
+
+    let mocked = extract_tests(
+        Path::new("tests/ns_mock.test.ts"),
+        r#"import * as ns from "../src/owners";
+jest.mock("../src/owners");
+
+test("mocked namespace", () => {
+    expect(ns.run([ns.stop])).toEqual([]);
+});
+"#,
+    );
+    assert_eq!(mocked.len(), 1);
+    let candidates = related_test_candidates(&owner, &mocked, None, &ReExportIndex::empty(), None);
+    assert!(candidates.is_empty(), "{candidates:?}");
+}
+
+#[test]
+fn find_related_tests_module_value_use_block_comment_and_template_negatives() {
+    let owner = module_value_owner("stop");
+    let tests = extract_tests(
+        Path::new("tests/named_neg.test.ts"),
+        r#"import { run, stop } from "../src/owners";
+
+test("block comment mention", () => {
+    /* stop */
+    expect(run([1])).toEqual([1]);
+});
+
+test("template literal mention", () => {
+    expect(run([`stop`])).toEqual(["stop"]);
+});
+
+test("plain third mention", () => {
+    expect(run([1])).toEqual([1]);
+});
+"#,
+    );
+    assert_eq!(tests.len(), 3);
+    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    assert!(candidates.is_empty(), "{candidates:?}");
+
+    let type_only = extract_tests(
+        Path::new("tests/type_only.test.ts"),
+        r#"import type { stop } from "../src/owners";
+
+test("type-only import never binds the runtime value", () => {
+    const marker: typeof stop = undefined as never;
+    expect(marker).toBeUndefined();
+});
+"#,
+    );
+    assert_eq!(type_only.len(), 1);
+    let candidates =
+        related_test_candidates(&owner, &type_only, None, &ReExportIndex::empty(), None);
+    assert!(candidates.is_empty(), "{candidates:?}");
+}
+
+#[test]
+fn find_related_tests_module_value_use_masks_trailing_and_multiline_comments_and_templates() {
+    let owner = module_value_owner("stop");
+    let tests = extract_tests(
+        Path::new("tests/masked.test.ts"),
+        r#"import { run, stop } from "../src/owners";
+
+test("trailing line comment", () => {
+    expect(run([1])).toEqual([1]); // stop is unused
+});
+
+test("multi-line block comment", () => {
+    /* the stop
+       value is unused */
+    expect(run([1])).toEqual([1]);
+});
+
+test("multi-line template literal", () => {
+    const text = `first line
+    mentions stop here`;
+    expect(run([text])).toEqual([text]);
+});
+"#,
+    );
+    assert_eq!(tests.len(), 3);
+    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    assert!(candidates.is_empty(), "{candidates:?}");
 }
 
 #[test]
