@@ -49,8 +49,9 @@ pub(crate) enum TestStubPlacement {
     /// Create `file` with `text` as its whole content.
     NewIntegrationFile { file: PathBuf },
     /// Append `text` to the end of `file`, an existing integration test file
-    /// the repair target already names. The file is not read when the stub is
-    /// computed; the write reads and appends to its current bytes.
+    /// the repair target already names. The file is read when the stub is
+    /// computed so the test name is unique within it; the write re-reads and
+    /// appends to its current bytes.
     ExistingIntegrationFile { file: PathBuf },
 }
 
@@ -209,12 +210,17 @@ pub(crate) fn rust_test_stub_for_classified_seam(
         RepairTargetSelection::Existing(existing)
             if existing.test_kind() == TestKind::Integration =>
         {
-            library_crate_name_for_root_file(root, entry.seam.file()).map(|crate_name| {
-                IntegrationTarget::Existing {
-                    file: existing.file().to_path_buf(),
+            let file = existing.file().to_path_buf();
+            let crate_name = library_crate_name_for_root_file(root, entry.seam.file(), Some(&file));
+            let target_source = std::fs::read_to_string(root.join(&file)).ok();
+            match (crate_name, target_source) {
+                (Some(crate_name), Some(source)) => Some(IntegrationTarget::Existing {
+                    file,
                     crate_name,
-                }
-            })
+                    source,
+                }),
+                _ => None,
+            }
         }
         _ => None,
     };
@@ -227,7 +233,12 @@ pub(crate) enum IntegrationTarget<'a> {
     New(&'a NewTestTargetProposal),
     /// The existing integration test file the repair target names, for an
     /// owner in the library crate root of `crate_name`.
-    Existing { file: PathBuf, crate_name: String },
+    Existing {
+        file: PathBuf,
+        crate_name: String,
+        /// Current content of `file`, the test-name uniqueness scope.
+        source: String,
+    },
 }
 
 /// Stub for one seam. `integration` is a producer-admitted integration
@@ -293,15 +304,21 @@ fn rust_test_stub_for_target(
         // A crate-root `pub fn` is the only free owner an integration test
         // can name through `use <crate>::*`; any other owner keeps the
         // inline placement.
-        (Some(IntegrationTarget::Existing { file, .. }), Some(_))
-            if matches!(signature.container, OwnerContainer::Free)
-                && signature.parent_modules.is_empty()
-                && owner_is_plain_pub(source, seam.byte_offset()) =>
+        (
+            Some(IntegrationTarget::Existing {
+                file,
+                source: target_source,
+                ..
+            }),
+            Some(_),
+        ) if matches!(signature.container, OwnerContainer::Free)
+            && signature.parent_modules.is_empty()
+            && owner_is_plain_pub(source, seam.byte_offset()) =>
         {
             (
                 TestStubPlacement::ExistingIntegrationFile { file: file.clone() },
                 String::new(),
-                None,
+                Some(target_source.as_str()),
             )
         }
         _ => inline_placement(seam.file(), source, &signature, seam.byte_offset())?,
