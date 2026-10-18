@@ -143,3 +143,21 @@ fn source_is_recorded_only_when_the_file_mentions_it_at_a_spread() {
     assert!(names(&wrap("var defaults = { a: 1 };")).is_empty());
     assert!(names(&wrap("const { defaults } = { defaults: { a: 1 } };")).is_empty());
 }
+
+#[test]
+fn rest_binding_in_a_parameter_list_or_assignment_is_not_a_spread_use() {
+    let names = |extra: &str| {
+        let source = format!(
+            "const defaults = {{ flush: 1 }};\n{extra}\ntest(\"t\", () => {{\n  const x = {{ write: 1, ...defaults }};\n}});\n"
+        );
+        extract_tests(Path::new("test/save.test.ts"), &source)
+            .first()
+            .map_or(0, |test| test.mock_spread_sources_in_file.len())
+    };
+    assert_eq!(names(""), 1);
+    assert_eq!(names("function f({ a, ...defaults }) {}"), 0);
+    assert_eq!(names("const g = ({ a, ...defaults }) => a;"), 0);
+    assert_eq!(names("const [h, { b, ...defaults }] = cfg();"), 0);
+    // A spread used as a call argument is not the `const x = { ... }` form.
+    assert_eq!(names("use({ ...defaults });"), 0);
+}

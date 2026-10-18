@@ -374,9 +374,12 @@ and the rejected alternative. Recorded on #6654.
    only in that declaration and after `...` spreads; a source with a `write`
    key (quoted, computed or a method included), a nested spread, a shorthand
    entry, a `let`/`var` binding, a call or other initializer, a member
-   access or `Object.assign(defaults, ...)`, an import, a body-local
-   `defaults`, a spread of an expression or call, or a file that calls
-   `eval` stays `weakly_exposed`, and a spread inside a test-file factory
+   access or `Object.assign(defaults, ...)`, an import, an `export` or
+   `declare` binding, a body-local `defaults` (including an object-rest
+   binding `const { a, ...defaults } = cfg()` or a rest parameter), a
+   spread outside a `= { ... }` literal, a spread of an expression or
+   call, or a file that calls `eval`, uses `with` or holds a `\u` escape
+   stays `weakly_exposed`, and a spread inside a test-file factory
    literal stays refused. Amended 2026-10-15: example 2 with
    `function makeDb() { return { write: jest.fn() }; }` in the test file
    and `const db = makeDb();` is `exposed`; a factory with a parameter, a

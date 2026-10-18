@@ -9,7 +9,7 @@
   "edit_kind": "behavior_change",
   "behavior_family": "side_effect",
   "test_shape": "jest_mock_fn_tohavebeencalledwith_spread_object",
-  "hard_case": "the literal `{ write: jest.fn(), ...defaults }` carries a spread, so the spec withholds the strong mock grade although the argument pin discriminates",
+  "hard_case": "the literal `{ write: jest.fn(), ...defaults }` carries a spread of a test-file const source; the grade holds only because that source has no `write` key and nothing else names it",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

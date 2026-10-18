@@ -1313,16 +1313,49 @@ fn mock_spread_sources(statements: &[Statement<'_>], code: &str) -> Vec<(String,
             Some((id.name.to_string(), id.span.start as usize, literal))
         })
         .filter(|(name, declared_at, _)| {
+            let masked = ts_mask_literals_and_comments(code);
             word_occurrences(code, name).all(|at| {
                 at == *declared_at
-                    || code[..at]
-                        .trim_end()
-                        .strip_suffix("...")
-                        .is_some_and(|before| !before.ends_with('.'))
+                    || masked.get(..at).is_some_and(|before| {
+                        before.trim_end().strip_suffix("...").is_some_and(|before| {
+                            !before.ends_with('.') && inside_expression_literal(before)
+                        })
+                    })
             })
         })
         .map(|(name, _, literal)| (name, literal))
         .collect()
+}
+
+/// `true` when the `...` that ends `before` sits in an object literal that
+/// is the right side of an `=` (`const db = { m: jest.fn(), ...name }`), not
+/// a rest binding in a destructuring pattern or parameter list
+/// (`const { a, ...name } = cfg()`), which would shadow the name.
+fn inside_expression_literal(before: &str) -> bool {
+    let mut depth = 0usize;
+    for (at, c) in before.char_indices().rev() {
+        match c {
+            '}' | ')' | ']' => depth += 1,
+            '(' | '[' => {
+                if depth == 0 {
+                    return false;
+                }
+                depth -= 1;
+            }
+            '{' => {
+                if depth > 0 {
+                    depth -= 1;
+                    continue;
+                }
+                let head = before[..at].trim_end();
+                return head
+                    .strip_suffix('=')
+                    .is_some_and(|rest| !rest.ends_with(['=', '!', '<', '>']));
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 /// The name, name offset and returned literal source of one top-level

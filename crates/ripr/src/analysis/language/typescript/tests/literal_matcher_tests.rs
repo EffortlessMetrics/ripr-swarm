@@ -168,7 +168,7 @@ fn mock_payload_on_a_test_file_factory_mock_is_credited() {
             &called_with("db.write", "2"),
             &test.body_text,
             &test.mock_factories_in_file,
-            &[],
+            &test.mock_spread_sources_in_file,
         ))
     };
     for factory in [
@@ -207,7 +207,7 @@ fn mock_payload_on_a_test_file_factory_mock_is_credited() {
         (
             "spread",
             file(
-                "function makeDb() {\n  return { write: jest.fn(), ...defaults };\n}",
+                "const defaults = { flush: 1 };\nfunction makeDb() {\n  return { write: jest.fn(), ...defaults };\n}",
                 pin,
             ),
         ),
