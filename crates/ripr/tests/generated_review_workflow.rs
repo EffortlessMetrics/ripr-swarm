@@ -34,12 +34,16 @@ fn generated_workflow_batches_compact_review_comments() -> Result<(), Box<dyn Er
     // against the repository only, and never builds a body in shell.
     let publish = workflow_step_block(&workflow, "Publish RIPR inline comments")
         .ok_or("missing publish step")?;
+    assert!(publish.contains("PR_NUMBER: ${{ github.event.pull_request.number }}"));
+    assert!(publish.contains("PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}"));
+    assert!(publish.contains("REPO: ${{ github.repository }}"));
     assert!(publish.contains(
-        "ripr pr-comments requests --root . --pull-request \"${{ github.event.pull_request.number }}\" --head-sha \"${{ github.event.pull_request.head.sha }}\""
+        "ripr pr-comments requests --root . --pull-request \"$PR_NUMBER\" --head-sha \"$PR_HEAD_SHA\""
     ));
     assert!(publish.contains(
-        "gh api --method \"$method\" \"repos/${{ github.repository }}/$endpoint\" --input \"$request\" </dev/null >/dev/null"
+        "gh api --method \"$method\" \"repos/$REPO/$endpoint\" --input \"$request\" </dev/null >/dev/null"
     ));
+    assert_no_github_expression_in_run_blocks(&workflow);
     assert!(!workflow.contains("jq "));
 
     let update_body = "### ripr gap: stale\n\nRepair:\nAdd one.\n\nVerify:\n`ripr agent verify`";
@@ -2890,7 +2894,7 @@ fn generated_existing_comment_capture_reads_keys_with_spaces() -> Result<(), Box
         .parent()
         .ok_or("ripr binary has no directory")?;
     let script = format!(
-        "chmod +x '{bin}/gh'\nexport PAGES='{pages}' PATH='{bin}:{ripr}':\"$PATH\"\n{script}",
+        "chmod +x '{bin}/gh'\nexport PAGES='{pages}' PATH='{bin}:{ripr}':\"$PATH\" REPO=ripr-test/pricing PR_NUMBER=1\n{script}",
         bin = bin.display(),
         pages = root.join("pages.json").display(),
         ripr = ripr_dir.display(),
@@ -2995,7 +2999,8 @@ fn generated_cleanup_step_removes_checked_in_ripr_artifacts() -> Result<(), Box<
     Ok(())
 }
 
-/// The capture step's `run:` body with its GitHub expressions filled in.
+/// The capture step's `run:` body. GitHub expressions live in step `env:`
+/// (`REPO`, `PR_NUMBER`); the caller exports those names.
 #[cfg(unix)]
 fn existing_comment_capture_script(workflow: &str) -> Result<String, String> {
     let block = workflow_step_block(workflow, "Capture existing RIPR inline comments")
@@ -3010,9 +3015,17 @@ fn existing_comment_capture_script(workflow: &str) -> Result<String, String> {
             "the capture step no longer pipes into ripr:\n{body}"
         ));
     }
-    Ok(body
-        .replace("${{ github.repository }}", "ripr-test/pricing")
-        .replace("${{ github.event.pull_request.number }}", "1"))
+    if body.contains("${{") {
+        return Err(format!(
+            "capture run: still interpolates a GitHub expression:\n{body}"
+        ));
+    }
+    if !body.contains("repos/$REPO/pulls/$PR_NUMBER/comments") {
+        return Err(format!(
+            "capture run: no longer uses step env REPO/PR_NUMBER:\n{body}"
+        ));
+    }
+    Ok(body.to_string())
 }
 
 /// #4089: the generated annotation step must keep path and message bytes.
@@ -3651,10 +3664,10 @@ fn generated_publish_step_sends_every_request_in_order() -> Result<(), Box<dyn E
         let body = block
             .split_once("\n        run: |\n")
             .map(|(_, body)| body)
-            .ok_or("publish step has no run block")?
-            .replace("${{ github.repository }}", "ripr-test/pricing")
-            .replace("${{ github.event.pull_request.number }}", "42")
-            .replace("${{ github.event.pull_request.head.sha }}", "0123abcd");
+            .ok_or("publish step has no run block")?;
+        if body.contains("${{") {
+            return Err("publish run: still interpolates a GitHub expression".into());
+        }
         let plan = serde_json::json!({
             "summary": {"safe_to_publish": true, "publishable": 2},
             "operations": [
@@ -3685,7 +3698,7 @@ fn generated_publish_step_sends_every_request_in_order() -> Result<(), Box<dyn E
             .parent()
             .ok_or("ripr binary has no directory")?;
         let script = format!(
-            "chmod +x '{bin}/gh'\nexport PATH='{bin}:{ripr}':\"$PATH\"\n{body}",
+            "chmod +x '{bin}/gh'\nexport PATH='{bin}:{ripr}':\"$PATH\" REPO=ripr-test/pricing PR_NUMBER=42 PR_HEAD_SHA=0123abcd\n{body}",
             bin = bin.display(),
             ripr = ripr_dir.display(),
         );
@@ -3740,10 +3753,10 @@ fn summary_step_updates_the_bot_comment_it_posted_before() -> Result<(), Box<dyn
         let body = block
             .split_once("\n        run: |\n")
             .map(|(_, body)| body)
-            .ok_or("summary step has no run block")?
-            .replace("${{ github.repository }}", "ripr-test/pricing")
-            .replace("${{ github.event.pull_request.number }}", "42")
-            .replace("${{ github.event.pull_request.head.sha }}", "0123abcd");
+            .ok_or("summary step has no run block")?;
+        if body.contains("${{") {
+            return Err("summary run: still interpolates a GitHub expression".into());
+        }
         fs::create_dir_all(root.join("target/ripr/review"))?;
         fs::write(
             root.join("target/ripr/review/comments.json"),
@@ -3784,7 +3797,7 @@ fn summary_step_updates_the_bot_comment_it_posted_before() -> Result<(), Box<dyn
             .parent()
             .ok_or("ripr binary has no directory")?;
         let script = format!(
-            "chmod +x '{bin}/gh'\nexport PATH='{bin}:{ripr}':\"$PATH\"\nexport GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=ripr-test/pricing GITHUB_RUN_ID=9\n{body}",
+            "chmod +x '{bin}/gh'\nexport PATH='{bin}:{ripr}':\"$PATH\"\nexport GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=ripr-test/pricing GITHUB_RUN_ID=9 REPO=ripr-test/pricing PR_NUMBER=42 PR_HEAD_SHA=0123abcd\n{body}",
             bin = bin.display(),
             ripr = ripr_dir.display(),
         );
@@ -3893,6 +3906,41 @@ fn run_sh(script: &str, cwd: &std::path::Path) -> Result<std::process::Output, B
         .args(["--noprofile", "--norc", "-eo", "pipefail", "-c", script])
         .current_dir(cwd)
         .output()?)
+}
+
+/// #4452: GitHub expressions in `run:` shell text are template injection.
+/// `concurrency:`, `with: ref:`, cache `key:`, and `if:` may still use `${{`.
+fn assert_no_github_expression_in_run_blocks(workflow: &str) {
+    let mut in_run = false;
+    let mut run_indent = 0usize;
+    for line in workflow.lines() {
+        if in_run {
+            let indent = line.chars().take_while(|c| *c == ' ').count();
+            if line.is_empty() || indent > run_indent {
+                assert!(
+                    !line.contains("${{"),
+                    "generated run: block interpolates a GitHub expression:\n{line}"
+                );
+                continue;
+            }
+            in_run = false;
+        }
+        let indent = line.chars().take_while(|c| *c == ' ').count();
+        let trimmed = line[indent..].trim_end();
+        let Some(rest) = trimmed.strip_prefix("run:") else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        if rest == "|" || rest == ">" {
+            in_run = true;
+            run_indent = indent;
+            continue;
+        }
+        assert!(
+            !rest.contains("${{"),
+            "generated run: interpolates a GitHub expression:\n{line}"
+        );
+    }
 }
 
 /// Extract one step block: from its `- name:` line through (excluding) the
