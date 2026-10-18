@@ -18,7 +18,13 @@ fn compact(text: &str) -> String {
 }
 fn known_builtin_attribute(attr: &ast::Attr) -> bool {
     let text = compact(&attr.syntax().text().to_string());
-    let Some(inner) = text.strip_prefix("#[").and_then(|s| s.strip_suffix(']')) else {
+    // Inner attributes (`#![forbid(unsafe_code)]`) share the outer grammar.
+    let Some(inner) = text
+        .strip_prefix("#!")
+        .or_else(|| text.strip_prefix('#'))
+        .and_then(|s| s.strip_prefix('['))
+        .and_then(|s| s.strip_suffix(']'))
+    else {
         return false;
     };
     let key = inner.split(['(', '=']).next().unwrap_or("");
@@ -910,6 +916,18 @@ mod tests {
             assert!(!successor_memo.admits(&successor, "Counter"), "{source}");
             assert!(memo.admits(&index, "Counter"));
         }
+    }
+
+    #[test]
+    fn crate_level_inner_attributes_do_not_veto_the_bounded_exception() {
+        let known = ExpansionSurface::scan([
+            "#![forbid(unsafe_code)]\n#![allow(dead_code)]\nstruct Counter;",
+        ]);
+        assert!(known.bounded);
+        let unknown = ExpansionSurface::scan(["#![my_unknown_attr]\nstruct Counter;"]);
+        assert!(!unknown.bounded);
+        let unknown_outer = ExpansionSurface::scan(["#[my_unknown_attr]\nstruct Counter;"]);
+        assert!(!unknown_outer.bounded);
     }
 
     #[test]

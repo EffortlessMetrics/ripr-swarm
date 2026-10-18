@@ -7527,6 +7527,7 @@ spec = "docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md
 tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::refused_implicit_kind_preserves_independent_token_confirmation",
   "crates/ripr/src/analysis/classify/implicit_effect.rs::tests::workspace_expansion_scan_is_once_per_immutable_run",
+  "crates/ripr/src/analysis/classify/implicit_effect.rs::tests::crate_level_inner_attributes_do_not_veto_the_bounded_exception",
   "crates/ripr/src/analysis/classify/implicit_effect.rs::tests::cached_receiver_exclusions_remain_receiver_specific",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::known_implicit_dispatch_requires_this_tests_receiver",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::test_may_reach_owner_by_name_unknown_call_or_implicit_dispatch",
