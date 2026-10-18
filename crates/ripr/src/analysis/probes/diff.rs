@@ -1848,6 +1848,58 @@ mod tests {
         probes_for_file(Path::new("workspace"), &changed, &index)
     }
 
+    /// Pair wiring: a neutral respelling beside a real change in one hunk
+    /// seeds no probe for the neutral pair and still probes the real change,
+    /// with old-file line numbers that differ from the new-side ones.
+    #[test]
+    fn a_neutral_pair_is_skipped_beside_a_changed_pair() {
+        let path = PathBuf::from("src/lib.rs");
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![
+                ChangedLine {
+                    line: 13,
+                    new_side_line: 13,
+                    text: "fn next(&mut self) -> Option<Chunk<'_>> {".to_string(),
+                },
+                ChangedLine {
+                    line: 14,
+                    new_side_line: 14,
+                    text: "fn peek(&mut self) -> Option<Other> {".to_string(),
+                },
+            ],
+            removed_lines: vec![
+                ChangedLine {
+                    line: 3,
+                    new_side_line: 13,
+                    text: "fn next(&mut self) -> Option<Chunk> {".to_string(),
+                },
+                ChangedLine {
+                    line: 4,
+                    new_side_line: 13,
+                    text: "fn peek(&mut self) -> Option<Chunk> {".to_string(),
+                },
+            ],
+        };
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files: BTreeMap::from([(
+                path.clone(),
+                FileFacts {
+                    path: path.clone(),
+                    source: "".into(),
+                    ..FileFacts::default()
+                },
+            )]),
+            ..Default::default()
+        });
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        assert!(
+            probes.iter().all(|probe| probe.location.line == 14),
+            "{probes:?}"
+        );
+        assert!(!probes.is_empty(), "the changed pair keeps its probe");
+    }
+
     #[test]
     fn a_respelled_signature_line_seeds_no_probe_but_a_changed_one_does() {
         let neutral = shapes_probes(
