@@ -439,9 +439,23 @@ pub(crate) fn check_repair_route(
     if repair_refusal_reason(entry, policy).is_some() {
         return None;
     }
+    // `ripr repair` confines a production-file target to its inline test
+    // module and starts only from the committed file. Ask the edit cage's own
+    // predicate so the check screen never offers a start the attempt refuses.
+    let uncommitted_target = repair_packet_eligibility(entry)
+        .readiness
+        .test_target
+        .as_ref()
+        .map(|target| target.file().to_string_lossy().replace('\\', "/"))
+        .filter(|file| {
+            !crate::analysis::is_test_surface_path(file)
+                && Path::new(file).extension().is_some_and(|ext| ext == "rs")
+                && crate::edit_cage::inline_target_is_uncommitted(root, file)
+        });
     Some(crate::app::RepairRoute {
         finding_id: finding.id.clone(),
         seam_id: entry.seam.id().as_str().to_string(),
+        uncommitted_target,
     })
 }
 

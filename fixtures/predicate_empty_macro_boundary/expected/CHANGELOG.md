@@ -168,3 +168,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — predicate_empty_macro_boundary (13)
+
+Reason:
+RIPR-SPEC-0181: check withholds a bare repair start when the inline-test target has uncommitted changes (#8738)
+
+Command:
+`cargo xtask goldens bless predicate_empty_macro_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

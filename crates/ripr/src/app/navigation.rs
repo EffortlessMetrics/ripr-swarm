@@ -48,6 +48,12 @@ pub(crate) struct RepairRoute {
     pub(crate) finding_id: String,
     /// The exact seam ID the repair resolver accepts for this finding.
     pub(crate) seam_id: String,
+    /// The production file whose uncommitted changes make `ripr repair`
+    /// refuse this seam today (its inline `#[cfg(test)]` module is the edit
+    /// target and starts only from the committed file). When set, the check
+    /// screen states the commit-or-stash requirement instead of offering the
+    /// repair start as a runnable next action.
+    pub(crate) uncommitted_target: Option<String>,
 }
 
 /// Copy-pasteable sibling commands for a selected finding.
@@ -394,6 +400,7 @@ mod tests {
         );
         // The route only answers for its own finding.
         let routed = navigation.with_repair_route(Some(RepairRoute {
+            uncommitted_target: None,
             finding_id: "probe:one".to_string(),
             seam_id: "67fc764ba37d77bd".to_string(),
         }));

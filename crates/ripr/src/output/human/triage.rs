@@ -310,8 +310,17 @@ pub(crate) fn render_human_triage(
                 && let Some(route) = navigation.repair_route_for(&finding.id)
             {
                 let command = navigation.repair_command(&route.seam_id);
-                out.push_str(&format!("  {command}\n"));
-                super::push_powershell_variant(out, "  ", &command);
+                if let Some(file) = route.uncommitted_target.as_deref() {
+                    // `ripr repair` would refuse this start: its inline test
+                    // module target begins from the committed file. State the
+                    // requirement instead of a command that exits 2.
+                    out.push_str(&format!(
+                        "  Repair start (needs a committed `{file}`; it has uncommitted changes, so commit or stash it first, or use the test route below): {command}\n"
+                    ));
+                } else {
+                    out.push_str(&format!("  {command}\n"));
+                    super::push_powershell_variant(out, "  ", &command);
+                }
             }
             // #5355: a Rust gap gets the one-step route to a runnable test.
             // A gap withheld because ripr could not read the related

@@ -26,7 +26,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_async_fn_owner/input --diff <cwd>/fixtures/rust_async_fn_owner/diff.patch --mode fast probe:src_lib.rs:predicate:736b22b0
   ripr context --root <cwd>/fixtures/rust_async_fn_owner/input --diff <cwd>/fixtures/rust_async_fn_owner/diff.patch --mode fast --at probe:src_lib.rs:predicate:736b22b0
-  ripr repair 0f9205182aabd9d2 --root <cwd>/fixtures/rust_async_fn_owner/input
+  Repair start (needs a committed `src/lib.rs`; it has uncommitted changes, so commit or stash it first, or use the test route below): ripr repair 0f9205182aabd9d2 --root <cwd>/fixtures/rust_async_fn_owner/input
 No test stub here: the owner is async and needs a runtime the stub cannot pick
 
 More:
