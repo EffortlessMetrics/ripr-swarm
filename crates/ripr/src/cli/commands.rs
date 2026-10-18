@@ -41,7 +41,9 @@ mod swarm_command;
 #[path = "commands/task_first.rs"]
 mod task_first;
 
-pub(super) use agent::{agent, before_phase_stdout, run_before_repair_with_identity};
+pub(super) use agent::{
+    agent, before_phase_stdout, run_before_repair_with_identity, translate_agent_repair_seam_id,
+};
 pub(super) use context::context;
 // Flag-documenting help bodies live beside their parsers so `cli::help`
 // suggestions mine the same text `--help` prints.
@@ -124,9 +126,13 @@ mod pr_comments_github;
 
 #[path = "commands/check.rs"]
 mod check;
+#[path = "commands/check_budget.rs"]
+mod check_budget;
 #[path = "commands/check_fanout.rs"]
 mod check_fanout;
 pub(super) use check::check;
+#[cfg(unix)]
+pub(super) use check::check_with_interrupt_flags;
 
 #[path = "commands/review_comments.rs"]
 mod review_comments;
@@ -314,8 +320,9 @@ pub(super) fn pr_comments(args: &[String]) -> Result<(), String> {
         "plan" => pr_comments_plan(rest),
         "existing" => pr_comments_github::pr_comments_existing(rest),
         "requests" => pr_comments_github::pr_comments_requests(rest),
+        "summary" => pr_comments_github::pr_comments_summary(rest),
         _ => Err(format!(
-            "unknown pr-comments subcommand {subcommand:?}; expected `plan`, `existing`, or `requests`"
+            "unknown pr-comments subcommand {subcommand:?}; expected `plan`, `existing`, `requests`, or `summary`"
         )),
     }
 }
@@ -3091,10 +3098,13 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // `--worktree` matches `ripr check --worktree`: the finding may come
     // from uncommitted edits the committed-history diff never sees.
     let mut worktree = false;
+    // #8739: same meaning as `ripr check --quiet`: stderr progress only.
+    let mut quiet = false;
     let mut root_explicitly_provided = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
+            "--quiet" => quiet = true,
             "--root" => {
                 i += 1;
                 input.root = PathBuf::from(expect_value(args, i, "--root")?);
@@ -3202,11 +3212,15 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // looked like a hang. The same stderr-only stage lines `ripr check`
     // projects disclose the work without touching machine stdout. The
     // `--from` artifact path runs no pipeline and wires no sink.
-    let progress = crate::cli::progress::CliProgressSink::for_stderr(
-        std::io::IsTerminal::is_terminal(&std::io::stderr()),
-        crate::cli::progress::ProgressPolicy::STANDARD,
-    );
-    let progress_sink = Some(&progress as &dyn app::AnalysisProgressSink);
+    let progress = (!quiet).then(|| {
+        crate::cli::progress::CliProgressSink::for_stderr(
+            std::io::IsTerminal::is_terminal(&std::io::stderr()),
+            crate::cli::progress::ProgressPolicy::STANDARD,
+        )
+    });
+    let progress_sink = progress
+        .as_ref()
+        .map(|sink| sink as &dyn app::AnalysisProgressSink);
     let rendered = match from_artifact.as_deref() {
         Some(artifact_path) => app::explain_finding_from_artifact_with_navigation_mode(
             input,
@@ -3232,7 +3246,9 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // without this call the dropped sink projects `ripr progress: failed`
     // despite the successful render, exactly the `ripr check` contract the
     // stage lines borrow.
-    progress.commit_success();
+    if let Some(progress) = &progress {
+        progress.commit_success();
+    }
     println!("{rendered}");
     Ok(())
 }
@@ -3514,6 +3530,7 @@ mod tests {
             // continue-on-error semantics in `ci_packet::stage_table`.
             yaml_advisory_steps: &[
                 "Capture existing RIPR inline comments",
+                "Publish RIPR summary comment",
                 "Publish RIPR inline comments",
                 "Add RIPR advisory summary",
                 "Upload RIPR report artifacts",
@@ -6089,7 +6106,7 @@ language = "rust"
         );
         assert_eq!(
             pr_comments(&args(&["publish"])),
-            Err("unknown pr-comments subcommand \"publish\"; expected `plan`, `existing`, or `requests`".to_string())
+            Err("unknown pr-comments subcommand \"publish\"; expected `plan`, `existing`, `requests`, or `summary`".to_string())
         );
         assert_eq!(
             parse_pr_comments_plan_options(&args(&["--mode", "post"])),
@@ -8041,8 +8058,8 @@ language = "rust"
         // The DX bar from #5409: a workflow an adopter can read in one sitting.
         let line_count = workflow.lines().count();
         assert!(
-            line_count <= 150,
-            "generated workflow is {line_count} lines; #5409 keeps it at 150 or fewer"
+            line_count <= 166,
+            "generated workflow is {line_count} lines; #5409 set 150, and the summary comment step took it to 165"
         );
 
         assert!(workflow.contains("RIPR_UPLOAD_SARIF: \"true\""));
@@ -8113,6 +8130,18 @@ language = "rust"
         assert!(capture.contains("| ripr pr-comments existing --root . --raw -"));
         let publish = workflow_step(&workflow, "Publish RIPR inline comments");
         assert!(publish.contains("done < target/ripr/review/publish/requests.tsv"));
+        // The conversation comment is on by default, but never for a fork or
+        // Dependabot head, whose token cannot write, and it stays advisory.
+        let summary = workflow_step(&workflow, "Publish RIPR summary comment");
+        assert!(summary.contains("env.RIPR_SUMMARY_COMMENT != 'false'"));
+        assert!(
+            summary.contains("github.event.pull_request.head.repo.full_name == github.repository")
+        );
+        assert!(summary.contains("github.actor != 'dependabot[bot]'"));
+        assert!(summary.contains("continue-on-error: true"));
+        assert!(summary.contains("| ripr pr-comments summary --root . --raw -"));
+        assert!(summary.contains("done < target/ripr/review/summary/summary.tsv"));
+        assert_step_before(&workflow, "Run RIPR", "Publish RIPR summary comment");
 
         let run = workflow_step(&workflow, "Run RIPR");
         assert_eq!(

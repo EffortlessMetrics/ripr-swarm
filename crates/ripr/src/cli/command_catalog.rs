@@ -442,6 +442,14 @@ const CATALOG: &[CommandCatalogEntry] = &[
         PR,
         DiscoveryPosture::OrdinaryPublic,
     ),
+    nested(
+        "cmd:pr-comments.summary",
+        "pr-comments summary",
+        CommandClass::Public,
+        CommandDispatch::PrComments,
+        PR,
+        DiscoveryPosture::OrdinaryPublic,
+    ),
     public_top("cmd:pr-review", "pr-review", CommandDispatch::PrReview),
     nested(
         "cmd:pr-review.front-panel",

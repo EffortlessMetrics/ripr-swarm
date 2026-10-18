@@ -80,10 +80,18 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
     // One marker scan per run, shared by both surfaces. `--json` used to branch
     // away before any of the environment facts were gathered, so the machine
     // surface reported none of them (#5214).
+    let detection_started = std::time::Instant::now();
     let detected = detect_languages(&root);
+    let language_detection_elapsed = detection_started.elapsed();
 
     if json_output {
-        return doctor_json(&root, profile, &detected, run_started);
+        return doctor_json(
+            &root,
+            profile,
+            &detected,
+            run_started,
+            language_detection_elapsed,
+        );
     }
 
     // Human-readable path. Gather every typed fact first, then project a
@@ -94,7 +102,13 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
     let mut report = core_evaluation.report;
     let mut ok = matches!(report.status, output::doctor::DoctorStatus::Pass);
     let enabled_languages = enabled_languages(&core_evaluation.config);
-    let environment = DoctorEnvironment::probe(&root, &detected, &core_evaluation.config);
+    let environment = DoctorEnvironment::probe(
+        &root,
+        &detected,
+        &core_evaluation.config,
+        language_detection_elapsed,
+    );
+    report.segments = environment.facts.segments.clone();
     let binary = output::doctor_binary::probe_binary_identity();
     ok &= add_language_runtime_probes(
         &root,
@@ -145,6 +159,7 @@ fn doctor_json(
     profile: output::doctor::DoctorProfile,
     detected: &[LanguageId],
     run_started: std::time::Instant,
+    language_detection_elapsed: std::time::Duration,
 ) -> Result<(), String> {
     let evaluation =
         output::doctor::evaluate_doctor_core_with_config_for_profile(root, detected, profile);
@@ -162,7 +177,12 @@ fn doctor_json(
     if let Some(advisory) = generated_workflow_advisory(root) {
         report.add_advisory_check("generated_workflow", advisory);
     }
-    let environment = DoctorEnvironment::probe(root, detected, &evaluation.config);
+    let environment = DoctorEnvironment::probe(
+        root,
+        detected,
+        &evaluation.config,
+        language_detection_elapsed,
+    );
     report.apply_environment(environment.facts);
     if profile == output::doctor::DoctorProfile::SourceBuild
         && let Some(advisory) = linker_temp_redirect_advisory(root)
@@ -191,21 +211,58 @@ struct DoctorEnvironment {
 }
 
 impl DoctorEnvironment {
-    fn probe(root: &Path, detected: &[LanguageId], config: &Result<RiprConfig, String>) -> Self {
+    fn probe(
+        root: &Path,
+        detected: &[LanguageId],
+        config: &Result<RiprConfig, String>,
+        language_detection_elapsed: std::time::Duration,
+    ) -> Self {
         let loaded = config.as_ref().ok();
         let preview_enablement = preview_languages_to_enable(detected, config);
+        // #8540 follow-up: each expensive computation is timed where it runs
+        // and named after itself, so the segment list can explain the run
+        // total alongside the timed checks and probes.
+        let mut segments = vec![output::doctor::DoctorSegmentTiming {
+            name: "language_detection".to_string(),
+            elapsed_ms: language_detection_elapsed.as_millis() as u64,
+        }];
+        let segment_started = std::time::Instant::now();
+        let unanalyzed_source_languages = unanalyzed_language_entries(root);
+        segments.push(output::doctor::DoctorSegmentTiming {
+            name: "unanalyzed_source_scan".to_string(),
+            elapsed_ms: segment_started.elapsed().as_millis() as u64,
+        });
+        let segment_started = std::time::Instant::now();
+        let cache = cache_status(root);
+        segments.push(output::doctor::DoctorSegmentTiming {
+            name: "cache_status".to_string(),
+            elapsed_ms: segment_started.elapsed().as_millis() as u64,
+        });
+        let segment_started = std::time::Instant::now();
+        let test_surfaces = detect_test_surfaces(root, detected);
+        segments.push(output::doctor::DoctorSegmentTiming {
+            name: "test_surfaces".to_string(),
+            elapsed_ms: segment_started.elapsed().as_millis() as u64,
+        });
+        let segment_started = std::time::Instant::now();
+        let perl_preview = probe_perl_preview(root, loaded);
+        segments.push(output::doctor::DoctorSegmentTiming {
+            name: "perl_preview".to_string(),
+            elapsed_ms: segment_started.elapsed().as_millis() as u64,
+        });
         Self {
             facts: output::doctor::DoctorEnvironmentFacts {
                 detected_languages: detected_language_entries(
                     detected,
                     loaded.map(|config| config.languages().enabled()),
                 ),
-                unanalyzed_source_languages: unanalyzed_language_entries(root),
+                unanalyzed_source_languages,
                 preview_language_gaps: preview_language_gaps(preview_enablement.as_ref()),
                 config_defaults: config_defaults(config),
-                cache: cache_status(root),
-                test_surfaces: detect_test_surfaces(root, detected),
-                perl_preview: probe_perl_preview(root, loaded),
+                cache,
+                test_surfaces,
+                perl_preview,
+                segments,
             },
             preview_enablement,
         }
@@ -3012,6 +3069,7 @@ mod tests {
                 },
                 test_surfaces: Vec::new(),
                 perl_preview: None,
+                segments: Vec::new(),
             },
             preview_enablement: None,
         }
@@ -3103,6 +3161,29 @@ mod tests {
             Some("✓ doctor checks passed"),
             "{lines:?}"
         );
+    }
+
+    #[test]
+    fn final_line_names_a_segment_when_it_is_the_slowest_measured() {
+        // #8540 follow-up: injected durations only, never wall-clock. A
+        // segment that beats every check wins the slowest attribution on
+        // the same final line, within the existing screen budget.
+        let mut report = passing_report();
+        report.elapsed_ms = Some(4_900);
+        report.mark_check_elapsed("tool_cargo", std::time::Duration::from_millis(300));
+        report.mark_check_elapsed("tool_git", std::time::Duration::from_millis(200));
+        report.segments.push(output::doctor::DoctorSegmentTiming {
+            name: "unanalyzed_source_scan".to_string(),
+            elapsed_ms: 3_800,
+        });
+        let environment = empty_environment();
+        let lines = render_screen(&report, &environment, false, true);
+        assert_eq!(
+            lines.last().map(String::as_str),
+            Some("✓ doctor checks passed in 4.9s (slowest: unanalyzed_source_scan 3.8s)"),
+            "{lines:?}"
+        );
+        assert_fits_one_screen(&lines);
     }
 
     #[test]
@@ -5847,6 +5928,7 @@ mod tests {
             output::doctor::DoctorProfile::Analysis,
             &detect_languages(&dir),
             std::time::Instant::now(),
+            std::time::Duration::ZERO,
         )
         .is_ok()
         {
