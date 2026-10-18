@@ -8367,6 +8367,30 @@ fn an_expected_value_a_macro_or_a_static_rebinds_from_the_owner_is_not_a_pin() {
             "static mut EXPECTED: u32 = 0;\n\n",
             "EXPECTED = crate::weight(4);\n        assert_eq!(crate::weight(4), EXPECTED);",
         ),
+        (
+            "static EXPECTED: AtomicU32 = AtomicU32::new(0);\n\n",
+            "AtomicU32::store(&EXPECTED, crate::weight(4), Ordering::SeqCst);\n        assert_eq!(crate::weight(4), EXPECTED.load(Ordering::SeqCst));",
+        ),
+        (
+            "thread_local! { static EXPECTED: Cell<u32> = Cell::new(0); }\n\n",
+            "EXPECTED.with(|c| c.set(crate::weight(4)));\n        assert_eq!(crate::weight(4), EXPECTED.with(|c| c.get()));",
+        ),
+        (
+            "",
+            "let mut expected = 0;\n        expected += crate::weight(4);\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        (
+            "",
+            "let mut expected = 0;\n        bump(&mut expected, crate::weight(4));\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        (
+            "",
+            "let mut expected = 0;\n        expected.widen::<u64>(crate::weight(4));\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        (
+            "",
+            "let mut expected = Wrapper::new();\n        expected.cell?.bump(crate::weight(4));\n        assert_eq!(crate::weight(4), expected);",
+        ),
         // Non-atomic writes: a field, a tuple field, an index, a listed
         // mutator that is not a `store`, and a mutator in a struct-literal
         // field value (not a `let` annotation).
@@ -8408,9 +8432,54 @@ fn an_expected_value_a_macro_or_a_static_rebinds_from_the_owner_is_not_a_pin() {
             "static EXPECTED: u32 = 12;\n\n",
             "assert_eq!(crate::weight(4), EXPECTED);",
         ),
+        (
+            "static EXPECTED: u32 = 12;\n\n",
+            "let _w = crate::weight(4);\n        let ok = EXPECTED == 12 && EXPECTED != 3 && EXPECTED >= 1 && EXPECTED <= 99;\n        assert!(ok);\n        assert_eq!(crate::weight(4), EXPECTED);",
+        ),
+        (
+            "static EXPECTED: AtomicU32 = AtomicU32::new(12);\n\n",
+            "let _w = crate::weight(4);\n        let _v = AtomicU32::load(&EXPECTED, Ordering::SeqCst);\n        assert_eq!(crate::weight(4), EXPECTED.load(Ordering::SeqCst));",
+        ),
+        (
+            "",
+            "let e: u32 = 12;\n        let expected: u32 = e;\n        assert_eq!(crate::weight(4), expected);",
+        ),
     ] {
         let lib = unit_tests(prelude, body);
         assert_eq!(path_admitted(&lib, "x * 3", None).len(), 1, "{body}");
+    }
+}
+
+/// #7847: the lexical write guard on its own, including operator edges the
+/// pipeline fixtures cannot reach.
+#[test]
+fn written_by_test_reads_operators_and_let_boundaries() {
+    for read in [
+        "x == EXPECTED",
+        "EXPECTED == 1",
+        "EXPECTED != 1",
+        "EXPECTED >= 1",
+        "EXPECTED <= 1",
+        "EXPECTED => 1",
+        "let e: EXPECTED = 1;",
+        "assert_eq!(f(4), &EXPECTED);",
+        "AtomicU32::load(&EXPECTED, o);",
+    ] {
+        assert!(!super::written_by_test(read, "EXPECTED"), "{read}");
+    }
+    for write in [
+        "EXPECTED = 1;",
+        "EXPECTED += 1;",
+        "EXPECTED.0 -= 1;",
+        "let a: u32 = 1; S { f: EXPECTED.swap(1) }",
+        "AtomicU32::store(&EXPECTED, 1, o);",
+        "g(&mut EXPECTED);",
+        "EXPECTED.with(|c| c.set(1));",
+        "EXPECTED.next();",
+        "EXPECTED.v?.bump();",
+        "EXPECTED.widen::<u8>();",
+    ] {
+        assert!(super::written_by_test(write, "EXPECTED"), "{write}");
     }
 }
 

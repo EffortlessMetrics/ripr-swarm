@@ -9711,8 +9711,62 @@ fn written_by_test(masked: &str, name: &str) -> bool {
         if before.ends_with(':') && !before.ends_with("::") && in_let_annotation(before) {
             return false;
         }
-        place_is_written(&masked[offset + name.len()..])
+        borrowed_into_path_call(before, name) || place_is_written(&masked[offset + name.len()..])
     })
+}
+
+/// A static passed by shared reference to a path call (`AtomicU32::store(&EXPECTED,
+/// ..)`, UFCS) may be written by the callee. Only an all-caps name in argument
+/// position of a non-macro `Path::callee(..)` whose callee is not a plain reader
+/// counts, so `assert_eq!(f(4), &EXPECTED)` and `Atomic::load(&EXPECTED)` pass.
+fn borrowed_into_path_call(before: &str, name: &str) -> bool {
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+    {
+        return false;
+    }
+    let Some(head) = before.strip_suffix('&') else {
+        return false;
+    };
+    let head = head.trim_end().trim_end_matches('&').trim_end();
+    if !head.ends_with(['(', ',']) {
+        return false;
+    }
+    let mut depth = 0usize;
+    let mut open = None;
+    for (at, c) in head.char_indices().rev() {
+        match c {
+            ')' | ']' => depth += 1,
+            '(' | '[' => {
+                if depth == 0 {
+                    open = Some(at);
+                    break;
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    let Some(open) = open else {
+        return false;
+    };
+    let callee = head[..open].trim_end();
+    if callee.ends_with('!') {
+        return false;
+    }
+    let path: String = callee
+        .chars()
+        .rev()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == ':')
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    let Some((_, last)) = path.rsplit_once("::") else {
+        return false;
+    };
+    !["load", "get", "read", "eq", "ne", "len", "clone", "cmp"].contains(&last)
 }
 
 /// Whether the text before a `:` sits inside a `let` pattern's annotation:
@@ -9740,6 +9794,10 @@ fn place_is_written(rest: &str) -> bool {
                 return true;
             }
             rest = call[method.len()..].trim_start();
+            // A turbofish or `?` is a shape the scan does not read.
+            if rest.starts_with("::") || rest.starts_with('?') {
+                return true;
+            }
             if rest.starts_with('(') {
                 if is_mutating_method(&method) {
                     return true;
@@ -9754,6 +9812,8 @@ fn place_is_written(rest: &str) -> bool {
                 Some(after) => rest = after.trim_start(),
                 None => return true,
             }
+        } else if rest.starts_with('?') {
+            return true;
         } else {
             break;
         }
@@ -9787,6 +9847,10 @@ fn is_mutating_method(method: &str) -> bool {
     const MUTATORS: &[&str] = &[
         "store",
         "set",
+        "with",
+        "nth",
+        "splice",
+        "replace_range",
         "insert",
         "replace",
         "swap",
@@ -9836,6 +9900,9 @@ fn is_mutating_method(method: &str) -> bool {
             "get_or_insert",
             "dedup",
             "swap_",
+            "next",
+            "write_",
+            "make_ascii_",
             "fetch_",
             "set_",
         ]
