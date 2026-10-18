@@ -9711,21 +9711,17 @@ fn written_by_test(masked: &str, name: &str) -> bool {
         if before.ends_with(':') && !before.ends_with("::") && in_let_annotation(before) {
             return false;
         }
-        borrowed_into_path_call(before, name) || place_is_written(&masked[offset + name.len()..])
+        borrowed_into_path_call(before, name)
+            || place_is_written(&masked[offset + name.len()..])
+            || destructured_into(&masked[offset + name.len()..])
     })
 }
 
-/// A static passed by shared reference to a path call (`AtomicU32::store(&EXPECTED,
-/// ..)`, UFCS) may be written by the callee. Only an all-caps name in argument
-/// position of a non-macro `Path::callee(..)` whose callee is not a plain reader
-/// counts, so `assert_eq!(f(4), &EXPECTED)` and `Atomic::load(&EXPECTED)` pass.
+/// A name passed by shared reference as an argument to any non-macro call
+/// (`AtomicU32::store(&EXPECTED, ..)`, `write(&EXPECTED, ..)`,
+/// `Cell::set(&expected, ..)`) may be written by the callee. A plain reader
+/// callee and a macro (`assert_eq!(f(4), &EXPECTED)`) do not count.
 fn borrowed_into_path_call(before: &str, name: &str) -> bool {
-    if !name
-        .chars()
-        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
-    {
-        return false;
-    }
     let Some(head) = before.strip_suffix('&') else {
         return false;
     };
@@ -9763,10 +9759,26 @@ fn borrowed_into_path_call(before: &str, name: &str) -> bool {
         .into_iter()
         .rev()
         .collect();
-    let Some((_, last)) = path.rsplit_once("::") else {
-        return false;
-    };
-    !["load", "get", "read", "eq", "ne", "len", "clone", "cmp"].contains(&last)
+    let last = path
+        .rsplit_once("::")
+        .map_or(path.as_str(), |(_, last)| last);
+    !last.is_empty()
+        && ![
+            "load",
+            "get",
+            "read",
+            "eq",
+            "ne",
+            "len",
+            "clone",
+            "cmp",
+            "partial_cmp",
+            "contains",
+            "starts_with",
+            "ends_with",
+            "is_empty",
+        ]
+        .contains(&last)
 }
 
 /// Whether the text before a `:` sits inside a `let` pattern's annotation:
@@ -9818,6 +9830,36 @@ fn place_is_written(rest: &str) -> bool {
             break;
         }
     }
+    assignment_operator_at(rest)
+}
+
+/// Whether the name sits in a pattern that is the left side of an assignment
+/// (`(name, _) = ..`, `[name, ..] = ..`, `S { f: name, .. } = ..`): after the
+/// enclosing group closes, an `=` (not `==` or `=>`) or compound operator
+/// follows. `rest` is the text after the name.
+fn destructured_into(rest: &str) -> bool {
+    let mut depth = 0usize;
+    for (at, character) in rest.char_indices() {
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                if depth > 0 {
+                    depth -= 1;
+                    continue;
+                }
+                // The enclosing group closed: what follows decides.
+                let mut tail = rest[at..].trim_start_matches([')', ']', '}']);
+                tail = tail.trim_start();
+                return assignment_operator_at(tail);
+            }
+            ';' if depth == 0 => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
+fn assignment_operator_at(rest: &str) -> bool {
     rest.strip_prefix('=')
         .is_some_and(|tail| !tail.starts_with(['=', '>']))
         || ["+=", "-=", "*=", "/=", "%=", "|=", "&=", "^=", "<<=", ">>="]
@@ -9851,16 +9893,13 @@ fn is_mutating_method(method: &str) -> bool {
         "nth",
         "splice",
         "replace_range",
-        "insert",
         "replace",
         "swap",
-        "extend",
         "append",
         "write",
         "lock",
         "take",
         "clear",
-        "remove",
         "entry",
         "resize",
         "truncate",
@@ -9868,20 +9907,11 @@ fn is_mutating_method(method: &str) -> bool {
         "update",
         "compare_exchange",
         "reverse",
-        "dedup",
         "split_off",
         "rotate_left",
         "rotate_right",
-        "or_insert",
-        "get_or_insert",
-        "retain",
-        "drain",
-        "fill",
-        "swap_remove",
-        "pop",
         "replace_with",
         "copy_within",
-        "clone_from",
     ];
     MUTATORS.contains(&method)
         || [

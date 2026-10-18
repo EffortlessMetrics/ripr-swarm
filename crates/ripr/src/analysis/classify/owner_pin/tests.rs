@@ -8391,6 +8391,34 @@ fn an_expected_value_a_macro_or_a_static_rebinds_from_the_owner_is_not_a_pin() {
             "",
             "let mut expected = Wrapper::new();\n        expected.cell?.bump(crate::weight(4));\n        assert_eq!(crate::weight(4), expected);",
         ),
+        (
+            "fn write(_: &AtomicU32, _: u32) {}\nstatic EXPECTED: AtomicU32 = AtomicU32::new(0);\n\n",
+            "write(&EXPECTED, crate::weight(4));\n        assert_eq!(crate::weight(4), EXPECTED.load(Ordering::SeqCst));",
+        ),
+        (
+            "",
+            "let expected = Cell::new(0);\n        Cell::set(&expected, crate::weight(4));\n        assert_eq!(crate::weight(4), expected.get());",
+        ),
+        (
+            "",
+            "let mut expected = 0;\n        (expected, _) = (crate::weight(4), 0);\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        (
+            "",
+            "let mut expected = 0;\n        [expected, ..] = [crate::weight(4), 0];\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        (
+            "struct S { f: u32, g: u32 }\n\n",
+            "let mut expected = 0;\n        S { f: expected, .. } = S { f: crate::weight(4), g: 0 };\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        (
+            "",
+            "let mut expected = String::new();\n        write!(expected, \"{}\", crate::weight(4)).unwrap();\n        assert_eq!(crate::weight(4).to_string(), expected);",
+        ),
+        (
+            "",
+            "let mut expected = String::new();\n        writeln!(expected, \"{}\", crate::weight(4)).unwrap();\n        assert_eq!(crate::weight(4).to_string(), expected);",
+        ),
         // Non-atomic writes: a field, a tuple field, an index, a listed
         // mutator that is not a `store`, and a mutator in a struct-literal
         // field value (not a `let` annotation).
@@ -8442,6 +8470,10 @@ fn an_expected_value_a_macro_or_a_static_rebinds_from_the_owner_is_not_a_pin() {
         ),
         (
             "",
+            "let _w = crate::weight(4);\n        let expected = 12;\n        let t = (expected, 1);\n        assert_eq!(crate::weight(4), t.0);",
+        ),
+        (
+            "",
             "let e: u32 = 12;\n        let expected: u32 = e;\n        assert_eq!(crate::weight(4), expected);",
         ),
     ] {
@@ -8464,6 +8496,8 @@ fn written_by_test_reads_operators_and_let_boundaries() {
         "let e: EXPECTED = 1;",
         "assert_eq!(f(4), &EXPECTED);",
         "AtomicU32::load(&EXPECTED, o);",
+        "let t = (EXPECTED, 1);",
+        "if (EXPECTED, 1) == t {}",
     ] {
         assert!(!super::written_by_test(read, "EXPECTED"), "{read}");
     }
@@ -8478,6 +8512,10 @@ fn written_by_test_reads_operators_and_let_boundaries() {
         "EXPECTED.next();",
         "EXPECTED.v?.bump();",
         "EXPECTED.widen::<u8>();",
+        "write(&EXPECTED, 1);",
+        "(EXPECTED, _) = p;",
+        "[EXPECTED, ..] = p;",
+        "S { f: EXPECTED, .. } = p;",
     ] {
         assert!(super::written_by_test(write, "EXPECTED"), "{write}");
     }
