@@ -300,7 +300,14 @@ pub(crate) fn absolute_command_root_display(root: &Path) -> Result<String, Strin
     } else {
         let cwd = std::env::current_dir()
             .map_err(|error| format!("cannot bind the selected root to its directory: {error}"))?;
-        std::borrow::Cow::Owned(cwd.join(root))
+        // `cwd.join(".")` keeps a trailing `/.`; drop `.` components so the
+        // rendered command names the directory itself.
+        std::borrow::Cow::Owned(
+            cwd.join(root)
+                .components()
+                .filter(|component| !matches!(component, std::path::Component::CurDir))
+                .collect(),
+        )
     };
     require_lossless_command_path(&path)?;
     Ok(human_path(&path))
@@ -317,9 +324,21 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        display_path, display_path_text, human_path_text, repository_display_path,
-        repository_relative_path_text_on, same_output_leaf,
+        absolute_command_root_display, display_path, display_path_text, human_path_text,
+        repository_display_path, repository_relative_path_text_on, same_output_leaf,
     };
+
+    #[test]
+    fn absolute_command_root_display_drops_current_dir_component() -> Result<(), String> {
+        let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
+        let expected = super::human_path(&cwd);
+        assert_eq!(absolute_command_root_display(Path::new("."))?, expected);
+        assert_eq!(
+            absolute_command_root_display(Path::new("./sub"))?,
+            format!("{expected}/sub")
+        );
+        Ok(())
+    }
 
     #[test]
     fn human_path_text_uses_one_separator_and_drops_verbatim_prefix_on_windows() {
