@@ -1,0 +1,312 @@
+{
+  "source_head": "c4a8f7828e15426c4d872718f66bd4bac3ab0daf",
+  "binary_sha256": "913bc60fcd8591c13b019c630f67a79882e92dd34cf02f9dedf26642b3fa68fe",
+  "records": [
+    {
+      "case": "closed-positive",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-veto-reconciliation/cases/closed-positive",
+        "--diff",
+        "/workspace/5500-veto-reconciliation/cases/closed-positive/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_cli_exit": 0,
+      "analysis_complete": true,
+      "header_id": "probe:src_proof.rs:match_arm:a83f5558",
+      "classification": "exposed",
+      "whole_tail_receipt": true,
+      "native": [
+        {
+          "variant": "original",
+          "compile_exit": 0,
+          "test_exit": 0,
+          "source_sha256": "338dd51c7b8747eb83fec97e00adff819c0c219d17a25b112a917072a581eea4"
+        },
+        {
+          "variant": "zero",
+          "compile_exit": 0,
+          "test_exit": 101,
+          "source_sha256": "57df4665c419395ed623de727278eb9ed834919cf1c064872f11b2b541506f12"
+        }
+      ]
+    },
+    {
+      "case": "stored-any",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-veto-reconciliation/cases/stored-any",
+        "--diff",
+        "/workspace/5500-veto-reconciliation/cases/stored-any/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_cli_exit": 0,
+      "analysis_complete": true,
+      "header_id": "probe:src_proof.rs:match_arm:a83f5558",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false,
+      "native": [
+        {
+          "variant": "original",
+          "compile_exit": 0,
+          "test_exit": 0,
+          "source_sha256": "338dd51c7b8747eb83fec97e00adff819c0c219d17a25b112a917072a581eea4"
+        },
+        {
+          "variant": "zero",
+          "compile_exit": 0,
+          "test_exit": 101,
+          "source_sha256": "57df4665c419395ed623de727278eb9ed834919cf1c064872f11b2b541506f12"
+        }
+      ]
+    },
+    {
+      "case": "qualified-root",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-veto-reconciliation/cases/qualified-root",
+        "--diff",
+        "/workspace/5500-veto-reconciliation/cases/qualified-root/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_cli_exit": 0,
+      "analysis_complete": true,
+      "header_id": "probe:src_proof.rs:match_arm:a83f5558",
+      "classification": "exposed",
+      "whole_tail_receipt": true,
+      "native": [
+        {
+          "variant": "original",
+          "compile_exit": 0,
+          "test_exit": 0,
+          "source_sha256": "338dd51c7b8747eb83fec97e00adff819c0c219d17a25b112a917072a581eea4"
+        },
+        {
+          "variant": "zero",
+          "compile_exit": 0,
+          "test_exit": 101,
+          "source_sha256": "57df4665c419395ed623de727278eb9ed834919cf1c064872f11b2b541506f12"
+        }
+      ]
+    },
+    {
+      "case": "owner-crate-glob",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-veto-reconciliation/cases/owner-crate-glob",
+        "--diff",
+        "/workspace/5500-veto-reconciliation/cases/owner-crate-glob/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_cli_exit": 0,
+      "analysis_complete": true,
+      "header_id": "probe:src_proof.rs:match_arm:a83f5558",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false,
+      "native": [
+        {
+          "variant": "original",
+          "compile_exit": 0,
+          "test_exit": 0,
+          "source_sha256": "63b9fd240881a1f9bdf89212d87495bbea0def46bf81724c1f4e43882a38b47a"
+        },
+        {
+          "variant": "zero",
+          "compile_exit": 0,
+          "test_exit": 101,
+          "source_sha256": "4bd02a67e47aef9b38955472c6d41933f96fb7119c0735c57eb3a128be31ff19"
+        }
+      ]
+    },
+    {
+      "case": "expected-glob-max",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-veto-reconciliation/cases/expected-glob-max",
+        "--diff",
+        "/workspace/5500-veto-reconciliation/cases/expected-glob-max/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_cli_exit": 0,
+      "analysis_complete": true,
+      "header_id": "probe:src_proof.rs:match_arm:a83f5558",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false,
+      "native": [
+        {
+          "variant": "original",
+          "compile_exit": 0,
+          "test_exit": 0,
+          "source_sha256": "a979106e55cc12c7012188d407583a5d487761ee94d1f69310b93a0a65c35aab"
+        },
+        {
+          "variant": "zero",
+          "compile_exit": 0,
+          "test_exit": 101,
+          "source_sha256": "8ac6cdd43900dd9371ef4cf5fa32375949aa645074c80ccf9fade1e732c81cbc"
+        }
+      ]
+    },
+    {
+      "case": "expected-glob-numeric",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-veto-reconciliation/cases/expected-glob-numeric",
+        "--diff",
+        "/workspace/5500-veto-reconciliation/cases/expected-glob-numeric/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_cli_exit": 0,
+      "analysis_complete": true,
+      "header_id": "probe:src_proof.rs:match_arm:a83f5558",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false,
+      "native": [
+        {
+          "variant": "original",
+          "compile_exit": 0,
+          "test_exit": 0,
+          "source_sha256": "4e098393376cab7a094a59fe44da09373548ccf9fea12b4455c038463a73457d"
+        },
+        {
+          "variant": "zero",
+          "compile_exit": 0,
+          "test_exit": 101,
+          "source_sha256": "f7e721480c7828f16fc1c7b9a198a6f4c1f57a45b539db22f95e32f1647af74b"
+        }
+      ]
+    },
+    {
+      "case": "return-alias",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-veto-reconciliation/cases/return-alias",
+        "--diff",
+        "/workspace/5500-veto-reconciliation/cases/return-alias/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_cli_exit": 0,
+      "analysis_complete": true,
+      "header_id": "probe:src_proof.rs:match_arm:a83f5558",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false,
+      "native": [
+        {
+          "variant": "original",
+          "compile_exit": 0,
+          "test_exit": 0,
+          "source_sha256": "e2cc84e14cc53580d77a31eee812b841fbaba0a06a22df2c4b0d8b1b54838b41"
+        },
+        {
+          "variant": "zero",
+          "compile_exit": 0,
+          "test_exit": 101,
+          "source_sha256": "1dc28fc88d2cd0846b8217c8c5fcb453533875ca4c12acbb12fdc1ebd00a1dc1"
+        }
+      ]
+    },
+    {
+      "case": "overwritten-actual",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-veto-reconciliation/cases/overwritten-actual",
+        "--diff",
+        "/workspace/5500-veto-reconciliation/cases/overwritten-actual/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_cli_exit": 0,
+      "analysis_complete": true,
+      "header_id": "probe:src_proof.rs:match_arm:a83f5558",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false,
+      "native": [
+        {
+          "variant": "original",
+          "compile_exit": 0,
+          "test_exit": 0,
+          "source_sha256": "81081848536ae1fce4778aa9c277d9de4f2552a72f444cecfa393723515c3722"
+        },
+        {
+          "variant": "zero",
+          "compile_exit": 0,
+          "test_exit": 0,
+          "source_sha256": "d3b399883abfeded7e22bed2a67f679fb3ed06cb900760ba99093b96aad31640"
+        }
+      ]
+    },
+    {
+      "case": "self-expected",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-veto-reconciliation/cases/self-expected",
+        "--diff",
+        "/workspace/5500-veto-reconciliation/cases/self-expected/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_cli_exit": 0,
+      "analysis_complete": true,
+      "header_id": "probe:src_proof.rs:match_arm:a83f5558",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false,
+      "native": [
+        {
+          "variant": "original",
+          "compile_exit": 0,
+          "test_exit": 0,
+          "source_sha256": "a63bce98bef8f1841f22fa2922382c95e51bc1f5138d5daf78337c1e3a20416e"
+        },
+        {
+          "variant": "zero",
+          "compile_exit": 0,
+          "test_exit": 0,
+          "source_sha256": "5859e903a57f5c877565cdc3fb7f8ce9a9a807dc8091d19160878547337b2bdc"
+        }
+      ]
+    }
+  ]
+}

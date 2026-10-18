@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/workspace/5500-veto-reconciliation/future_contract_red.py", line 7, in <module>
+    assert headers[0]['classification']=='exposed',f"Future closed-primitive-identity positive is not admitted: {headers[0]['id']} = {headers[0]['classification']}; current conservative refusal is retained pending new authority"
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Future closed-primitive-identity positive is not admitted: probe:src_proof.rs:match_arm:a83f5558 = weakly_exposed; current conservative refusal is retained pending new authority

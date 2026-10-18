@@ -1,0 +1,331 @@
+{
+  "source_head": "c4a8f7828e15426c4d872718f66bd4bac3ab0daf",
+  "canonical_owner": "delegated root integration #5500 comment6252014142",
+  "current_adjacent_owners": [
+    {
+      "number": 8772,
+      "head": "cb6f7667430ad12f1cea5bb8b23ad98e078400b9",
+      "state": "open",
+      "draft": true,
+      "scope": "retained macro-site disclosure parity"
+    },
+    {
+      "number": 8597,
+      "head": "5aa226a14a0012dfb3638e2ebbfdf58dbf2e75a7",
+      "state": "open",
+      "draft": false,
+      "scope": "expected word macro/static rebinding"
+    },
+    {
+      "number": 8592,
+      "head": "2b3013d0f4e445fab18846af6c75c3d482f3437a",
+      "state": "open",
+      "draft": false,
+      "scope": "check-helper argument substitution"
+    }
+  ],
+  "searches": [
+    {
+      "key": "primitive-symbol",
+      "items": [],
+      "limit": 100,
+      "state": "all PR states"
+    },
+    {
+      "key": "primitive-glob",
+      "items": [
+        {
+          "number": 8529,
+          "title": "fix(owner-pin): a std/core/alloc glob import no longer makes every plain assert_eq! \"not credited\" (#8388)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8529"
+        },
+        {
+          "number": 8592,
+          "title": "fix(owner_pin): read check-helper parameters as the test's arguments",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8592"
+        },
+        {
+          "number": 7835,
+          "title": "fix(owner_pin): a scalar let-bound result read by other assertions still pins",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7835"
+        },
+        {
+          "number": 7084,
+          "title": "False verdicts: drop an unchanged arm return value (#7074); field pinned equal to an operand (#7077)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7084"
+        },
+        {
+          "number": 7403,
+          "title": "fix(typescript): RIPR-SPEC-0247 literal matcher strength",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7403"
+        },
+        {
+          "number": 7996,
+          "title": "fix(rust): read let-bound literal inputs and const bounds in unentered guards (#7964)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7996"
+        },
+        {
+          "number": 7938,
+          "title": "fix(rust): credit std/core-qualified assert_eq when the root cannot be rebound (#7857)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7938"
+        },
+        {
+          "number": 8572,
+          "title": "fix(rust): read runnable library doc examples as tests (#6648, RIPR-SPEC-0279)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8572"
+        },
+        {
+          "number": 7932,
+          "title": "fix(owner_pin): a projection that keeps a scalar owner's value pins it",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7932"
+        },
+        {
+          "number": 8748,
+          "title": "fix(probes): skip behavior-neutral lifetime and int-constant respellings",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8748"
+        },
+        {
+          "number": 8347,
+          "title": "fix(typescript): resolve tsconfig paths aliases by default (#8346)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8347"
+        },
+        {
+          "number": 8102,
+          "title": "fix(owner-pin): a verified expect_file golden comparison pins the owner return (#6578)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8102"
+        },
+        {
+          "number": 6798,
+          "title": "fix(typescript): RIPR-SPEC-0243 verdict rules cut TypeScript corpus false verdicts 36 → 21",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/6798"
+        },
+        {
+          "number": 4064,
+          "title": "fix(typescript): make tsconfig alias precedence deterministic",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4064"
+        },
+        {
+          "number": 6662,
+          "title": "fix(seams): scope trait-dispatch reach per trait (#5577)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/6662"
+        },
+        {
+          "number": 8262,
+          "title": "fix(analysis): diff-scoped check converges on macro-binding disclosures (#8255)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8262"
+        },
+        {
+          "number": 7703,
+          "title": "fix(oracles): a matches! conjunct keeps its pattern's reading",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7703"
+        },
+        {
+          "number": 7949,
+          "title": "perf(analysis): share one call identity per analysis run — residual of #7716 (related-tests gather part)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7949"
+        },
+        {
+          "number": 7263,
+          "title": "fix(classify): uniqueness-refused helper entries read static_unknown (#7080)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7263"
+        },
+        {
+          "number": 7973,
+          "title": "fix(rust): observe literal assertions on exact mutable field arguments (#7966)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7973"
+        },
+        {
+          "number": 7098,
+          "title": "fix(owner-pin): type unit-struct receivers by their own name",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7098"
+        },
+        {
+          "number": 7093,
+          "title": "fix(verdicts): an overwritten field or an imported same-name twin is not the owner",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7093"
+        },
+        {
+          "number": 8269,
+          "title": "fix(rust): a seeded-collection expectation cannot confirm a guarded push (#8205)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8269"
+        },
+        {
+          "number": 8004,
+          "title": "fix(analysis): require bounded inherent receiver attribution",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8004"
+        },
+        {
+          "number": 6764,
+          "title": "fix(oracles): a related test's oracle follows what its pattern pins (RIPR-SPEC-0231 rules 2-6)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/6764"
+        },
+        {
+          "number": 7379,
+          "title": "fix(typescript): RIPR-SPEC-0246 identity-copy and nested-callback oracle rules",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7379"
+        },
+        {
+          "number": 7285,
+          "title": "feat(check): expose canonical next action in check JSON",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7285"
+        },
+        {
+          "number": 8059,
+          "title": "fix(field-observation): a test pinning one element of a returned array observes that element's field (#7858)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8059"
+        },
+        {
+          "number": 7828,
+          "title": "fix(rust): admit registry-bound literal JSON construction (#7776)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7828"
+        },
+        {
+          "number": 7412,
+          "title": "fix(docs): align five documentation truths with shipped behavior",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7412"
+        },
+        {
+          "number": 6578,
+          "title": "eval(verdict-corpus): runtime-labeled cases for 15 common Rust test libraries, plus serial_test and path-qualified assert fixes",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/6578"
+        },
+        {
+          "number": 7410,
+          "title": "fix(rerun): retain qualified selected owner identity (#1601)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7410"
+        },
+        {
+          "number": 2513,
+          "title": "refactor(xtask): extract shared type definitions to types.rs (#2119 Phase 1)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/2513"
+        },
+        {
+          "number": 2772,
+          "title": "fix(badge): apply path suppressions consistently",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/2772"
+        },
+        {
+          "number": 5735,
+          "title": "docs(repair): state the inline-only boundary as permanent scope (#5210)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/5735"
+        },
+        {
+          "number": 7633,
+          "title": "fix(python): credit a pinned mock passed for a called parameter (#7586)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7633"
+        },
+        {
+          "number": 2808,
+          "title": "fix(analysis): configure Rust generated-file patterns",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/2808"
+        },
+        {
+          "number": 7943,
+          "title": "fix(infection): withhold boundary credit when a predicate edit adds or removes an operand",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7943"
+        },
+        {
+          "number": 5359,
+          "title": "fix(verdicts): credit assert_eq! oracles real tests run, and name every refusal",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/5359"
+        },
+        {
+          "number": 8463,
+          "title": "refactor(xtask): decompose python_repair_verification into focused modules",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8463"
+        },
+        {
+          "number": 7926,
+          "title": "fix(rust): read only use/extern crate items as renames",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7926"
+        },
+        {
+          "number": 8228,
+          "title": "fix(test): claim artifact fixture roots and size Analytics budget (#7142)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8228"
+        },
+        {
+          "number": 5981,
+          "title": "fix(output): call method owners with receiver syntax and label path constants (#5357)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/5981"
+        },
+        {
+          "number": 8040,
+          "title": "fix(field-observation): a literal variant-field pattern on the owner result pins the field (#6578)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8040"
+        },
+        {
+          "number": 7621,
+          "title": "fix(rust): recover missing empty-slice inputs from literal tables",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7621"
+        },
+        {
+          "number": 7928,
+          "title": "fix(oracles): a bool-compared comparison reads as what it asserts (#7598)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7928"
+        },
+        {
+          "number": 8010,
+          "title": "test(vscode): retain failure-only test-host diagnostics",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8010"
+        },
+        {
+          "number": 7408,
+          "title": "fix(vscode): bind multi-root sessions and add real-server acceptance",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7408"
+        },
+        {
+          "number": 3406,
+          "title": "feat(agent): bind repair receipts to edit cages",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/3406"
+        },
+        {
+          "number": 8201,
+          "title": "feat(check): emit native diff output set from one analysis (#8169)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8201"
+        },
+        {
+          "number": 7486,
+          "title": "fix(rerun): select exact source call occurrences (#1601)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7486"
+        },
+        {
+          "number": 4287,
+          "title": "fix(0.11): bind generated commands to the selected repository root (#3999, #4001, #4000 partial)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/4287"
+        },
+        {
+          "number": 7066,
+          "title": "fix(field-credit): pin a constructed field through a whole-value literal that names it (RIPR-SPEC-0225)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7066"
+        },
+        {
+          "number": 3524,
+          "title": "feat(xtask): make help progressive and conventional",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/3524"
+        },
+        {
+          "number": 7306,
+          "title": "test(xtask): isolate fixture cache and output ownership (#7300)",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/7306"
+        }
+      ],
+      "limit": 100,
+      "state": "all PR states"
+    },
+    {
+      "key": "primitive-issues",
+      "items": [
+        {
+          "number": 5500,
+          "title": "analysis(rust): emit match-arm activation from direct arguments and method receivers",
+          "url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/5500"
+        }
+      ],
+      "limit": 100,
+      "state": "issue search all states"
+    }
+  ],
+  "conclusion": "No separate active owner of exact owner-return PrimitiveScalarIdentity found within targeted current/all-state results. Do not assign #8772 or #8597 this slice by adjacency. #5500 root retains integration and prerequisite handoff.",
+  "search_instrument_note": "Two initial direct REST search URL calls failed without usable results; they establish no owner absence or repository access denial. Supported GitHub search actions succeeded and are the listed evidence."
+}

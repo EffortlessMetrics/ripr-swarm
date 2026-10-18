@@ -1,0 +1,314 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "ready",
+  "root": "/workspace/5500-veto-reconciliation/cases/self-expected",
+  "summary": {"changed_rust_files":1,"probes":4,"findings":4,"exposed":0,"weakly_exposed":4,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:4e8ef0ceccb6f416a1a55e78d96f099968ed8b827cfb21ddb4b1cb1cf955a034","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":17,"candidate_line_count":4,"probe_count":4,"finding_count":4},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_proof.rs:field_construction:31e99cef",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_proof.rs:field_construction:31e99cef",
+        "family": "field_construction",
+        "delta": "value",
+        "file": "./src/proof.rs",
+        "line": 1,
+        "expression": "struct Lease { elapsed: Option<u64> }"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"No test is seen calling changed owner; tests share only its file or a name token: observes"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"weak","confidence":"low","summary":"No complete owner-bound propagation witness found for constructed field: struct Lease { elapsed: Option<u64> }"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach weak: No test is seen calling changed owner; tests share only its file or a name token: observes", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: No complete owner-bound propagation witness found for constructed field: struct Lease { elapsed: Option<u64> }", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches constructed field: struct Lease { elapsed: Option<u64> } (line 1)", "related test src/proof.rs:12 observes uses strong exact value oracle: assert_eq!(charge(&lease), expected);", "missing discriminator struct Lease { elapsed: Option<u64> }: No field-value assertion observes the constructed field: struct Lease { elapsed: Option<u64> }"],
+      "flow_sinks": [
+        {"kind":"struct_field","text":"struct Lease { elapsed: Option<u64> }","line":1}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No complete owner-bound propagation witness found for constructed field: struct Lease { elapsed: Option<u64> }", "No test is seen calling changed owner; tests share only its file or a name token: observes", "Reachable tests can plausibly activate this changed behavior"],
+      "missing": ["Missing discriminator value: struct Lease { elapsed: Option<u64> }", "No strong discriminator was detected"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "struct Lease { elapsed: Option<u64> }",
+            "reason": "No field-value assertion observes the constructed field: struct Lease { elapsed: Option<u64> }",
+            "flow_sink": {"kind":"struct_field","text":"struct Lease { elapsed: Option<u64> }","line":1}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "struct Lease { elapsed: Option<u64> }",
+          "reason": "No field-value assertion observes the constructed field: struct Lease { elapsed: Option<u64> }",
+          "flow_sink": {"kind":"struct_field","text":"struct Lease { elapsed: Option<u64> }","line":1}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "observes",
+          "file": "src/proof.rs",
+          "line": 12,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(charge(&lease), expected);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "missing_exact_assertion",
+          "why": "no assertion pins `struct Lease { elapsed: Option<u64> }`"
+        }
+      ],
+      "stop_reasons": ["no_changed_rust_line"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.",
+      "suggested_next_action": "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof.rs:match_arm:a83f5558",
+      "canonical_gap_id": "gap:rust:src/proof.rs:charge:match_arm:match_arm:match_lease.elapsed",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/proof.rs:charge:match_arm:match_arm:match_lease.elapsed",
+        "language": "rust",
+        "file": "src/proof.rs",
+        "owner": "charge",
+        "behavior_kind": "match_arm",
+        "probe_kind": "match_arm",
+        "normalized_discriminator": "match_lease.elapsed"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_proof.rs:match_arm:a83f5558",
+        "family": "match_arm",
+        "delta": "control",
+        "file": "./src/proof.rs",
+        "line": 3,
+        "expression": "match lease.elapsed"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach charge: observes"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: match lease.elapsed"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach charge: observes", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: match lease.elapsed", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: match lease.elapsed (line 3)", "related test src/proof.rs:12 observes uses weak exact value oracle: assert_eq!(charge(&lease), expected);"],
+      "flow_sinks": [
+        {"kind":"match_arm","text":"match lease.elapsed","line":3}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: match lease.elapsed", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach charge: observes"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "observes",
+          "file": "src/proof.rs",
+          "line": 12,
+          "oracle_strength": "weak",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(charge(&lease), expected);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "weak",
+      "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof.rs:match_arm:cae48bab",
+      "canonical_gap_id": "gap:rust:src/proof.rs:charge:match_arm:match_arm:some_ms",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/proof.rs:charge:match_arm:match_arm:some_ms",
+        "language": "rust",
+        "file": "src/proof.rs",
+        "owner": "charge",
+        "behavior_kind": "match_arm",
+        "probe_kind": "match_arm",
+        "normalized_discriminator": "some_ms"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.84,
+      "probe": {
+        "id": "probe:src_proof.rs:match_arm:cae48bab",
+        "family": "match_arm",
+        "delta": "control",
+        "file": "./src/proof.rs",
+        "line": 4,
+        "expression": "Some(ms) =>"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach charge: observes"},
+        "infect": {"state":"weak","confidence":"medium","summary":"No related test call selects arm `Some(ms) =>`; observed `lease.elapsed` values: `None`"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: Some(ms) =>"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach charge: observes", "infection weak: No related test call selects arm `Some(ms) =>`; observed `lease.elapsed` values: `None`", "propagation yes: Changed behavior appears to influence match arm result: Some(ms) =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: Some(ms) => (line 4)", "related test src/proof.rs:12 observes uses weak exact value oracle: assert_eq!(charge(&lease), expected);", "missing discriminator Some(ms): No related test call selects arm `Some(ms) =>`; observed `lease.elapsed` values: `None`"],
+      "flow_sinks": [
+        {"kind":"match_arm","text":"Some(ms) =>","line":4}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: Some(ms) =>", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No related test call selects arm `Some(ms) =>`; observed `lease.elapsed` values: `None`", "Related tests appear to reach charge: observes"],
+      "missing": ["Missing discriminator value: Some(ms)", "No strong discriminator was detected"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "Some(ms)",
+            "reason": "No related test call selects arm `Some(ms) =>`; observed `lease.elapsed` values: `None`",
+            "flow_sink": {"kind":"match_arm","text":"Some(ms) =>","line":4}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "Some(ms)",
+          "reason": "No related test call selects arm `Some(ms) =>`; observed `lease.elapsed` values: `None`",
+          "flow_sink": {"kind":"match_arm","text":"Some(ms) =>","line":4}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "observes",
+          "file": "src/proof.rs",
+          "line": 12,
+          "oracle_strength": "weak",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(charge(&lease), expected);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "weak",
+      "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof.rs:match_arm:b54be3b1",
+      "canonical_gap_id": "gap:rust:src/proof.rs:charge:match_arm:match_arm:none",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/proof.rs:charge:match_arm:match_arm:none",
+        "language": "rust",
+        "file": "src/proof.rs",
+        "owner": "charge",
+        "behavior_kind": "match_arm",
+        "probe_kind": "match_arm",
+        "normalized_discriminator": "none"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_proof.rs:match_arm:b54be3b1",
+        "family": "match_arm",
+        "delta": "control",
+        "file": "./src/proof.rs",
+        "line": 5,
+        "expression": "None =>"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach charge: observes"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: None =>"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach charge: observes", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: None =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: None => (line 5)", "related test src/proof.rs:12 observes uses weak exact value oracle: assert_eq!(charge(&lease), expected);"],
+      "flow_sinks": [
+        {"kind":"match_arm","text":"None =>","line":5}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: None =>", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach charge: observes"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "observes",
+          "file": "src/proof.rs",
+          "line": 12,
+          "oracle_strength": "weak",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(charge(&lease), expected);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "weak",
+      "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "canonical_next_action": {"schema_version":"canonical_next_action.v1","producer":"check_top_result","subject":{"root":"/workspace/5500-veto-reconciliation/cases/self-expected","diff_source":{"committed":{"base":null,"head":null}},"item":"probe:src_proof.rs:match_arm:a83f5558"},"currentness":{"head_expected":null,"head_observed":null,"config_expected":null,"config_observed":null},"action_class":"inspect_details","stop":{"kind":"check_triage","case":"top_gap","detail_route":"ripr explain --root /workspace/5500-veto-reconciliation/cases/self-expected --diff /workspace/5500-veto-reconciliation/cases/self-expected/input.diff --mode ready probe:src_proof.rs:match_arm:a83f5558"},"alternatives":[{"label":"considered finding probe:src_proof.rs:field_construction:31e99cef","route":"ripr explain --root /workspace/5500-veto-reconciliation/cases/self-expected --diff /workspace/5500-veto-reconciliation/cases/self-expected/input.diff --mode ready probe:src_proof.rs:field_construction:31e99cef"},{"label":"considered finding probe:src_proof.rs:match_arm:cae48bab","route":"ripr explain --root /workspace/5500-veto-reconciliation/cases/self-expected --diff /workspace/5500-veto-reconciliation/cases/self-expected/input.diff --mode ready probe:src_proof.rs:match_arm:cae48bab"}],"non_claim":"Advisory selection from producer-bound state; it does not execute, complete, or prove the repair, and the display string is never execution authority."}
+}

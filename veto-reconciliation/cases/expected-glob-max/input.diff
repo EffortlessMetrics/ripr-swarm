@@ -1,0 +1,20 @@
+--- /dev/null
++++ b/src/proof.rs
+@@ -0,0 +1,17 @@
++struct Lease { elapsed: Option<u64> }
++fn charge(lease: &Lease) -> u64 {
++    match lease.elapsed {
++        Some(ms) => ms,
++        None => 600,
++    }
++}
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::*;
++    #[test]
++    fn observes() {
++        let lease = Lease { elapsed: Some(u64::MAX) };
++        assert_eq!(charge(&lease), u64::MAX);
++    }
++}

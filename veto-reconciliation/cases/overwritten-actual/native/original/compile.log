@@ -1,0 +1,11 @@
+warning: value assigned to `actual` is never read
+  --> /workspace/5500-veto-reconciliation/cases/overwritten-actual/native/original/src/proof.rs:14:26
+   |
+14 |         let mut actual = charge(&lease);
+   |                          ^^^^^^^^^^^^^^
+   |
+   = help: maybe it is overwritten before being read?
+   = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: 1 warning emitted
+

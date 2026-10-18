@@ -1,0 +1,1431 @@
+{
+  "source_head": "c4a8f7828e15426c4d872718f66bd4bac3ab0daf",
+  "consumer_head": "278253a03b00d1aa777eeba7633954122163890f",
+  "consumer_tree": "6e288c65d71e1a7f7f38fa064221e53163c9b47d",
+  "retained_exact_consumer_command": {
+    "head": "c4a8f7828e15426c4d872718f66bd4bac3ab0daf",
+    "started_utc": "2026-10-18T19:47:32.154137+00:00",
+    "command": [
+      "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+      "check",
+      "--root",
+      "/workspace/5500-consumer",
+      "--diff",
+      "/workspace/5500-whole-tail-evidence/consumer.diff",
+      "--mode",
+      "ready",
+      "--format",
+      "json"
+    ],
+    "cache": "/workspace/5500-assertion-prerequisite/cache-consumer-c4a",
+    "native_exit": 0
+  },
+  "validation_reuse": "No source/input/instrument change. Independentlycompare everyretainedfactsource tocurrentfile, cleangit consumer, exactsource/binary/diff/output hashes; reuse terminal exactnative0 instead of duplicate unchanged replay.",
+  "diff_sha256": "6af0470bd2c7a8648325402af4d5294c94f35304403ef2c3952ffe986adc8b02",
+  "binary_sha256": "913bc60fcd8591c13b019c630f67a79882e92dd34cf02f9dedf26642b3fa68fe",
+  "raw_output_sha256": "e67563d1ec9aad34b8c54d5f341a13114b93469c73bb6b97f55f6ccbe66db96b",
+  "equals_frozen656_bytes": true,
+  "finding_count": 52,
+  "any_files": [
+    {
+      "path": "tests/cli_run.rs",
+      "relevant_glob_lines": [
+        {
+          "line": 10,
+          "text": "use common::*;"
+        }
+      ],
+      "claim": "CachedAny observed; producer source plus glob lines supplies conservative refusal, not proof everylistedline is independentlynecessary."
+    },
+    {
+      "path": "src/sensors/mod.rs",
+      "relevant_glob_lines": [
+        {
+          "line": 6,
+          "text": "pub(crate) use command_build::*;"
+        },
+        {
+          "line": 11,
+          "text": "pub(crate) use coverage::*;"
+        },
+        {
+          "line": 12,
+          "text": "pub(crate) use ripr::*;"
+        },
+        {
+          "line": 13,
+          "text": "pub(crate) use unsafe_review::*;"
+        },
+        {
+          "line": 24,
+          "text": "use crate::*;"
+        },
+        {
+          "line": 1273,
+          "text": "use crate::*;"
+        }
+      ],
+      "claim": "CachedAny observed; producer source plus glob lines supplies conservative refusal, not proof everylistedline is independentlynecessary."
+    },
+    {
+      "path": "src/proof/mod.rs",
+      "relevant_glob_lines": [
+        {
+          "line": 9,
+          "text": "use crate::*;"
+        },
+        {
+          "line": 12,
+          "text": "pub(crate) use command_parse::*;"
+        },
+        {
+          "line": 14,
+          "text": "pub(crate) use broker::*;"
+        },
+        {
+          "line": 17,
+          "text": "pub(crate) use budget::*;"
+        },
+        {
+          "line": 20,
+          "text": "pub(crate) use command::*;"
+        },
+        {
+          "line": 23,
+          "text": "pub(crate) use tasks::*;"
+        },
+        {
+          "line": 26,
+          "text": "pub(crate) use build::*;"
+        },
+        {
+          "line": 29,
+          "text": "pub(crate) use planner::*;"
+        },
+        {
+          "line": 32,
+          "text": "pub(crate) use red_green::*;"
+        },
+        {
+          "line": 35,
+          "text": "pub(crate) use patch_split::*;"
+        },
+        {
+          "line": 38,
+          "text": "pub(crate) use rust_test_regions::*;"
+        },
+        {
+          "line": 41,
+          "text": "pub(crate) use worktree::*;"
+        },
+        {
+          "line": 43,
+          "text": "pub(crate) use intent::*;"
+        },
+        {
+          "line": 682,
+          "text": "use super::*;"
+        }
+      ],
+      "claim": "CachedAny observed; producer source plus glob lines supplies conservative refusal, not proof everylistedline is independentlynecessary."
+    },
+    {
+      "path": "src/main.rs",
+      "relevant_glob_lines": [
+        {
+          "line": 24,
+          "text": "use cli::*;"
+        },
+        {
+          "line": 26,
+          "text": "use config::*;"
+        },
+        {
+          "line": 29,
+          "text": "use builtin::*;"
+        },
+        {
+          "line": 31,
+          "text": "use gate::*;"
+        },
+        {
+          "line": 34,
+          "text": "use artifacts::*;"
+        },
+        {
+          "line": 37,
+          "text": "pub(crate) use proof::*;"
+        },
+        {
+          "line": 38,
+          "text": "pub(crate) use proof_task_ledger::*;"
+        },
+        {
+          "line": 40,
+          "text": "pub(crate) use tools::*;"
+        },
+        {
+          "line": 42,
+          "text": "pub(crate) use lanes::*;"
+        },
+        {
+          "line": 44,
+          "text": "pub(crate) use observations::*;"
+        },
+        {
+          "line": 47,
+          "text": "pub(crate) use sensors::*;"
+        },
+        {
+          "line": 49,
+          "text": "pub(crate) use prompt_cache::*;"
+        },
+        {
+          "line": 51,
+          "text": "pub(crate) use providers::*;"
+        },
+        {
+          "line": 53,
+          "text": "pub(crate) use init::*;"
+        },
+        {
+          "line": 55,
+          "text": "pub(crate) use enable::*;"
+        },
+        {
+          "line": 57,
+          "text": "pub(crate) use promotion::*;"
+        },
+        {
+          "line": 59,
+          "text": "pub(crate) use claim_graph::*;"
+        },
+        {
+          "line": 63,
+          "text": "pub(crate) use revision_admission::*;"
+        },
+        {
+          "line": 68,
+          "text": "pub(crate) use compiler_reconciliation::*;"
+        },
+        {
+          "line": 69,
+          "text": "pub(crate) use sensor_task_ledger::*;"
+        },
+        {
+          "line": 71,
+          "text": "pub(crate) use review_topics::*;"
+        },
+        {
+          "line": 73,
+          "text": "pub(crate) use impact_plan::*;"
+        },
+        {
+          "line": 75,
+          "text": "pub(crate) use model_api::*;"
+        },
+        {
+          "line": 77,
+          "text": "pub(crate) use model_exec::*;"
+        },
+        {
+          "line": 79,
+          "text": "pub(crate) use validate::*;"
+        },
+        {
+          "line": 81,
+          "text": "pub(crate) use render::*;"
+        },
+        {
+          "line": 83,
+          "text": "pub(crate) use decision_core::*;"
+        },
+        {
+          "line": 85,
+          "text": "pub(crate) use noise::*;"
+        },
+        {
+          "line": 87,
+          "text": "pub(crate) use diff_class::*;"
+        },
+        {
+          "line": 89,
+          "text": "pub(crate) use observation_build::*;"
+        },
+        {
+          "line": 91,
+          "text": "pub(crate) use candidate::*;"
+        },
+        {
+          "line": 93,
+          "text": "pub(crate) use issue_broker::*;"
+        },
+        {
+          "line": 95,
+          "text": "pub(crate) use quality_backfill_build::*;"
+        },
+        {
+          "line": 97,
+          "text": "pub(crate) use fill_ledger::*;"
+        },
+        {
+          "line": 99,
+          "text": "pub(crate) use follow_up_routing::*;"
+        },
+        {
+          "line": 101,
+          "text": "pub(crate) use plan_build::*;"
+        },
+        {
+          "line": 103,
+          "text": "pub(crate) use lane_packets::*;"
+        },
+        {
+          "line": 105,
+          "text": "pub(crate) use lane_threads::*;"
+        },
+        {
+          "line": 107,
+          "text": "pub(crate) use cross_lane_messages::*;"
+        },
+        {
+          "line": 109,
+          "text": "pub(crate) use reporter::*;"
+        },
+        {
+          "line": 115,
+          "text": "pub(crate) use review_compiler::*;"
+        },
+        {
+          "line": 128,
+          "text": "pub(crate) use quality_github::*;"
+        },
+        {
+          "line": 137,
+          "text": "pub(crate) use witness::*;"
+        },
+        {
+          "line": 139,
+          "text": "pub(crate) use work_queue::*;"
+        },
+        {
+          "line": 142,
+          "text": "pub(crate) use observation_merge::*;"
+        },
+        {
+          "line": 144,
+          "text": "pub(crate) use shared_context_render::*;"
+        },
+        {
+          "line": 146,
+          "text": "pub(crate) use pr_thread_context::*;"
+        },
+        {
+          "line": 148,
+          "text": "pub(crate) use receipt_builders::*;"
+        },
+        {
+          "line": 150,
+          "text": "pub(crate) use model_orchestration::*;"
+        },
+        {
+          "line": 152,
+          "text": "pub(crate) use proof_planner_lane::*;"
+        },
+        {
+          "line": 154,
+          "text": "pub(crate) use review_text::*;"
+        },
+        {
+          "line": 156,
+          "text": "pub(crate) use github_validation::*;"
+        },
+        {
+          "line": 158,
+          "text": "pub(crate) use summary_render::*;"
+        },
+        {
+          "line": 160,
+          "text": "pub(crate) use post_run_utils::*;"
+        },
+        {
+          "line": 168,
+          "text": "pub(crate) use run_args::*;"
+        },
+        {
+          "line": 170,
+          "text": "pub(crate) use post_command::*;"
+        },
+        {
+          "line": 172,
+          "text": "pub(crate) use github_delivery::*;"
+        },
+        {
+          "line": 179,
+          "text": "pub(crate) use ci_audit::*;"
+        },
+        {
+          "line": 793,
+          "text": "use super::*;"
+        },
+        {
+          "line": 2678,
+          "text": "use super::*;"
+        }
+      ],
+      "claim": "CachedAny observed; producer source plus glob lines supplies conservative refusal, not proof everylistedline is independentlynecessary."
+    },
+    {
+      "path": "tests/cli.rs",
+      "relevant_glob_lines": [
+        {
+          "line": 7229,
+          "text": "use common::*;"
+        }
+      ],
+      "claim": "CachedAny observed; producer source plus glob lines supplies conservative refusal, not proof everylistedline is independentlynecessary."
+    }
+  ],
+  "all_retained_source_files": [
+    {
+      "path": "src/decision_core.rs",
+      "source_sha256": "0a6766b00f62cfe632a1e3b1bc9cc181fe811e13d739fe23f9fb30235908dd1d",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "matches"
+        ]
+      }
+    },
+    {
+      "path": "src/sensors/coverage.rs",
+      "source_sha256": "7196f037dbad2c95f92d3e26dfe746ce2f99cd7c088f827a6a261b49c70df313",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "json"
+        ]
+      }
+    },
+    {
+      "path": "src/observation_build.rs",
+      "source_sha256": "79a9d7a279c4a70f5aae7d0bd2204184df03231f177219149dbbc8dd735f6a33",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format",
+          "line"
+        ]
+      }
+    },
+    {
+      "path": "src/lane_threads.rs",
+      "source_sha256": "3aaa6827beff8237f0296f57583494aa46b61f1b134388ffe12221084968241d",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "src/review_topics.rs",
+      "source_sha256": "969b9bc4f36f87080b9ffcd3340c56e5efeee304ff261b42af5d1c812029d691",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format",
+          "line",
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "src/tests/ci_audit_tests.rs",
+      "source_sha256": "625943564d67140993611a9f5f7aaf816ec2ba042ed3f5393dd71a91eca6a8da",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "file",
+          "format",
+          "json",
+          "matches",
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "src/artifacts.rs",
+      "source_sha256": "ec5ef99473bc27eb2f7b19ae52a34a55f4fc484518e445aae4958a3f5ab83666",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/witness.rs",
+      "source_sha256": "c2c34057720f8ea63de2ad8aceeeb4cc70ff19385c83432a558551691cbbf277",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/validate.rs",
+      "source_sha256": "376fe0ddb8606fda87c18f84aee209c02f9689ca6b4a88686d9ef43fbe85346f",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format",
+          "line"
+        ]
+      }
+    },
+    {
+      "path": "src/task_ledger.rs",
+      "source_sha256": "66fc1800df61dd77f78f55815dfcabc0b9b6a912cf6043787e781b063db20acf",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "matches",
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "tests/cli_run.rs",
+      "source_sha256": "ac8576a4b08c1e30dd9723048922af24899dd5fcb59b07bbda5deaed69743255",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": "Any"
+    },
+    {
+      "path": "src/post_run_utils.rs",
+      "source_sha256": "a79785e8e5ae4bfe983dd9d4bf6668762ce874f2d717ab7ac2bc943426a087eb",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "file"
+        ]
+      }
+    },
+    {
+      "path": "src/issue_broker.rs",
+      "source_sha256": "7f67d5b6b287b028e3dcaa0527f7102601a313da676bb91fd95bf8200997ebc5",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format",
+          "matches"
+        ]
+      }
+    },
+    {
+      "path": "src/proof/command_parse.rs",
+      "source_sha256": "f71cf9d33d26e5c8eea3c4919944d87cd408a05d29989d78e169248acb2fb4fc",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/quality_github.rs",
+      "source_sha256": "42e12419077f3632c1d461d8f2c5f675cc9a54276829f846663ad8169be850f8",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/cross_lane_messages.rs",
+      "source_sha256": "56a722535ee0dc70f7cff521893529433ec2122304cc8675ea34d1332395245d",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "file"
+        ]
+      }
+    },
+    {
+      "path": "src/proof_task_ledger.rs",
+      "source_sha256": "e1ac66daa3c9f64ad049b0b5ce3d1282155e78991201222d510a8b7e7d6e7ed9",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format",
+          "matches"
+        ]
+      }
+    },
+    {
+      "path": "src/impact_plan.rs",
+      "source_sha256": "64320bd207153e9012e691318ebcb20d3b51da597ef1dec491994150adf6504a",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/plan_build.rs",
+      "source_sha256": "64740a844746885da1afb862d28b620eab2f35646e2e3c4e79a46f34f4489b43",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/follow_up_routing.rs",
+      "source_sha256": "c565ebcf11f85a5ec19fa4d9ccf558a68c68deb6195714cc00c03eaa522f5523",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/model_api.rs",
+      "source_sha256": "b1c9c18deb0f6af27b1c627d4fa5ce6d6fdcaa92f55cd16c13d2d7f254d2d553",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/init.rs",
+      "source_sha256": "dbf4a8d6231e8173404eef73b475414bb8ca6e464e02566451f7468635fc4cec",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/observations.rs",
+      "source_sha256": "fad8ecb9ae52e71e2ac4255849daee843193dbf28dc9ea8f3ee9192ca1aa0e4d",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format"
+        ]
+      }
+    },
+    {
+      "path": "tests/self_gate_containment.rs",
+      "source_sha256": "e1643a09e81b299e72c1720454c2566e3942872e904eb1f579585060b466c21e",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "matches"
+        ]
+      }
+    },
+    {
+      "path": "src/compiler_reconciliation.rs",
+      "source_sha256": "e89ae323fff700ba9546222636644a1bc01f2ee9de94c1bdff1fd0ff22a64cd4",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format",
+          "line",
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "src/revision_identity.rs",
+      "source_sha256": "81d0ea719c27f7e3d8b12b877ca4c3af65ea154fd82046bb710c9bde7058c2a6",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/enable.rs",
+      "source_sha256": "0804831088ca69a6a168eb9add2b3978d3f2cbcc312e4d00d0ef1f2cdf6ff17d",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format",
+          "line",
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "src/sensors/mod.rs",
+      "source_sha256": "0b145f6b0e506108e90cd545ac08b68c82a20521991075e38a8c295a285a5bdd",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": "Any"
+    },
+    {
+      "path": "src/candidate.rs",
+      "source_sha256": "e79c9d01a064c94734860e5df0c5ab3acbdb7d2a6b7acea5f6ecbbe93e835577",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format",
+          "line"
+        ]
+      }
+    },
+    {
+      "path": "src/post_command.rs",
+      "source_sha256": "9f070e3d84d995b8c1eb455174049e9ea851a3efa102fc878f58b9b2ed068969",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/proof/planner.rs",
+      "source_sha256": "848c861099ed54f9daa426baa74cf8cdbfd1d73585764a05eca720075c6171af",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "file",
+          "format",
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "src/task_ledger_artifact.rs",
+      "source_sha256": "8801ed4dc5693ce9bf3a1eea861933fbd1848a896e7f1a85ff9c5e0da255eb9c",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format",
+          "line",
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "src/model_orchestration.rs",
+      "source_sha256": "42868e5eb43eb9477fd8fac249153b67918a846df0ddc1aab61e87d9cc875374",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format",
+          "matches",
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "src/providers.rs",
+      "source_sha256": "1fd7dfdf6c1c509f1925be981a76536844157ac68dc257066ec6288848609659",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/test_parse.rs",
+      "source_sha256": "98513c2894e608a1d43254c7b5aaa246ee37f6ccce4a31ce135af993d5d66d03",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/cli.rs",
+      "source_sha256": "79bfd862036d12f873af8166f5e8eb92840bdb9573bd553bd14bfcf040703903",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/lane_packets.rs",
+      "source_sha256": "9cba3448e2fd0dbdb5ed317c9a0e3bd6fbfe8471ca1ff442f41fd82296b76905",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format"
+        ]
+      }
+    },
+    {
+      "path": "src/ci_audit.rs",
+      "source_sha256": "d5106b0e81e609d029d9e4a1ce5196c3d0c5f54cc757be202e665ab56701ac65",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "file",
+          "format"
+        ]
+      }
+    },
+    {
+      "path": "src/shared_context_render.rs",
+      "source_sha256": "384be31e575267697995ebd853ecea106b116d5a3981bb49101b86c0fbac001f",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "line"
+        ]
+      }
+    },
+    {
+      "path": "src/proof/patch_split.rs",
+      "source_sha256": "db6c44476b97e409768218eab21958a8143467ad374c418264c796a0a0095bd9",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "file",
+          "line",
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "src/gate.rs",
+      "source_sha256": "905d7cfad3dc44c92aa5e49008039aba07fcfc7a298cd945424f616e8007ca93",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format",
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "src/artifact_writers.rs",
+      "source_sha256": "0f02042f553de594980e1329620fcf8d2566e4f6965362aba8b7f86ba0e45e21",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/noise.rs",
+      "source_sha256": "cca794c9d38bf23f717f71209f1d2ab9b4d8bc351a85ae1a0c26945fd6f13012",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format",
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "src/proof/mod.rs",
+      "source_sha256": "a4ff6392aba82f8d76d83bb0e4bb16fdf29bd03e3f9f8f6e8457bf07ad900ec4",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": "Any"
+    },
+    {
+      "path": "src/observation_merge.rs",
+      "source_sha256": "c4d4e270457bdb82e776603d50871947b36241f3e2f24393ddc99ab88237040f",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/main.rs",
+      "source_sha256": "8a7126b5d34db6f3c9cb981e863d73b477f2a04862531cd2c037213c3092c7f4",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": "Any"
+    },
+    {
+      "path": "src/claim_graph.rs",
+      "source_sha256": "0c4a67a8fd84bab34644a8634dd70180b5043d047c7ad2762c59714ce6611834",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format",
+          "matches",
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "tests/common/cli_lock.rs",
+      "source_sha256": "7445727ccb96c3e92a3f0c2749afbe2ee7c94884e94bfbadb0d9b43943d7e39b",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/quality_artifact.rs",
+      "source_sha256": "470165e91620fd754c24692339c16a5ab7bf87f4bd0bfbdb1670252727db6679",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/proof/worktree.rs",
+      "source_sha256": "ed02b815fb3edf47884741912246ad23781d90e7b03767acc113e0c00f051030",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "file",
+          "format",
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "tests/cli_contract.rs",
+      "source_sha256": "eb8c99c73cfbcdd480e99175d081642cd754c086976cd6791750d0e2db2ccc92",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/builtin.rs",
+      "source_sha256": "fa88b5ea44fe1dbd2f7e6b803eb39a2709e316e2b8d909efc82c17cf5063aee4",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "tests/release_result_planes.rs",
+      "source_sha256": "c06b32fbf215df1a1effdc5dfc5d5aa7cc95d302f97d82a3d83a9deb67659f5c",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "json"
+        ]
+      }
+    },
+    {
+      "path": "src/config.rs",
+      "source_sha256": "b93aa5dd858eb4eb419fea2ca56d422d89b3686066fc9eca66046842cdc05c8e",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "cfg",
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "src/render.rs",
+      "source_sha256": "9562c5cc99335d5c7720aef22aad8456afc13634e649cc0c60211d99e4fabe97",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "line"
+        ]
+      }
+    },
+    {
+      "path": "src/model_exec.rs",
+      "source_sha256": "f66606bcbadc0a099d69302d8eecb38fe7588cffdf787a6301a7ee6ce316a73e",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format",
+          "line",
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "src/delivery_transaction.rs",
+      "source_sha256": "2838c5dde797e8d702e5baf50cf3ee6558ebb93896761e6c24fc7fe37ff531c9",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "json",
+          "line",
+          "matches",
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "src/proof/command.rs",
+      "source_sha256": "8a5e0abdb8de4bbc32dd3d5c2b22a7bd20c81d588909c24a6263f9b8f66b6b03",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format",
+          "matches"
+        ]
+      }
+    },
+    {
+      "path": "src/proof/rust_test_regions.rs",
+      "source_sha256": "a0159dac61b7f614081f264ed9169e4c811ebe97874ffbd6b5f3a80f15c9e187",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "src/tests/validate_tests.rs",
+      "source_sha256": "b32d710f6c656637965da8e23ecba08d3990b1c5a602cbf84bffa89c2a69dbd5",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format",
+          "line",
+          "matches",
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "src/review_text.rs",
+      "source_sha256": "0183195667a88d78b0bda27fb82716d767222e92500762f7a8980edd5336693e",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "json",
+          "line"
+        ]
+      }
+    },
+    {
+      "path": "xtask/tests/smoke_base_cli.rs",
+      "source_sha256": "b3043920c1a291aa84cab4b381ee42041b411c47c0b92ee64be7fe718ace6a97",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/review_experience.rs",
+      "source_sha256": "a9a1fe40f516d02b25ef7c66c648ea5914e5013d3ee058475d0cbf612467f09d",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format",
+          "json",
+          "line"
+        ]
+      }
+    },
+    {
+      "path": "tests/cli/setup_ci.rs",
+      "source_sha256": "1bfbd391f9748a078dc88070852dc35c5201458ac69308b61982267ad28086f6",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format",
+          "json",
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "src/proof/broker.rs",
+      "source_sha256": "450fd069c0c18068d9cbdd2924525e0a61bc707386d5820d6e281330d004a33c",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "json",
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "tests/authority_incidents.rs",
+      "source_sha256": "ee7d8568b220db9631874e330f600afa43936ca3ad674c67d916da7a95073ac0",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "file",
+          "format",
+          "matches"
+        ]
+      }
+    },
+    {
+      "path": "src/github_delivery.rs",
+      "source_sha256": "016e420ff153c04eb49bd601e737eff76bbb47babefa99248fadaa2d15a9adfd",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format",
+          "json",
+          "line",
+          "matches"
+        ]
+      }
+    },
+    {
+      "path": "tests/quality_backfill_workflow.rs",
+      "source_sha256": "103e2db5381bb303f05e8e1e24f39441b35495413b34aadd2b5139e926c64c56",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/gate_truth.rs",
+      "source_sha256": "f5336974b9dca2bc2fb0af9167df332f148c7c1619c28da766aa49633660953c",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/sensors/ripr.rs",
+      "source_sha256": "45daa443d07dd8ddd1ad08b97cc67345bb206360cef03a3ceb3fdb38317656dd",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "file",
+          "format",
+          "json",
+          "line"
+        ]
+      }
+    },
+    {
+      "path": "src/pr_thread_context.rs",
+      "source_sha256": "84a6bc264cb7db2eaef33c89d49149d30e9eefab066c8623052c3ed70fec8df1",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "line"
+        ]
+      }
+    },
+    {
+      "path": "tests/common/mod.rs",
+      "source_sha256": "51dbda9d8053fa99ebdf7da682c7a0bfa796e7f7be0759a2079af82408d86817",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format",
+          "json"
+        ]
+      }
+    },
+    {
+      "path": "src/calibration.rs",
+      "source_sha256": "195bfe1c407e6a96b34294d025aa134e8c314e088e70469fc9e0558b18038cb1",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "json"
+        ]
+      }
+    },
+    {
+      "path": "src/diff_posture.rs",
+      "source_sha256": "57594db078a59ad2298c097fe5989b96bcbffd5de9329cf61578af85c0514d25",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/gate_watchdog.rs",
+      "source_sha256": "843102b2de3792ad9cedd4f9fd6fe45f6a0ba7e53d9b5ea240cb5fd33364e305",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/proof/tasks.rs",
+      "source_sha256": "8957e9b7ac429dda5cc7c72231f9a9df48c16a4784aae48ef7d45bb125f03961",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "file",
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "src/github_validation.rs",
+      "source_sha256": "0a98cccf66bf3a00b55995643271f30edd2bce228116163a12a3f024250cd7b7",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format",
+          "line"
+        ]
+      }
+    },
+    {
+      "path": "src/sensors/command_build.rs",
+      "source_sha256": "93e069b8ee071ad9903bcb3c43c791b074c9ba1b45d486ba33f8633e09ea5bbb",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "src/review_compiler.rs",
+      "source_sha256": "f56d6a43909cb9b8ae2d3420a1459595059ed33c1b3c0b8d3d72a4fd8b94c006",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/tests.rs",
+      "source_sha256": "56c78c66007fd0171f6efd354ec88022b564fd7637bc1bf710ad37f7cb2766b3",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format",
+          "line",
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "src/system_detect.rs",
+      "source_sha256": "6fc7752873f0028612dd3846f845ae30b18e7b7b1321eac40325b96c15b7a331",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/run_args.rs",
+      "source_sha256": "3d7f6f28bfa2110741d5268c035d3830b29a7fc4c0cc4f5834b09a647d6801c5",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/sensor_task_ledger.rs",
+      "source_sha256": "cf8ccc1f50ad935880cdf5dddc21ab1db176816ddb1146f96d520203f22958e3",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "json"
+        ]
+      }
+    },
+    {
+      "path": "src/revision_admission.rs",
+      "source_sha256": "003177d3188896bb1d6e5b8f9f93c1ca8ab8a5b0eb6fef15af2753f82530fb1b",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format"
+        ]
+      }
+    },
+    {
+      "path": "src/cost_artifact.rs",
+      "source_sha256": "e36485e7b67280edbbedfb4206b729e6f86124a08fd3cb07936f2094c4862e78",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/plan_artifacts.rs",
+      "source_sha256": "5a4cfa4beadd9cab8adc7dd35b8d72726fda8ab737d124d5dcf020f2537c1bcf",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/work_queue.rs",
+      "source_sha256": "aacdb9c78d208f08131adba45da2a146837a2c21211f765cce6fd3269025a049",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/proof/intent.rs",
+      "source_sha256": "958b12d9e9dd763e24c5e629ccb65612dddebb00ef4dc4834708c51b40c84cae",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "src/fill_ledger.rs",
+      "source_sha256": "ea215a6b672e024dc9f2e35284b10f70c0aca5febfe4cac09dccc72e2452817b",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/tools.rs",
+      "source_sha256": "89badd42d5ac0b27a6ff596362415397767911799f79cdbb685563d1e24de972",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format"
+        ]
+      }
+    },
+    {
+      "path": "src/promotion.rs",
+      "source_sha256": "a0fd0b54f6dc41f74dfe1f6de8f8cab5fe0b7241f80033426116c453efa5d20f",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format"
+        ]
+      }
+    },
+    {
+      "path": "src/receipt_builders.rs",
+      "source_sha256": "827bb3d19e0e06151c98e80ba097855aa2173c3112ed7e980b5c165effffa53f",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/reporter.rs",
+      "source_sha256": "2cbfae090d1548a6fe579c41e04dcc1bbebd75535b1daf6e7aaaf3c8b892e334",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "tests/cli.rs",
+      "source_sha256": "7480179c395ad0d4f43b3fd1c30347cfc5b061759f3da72e9ab246f75d9c93f8",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": "Any"
+    },
+    {
+      "path": "src/sensors/unsafe_review.rs",
+      "source_sha256": "5e774700ba096a72b0d13d94ca9a3eddf8e8f74f592e7993058a460518a53518",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format",
+          "line",
+          "matches"
+        ]
+      }
+    },
+    {
+      "path": "src/lanes.rs",
+      "source_sha256": "d2892ac9d91b651c2cfc0b9139048eaf6c0924a2432fb9137adb743ca26ac5b4",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/tests/sensor_tests.rs",
+      "source_sha256": "b78c78b31a442a826910105279f7fd0b3b272aabb84abb977c3703b56c790dd6",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "src/diff_class.rs",
+      "source_sha256": "7c240d62f5a61baf25d33e5f226fe46dc08106d55e8d65855b2ca2bbaa4bff59",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/summary_render.rs",
+      "source_sha256": "fcf2d9fe1725c4d8157a8adeae3054e73b0562399d25b8a47e68cf075c64c1ce",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "tests/common/cli_run.rs",
+      "source_sha256": "f09cf4dd4983bc16b7c0b01659ccf1ed478a14408aefd784fc6da4ace926ced6",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/quality_backfill_build.rs",
+      "source_sha256": "d81d0e490bb852da7dafc6dfe54a9d13bd50e5b9d700afdab8756ecacb316f2c",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/proof/build.rs",
+      "source_sha256": "e6ff765e6a517962f97d675d08cdc64926b52cd99e961044b95e67857ef4da9a",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format",
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "src/proof/red_green.rs",
+      "source_sha256": "404b9ff88a3db7f4db9910b8202a6cc1d02261e2c48ef16c6793a49f0553ad4d",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format",
+          "matches",
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "src/proof/budget.rs",
+      "source_sha256": "05e215b8e175fdbb608db9a9eb405fa9ab59284ec8568f974079de1fde9b15c9",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "src/prompt_cache.rs",
+      "source_sha256": "10c485a46020e2d134b17bacc4065d3b59e774ccf578829bfdd328dc49cc5be7",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": []
+      }
+    },
+    {
+      "path": "xtask/src/main.rs",
+      "source_sha256": "a1f90889b2922d0f929251693d949537ed9f4c6530f9b656b7d596b3c737a77d",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "file",
+          "format",
+          "json",
+          "line",
+          "vec"
+        ]
+      }
+    },
+    {
+      "path": "src/proof_planner_lane.rs",
+      "source_sha256": "22c123d964e60664428fabccebc467a4d0024dad2cd4a39f09ec72820c5fdcb0",
+      "current_equal_frozen_replay_fact_source": true,
+      "macro_candidates": {
+        "Names": [
+          "format"
+        ]
+      }
+    }
+  ],
+  "source_mismatches": []
+}

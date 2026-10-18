@@ -1,0 +1,32 @@
+{
+  "source_head": "c4a8f7828e15426c4d872718f66bd4bac3ab0daf",
+  "case": "custom-glob-primitive",
+  "command": [
+    "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+    "check",
+    "--root",
+    "/workspace/5500-veto-reconciliation/cases/custom-glob-primitive",
+    "--diff",
+    "/workspace/5500-veto-reconciliation/cases/custom-glob-primitive/input.diff",
+    "--mode",
+    "ready",
+    "--format",
+    "json"
+  ],
+  "native_cli_exit": 0,
+  "header_id": "probe:src_proof.rs:match_arm:a83f5558",
+  "classification": "weakly_exposed",
+  "native": [
+    {
+      "variant": "original",
+      "compile_exit": 0,
+      "test_exit": 0
+    },
+    {
+      "variant": "zero",
+      "compile_exit": 0,
+      "test_exit": 0
+    }
+  ],
+  "claim": "A real customtypeimported throughowncrate glob has apparent u64 return and always-true heterogeneous equality. Bothnativeoriginalandzeropass. Owner primitive provenance must stayrefused; MacroBindingCandidates Names is not primitive authority."
+}

@@ -1,0 +1,6 @@
+{
+  "native_exit": 1,
+  "expected_exit": 1,
+  "source_head": "c4a8f7828e15426c4d872718f66bd4bac3ab0daf",
+  "claim": "Nonempty nativecompiling originaltest0/mutant101 futurepositive currentlyweak. This is future acceptance RED for missing primitiveimport authority, not a current regression/unsoundness claim."
+}

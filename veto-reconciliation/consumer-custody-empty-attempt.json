@@ -1,0 +1,32 @@
+{
+  "source_head": "c4a8f7828e15426c4d872718f66bd4bac3ab0daf",
+  "consumer_head": "278253a03b00d1aa777eeba7633954122163890f",
+  "consumer_tree": "6e288c65d71e1a7f7f38fa064221e53163c9b47d",
+  "retained_exact_consumer_command": {
+    "head": "c4a8f7828e15426c4d872718f66bd4bac3ab0daf",
+    "started_utc": "2026-10-18T19:47:32.154137+00:00",
+    "command": [
+      "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+      "check",
+      "--root",
+      "/workspace/5500-consumer",
+      "--diff",
+      "/workspace/5500-whole-tail-evidence/consumer.diff",
+      "--mode",
+      "ready",
+      "--format",
+      "json"
+    ],
+    "cache": "/workspace/5500-assertion-prerequisite/cache-consumer-c4a",
+    "native_exit": 0
+  },
+  "validation_reuse": "No source/input/instrument change. Independentlycompare everyretainedfactsource tocurrentfile, cleangit consumer, exactsource/binary/diff/output hashes; reuse terminal exactnative0 instead of duplicate unchanged replay.",
+  "diff_sha256": "6af0470bd2c7a8648325402af4d5294c94f35304403ef2c3952ffe986adc8b02",
+  "binary_sha256": "913bc60fcd8591c13b019c630f67a79882e92dd34cf02f9dedf26642b3fa68fe",
+  "raw_output_sha256": "e67563d1ec9aad34b8c54d5f341a13114b93469c73bb6b97f55f6ccbe66db96b",
+  "equals_frozen656_bytes": true,
+  "finding_count": 52,
+  "any_files": [],
+  "all_retained_source_files": [],
+  "source_mismatches": []
+}

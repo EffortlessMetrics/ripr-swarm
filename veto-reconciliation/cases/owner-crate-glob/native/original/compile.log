@@ -1,0 +1,10 @@
+warning: unused import: `crate::*`
+ --> /workspace/5500-veto-reconciliation/cases/owner-crate-glob/native/original/src/proof.rs:1:5
+  |
+1 | use crate::*;
+  |     ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: 1 warning emitted
+

@@ -1,0 +1,14 @@
+warning: field `0` is never read
+ --> /workspace/5500-veto-reconciliation/cases/custom-glob-primitive/native/original/src/foreign.rs:3:23
+  |
+3 | pub(crate) struct u64(pub(crate) std::primitive::u64);
+  |                   --- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |                   |
+  |                   field in this struct
+  |
+  = help: consider removing this field
+  = note: `u64` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: 1 warning emitted
+

@@ -1,0 +1,18 @@
+warning: unused import: `crate::*`
+ --> /workspace/5500-veto-reconciliation/cases/owner-crate-glob/native/zero/src/proof.rs:1:5
+  |
+1 | use crate::*;
+  |     ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `ms`
+ --> /workspace/5500-veto-reconciliation/cases/owner-crate-glob/native/zero/src/proof.rs:5:14
+  |
+5 |         Some(ms) => 0,
+  |              ^^ help: if this is intentional, prefix it with an underscore: `_ms`
+  |
+  = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: 2 warnings emitted
+

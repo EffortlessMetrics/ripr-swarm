@@ -1,0 +1,22 @@
+warning: unused variable: `ms`
+ --> /workspace/5500-veto-reconciliation/cases/custom-glob-primitive/native/zero/src/proof.rs:5:14
+  |
+5 |         Some(ms) => u64(0),
+  |              ^^ help: if this is intentional, prefix it with an underscore: `_ms`
+  |
+  = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `0` is never read
+ --> /workspace/5500-veto-reconciliation/cases/custom-glob-primitive/native/zero/src/foreign.rs:3:23
+  |
+3 | pub(crate) struct u64(pub(crate) std::primitive::u64);
+  |                   --- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |                   |
+  |                   field in this struct
+  |
+  = help: consider removing this field
+  = note: `u64` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: 2 warnings emitted
+

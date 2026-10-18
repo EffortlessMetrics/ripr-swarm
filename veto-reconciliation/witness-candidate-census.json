@@ -1,0 +1,222 @@
+[
+  {
+    "case": "closed-positive",
+    "file_fact_candidates": [
+      {
+        "path": "src/proof.rs",
+        "macro_candidates": {
+          "Names": []
+        }
+      },
+      {
+        "path": "src/lib.rs",
+        "macro_candidates": {
+          "Names": []
+        }
+      }
+    ]
+  },
+  {
+    "case": "custom-glob-primitive",
+    "file_fact_candidates": [
+      {
+        "path": "src/proof.rs",
+        "macro_candidates": {
+          "Names": []
+        }
+      },
+      {
+        "path": "src/lib.rs",
+        "macro_candidates": {
+          "Names": []
+        }
+      },
+      {
+        "path": "src/foreign.rs",
+        "macro_candidates": {
+          "Names": []
+        }
+      }
+    ]
+  },
+  {
+    "case": "expected-glob-max",
+    "file_fact_candidates": [
+      {
+        "path": "src/proof.rs",
+        "macro_candidates": {
+          "Names": []
+        }
+      },
+      {
+        "path": "src/lib.rs",
+        "macro_candidates": {
+          "Names": []
+        }
+      }
+    ]
+  },
+  {
+    "case": "expected-glob-numeric",
+    "file_fact_candidates": [
+      {
+        "path": "src/proof.rs",
+        "macro_candidates": {
+          "Names": []
+        }
+      },
+      {
+        "path": "src/lib.rs",
+        "macro_candidates": {
+          "Names": []
+        }
+      }
+    ]
+  },
+  {
+    "case": "isolated-expected-max",
+    "file_fact_candidates": [
+      {
+        "path": "src/proof.rs",
+        "macro_candidates": {
+          "Names": []
+        }
+      },
+      {
+        "path": "src/tests.rs",
+        "macro_candidates": {
+          "Names": []
+        }
+      },
+      {
+        "path": "src/lib.rs",
+        "macro_candidates": {
+          "Names": []
+        }
+      }
+    ]
+  },
+  {
+    "case": "isolated-expected-numeric",
+    "file_fact_candidates": [
+      {
+        "path": "src/proof.rs",
+        "macro_candidates": {
+          "Names": []
+        }
+      },
+      {
+        "path": "src/lib.rs",
+        "macro_candidates": {
+          "Names": []
+        }
+      },
+      {
+        "path": "src/tests.rs",
+        "macro_candidates": {
+          "Names": []
+        }
+      }
+    ]
+  },
+  {
+    "case": "overwritten-actual",
+    "file_fact_candidates": [
+      {
+        "path": "src/proof.rs",
+        "macro_candidates": {
+          "Names": []
+        }
+      },
+      {
+        "path": "src/lib.rs",
+        "macro_candidates": {
+          "Names": []
+        }
+      }
+    ]
+  },
+  {
+    "case": "owner-crate-glob",
+    "file_fact_candidates": [
+      {
+        "path": "src/proof.rs",
+        "macro_candidates": {
+          "Names": []
+        }
+      },
+      {
+        "path": "src/lib.rs",
+        "macro_candidates": {
+          "Names": []
+        }
+      }
+    ]
+  },
+  {
+    "case": "qualified-root",
+    "file_fact_candidates": [
+      {
+        "path": "src/lib.rs",
+        "macro_candidates": {
+          "Names": []
+        }
+      },
+      {
+        "path": "src/proof.rs",
+        "macro_candidates": {
+          "Names": []
+        }
+      }
+    ]
+  },
+  {
+    "case": "return-alias",
+    "file_fact_candidates": [
+      {
+        "path": "src/proof.rs",
+        "macro_candidates": {
+          "Names": []
+        }
+      },
+      {
+        "path": "src/lib.rs",
+        "macro_candidates": {
+          "Names": []
+        }
+      }
+    ]
+  },
+  {
+    "case": "self-expected",
+    "file_fact_candidates": [
+      {
+        "path": "src/proof.rs",
+        "macro_candidates": {
+          "Names": []
+        }
+      },
+      {
+        "path": "src/lib.rs",
+        "macro_candidates": {
+          "Names": []
+        }
+      }
+    ]
+  },
+  {
+    "case": "stored-any",
+    "file_fact_candidates": [
+      {
+        "path": "src/proof.rs",
+        "macro_candidates": {
+          "Names": []
+        }
+      },
+      {
+        "path": "src/lib.rs",
+        "macro_candidates": "Any"
+      }
+    ]
+  }
+]

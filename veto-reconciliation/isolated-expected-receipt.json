@@ -1,0 +1,69 @@
+{
+  "source_head": "c4a8f7828e15426c4d872718f66bd4bac3ab0daf",
+  "records": [
+    {
+      "case": "isolated-expected-max",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-veto-reconciliation/cases/isolated-expected-max",
+        "--diff",
+        "/workspace/5500-veto-reconciliation/cases/isolated-expected-max/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_cli_exit": 0,
+      "analysis_complete": true,
+      "header_id": "probe:src_proof.rs:match_arm:a83f5558",
+      "classification": "weakly_exposed",
+      "whole_tail_receipt": false,
+      "native": [
+        {
+          "variant": "original",
+          "compile_exit": 0,
+          "test_exit": 0
+        },
+        {
+          "variant": "zero",
+          "compile_exit": 0,
+          "test_exit": 101
+        }
+      ]
+    },
+    {
+      "case": "isolated-expected-numeric",
+      "command": [
+        "/workspace/5500-assertion-prerequisite/ripr-c4a8f782",
+        "check",
+        "--root",
+        "/workspace/5500-veto-reconciliation/cases/isolated-expected-numeric",
+        "--diff",
+        "/workspace/5500-veto-reconciliation/cases/isolated-expected-numeric/input.diff",
+        "--mode",
+        "ready",
+        "--format",
+        "json"
+      ],
+      "native_cli_exit": 0,
+      "analysis_complete": true,
+      "header_id": "probe:src_proof.rs:match_arm:a83f5558",
+      "classification": "exposed",
+      "whole_tail_receipt": true,
+      "native": [
+        {
+          "variant": "original",
+          "compile_exit": 0,
+          "test_exit": 0
+        },
+        {
+          "variant": "zero",
+          "compile_exit": 0,
+          "test_exit": 101
+        }
+      ]
+    }
+  ]
+}

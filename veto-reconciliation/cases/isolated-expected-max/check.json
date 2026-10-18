@@ -1,0 +1,362 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "ready",
+  "root": "/workspace/5500-veto-reconciliation/cases/isolated-expected-max",
+  "summary": {"changed_rust_files":1,"probes":5,"findings":5,"exposed":0,"weakly_exposed":3,"reachable_unrevealed":0,"no_static_path":2,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:d5bc8af5272be10828f088bb391c10bf97a4ebec578e1ae29719ff6a3984ecb8","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":7,"candidate_line_count":4,"probe_count":5,"finding_count":5},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_proof.rs:call_deletion:7cabf1b6",
+      "classification": "no_static_path",
+      "severity": "warning",
+      "confidence": 0.48,
+      "probe": {
+        "id": "probe:src_proof.rs:call_deletion:7cabf1b6",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/proof.rs",
+        "line": 1,
+        "expression": "pub(crate) struct Lease { pub(crate) elapsed: Option<u64> }"
+       },
+      "ripr": {
+        "reach": {"state":"no","confidence":"medium","summary":"No static test path found for the changed owner"},
+        "infect": {"state":"unknown","confidence":"low","summary":"No reachable tests were found, so infection cannot be established"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence call effect: pub(crate) struct Lease { pub(crate) elapsed: Option<u64> }"},
+        "observe": {"state":"no","confidence":"medium","summary":"No reachable test oracle found"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No assertion can discriminate the changed behavior without a reachable test"}
+       },
+      "evidence_path": ["reach no: No static test path found for the changed owner", "infection unknown: No reachable tests were found, so infection cannot be established", "propagation yes: Changed behavior appears to influence call effect: pub(crate) struct Lease { pub(crate) elapsed: Option<u64> }", "observation no: No reachable test oracle found", "discriminator no: No assertion can discriminate the changed behavior without a reachable test", "local flow reaches call effect: pub(crate) struct Lease { pub(crate) elapsed: Option<u64> } (line 1)"],
+      "flow_sinks": [
+        {"kind":"call_effect","text":"pub(crate) struct Lease { pub(crate) elapsed: Option<u64> }","line":1}
+      ],
+      "evidence": ["Changed behavior appears to influence call effect: pub(crate) struct Lease { pub(crate) elapsed: Option<u64> }", "No assertion can discriminate the changed behavior without a reachable test", "No reachable test oracle found", "No reachable tests were found, so infection cannot be established", "No static test path found for the changed owner"],
+      "missing": ["No relevant oracle was detected", "No static test path reaches the changed owner", "No strong discriminator was detected"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 0,
+      "related_tests": [
+      ],
+      "stop_reasons": ["no_changed_rust_line"],
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "recommended_next_step": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.",
+      "suggested_next_action": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof.rs:field_construction:02a9ece8",
+      "classification": "no_static_path",
+      "severity": "warning",
+      "confidence": 0.40,
+      "probe": {
+        "id": "probe:src_proof.rs:field_construction:02a9ece8",
+        "family": "field_construction",
+        "delta": "value",
+        "file": "./src/proof.rs",
+        "line": 1,
+        "expression": "pub(crate) struct Lease { pub(crate) elapsed: Option<u64> }"
+       },
+      "ripr": {
+        "reach": {"state":"no","confidence":"medium","summary":"No static test path found for the changed owner"},
+        "infect": {"state":"unknown","confidence":"low","summary":"No reachable tests were found, so infection cannot be established"},
+        "propagate": {"state":"weak","confidence":"low","summary":"No complete owner-bound propagation witness found for constructed field: pub(crate) struct Lease { pub(crate) elapsed: Option<u64> }"},
+        "observe": {"state":"no","confidence":"medium","summary":"No reachable test oracle found"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No assertion can discriminate the changed behavior without a reachable test"}
+       },
+      "evidence_path": ["reach no: No static test path found for the changed owner", "infection unknown: No reachable tests were found, so infection cannot be established", "propagation weak: No complete owner-bound propagation witness found for constructed field: pub(crate) struct Lease { pub(crate) elapsed: Option<u64> }", "observation no: No reachable test oracle found", "discriminator no: No assertion can discriminate the changed behavior without a reachable test", "local flow reaches constructed field: pub(crate) struct Lease { pub(crate) elapsed: Option<u64> } (line 1)", "missing discriminator pub(crate) struct Lease { pub(crate) elapsed: Option<u64> }: No field-value assertion observes the constructed field: pub(crate) struct Lease { pub(crate) elapsed: Option<u64> }"],
+      "flow_sinks": [
+        {"kind":"struct_field","text":"pub(crate) struct Lease { pub(crate) elapsed: Option<u64> }","line":1}
+      ],
+      "evidence": ["No assertion can discriminate the changed behavior without a reachable test", "No complete owner-bound propagation witness found for constructed field: pub(crate) struct Lease { pub(crate) elapsed: Option<u64> }", "No reachable test oracle found", "No reachable tests were found, so infection cannot be established", "No static test path found for the changed owner"],
+      "missing": ["Missing discriminator value: pub(crate) struct Lease { pub(crate) elapsed: Option<u64> }", "No relevant oracle was detected", "No static test path reaches the changed owner", "No strong discriminator was detected"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "pub(crate) struct Lease { pub(crate) elapsed: Option<u64> }",
+            "reason": "No field-value assertion observes the constructed field: pub(crate) struct Lease { pub(crate) elapsed: Option<u64> }",
+            "flow_sink": {"kind":"struct_field","text":"pub(crate) struct Lease { pub(crate) elapsed: Option<u64> }","line":1}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "pub(crate) struct Lease { pub(crate) elapsed: Option<u64> }",
+          "reason": "No field-value assertion observes the constructed field: pub(crate) struct Lease { pub(crate) elapsed: Option<u64> }",
+          "flow_sink": {"kind":"struct_field","text":"pub(crate) struct Lease { pub(crate) elapsed: Option<u64> }","line":1}
+        }
+      ],
+      "related_tests_total": 0,
+      "related_tests": [
+      ],
+      "stop_reasons": ["no_changed_rust_line"],
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "recommended_next_step": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.",
+      "suggested_next_action": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof.rs:match_arm:a83f5558",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_proof.rs:match_arm:a83f5558",
+        "family": "match_arm",
+        "delta": "control",
+        "file": "./src/proof.rs",
+        "line": 3,
+        "expression": "match lease.elapsed"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach charge: observes"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: match lease.elapsed"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach charge: observes", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: match lease.elapsed", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: match lease.elapsed (line 3)", "related test src/tests.rs:4 observes uses strong exact value oracle: assert_eq!(charge(&lease), u64::MAX);", "source constant value u64::MAX at line 6"],
+      "flow_sinks": [
+        {"kind":"match_arm","text":"match lease.elapsed","line":3}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: match lease.elapsed", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach charge: observes", "limitation_last_established_edge: owner parameter field `lease.elapsed` is the changed tail match selector", "limitation_first_unresolved_edge: `lease.elapsed` value at the owner invocation and whether a related assertion observes that invocation's returned value", "limitation_analyzer_route: analysis/rust-field-match-selector", "limitation_non_claim: named analyzer limitation only; no coverage, test adequacy, gap absence, or same-invocation proof"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "6": "assert_eq!(charge(&lease), u64::MAX);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 6,
+            "value": "u64::MAX",
+            "context": "constant"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 6,
+          "value": "u64::MAX",
+          "context": "constant"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "observes",
+          "file": "src/tests.rs",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(charge(&lease), u64::MAX);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Inspect `lease.elapsed` at the existing owner call and whether a related assertion observes that call's returned value; add or strengthen a test only if that inspection identifies a missing observation.",
+      "suggested_next_action": "Inspect `lease.elapsed` at the existing owner call and whether a related assertion observes that call's returned value; add or strengthen a test only if that inspection identifies a missing observation.",
+      "language": "rust",
+      "static_limit_kind": "rust_field_match_selector_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/rust-field-match-selector",
+        "first_unresolved_edge": "`lease.elapsed` value at the owner invocation and whether a related assertion observes that invocation's returned value",
+        "kind": "rust_field_match_selector_unresolved",
+        "last_established_edge": "owner parameter field `lease.elapsed` is the changed tail match selector",
+        "non_claim": "named analyzer limitation only; no coverage, test adequacy, gap absence, or same-invocation proof"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof.rs:match_arm:cae48bab",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_proof.rs:match_arm:cae48bab",
+        "family": "match_arm",
+        "delta": "control",
+        "file": "./src/proof.rs",
+        "line": 4,
+        "expression": "Some(ms) =>"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach charge: observes"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: Some(ms) =>"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach charge: observes", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: Some(ms) =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: Some(ms) => (line 4)", "related test src/tests.rs:4 observes uses strong exact value oracle: assert_eq!(charge(&lease), u64::MAX);", "source constant value u64::MAX at line 6"],
+      "flow_sinks": [
+        {"kind":"match_arm","text":"Some(ms) =>","line":4}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: Some(ms) =>", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach charge: observes", "limitation_last_established_edge: owner parameter field `lease.elapsed` is the changed tail match selector", "limitation_first_unresolved_edge: `lease.elapsed` value at the owner invocation and whether a related assertion observes that invocation's returned value", "limitation_analyzer_route: analysis/rust-field-match-selector", "limitation_non_claim: named analyzer limitation only; no coverage, test adequacy, gap absence, or same-invocation proof"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "6": "assert_eq!(charge(&lease), u64::MAX);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 6,
+            "value": "u64::MAX",
+            "context": "constant"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 6,
+          "value": "u64::MAX",
+          "context": "constant"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "observes",
+          "file": "src/tests.rs",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(charge(&lease), u64::MAX);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Inspect `lease.elapsed` at the existing owner call and whether a related assertion observes that call's returned value; add or strengthen a test only if that inspection identifies a missing observation.",
+      "suggested_next_action": "Inspect `lease.elapsed` at the existing owner call and whether a related assertion observes that call's returned value; add or strengthen a test only if that inspection identifies a missing observation.",
+      "language": "rust",
+      "static_limit_kind": "rust_field_match_selector_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/rust-field-match-selector",
+        "first_unresolved_edge": "`lease.elapsed` value at the owner invocation and whether a related assertion observes that invocation's returned value",
+        "kind": "rust_field_match_selector_unresolved",
+        "last_established_edge": "owner parameter field `lease.elapsed` is the changed tail match selector",
+        "non_claim": "named analyzer limitation only; no coverage, test adequacy, gap absence, or same-invocation proof"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_proof.rs:match_arm:b54be3b1",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_proof.rs:match_arm:b54be3b1",
+        "family": "match_arm",
+        "delta": "control",
+        "file": "./src/proof.rs",
+        "line": 5,
+        "expression": "None =>"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach charge: observes"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: None =>"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach charge: observes", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: None =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: None => (line 5)", "related test src/tests.rs:4 observes uses strong exact value oracle: assert_eq!(charge(&lease), u64::MAX);", "source constant value u64::MAX at line 6"],
+      "flow_sinks": [
+        {"kind":"match_arm","text":"None =>","line":5}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: None =>", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach charge: observes", "limitation_last_established_edge: owner parameter field `lease.elapsed` is the changed tail match selector", "limitation_first_unresolved_edge: `lease.elapsed` value at the owner invocation and whether a related assertion observes that invocation's returned value", "limitation_analyzer_route: analysis/rust-field-match-selector", "limitation_non_claim: named analyzer limitation only; no coverage, test adequacy, gap absence, or same-invocation proof"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "6": "assert_eq!(charge(&lease), u64::MAX);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 6,
+            "value": "u64::MAX",
+            "context": "constant"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 6,
+          "value": "u64::MAX",
+          "context": "constant"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "observes",
+          "file": "src/tests.rs",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(charge(&lease), u64::MAX);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Inspect `lease.elapsed` at the existing owner call and whether a related assertion observes that call's returned value; add or strengthen a test only if that inspection identifies a missing observation.",
+      "suggested_next_action": "Inspect `lease.elapsed` at the existing owner call and whether a related assertion observes that call's returned value; add or strengthen a test only if that inspection identifies a missing observation.",
+      "language": "rust",
+      "static_limit_kind": "rust_field_match_selector_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/rust-field-match-selector",
+        "first_unresolved_edge": "`lease.elapsed` value at the owner invocation and whether a related assertion observes that invocation's returned value",
+        "kind": "rust_field_match_selector_unresolved",
+        "last_established_edge": "owner parameter field `lease.elapsed` is the changed tail match selector",
+        "non_claim": "named analyzer limitation only; no coverage, test adequacy, gap absence, or same-invocation proof"
+      },
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "canonical_next_action": {"schema_version":"canonical_next_action.v1","producer":"check_top_result","subject":{"root":"/workspace/5500-veto-reconciliation/cases/isolated-expected-max","diff_source":{"committed":{"base":null,"head":null}},"item":"probe:src_proof.rs:match_arm:a83f5558"},"currentness":{"head_expected":null,"head_observed":null,"config_expected":null,"config_observed":null},"action_class":"unsupported_or_limited","stop":{"kind":"check_triage","case":"static_limited","detail_route":"ripr explain --root /workspace/5500-veto-reconciliation/cases/isolated-expected-max --diff /workspace/5500-veto-reconciliation/cases/isolated-expected-max/input.diff --mode ready probe:src_proof.rs:match_arm:a83f5558"},"alternatives":[{"label":"considered finding probe:src_proof.rs:call_deletion:7cabf1b6","route":"ripr explain --root /workspace/5500-veto-reconciliation/cases/isolated-expected-max --diff /workspace/5500-veto-reconciliation/cases/isolated-expected-max/input.diff --mode ready probe:src_proof.rs:call_deletion:7cabf1b6"},{"label":"considered finding probe:src_proof.rs:field_construction:02a9ece8","route":"ripr explain --root /workspace/5500-veto-reconciliation/cases/isolated-expected-max --diff /workspace/5500-veto-reconciliation/cases/isolated-expected-max/input.diff --mode ready probe:src_proof.rs:field_construction:02a9ece8"}],"non_claim":"Advisory selection from producer-bound state; it does not execute, complete, or prove the repair, and the display string is never execution authority."}
+}

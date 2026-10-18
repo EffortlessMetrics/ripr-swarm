@@ -1,0 +1,20 @@
+
+running 1 test
+test proof::tests::observes ... FAILED
+
+failures:
+
+---- proof::tests::observes stdout ----
+
+thread 'proof::tests::observes' (96163) panicked at /workspace/5500-veto-reconciliation/cases/expected-glob-max/native/zero/src/proof.rs:15:9:
+assertion `left == right` failed
+  left: 0
+ right: 18446744073709551615
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    proof::tests::observes
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
