@@ -366,8 +366,9 @@ pub(crate) fn resolve_repair_subject_outcome(
 }
 
 /// The repair route for the one finding the default human `ripr check`
-/// selects (#8166 Slice C), or `None` when that finding may not be offered
-/// a repair start. The seam↔finding binding is the shared
+/// selects (#8166 Slice C), or the named refusal when that finding may not
+/// be offered a repair start (#8729). The seam↔finding binding is the
+/// shared
 /// [`finding_for_seam`](super::repair_card_handoff::finding_for_seam)
 /// authority, and admission is the same [`repair_refusal_reason`] gate
 /// the explicit resolver applies, so the printed seam ID round-trips
@@ -388,16 +389,22 @@ pub(crate) fn resolve_repair_subject_outcome(
 /// finding's gap file, so no seam outside that file could claim this
 /// finding. Fail-closed throughout: a seam-limit-truncated candidate
 /// set, zero or several binding seams, an ineligible or policy-omitted
-/// seam, and any unreadable authority yield no route rather than a
-/// guessed one. When bounded evidence cannot decide eligibility the
-/// seam simply gets no route; `ripr repair` itself re-checks admission
-/// against the full inventory before starting any attempt.
+/// seam, and any unreadable authority refuse with a named reason rather
+/// than a guessed or silent route. `Silent` is deliberate only: a
+/// static-limited finding already carries its limitation guidance on the
+/// same screen, and a run with no selected finding has nothing to name.
+/// When bounded evidence cannot decide eligibility the refusal names the
+/// state; `ripr repair` itself re-checks admission against the full
+/// inventory before starting any attempt.
 pub(crate) fn check_repair_route(
     root: &Path,
     check_config: &crate::config::RiprConfig,
     output: &super::CheckOutput,
-) -> Option<crate::app::RepairRoute> {
-    let finding = crate::output::human::selected_triage_finding(output, check_config)?;
+) -> crate::app::CheckRepairRoute {
+    use super::navigation::{CheckRepairRoute, RepairRouteRefusal};
+    let Some(finding) = crate::output::human::selected_triage_finding(output, check_config) else {
+        return CheckRepairRoute::Silent;
+    };
     // #8166 residual (F3): a static-limited finding keeps its limitation
     // guidance and gets no runnable repair line — the same static-limited
     // definition the human triage state uses (a named static limitation, or
@@ -413,10 +420,14 @@ pub(crate) fn check_repair_route(
                 | crate::domain::ExposureClass::StaticUnknown
         )
     {
-        return None;
+        return CheckRepairRoute::Silent;
     }
-    let gap = finding.canonical_gap.as_ref()?;
-    let config = load_for_root(root).ok()?;
+    let Some(gap) = finding.canonical_gap.as_ref() else {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::NoCanonicalGap);
+    };
+    let Ok(config) = load_for_root(root) else {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::ConfigUnreadable);
+    };
     let evidence_files: Vec<std::path::PathBuf> = finding
         .related_tests
         .iter()
@@ -430,17 +441,20 @@ pub(crate) fn check_repair_route(
                 .then_some(relative)
         })
         .collect();
-    let classified = crate::analysis::classify_seams_in_file_with_related_at_with_config(
+    let Ok(classified) = crate::analysis::classify_seams_in_file_with_related_at_with_config(
         root,
         &config,
         Path::new(&gap.file),
         &evidence_files,
-    )
-    .ok()?;
+    ) else {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::ClassificationFailed);
+    };
     match crate::analysis::repo_exposure_seam_limit() {
-        Ok(Some((limit, _))) if classified.len() > limit => return None,
+        Ok(Some((limit, _))) if classified.len() > limit => {
+            return CheckRepairRoute::Refused(RepairRouteRefusal::SeamLimit);
+        }
         Ok(_) => {}
-        Err(_) => return None,
+        Err(_) => return CheckRepairRoute::Refused(RepairRouteRefusal::SeamLimit),
     }
     let policy = AgentBriefPolicy::from_config(&config);
     let mut bound = classified.iter().filter(|entry| {
@@ -453,14 +467,16 @@ pub(crate) fn check_repair_route(
         )
         .is_some_and(|bound_finding| bound_finding.id == finding.id)
     });
-    let entry = bound.next()?;
+    let Some(entry) = bound.next() else {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::NoBindingSeam);
+    };
     if bound.next().is_some() {
-        return None;
+        return CheckRepairRoute::Refused(RepairRouteRefusal::SeveralBindingSeams);
     }
-    if repair_refusal_reason(entry, policy).is_some() {
-        return None;
+    if let Some(reason) = repair_refusal_reason(entry, policy) {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::Ineligible { reason });
     }
-    Some(crate::app::RepairRoute {
+    CheckRepairRoute::Route(crate::app::RepairRoute {
         finding_id: finding.id.clone(),
         seam_id: entry.seam.id().as_str().to_string(),
     })

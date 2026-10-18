@@ -666,7 +666,9 @@ fn check_drill_down_prints_repair_identity_that_starts_the_same_seam() -> Result
 
 /// #8166 Slice C (negative control): when the top finding's seam is no
 /// longer repair-eligible (its boundary is already gripped, so it is not a
-/// headline repair target), the drill-down prints no `ripr repair` line.
+/// headline repair target), the drill-down prints no runnable `ripr repair`
+/// line. #8729: the omission is not silent — one advisory line names the
+/// ineligibility and the full-gate route.
 #[test]
 fn check_drill_down_omits_repair_when_top_seam_is_not_eligible() -> Result<(), String> {
     let fixture = Fixture::boundary("facade-check-drilldown-ineligible")?;
@@ -700,8 +702,18 @@ fn check_drill_down_omits_repair_when_top_seam_is_not_eligible() -> Result<(), S
         "the gripped finding must still drill down to explain/context:\n{stdout}"
     );
     assert!(
-        printed_repair_identity(&stdout).is_none() && !stdout.contains("ripr repair"),
-        "an ineligible seam must print no repair line:\n{stdout}"
+        printed_repair_identity(&stdout).is_none(),
+        "an ineligible seam must print no runnable repair line:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("no repair start offered:"),
+        "an ineligible seam must name the omission's state:\n{stdout}"
+    );
+    assert!(
+        !stdout
+            .lines()
+            .any(|line| line.trim_start().starts_with("ripr repair ")),
+        "no line may be a runnable repair start:\n{stdout}"
     );
     assert!(
         attempt_ids(root).is_empty(),

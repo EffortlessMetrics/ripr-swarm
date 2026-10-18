@@ -2059,12 +2059,12 @@ mod tests {
         };
         let config = crate::config::RiprConfig::default();
         let routed = crate::app::FindingDrillIn::Commands(
-            crate::app::FindingNavigation::legacy().with_repair_route(Some(
-                crate::app::RepairRoute {
+            crate::app::FindingNavigation::legacy().with_repair_route_outcome(
+                crate::app::CheckRepairRoute::Route(crate::app::RepairRoute {
                     finding_id: finding_id.clone(),
                     seam_id: "67fc764ba37d77bd".to_string(),
-                },
-            )),
+                }),
+            ),
         );
         let rendered = super::render_bounded_with_config_and_navigation(
             &output,
@@ -2084,12 +2084,12 @@ mod tests {
         );
 
         let other = crate::app::FindingDrillIn::Commands(
-            crate::app::FindingNavigation::legacy().with_repair_route(Some(
-                crate::app::RepairRoute {
+            crate::app::FindingNavigation::legacy().with_repair_route_outcome(
+                crate::app::CheckRepairRoute::Route(crate::app::RepairRoute {
                     finding_id: "probe:other".to_string(),
                     seam_id: "67fc764ba37d77bd".to_string(),
-                },
-            )),
+                }),
+            ),
         );
         let rendered_other = super::render_bounded_with_config_and_navigation(
             &output,
