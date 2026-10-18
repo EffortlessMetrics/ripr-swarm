@@ -177,6 +177,15 @@ RIPR-SPEC-0243 ladder, including the observation guard.
 - A runner config passed by path is not read; a `package.json` script that
   passes one refuses instead. A config above the repository boundary is not
   read.
+- Only a `.git` entry is a recognized repository boundary. A Mercurial,
+  Subversion, Jujutsu or pnpm-workspace root without `.git` is not one: the
+  walk continues past it and reads ancestor configs, and refuses (medium) if
+  16 levels pass without a `.git` or the filesystem root.
+- The 16-level reach is a bound on the filesystem reads per file, chosen to
+  exceed the depth of ordinary monorepo package nesting (`packages/x/y/src`)
+  while keeping the walk cheap; deeper nests refuse rather than read on.
+- `passes_config_by_path` over-matches (`--configdir`, a `node -r` preload);
+  over-matching only refuses, so it costs credit, never adds it.
 - Windows junctions and `\\?\` extended paths are untested; the symlink
   checks are `lstat`-based and a junction may not read as a symlink there.
 - Configs reached through environment variables or `.yarnrc` indirection are
