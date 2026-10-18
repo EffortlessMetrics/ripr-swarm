@@ -84,6 +84,33 @@ use std::time::{Duration, Instant};
 /// Explicit refresh and config reload bypass the debounce (#1908).
 const INTERACTIVE_REFRESH_DEBOUNCE: Duration = Duration::from_millis(200);
 
+/// Claims the one in-flight interactive debounce window (#8528).
+///
+/// `try_acquire` fails when a window is already open: that trigger has
+/// already advanced the workspace revision, so it returns without parking a
+/// notification slot. The owner drops the claim after the sleep, then reads
+/// `workspace_revision` so a folded trigger cannot be sampled into a request
+/// that has already chosen its revision.
+struct InteractiveDebounceClaim<'a> {
+    flag: &'a AtomicBool,
+}
+
+impl<'a> InteractiveDebounceClaim<'a> {
+    fn try_acquire(flag: &'a AtomicBool) -> Option<Self> {
+        if flag.swap(true, Ordering::AcqRel) {
+            None
+        } else {
+            Some(Self { flag })
+        }
+    }
+}
+
+impl Drop for InteractiveDebounceClaim<'_> {
+    fn drop(&mut self) {
+        self.flag.store(false, Ordering::Release);
+    }
+}
+
 /// Upper bound on the optional client disclosures that follow an
 /// initialize-time failure commit (#3802). The owning session failure is
 /// recorded synchronously first, so a wedged or undriven peer can delay only
@@ -192,7 +219,13 @@ pub(super) struct Backend {
     refresh_failure_shown: AtomicBool,
     refresh_scheduler: RefreshScheduler,
     workspace_revision: Mutex<u64>,
+    /// One in-flight interactive debounce window (#8528). A trigger that
+    /// finds this set returns immediately; the owner sleeps, then drops the
+    /// claim before reading the latest workspace revision.
+    interactive_debounce_window_open: AtomicBool,
     refresh_idle: Notify,
+    #[cfg(test)]
+    last_requested_workspace_revision: AtomicU64,
     /// Liveness bound for one server→client request round-trip (#5278,
     /// `transport_bounds::CLIENT_REQUEST_TIMEOUT`): after the transport read
     /// loop fuses, a client response can never arrive, so an unbounded await
@@ -322,7 +355,10 @@ impl Backend {
             refresh_failure_shown: AtomicBool::new(false),
             refresh_scheduler: RefreshScheduler::default(),
             workspace_revision: Mutex::new(0),
+            interactive_debounce_window_open: AtomicBool::new(false),
             refresh_idle: Notify::new(),
+            #[cfg(test)]
+            last_requested_workspace_revision: AtomicU64::new(0),
             client_request_timeout: crate::lsp::transport_bounds::CLIENT_REQUEST_TIMEOUT,
             #[cfg(test)]
             consumed_source_barrier: Mutex::new(None),
@@ -403,16 +439,18 @@ impl Backend {
             return;
         };
         // Debounce interactive triggers (did_open/did_save/did_close) so
-        // rapid saves collapse into one analysis run. Explicit refresh and
-        // config reload bypass the debounce (#1908).
+        // rapid saves collapse into one analysis run. Explicit refresh,
+        // config reload, and watched-input bypass the debounce (#1908).
         //
-        // The collapse itself is handled by the refresh scheduler:
-        // `refresh_scheduler.request()` deduplicates matching active/pending
-        // work before incrementing `next_generation`, so rapid equivalent
-        // saves do not each obtain a new generation. The sleep here just
-        // delays the request so a second save arriving within the window
-        // can coalesce with the first rather than triggering a cancel +
-        // re-queue cycle on the scheduler.
+        // #8528: park at most one notification handler in this sleep.
+        // tower-lsp-server runs four handlers at a time; sleeping in each
+        // didOpen filled every slot, stopped stdin reads, and published one
+        // status burst per open. A trigger that finds a window already open
+        // has already advanced `workspace_revision` and returns immediately.
+        // The owner drops the claim after waking, then reads the latest
+        // revision so a folded trigger is not sampled into a request that
+        // already chose its revision. The scheduler still deduplicates
+        // matching active/pending work once a request is issued.
         //
         // The earlier version of this block used a `tokio::select!` arm on
         // `refresh_idle.notified()` to "cancel" when a superseding
@@ -426,18 +464,28 @@ impl Backend {
             RefreshReason::DidOpen | RefreshReason::DidSave | RefreshReason::DidClose
         );
         if is_interactive {
-            tokio::time::sleep(INTERACTIVE_REFRESH_DEBOUNCE).await;
-            // Re-check preconditions after the debounce window — config or
-            // authority may have changed during the wait.
-            if self.configuration_failure().is_some() {
-                return;
-            }
-            let post_authority = self.workspace_root_authority();
-            if !post_authority.allows_analysis() {
-                return;
+            {
+                let Some(_claim) =
+                    InteractiveDebounceClaim::try_acquire(&self.interactive_debounce_window_open)
+                else {
+                    return;
+                };
+                tokio::time::sleep(INTERACTIVE_REFRESH_DEBOUNCE).await;
+                // Re-check preconditions after the debounce window — config or
+                // authority may have changed during the wait.
+                if self.configuration_failure().is_some() {
+                    return;
+                }
+                let post_authority = self.workspace_root_authority();
+                if !post_authority.allows_analysis() {
+                    return;
+                }
             }
         }
         let workspace_revision = self.workspace_revision();
+        #[cfg(test)]
+        self.last_requested_workspace_revision
+            .store(workspace_revision, Ordering::Release);
         let authority_epoch = self.workspace_root_epoch.load(Ordering::SeqCst);
         let decision = self.refresh_scheduler.request(
             root,
@@ -1362,6 +1410,12 @@ impl Backend {
         &self,
     ) -> super::refresh_scheduler::RefreshTelemetrySnapshot {
         self.refresh_scheduler.telemetry()
+    }
+
+    #[cfg(test)]
+    pub(super) fn last_requested_workspace_revision_for_test(&self) -> u64 {
+        self.last_requested_workspace_revision
+            .load(Ordering::Acquire)
     }
 
     pub(super) fn workspace_revision(&self) -> u64 {
@@ -4546,6 +4600,9 @@ fn bounded_failure_message(message: &str) -> String {
 
 #[cfg(test)]
 mod refresh_failure_show_message_tests;
+
+#[cfg(test)]
+mod interactive_debounce_fold_tests;
 
 #[cfg(test)]
 mod bounded_failure_message_tests {
