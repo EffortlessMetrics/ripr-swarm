@@ -373,6 +373,57 @@ fn internal_path(
     Some(lexical(&base.join(path)))
 }
 
+impl MemberCrates {
+    /// Whether `cargo test` runs the doc examples of the library whose crate
+    /// root is `crate_root`, a root-relative `src/lib.rs` (#6648): the
+    /// manifest keeps that file as its default library root
+    /// ([`Self::is_default_target_root`]), leaves `[lib] doctest` on and
+    /// builds a Rust library a doctest can link (`lib`, `rlib` or
+    /// `proc-macro`, or no `crate-type`). Without manifest authority, or with
+    /// any value it cannot read, the answer is no.
+    pub(crate) fn runs_library_doctests(&self, crate_root: &Path) -> bool {
+        let Some(root) = &self.root else {
+            return false;
+        };
+        if !crate_root.ends_with(Path::new("src").join("lib.rs"))
+            || !self.is_default_target_root(crate_root)
+        {
+            return false;
+        }
+        let root = lexical(root);
+        let crate_root = lexical(&root.join(crate_root));
+        let Some(directory) = crate_root.parent().and_then(Path::parent) else {
+            return false;
+        };
+        let Some((package, _)) = nearest_package(&root, directory) else {
+            return false;
+        };
+        if package.directory != directory || !is_default_library_root(&package, &crate_root) {
+            return false;
+        }
+        let Some(lib) = package.manifest.get("lib") else {
+            return true;
+        };
+        let doctest_on = lib
+            .get("doctest")
+            .is_none_or(|value| value.as_bool() == Some(true));
+        let linkable = lib.get("crate-type").is_none_or(|kinds| {
+            kinds.as_array().is_some_and(|kinds| {
+                kinds.iter().any(|kind| {
+                    kind.as_str()
+                        .is_some_and(|kind| matches!(kind, "lib" | "rlib"))
+                })
+            })
+        });
+        // A proc-macro crate exports no plain `pub fn` an example could
+        // call, so it registers nothing.
+        let not_proc_macro = lib
+            .get("proc-macro")
+            .is_none_or(|value| value.as_bool() == Some(false));
+        doctest_on && linkable && not_proc_macro
+    }
+}
+
 /// One package manifest: its directory and parsed table.
 struct Package {
     directory: PathBuf,

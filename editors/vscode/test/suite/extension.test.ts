@@ -3411,7 +3411,8 @@ suite('Extension Smoke', () => {
     await withControllerTestContext({
       resolveFailure: {
         message: 'Configured ripr.server.path does not exist.',
-        detail: 'Missing configured ripr server path for this test.'
+        detail: 'Missing configured ripr server path for this test.',
+        kind: 'other'
       }
     }, async (context) => {
       await context.controller.start();
@@ -3421,7 +3422,7 @@ suite('Extension Smoke', () => {
         'Missing configured ripr server path for this test.',
         'Server: not resolved',
         'Server started: no; server unavailable',
-        'Next safe action: Enable ripr.server.autoDownload, install with cargo install ripr, or set ripr.server.path. Then run ripr: Restart Server.'
+        'Next safe action: Inspect the diagnostic, then retry or set ripr.server.path (ripr.server.downloadBaseUrl for a mirror). Then run ripr: Restart Server.'
       ]);
       assert.strictEqual(context.client.startCalls, 0);
     });
@@ -4055,7 +4056,8 @@ suite('Extension Smoke', () => {
     const context = createControllerTestContext({
       resolveFailure: {
         message: 'Configured ripr.server.path does not exist.',
-        detail: 'Missing configured ripr server path for this test.'
+        detail: 'Missing configured ripr server path for this test.',
+        kind: 'other'
       }
     });
     try {
@@ -4067,7 +4069,7 @@ suite('Extension Smoke', () => {
       assert.ok(String(context.status.tooltip).includes('Server: not resolved'));
       assert.ok(String(context.status.tooltip).includes('Server started: no; server unavailable'));
       assert.ok(String(context.status.tooltip).includes('Config: ripr.toml'));
-      assert.ok(String(context.status.tooltip).includes('Next safe action: Enable ripr.server.autoDownload, install with cargo install ripr, or set ripr.server.path. Then run ripr: Restart Server.'));
+      assert.ok(String(context.status.tooltip).includes('Next safe action: Inspect the diagnostic, then retry or set ripr.server.path (ripr.server.downloadBaseUrl for a mirror). Then run ripr: Restart Server.'));
       assert.strictEqual(context.errorMessages.length, 1);
       assert.strictEqual(context.client.startCalls, 0);
     } finally {
@@ -5346,7 +5348,7 @@ interface ControllerTestOptions {
   files?: Record<string, string | null>;
   workspaceRoot?: string | null;
   workspaceRootState?: RiprWorkspaceRootState;
-  resolveFailure?: { message: string; detail: string };
+  resolveFailure?: { message: string; detail: string; kind: 'missing_binary' | 'download' | 'http' | 'checksum' | 'manifest' | 'other' };
   serverVersion?: string;
   workspaceTrusted?: boolean;
   beforeReadFile?: () => Promise<void>;

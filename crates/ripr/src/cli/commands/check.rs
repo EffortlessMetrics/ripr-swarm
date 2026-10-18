@@ -290,6 +290,7 @@ const CHECK_VALUE_OPTIONS: &[&str] = &[
     "--output-dir",
     "--write-artifact",
     "--git-timeout",
+    "--timeout",
 ];
 
 /// Value-taking options whose values are enumerated names (never flag-shaped).
@@ -340,6 +341,32 @@ fn parse_git_timeout_from(
         ));
     }
     Ok((secs > 0).then_some(timeout))
+}
+
+/// `--timeout` / `RIPR_CHECK_TIMEOUT`: the whole-run analysis wall-clock
+/// budget in seconds, `0` disabling it (#5369). Same shape as the git
+/// deadline, so a typo never runs with a silently different bound.
+fn parse_check_timeout_from(
+    source: &str,
+    value: &str,
+) -> Result<Option<std::time::Duration>, String> {
+    parse_git_timeout_from(source, value)
+}
+
+fn check_timeout_from_env(
+    explicit: bool,
+    env_value: Result<String, std::env::VarError>,
+) -> Result<Option<Option<std::time::Duration>>, String> {
+    if explicit {
+        return Ok(None);
+    }
+    match env_value {
+        Ok(value) => parse_check_timeout_from("RIPR_CHECK_TIMEOUT", &value).map(Some),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err("RIPR_CHECK_TIMEOUT must be valid UTF-8".to_string())
+        }
+    }
 }
 
 pub(super) fn git_timeout_from_env(
@@ -521,6 +548,8 @@ fn check_inner(
     // pair. No implicit cache: the user names the artifact path.
     let mut write_artifact: Option<PathBuf> = None;
     let mut git_timeout_explicitly_provided = false;
+    let mut check_timeout = super::check_budget::default_check_timeout();
+    let mut check_timeout_explicitly_provided = false;
     let mut candidate_tree: Option<String> = None;
     let mut candidate_base: Option<String> = None;
     let mut quiet = false;
@@ -636,6 +665,12 @@ fn check_inner(
                 input.git_timeout = parse_git_timeout(value)?;
                 git_timeout_explicitly_provided = true;
             }
+            "--timeout" => {
+                i += 1;
+                let value = expect_value(args, i, "--timeout")?;
+                check_timeout = parse_check_timeout_from("--timeout", value)?;
+                check_timeout_explicitly_provided = true;
+            }
             "--quiet" => {
                 quiet = true;
             }
@@ -740,6 +775,23 @@ fn check_inner(
         )
     })? {
         input.git_timeout = timeout;
+    }
+    if let Some(timeout) = check_timeout_from_env(
+        check_timeout_explicitly_provided,
+        std::env::var("RIPR_CHECK_TIMEOUT"),
+    )
+    .map_err(|err| {
+        super::check_fanout::refuse(
+            super::check_fanout::refusal_destination(
+                fanout_custody.as_ref(),
+                output_dir.as_deref(),
+            ),
+            &envelope_input,
+            effective_format,
+            err,
+        )
+    })? {
+        check_timeout = timeout;
     }
     if worktree_explicitly_provided && input.diff_file.is_some() {
         return Err(super::check_fanout::refuse(
@@ -1264,14 +1316,14 @@ fn check_inner(
     // throttled heartbeats included). Both the audit-path disclosure and the
     // stage lines are stderr-only and cannot change machine stdout.
     let progress = (!quiet).then(|| {
-        crate::cli::progress::CliProgressSink::for_stderr(
+        std::sync::Arc::new(crate::cli::progress::CliProgressSink::for_stderr(
             std::io::stderr().is_terminal(),
             crate::cli::progress::ProgressPolicy::STANDARD,
-        )
+        ))
     });
     let progress_sink = progress
         .as_ref()
-        .map(|sink| sink as &dyn crate::app::AnalysisProgressSink);
+        .map(|sink| &**sink as &dyn crate::app::AnalysisProgressSink);
     // #4945: invocation-time cost disclosure for the full-repo audit-path
     // formats. One line, before the run begins, naming the expected cost
     // class (cold full-corpus walk; the warm-rerun clause is honest per
@@ -1399,7 +1451,28 @@ fn check_inner(
         // `CheckOutput` carries only the fields these renderers read.
         Ok(app::repo_seam_inventory_input(input))
     } else {
-        app::check_with_progress_core(input, &config, progress_scope, progress_sink)
+        // #5369: bound the diff/worktree analysis by the wall-clock budget.
+        let worker_config = config.clone();
+        let worker_sink = progress.clone();
+        let abandon_sink = progress.clone();
+        super::check_budget::run_with_budget(
+            check_timeout,
+            move || {
+                if let Some(sink) = &abandon_sink {
+                    sink.abandon();
+                }
+            },
+            move || {
+                app::check_with_progress_core(
+                    input,
+                    &worker_config,
+                    progress_scope,
+                    worker_sink
+                        .as_ref()
+                        .map(|sink| &**sink as &dyn crate::app::AnalysisProgressSink),
+                )
+            },
+        )
     };
     let mut output = match output_result {
         Ok(output) => output,

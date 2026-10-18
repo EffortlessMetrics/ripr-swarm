@@ -188,8 +188,20 @@ pub(in crate::cli) fn drive_before_phase(
 /// `EXIT_TYPED_REFUSAL_EMPTY_STDOUT` honest when the card refuses after
 /// the attempt already exists (#7032).
 pub(in crate::cli) fn drive_before_phase_deferring_stdout(
-    options: agent::AgentRepairOptions,
+    mut options: agent::AgentRepairOptions,
 ) -> Result<(String, String), CommandError> {
+    // #8166 residual: a cross-namespace `--seam-id` (a `probe:` finding ID,
+    // a canonical `gap:` ID, or a `file:line` location) that names exactly
+    // one seam proceeds under that seam's ID, so the attempt identity, the
+    // packet, and every later seam reference agree. Translation happens
+    // before the lock and the identity preparation: a refused mapping
+    // writes no workflow artifact and starts no attempt.
+    if let Some(seam_id) = options.seam_id.clone() {
+        options.seam_id = Some(commands::translate_agent_repair_seam_id(
+            &options.root,
+            &seam_id,
+        )?);
+    }
     let _before_lock = lock_before_repair_attempt(&options.root)?;
     let seam_id = options
         .seam_id
