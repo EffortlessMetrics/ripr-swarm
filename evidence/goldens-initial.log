@@ -1,0 +1,15 @@
+    Finished `dev` profile [unoptimized] target(s) in 0.16s
+     Running `/workspace/5500-target/debug/xtask goldens check`
+$ CARGO_HOME=/workspace/.cargo RUSTUP_TOOLCHAIN=1.95.0 RUSTUP_HOME=/workspace/.rustup cargo build -p ripr
+    Finished `dev` profile [unoptimized] target(s) in 0.11s
+xtask: goldens check failed; semantic drift detail in target/ripr/reports/golden-drift.md
+  produced by: ripr 0.11.0 (ae0e993c3a3f41068c7f90efb3a1b4f9c1dba952) (binary `/workspace/5500-target/debug/ripr`, revision `ae0e993c3a3f41068c7f90efb3a1b4f9c1dba952`)
+  error: fixture dependency preparation failed for owner_return_pin_fallible_literal
+environment: CARGO_HOME="/workspace/.cargo" RUSTUP_TOOLCHAIN="1.95.0" RUSTUP_HOME="/workspace/.rustup" RUSTUP_AUTO_INSTALL="0"
+cargo metadata --locked --offline --format-version 1 --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml failed with exit status: 101; stdout: ; stderr: error: failed to download `anyhow v1.0.100`
+
+Caused by:
+  attempting to make an HTTP request, but --offline was specified
+next: run `cargo xtask goldens prepare` with this same environment (or `cargo xtask goldens prepare --offline` with a seeded cache), then retry the fixture/golden check. The fixture requires its locked anyhow 1.0.100; fetching another Cargo home does not prepare this subprocess. If the pinned toolchain is missing, install it explicitly before retrying offline. Do not bless availability drift.
+reproduce: cargo xtask goldens check
+next: inspect target/ripr/reports/golden-drift.md; if a flip is intended, run `cargo xtask goldens bless <fixture> --reason <reason>`

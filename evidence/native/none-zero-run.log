@@ -1,0 +1,22 @@
+
+running 3 tests
+test absent_retains_600 ... FAILED
+test elapsed_rounds_to_2 ... ok
+test saturated_is_max ... ok
+
+failures:
+
+---- absent_retains_600 stdout ----
+
+thread 'absent_retains_600' (6338) panicked at /workspace/5500-whole-tail-evidence/native/none-zero.rs:14:35:
+assertion `left == right` failed
+  left: 0
+ right: 600
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    absent_retains_600
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -1,0 +1,100 @@
+Independent affected-dimension review — 2026-10-18 UTC
+Original review retained unchanged: independent-review.txt (fcffca11 P1).
+
+reviewed_head_sha: d92cdab813d1f5256032f52c6466d66ebd734c0a
+reviewed_tree: 302607a0f27baa7108b5e0054dc332ebc21d5ec3
+integration_basis: original candidatefcffca11ffa7e2d0a0834e8dd5066f79660f0a68;
+full cumulative review retains predecessor16ff7479d2a78fd9558b4ff9f5ad6c803c2857d7.
+source branch: codex/5500-whole-tail-observation, /workspace/ripr-swarm.
+claim_boundary: original narrow whole-tail HEADER observation only. No actual
+consumer improvement, arm selection, shared macro-site parity, serde admission,
+helperargs, broad expected rebinding, hosted qualification or merge claim.
+
+changed_surfaces_and_semantic_owners_inspected:
+Full four-path fcff..d92 diff read: whole_tail_match.rs, integration tests,
+SPEC0229 and traceability. Original15-path review remains applicable except the
+changed owner admission, old-source/probe.before authority, fixture and contract
+wording dimensions refreshed here. Author checkout never moved or edited.
+
+Original P1 source repair:
+Before constructing Any gate, the adapter masks comments/strings, refuses '?'
+and whole-word return/break/continue/yield throughout match syntax, and refuses
+EVERY AST MacroCall descendant. This closes direct scrutinee exits and concealed
+macro exits without assigning shared macro admission new authority. It also
+conservatively rejects local closure returns/loop exits and otherwise benign
+macros. Those are explicitly documented nonclaims. Harmless words inside literal
+text are not intended exit evidence; targeted CLI control checks this separately.
+Four-case API negative asserts exactly one retained header and nonexposed class
+for scrutinee return, arm return, custom macro exit, and shadowed bounded macro.
+
+Old-side custody change:
+Dropping probe.before.is_some refusal is justified because probe.before is a
+heuristic neighbor and cannot override the receipt's exact all-added owner lines,
+validated source/diff text, removed-newline exclusion, parseable old source and
+absence of ANY old same-name Fn. New public fixture asserts header.before is Some
+and header exposed with an unrelated prior changed owner. Receipt unit now
+includes a removed old same-name function mapped outside new owner (moved) and
+unreadable old source; both refuse. Existing changed-owner/wrong-source/diff
+controls retain their role. No change to selector or ordinary OwnerReturnPin.
+
+Result-binding fixture:
+fcff final focused log (focused-api-nativepath.log) actually reports6/7 passing:
+same-line let-binding/assertion positive remainedweak and failed. d92 formats
+that positive onto separate lines without changing production binding admission.
+This is a retained shared-scanner scope limit, not evidence of supporting all
+same-line bindings. It must not be described as a finalfcff7/7 pass or as a
+production fix. Targeted repaired CLI checks both forms independently.
+
+Proof receipt and final disposition appended after frozen binary validation.
+
+proof_and_ci_observed:
+- Frozen binary /workspace/5500-whole-tail-evidence/ripr-candidate-d92cdab81;
+  reviewer independently calculated SHA256
+  ea333b0cbfa9568c7aa7cc54741456049da1922fcc2ff79407e3429930bbecb0.
+- 14 independent CLI executions all native exit0, each EXACTLY ONE header subject.
+  Receipt /workspace/5500-review/d92-cli-controls-receipt.json with raw JSON/stderr
+  adjacent under each fixture; immutable original fcff receipts preserved.
+- Original P1 scrutinee_return and all3 native-compiled arm-zero variants now
+  weakly_exposed. Macro scrutinee and explicit arm return also weak. Thus new
+  runtime admission rejects the real counterexample rather than dropping its
+  subject. The independently compiled original/all3 mutants still provide the
+  unchanged native witness: all compile/pass because scrutinee exits first;
+  no need to regenerate identical binaries as source changes concern analyzer.
+- Positive ordinary owner exposed; immutable multiline binding exposed; same-line
+  binding weak (retained limitation explicitly established); words return/?/break/
+  continue/yield inside string literal remain exposed. New lexical refusal does
+  not mistake this harmless literal for an exit.
+- Statement-before-tail weak. Macro-generated fake MAX equality controls both
+  original/wrong result weak. Literal expected wrong production exposed remains
+  legitimate static discriminator evidence, without a runtime-baseline pass claim.
+- Read retained honesty corpus draft CLI output: fcff4subjects includes header
+  exposed, d924subjects includes headerweak; remaining3subjects weak unchanged.
+  This is source-stage draft evidence; eventual committed corpus entry/schema
+  validation and exact final head identity remain to be reviewed.
+- repaired-api-nativepath.log was still compiling at this review read; no claimed
+  final API pass yet. Author/root own serial required focused checks. No reviewer
+  Cargo invocation, no broad predecessor suite, no target sharing.
+
+blocking_findings: NONE newly found on d92 within the reviewed source slice.
+refuted_or_stale_findings: original P1 FIXED with independent exact d92CLI
+counterexample results and preserved nonempty subjects. Original fcff remains
+REPAIR_REQUIRED historically; repaired review does not rewrite that record.
+non_blocking_suggestions: retain same-line binding and conservative exit/macro
+scope as explicit limits when describing supported result binding.
+proof_or_review_missing: final focused source checks/corpus validation and eventual
+fixture-only head rebind; exact final consumer replay (root owned); hosted
+qualification/reviews absent by instruction. Real consumer target improvement is
+NOT_ESTABLISHED: previous exact fcff replay target remainsweak; root's diagnostic
+route reports existing assertion MacroBinding/assert_eq/serde/closure refusals,
+which are outside this candidate. No new consumer success claimed.
+affected_currentness_dimensions: d92 authority/control-flow fix, old-source
+custody, tests/contract and head refreshed; future fixture-only edit needs bounded
+fixture/corpus review plus exact identity rebind, not broad unchanged reruns.
+residual_assumptions_and_non_claims: candidate source review only; conservative
+refusal does not perform macro expansion or prove arbitrary expressions terminate.
+Shared assertion admission retains its existing limits and other PR ownership.
+Platform/process/security source unchanged. No review worktree cleanup performed
+because explicit user instruction retains labs. No denied/pending operation.
+disposition: REVIEW_INCOMPLETE overall (publication/hosted/final gates absent),
+with original P1 resolved and no remaining blocking source defect found within
+this bounded candidate review. This is not REVIEW_READY or consumer clearance.

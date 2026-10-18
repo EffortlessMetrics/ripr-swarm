@@ -1,0 +1,61 @@
+{
+  "head": "f4be8084a1cbc7cd9d66c7e10ec4b9eb46b7a5bc",
+  "tree": "7b181b6917993fb4622c22d7ae75642b746dbd00",
+  "check_fast": {
+    "executed_head": "c96331b7113c7626609d57405236e85ef4a0a703",
+    "native_exit": 0,
+    "ran": 15,
+    "skipped": [
+      "cli-help-parity"
+    ],
+    "selected_paths": 51,
+    "final_delta": "Fixture SPEC primary id syntax only; production/tests/input/expected blobs unchanged, independently reviewed. Final precommit covers the doc change."
+  },
+  "precommit": {
+    "native_exit": 0,
+    "status": "pass",
+    "selected_paths": 51,
+    "independent_path_set_matches": true,
+    "strict_clippy_packages": [
+      "ripr",
+      "xtask"
+    ],
+    "all_targets": true,
+    "report_digest": "sha256:40f5325270215fc637c016414cf6c8215a393ba1786d9ed85b80ee0b4a000c05",
+    "skips": [],
+    "limitations": []
+  },
+  "goldens": {
+    "fixtures": 500,
+    "comparisons": 1268,
+    "drift": 0,
+    "errors": 0,
+    "provenance_revision": "f4be8084a1cbc7cd9d66c7e10ec4b9eb46b7a5bc"
+  },
+  "dogfood": {
+    "native_exit": 0,
+    "status": "pass",
+    "mode": "advisory"
+  },
+  "honesty_final_gate": {
+    "native_exit": 0,
+    "wrong_pre_repair_output_rejected": true,
+    "gate_weakened": false
+  },
+  "focused_tests": {
+    "whole_tail_api": 9,
+    "field_selector": 15,
+    "native_path_roots": 5,
+    "provenance": 1,
+    "shared_owner_units": 7,
+    "note": "Repaired production-equivalent executions retained; final artifact separately reexecuted14independentCLIcontrols. Predecessor fullvalidation not repeated."
+  },
+  "resources": {
+    "reserve_bytes": 10737418240,
+    "peak_additional_budget_bytes": 12884901888,
+    "available_closeout_bytes": 27007807488,
+    "all_owned_native_build_and_proof_sessions": "TERMINAL; no active owned Cargo driver",
+    "disposition": "RETAIN source/target/caches/executable witnesses/native+review labs/raw text for parent audit; no cleanup authorized or done"
+  },
+  "claim_boundary": "Bounded local source proof; consumer67654dc6 remains weak18currentweak. No hosted, Ready, merge, installed, release or full5500 completion."
+}

@@ -1,0 +1,18 @@
+warning: unused import: `std::convert::TryFrom`
+ --> /workspace/5500-whole-tail-evidence/native/some-zero.rs:1:5
+  |
+1 | use std::convert::TryFrom;
+  |     ^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `millis`
+ --> /workspace/5500-whole-tail-evidence/native/some-zero.rs:7:14
+  |
+7 |         Some(millis) => 0,
+  |              ^^^^^^ help: if this is intentional, prefix it with an underscore: `_millis`
+  |
+  = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: 2 warnings emitted
+

@@ -1,0 +1,87 @@
+ Downloading crates ...
+  Downloaded nix v0.31.3
+   Compiling libc v0.2.190
+   Compiling getrandom v0.3.4
+   Compiling rustix v1.1.5
+   Compiling linux-raw-sys v0.12.1
+   Compiling rmcp v3.5.1
+   Compiling errno v0.3.14
+   Compiling signal-hook-registry v1.4.8
+   Compiling mio v1.2.3
+   Compiling getrandom v0.4.3
+   Compiling tokio v1.53.2
+   Compiling parking_lot_core v0.9.12
+   Compiling rand_core v0.9.5
+   Compiling dashmap v6.2.1
+   Compiling uuid v1.26.0
+   Compiling ra_ap_stdx v0.0.349
+   Compiling fastrand v2.5.0
+   Compiling cfg_aliases v0.2.2
+   Compiling nix v0.31.3
+   Compiling ra_ap_syntax v0.0.349
+   Compiling tokio-util v0.7.20
+   Compiling tokio-stream v0.1.19
+   Compiling tower-lsp-server v0.23.0
+   Compiling tempfile v3.27.0
+   Compiling signal-hook v0.3.18
+   Compiling wait-timeout v0.2.1
+   Compiling fs2 v0.4.3
+   Compiling ppv-lite86 v0.2.21
+   Compiling bit-vec v0.8.0
+   Compiling quick-error v1.2.3
+   Compiling fnv v1.0.7
+   Compiling rusty-fork v0.3.1
+   Compiling ripr v0.11.0 (/workspace/ripr-swarm/crates/ripr)
+   Compiling bit-set v0.8.0
+   Compiling rand_chacha v0.9.0
+   Compiling rand v0.9.5
+   Compiling rand_xorshift v0.4.0
+   Compiling parking_lot v0.12.5
+   Compiling serial_test_derive v4.0.1
+   Compiling regex-syntax v0.8.11
+   Compiling unarray v0.1.4
+   Compiling proptest v1.11.0
+   Compiling serial_test v4.0.1
+    Finished `test` profile [unoptimized] target(s) in 1m 49s
+     Running tests/whole_tail_match_observation.rs (/workspace/5500-target/debug/deps/whole_tail_match_observation-f975328be5f8d501)
+
+running 5 tests
+test added_documented_owner_header_observes_its_whole_return ... FAILED
+test saturated_opaque_imported_input_observes_the_whole_result ... FAILED
+test existing_nested_and_mismatched_owners_never_receive_the_receipt ... ok
+test whole_tail_receipt_never_selects_an_unobserved_sibling_arm ... FAILED
+test whole_result_refuses_unobserved_or_ambiguous_assertions ... ok
+
+failures:
+
+---- added_documented_owner_header_observes_its_whole_return stdout ----
+
+thread 'added_documented_owner_header_observes_its_whole_return' (5805) panicked at crates/ripr/tests/whole_tail_match_observation.rs:92:9:
+assertion `left == right` failed: : probe:src_lib.rs:match_arm:931816b8
+  left: WeaklyExposed
+ right: Exposed
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- saturated_opaque_imported_input_observes_the_whole_result stdout ----
+
+thread 'saturated_opaque_imported_input_observes_the_whole_result' (5810) panicked at crates/ripr/tests/whole_tail_match_observation.rs:115:5:
+assertion `left == right` failed
+  left: WeaklyExposed
+ right: Exposed
+
+---- whole_tail_receipt_never_selects_an_unobserved_sibling_arm stdout ----
+
+thread 'whole_tail_receipt_never_selects_an_unobserved_sibling_arm' (5812) panicked at crates/ripr/tests/whole_tail_match_observation.rs:144:5:
+assertion `left == right` failed
+  left: WeaklyExposed
+ right: Exposed
+
+
+failures:
+    added_documented_owner_header_observes_its_whole_return
+    saturated_opaque_imported_input_observes_the_whole_result
+    whole_tail_receipt_never_selects_an_unobserved_sibling_arm
+
+test result: FAILED. 2 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+error: test failed, to rerun pass `-p ripr --test whole_tail_match_observation`

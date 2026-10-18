@@ -1,0 +1,36 @@
+[
+  {
+    "case": "std",
+    "exit": 0,
+    "headers": [
+      {
+        "id": "probe:src_lib.rs:match_arm:40feaca2",
+        "classification": "weakly_exposed",
+        "evidence": [
+          "A related test observes a value or effect near the changed behavior",
+          "Changed behavior appears to influence match arm result: match x",
+          "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)",
+          "Reachable tests can plausibly activate this changed behavior",
+          "Related tests appear to reach charge: pins"
+        ]
+      }
+    ]
+  },
+  {
+    "case": "absolute_std",
+    "exit": 0,
+    "headers": [
+      {
+        "id": "probe:src_lib.rs:match_arm:40feaca2",
+        "classification": "weakly_exposed",
+        "evidence": [
+          "A related test observes a value or effect near the changed behavior",
+          "Changed behavior appears to influence match arm result: match x",
+          "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)",
+          "Reachable tests can plausibly activate this changed behavior",
+          "Related tests appear to reach charge: pins"
+        ]
+      }
+    ]
+  }
+]

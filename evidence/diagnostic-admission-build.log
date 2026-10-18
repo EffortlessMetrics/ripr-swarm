@@ -1,0 +1,252 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-swarm/crates/ripr)
+error[E0425]: cannot find value `trace` in this scope
+   --> crates/ripr/src/analysis/classify/owner_pin.rs:724:16
+    |
+724 |             if trace { eprintln!("PIN refuse stage1"); } return false;
+    |                ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+   --> crates/ripr/src/analysis/classify/owner_pin.rs:727:16
+    |
+727 |             if trace { eprintln!("PIN refuse stage2"); } return false;
+    |                ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+   --> crates/ripr/src/analysis/classify/owner_pin.rs:732:20
+    |
+732 |                 if trace { eprintln!("PIN refuse stage3"); } return false;
+    |                    ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+   --> crates/ripr/src/analysis/classify/owner_pin.rs:752:20
+    |
+752 |                 if trace { eprintln!("PIN refuse stage4"); } return false;
+    |                    ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+   --> crates/ripr/src/analysis/classify/owner_pin.rs:764:20
+    |
+764 |                 if trace { eprintln!("PIN refuse stage5"); } return false;
+    |                    ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+   --> crates/ripr/src/analysis/classify/owner_pin.rs:770:20
+    |
+770 |                 if trace { eprintln!("PIN refuse stage6"); } return false;
+    |                    ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+   --> crates/ripr/src/analysis/classify/owner_pin.rs:802:20
+    |
+802 |                 if trace { eprintln!("PIN refuse stage7"); } return false;
+    |                    ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:2613:16
+     |
+2613 |             if trace { eprintln!("PIN refuse stage8"); } return false;
+     |                ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:2616:16
+     |
+2616 |             if trace { eprintln!("PIN refuse stage9"); } return false;
+     |                ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:2619:16
+     |
+2619 |             if trace { eprintln!("PIN refuse stage10"); } return false;
+     |                ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:2946:16
+     |
+2946 |             if trace { eprintln!("PIN refuse stage11"); } return false;
+     |                ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:2951:16
+     |
+2951 |             if trace { eprintln!("PIN refuse stage12"); } return false;
+     |                ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:2998:20
+     |
+2998 |                 if trace { eprintln!("PIN refuse stage13"); } return false;
+     |                    ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:3067:28
+     |
+3067 |                         if trace { eprintln!("PIN refuse stage14"); } return false;
+     |                            ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:3157:20
+     |
+3157 |                 if trace { eprintln!("PIN refuse stage15"); } return false;
+     |                    ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:3170:20
+     |
+3170 |                 if trace { eprintln!("PIN refuse stage16"); } return false;
+     |                    ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:3194:20
+     |
+3194 |                 if trace { eprintln!("PIN refuse stage17"); } return false;
+     |                    ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:3197:20
+     |
+3197 |                 if trace { eprintln!("PIN refuse stage18"); } return false;
+     |                    ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:3209:20
+     |
+3209 |                 if trace { eprintln!("PIN refuse stage19"); } return false;
+     |                    ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:3218:20
+     |
+3218 |                 if trace { eprintln!("PIN refuse stage20"); } return false;
+     |                    ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:3222:16
+     |
+3222 |             if trace { eprintln!("PIN refuse stage21"); } return false;
+     |                ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:3225:16
+     |
+3225 |             if trace { eprintln!("PIN refuse stage22"); } return false;
+     |                ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:3236:16
+     |
+3236 |             if trace { eprintln!("PIN refuse stage23"); } return false;
+     |                ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:3247:16
+     |
+3247 |             if trace { eprintln!("PIN refuse stage24"); } return false;
+     |                ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:3257:20
+     |
+3257 |                 if trace { eprintln!("PIN refuse stage25"); } return false;
+     |                    ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:3262:20
+     |
+3262 |                 if trace { eprintln!("PIN refuse stage26"); } return false;
+     |                    ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:3301:16
+     |
+3301 |             if trace { eprintln!("PIN refuse stage27"); } return false;
+     |                ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:3315:16
+     |
+3315 |             if trace { eprintln!("PIN refuse stage28"); } return false;
+     |                ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:3335:24
+     |
+3335 |                     if trace { eprintln!("PIN refuse stage29"); } return false;
+     |                        ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:3344:24
+     |
+3344 |                     if trace { eprintln!("PIN refuse stage30"); } return false;
+     |                        ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:3359:24
+     |
+3359 |                     if trace { eprintln!("PIN refuse stage31"); } return false;
+     |                        ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:3374:24
+     |
+3374 |                     if trace { eprintln!("PIN refuse stage32"); } return false;
+     |                        ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:3390:24
+     |
+3390 |                     if trace { eprintln!("PIN refuse stage33"); } return false;
+     |                        ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:3402:16
+     |
+3402 |             if trace { eprintln!("PIN refuse stage34"); } return false;
+     |                ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:3411:16
+     |
+3411 |             if trace { eprintln!("PIN refuse stage35"); } return false;
+     |                ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:3425:16
+     |
+3425 |             if trace { eprintln!("PIN refuse stage36"); } return false;
+     |                ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:3445:20
+     |
+3445 |                 if trace { eprintln!("PIN bare gates nesting={} filecfg={} identity={} shadow={} binds={} macro={} source={}",
+     |                    ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:3501:32
+     |
+3501 | ...                   if trace { eprintln!("PIN refuse stage37"); } return false;
+     |                          ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:3527:24
+     |
+3527 |                     if trace { eprintln!("PIN refuse stage38"); } return false;
+     |                        ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `trace` in this scope
+    --> crates/ripr/src/analysis/classify/owner_pin.rs:3530:24
+     |
+3530 |                     if trace { eprintln!("PIN refuse stage39"); } return false;
+     |                        ^^^^^ not found in this scope
+
+error[E0609]: no field `name` on type `&analysis::classify::owner_pin::OwnerPinSyntax`
+   --> crates/ripr/src/analysis/classify/owner_pin.rs:658:81
+    |
+658 |         let trace = std::env::var_os("RIPR_WHOLE_TAIL_TRACE").is_some() && self.name == "focused_proof_lease_charged_seconds";
+    |                                                                                 ^^^^ unknown field
+    |
+    = note: available fields are: `std_rooted`, `fallible_dependencies`, `ambiguous_macro_bindings`, `scoped_macro_bindings`, `crate_macro_bindings` ... and 19 others
+
+Some errors have detailed explanations: E0425, E0609.
+For more information about an error, try `rustc --explain E0425`.
+error: could not compile `ripr` (lib) due to 41 previous errors

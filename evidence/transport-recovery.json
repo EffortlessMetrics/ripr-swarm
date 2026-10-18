@@ -1,0 +1,8 @@
+{
+  "event": "exec-server transport disconnected during new process creation; existing native session remained reachable",
+  "recovery": "fresh exec read succeeded; git clean and ls-remote verified f4be8084a1cbc7cd9d66c7e10ec4b9eb46b7a5bc; existing precommit41736 alive; no command restarted",
+  "source_local_only_changes": false,
+  "retained_local_only": "raw receipts, binaries, target/cache/native/reviewer labs; evidence branch publication pending",
+  "precommit_outcome": "pending at recovery; final terminal receipts authoritative",
+  "consumer_replay": "f4be native0; raw JSON complete52/52; comparison independently rerun after recovery, all52 unchanged"
+}

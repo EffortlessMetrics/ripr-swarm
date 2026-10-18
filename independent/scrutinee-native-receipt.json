@@ -1,0 +1,26 @@
+[
+  {
+    "case": "original",
+    "compile_exit": 0,
+    "run_exit": 0,
+    "source_sha256": "edc474844bf7c57be6766c64d73991fba51a523e8a7ab7162f4e55cdcbb34cb0"
+  },
+  {
+    "case": "some-zero",
+    "compile_exit": 0,
+    "run_exit": 0,
+    "source_sha256": "4d8842632650aa1481f4a0a12e96744768562280e6ace3748e5ca69b92a627cb"
+  },
+  {
+    "case": "none-zero",
+    "compile_exit": 0,
+    "run_exit": 0,
+    "source_sha256": "5e78537d7cc55e628b9958db2b56ce150de3265d34c760ec7644f556424af5c9"
+  },
+  {
+    "case": "both-zero",
+    "compile_exit": 0,
+    "run_exit": 0,
+    "source_sha256": "b0aa735d228819d910ea9315850e5216598113ab933432d0804a0402c3ec2631"
+  }
+]

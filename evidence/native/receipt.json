@@ -1,0 +1,18 @@
+{
+  "original": {
+    "compile_exit": 0,
+    "run_exit": 0,
+    "source_sha256": "110ff7f2a315593c7d608d84c8d34b4379d98958f4ee3dda2136adda75d65029"
+  },
+  "some-zero": {
+    "compile_exit": 0,
+    "run_exit": 101,
+    "source_sha256": "c0559f76a72344d42f73c4cc4aeb1438fad35bb48becb5756c9ece04e6dbaf2a"
+  },
+  "none-zero": {
+    "compile_exit": 0,
+    "run_exit": 101,
+    "source_sha256": "46ced7fd6a1088b371648fdbe847e3b42c5ba64400228d9bd24cab2c5a1990de"
+  },
+  "helper_sha256": "6a0826d80c1142b4c08183955d8b2cfe4e72abced15f86af9aedcb40b177ee3c"
+}

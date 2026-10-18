@@ -1,0 +1,41 @@
+{
+  "commit": "ae0e993c3a3f41068c7f90efb3a1b4f9c1dba952",
+  "binary": "/workspace/5500-target/debug/deps/ripr-ae895c9b88ff76c4",
+  "results": [
+    {
+      "test": "analysis::classify::owner_pin::tests::bare_call_names_only_a_module_level_function",
+      "native_exit": 0,
+      "passed": 1
+    },
+    {
+      "test": "analysis::classify::owner_pin::tests::bare_call_is_defeated_by_another_free_function_or_a_local_binding",
+      "native_exit": 0,
+      "passed": 1
+    },
+    {
+      "test": "analysis::classify::owner_pin::tests::return_path_gate_needs_the_changed_tail_on_the_pinned_path",
+      "native_exit": 0,
+      "passed": 1
+    },
+    {
+      "test": "analysis::classify::owner_pin::tests::a_tail_that_skips_its_changed_part_on_some_inputs_is_not_established",
+      "native_exit": 0,
+      "passed": 1
+    },
+    {
+      "test": "analysis::classify::owner_pin::tests::shared_return_admission_uses_the_outer_invocation_identity",
+      "native_exit": 0,
+      "passed": 1
+    },
+    {
+      "test": "analysis::classify::owner_pin::tests::a_shadowed_primitive_return_is_not_a_scalar",
+      "native_exit": 0,
+      "passed": 1
+    },
+    {
+      "test": "analysis::classify::owner_pin::tests::an_equality_whose_expected_side_names_the_owner_is_not_a_pin",
+      "native_exit": 0,
+      "passed": 1
+    }
+  ]
+}

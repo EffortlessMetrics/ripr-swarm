@@ -1,0 +1,10 @@
+ripr progress: loading_input [diff]
+ripr progress: analyzing [diff]
+ripr progress: analyzing still active after 2s
+ripr: 1 Rust module composition limitation(s): tests/common/cli_lock.rs:rust_module_ambiguous_parent; affected module contexts remain fail-closed. This is an analysis-limit note about indexed context, not a finding: no action is needed unless evidence you expected from a listed file is missing. To resolve rust_module_ambiguous_parent, give each listed file one owner: declare it from a single parent `mod` item (drop duplicate `#[path]` declarations and keep only one of `<name>.rs` or `<name>/mod.rs`); a shared `tests/<name>/mod.rs` helper needs the same `mod <name>;` declaration, with the same `#[cfg(test)]` gating, in every integration test.
+ripr progress: analyzing still active after 10s
+ripr progress: analyzing still active after 10s
+ripr progress: analyzing still active after 10s
+ripr progress: building_output [diff]
+ripr: detected .ripr/suppressions.toml under the analyzed root; it was not applied to this check. Rerun this check with --suppression-policy .ripr/suppressions.toml to apply it.
+ripr progress: completed [diff]

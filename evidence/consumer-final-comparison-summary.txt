@@ -1,0 +1,123 @@
+{
+  "consumer_head": "278253a03b00d1aa777eeba7633954122163890f",
+  "consumer_base": "715a36434a56be3a9abeb5545012d56e2cb9cb60",
+  "diff_bytes": 40491,
+  "diff_sha256": "6af0470bd2c7a8648325402af4d5294c94f35304403ef2c3952ffe986adc8b02",
+  "target": {
+    "id": "probe:src_proof_budget.rs:match_arm:67654dc6",
+    "before": "weakly_exposed",
+    "after": "weakly_exposed",
+    "status": "unchanged",
+    "changed_fields": [],
+    "probe": {
+      "id": "probe:src_proof_budget.rs:match_arm:67654dc6",
+      "family": "match_arm",
+      "delta": "control",
+      "file": "./src/proof/budget.rs",
+      "line": 96,
+      "expression": "match lease.settled_elapsed_ms"
+    },
+    "source_currentness": "candidate_current"
+  },
+  "inventory": {
+    "unchanged": 52
+  },
+  "other_top_level_changes": [],
+  "claim_boundary": "Exact frozen consumer comparison only; no hosted, installed, merge or full consumer clearance."
+}
+{
+  "predecessor": {
+    "sha256": "e67563d1ec9aad34b8c54d5f341a13114b93469c73bb6b97f55f6ccbe66db96b",
+    "count": 52,
+    "classes": {
+      "weakly_exposed": 20,
+      "exposed": 6,
+      "static_unknown": 21,
+      "infection_unknown": 3,
+      "propagation_unknown": 2
+    },
+    "current_classes": {
+      "weakly_exposed": 18,
+      "exposed": 6,
+      "static_unknown": 17,
+      "infection_unknown": 3,
+      "propagation_unknown": 2
+    },
+    "deleted_classes": {
+      "static_unknown": 4,
+      "weakly_exposed": 2
+    },
+    "analysis_outcome": {
+      "analysis_complete": true,
+      "outcome": {
+        "schema_version": "0.1",
+        "kind": "complete_with_findings",
+        "identity": {
+          "repository_identity": null,
+          "root_identity": null,
+          "config_identity": null,
+          "base_revision": null,
+          "input_identity": "sha256:6af0470bd2c7a8648325402af4d5294c94f35304403ef2c3952ffe986adc8b02",
+          "snapshot_identity": null,
+          "git_candidate_subject": null
+        },
+        "counts": {
+          "changed_file_count": 10,
+          "changed_line_count": 644,
+          "candidate_line_count": 46,
+          "probe_count": 52,
+          "finding_count": 52
+        },
+        "limitations": [],
+        "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+      }
+    }
+  },
+  "candidate": {
+    "sha256": "e67563d1ec9aad34b8c54d5f341a13114b93469c73bb6b97f55f6ccbe66db96b",
+    "count": 52,
+    "classes": {
+      "weakly_exposed": 20,
+      "exposed": 6,
+      "static_unknown": 21,
+      "infection_unknown": 3,
+      "propagation_unknown": 2
+    },
+    "current_classes": {
+      "weakly_exposed": 18,
+      "exposed": 6,
+      "static_unknown": 17,
+      "infection_unknown": 3,
+      "propagation_unknown": 2
+    },
+    "deleted_classes": {
+      "static_unknown": 4,
+      "weakly_exposed": 2
+    },
+    "analysis_outcome": {
+      "analysis_complete": true,
+      "outcome": {
+        "schema_version": "0.1",
+        "kind": "complete_with_findings",
+        "identity": {
+          "repository_identity": null,
+          "root_identity": null,
+          "config_identity": null,
+          "base_revision": null,
+          "input_identity": "sha256:6af0470bd2c7a8648325402af4d5294c94f35304403ef2c3952ffe986adc8b02",
+          "snapshot_identity": null,
+          "git_candidate_subject": null
+        },
+        "counts": {
+          "changed_file_count": 10,
+          "changed_line_count": 644,
+          "candidate_line_count": 46,
+          "probe_count": 52,
+          "finding_count": 52
+        },
+        "limitations": [],
+        "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+      }
+    }
+  }
+}

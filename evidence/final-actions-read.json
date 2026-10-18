@@ -1,0 +1,7 @@
+{
+  "head": "f4be8084a1cbc7cd9d66c7e10ec4b9eb46b7a5bc",
+  "read_only": true,
+  "total_count": 0,
+  "runs": [],
+  "claim": "Observed zero final-head Actions runs. No workflow request or PR opening by this lane."
+}

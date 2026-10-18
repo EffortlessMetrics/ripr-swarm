@@ -1,0 +1,20 @@
+warning: unreachable expression
+ --> /workspace/5500-review/scrutinee-original.rs:3:25
+  |
+3 |     match { return 600; lease.elapsed } {
+  |             ----------  ^^^^^^^^^^^^^ unreachable expression
+  |             |
+  |             any code following this expression is unreachable
+  |
+  = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `lease`
+ --> /workspace/5500-review/scrutinee-original.rs:2:11
+  |
+2 | fn charge(lease: &Lease) -> u64 {
+  |           ^^^^^ help: if this is intentional, prefix it with an underscore: `_lease`
+  |
+  = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: 2 warnings emitted
+

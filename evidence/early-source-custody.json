@@ -1,0 +1,11 @@
+{
+  "branch": "codex/5500-whole-tail-observation",
+  "head": "a982659ab5d21e8088febbcdf31dc143b9d99207",
+  "parent": "16ff7479d2a78fd9558b4ff9f5ad6c803c2857d7",
+  "operation": "ordinary non-force git push of exact commit to new branch",
+  "native_exit": 0,
+  "remote_ref_readback": "a982659ab5d21e8088febbcdf31dc143b9d99207",
+  "subject": "initial tests-only checkpoint; later matrix remains local until coherent source publication",
+  "pr_created": false,
+  "hosted_ci_requested": false
+}

@@ -1,0 +1,131 @@
+Final independent exact-head source inspection — 2026-10-18 UTC
+
+reviewed_head_sha: d0412aed451fbda53eb6621109654517476ee0a6
+reviewed_tree: 6d3669c6eaf4377ab0ad7d2a8f747d35daac38f0
+repository/branch: /workspace/ripr-swarm, codex/5500-whole-tail-observation
+integration_basis: 16ff7479d2a78fd9558b4ff9f5ad6c803c2857d7,
+872e30737142ac3e0e977603fa4cc684d662a5ad.
+review_route: AGENTS.md and .agents/skills/review-pr/SKILL.md.
+
+claim_boundary:
+Newly added unique root, synchronous statement-free primitive scalar owner's
+whole-tail MatchExpr HEADER may obtain an independent whole-result observation
+receipt, with exact parser/index/source/diff/old-owner custody and existing
+assertion invocation/macro/callee/expected/result overwrite guards. Opaque inputs
+are not evaluated and supply no individual-arm selection or coverage authority.
+No threshold, suppression, family, public DTO, macro-parity, helperargs or broad
+expected-rebinding expansion. Actual consumer improvement is not established.
+
+changed_surfaces_and_semantic_owners_inspected:
+Cumulative review reads full15-path16ff..fcff, full4-pathfcff..d92 and full11-path
+d92..d041 diffs; preserved detailed records independent-review.txt and
+repaired-review.txt describe authority and test mapping. Final source changed
+from d92 ONLY by .into() conversion of a String to SourceText in a cfg(test)
+owner-body mutation. All other production source blobs unchanged; production
+prefix of whole_tail_match.rs byte-identical SHA256
+878b0cbe5d80cccf4d3f03f0731715d07bbb678785069aba7959815ce263e094.
+The14 independently executed repaired CLI controls therefore remain applicable
+source-equivalent evidence, not falsely described as final-stamped executions.
+
+Original P1 and resolution:
+fcff falsely exposed `match { return 600; lease.elapsed }` as whole match result
+observation even though the scrutinee returned first. Independent rustc original,
+Some=>0, None=>0 and BOTH=>0 all compiled/passed, while fcffCLI exposed header.
+The repaired production rejects explicit return/?/break/continue/yield and all
+MacroCall descendants throughout this match before Any constructor admission.
+Independent frozen d92CLI returns weak for the original and all3 arm mutants,
+macro scrutinee and explicit arm return; retained exact1header per fixture proves
+refusal, not row disappearance. Original finding FIXED; no open source finding.
+Validated all-added owner/parseable old source/no old same-nameFn outranks heuristic
+probe.before after repair. Public neighbor-old test pins Some-before+exposed;
+moved-existingowner and unread-old-source negatives retain custody authority.
+
+Permanent regression and semantic honesty review:
+Final fixture input/src/lib.rs reproduces exact nonlocal scrutinee return in a
+new documented pub(crate) owner and a direct literal equality. Its input helper
+avoids incidental Some/None assertion tokens. diff.patch adds exactly lines3..9
+(owner doc+declaration+body), keeping meaningful existing struct/input/test. Old
+source therefore lacks charge; valid new-owner custody reaches the repaired
+exit gate. Fixture SPEC explains why all arm mutants survive.
+Golden JSON contains4subjects: header0ca211c2, return-value925496ef, Someafe43b21,
+None23efc786; all weak. Human output4probes/4weak and actionable weak header agrees.
+Corpus case rust_whole_tail_match_scrutinee_return_bypasses_observation scopes
+probe_family=match_arm: EXACTLY3subjects (header+two arms), must_not_promote,
+must_not_report_clean and expected_finding_count3. Existing evaluator inspected
+at xtask/src/evidence_promotion.rs:1420+,1970+,4348+: family scoping rejects empty
+matches, count is applied after filtering, and must_not_promote rejects each
+exposed member. No existing corpus guard changed. Thus neither golden rebless
+nor disappearing findings can make this regression vacuously pass.
+Read retained actual frozenfcff output copied as wrong expected/check.json:
+standard gate fails specifically newheader0ca211c2 exposed under must_not_promote
+(corpus-wrong-gate.log). Correct golden restored SHA256
+effa3b0a234b3c6f3fe03be9a5a29b028c14df84177ab471f51359d01a44b0af,
+independently hashed by reviewer; corpus-final-gate.log passes. Wrong-output
+experiment is grounded in real faulty CLI output, not synthetic class editing.
+Traceability links fixture/code/goldens; SPEC documents earlier-line binding
+requirement and permanent counterexample; source/test type conversion is valid.
+
+proof_and_ci_observed:
+- Independent14CLI controls on d92 exact binary SHA256
+  ea333b0cbfa9568c7aa7cc54741456049da1922fcc2ff79407e3429930bbecb0:
+  all exit0, exact1header each; P1 original+3mutants nowweak, macro/arm exits weak,
+  positive and multiline binding exposed, same-line binding weak, harmless exit
+  words inside string exposed, statement-before-tail weak, fake MAX original/
+  wrong result weak. /workspace/5500-review/d92-cli-controls-receipt.json.
+- Independent native4 compile0/run0 witnesses in scrutinee-native-receipt.json;
+  actual consumer helper original3pass/mutants compile+fail separately retained.
+- Repaired author integration output read: field selector15/15, native roots5/5,
+  whole-tail9/9 pass. cfgtest type-fix provenance unit1/1 passes; shared-owner
+  receipt7targeted tests pass on ae0 source-equivalent production. These are
+  retained source-stage checks, not hosted or finalstamp claims.
+- Native goldens bless log inspected; new fixture only. Initial fullgoldens
+  infrastructure failure missing locked anyhow1.0.100 is separately owned;
+  supported goldens prepare log succeeds. No old golden rebless in final diff.
+- Corpus actual-wrong output gate fails and correct output gate passes as above.
+- Predecessor full unchanged suite reused; no reviewer Cargo invocation/build.
+  Root owns final check-fast/precommit/fullgoldens/stampedCLI/consumer replay.
+
+blocking_findings: NONE in final bounded source/fixture review.
+non_blocking_suggestions: none requiring action; preserve documented conservative
+exit/macro and same-line binding limitations in claims.
+refuted_or_stale_findings: original P1 resolved. Candidate does not globally
+admit MatchArm through ordinary OwnerReturnPin, and whole receipt never supplies
+ArmSelector authority. Attempted macro MAX false promotion concretely staysweak.
+proof_or_review_missing_at_this_record:
+Root final changed-path checks and final stampedCLI/consumer replay were pending
+at reviewer handoff. No hosted checks, PR/review/Ready/merge transition requested.
+Actual exact fcff consumer52subjects byte-identical to predecessor, target67654dc6
+weak and18currentweak unchanged. Diagnostic root reports existing assertion
+macro/serde/closure admission refusals; this candidate does not repair those.
+Future final replay must be reported from actual receipt, not inferred18->17.
+affected_currentness_dimensions: final identity, cfgtest conversion, fixture/
+corpus/public documentation refreshed. Production14CLI proof remains current by
+exact source equivalence; no independent claim finalbinary executed yet.
+residual_assumptions_and_non_claims:
+Candidate-level source review, Linux tools only; no platform/process/security
+source change. No test adequacy, full consumer clearance, installed adoption,
+hosted qualification or merge readiness. Author checkout never edited/moved.
+Labs and all evidence retained under explicit user no-cleanup instruction.
+No denied or pending permission action; only named proof work remains root-owned.
+disposition: REVIEW_INCOMPLETE overall while final local/remote evidence remains
+pending; bounded source/fixture inspection complete with no blocking findings.
+
+Additional final authority challenge (parent-requested, exact d92CLI):
+Two-file root `mod types; use types::*;` and newly added `fn charge(x: bool)
+-> u64 { match x { true=>u64(1), false=>u64(2) } }`; types.rs defines custom
+Debug u64 with always-true PartialEq<i32>, test compares charge(true) to literal600.
+Real header40feaca2 remains weakly_exposed, CLI nativeexit0, no whole-tail receipt
+credited. Suspected glob-bound custom scalar false promotion REFUTED for this
+concrete control. Raw source/diff/JSON/stderr retained at
+/workspace/5500-review/glob_scalar. No further broadening or native compilation
+because shared admission refused the case. Final no-blocking-source disposition
+unchanged; this does not establish arbitrary glob/type resolution completeness.
+
+Discriminating qualified-macro follow-up:
+Changed only the glob-scalar control's assertion to std::assert_eq!, then
+::std::assert_eq!, preserving source/diff/type setup. BOTH exact d92CLI runs
+nativeexit0, exact1 header40feaca2, weakly_exposed without whole-tailreceipt.
+Thus qualifying the macro did not expose the suspected custom-equality pin;
+concrete concern remains refuted. /workspace/5500-review/glob_scalar/
+qualified-cli-receipt.json and std/absolute_std raw inputs/outputs retained.
+No native compile warranted after both cases refused; no scope broadening.

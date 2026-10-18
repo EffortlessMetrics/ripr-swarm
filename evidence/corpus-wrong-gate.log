@@ -1,0 +1,4 @@
+    Finished `dev` profile [unoptimized] target(s) in 0.16s
+     Running `/workspace/5500-target/debug/xtask check-evidence-promotion-honesty`
+xtask: check-evidence-promotion-honesty failed; see target/ripr/reports/evidence-promotion-honesty.md
+evidence promotion honesty case `rust_whole_tail_match_scrutinee_return_bypasses_observation` (fixture `fixtures/whole_tail_match_scrutinee_return`): finding `probe:src_lib.rs:match_arm:0ca211c2` promoted to exposed (classification `exposed`) but `must_not_promote` is asserted

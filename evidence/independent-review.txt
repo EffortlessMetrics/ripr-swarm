@@ -1,0 +1,128 @@
+Independent adversarial candidate review — 2026-10-18 UTC
+
+P1 BLOCKING SOURCE/ORACLE FINDING: a non-local return inside the scrutinee
+bypasses the match result but receives whole-tail header observation credit.
+Location: crates/ripr/src/analysis/classify/owner_pin/whole_tail_match.rs:78-87,
+127-128. The adapter verifies the outer body's statement-free tail MatchExpr,
+but does not prove that evaluating its scrutinee reaches the match result. It
+then constructs ReturnPathGate::Any without the ordinary owner return-path gate.
+
+Concrete compilable trigger:
+  fn charge(lease: &Lease) -> u64 {
+      match { return 600; lease.elapsed } {
+          Some(ms) => ms,
+          None => 600,
+      }
+  }
+  // test uses elapsed: None and assert_eq!(charge(&lease), 600)
+All owner lines are added, parser/index/diff custody is valid, owner synchronous
+and primitive-returning. Exact fcff CLI reports header probe0ca211c2 exposed,
+including whole_tail_match_return_observation and the assertion that the whole
+tail match supplies the observed owner return. Predecessor-equivalent CLI says
+weakly_exposed. Standalone rustc --test compiles and passes original, Some=>0,
+None=>0, and BOTH=>0 (each compile0/run0, 1test passes). Match results are never
+observed: the scrutinee returns from the owner first. This is a new false
+promotion, not a missing-input advisory or a merely weak test style.
+Disposition: repair the adapter's owner-side control-flow admission; require
+that the scrutinee cannot exit the owner before the match result (a conservative
+refusal of non-local return syntax is acceptable for this bounded slice). Add a
+public API negative and appropriate evidence-promotion honesty coverage. Do not
+repair by weakening thresholds or borrowing arm-selector authority.
+Proof: /workspace/5500-review/cli-controls-receipt.json,
+/workspace/5500-review/scrutinee-native-receipt.json, source/diff/raw outputs and
+native compile/run logs adjacent. Author/root were notified immediately.
+
+reviewed_head_sha: fcffca11ffa7e2d0a0834e8dd5066f79660f0a68
+reviewed_tree: ce57a5860c97c6c2dca32e05f44580f2f72a7d66
+repository: /workspace/ripr-swarm, source branch codex/5500-whole-tail-observation
+integration_basis: predecessor16ff7479d2a78fd9558b4ff9f5ad6c803c2857d7,
+tree872e30737142ac3e0e977603fa4cc684d662a5ad; 15 changed paths inspected.
+claim_boundary: exact added whole-tail MatchExpr HEADER observation for a unique
+root synchronous statement-free primitive scalar owner, opaque input permitted
+only for whole result. No individual arm selection/coverage, gap/unknown changes,
+macro-site parity (#8772), helperargs (#8592), broad expected rebinding (#8597),
+consumer clearance, hosted qualification, PR/Ready/merge/release authority.
+
+changed_surfaces_and_semantic_owners_inspected:
+- Complete 15-path diff 16ff..fcff, root AGENTS.md, review-pr/SKILL.md.
+- classifier ProbeOrigin and diff/parser custody from RustAdapter; repo-mode and
+  synthetic classifications use absent custody and therefore cannot enter adapter.
+- WholeTailMatchObservation root/AST/name/function-token/index body/new owner/old
+  reconstructed source gates; reconstruct_old_source exact added text matching.
+- OwnerReturnPin extraction into private from_owner_path; ordinary establish
+  still excludes MatchArm. Shared admitted assertion execution/callee/macro,
+  expected reaches owner, return binding/overwrite, drop and should_panic guards.
+- reveal admission and token-match route, owner_pin_credited and evidence wording;
+  no selector is supplied by header receipt. Field selector test expectation change.
+- SPEC0229 addition, changelog, traceability entries all inspected; no public DTO,
+  threshold, family, suppression, row deletion or unrelated owner implementation.
+
+claims_to_evidence_and_negative_mapping:
+1. Exact added header/new owner: API documented private/pub/pub(crate) positive;
+   existing owner/non-tail/nested/discarded match/explicit attribute/async/wrong
+   diff negatives. Unit receipt mutates complete flag, byte span, owner name/body/
+   fn-start/id/file; probe owner/line/text/after/before/file; diff path/text/missing/
+   duplicate/old. Positives assert exactly one header, not an empty denominator.
+2. Exact invocation observed: API wrong owner, wrong result, discarded/deferred/
+   uncalled call, shadowed macro/callee, self expected and overwritten result
+   negatives; immutable result-binding positive. Existing shared semantics remain
+   authority; constructor extraction does not duplicate them.
+3. Independent expected side: separate API macro/static/rewritten binding, u64
+   module, std/core root rebinding negatives. Adapter admits whole literal or
+   primitive integer MAX operands and then shared pin admission. Reviewer tried
+   macro-generated local u64::MAX with custom always-true PartialEq (original and
+   wrong result): BOTH stay weak in candidate and predecessor. Suspected bypass
+   refuted for those concrete fixtures; no generalized macro-parity claim.
+4. No arm credit: API None-only whole header positive plus explicit nonempty Some
+   arm stays nonexposed. Opaque imported/saturating MAX header positive separate
+   from individual-arm selection. No new ArmSelector implementation.
+5. Owner-side match supplies result: OUTER-shape negatives exist, but scrutinee
+   non-local exit absent. Independent CLI/native counterexample above blocks.
+
+proof_and_ci_observed:
+- Reviewer used only git object reads/source inspection; author checkout never
+  moved or edited. All fixture/control writes are owned /workspace/5500-review.
+  User instruction retains labs, so no cleanup performed.
+- Candidate binary SHA256 e288e9b15e1221de7c47adac2f3024da8cb8b055595a0d67d961e68efbc7d528;
+  parent supplied final identity, reviewer independently hashed bytes.
+- 6 fixtures x 2 binaries = 12 CLI executions, all native exit0, retained raw JSON
+  and stderr. Positive candidate exposed/predecessorweak; statement-before-tail
+  weak in both; macro fake MAX controls weak in both; scrutinee return false
+  promotion candidateexposed/predecessorweak. Literal expected wrong-production
+  fixture is exposed statically (expected discriminator will fail; no runtime
+  passing claim). CLI receipt script initially used incorrect JSON key 'class',
+  exited before recording; corrected to actual 'classification', complete rerun
+  succeeded; initial wrapper error is not a product failure.
+- Native bypass challenge 4/4 compiled and passed with independent rustc calls;
+  permitted by root, no Cargo/target sharing. Compiler warning of unreachable
+  scrutinee tail is retained in logs and consistent with the control.
+- Read retained author RED: 3behavioral failures/2passes; earlier GREEN5/5. These
+  are source-stage receipts, not final fcff7-test pass claims. Final focused API/
+  provenance/shared-owner checks were still compiling at last reviewer read.
+- Retained actual consumer native original3passes / Some=>0 and None=>0 compile
+  success+testfail support meaningful real helper tests but cannot establish
+  candidate receipt reaches the actual consumer.
+- Read root-produced exact consumer comparison: source278253a/base715a364;
+  diff40491bytes SHA6af0470bd2c7a8648325402af4d5294c94f35304403ef2c3952ffe986adc8b02.
+  Candidate and predecessor outputs have identical SHAe67563d1ec9aad34b8c54d5f341a13114b93469c73bb6b97f55f6ccbe66db96b,
+  52/52subjects,6exposed20weak26unknown; target67654dc6 staysweak;
+  candidate_current weak18 unchanged. Reviewer read receipt; root owns execution.
+  Thus the intended actual-consumer progress is NOT_ESTABLISHED and18->17 false
+  for fcff. No claim this adapter already resolves actual consumer target.
+
+blocking_findings: P1 source false promotion above; candidate requires repair.
+non_blocking_suggestions: none beyond concrete missing negative described above.
+refuted_or_stale_findings: macro-generated MAX attempted bypass stayedweak in both
+binaries; no confirmed MAX finding. Source adapter is separate from arm selector,
+so a global MatchArm OwnerReturnPin admission concern is refuted by actual code.
+proof_or_review_missing: corrected-head review/proof; real consumer target
+improvement; final focused checks at last read; hosted checks/reviews intentionally
+not initiated. No broad unchanged predecessor suite repeated.
+affected_currentness_dimensions: production authority, stimulus/oracle, public
+propagation claim and head identity require refreshed review after repair.
+residual_assumptions_and_non_claims: Linux execution only; no new platform/process/
+packaging/security behavior in changed source, so no broad platform suite run.
+No hosted merge readiness; no installed adoption or consumer full clearance.
+No filesystem approval denial or pending action; no destructive operation.
+disposition: REPAIR_REQUIRED for fcffca11. Retain this exact-head record even if a
+successor repairs the candidate; successor findings/currentness need an addendum.

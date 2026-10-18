@@ -1,0 +1,44 @@
+{
+  "binary_sha256": "b35ae29af7c5b2e148eee614754a616456b22cf0758b69b0ef0c09b761bbb80e",
+  "consumer_head": "278253a03b00d1aa777eeba7633954122163890f",
+  "consumer_tree": "6e288c65d71e1a7f7f38fa064221e53163c9b47d",
+  "consumer_base": "715a36434a56be3a9abeb5545012d56e2cb9cb60",
+  "command": [
+    "ripr-predecessor",
+    "check",
+    "--root",
+    "/workspace/5500-consumer",
+    "--diff",
+    "/workspace/5500-whole-tail-evidence/consumer.diff",
+    "--mode",
+    "ready",
+    "--format",
+    "json"
+  ],
+  "environment": {
+    "RIPR_CACHE_DIR": "/workspace/5500-whole-tail-evidence/cache-predecessor",
+    "RAYON_NUM_THREADS": "2"
+  },
+  "native_exit": 0,
+  "analysis_complete": true,
+  "counts": {
+    "changed_file_count": 10,
+    "changed_line_count": 644,
+    "candidate_line_count": 46,
+    "probe_count": 52,
+    "finding_count": 52
+  },
+  "output_sha256": "e67563d1ec9aad34b8c54d5f341a13114b93469c73bb6b97f55f6ccbe66db96b",
+  "historical_output_sha256": "320eac3237b7454f44729d727ffb627c551e150f8a6e5f92f223475d80dc6b4c",
+  "historical_comparison": "same class counts and52 subjects; historical byte equality not established because prior raw output not available and root differs",
+  "stderr_limitation": "tests/common/cli_lock.rs:rust_module_ambiguous_parent; fail-closed context note; outcome reports complete",
+  "claim": "Fresh local exact consumer predecessor reference only; reused predecessor full source validation, not repeated.",
+  "production_source": "16ff7479d2a78fd9558b4ff9f5ad6c803c2857d7",
+  "production_source_tree": "872e30737142ac3e0e977603fa4cc684d662a5ad",
+  "built_commit": "a982659ab5d21e8088febbcdf31dc143b9d99207",
+  "built_version": "ripr 0.11.0 (a982659ab5d21e8088febbcdf31dc143b9d99207)",
+  "build_subject_note": "Tests-only checkpoint; production inputs match16ff. It is a fresh predecessor-equivalent reference executable, not the prior retained16ff executable.",
+  "checkpoint_changed_paths": [
+    "crates/ripr/tests/whole_tail_match_observation.rs"
+  ]
+}

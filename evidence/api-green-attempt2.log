@@ -1,0 +1,13 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-swarm/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 1m 20s
+     Running tests/whole_tail_match_observation.rs (/workspace/5500-target/debug/deps/whole_tail_match_observation-f975328be5f8d501)
+
+running 5 tests
+test existing_nested_and_mismatched_owners_never_receive_the_receipt ... ok
+test added_documented_owner_header_observes_its_whole_return ... ok
+test saturated_opaque_imported_input_observes_the_whole_result ... ok
+test whole_tail_receipt_never_selects_an_unobserved_sibling_arm ... ok
+test whole_result_refuses_unobserved_or_ambiguous_assertions ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+

@@ -1,0 +1,42 @@
+{
+  "source_head": "f4be8084a1cbc7cd9d66c7e10ec4b9eb46b7a5bc",
+  "source_tree": "7b181b6917993fb4622c22d7ae75642b746dbd00",
+  "binary": {
+    "path": "/workspace/5500-whole-tail-evidence/ripr-final-f4be8084a",
+    "sha256": "0bdc445a97709960405d2f4d29985ab9db238cbc1723341f0a2acb20af90cc90",
+    "bytes": 125595520,
+    "version": "ripr 0.11.0 (f4be8084a1cbc7cd9d66c7e10ec4b9eb46b7a5bc)"
+  },
+  "command": [
+    "/workspace/5500-whole-tail-evidence/ripr-final-f4be8084a",
+    "check",
+    "--root",
+    "/workspace/5500-consumer",
+    "--diff",
+    "/workspace/5500-whole-tail-evidence/consumer.diff",
+    "--mode",
+    "ready",
+    "--format",
+    "json"
+  ],
+  "env": {
+    "RIPR_CACHE_DIR": "/workspace/5500-whole-tail-evidence/cache-final-f4be",
+    "RAYON_NUM_THREADS": "2"
+  },
+  "native_exit": 0,
+  "consumer_head": "278253a03b00d1aa777eeba7633954122163890f",
+  "consumer_base": "715a36434a56be3a9abeb5545012d56e2cb9cb60",
+  "output_sha256": "e67563d1ec9aad34b8c54d5f341a13114b93469c73bb6b97f55f6ccbe66db96b",
+  "analysis_complete": true,
+  "all_findings": 52,
+  "unchanged": 52,
+  "introduced": 0,
+  "removed": 0,
+  "changed": 0,
+  "target": "probe:src_proof_budget.rs:match_arm:67654dc6",
+  "target_after": "weakly_exposed",
+  "candidate_current_weak": 18,
+  "hypothesis_18_to_17": "NOT_ESTABLISHED",
+  "blocker": "Existing OwnerPinSyntax.admits refuses candidate assertions: MacroBinding(assert_eq), plus OpaqueMacro(serde_json::json) and ClosureExit for other paths. Whole-tail custody succeeds; no gate was weakened.",
+  "claim_boundary": "Exact local producer artifact replay only; no hosted CI, installed adoption, consumer clearance, Ready, merge or release."
+}

@@ -1,0 +1,22 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-swarm/crates/ripr)
+error[E0061]: this function takes 3 arguments but 2 arguments were supplied
+    --> crates/ripr/src/analysis/classify/owner_pin/whole_tail_match.rs:156:42
+     |
+ 156 |                     .is_some_and(|facts| file_imports_foreign_callee_name(&facts.source, name))
+     |                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^--------------------- argument #3 of type `&std::collections::BTreeSet<std::string::String>` is missing
+     |
+note: function defined here
+    --> crates/ripr/src/analysis/classify/reveal.rs:3878:28
+     |
+3878 | pub(in crate::analysis) fn file_imports_foreign_callee_name(
+     |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+3881 |     crate_names: &std::collections::BTreeSet<String>,
+     |     ------------------------------------------------
+help: provide the argument
+     |
+ 156 |                     .is_some_and(|facts| file_imports_foreign_callee_name(&facts.source, name, /* &std::collections::BTreeSet<std::string::String> */))
+     |                                                                                              ++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+For more information about this error, try `rustc --explain E0061`.
+error: could not compile `ripr` (lib) due to 1 previous error

@@ -1,0 +1,16 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-swarm/crates/ripr)
+error[E0308]: mismatched types
+   --> crates/ripr/src/analysis/classify/owner_pin/whole_tail_match.rs:300:40
+    |
+300 |                 "body" => other.body = other.body.replace("600", "601"),
+    |                           ----------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `SourceText`, found `String`
+    |                           |
+    |                           expected due to the type of this binding
+    |
+help: call `Into::into` on this expression to convert `std::string::String` into `facts::model::SourceText`
+    |
+300 |                 "body" => other.body = other.body.replace("600", "601").into(),
+    |                                                                        +++++++
+
+For more information about this error, try `rustc --explain E0308`.
+error: could not compile `ripr` (lib test) due to 1 previous error

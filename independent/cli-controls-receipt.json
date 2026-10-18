@@ -1,0 +1,257 @@
+[
+  {
+    "case": "literal_expected_wrong",
+    "binary": "candidate",
+    "exit": 0,
+    "headers": [
+      {
+        "id": "probe:src_lib.rs:match_arm:8e7ef68c",
+        "class": "exposed",
+        "expression": "match lease.elapsed",
+        "evidence": [
+          "A related test observes a value or effect near the changed behavior",
+          "Reachable tests can plausibly activate this changed behavior",
+          "Related tests appear to reach charge: observes",
+          "Strong oracle found: exact value or pattern assertion",
+          "The whole tail match supplies the observed owner return value; individual-arm selection remains separate",
+          "whole_tail_match_return_observation: exact invocation result pinned; no selected-input or individual-arm credit"
+        ]
+      }
+    ]
+  },
+  {
+    "case": "literal_expected_wrong",
+    "binary": "predecessor",
+    "exit": 0,
+    "headers": [
+      {
+        "id": "probe:src_lib.rs:match_arm:8e7ef68c",
+        "class": "weakly_exposed",
+        "expression": "match lease.elapsed",
+        "evidence": [
+          "A related test observes a value or effect near the changed behavior",
+          "Changed behavior appears to influence match arm result: match lease.elapsed",
+          "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)",
+          "Reachable tests can plausibly activate this changed behavior",
+          "Related tests appear to reach charge: observes",
+          "limitation_last_established_edge: owner parameter field `lease.elapsed` is the changed tail match selector",
+          "limitation_first_unresolved_edge: `lease.elapsed` value at the owner invocation and whether a related assertion observes that invocation's returned value",
+          "limitation_analyzer_route: analysis/rust-field-match-selector",
+          "limitation_non_claim: named analyzer limitation only; no coverage, test adequacy, gap absence, or same-invocation proof"
+        ]
+      }
+    ]
+  },
+  {
+    "case": "macro_max",
+    "binary": "candidate",
+    "exit": 0,
+    "headers": [
+      {
+        "id": "probe:src_lib.rs:match_arm:8e7ef68c",
+        "class": "weakly_exposed",
+        "expression": "match lease.elapsed",
+        "evidence": [
+          "A related test observes a value or effect near the changed behavior",
+          "Changed behavior appears to influence match arm result: match lease.elapsed",
+          "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)",
+          "Reachable tests can plausibly activate this changed behavior",
+          "Related tests appear to reach charge: observes",
+          "limitation_last_established_edge: owner parameter field `lease.elapsed` is the changed tail match selector",
+          "limitation_first_unresolved_edge: `lease.elapsed` value at the owner invocation and whether a related assertion observes that invocation's returned value",
+          "limitation_analyzer_route: analysis/rust-field-match-selector",
+          "limitation_non_claim: named analyzer limitation only; no coverage, test adequacy, gap absence, or same-invocation proof"
+        ]
+      }
+    ]
+  },
+  {
+    "case": "macro_max",
+    "binary": "predecessor",
+    "exit": 0,
+    "headers": [
+      {
+        "id": "probe:src_lib.rs:match_arm:8e7ef68c",
+        "class": "weakly_exposed",
+        "expression": "match lease.elapsed",
+        "evidence": [
+          "A related test observes a value or effect near the changed behavior",
+          "Changed behavior appears to influence match arm result: match lease.elapsed",
+          "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)",
+          "Reachable tests can plausibly activate this changed behavior",
+          "Related tests appear to reach charge: observes",
+          "limitation_last_established_edge: owner parameter field `lease.elapsed` is the changed tail match selector",
+          "limitation_first_unresolved_edge: `lease.elapsed` value at the owner invocation and whether a related assertion observes that invocation's returned value",
+          "limitation_analyzer_route: analysis/rust-field-match-selector",
+          "limitation_non_claim: named analyzer limitation only; no coverage, test adequacy, gap absence, or same-invocation proof"
+        ]
+      }
+    ]
+  },
+  {
+    "case": "macro_max_wrong",
+    "binary": "candidate",
+    "exit": 0,
+    "headers": [
+      {
+        "id": "probe:src_lib.rs:match_arm:8e7ef68c",
+        "class": "weakly_exposed",
+        "expression": "match lease.elapsed",
+        "evidence": [
+          "A related test observes a value or effect near the changed behavior",
+          "Changed behavior appears to influence match arm result: match lease.elapsed",
+          "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)",
+          "Reachable tests can plausibly activate this changed behavior",
+          "Related tests appear to reach charge: observes",
+          "limitation_last_established_edge: owner parameter field `lease.elapsed` is the changed tail match selector",
+          "limitation_first_unresolved_edge: `lease.elapsed` value at the owner invocation and whether a related assertion observes that invocation's returned value",
+          "limitation_analyzer_route: analysis/rust-field-match-selector",
+          "limitation_non_claim: named analyzer limitation only; no coverage, test adequacy, gap absence, or same-invocation proof"
+        ]
+      }
+    ]
+  },
+  {
+    "case": "macro_max_wrong",
+    "binary": "predecessor",
+    "exit": 0,
+    "headers": [
+      {
+        "id": "probe:src_lib.rs:match_arm:8e7ef68c",
+        "class": "weakly_exposed",
+        "expression": "match lease.elapsed",
+        "evidence": [
+          "A related test observes a value or effect near the changed behavior",
+          "Changed behavior appears to influence match arm result: match lease.elapsed",
+          "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)",
+          "Reachable tests can plausibly activate this changed behavior",
+          "Related tests appear to reach charge: observes",
+          "limitation_last_established_edge: owner parameter field `lease.elapsed` is the changed tail match selector",
+          "limitation_first_unresolved_edge: `lease.elapsed` value at the owner invocation and whether a related assertion observes that invocation's returned value",
+          "limitation_analyzer_route: analysis/rust-field-match-selector",
+          "limitation_non_claim: named analyzer limitation only; no coverage, test adequacy, gap absence, or same-invocation proof"
+        ]
+      }
+    ]
+  },
+  {
+    "case": "non_tail",
+    "binary": "candidate",
+    "exit": 0,
+    "headers": [
+      {
+        "id": "probe:src_lib.rs:match_arm:8e7ef68c",
+        "class": "weakly_exposed",
+        "expression": "match lease.elapsed",
+        "evidence": [
+          "A related test observes a value or effect near the changed behavior",
+          "Changed behavior appears to influence match arm result: match lease.elapsed",
+          "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)",
+          "Reachable tests can plausibly activate this changed behavior",
+          "Related tests appear to reach charge: observes"
+        ]
+      }
+    ]
+  },
+  {
+    "case": "non_tail",
+    "binary": "predecessor",
+    "exit": 0,
+    "headers": [
+      {
+        "id": "probe:src_lib.rs:match_arm:8e7ef68c",
+        "class": "weakly_exposed",
+        "expression": "match lease.elapsed",
+        "evidence": [
+          "A related test observes a value or effect near the changed behavior",
+          "Changed behavior appears to influence match arm result: match lease.elapsed",
+          "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)",
+          "Reachable tests can plausibly activate this changed behavior",
+          "Related tests appear to reach charge: observes"
+        ]
+      }
+    ]
+  },
+  {
+    "case": "positive",
+    "binary": "candidate",
+    "exit": 0,
+    "headers": [
+      {
+        "id": "probe:src_lib.rs:match_arm:8e7ef68c",
+        "class": "exposed",
+        "expression": "match lease.elapsed",
+        "evidence": [
+          "A related test observes a value or effect near the changed behavior",
+          "Reachable tests can plausibly activate this changed behavior",
+          "Related tests appear to reach charge: observes",
+          "Strong oracle found: exact value or pattern assertion",
+          "The whole tail match supplies the observed owner return value; individual-arm selection remains separate",
+          "whole_tail_match_return_observation: exact invocation result pinned; no selected-input or individual-arm credit"
+        ]
+      }
+    ]
+  },
+  {
+    "case": "positive",
+    "binary": "predecessor",
+    "exit": 0,
+    "headers": [
+      {
+        "id": "probe:src_lib.rs:match_arm:8e7ef68c",
+        "class": "weakly_exposed",
+        "expression": "match lease.elapsed",
+        "evidence": [
+          "A related test observes a value or effect near the changed behavior",
+          "Changed behavior appears to influence match arm result: match lease.elapsed",
+          "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)",
+          "Reachable tests can plausibly activate this changed behavior",
+          "Related tests appear to reach charge: observes",
+          "limitation_last_established_edge: owner parameter field `lease.elapsed` is the changed tail match selector",
+          "limitation_first_unresolved_edge: `lease.elapsed` value at the owner invocation and whether a related assertion observes that invocation's returned value",
+          "limitation_analyzer_route: analysis/rust-field-match-selector",
+          "limitation_non_claim: named analyzer limitation only; no coverage, test adequacy, gap absence, or same-invocation proof"
+        ]
+      }
+    ]
+  },
+  {
+    "case": "scrutinee_return",
+    "binary": "candidate",
+    "exit": 0,
+    "headers": [
+      {
+        "id": "probe:src_lib.rs:match_arm:0ca211c2",
+        "class": "exposed",
+        "expression": "match { return 600; lease.elapsed }",
+        "evidence": [
+          "A related test observes a value or effect near the changed behavior",
+          "Reachable tests can plausibly activate this changed behavior",
+          "Related tests appear to reach charge: observes",
+          "Strong oracle found: exact value or pattern assertion",
+          "The whole tail match supplies the observed owner return value; individual-arm selection remains separate",
+          "whole_tail_match_return_observation: exact invocation result pinned; no selected-input or individual-arm credit"
+        ]
+      }
+    ]
+  },
+  {
+    "case": "scrutinee_return",
+    "binary": "predecessor",
+    "exit": 0,
+    "headers": [
+      {
+        "id": "probe:src_lib.rs:match_arm:0ca211c2",
+        "class": "weakly_exposed",
+        "expression": "match { return 600; lease.elapsed }",
+        "evidence": [
+          "A related test observes a value or effect near the changed behavior",
+          "Changed behavior appears to influence match arm result: match { return 600; lease.elapsed }",
+          "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)",
+          "Reachable tests can plausibly activate this changed behavior",
+          "Related tests appear to reach charge: observes"
+        ]
+      }
+    ]
+  }
+]

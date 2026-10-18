@@ -1,0 +1,10 @@
+warning: field `timeout_sec` is never read
+ --> /workspace/5500-whole-tail-evidence/native/none-zero.rs:2:58
+  |
+2 | struct ResourceLease { settled_elapsed_ms: Option<u128>, timeout_sec: u64 }
+  |        ------------- field in this struct                ^^^^^^^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: 1 warning emitted
+

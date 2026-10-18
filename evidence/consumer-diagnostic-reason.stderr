@@ -1,0 +1,390 @@
+ripr progress: loading_input [diff]
+ripr progress: analyzing [diff]
+ripr progress: analyzing still active after 2s
+ripr: 1 Rust module composition limitation(s): tests/common/cli_lock.rs:rust_module_ambiguous_parent; affected module contexts remain fail-closed. This is an analysis-limit note about indexed context, not a finding: no action is needed unless evidence you expected from a listed file is missing. To resolve rust_module_ambiguous_parent, give each listed file one owner: declare it from a single parent `mod` item (drop duplicate `#[path]` declarations and keep only one of `<name>.rs` or `<name>/mod.rs`); a shared `tests/<name>/mod.rs` helper needs the same `mod <name>;` declaration, with the same `#[cfg(test)]` gating, in every integration test.
+ripr progress: analyzing still active after 10s
+WHOLETAIL initial complete=true before=None changed="src/proof/budget.rs" owner="src/proof/budget.rs" probe=SourceLocation { file: "/workspace/5500-consumer/src/proof/budget.rs", line: 96, column: 1 } id=SymbolId("src/proof/budget.rs::focused_proof_lease_charged_seconds") span=ParserByteSpan { start_byte: 3402 }
+WHOLETAIL checkpoint 24
+WHOLETAIL checkpoint 29
+WHOLETAIL checkpoint 118
+WHOLETAIL checkpoint 129
+PIN constructor bare=true
+PIN constructor success
+PIN admits test=elapsed_totals_saturate_instead_of_overflowing assertionline=690 text=assert_eq!(focused_proof_lease_charged_seconds(&lease), u64::MAX);
+PIN refuse stage12 reason=Some(Syntax(MacroBinding("assert_eq")))
+WHOLETAIL test=elapsed_totals_saturate_instead_of_overflowing line=690 independent=false admitted=false
+PIN admits test=elapsed_totals_saturate_instead_of_overflowing assertionline=692 text=assert_eq!(remaining.max_total_seconds, 0);
+WHOLETAIL test=elapsed_totals_saturate_instead_of_overflowing line=692 independent=true admitted=false
+PIN admits test=settlement_requires_confirmed_terminal_receipts assertionline=537 text=assert_eq!(
+                lease.settled_elapsed_ms,
+                settles.then_some(25_001),
+                "{status}/{exit_code:?}/{timed_out}"
+            );
+WHOLETAIL test=settlement_requires_confirmed_terminal_receipts line=537 independent=false admitted=false
+PIN admits test=settlement_requires_confirmed_terminal_receipts assertionline=542 text=assert_eq!(lease.timeout_sec, 600);
+WHOLETAIL test=settlement_requires_confirmed_terminal_receipts line=542 independent=true admitted=false
+PIN admits test=settlement_requires_confirmed_terminal_receipts assertionline=543 text=assert_eq!(lease.status, "granted");
+WHOLETAIL test=settlement_requires_confirmed_terminal_receipts line=543 independent=true admitted=false
+PIN admits test=settlement_requires_confirmed_terminal_receipts assertionline=555 text=assert_eq!(lease.settled_elapsed_ms, None, "{bad}");
+WHOLETAIL test=settlement_requires_confirmed_terminal_receipts line=555 independent=false admitted=false
+PIN admits test=settlement_requires_confirmed_terminal_receipts assertionline=556 text=assert_eq!(focused_proof_lease_charged_seconds(&lease), 600);
+PIN refuse stage12 reason=Some(Syntax(MacroBinding("assert_eq")))
+WHOLETAIL test=settlement_requires_confirmed_terminal_receipts line=556 independent=true admitted=false
+PIN admits test=settlement_requires_confirmed_terminal_receipts assertionline=562 text=assert_eq!(lease.settled_elapsed_ms, Some(600_001));
+WHOLETAIL test=settlement_requires_confirmed_terminal_receipts line=562 independent=false admitted=false
+PIN admits test=settlement_requires_confirmed_terminal_receipts assertionline=563 text=assert_eq!(focused_proof_lease_charged_seconds(&lease), 601);
+PIN refuse stage12 reason=Some(Syntax(MacroBinding("assert_eq")))
+WHOLETAIL test=settlement_requires_confirmed_terminal_receipts line=563 independent=true admitted=false
+PIN admits test=settlement_requires_matching_revision_and_granted_admission assertionline=651 text=assert_eq!(
+                lease.settled_elapsed_ms,
+                settles.then_some(25_001),
+                "{name}"
+            );
+WHOLETAIL test=settlement_requires_matching_revision_and_granted_admission line=651 independent=false admitted=false
+PIN admits test=settlement_requires_matching_revision_and_granted_admission assertionline=656 text=assert_eq!(
+                focused_proof_lease_charged_seconds(&lease),
+                if settles { 26 } else { 600 },
+                "{name}"
+            );
+PIN refuse stage12 reason=Some(Syntax(OpaqueMacro("serde_json::json")))
+WHOLETAIL test=settlement_requires_matching_revision_and_granted_admission line=656 independent=false admitted=false
+PIN admits test=settlement_requires_matching_revision_and_granted_admission assertionline=661 text=assert_eq!(lease.status, status, "{name}");
+WHOLETAIL test=settlement_requires_matching_revision_and_granted_admission line=661 independent=false admitted=false
+PIN admits test=settlement_requires_matching_revision_and_granted_admission assertionline=662 text=assert_eq!(lease.timeout_sec, 600, "{name}");
+WHOLETAIL test=settlement_requires_matching_revision_and_granted_admission line=662 independent=true admitted=false
+PIN admits test=unbuildable_base_plus_tests_patch_reports_base_patch_failed assertionline=653 text=assert_eq!(receipt.result, "base_patch_failed", "{receipt:?}");
+WHOLETAIL test=unbuildable_base_plus_tests_patch_reports_base_patch_failed line=653 independent=true admitted=false
+PIN admits test=unbuildable_base_plus_tests_patch_reports_base_patch_failed assertionline=654 text=assert_eq!(result.resource_leases[0].settled_elapsed_ms, None);
+WHOLETAIL test=unbuildable_base_plus_tests_patch_reports_base_patch_failed line=654 independent=false admitted=false
+PIN admits test=unbuildable_base_plus_tests_patch_reports_base_patch_failed assertionline=655 text=assert_eq!(
+            focused_proof_lease_charged_seconds(&result.resource_leases[0]),
+            120
+        );
+PIN refuse stage12 reason=Some(Syntax(ClosureExit))
+WHOLETAIL test=unbuildable_base_plus_tests_patch_reports_base_patch_failed line=655 independent=true admitted=false
+PIN admits test=elapsed_charge_rounds_up_and_never_caps_overruns assertionline=491 text=assert_eq!(
+                remaining.max_total_seconds,
+                1800 - expected_seconds,
+                "{millis}ms"
+            );
+WHOLETAIL test=elapsed_charge_rounds_up_and_never_caps_overruns line=491 independent=false admitted=false
+PIN admits test=elapsed_charge_rounds_up_and_never_caps_overruns assertionline=499 text=assert_eq!(remaining.max_total_seconds, 0);
+WHOLETAIL test=elapsed_charge_rounds_up_and_never_caps_overruns line=499 independent=true admitted=false
+PIN admits test=recorded_optional_durations_refund_time_without_refunding_slots assertionline=474 text=assert_eq!(remaining.max_total_seconds, 1769);
+WHOLETAIL test=recorded_optional_durations_refund_time_without_refunding_slots line=474 independent=true admitted=false
+PIN admits test=recorded_optional_durations_refund_time_without_refunding_slots assertionline=475 text=assert_eq!(remaining.max_focused_tests, 1);
+WHOLETAIL test=recorded_optional_durations_refund_time_without_refunding_slots line=475 independent=true admitted=false
+PIN admits test=recorded_optional_durations_refund_time_without_refunding_slots assertionline=476 text=assert_eq!(
+            leases.iter().map(|lease| lease.timeout_sec).sum::<u64>(),
+            1800
+        );
+WHOLETAIL test=recorded_optional_durations_refund_time_without_refunding_slots line=476 independent=true admitted=false
+PIN admits test=red_green_settlement_sums_commands_before_applying_task_clock assertionline=682 text=assert_eq!(lease.settled_elapsed_ms, Some(43_000));
+WHOLETAIL test=red_green_settlement_sums_commands_before_applying_task_clock line=682 independent=false admitted=false
+PIN admits test=terminal_elapsed_reclaims_time_but_not_task_slots assertionline=442 text=assert_eq!(remaining.max_total_seconds, 1737);
+WHOLETAIL test=terminal_elapsed_reclaims_time_but_not_task_slots line=442 independent=true admitted=false
+PIN admits test=terminal_elapsed_reclaims_time_but_not_task_slots assertionline=443 text=assert_eq!(remaining.max_focused_tests, 1);
+WHOLETAIL test=terminal_elapsed_reclaims_time_but_not_task_slots line=443 independent=true admitted=false
+PIN admits test=terminal_elapsed_reclaims_time_but_not_task_slots assertionline=444 text=assert_eq!(remaining.max_focused_test_files, 0);
+WHOLETAIL test=terminal_elapsed_reclaims_time_but_not_task_slots line=444 independent=true admitted=false
+PIN admits test=terminal_elapsed_reclaims_time_but_not_task_slots assertionline=445 text=assert_eq!(
+            leases.iter().map(|lease| lease.timeout_sec).sum::<u64>(),
+            1500
+        );
+WHOLETAIL test=terminal_elapsed_reclaims_time_but_not_task_slots line=445 independent=true admitted=false
+PIN admits test=terminal_elapsed_reclaims_time_but_not_task_slots assertionline=451 text=assert_eq!(legacy.max_total_seconds, 1200);
+WHOLETAIL test=terminal_elapsed_reclaims_time_but_not_task_slots line=451 independent=true admitted=false
+PIN admits test=disabled_focused_proof_allows_zero_command_budget assertionline=252 text=assert_eq!(budget.max_focused_tests, 0);
+WHOLETAIL test=disabled_focused_proof_allows_zero_command_budget line=252 independent=true admitted=false
+PIN admits test=disabled_focused_proof_allows_zero_command_budget assertionline=253 text=assert_eq!(budget.per_command_timeout_sec, 0);
+WHOLETAIL test=disabled_focused_proof_allows_zero_command_budget line=253 independent=true admitted=false
+PIN admits test=disabled_focused_proof_allows_zero_command_budget assertionline=254 text=assert_eq!(budget.max_total_seconds, 0);
+WHOLETAIL test=disabled_focused_proof_allows_zero_command_budget line=254 independent=true admitted=false
+PIN admits test=disabled_test_leases_allow_zero_proof_resources assertionline=351 text=assert_eq!(budget.cpu, 0);
+WHOLETAIL test=disabled_test_leases_allow_zero_proof_resources line=351 independent=true admitted=false
+PIN admits test=disabled_test_leases_allow_zero_proof_resources assertionline=352 text=assert_eq!(budget.memory_mb, 0);
+WHOLETAIL test=disabled_test_leases_allow_zero_proof_resources line=352 independent=true admitted=false
+PIN admits test=disabled_test_leases_allow_zero_proof_resources assertionline=353 text=assert_eq!(budget.disk_mb, 0);
+WHOLETAIL test=disabled_test_leases_allow_zero_proof_resources line=353 independent=true admitted=false
+PIN admits test=invalid_enabled_proof_budget_is_rejected assertionline=230 text=assert_eq!(
+            err.to_string(),
+            "runtime profile broken has proof_command_timeout_sec=0 with focused proof enabled"
+        );
+WHOLETAIL test=invalid_enabled_proof_budget_is_rejected line=230 independent=true admitted=false
+PIN admits test=invalid_enabled_proof_lease_budget_is_rejected assertionline=324 text=assert_eq!(
+            err.to_string(),
+            "runtime profile broken has proof_cpu=0 with focused proof enabled"
+        );
+WHOLETAIL test=invalid_enabled_proof_lease_budget_is_rejected line=324 independent=true admitted=false
+PIN admits test=invalid_enabled_proof_lease_disk_budget_is_rejected assertionline=400 text=assert_eq!(
+            err.to_string(),
+            "runtime profile broken has proof_disk_mb=0 with focused proof enabled"
+        );
+WHOLETAIL test=invalid_enabled_proof_lease_disk_budget_is_rejected line=400 independent=true admitted=false
+PIN admits test=invalid_enabled_proof_lease_memory_budget_is_rejected assertionline=375 text=assert_eq!(
+            err.to_string(),
+            "runtime profile broken has proof_memory_mb=0 with focused proof enabled"
+        );
+WHOLETAIL test=invalid_enabled_proof_lease_memory_budget_is_rejected line=375 independent=true admitted=false
+PIN admits test=invalid_enabled_proof_total_budget_is_rejected assertionline=275 text=assert_eq!(
+            err.to_string(),
+            "runtime profile broken has proof_total_timeout_sec=0 with focused proof enabled"
+        );
+WHOLETAIL test=invalid_enabled_proof_total_budget_is_rejected line=275 independent=true admitted=false
+PIN admits test=proof_budget_comes_from_runtime_profile_budgets assertionline=206 text=assert_eq!(proof_budget(gh_runner)?.max_focused_tests, 1);
+WHOLETAIL test=proof_budget_comes_from_runtime_profile_budgets line=206 independent=true admitted=false
+PIN admits test=proof_budget_comes_from_runtime_profile_budgets assertionline=207 text=assert_eq!(proof_budget(cx23)?.max_focused_tests, 2);
+WHOLETAIL test=proof_budget_comes_from_runtime_profile_budgets line=207 independent=true admitted=false
+PIN admits test=proof_budget_comes_from_runtime_profile_budgets assertionline=208 text=assert_eq!(proof_budget(cx43)?.max_focused_tests, 6);
+WHOLETAIL test=proof_budget_comes_from_runtime_profile_budgets line=208 independent=true admitted=false
+PIN admits test=proof_budget_comes_from_runtime_profile_budgets assertionline=209 text=assert_eq!(proof_budget(cx43)?.per_command_timeout_sec, 600);
+WHOLETAIL test=proof_budget_comes_from_runtime_profile_budgets line=209 independent=true admitted=false
+PIN admits test=proof_budget_comes_from_runtime_profile_budgets assertionline=210 text=assert_eq!(proof_budget(cx43)?.max_total_seconds, 1_800);
+WHOLETAIL test=proof_budget_comes_from_runtime_profile_budgets line=210 independent=true admitted=false
+PIN admits test=proof_lease_budget_comes_from_runtime_profile_budgets assertionline=298 text=assert_eq!(proof_lease_budget(gh_runner)?.cpu, 2);
+WHOLETAIL test=proof_lease_budget_comes_from_runtime_profile_budgets line=298 independent=true admitted=false
+PIN admits test=proof_lease_budget_comes_from_runtime_profile_budgets assertionline=299 text=assert_eq!(proof_lease_budget(gh_runner)?.memory_mb, 2_048);
+WHOLETAIL test=proof_lease_budget_comes_from_runtime_profile_budgets line=299 independent=true admitted=false
+PIN admits test=proof_lease_budget_comes_from_runtime_profile_budgets assertionline=300 text=assert_eq!(proof_lease_budget(gh_runner)?.disk_mb, 1_024);
+WHOLETAIL test=proof_lease_budget_comes_from_runtime_profile_budgets line=300 independent=true admitted=false
+PIN admits test=proof_lease_budget_comes_from_runtime_profile_budgets assertionline=301 text=assert_eq!(proof_lease_budget(cx23)?.cpu, 1);
+WHOLETAIL test=proof_lease_budget_comes_from_runtime_profile_budgets line=301 independent=true admitted=false
+PIN admits test=proof_lease_budget_comes_from_runtime_profile_budgets assertionline=302 text=assert_eq!(proof_lease_budget(cx23)?.memory_mb, 1_024);
+WHOLETAIL test=proof_lease_budget_comes_from_runtime_profile_budgets line=302 independent=true admitted=false
+PIN admits test=proof_lease_budget_comes_from_runtime_profile_budgets assertionline=303 text=assert_eq!(proof_lease_budget(cx43)?.cpu, 4);
+WHOLETAIL test=proof_lease_budget_comes_from_runtime_profile_budgets line=303 independent=true admitted=false
+PIN admits test=proof_lease_budget_comes_from_runtime_profile_budgets assertionline=304 text=assert_eq!(proof_lease_budget(cx43)?.disk_mb, 2_048);
+WHOLETAIL test=proof_lease_budget_comes_from_runtime_profile_budgets line=304 independent=true admitted=false
+PIN admits test=remaining_focused_proof_budget_ignores_unrelated_leases assertionline=748 text=assert_eq!(remaining.max_focused_tests, 4);
+WHOLETAIL test=remaining_focused_proof_budget_ignores_unrelated_leases line=748 independent=true admitted=false
+PIN admits test=remaining_focused_proof_budget_ignores_unrelated_leases assertionline=749 text=assert_eq!(remaining.max_focused_test_files, 3);
+WHOLETAIL test=remaining_focused_proof_budget_ignores_unrelated_leases line=749 independent=true admitted=false
+PIN admits test=remaining_focused_proof_budget_ignores_unrelated_leases assertionline=750 text=assert_eq!(remaining.max_total_seconds, 600);
+WHOLETAIL test=remaining_focused_proof_budget_ignores_unrelated_leases line=750 independent=true admitted=false
+PIN admits test=remaining_focused_proof_budget_ignores_unrelated_leases assertionline=751 text=assert_eq!(remaining.per_command_timeout_sec, 300);
+WHOLETAIL test=remaining_focused_proof_budget_ignores_unrelated_leases line=751 independent=true admitted=false
+PIN admits test=remaining_focused_proof_budget_subtracts_granted_focused_leases assertionline=706 text=assert_eq!(remaining.max_focused_tests, 2);
+WHOLETAIL test=remaining_focused_proof_budget_subtracts_granted_focused_leases line=706 independent=true admitted=false
+PIN admits test=remaining_focused_proof_budget_subtracts_granted_focused_leases assertionline=707 text=assert_eq!(remaining.max_focused_test_files, 1);
+WHOLETAIL test=remaining_focused_proof_budget_subtracts_granted_focused_leases line=707 independent=true admitted=false
+PIN admits test=remaining_focused_proof_budget_subtracts_granted_focused_leases assertionline=708 text=assert_eq!(remaining.max_total_seconds, 420);
+WHOLETAIL test=remaining_focused_proof_budget_subtracts_granted_focused_leases line=708 independent=true admitted=false
+PIN admits test=remaining_focused_proof_budget_subtracts_granted_focused_leases assertionline=709 text=assert_eq!(remaining.per_command_timeout_sec, 300);
+WHOLETAIL test=remaining_focused_proof_budget_subtracts_granted_focused_leases line=709 independent=true admitted=false
+PIN admits test=remaining_focused_proof_budget_zeroes_after_absent_focused_lease assertionline=732 text=assert_eq!(remaining.max_focused_tests, 0);
+WHOLETAIL test=remaining_focused_proof_budget_zeroes_after_absent_focused_lease line=732 independent=true admitted=false
+PIN admits test=remaining_focused_proof_budget_zeroes_after_absent_focused_lease assertionline=733 text=assert_eq!(remaining.max_focused_test_files, 0);
+WHOLETAIL test=remaining_focused_proof_budget_zeroes_after_absent_focused_lease line=733 independent=true admitted=false
+PIN admits test=remaining_focused_proof_budget_zeroes_after_absent_focused_lease assertionline=734 text=assert_eq!(remaining.max_total_seconds, 0);
+WHOLETAIL test=remaining_focused_proof_budget_zeroes_after_absent_focused_lease line=734 independent=true admitted=false
+PIN admits test=remaining_focused_proof_budget_zeroes_after_absent_focused_lease assertionline=735 text=assert_eq!(remaining.per_command_timeout_sec, 300);
+WHOLETAIL test=remaining_focused_proof_budget_zeroes_after_absent_focused_lease line=735 independent=true admitted=false
+PIN admits test=remaining_focused_proof_budget_zeroes_after_exhausted_focused_lease assertionline=719 text=assert_eq!(remaining.max_focused_tests, 0);
+WHOLETAIL test=remaining_focused_proof_budget_zeroes_after_exhausted_focused_lease line=719 independent=true admitted=false
+PIN admits test=remaining_focused_proof_budget_zeroes_after_exhausted_focused_lease assertionline=720 text=assert_eq!(remaining.max_focused_test_files, 0);
+WHOLETAIL test=remaining_focused_proof_budget_zeroes_after_exhausted_focused_lease line=720 independent=true admitted=false
+PIN admits test=remaining_focused_proof_budget_zeroes_after_exhausted_focused_lease assertionline=721 text=assert_eq!(remaining.max_total_seconds, 0);
+WHOLETAIL test=remaining_focused_proof_budget_zeroes_after_exhausted_focused_lease line=721 independent=true admitted=false
+PIN admits test=remaining_focused_proof_budget_zeroes_after_exhausted_focused_lease assertionline=722 text=assert_eq!(remaining.per_command_timeout_sec, 300);
+WHOLETAIL test=remaining_focused_proof_budget_zeroes_after_exhausted_focused_lease line=722 independent=true admitted=false
+PIN admits test=fill_ledger_selected_focused_build_request_cites_matching_lease assertionline=19693 text=assert_eq!(entry.cost, "focused-build");
+WHOLETAIL test=fill_ledger_selected_focused_build_request_cites_matching_lease line=19693 independent=true admitted=false
+PIN admits test=fill_ledger_selected_focused_build_request_cites_matching_lease assertionline=19694 text=assert_eq!(
+            entry.artifact_path.as_deref(),
+            Some(format!("review/proof_receipts.json#{}", receipt.id).as_str())
+        );
+WHOLETAIL test=fill_ledger_selected_focused_build_request_cites_matching_lease line=19694 independent=false admitted=false
+PIN admits test=fill_ledger_selected_focused_build_request_cites_matching_lease assertionline=19698 text=assert_eq!(entry.time_spent_sec, 1.234);
+WHOLETAIL test=fill_ledger_selected_focused_build_request_cites_matching_lease line=19698 independent=true admitted=false
+PIN admits test=baseline_gate_sensor_argvs_match_required_matrix assertionline=1400 text=assert_eq!(argv, expected);
+WHOLETAIL test=baseline_gate_sensor_argvs_match_required_matrix line=1400 independent=false admitted=false
+PIN admits test=baseline_gate_sensor_argvs_match_required_matrix assertionline=1422 text=assert_eq!(
+            argv,
+            vec![
+                "ripr".to_owned(),
+                "check".to_owned(),
+                "--root".to_owned(),
+                ".".to_owned(),
+                "--diff".to_owned(),
+                diff_path,
+                "--mode".to_owned(),
+                "ready".to_owned(),
+                "--format".to_owned(),
+                "badge-json".to_owned(),
+            ]
+        );
+WHOLETAIL test=baseline_gate_sensor_argvs_match_required_matrix line=1422 independent=false admitted=false
+PIN admits test=builtin_gh_runner_profile_matches_default_test_lease assertionline=7298 text=assert_eq!(builtin.limits.tests, Profile::default().limits.tests);
+WHOLETAIL test=builtin_gh_runner_profile_matches_default_test_lease line=7298 independent=false admitted=false
+PIN admits test=builtin_gh_runner_profile_matches_default_test_lease assertionline=7299 text=assert_eq!(builtin.limits.tests, 2);
+WHOLETAIL test=builtin_gh_runner_profile_matches_default_test_lease line=7299 independent=true admitted=false
+PIN admits test=builtin_runtime_profiles_match_runtime_files assertionline=7306 text=assert_eq!(
+            profiles
+                .iter()
+                .map(|profile| profile.name.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "gh-runner",
+                "gh-runner-standard",
+                "gh-runner-full",
+                "cx23",
+                "cx33",
+                "cx43",
+            ]
+        );
+WHOLETAIL test=builtin_runtime_profiles_match_runtime_files line=7306 independent=false admitted=false
+PIN admits test=builtin_runtime_profiles_match_runtime_files assertionline=7328 text=assert_eq!(
+            serde_json::to_value(&profiles)?,
+            serde_json::to_value(&from_files)?
+        );
+WHOLETAIL test=builtin_runtime_profiles_match_runtime_files line=7328 independent=false admitted=false
+PIN admits test=clippy_findings_match_absolute_diagnostic_paths assertionline=2802 text=assert_eq!(findings.len(), 1);
+WHOLETAIL test=clippy_findings_match_absolute_diagnostic_paths line=2802 independent=true admitted=false
+PIN admits test=clippy_findings_match_absolute_diagnostic_paths assertionline=2803 text=assert_eq!(findings[0].path, "xtask/src/main.rs");
+WHOLETAIL test=clippy_findings_match_absolute_diagnostic_paths line=2803 independent=true admitted=false
+PIN admits test=default_sensor_phase_classifies_by_class_and_lease assertionline=1566 text=assert_eq!(
+            default_sensor_phase(ToolClass::Test, false),
+            SensorPhase::Late
+        );
+WHOLETAIL test=default_sensor_phase_classifies_by_class_and_lease line=1566 independent=false admitted=false
+PIN admits test=default_sensor_phase_classifies_by_class_and_lease assertionline=1570 text=assert_eq!(
+            default_sensor_phase(ToolClass::Build, false),
+            SensorPhase::Late
+        );
+WHOLETAIL test=default_sensor_phase_classifies_by_class_and_lease line=1570 independent=false admitted=false
+PIN admits test=default_sensor_phase_classifies_by_class_and_lease assertionline=1574 text=assert_eq!(
+            default_sensor_phase(ToolClass::Coverage, false),
+            SensorPhase::Late
+        );
+WHOLETAIL test=default_sensor_phase_classifies_by_class_and_lease line=1574 independent=false admitted=false
+PIN admits test=default_sensor_phase_classifies_by_class_and_lease assertionline=1578 text=assert_eq!(
+            default_sensor_phase(ToolClass::HeavyWitness, false),
+            SensorPhase::Late
+        );
+WHOLETAIL test=default_sensor_phase_classifies_by_class_and_lease line=1578 independent=false admitted=false
+PIN admits test=default_sensor_phase_classifies_by_class_and_lease assertionline=1583 text=assert_eq!(
+            default_sensor_phase(ToolClass::Static, true),
+            SensorPhase::Late
+        );
+WHOLETAIL test=default_sensor_phase_classifies_by_class_and_lease line=1583 independent=false admitted=false
+PIN admits test=default_sensor_phase_classifies_by_class_and_lease assertionline=1595 text=assert_eq!(default_sensor_phase(class, false), SensorPhase::Fast);
+WHOLETAIL test=default_sensor_phase_classifies_by_class_and_lease line=1595 independent=false admitted=false
+PIN admits test=gh_runner_profiles_carry_ripr_lease_override_quick_boxes_do_not assertionline=25 text=assert_eq!(
+            profile.tool_timeouts.get("ripr"),
+            Some(&720),
+            "{name} must carry the ripr lease override"
+        );
+WHOLETAIL test=gh_runner_profiles_carry_ripr_lease_override_quick_boxes_do_not line=25 independent=false admitted=false
+PIN admits test=gh_runner_profiles_carry_ripr_lease_override_quick_boxes_do_not assertionline=45 text=assert_eq!(profile.tool_timeouts.get("ripr"), Some(&720));
+WHOLETAIL test=gh_runner_profiles_carry_ripr_lease_override_quick_boxes_do_not line=45 independent=false admitted=false
+PIN admits test=gh_runner_profiles_carry_ripr_lease_override_quick_boxes_do_not assertionline=55 text=assert_eq!(
+        resolved,
+        ripr.timeout_sec.min(profile.budgets.default_timeout_sec),
+        "repo-pinned lease wins over the profile override"
+    );
+WHOLETAIL test=gh_runner_profiles_carry_ripr_lease_override_quick_boxes_do_not line=55 independent=false admitted=false
+PIN admits test=gh_runner_profiles_carry_ripr_lease_override_quick_boxes_do_not assertionline=60 text=assert_ne!(resolved, 720, "profile table must not shadow repo config");
+PIN refuse stage11
+WHOLETAIL test=gh_runner_profiles_carry_ripr_lease_override_quick_boxes_do_not line=60 independent=true admitted=false
+PIN admits test=minimax_prompt_cache_keys_match_config_vocabulary assertionline=1072 text=assert_eq!(
+            MinimaxPromptCache::ExplicitAnthropic.key(),
+            "explicit-anthropic"
+        );
+WHOLETAIL test=minimax_prompt_cache_keys_match_config_vocabulary line=1072 independent=true admitted=false
+PIN admits test=minimax_prompt_cache_keys_match_config_vocabulary assertionline=1076 text=assert_eq!(MinimaxPromptCache::Off.key(), "off");
+WHOLETAIL test=minimax_prompt_cache_keys_match_config_vocabulary line=1076 independent=true admitted=false
+PIN admits test=missing_tool_install_hints_match_standard_runner_fixes assertionline=2332 text=assert_eq!(install_hint(tool), hint, "{tool} install hint drifted");
+WHOLETAIL test=missing_tool_install_hints_match_standard_runner_fixes line=2332 independent=false admitted=false
+PIN admits test=prefix_manifest_hash_and_length_match_prefix assertionline=845 text=assert_eq!(manifest.hash, hash);
+WHOLETAIL test=prefix_manifest_hash_and_length_match_prefix line=845 independent=false admitted=false
+PIN admits test=prefix_manifest_hash_and_length_match_prefix assertionline=846 text=assert_eq!(manifest.byte_length, prefix.len());
+WHOLETAIL test=prefix_manifest_hash_and_length_match_prefix line=846 independent=false admitted=false
+PIN admits test=prefix_manifest_hash_and_length_match_prefix assertionline=847 text=assert_eq!(manifest.base, "abc");
+WHOLETAIL test=prefix_manifest_hash_and_length_match_prefix line=847 independent=true admitted=false
+PIN admits test=prefix_manifest_hash_and_length_match_prefix assertionline=848 text=assert_eq!(manifest.head, "def");
+WHOLETAIL test=prefix_manifest_hash_and_length_match_prefix line=848 independent=true admitted=false
+PIN admits test=prefix_manifest_hash_and_length_match_prefix assertionline=850 text=assert_eq!(manifest.schema, "ub-review.shared_prefix_manifest.v1");
+WHOLETAIL test=prefix_manifest_hash_and_length_match_prefix line=850 independent=true admitted=false
+PIN admits test=producer_prompt_evidence_shapes_match_wire_contract assertionline=524 text=assert_eq!(output.candidate_findings.len(), 1);
+WHOLETAIL test=producer_prompt_evidence_shapes_match_wire_contract line=524 independent=true admitted=false
+PIN admits test=producer_prompt_evidence_shapes_match_wire_contract assertionline=525 text=assert_eq!(output.observations.len(), 1);
+WHOLETAIL test=producer_prompt_evidence_shapes_match_wire_contract line=525 independent=true admitted=false
+PIN admits test=producer_prompt_evidence_shapes_match_wire_contract assertionline=526 text=assert_eq!(output.proof_requests.len(), 1);
+WHOLETAIL test=producer_prompt_evidence_shapes_match_wire_contract line=526 independent=true admitted=false
+PIN admits test=producer_prompt_evidence_shapes_match_wire_contract assertionline=527 text=assert_eq!(output.proof_intents.len(), 1);
+WHOLETAIL test=producer_prompt_evidence_shapes_match_wire_contract line=527 independent=true admitted=false
+PIN admits test=proof_broker_v0_does_not_execute_without_focused_test_lease assertionline=11503 text=assert_eq!(proof_result.proof_receipts.len(), 1);
+WHOLETAIL test=proof_broker_v0_does_not_execute_without_focused_test_lease line=11503 independent=true admitted=false
+PIN admits test=proof_broker_v0_does_not_execute_without_focused_test_lease assertionline=11504 text=assert_eq!(proof_result.proof_receipts[0].result, "skipped_profile");
+WHOLETAIL test=proof_broker_v0_does_not_execute_without_focused_test_lease line=11504 independent=true admitted=false
+PIN admits test=proof_broker_v0_does_not_execute_without_focused_test_lease assertionline=11505 text=assert_eq!(proof_result.resource_leases.len(), 1);
+WHOLETAIL test=proof_broker_v0_does_not_execute_without_focused_test_lease line=11505 independent=true admitted=false
+PIN admits test=proof_broker_v0_does_not_execute_without_focused_test_lease assertionline=11506 text=assert_eq!(proof_result.resource_leases[0].status, "absent");
+WHOLETAIL test=proof_broker_v0_does_not_execute_without_focused_test_lease line=11506 independent=true admitted=false
+PIN admits test=proof_broker_v0_does_not_execute_without_focused_test_lease assertionline=11507 text=assert_eq!(
+            proof_result.resource_leases[0].reason,
+            "profile allows zero focused test leases"
+        );
+WHOLETAIL test=proof_broker_v0_does_not_execute_without_focused_test_lease line=11507 independent=true admitted=false
+PIN admits test=proof_command_receipt_refuses_lease_for_different_consumer assertionline=947 text=assert_eq!(receipt.status, "skipped");
+WHOLETAIL test=proof_command_receipt_refuses_lease_for_different_consumer line=947 independent=true admitted=false
+PIN admits test=proof_command_receipt_refuses_non_granted_lease_without_running assertionline=893 text=assert_eq!(receipt.status, "skipped");
+WHOLETAIL test=proof_command_receipt_refuses_non_granted_lease_without_running line=893 independent=true admitted=false
+PIN admits test=proof_command_receipt_refuses_non_granted_lease_without_running assertionline=894 text=assert_eq!(receipt.timeout_sec, 0);
+WHOLETAIL test=proof_command_receipt_refuses_non_granted_lease_without_running line=894 independent=true admitted=false
+PIN admits test=proof_command_receipt_refuses_non_granted_lease_without_running assertionline=897 text=assert_eq!(fs::read_to_string(out.join(&receipt.stdout))?, "");
+WHOLETAIL test=proof_command_receipt_refuses_non_granted_lease_without_running line=897 independent=true admitted=false
+PIN admits test=proof_command_receipt_refuses_non_granted_lease_without_running assertionline=898 text=assert_eq!(fs::read_to_string(out.join(&receipt.stderr))?, "");
+WHOLETAIL test=proof_command_receipt_refuses_non_granted_lease_without_running line=898 independent=true admitted=false
+PIN admits test=resolved_away_candidates_match_their_original_review_surfaces assertionline=23260 text=assert_eq!(candidates.len(), 2);
+WHOLETAIL test=resolved_away_candidates_match_their_original_review_surfaces line=23260 independent=true admitted=false
+PIN admits test=tool_policy_known_keys_match_serialized_fields assertionline=15623 text=assert_eq!(serialized_keys, known);
+WHOLETAIL test=tool_policy_known_keys_match_serialized_fields line=15623 independent=false admitted=false
+PIN admits test=v2_focused_build_candidates_match_v1 assertionline=1847 text=assert_eq!(from_v1.len(), from_v2.len());
+WHOLETAIL test=v2_focused_build_candidates_match_v1 line=1847 independent=false admitted=false
+PIN admits test=v2_focused_build_candidates_match_v1 assertionline=1848 text=assert_eq!(from_v1.len(), 1, "the allowlisted build must resolve");
+WHOLETAIL test=v2_focused_build_candidates_match_v1 line=1848 independent=true admitted=false
+PIN admits test=v2_focused_build_candidates_match_v1 assertionline=1849 text=assert_eq!(from_v1[0].command, from_v2[0].command);
+WHOLETAIL test=v2_focused_build_candidates_match_v1 line=1849 independent=false admitted=false
+PIN admits test=v2_focused_build_candidates_match_v1 assertionline=1850 text=assert_eq!(from_v1[0].argv, from_v2[0].argv);
+WHOLETAIL test=v2_focused_build_candidates_match_v1 line=1850 independent=false admitted=false
+PIN admits test=v2_focused_test_candidates_match_v1 assertionline=1525 text=assert_eq!(
+            from_v1.len(),
+            from_v2.len(),
+            "v1 and v2 extractors must produce the same candidate count"
+        );
+WHOLETAIL test=v2_focused_test_candidates_match_v1 line=1525 independent=false admitted=false
+PIN admits test=v2_focused_test_candidates_match_v1 assertionline=1530 text=assert_eq!(from_v1.len(), 1, "the allowlisted command must resolve");
+WHOLETAIL test=v2_focused_test_candidates_match_v1 line=1530 independent=true admitted=false
+PIN admits test=v2_focused_test_candidates_match_v1 assertionline=1532 text=assert_eq!(from_v1[0].id, from_v2[0].id);
+WHOLETAIL test=v2_focused_test_candidates_match_v1 line=1532 independent=false admitted=false
+PIN admits test=v2_focused_test_candidates_match_v1 assertionline=1533 text=assert_eq!(from_v1[0].file, from_v2[0].file);
+WHOLETAIL test=v2_focused_test_candidates_match_v1 line=1533 independent=false admitted=false
+PIN admits test=v2_focused_test_candidates_match_v1 assertionline=1534 text=assert_eq!(from_v1[0].test_name, from_v2[0].test_name);
+WHOLETAIL test=v2_focused_test_candidates_match_v1 line=1534 independent=false admitted=false
+PIN admits test=v2_focused_test_candidates_match_v1 assertionline=1535 text=assert_eq!(from_v1[0].mode, from_v2[0].mode);
+WHOLETAIL test=v2_focused_test_candidates_match_v1 line=1535 independent=false admitted=false
+PIN admits test=v2_focused_test_candidates_match_v1 assertionline=1536 text=assert_eq!(
+            from_v1[0]
+                .command_specs
+                .as_ref()
+                .map(|specs| (&specs.head.argv, &specs.base_plus_tests.argv)),
+            from_v2[0]
+                .command_specs
+                .as_ref()
+                .map(|specs| (&specs.head.argv, &specs.base_plus_tests.argv)),
+            "v1 and v2 command specifications must preserve Cargo passthrough arguments"
+        );
+WHOLETAIL test=v2_focused_test_candidates_match_v1 line=1536 independent=false admitted=false
+WHOLETAIL initial complete=true before=None changed="src/proof/budget.rs" owner="src/proof/budget.rs" probe=SourceLocation { file: "/workspace/5500-consumer/src/proof/budget.rs", line: 97, column: 1 } id=SymbolId("src/proof/budget.rs::focused_proof_lease_charged_seconds") span=ParserByteSpan { start_byte: 3456 }
+WHOLETAIL checkpoint 24
+WHOLETAIL checkpoint 29
+WHOLETAIL refuse stage10
+WHOLETAIL initial complete=true before=None changed="src/proof/budget.rs" owner="src/proof/budget.rs" probe=SourceLocation { file: "/workspace/5500-consumer/src/proof/budget.rs", line: 100, column: 1 } id=SymbolId("src/proof/budget.rs::focused_proof_lease_charged_seconds") span=ParserByteSpan { start_byte: 3563 }
+WHOLETAIL checkpoint 24
+WHOLETAIL checkpoint 29
+WHOLETAIL refuse stage10
+ripr progress: analyzing still active after 10s
+ripr progress: building_output [diff]
+ripr: detected .ripr/suppressions.toml under the analyzed root; it was not applied to this check. Rerun this check with --suppression-policy .ripr/suppressions.toml to apply it.
+ripr progress: completed [diff]

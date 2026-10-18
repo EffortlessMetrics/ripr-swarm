@@ -1,0 +1,297 @@
+Current exact-head independent review — 2026-10-18 UTC
+reviewed_head_sha: f4be8084a1cbc7cd9d66c7e10ec4b9eb46b7a5bc
+reviewed_tree: 7b181b6917993fb4622c22d7ae75642b746dbd00
+integration_basis: predecessor16ff7479; incremental basisc96331b7113c7626609d57405236e85ef4a0a703.
+
+TERMINAL LOCAL DISPOSITION (supersedes pending local-proof notes below):
+local_source_review: COMPLETE, NO BLOCKING FINDINGS.
+local_validation: PASS for exact f4be8084a1cbc7cd9d66c7e10ec4b9eb46b7a5bc.
+consumer_progress: HELD / NOT_ESTABLISHED; target67654dc6 remainsweak,18currentweak.
+merge_route_disposition: REVIEW_INCOMPLETE solely for intentionally excluded hosted
+qualification/PR review; no hosted action requested or implied. Local review task
+is complete; no local source/proof blocker remains. No REVIEW_READY/merge or full
+consumer acceptance claimed.
+
+Final terminal evidence independently inspected:
+- final-validation-receipt.json read at closeout: exacthead/tree agree; explicitly
+  records c963 check-fast provenance and docs-only delta, f4beprecommit0,
+  500/1268goldens0drift/errors, advisorydogfood0, finalhonesty0 with wrong-prerepair
+  output rejected, focused9/15/5/1/7 tests and actualfinal14CLI controls. Counts and
+  scope agree with inspected primary receipts. Resourcecloseout27007807488B above
+  10737418240B reserve; all owned sessions terminal per owning root; source/target/
+  caches/binaries/labs retained, no cleanup. No further reviewer work pending.
+- precommit-final.json/report.md binds exactf4be, mergebaseddfa2a138ae816cdd46e639c532900d2abe60b27,
+  statuspass/failure_kindnone. Independently recomputed Git changed-path set and
+  compared receipt set:51==51 exactmatch, not a zero-selector pass. Both strict
+  `-p ripr --all-targets` and `-p xtask --all-targets` Clippy diagnostics native0;
+  every recorded commandpass, skipped[], limitations[]. Report digest matches
+  declared sha25640f5325270215fc637c016414cf6c8215a393ba1786d9ed85b80ee0b4a000c05.
+  Parent owns actual precommit invocation/native0; reviewer read retained reports.
+- goldens-final-report.md independently counted500fixtures and1268comparisons,
+  statuspass; golden-drift-final.md/json provenance exactf4be,0drift0fixtureerrors.
+  New refused-header fixture included; no expected-output drift or rebless used
+  to hide the original fault. Earlier missinglockeddependency and SPEC/Clippy
+  failures remain preserved historical failures, superseded by actual finalpass.
+- dogfood-final.log read; live target/ripr/reports/dogfood.json statuspass,
+  advisorytrue, both boundary_gap/weak_error_oracle runs noerrors,6/6 first-useful
+  rendered cases. Parent reports native0; advisory dogfood does not substitute
+  for mutation authority, source checks or hosted qualification.
+- consumer-final-receipt.json refreshed exactf4be/tree7b181b69/binary0bdc445a...cc90,
+  native0/complete52. Raw candidate and predecessor hashes independently verified
+  e67563d1ec9aad34b8c54d5f341a13114b93469c73bb6b97f55f6ccbe66db96b each;
+  all52unchanged0introduced/removed/changed,6exposed20weak26unknown,18currentweak,
+  target67654dc6weak. This is finalexactartifact nonregression, not targetprogress.
+- Finalexactartifact14independent CLIcontrols already validated below; original
+  P1 fixed with exact retainedsubjects and real native arm-mutant survival proof.
+- Re-read current Git HEADf4be/tree7b181b69 and clean status at closeout. No source
+  mutations/builds by reviewer; lab/evidence retained. No pending denied/uncertain
+  tool action. Remaining parentconsumer predicate lies in unchanged assertion
+  admission and is explicit, not transformed into an accepted implementation.
+
+
+Independently inspected the ENTIRE c963..f4be diff: only fixture SPEC.md changed.
+Primary `Spec: RIPR-SPEC-0229` now follows the fixture parser's single-ID contract;
+RIPR-SPEC-0108 is retained as a plain explanatory cross-reference. The refusal
+claim, input, diff, corpus rule, golden outputs, tests and production source are
+unchanged. No new source/oracle/authority issue. Finalc963 exactartifact14controls
+and exactconsumer replay remain applicable to unchanged production/inputs, but
+are not mislabeled executions of a finalstamp f4be binary.
+
+Failure and repair evidence retained:
+- c963 check-fast report PASS,15gates including strict workspace/all-target Clippy
+  native0; selector separately PASS/stable,51nonzero changed files from origin/main,
+  base merge commitddfa2a138ae816cdd46e639c532900d2abe60b27 (includes inheritedpaths).
+- c963 precommit receipt status source_or_policy_failure/native1 with invalid
+  comma-separated fixture Spec ID; log names exact newSPEC file and invalid ID.
+  This is a real candidate policy failure, not infrastructure or a previouspass.
+- f4be exact docs-only fix resolves that malformed header. Parent reports direct
+  traceability native0; final precommit remains parent-owned/pending here.
+- Historical review retained verbatim as final-review-c963.txt, including original
+  P1 fix, exact finalc963 artifact14controls, corpus wrong-output oracle challenge
+  and unchanged52/52consumer comparison/18currentweak. Original failure records
+  remain intact. No reviewer Cargo or source write; review outputs only.
+
+blocking_findings: NONE in current bounded source/docs review.
+proof_or_review_missing: finalf4be stampedCLI/replay and full finalprecommit remain
+parent-owned; hosted qualification intentionally absent. Actual consumer target
+67654dc6 improvement remains NOT_ESTABLISHED, even though source review is clean.
+disposition: REVIEW_INCOMPLETE overall; substantive candidate source/fixture review
+complete, no remaining blocking sourcefinding, no merge/consumer clearance.
+
+Final f4be exact-artifact independent update:
+Frozen /workspace/5500-whole-tail-evidence/ripr-final-f4be8084a independently
+SHA2560bdc445a97709960405d2f4d29985ab9db238cbc1723341f0a2acb20af90cc90.
+Reran14existing CLIcontrols against this exactfinalartifact, separate f4becaches/
+outputs. All14nativeexit0, exact1header each and all14expected classes asserted:
+earlyreturnoriginal+3armmutants weak, armreturn/macroexit/non-tail/fakeMAX controls
+weak, ordinarypositive/multilinebinding/harmlessliteralwords exposed, same-line
+bindingweak. Wrongproduction literalexpected exposed is staticdiscriminator shape
+only, not nativecorrectness pass. OriginalP1 remains fixed on actualfinalbinary.
+Receipt /workspace/5500-review/f4be-cli-controls-receipt.json; rawf4beJSON/stderr
+retained in ownedfixture directories. This supersedes pendingf4bestampedCLI scope
+above. Finalprecommit and f4beexactconsumerreplay pending at thisupdate.
+
+----- Historical c963 exact-artifact inspection (preserved) -----
+
+Current exact-head independent review — 2026-10-18 UTC
+reviewed_head_sha: c96331b7113c7626609d57405236e85ef4a0a703
+reviewed_tree: 1150eefc02802e0a312cfc1c27571bd9ebda0f78
+integration_basis: predecessor16ff7479; incremental basisd0412aed451fbda53eb6621109654517476ee0a6.
+
+The d041 check-fast failure is retained, not reported as a pass:
+check-fast-d041-cmp-owned.log and check-fast-d041-report.md record Clippy101,
+aggregate1 due to new receipt .text().to_string()!=operand (cmp_owned).
+The entire d041..c963 source delta was independently read: one line now compares
+.text()!=operand without allocating a String. No guard, threshold, macro route,
+selector, expected syntax admission or fixture changes.
+
+Primary implementation verified directly from installed rowan0.17.0 source,
+syntax_text.rs:143-166: SyntaxText PartialEq<str> visits every chunk, requires rhs
+starts_with(chunk), consumes exactly chunk.len(), and finally requires empty rhs;
+PartialEq<&str> delegates to that exact implementation. This is exact bytewise
+concatenated text equality, same predicate as allocated String comparison. Both
+shorter/longer mismatches and a differing chunk remain refused. No new parser or
+expected-side authority is introduced. Mechanical Clippy repair is correct.
+
+Prior d92 14CLI behavioral controls and final d041 corpus/oracle review remain
+applicable across this semantically equivalent one-line change; they are not
+claimed as executions of a final stamped c963 binary. Root final stampedCLI and
+source gates were pending at this addendum. All previous source findings are
+resolved; no new blocking source finding. No reviewer build or source mutation.
+Original d041 review preserved verbatim as final-review-d041.txt; historical
+record below describes that earlier identity, not the current reviewed SHA.
+
+blocking_findings: NONE on current bounded source review.
+proof_or_review_missing: root final source checks, stampedCLI/consumer replay and
+hosted qualification remain explicit; no actual consumer improvement claimed.
+disposition: REVIEW_INCOMPLETE overall pending named proof; source review complete.
+
+Final exact-artifact validation update:
+Independently hashed frozen /workspace/5500-whole-tail-evidence/ripr-final-c96331b71:
+SHA256734e2313d4cb52262f46b92869b7a23c57cd855913e3f114f437444fb1143722.
+Reran all14 existing CLI controls against this exact artifact using separate c963
+cache/output paths. All14 nativeexit0, exactly1header per case, classifications
+asserted against expected outcomes: original scrutinee return and all3arm-zero
+mutants weak; macro scrutinee/explicit armreturn/non-tail/fakeMAX variants weak;
+ordinary positive/multiline binding/harmless exitwords string exposed; same-line
+binding weak. Wrong-production literal-expected control exposed is discriminator
+shape evidence only, not a passing-native correctness assertion. Outcome vector
+matches repaired d92; original P1 fixed on the actual final binary.
+Receipt /workspace/5500-review/c963-cli-controls-receipt.json; raw c963.json/stderr
+under each owned fixture. This supersedes pending-finalCLI scope above. Root
+final check-fast/precommit and final exact consumer receipt still pending at this
+update; no hosted qualification or consumer improvement inferred.
+
+Final exact-consumer evidence update:
+Independently read consumer-final-receipt.json and full consumer-comparison.json,
+and calculated both raw consumer-predecessor.json/consumer-candidate.json hashes:
+e67563d1ec9aad34b8c54d5f341a13114b93469c73bb6b97f55f6ccbe66db96b each.
+Final receipt binds sourcec963/tree1150eef, exact frozen binary734e2313...3722,
+consumer278253a/base715a364, isolated cache-final-c963, nativeexit0 and complete
+52/52analysis. Comparison contains52rows,52unchanged,0introduced/removed/changed,
+no other top-level changes. Counts unchanged6exposed20weak26unknown;18currentweak
+plus2base-deletedweak. Target67654dc6 candidate_current remainsweak at budget.rs96.
+Exactdiff40491bytes SHA6af0470bd2c7a8648325402af4d5294c94f35304403ef2c3952ffe986adc8b02.
+Therefore actual consumer progress is NOT_ESTABLISHED on finalc963;18->17 did not
+occur. This is valid nonregression evidence, not consumer acceptance. Root's
+recorded causal diagnosis is existing OwnerPinSyntax MacroBinding(assert_eq),
+OpaqueMacro(serde_json::json) and ClosureExit refusals after whole-tail custody
+succeeds. No unchanged shared admission guard was weakened by this candidate.
+Finalconsumer replay is no longer missing; final changed-path checks/precommit
+and hosted qualification still pending or intentionally absent. No open blocking
+source finding, but parent target-improvement predicate remains unmet. Overall
+REVIEW_INCOMPLETE unchanged; no REVIEW_READY/consumer-clearance claim.
+
+----- Historical d041 source/fixture inspection (preserved) -----
+
+Final independent exact-head source inspection — 2026-10-18 UTC
+
+reviewed_head_sha: d0412aed451fbda53eb6621109654517476ee0a6
+reviewed_tree: 6d3669c6eaf4377ab0ad7d2a8f747d35daac38f0
+repository/branch: /workspace/ripr-swarm, codex/5500-whole-tail-observation
+integration_basis: 16ff7479d2a78fd9558b4ff9f5ad6c803c2857d7,
+872e30737142ac3e0e977603fa4cc684d662a5ad.
+review_route: AGENTS.md and .agents/skills/review-pr/SKILL.md.
+
+claim_boundary:
+Newly added unique root, synchronous statement-free primitive scalar owner's
+whole-tail MatchExpr HEADER may obtain an independent whole-result observation
+receipt, with exact parser/index/source/diff/old-owner custody and existing
+assertion invocation/macro/callee/expected/result overwrite guards. Opaque inputs
+are not evaluated and supply no individual-arm selection or coverage authority.
+No threshold, suppression, family, public DTO, macro-parity, helperargs or broad
+expected-rebinding expansion. Actual consumer improvement is not established.
+
+changed_surfaces_and_semantic_owners_inspected:
+Cumulative review reads full15-path16ff..fcff, full4-pathfcff..d92 and full11-path
+d92..d041 diffs; preserved detailed records independent-review.txt and
+repaired-review.txt describe authority and test mapping. Final source changed
+from d92 ONLY by .into() conversion of a String to SourceText in a cfg(test)
+owner-body mutation. All other production source blobs unchanged; production
+prefix of whole_tail_match.rs byte-identical SHA256
+878b0cbe5d80cccf4d3f03f0731715d07bbb678785069aba7959815ce263e094.
+The14 independently executed repaired CLI controls therefore remain applicable
+source-equivalent evidence, not falsely described as final-stamped executions.
+
+Original P1 and resolution:
+fcff falsely exposed `match { return 600; lease.elapsed }` as whole match result
+observation even though the scrutinee returned first. Independent rustc original,
+Some=>0, None=>0 and BOTH=>0 all compiled/passed, while fcffCLI exposed header.
+The repaired production rejects explicit return/?/break/continue/yield and all
+MacroCall descendants throughout this match before Any constructor admission.
+Independent frozen d92CLI returns weak for the original and all3 arm mutants,
+macro scrutinee and explicit arm return; retained exact1header per fixture proves
+refusal, not row disappearance. Original finding FIXED; no open source finding.
+Validated all-added owner/parseable old source/no old same-nameFn outranks heuristic
+probe.before after repair. Public neighbor-old test pins Some-before+exposed;
+moved-existingowner and unread-old-source negatives retain custody authority.
+
+Permanent regression and semantic honesty review:
+Final fixture input/src/lib.rs reproduces exact nonlocal scrutinee return in a
+new documented pub(crate) owner and a direct literal equality. Its input helper
+avoids incidental Some/None assertion tokens. diff.patch adds exactly lines3..9
+(owner doc+declaration+body), keeping meaningful existing struct/input/test. Old
+source therefore lacks charge; valid new-owner custody reaches the repaired
+exit gate. Fixture SPEC explains why all arm mutants survive.
+Golden JSON contains4subjects: header0ca211c2, return-value925496ef, Someafe43b21,
+None23efc786; all weak. Human output4probes/4weak and actionable weak header agrees.
+Corpus case rust_whole_tail_match_scrutinee_return_bypasses_observation scopes
+probe_family=match_arm: EXACTLY3subjects (header+two arms), must_not_promote,
+must_not_report_clean and expected_finding_count3. Existing evaluator inspected
+at xtask/src/evidence_promotion.rs:1420+,1970+,4348+: family scoping rejects empty
+matches, count is applied after filtering, and must_not_promote rejects each
+exposed member. No existing corpus guard changed. Thus neither golden rebless
+nor disappearing findings can make this regression vacuously pass.
+Read retained actual frozenfcff output copied as wrong expected/check.json:
+standard gate fails specifically newheader0ca211c2 exposed under must_not_promote
+(corpus-wrong-gate.log). Correct golden restored SHA256
+effa3b0a234b3c6f3fe03be9a5a29b028c14df84177ab471f51359d01a44b0af,
+independently hashed by reviewer; corpus-final-gate.log passes. Wrong-output
+experiment is grounded in real faulty CLI output, not synthetic class editing.
+Traceability links fixture/code/goldens; SPEC documents earlier-line binding
+requirement and permanent counterexample; source/test type conversion is valid.
+
+proof_and_ci_observed:
+- Independent14CLI controls on d92 exact binary SHA256
+  ea333b0cbfa9568c7aa7cc54741456049da1922fcc2ff79407e3429930bbecb0:
+  all exit0, exact1header each; P1 original+3mutants nowweak, macro/arm exits weak,
+  positive and multiline binding exposed, same-line binding weak, harmless exit
+  words inside string exposed, statement-before-tail weak, fake MAX original/
+  wrong result weak. /workspace/5500-review/d92-cli-controls-receipt.json.
+- Independent native4 compile0/run0 witnesses in scrutinee-native-receipt.json;
+  actual consumer helper original3pass/mutants compile+fail separately retained.
+- Repaired author integration output read: field selector15/15, native roots5/5,
+  whole-tail9/9 pass. cfgtest type-fix provenance unit1/1 passes; shared-owner
+  receipt7targeted tests pass on ae0 source-equivalent production. These are
+  retained source-stage checks, not hosted or finalstamp claims.
+- Native goldens bless log inspected; new fixture only. Initial fullgoldens
+  infrastructure failure missing locked anyhow1.0.100 is separately owned;
+  supported goldens prepare log succeeds. No old golden rebless in final diff.
+- Corpus actual-wrong output gate fails and correct output gate passes as above.
+- Predecessor full unchanged suite reused; no reviewer Cargo invocation/build.
+  Root owns final check-fast/precommit/fullgoldens/stampedCLI/consumer replay.
+
+blocking_findings: NONE in final bounded source/fixture review.
+non_blocking_suggestions: none requiring action; preserve documented conservative
+exit/macro and same-line binding limitations in claims.
+refuted_or_stale_findings: original P1 resolved. Candidate does not globally
+admit MatchArm through ordinary OwnerReturnPin, and whole receipt never supplies
+ArmSelector authority. Attempted macro MAX false promotion concretely staysweak.
+proof_or_review_missing_at_this_record:
+Root final changed-path checks and final stampedCLI/consumer replay were pending
+at reviewer handoff. No hosted checks, PR/review/Ready/merge transition requested.
+Actual exact fcff consumer52subjects byte-identical to predecessor, target67654dc6
+weak and18currentweak unchanged. Diagnostic root reports existing assertion
+macro/serde/closure admission refusals; this candidate does not repair those.
+Future final replay must be reported from actual receipt, not inferred18->17.
+affected_currentness_dimensions: final identity, cfgtest conversion, fixture/
+corpus/public documentation refreshed. Production14CLI proof remains current by
+exact source equivalence; no independent claim finalbinary executed yet.
+residual_assumptions_and_non_claims:
+Candidate-level source review, Linux tools only; no platform/process/security
+source change. No test adequacy, full consumer clearance, installed adoption,
+hosted qualification or merge readiness. Author checkout never edited/moved.
+Labs and all evidence retained under explicit user no-cleanup instruction.
+No denied or pending permission action; only named proof work remains root-owned.
+disposition: REVIEW_INCOMPLETE overall while final local/remote evidence remains
+pending; bounded source/fixture inspection complete with no blocking findings.
+
+Additional final authority challenge (parent-requested, exact d92CLI):
+Two-file root `mod types; use types::*;` and newly added `fn charge(x: bool)
+-> u64 { match x { true=>u64(1), false=>u64(2) } }`; types.rs defines custom
+Debug u64 with always-true PartialEq<i32>, test compares charge(true) to literal600.
+Real header40feaca2 remains weakly_exposed, CLI nativeexit0, no whole-tail receipt
+credited. Suspected glob-bound custom scalar false promotion REFUTED for this
+concrete control. Raw source/diff/JSON/stderr retained at
+/workspace/5500-review/glob_scalar. No further broadening or native compilation
+because shared admission refused the case. Final no-blocking-source disposition
+unchanged; this does not establish arbitrary glob/type resolution completeness.
+
+Discriminating qualified-macro follow-up:
+Changed only the glob-scalar control's assertion to std::assert_eq!, then
+::std::assert_eq!, preserving source/diff/type setup. BOTH exact d92CLI runs
+nativeexit0, exact1 header40feaca2, weakly_exposed without whole-tailreceipt.
+Thus qualifying the macro did not expose the suspected custom-equality pin;
+concrete concern remains refuted. /workspace/5500-review/glob_scalar/
+qualified-cli-receipt.json and std/absolute_std raw inputs/outputs retained.
+No native compile warranted after both cases refused; no scope broadening.

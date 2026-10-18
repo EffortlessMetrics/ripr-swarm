@@ -1,0 +1,7 @@
+remote: 
+remote: GitHub found 12 vulnerabilities on EffortlessMetrics/ripr-swarm's default branch (4 high, 4 moderate, 4 low). To find out more, visit:        
+remote:      https://github.com/EffortlessMetrics/ripr-swarm/security/dependabot        
+remote: 
+To https://github.com/EffortlessMetrics/ripr-swarm.git
+ 	fcffca11ffa7e2d0a0834e8dd5066f79660f0a68:refs/heads/codex/5500-whole-tail-observation	a982659ab..fcffca11f
+Done

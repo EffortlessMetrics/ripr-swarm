@@ -1,0 +1,455 @@
+{
+  "schema_version": "0.2",
+  "composition": "local_precommit",
+  "status": "source_or_policy_failure",
+  "failure_kind": "source_or_policy",
+  "repository_root": "$REPO",
+  "head_sha": "c96331b7113c7626609d57405236e85ef4a0a703",
+  "merge_base_ref": "origin/main",
+  "merge_base_sha": "ddfa2a138ae816cdd46e639c532900d2abe60b27",
+  "change_set": {
+    "changes": [
+      {
+        "kind": "added",
+        "path": "changelog.d/5500-helper-mutable-field-selector.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "changelog.d/5500-whole-tail-match-observation.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "crates/ripr/src/analysis/classify/owner_pin/whole_tail_match.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "crates/ripr/src/analysis/value_resolution/option_field.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "crates/ripr/tests/whole_tail_match_observation.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_mutable/SPEC.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_mutable/diff.patch",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_mutable/expected/CHANGELOG.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_mutable/expected/check.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_mutable/expected/human-full.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_mutable/expected/human.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_mutable/input/Cargo.toml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_mutable/input/src/lib.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_taken/SPEC.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_taken/diff.patch",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_taken/expected/CHANGELOG.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_taken/expected/check.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_taken/expected/human-full.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_taken/expected/human.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_taken/input/Cargo.toml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/field_match_helper_taken/input/src/lib.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_scrutinee_return/SPEC.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_scrutinee_return/diff.patch",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_scrutinee_return/expected/CHANGELOG.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_scrutinee_return/expected/check.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_scrutinee_return/expected/human.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_scrutinee_return/input/Cargo.toml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "fixtures/whole_tail_match_scrutinee_return/input/src/lib.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": ".ripr/traceability.toml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/classifier.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/classifier/evidence.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/classify/arm_selection.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/classify/arm_selection/field_selector.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/classify/context.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/classify/mod.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/classify/owner_pin.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/classify/related_tests.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/classify/reveal.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/language/rust/mod.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/probes/propagation_boundary_tests.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/seam_cache.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/value_resolution.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/value_resolution/tests.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/tests/field_match_selector.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "docs/OUTPUT_SCHEMA.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "docs/specs/RIPR-SPEC-0229-match-arm-selection-discriminator.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "fixtures/evidence-promotion-honesty-corpus/corpus.json",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "xtask/src/tests/rust_corpus_projection.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      }
+    ],
+    "complete": true,
+    "limitations": []
+  },
+  "impact_plan": {
+    "impacted_packages": [
+      "ripr",
+      "xtask"
+    ],
+    "workspace_clippy": false,
+    "workspace_widening_reason": null,
+    "skipped_reason": null
+  },
+  "commands": [
+    {
+      "command": "cargo metadata --format-version 1 --no-deps --manifest-path $REPO/Cargo.toml",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": null
+    },
+    {
+      "command": "existing repository policy precommit",
+      "outcome": "failed",
+      "detail": "check-traceability failed; see target/ripr/reports/traceability.md\nfixtures/whole_tail_match_scrutinee_return/SPEC.md references invalid spec id `RIPR-SPEC-0229, RIPR-SPEC-0108`",
+      "diagnostic": null
+    }
+  ],
+  "skipped": [
+    "Clippy for ripr was not run",
+    "Clippy for xtask was not run"
+  ],
+  "limitations": [
+    "check-traceability failed; see target/ripr/reports/traceability.md\nfixtures/whole_tail_match_scrutinee_return/SPEC.md references invalid spec id `RIPR-SPEC-0229, RIPR-SPEC-0108`"
+  ],
+  "report_digest": "sha256:58789747a289fb5aa2839849e05b8b33c64890aed5dc9c310293830873ddca69"
+}

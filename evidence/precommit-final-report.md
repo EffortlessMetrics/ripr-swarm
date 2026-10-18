@@ -1,0 +1,99 @@
+# ripr precommit v2
+
+- Status: `pass`
+- Failure kind: `none`
+- Head: `f4be8084a1cbc7cd9d66c7e10ec4b9eb46b7a5bc`
+- Merge base: `ddfa2a138ae816cdd46e639c532900d2abe60b27`
+- Changed records: `51`
+- Report digest: `sha256:40f5325270215fc637c016414cf6c8215a393ba1786d9ed85b80ee0b4a000c05`
+
+- Composition: `local_precommit`
+
+## Changed files
+
+- `added` `-` -> `changelog.d/5500-helper-mutable-field-selector.md` (committed)
+- `added` `-` -> `changelog.d/5500-whole-tail-match-observation.md` (committed)
+- `added` `-` -> `crates/ripr/src/analysis/classify/owner_pin/whole_tail_match.rs` (committed)
+- `added` `-` -> `crates/ripr/src/analysis/value_resolution/option_field.rs` (committed)
+- `added` `-` -> `crates/ripr/tests/whole_tail_match_observation.rs` (committed)
+- `added` `-` -> `fixtures/field_match_helper_mutable/SPEC.md` (committed)
+- `added` `-` -> `fixtures/field_match_helper_mutable/diff.patch` (committed)
+- `added` `-` -> `fixtures/field_match_helper_mutable/expected/CHANGELOG.md` (committed)
+- `added` `-` -> `fixtures/field_match_helper_mutable/expected/check.json` (committed)
+- `added` `-` -> `fixtures/field_match_helper_mutable/expected/human-full.txt` (committed)
+- `added` `-` -> `fixtures/field_match_helper_mutable/expected/human.txt` (committed)
+- `added` `-` -> `fixtures/field_match_helper_mutable/input/Cargo.toml` (committed)
+- `added` `-` -> `fixtures/field_match_helper_mutable/input/src/lib.rs` (committed)
+- `added` `-` -> `fixtures/field_match_helper_taken/SPEC.md` (committed)
+- `added` `-` -> `fixtures/field_match_helper_taken/diff.patch` (committed)
+- `added` `-` -> `fixtures/field_match_helper_taken/expected/CHANGELOG.md` (committed)
+- `added` `-` -> `fixtures/field_match_helper_taken/expected/check.json` (committed)
+- `added` `-` -> `fixtures/field_match_helper_taken/expected/human-full.txt` (committed)
+- `added` `-` -> `fixtures/field_match_helper_taken/expected/human.txt` (committed)
+- `added` `-` -> `fixtures/field_match_helper_taken/input/Cargo.toml` (committed)
+- `added` `-` -> `fixtures/field_match_helper_taken/input/src/lib.rs` (committed)
+- `added` `-` -> `fixtures/whole_tail_match_scrutinee_return/SPEC.md` (committed)
+- `added` `-` -> `fixtures/whole_tail_match_scrutinee_return/diff.patch` (committed)
+- `added` `-` -> `fixtures/whole_tail_match_scrutinee_return/expected/CHANGELOG.md` (committed)
+- `added` `-` -> `fixtures/whole_tail_match_scrutinee_return/expected/check.json` (committed)
+- `added` `-` -> `fixtures/whole_tail_match_scrutinee_return/expected/human.txt` (committed)
+- `added` `-` -> `fixtures/whole_tail_match_scrutinee_return/input/Cargo.toml` (committed)
+- `added` `-` -> `fixtures/whole_tail_match_scrutinee_return/input/src/lib.rs` (committed)
+- `modified` `-` -> `.ripr/traceability.toml` (committed)
+- `modified` `-` -> `crates/ripr/src/analysis/classifier.rs` (committed)
+- `modified` `-` -> `crates/ripr/src/analysis/classifier/evidence.rs` (committed)
+- `modified` `-` -> `crates/ripr/src/analysis/classify/arm_selection.rs` (committed)
+- `modified` `-` -> `crates/ripr/src/analysis/classify/arm_selection/field_selector.rs` (committed)
+- `modified` `-` -> `crates/ripr/src/analysis/classify/context.rs` (committed)
+- `modified` `-` -> `crates/ripr/src/analysis/classify/mod.rs` (committed)
+- `modified` `-` -> `crates/ripr/src/analysis/classify/owner_pin.rs` (committed)
+- `modified` `-` -> `crates/ripr/src/analysis/classify/related_tests.rs` (committed)
+- `modified` `-` -> `crates/ripr/src/analysis/classify/reveal.rs` (committed)
+- `modified` `-` -> `crates/ripr/src/analysis/language/rust/mod.rs` (committed)
+- `modified` `-` -> `crates/ripr/src/analysis/probes/propagation_boundary_tests.rs` (committed)
+- `modified` `-` -> `crates/ripr/src/analysis/seam_cache.rs` (committed)
+- `modified` `-` -> `crates/ripr/src/analysis/value_resolution.rs` (committed)
+- `modified` `-` -> `crates/ripr/src/analysis/value_resolution/tests.rs` (committed)
+- `modified` `-` -> `crates/ripr/tests/field_match_selector.rs` (committed)
+- `modified` `-` -> `crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs` (committed)
+- `modified` `-` -> `docs/OUTPUT_SCHEMA.md` (committed)
+- `modified` `-` -> `docs/specs/RIPR-SPEC-0229-match-arm-selection-discriminator.md` (committed)
+- `modified` `-` -> `fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json` (committed)
+- `modified` `-` -> `fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json` (committed)
+- `modified` `-` -> `fixtures/evidence-promotion-honesty-corpus/corpus.json` (committed)
+- `modified` `-` -> `xtask/src/tests/rust_corpus_projection.rs` (committed)
+
+## Impact plan
+
+- package: `ripr`
+- package: `xtask`
+
+## Commands
+
+- `cargo metadata --format-version 1 --no-deps --manifest-path $REPO/Cargo.toml`: `pass`
+- `existing repository policy precommit`: `pass`
+- `git diff --check ddfa2a138ae816cdd46e639c532900d2abe60b27...HEAD`: `pass`
+- `git diff --cached --check`: `pass`
+- `git diff --check`: `pass`
+- `cargo clippy --manifest-path $REPO/Cargo.toml -p ripr --all-targets -- -D warnings`: `pass`
+- `cargo clippy --manifest-path $REPO/Cargo.toml -p xtask --all-targets -- -D warnings`: `pass`
+
+## Child command diagnostics
+
+Diagnostic observations of existing child calls in this invocation only. Missing rows/values are unavailable evidence, never zero compilation or completed work. Elapsed scopes differ; the captured runner polls exit and excludes pipe draining; enforced timeout duration includes termination/reaping and Unix process-group confirmation where applicable. Cargo progress counts recognize stderr lines only, not compiler-unit identities, completed artifacts, reuse proof or redundant compilation. These diagnostics waive no gate.
+
+Capture scope: diff checks and selected Clippy children only. Metadata, aggregate policy gates and their children have unavailable diagnostics here. Argv retains argument boundaries with repository-root substitution `$REPO`. HEAD/base and changed paths are context, not an immutable digest of dirty source.
+
+- program="git"; argv=["-C", "$REPO", "diff", "--check", "ddfa2a138ae816cdd46e639c532900d2abe60b27...HEAD"]; outcome=pass; status=exit status: 0; exit_code=0; elapsed_ms=100; elapsed_scope=runner_start_to_observed_exit_excluding_pipe_drain; cargo_progress=unavailable
+- program="git"; argv=["-C", "$REPO", "diff", "--cached", "--check"]; outcome=pass; status=exit status: 0; exit_code=0; elapsed_ms=100; elapsed_scope=runner_start_to_observed_exit_excluding_pipe_drain; cargo_progress=unavailable
+- program="git"; argv=["-C", "$REPO", "diff", "--check"]; outcome=pass; status=exit status: 0; exit_code=0; elapsed_ms=100; elapsed_scope=runner_start_to_observed_exit_excluding_pipe_drain; cargo_progress=unavailable
+- program="cargo"; argv=["clippy", "--manifest-path", "$REPO/Cargo.toml", "-p", "ripr", "--all-targets", "--", "-D", "warnings"]; outcome=pass; status=exit status: 0; exit_code=0; elapsed_ms=152828; elapsed_scope=runner_start_to_observed_exit_excluding_pipe_drain; cargo_progress=recognized_stderr_lines(compiling=1, checking=unavailable, fresh=unavailable)
+- program="cargo"; argv=["clippy", "--manifest-path", "$REPO/Cargo.toml", "-p", "xtask", "--all-targets", "--", "-D", "warnings"]; outcome=pass; status=exit status: 0; exit_code=0; elapsed_ms=149107; elapsed_scope=runner_start_to_observed_exit_excluding_pipe_drain; cargo_progress=recognized_stderr_lines(compiling=unavailable, checking=22, fresh=unavailable)
+
+## Skipped
+
+- none recorded
+
+## Limitations
+
+- none

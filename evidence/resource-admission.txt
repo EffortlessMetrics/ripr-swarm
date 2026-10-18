@@ -1,0 +1,12 @@
+2026-10-18 fresh #5500 continuation admission
+Owner: delegated Codex root; sole source writer implementation agent.
+Source: /workspace/ripr-swarm; common Git /workspace/ripr-swarm/.git.
+Branch: codex/5500-whole-tail-observation from 16ff7479d2a78fd9558b4ff9f5ad6c803c2857d7.
+Consumer: /workspace/5500-consumer exact UB1503 head278253a03b00d1aa777eeba7633954122163890f, base715a36434a56be3a9abeb5545012d56e2cb9cb60.
+Mutable Cargo target: /workspace/5500-target; checkout target supplies repository temp redirect.
+Frozen witnesses/raw receipts: /workspace/5500-whole-tail-evidence. Distinct predecessor and final CLI, RED/GREEN/native control observations required; no redundant executable snapshots for same bytes.
+Observed available31516831744B after source fetch/consumer checkout; accepted reserve10737418240B. Peak additional allocation budget12884901888B includes dependencies/builds, source/control labs, binary snapshots, output/cache/receipts and any restore staging. No cleanup savings assumed. Stop generation if budget no longer fits; no cleanup authorized in this task.
+Toolchain: /workspace/.cargo/bin proxies with RUSTUP_HOME=/workspace/.rustup CARGO_HOME=/workspace/.cargo. Rust/cargo1.95.0 verified. Initial proxy without RUSTUP_HOME failed before execution trying read-only /home/agent/.rustup; this is setup, not a source/check failure.
+Build settings: jobs2, incremental0, dev/test debug0; tests2/rayon2; serialize Cargo across workers. Root only runs frozen CLI after writer signals build boundary.
+Current inherited basis independently resolves ddfa2a138ae816cdd46e639c532900d2abe60b27 after fetch;33 inherited paths. Predecessor complete validation reused from comment6248595293; no rerun of unchanged whole suite.
+All source, Git objects, target and witnesses retained for implementation/review/replay consumers. No hosted runs, PR, Ready, merge, release, credentials/security changes or destructive cleanup.

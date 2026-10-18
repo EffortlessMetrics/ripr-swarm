@@ -1,0 +1,17 @@
+struct Lease { elapsed: Option<u64> }
+macro_rules! early { ($e:expr) => {{ return 600; $e }} }
+fn charge(lease: &Lease) -> u64 {
+    match early!(lease.elapsed) {
+        Some(ms) => ms,
+        None => 600,
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn observes() {
+        let lease = Lease { elapsed: None };
+        assert_eq!(charge(&lease), 600);
+    }
+}

@@ -1,0 +1,80 @@
+---
+name: review-pr
+description: Perform a substantive exact-head review of one pull request or current candidate before merge convergence. Use after candidate hardening, after a material head change, or when review quality/currentness is uncertain.
+---
+
+# Useful result
+
+The exact current PR head has an evidence-backed disposition that distinguishes blocking defects, non-blocking suggestions, refuted or stale findings, missing proof/review, and infrastructure or instrument failure. The review establishes whether the candidate may proceed to merge convergence; it does not substitute GitHub state or green CI for semantic acceptance.
+
+# Contract markers
+
+These stable IDs declare the load-bearing review contract without requiring
+provider prose symmetry. `cargo xtask check-agent-skills` validates the closed
+set; normal review still verifies whether the prose and behavior actually honor
+it.
+
+- `review_contract:exact_head_binding`
+- `review_contract:non_mutating_inspection_workspace`
+- `review_contract:semantic_owner_and_consumers`
+- `review_contract:wrong_behavior_oracle_challenge`
+- `review_contract:rendered_behavior`
+- `review_contract:contract_parity`
+- `review_contract:platform_relevance`
+- `review_contract:exact_head_ci_receipts`
+- `review_contract:denominator_honesty`
+- `review_contract:mutation_or_removal_challenge`
+- `review_contract:no_threads_is_not_review`
+- `review_contract:green_ci_is_not_semantic_review`
+- `review_contract:clean_review_record_not_lgtm`
+- `review_contract:author_self_review_comment`
+- `review_contract:review_ready_gate`
+- `review_contract:repair_same_candidate`
+- `review_contract:blocked_is_not_human_cause`
+
+# Exact-head levels
+
+An exact head is a committed Git object. Uncommitted worktree state cannot
+receive an exact-head disposition.
+
+The procedure may run twice on the same candidate lifecycle:
+
+1. **Candidate review before publication.** Bind the committed branch head and
+   inspect source, proof, and repository contracts. Hosted checks, artifacts,
+   and external review that do not yet exist remain missing evidence, so the
+   normal result is `REVIEW_INCOMPLETE`, not `REVIEW_READY`.
+2. **Merge review after publication.** Bind the exact published PR head, inspect
+   current remote checks, artifacts, comments, and integration evidence, and
+   refresh only dimensions changed since the earlier review. Only this complete
+   published-head pass may emit `REVIEW_READY` for merge convergence.
+
+Publication does not erase a valid candidate review. It adds remote evidence
+that must be inspected before the disposition can advance.
+
+# Inspection workspace
+
+Reviewing means reading a committed Git object. Binding an exact head must never
+mutate a checkout the reviewer does not own.
+
+Routes that materialize nothing are the default:
+
+```bash
+gh pr view <n> --json headRefOid,baseRefName,body,files
+gh pr diff <n>
+git fetch origin pull/<n>/head          # writes FETCH_HEAD only
+git show <sha>:<path>
+git diff <base>...<sha> -- <path>
+```
+
+Exercising the real CLI, LSP, packaging, or generated output under
+`review_contract:rendered_behavior` does require a materialized tree. Take one
+that belongs to the review and work only inside it:
+
+```bash
+git worktree add --detach <own-path> <sha>
+```
+
+Candidate protection does not prohibit an admitted wrong-result, removal or
+fixture experiment in that review-owned tree. Keep its target/output separate,
+record the original reviewed head plus the experimental diff and result, and
+leave the submitted candidate unchanged. Experimental bytes are a control, not

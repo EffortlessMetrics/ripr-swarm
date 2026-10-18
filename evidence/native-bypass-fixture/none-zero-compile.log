@@ -1,0 +1,20 @@
+warning: unreachable expression
+ --> /workspace/5500-whole-tail-evidence/native-bypass-fixture/none-zero.rs:5:25
+  |
+5 |     match { return 600; lease.elapsed } {
+  |             ----------  ^^^^^^^^^^^^^ unreachable expression
+  |             |
+  |             any code following this expression is unreachable
+  |
+  = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `lease`
+ --> /workspace/5500-whole-tail-evidence/native-bypass-fixture/none-zero.rs:4:22
+  |
+4 | pub(crate) fn charge(lease: &Lease) -> u64 {
+  |                      ^^^^^ help: if this is intentional, prefix it with an underscore: `_lease`
+  |
+  = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: 2 warnings emitted
+
