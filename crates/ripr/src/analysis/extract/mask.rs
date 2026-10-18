@@ -119,7 +119,54 @@ fn raw_hashes_before_quote(bytes: &[u8], quote_index: usize) -> Option<usize> {
 /// length is preserved, so downstream line-based extraction keeps exact
 /// line attribution.
 pub(crate) fn mask_comments_and_strings(text: &str) -> String {
-    mask_with_char_literals(text).0
+    if !(MEMO_MIN_BYTES..=MEMO_MAX_BYTES).contains(&text.len()) {
+        return mask_with_char_literals(text).0;
+    }
+    MASK_MEMO.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        if let Some(at) = memo.iter().position(|(source, _)| **source == *text) {
+            let hit = memo.remove(at);
+            let masked = hit.1.to_string();
+            memo.push(hit);
+            return masked;
+        }
+        #[cfg(test)]
+        MASK_MEMO_MISSES.with(|misses| misses.set(misses.get() + 1));
+        let masked = mask_with_char_literals(text).0;
+        if memo.len() >= MEMO_CAPACITY {
+            memo.remove(0);
+        }
+        memo.push((std::rc::Rc::from(text), std::rc::Rc::from(masked.as_str())));
+        masked
+    })
+}
+
+/// Whole-file callers mask the same few files once per probe or per
+/// assertion; below this size a scan is cheaper than the lookup. The memo is
+/// content-compared and works on every thread, unlike the run-scoped
+/// `syntax::run_memo`: the callers include the parallel fact-building
+/// workers, which run without a scope, and a digest of the whole file per
+/// call would cost as much as the scan it saves in a debug build.
+const MEMO_MIN_BYTES: usize = 16 * 1024;
+
+/// Larger inputs are scanned every time, so a long-lived thread (the LSP
+/// analysis thread) holds at most `MEMO_CAPACITY` × 2 × this many bytes.
+const MEMO_MAX_BYTES: usize = 2 * 1024 * 1024;
+
+/// How many recent whole files [`mask_comments_and_strings`] remembers per
+/// thread, least recent first. Analysis alternates between an owner's file
+/// and its test files, so one slot would thrash.
+const MEMO_CAPACITY: usize = 8;
+
+type MaskMemo = Vec<(std::rc::Rc<str>, std::rc::Rc<str>)>;
+
+thread_local! {
+    static MASK_MEMO: std::cell::RefCell<MaskMemo> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+thread_local! {
+    static MASK_MEMO_MISSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// [`mask_comments_and_strings`], plus the byte range of every character
@@ -331,6 +378,44 @@ fn scan(text: &str) -> Scanned {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A large file is masked once while it stays among the recent files,
+    /// every hit equals a fresh scan, and an edited file is scanned again.
+    #[test]
+    fn large_files_are_masked_once_and_never_stale() {
+        let misses = || MASK_MEMO_MISSES.with(std::cell::Cell::get);
+        let file = |n: usize| {
+            format!("fn f{n}() {{ \"text {n}\" }} // note\n").repeat(MEMO_MIN_BYTES / 20)
+        };
+        let (first, second) = (file(1), file(2));
+        let before = misses();
+        for _ in 0..5 {
+            assert_eq!(
+                mask_comments_and_strings(&first),
+                mask_with_char_literals(&first).0
+            );
+            assert_eq!(
+                mask_comments_and_strings(&second),
+                mask_with_char_literals(&second).0
+            );
+        }
+        assert_eq!(misses() - before, 2);
+        let edited = first.replacen("text 1", "text 9", 1);
+        assert_eq!(
+            mask_comments_and_strings(&edited),
+            mask_with_char_literals(&edited).0
+        );
+        assert_eq!(misses() - before, 3);
+        for n in 10..10 + MEMO_CAPACITY {
+            mask_comments_and_strings(&file(n));
+        }
+        mask_comments_and_strings(&second);
+        assert_eq!(
+            misses() - before,
+            4 + MEMO_CAPACITY,
+            "evicted file rescanned"
+        );
+    }
 
     #[test]
     fn block_comments_and_strings_are_masked_with_lines_preserved() {
