@@ -39,7 +39,7 @@ fn classification(
         .filter(|finding| finding.id == "probe:src_proof.rs:return_value:d87248f4")
         .collect::<Vec<_>>();
     assert_eq!(findings.len(), 1, "exact changed return subject survives");
-    let class = findings[0].class;
+    let class = findings[0].class.clone();
     std::fs::remove_dir_all(root)?;
     Ok(class)
 }
@@ -70,7 +70,10 @@ fn custom_macro_and_opaque_module_exports_never_gain_assertion_identity()
         classification("mod proof;\npub(crate) use proof::*;\n", &shadowed)?,
         ExposureClass::StaticUnknown
     );
-    let opaque = OWNER.replace("#[cfg(test)]", "opaque!();\n#[cfg(test)]");
+    let opaque = OWNER.replace(
+        "#[cfg(test)]",
+        "macro_rules! opaque { () => { struct Extra; }; }\nopaque!();\n#[cfg(test)]",
+    );
     assert_eq!(
         classification("mod proof;\npub(crate) use proof::*;\n", &opaque)?,
         ExposureClass::StaticUnknown
