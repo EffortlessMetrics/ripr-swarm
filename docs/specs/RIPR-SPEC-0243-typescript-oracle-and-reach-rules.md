@@ -30,6 +30,7 @@ Linked issues:
 Linked PRs:
 
 - #6686 (TypeScript verdict corpus; mutation evidence for rule 10)
+- #8713 (rule 9 implementation: self-comparing exact matchers)
 
 
 Support-tier impact:
@@ -382,7 +383,12 @@ same token sequence, ignoring whitespace outside string literals
 (`expect(price(150)).toBe(price(150))`), reads `relational_check` /
 weak. The matcher supplies no independent expected value: both sides
 run the code under test, so a change that alters both alike passes. This
-mirrors RIPR-SPEC-0238 rule 1.
+mirrors RIPR-SPEC-0238 rule 1. Implemented 2026-10-18 (#8713) for a
+dynamic matcher argument — the expected side re-invokes the owner or
+re-reads the same one-hop local; a literal-vs-literal self-comparison
+stays strong at extraction and the observation guard refuses it credit.
+Whitespace inside a string literal is significant, so
+`expect("ab").toBe("a b")` is not self-comparing.
 
 ### Other assertion tables
 
@@ -739,8 +745,9 @@ to `amount - 20`, and `tests/lib.test.ts` has
    `direct_owner_call`, `exposed` (unchanged).
 2. `expect(price(150)).toBeGreaterThan(100)`: `relational_check` / weak,
    `weakly_exposed` (unchanged). `expect(price(150)).toBe(price(150))`:
-   `relational_check` / weak, `weakly_exposed` (today `exact_value` /
-   strong, `exposed`, inferred; rule 9).
+   `relational_check` / weak, `weakly_exposed` (rule 9, #8713; measured
+   `exact_value` / strong, `exposed` before implementation). The one-hop-local
+   spelling `const a = price(150); expect(a).toBe(a)` reads the same.
 3. `expect(price(150)).toMatchSnapshot()`: `snapshot` / medium,
    `weakly_exposed`, `typescript_snapshot_discriminator_unresolved`
    (unchanged).

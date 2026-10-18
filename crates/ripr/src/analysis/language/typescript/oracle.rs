@@ -846,7 +846,7 @@ pub(crate) fn expect_assertion_from_expression(
             .arguments
             .first()
             .is_some_and(|argument| argument.as_expression().is_some());
-    let (mut oracle_kind, oracle_strength) = if error_payload.is_some() {
+    let (mut oracle_kind, mut oracle_strength) = if error_payload.is_some() {
         (OracleKind::ExactErrorVariant, OracleStrength::Strong)
     } else if matcher == "toMatchObject" && async_modifier == Some("rejects") {
         // An error object this extraction could not read stays unresolved
@@ -879,6 +879,23 @@ pub(crate) fn expect_assertion_from_expression(
             Some(class) => (Some(class), false),
             None => extract_matcher_expected_value(matcher, &error_payload, outer_call, source),
         };
+
+    // RIPR-SPEC-0243 rule 9 (#8713): a self-comparing exact matcher with a
+    // dynamic expected — `expect(price(150)).toBe(price(150))`, or the
+    // one-hop-local spelling `const a = price(150); expect(a).toBe(a)` — is a
+    // tautology. Both sides run the changed code with the same inputs, so the
+    // assertion passes under both sides of the diff and can never discriminate
+    // a pure change. Read `relational_check` / weak instead of `exact_value` /
+    // strong. Literal-vs-literal spellings stay strong here: the value-family
+    // observation guard and the predicate self-comparing guard already refuse
+    // them credit at the classifier.
+    if has_dynamic_matcher_arg
+        && matches!(matcher, "toBe" | "toEqual" | "toStrictEqual")
+        && self_comparing_matcher_argument(outer_call, source, observed_expression.as_deref())
+    {
+        oracle_kind = OracleKind::RelationalCheck;
+        oracle_strength = OracleStrength::Weak;
+    }
 
     // A rejection equality observes the rejected reason, not the fulfilled
     // value. Admit this new credit only for a concrete literal through a
@@ -1976,6 +1993,63 @@ pub(crate) fn call_expression_is_expect(call: &oxc_ast::ast::CallExpression<'_>)
         &call.callee,
         Expression::Identifier(ident) if ident.name.as_str() == "expect"
     )
+}
+
+/// RIPR-SPEC-0243 rule 9 (#8713): true when the matcher's single argument is
+/// the same token sequence as the `expect(...)` argument. Whitespace outside
+/// string literals is not part of the sequence (`expect(a).toBe( a )` is still
+/// self-comparing); whitespace inside a string literal is significant, so
+/// `expect("ab").toBe("a b")` is not self-comparing.
+fn self_comparing_matcher_argument(
+    matcher_call: &oxc_ast::ast::CallExpression<'_>,
+    source: &str,
+    observed: Option<&str>,
+) -> bool {
+    let Some(observed) = observed else {
+        return false;
+    };
+    if matcher_call.arguments.len() != 1 {
+        return false;
+    }
+    let Some(expected_text) = matcher_call
+        .arguments
+        .first()
+        .and_then(|arg| source_text_for_argument(arg, source))
+    else {
+        return false;
+    };
+    normalized_token_sequence(observed) == normalized_token_sequence(&expected_text)
+}
+
+/// Token sequence with whitespace outside string literals removed. Quotes and
+/// escapes inside a string literal are preserved so two spellings that differ
+/// only inside a string never compare equal.
+fn normalized_token_sequence(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for ch in text.chars() {
+        if let Some(open) = quote {
+            out.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => {
+                quote = Some(ch);
+                out.push(ch);
+            }
+            _ if ch.is_whitespace() => {}
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 pub(crate) fn mock_payload_from_assertion(

@@ -97,6 +97,8 @@ mod rejection_equality_tests;
 mod related_tests;
 #[cfg(test)]
 mod replaced_block_tests;
+#[cfg(test)]
+mod self_comparing_assertion_tests;
 mod spread_override_guard;
 mod static_limit;
 mod table_rows;
