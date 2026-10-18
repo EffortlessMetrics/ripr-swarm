@@ -6417,6 +6417,10 @@ tests = [
     "crates/ripr/src/lsp/tests.rs::diagnostic_witness_command_binds_the_workspace_root",
     "crates/ripr/src/domain/diagnostic_witness.rs::tests::witness_preserves_exact_facts_and_named_missing_assertion_limitations",
     "crates/ripr/src/domain/diagnostic_witness.rs::tests::exposed_finding_without_missing_fact_does_not_become_a_gap_witness",
+    "crates/ripr/src/lsp/tests.rs::generic_client_is_told_once_when_a_changed_language_is_not_enabled",
+    "editors/vscode/test/suite/extension.test.ts::typed unavailable_languages status names the language in the status bar, not message text (#8585)",
+    "editors/vscode/test/suite/extension.test.ts::closing an unsaved buffer restores the typed language-not-enabled status (#8585)",
+    "editors/vscode/test/suite/extension.test.ts::language-not-enabled status keeps degraded component recovery and trust warning (#8585)",
 ]
 fixtures = []
 code = [
@@ -6424,6 +6428,7 @@ code = [
     "crates/ripr/src/lsp/capabilities.rs",
     "crates/ripr/src/lsp/actions.rs",
     "crates/ripr/src/lsp/gap_artifacts.rs",
+    "editors/vscode/src/statusRender.ts",
     "crates/ripr/src/domain/diagnostic_witness.rs",
     "crates/ripr/src/domain/context_packet.rs",
     "crates/ripr/src/output/json/context_packet.rs",

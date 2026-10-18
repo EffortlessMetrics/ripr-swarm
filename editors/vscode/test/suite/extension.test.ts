@@ -4271,6 +4271,65 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('closing an unsaved buffer restores the typed language-not-enabled status (#8585)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      const document = await vscode.workspace.openTextDocument(workspaceFileUri('src/lib.rs'));
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'succeeded',
+        run_status: 'limited_incomplete_input',
+        attempt_id: 'run-lang-close', snapshot_id: 'snapshot:run-lang-close',
+        unavailable_languages: [{ language: 'python', file_count: 1 }]
+      });
+      assert.ok(context.status.text.includes('ripr: language off'), context.status.text);
+
+      context.controller.markWorkspaceStale(document);
+      assert.ok(context.status.text.includes('ripr: stale'), context.status.text);
+      context.controller.markWorkspaceClosed(document);
+      // The restored status is the typed one, not a log-derived form that
+      // carries no unavailable-language rows.
+      assert.ok(context.status.text.includes('ripr: language off'), context.status.text);
+      assert.ok(String(context.status.tooltip).includes('did not analyze changed python'));
+      assert.ok(String(context.status.tooltip).includes('without saving'));
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('language-not-enabled status keeps degraded component recovery and trust warning (#8585)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'succeeded',
+        run_status: 'limited_incomplete_input',
+        attempt_id: 'run-mixed', snapshot_id: 'snapshot:run-mixed',
+        unavailable_languages: [{ language: 'python', file_count: 1, recovery: 'enable python in ripr.toml' }],
+        components: [
+          {
+            component: 'gap_ledger',
+            state: 'failed',
+            kind: 'artifact_derived',
+            message: 'gap ledger unreadable',
+            findings_trustworthy: false,
+            recovery: 'run ripr check to regenerate the gap decision ledger',
+            snapshot_identity: 'snapshot:run-mixed'
+          }
+        ]
+      });
+      assert.ok(context.status.text.includes('ripr: language off'), context.status.text);
+      const tooltip = String(context.status.tooltip);
+      assert.ok(tooltip.includes('did not analyze changed python'), tooltip);
+      assert.ok(tooltip.includes('Enable python in ripr.toml'), tooltip);
+      assert.ok(tooltip.includes('Run ripr check to regenerate the gap decision ledger'), tooltip);
+      assert.ok(tooltip.includes('not trustworthy evidence'), tooltip);
+    } finally {
+      await context.dispose();
+    }
+  });
+
   test('closing an unsaved buffer before any completed refresh reports paused analysis, not queued', async () => {
     const context = createControllerTestContext({});
     try {

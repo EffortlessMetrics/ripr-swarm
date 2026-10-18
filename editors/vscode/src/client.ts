@@ -1810,7 +1810,11 @@ export class RiprClientController {
       // state — so store the clean completion form even while documents are
       // dirty; the dirty-buffer overlay applies to the visible status only
       // and must not survive into the restored close-path status.
-      this.lastCompletedStatus = statusFromRefreshCompletedMessage(message);
+      // Once the typed `ripr/analysisStatus` is flowing it owns the stored
+      // clean status (#8585): the log-derived form carries no typed rows.
+      if (!this.receivedTypedAnalysisStatus) {
+        this.lastCompletedStatus = statusFromRefreshCompletedMessage(message);
+      }
       this.updateStatus(completed);
       void this.refreshFirstUsefulActionStatus();
       return;
@@ -1905,8 +1909,10 @@ export class RiprClientController {
           nextStep: `Run ${retry} to obtain a current saved-workspace snapshot.`
         });
         return;
-      case 'succeeded':
-        this.updateStatus(statusForRunStatus(status.run_status, {
+      case 'succeeded': {
+        // The clean saved-workspace form (no dirty overlay) is what closing
+        // an unsaved buffer restores (#7340, #8585).
+        const cleanInput = {
           detail: analysisStatusDetail(status),
           retryCommand: typeof status.retry_command === 'string' ? status.retry_command : undefined,
           // #5999: the server's budget-bound recovery replaces the canned
@@ -1916,12 +1922,17 @@ export class RiprClientController {
             && status.retry_recovery.detail.trim()
             ? status.retry_recovery.detail
             : undefined,
-          dirtyRoutedDocuments: Array.from(this.dirtyRiprDocuments),
           components: status.components,
           unavailableLanguages: status.unavailable_languages
+        };
+        this.lastCompletedStatus = statusForRunStatus(status.run_status, cleanInput);
+        this.updateStatus(statusForRunStatus(status.run_status, {
+          ...cleanInput,
+          dirtyRoutedDocuments: Array.from(this.dirtyRiprDocuments)
         }));
         void this.refreshFirstUsefulActionStatus();
         return;
+      }
       default:
         return;
     }
@@ -4183,7 +4194,10 @@ export function statusForRunStatus(
     && (runStatus === 'limited_incomplete_input'
       || !((runStatus ?? '') in LIMITED_RUN_STATUS_PRESENTATIONS))
   ) {
-    return statusForUnavailableLanguages(unavailable, input.detail);
+    // Compose with the presentation the run would otherwise get, so degraded
+    // component recoveries and the untrustworthy-findings warning survive.
+    const base = statusForRunStatus(runStatus, { ...input, unavailableLanguages: undefined });
+    return statusForUnavailableLanguages(unavailable, base);
   }
   const limited = LIMITED_RUN_STATUS_PRESENTATIONS[runStatus ?? ''];
   if (limited) {
@@ -4247,24 +4261,34 @@ function validUnavailableLanguages(
 
 function statusForUnavailableLanguages(
   rows: readonly AnalysisStatusUnavailableLanguage[],
-  detail: string | undefined
+  base: RiprStatusState
 ): RiprStatusState {
   const described = rows.map((row) =>
     typeof row.file_count === 'number' && row.file_count > 0
       ? `${row.language} (${row.file_count} ${plural(row.file_count, 'file')})`
       : row.language
   );
-  const recoveries = uniqueStrings(rows.map((row) => row.recovery));
+  const recoveries = uniqueStrings(
+    rows
+      .map((row) => row.recovery)
+      .filter((recovery): recovery is string => typeof recovery === 'string' && recovery.trim().length > 0)
+  );
+  const languageStep = recoveries.length > 0
+    ? recoveries.map(capitalizeFirst).join('; ')
+    : 'Add the language to ripr.toml [languages] enabled, then run ripr: Restart Server.';
+  // A degraded base (incomplete input with component recoveries) keeps its
+  // own detail and next step after the language disclosure.
+  const degradedBase = base.kind === 'analysisLimited';
   return {
     kind: 'languageNotEnabled',
     summary: `ripr did not analyze changed ${described.join(', ')}: the language adapter is not enabled.`,
     detail: [
-      detail,
+      base.detail,
       'Changed files of these languages produce no diagnostics, so a quiet editor is not an all-clear for them.'
     ].filter((line): line is string => Boolean(line)).join('\n'),
-    nextStep: recoveries.length > 0
-      ? recoveries.map(capitalizeFirst).join('; ')
-      : 'Add the language to ripr.toml [languages] enabled, then run ripr: Restart Server.'
+    nextStep: degradedBase && base.nextStep
+      ? `${languageStep}. Also: ${base.nextStep}`
+      : languageStep
   };
 }
 
