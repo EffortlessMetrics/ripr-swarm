@@ -245,3 +245,19 @@ fn given_a_skipped_test_with_a_fixture_relation_then_the_finding_is_not_exposed(
     assert_eq!(finding.related_tests[0].oracle, None);
     Ok(())
 }
+
+#[test]
+fn given_a_conftest_fixture_shadowed_by_a_parametrize_argname_then_the_test_stays_unrelated()
+-> Result<(), String> {
+    let conftest = "import pytest\nfrom src.utils import _short\n\n\n@pytest.fixture\ndef out():\n    return _short('abcd', 3)\n";
+    let test = "import pytest\n\n\n@pytest.mark.parametrize('out', ['abc'])\ndef test_short(out):\n    assert out == 'abc'\n";
+    assert!(
+        relations(&[
+            ("src/utils.py", UTILS_PY),
+            ("tests/conftest.py", conftest),
+            ("tests/test_utils.py", test),
+        ])?
+        .is_empty()
+    );
+    Ok(())
+}

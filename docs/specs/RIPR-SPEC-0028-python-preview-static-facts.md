@@ -294,9 +294,10 @@ module or a `conftest.py` up its directory chain, nearest wins) as a parameter
 is related, with the weak `fixture_owner_call` relation, when that fixture's
 body calls the owner by the rules a test body uses (#4563). One hop only; a
 renamed fixture (`name=`) and a test that rebinds the parameter name make no
-edge, nor does a parameter that a direct (non-`indirect`) `parametrize` supplies.
-When a file defines the same fixture name twice the last definition wins, and
-at most eight fixture definitions attach to one test. Not covered: class-level
+edge, nor does a parameter that a direct (non-`indirect`) `parametrize`
+supplies. When a file defines the same fixture name twice the last definition wins, and
+the analyzer attaches at most eight fixture definitions to one test (an
+implementation limit, not a pytest rule). Not covered: class-level
 fixtures, `mock` or rebinding inside the fixture body, parameters with defaults
 or supplied by `@patch`, `autouse` fixtures and fixtures of fixtures. The
 relation is uncertain, carries no oracle, and never reaches `exposed`.
