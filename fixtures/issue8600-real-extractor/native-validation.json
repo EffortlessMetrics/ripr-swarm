@@ -1,0 +1,130 @@
+[
+  {
+    "case": "numeric_independent_positive",
+    "rustc_exit": 0,
+    "source_sha256": "c621d93cb36cc20079bf6126ac9508e183f2bf5c3d4723657cd105d04fa06da3",
+    "emit": "binary",
+    "native_test_exit": 0,
+    "mutant_sha256": "cd577f6733f4bb7ea456289da2cd537c91041dcd7ddc19889920feee12a95cd2",
+    "mutant_test_exit": 101,
+    "mutation": "9 * base -> 8 * base"
+  },
+  {
+    "case": "reach_255_first_body",
+    "rustc_exit": 0,
+    "source_sha256": "bbebf218c055fdd4e5b45d827fa7b7f0c7f427bf2a4094ac36464659696ca4b8",
+    "emit": "metadata"
+  },
+  {
+    "case": "reach_255_first_inline",
+    "rustc_exit": 0,
+    "source_sha256": "64cf8fdabb4d3e2c97c126017968e4437e066e1b8499493c870236305e7be56d",
+    "emit": "metadata"
+  },
+  {
+    "case": "reach_255_last_body",
+    "rustc_exit": 0,
+    "source_sha256": "a49a546a8acc8520446d7b9de790b371195a6c8cb9357d35946dd4d2d23f87b4",
+    "emit": "metadata"
+  },
+  {
+    "case": "reach_255_last_inline",
+    "rustc_exit": 0,
+    "source_sha256": "5544fecbd64e4e060251ef32aba600c2025f23ace8a6462957fb76b2e0e337f2",
+    "emit": "metadata"
+  },
+  {
+    "case": "reach_256_first_body",
+    "rustc_exit": 0,
+    "source_sha256": "11e06a91ec4f659f6861c4f6d8f96023e98e915f47a81d5018aa49738bd5e2f6",
+    "emit": "metadata"
+  },
+  {
+    "case": "reach_256_first_inline",
+    "rustc_exit": 0,
+    "source_sha256": "b08e301e260606510813dac8ccef69cf02875f437cc95e8f6baee44ebaef10c4",
+    "emit": "metadata"
+  },
+  {
+    "case": "reach_256_last_body",
+    "rustc_exit": 0,
+    "source_sha256": "b67abc37ea6bf55ce1e584d9ab458f25baade6756c8f8632b442e11d83daab1e",
+    "emit": "metadata"
+  },
+  {
+    "case": "reach_256_last_inline",
+    "rustc_exit": 0,
+    "source_sha256": "4ef6b2889540fd5924a6a52daf5718a9fcacaed8cbdfd12ad6d24413bd265d1a",
+    "emit": "metadata"
+  },
+  {
+    "case": "reach_257_first_body",
+    "rustc_exit": 0,
+    "source_sha256": "b4987f11705a822f5c77ee1dfc1a675288a73c0292deb4368fa2f96bb0665027",
+    "emit": "metadata"
+  },
+  {
+    "case": "reach_257_first_inline",
+    "rustc_exit": 0,
+    "source_sha256": "739d3bcfc685133f8c939b2fadc6c7a441fdc9d85d59fcad5009ac3d61fcc5d2",
+    "emit": "metadata"
+  },
+  {
+    "case": "reach_257_last_body",
+    "rustc_exit": 0,
+    "source_sha256": "f1567c754cb5ad22f871ff240d078bb774c2991a9176d37e6fdb1c88bed39e90",
+    "emit": "metadata"
+  },
+  {
+    "case": "reach_257_last_inline",
+    "rustc_exit": 0,
+    "source_sha256": "bc545c7b068dc11ad16f79e677d5eea74980388bf517cf78224b6e7256f96c81",
+    "emit": "metadata"
+  },
+  {
+    "case": "repeated_name_dedup",
+    "rustc_exit": 0,
+    "source_sha256": "c426e6a626f3a949a5f889b41aa6c1db4c9f8e48384be0e2afefceca6f45e169",
+    "emit": "metadata"
+  },
+  {
+    "case": "slice_complete",
+    "rustc_exit": 0,
+    "source_sha256": "9989a25876ac298280b9ddec81b23648d2267a5376798cb6e46a8e57ab38f7f2",
+    "emit": "metadata"
+  },
+  {
+    "case": "slice_independent_positive",
+    "rustc_exit": 0,
+    "source_sha256": "e1d180be8705bb08d7eff1260e13c6f8a7a8bf7273eb18079c4bf302595df4c0",
+    "emit": "binary",
+    "native_test_exit": 0,
+    "mutant_sha256": "74cad2cd4e2d99c83cebdcbe83864c68e3a9c058e541f5149d360e13a6f8d4e6",
+    "mutant_test_exit": 101,
+    "mutation": "samples.len() == 0 -> samples.len() != 0"
+  },
+  {
+    "case": "slice_noise_255",
+    "rustc_exit": 0,
+    "source_sha256": "d40d1102d7bd9a5d093d1e30d542904f9260ff08e260d79783e973d47c3c2ab4",
+    "emit": "metadata"
+  },
+  {
+    "case": "slice_noise_256",
+    "rustc_exit": 0,
+    "source_sha256": "c863fb31086997403f040f10d69c797f2a44a8a4764eb3aff4b79fb69320a244",
+    "emit": "metadata"
+  },
+  {
+    "case": "slice_saturated_same_test",
+    "rustc_exit": 0,
+    "source_sha256": "1c2e1027cdaab451d0777a0117d3de59f10038f0962a3e04ffa7ce0d1d637fe7",
+    "emit": "metadata"
+  },
+  {
+    "case": "slice_unrelated_line",
+    "rustc_exit": 0,
+    "source_sha256": "17736e8c3254bfcdf07d4569ec2b680793b84870e96fc4c4a9c0d8372b774fcb",
+    "emit": "metadata"
+  }
+]

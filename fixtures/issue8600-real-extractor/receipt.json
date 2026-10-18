@@ -1,0 +1,46 @@
+{
+  "source_commit": "806147b2184d1ff703a883abf68215228a7d2bef",
+  "source_tree": "f462f9db07b2fba93883ce7658bfa612352f21e0",
+  "production_delta": "none",
+  "harness_sha256": "1f1ccad17ce59635e770c477aa007d5de1bed234da8c52523a37bcfbed9b3d1f",
+  "cli_path": "/workspace/ripr-swarm/target/debug/ripr",
+  "cli_sha256": "ef7892cf90704a7c70fa6f2bbb3a2ef24bb4aca04c1c2085ce49dde43bf836f0",
+  "cli_bytes": 229697616,
+  "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+  "host": "Linux-6.18.55-x86_64-with-glibc2.41",
+  "observed": {
+    "test_exit": 0,
+    "cases": 20,
+    "cli_runs": 80,
+    "seconds": 9.1,
+    "root": "/workspace/scratch/8600-delivery-observed"
+  },
+  "future": {
+    "test_exit": 101,
+    "cases_completed": 20,
+    "cli_runs": 80,
+    "seconds": 8.89,
+    "root": "/workspace/scratch/8600-delivery-future",
+    "missing_typed": [
+      "slice_saturated_same_test",
+      "slice_noise_256"
+    ],
+    "positive_preservation_missing": [
+      "slice_independent_positive"
+    ],
+    "repo_warm_cache_hits": 20
+  },
+  "fixture_compilation": {
+    "passed": 20,
+    "native_positive_suites_passed": 2,
+    "positive_mutants_rejected": 2
+  },
+  "archive_sha256": "02277f5cbd09c58dd19c761998f790604207b2f6073906b6c11e3c26c6c83214",
+  "archive_bytes": 2220286,
+  "retention": "Source, raw outputs, caches and logs archived here. Original scratch dirs, test binaries and Cargo state retained locally; no cleanup performed.",
+  "earlier_attempts": "Two harness premise errors (predicate shares line with a return seam; diff/repo reach vocabulary differs) corrected before final proof. Those failures establish no product regression. Logs preserved.",
+  "observed_resource_receipts": {
+    "cli_receipts": 80,
+    "max_cli_peak_resident_bytes": 61440000
+  }
+}
