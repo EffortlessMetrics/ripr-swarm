@@ -273,6 +273,16 @@ fn snapshot_location_or_update_override_stays_medium() -> Result<(), String> {
         ),
         (
             "package.json",
+            "{ \"scripts\": { \"test\": \"jest\t-u\" } }",
+            &jest,
+        ),
+        (
+            "jest.config.js",
+            "module.exports = { snapshotFormat: { escapeString: false } };",
+            &jest,
+        ),
+        (
+            "package.json",
             "{ \"scripts\": { \"test\": \"jest --updateSnapshot\" } }",
             &jest,
         ),
@@ -559,9 +569,11 @@ fn config_passed_by_path_or_custom_named_stays_medium() -> Result<(), String> {
         );
     }
     // A custom-named config that overrides nothing and a script without a
-    // config flag keep the credit.
+    // config flag keep the credit. `-` and `_` stem separators are read the
+    // same way as `.` (`jest.unit.config.js`).
     for (config, text) in [
         ("jest.unit.config.js", "module.exports = {};"),
+        ("jest_unit.config.js", "module.exports = {};"),
         (
             "package.json",
             "{ \"scripts\": { \"test\": \"jest --ci --coverage\" } }",
@@ -578,17 +590,44 @@ fn config_passed_by_path_or_custom_named_stays_medium() -> Result<(), String> {
         );
     }
     // A Vitest custom-named config that overrides nothing keeps the credit.
+    // `unit-vitest.config.ts` must mention vitest in the file (the name does
+    // not start with `vite`, which is how `mentions_vitest` is set).
     let vitest_snap = format!("{VITEST_HEADER}{}", entry("price 1", "140"));
+    let vitest_plain = "import { defineConfig } from \"vitest/config\";\nexport default defineConfig({ test: {} });";
+    for name in ["vitest.unit.config.ts", "unit-vitest.config.ts"] {
+        assert_eq!(
+            strengths(
+                "snap-vitest-custom",
+                PRICE_TEST,
+                &[(SNAP_PATH, &vitest_snap), (name, vitest_plain)]
+            )?,
+            vec![OracleStrength::Strong],
+            "{name}"
+        );
+    }
+    // The same `-` / `_` stems with an override refuse, so the walk did read
+    // them (a name the walk skipped would keep Strong).
     assert_eq!(
         strengths(
-            "snap-vitest-custom",
+            "snap-underscore-override",
+            PRICE_TEST,
+            &[(SNAP_PATH, &snap), ("jest_unit.config.js", RESOLVER_CONFIG)]
+        )?,
+        vec![OracleStrength::Medium]
+    );
+    assert_eq!(
+        strengths(
+            "snap-hyphen-override",
             PRICE_TEST,
             &[
                 (SNAP_PATH, &vitest_snap),
-                ("vitest.unit.config.ts", "export default { test: {} };")
+                (
+                    "unit-vitest.config.ts",
+                    "import { defineConfig } from \"vitest/config\";\nexport default defineConfig({ test: { update: true } });"
+                )
             ]
         )?,
-        vec![OracleStrength::Strong]
+        vec![OracleStrength::Medium]
     );
     Ok(())
 }
@@ -809,5 +848,111 @@ fn config_above_the_root_without_a_repository_boundary_is_not_read() -> Result<(
         "boundary unknown: medium"
     );
     assert_eq!(with_marker, vec![OracleStrength::Strong]);
+    Ok(())
+}
+
+/// RIPR-SPEC-0258 / #8768: a runner config that names another config
+/// (`projects`, `workspace`, or `root`) is not walked, so the reading
+/// refuses. A `rootDir` / `<rootDir>` mention is not that key: a broad
+/// `root` substring would refuse the TypeScript verdict corpus alias and
+/// monorepo subjects.
+#[test]
+fn runner_config_that_delegates_stays_medium() -> Result<(), String> {
+    let jest = jest_snap(&[("price 1", "140")]);
+    let vitest = format!("{VITEST_HEADER}{}", entry("price 1", "140"));
+    for (config, text, snap) in [
+        (
+            "jest.config.js",
+            "module.exports = { projects: [\"<rootDir>/config/app.jest.js\"] };",
+            &jest,
+        ),
+        (
+            "jest.config.js",
+            "module.exports = { \"projects\": [\"<rootDir>/config/app.jest.js\"] };",
+            &jest,
+        ),
+        (
+            "vitest.config.ts",
+            "export default { test: { workspace: [\"./packages/*\"] } };",
+            &vitest,
+        ),
+        (
+            "vitest.config.ts",
+            "export default { workspace: [\"./packages/*\"] };",
+            &vitest,
+        ),
+        (
+            "vitest.config.ts",
+            "export default { test: { root: \"./pkg\" } };",
+            &vitest,
+        ),
+        (
+            "vitest.config.ts",
+            "export default { root: \"./pkg\" };",
+            &vitest,
+        ),
+        (
+            "vite.config.ts",
+            "export default { test: { root: \"./pkg\" } };",
+            &vitest,
+        ),
+    ] {
+        assert_eq!(
+            strengths(
+                "snap-delegate",
+                PRICE_TEST,
+                &[(SNAP_PATH, snap), (config, text)]
+            )?,
+            vec![OracleStrength::Medium],
+            "{config}: {text}"
+        );
+    }
+    // `<rootDir>` in a mapper, and Jest's `rootDir` key, do not delegate to
+    // another config file. Matching the `root` substring would refuse these.
+    for (config, text) in [
+        (
+            "jest.config.js",
+            "module.exports = { moduleNameMapper: { \"^@/(.*)$\": \"<rootDir>/src/$1\" } };",
+        ),
+        ("jest.config.js", "module.exports = { rootDir: \"src\" };"),
+    ] {
+        assert_eq!(
+            strengths(
+                "snap-rootdir",
+                PRICE_TEST,
+                &[(SNAP_PATH, &jest), (config, text)]
+            )?,
+            vec![OracleStrength::Strong],
+            "{config}: {text}"
+        );
+    }
+    Ok(())
+}
+
+/// A `.git` *file* (worktree `gitdir:` pointer) is a repository boundary,
+/// the same as a `.git` directory. A parent config above that file is not
+/// read.
+#[test]
+fn git_file_is_a_repository_boundary() -> Result<(), String> {
+    let (outer, package_root) = monorepo("snap-git-file", None)?;
+    let written = ts_write_file(
+        &package_root.join(".git"),
+        "gitdir: ../.git/worktrees/app\n",
+    )
+    .and_then(|()| ts_write_file(&outer.join("jest.config.js"), RESOLVER_CONFIG));
+    let above = directories_above_root(&package_root, 16);
+    let got = strengths_at(&package_root);
+    let _ = std::fs::remove_dir_all(&outer);
+    written?;
+    assert_eq!(
+        above,
+        Some(Vec::new()),
+        ".git file at the analysis root: nothing above is read"
+    );
+    assert_eq!(
+        got,
+        vec![OracleStrength::Strong],
+        "parent snapshotResolver stays unseen when .git is a file at the root"
+    );
     Ok(())
 }
