@@ -256,7 +256,7 @@ alternatives may be compared with focused proof; select one to land before expen
 qualification. Do not create rival implementations merely to consume parallel
 capacity. Disjoint pieces may be delegated through one integrating candidate owner.
 
-An issue claim is one ordinary comment (branch, PR and candidate/qualification state), live for 3 hours of activity and
+An issue claim is one ordinary comment (branch, PR and candidate/qualification state), live for 3 hours of claimant activity and
 then takeable with a note; duplicate drafts are tolerated, but only one PR per claim, chosen on merit, goes to qualification (see
 `prepare-issue` Issue claim comment).
 

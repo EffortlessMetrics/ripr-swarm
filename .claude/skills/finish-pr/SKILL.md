@@ -37,7 +37,7 @@ can still proceed after current-head review, findings and required proof are
 satisfied. Existing restrictions remain binding; never use admin bypass or
 change settings to obtain a merge.
 
-1. Reuse the PR that already owns the claim. Search current source, all-state PRs, recently merged PRs, and the controlling issue immediately before publishing a new PR. Publish a new PR only when no equivalent candidate exists. Read the issue's claim comments too; a live claim (activity within 3 hours) means join or review its PR, and a stale one may be taken over with a note, per `prepare-issue` (Issue claim comment). After publishing, search once more for a competing PR; only one proceeds to qualification, chosen on merit. Update the claim comment's `Branch:`, `PR:` and `State:` lines.
+1. Reuse the PR that already owns the claim. Search current source, all-state PRs, recently merged PRs, and the controlling issue immediately before publishing a new PR. Publish a new PR only when no equivalent candidate exists. Read the issue's claim comments too; a live claim (claimant activity within 3 hours) means join or review its PR, and a stale one may be taken over with a note, per `prepare-issue` (Issue claim comment). After publishing, search once more for a competing PR; only one proceeds to qualification, chosen on merit. Update the claim comment's `Branch:`, `PR:` and `State:` lines.
 2. Write a complete body:
    - production and evidence delta;
    - acceptance matrix;
