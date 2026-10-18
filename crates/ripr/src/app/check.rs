@@ -657,22 +657,10 @@ impl PerlProducerStaging {
 
     /// The tail of the exporter's stderr, for failure messages. The file is
     /// attempt-private and bounded here, so a noisy producer cannot flood the
-    /// report.
+    /// report — including by writing an unbounded capture that would OOM if
+    /// read whole (#8796).
     fn stderr_tail(&self) -> Option<String> {
-        const LIMIT: usize = 600;
-        let bytes = std::fs::read(&self.stderr).ok()?;
-        let text = String::from_utf8_lossy(&bytes);
-        let text = text.trim();
-        if text.is_empty() {
-            return None;
-        }
-        let start = text
-            .char_indices()
-            .rev()
-            .map(|(index, _)| index)
-            .nth(LIMIT)
-            .unwrap_or(0);
-        Some(text[start..].trim().to_string())
+        extract_stderr_tail(&self.stderr)
     }
 
     fn remove_empty_directory(&self) -> Result<(), String> {
@@ -702,6 +690,68 @@ impl PerlProducerStaging {
             self.directory.display()
         )
     }
+}
+
+/// Last characters kept from a failing exporter's stderr.
+const STDERR_TAIL_CHAR_LIMIT: usize = 600;
+
+/// Bytes read from the capture. 600 UTF-8 scalar values need at most 2400
+/// bytes; 16 KiB leaves slack for trailing whitespace without loading the
+/// whole unbounded file.
+const STDERR_TAIL_READ_WINDOW: usize = 16 * 1024;
+
+/// One extra window when the first is whitespace-only, so a capture that
+/// ends in more trailing whitespace than the primary window still surfaces
+/// earlier text the old whole-file `trim()` would have found. Residual:
+/// more trailing whitespace than this window still returns `None`.
+const STDERR_TAIL_FALLBACK_WINDOW: usize = 64 * 1024;
+
+fn extract_stderr_tail(path: &Path) -> Option<String> {
+    let (text, _) = read_stderr_tail_window(path, STDERR_TAIL_READ_WINDOW)?;
+    if let Some(tail) = trim_stderr_char_tail(&text) {
+        return Some(tail);
+    }
+    let len = std::fs::metadata(path).ok()?.len();
+    if len > u64::try_from(STDERR_TAIL_READ_WINDOW).ok()? {
+        let (text, _) = read_stderr_tail_window(path, STDERR_TAIL_FALLBACK_WINDOW)?;
+        return trim_stderr_char_tail(&text);
+    }
+    None
+}
+
+/// Open `path`, seek to `End(-window)` (clamped to the file length), and
+/// lossy-decode only that trailing byte window. Returns the decoded window
+/// and the number of bytes actually read so tests can assert the bound.
+fn read_stderr_tail_window(path: &Path, window: usize) -> Option<(String, usize)> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    let window_u64 = u64::try_from(window).ok()?;
+    let read_len = len.min(window_u64);
+    if read_len == 0 {
+        return Some((String::new(), 0));
+    }
+    let back = i64::try_from(read_len).ok()?;
+    file.seek(SeekFrom::End(-back)).ok()?;
+    let mut buf = vec![0_u8; usize::try_from(read_len).ok()?];
+    let n = file.read(&mut buf).ok()?;
+    buf.truncate(n);
+    Some((String::from_utf8_lossy(&buf).into_owned(), n))
+}
+
+fn trim_stderr_char_tail(text: &str) -> Option<String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let start = text
+        .char_indices()
+        .rev()
+        .map(|(index, _)| index)
+        .nth(STDERR_TAIL_CHAR_LIMIT)
+        .unwrap_or(0);
+    Some(text[start..].trim().to_string())
 }
 
 /// Invoke a Perl facts exporter to generate a fact packet.
@@ -1708,6 +1758,161 @@ mod tests {
                 "unconfigured producer must default to perl-ripr-facts, got {none:?}"
             ));
         }
+        Ok(())
+    }
+
+    fn stderr_tail_scratch(label: &str) -> Result<PathBuf, String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-8796-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir)
+            .map_err(|error| format!("mkdir {}: {error}", dir.display()))?;
+        Ok(dir)
+    }
+
+    fn write_stderr_capture(dir: &Path, bytes: &[u8]) -> Result<PerlProducerStaging, String> {
+        let staging = PerlProducerStaging::create(dir, "8796stderr")?;
+        std::fs::write(&staging.stderr, bytes)
+            .map_err(|error| format!("write {}: {error}", staging.stderr.display()))?;
+        Ok(staging)
+    }
+
+    /// Pre-#8796 whole-file tail, used only to pin that the bounded reader
+    /// still returns the same last 600 characters.
+    fn unbounded_stderr_tail(path: &Path) -> Option<String> {
+        let bytes = std::fs::read(path).ok()?;
+        trim_stderr_char_tail(&String::from_utf8_lossy(&bytes))
+    }
+
+    #[test]
+    fn stderr_tail_reads_a_bounded_window_from_a_multi_mb_capture() -> Result<(), String> {
+        let dir = stderr_tail_scratch("multi-mb")?;
+        let unique: String = (0..STDERR_TAIL_CHAR_LIMIT)
+            .map(|index| char::from(b'A' + (index % 26) as u8))
+            .collect();
+        let mut bytes = vec![b'x'; 3 * 1024 * 1024];
+        bytes.extend_from_slice(unique.as_bytes());
+        let staging = write_stderr_capture(&dir, &bytes)?;
+
+        let (_window_text, bytes_read) =
+            read_stderr_tail_window(&staging.stderr, STDERR_TAIL_READ_WINDOW)
+                .ok_or_else(|| "window helper must open the capture".to_string())?;
+        if bytes_read > STDERR_TAIL_READ_WINDOW {
+            return Err(format!(
+                "window helper read {bytes_read} bytes; bound is {STDERR_TAIL_READ_WINDOW}"
+            ));
+        }
+
+        let expected = unbounded_stderr_tail(&staging.stderr)
+            .ok_or_else(|| "unbounded oracle must see the unique tail".to_string())?;
+        let got = staging
+            .stderr_tail()
+            .ok_or_else(|| "bounded tail must return the unique suffix".to_string())?;
+        if got != expected {
+            return Err(format!(
+                "bounded tail diverged from the pre-#8796 last-600-char contract:\n bounded={got:?}\n unbounded={expected:?}"
+            ));
+        }
+        if !got.ends_with(&unique) {
+            return Err(format!(
+                "bounded tail must keep the unique suffix; got {got:?}"
+            ));
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn stderr_tail_ignores_a_split_multibyte_char_at_the_window_edge() -> Result<(), String> {
+        let dir = stderr_tail_scratch("multibyte")?;
+        // 4-byte UTF-8 scalar (U+1F600). Placing its first byte one past the
+        // window start splits it; lossy-decode may insert U+FFFD there, which
+        // still sits outside the last 600 characters.
+        let grin = "😀";
+        let unique: String = (0..STDERR_TAIL_CHAR_LIMIT)
+            .map(|index| char::from(b'0' + (index % 10) as u8))
+            .collect();
+        let prefix_len = STDERR_TAIL_READ_WINDOW + 1;
+        let mut bytes = vec![b'a'; prefix_len];
+        bytes.extend_from_slice(grin.as_bytes());
+        bytes.resize(bytes.len() + STDERR_TAIL_READ_WINDOW, b'b');
+        bytes.extend_from_slice(unique.as_bytes());
+        // Align the split: the 4-byte char starts one byte before the
+        // primary window so the window's first bytes are a continuation.
+        let window_start = bytes
+            .len()
+            .checked_sub(STDERR_TAIL_READ_WINDOW)
+            .ok_or_else(|| "capture shorter than the read window".to_string())?;
+        let grin_bytes = grin.as_bytes();
+        let first = *grin_bytes
+            .first()
+            .ok_or_else(|| "grin encoding is empty".to_string())?;
+        let rest = grin_bytes
+            .get(1..)
+            .ok_or_else(|| "grin encoding is too short".to_string())?;
+        let split_at = window_start
+            .checked_sub(1)
+            .ok_or_else(|| "window starts at byte 0".to_string())?;
+        match bytes.get_mut(split_at) {
+            Some(slot) => *slot = first,
+            None => return Err("split byte is outside the capture".to_string()),
+        }
+        let dest = bytes
+            .get_mut(window_start..window_start + rest.len())
+            .ok_or_else(|| "window start cannot hold the continuation bytes".to_string())?;
+        dest.copy_from_slice(rest);
+
+        let staging = write_stderr_capture(&dir, &bytes)?;
+        let expected = unbounded_stderr_tail(&staging.stderr)
+            .ok_or_else(|| "unbounded oracle must see the unique tail".to_string())?;
+        let got = staging
+            .stderr_tail()
+            .ok_or_else(|| "bounded tail must return the unique suffix".to_string())?;
+        if got != expected {
+            return Err(format!(
+                "split multibyte at the window edge changed the 600-char tail:\n bounded={got:?}\n unbounded={expected:?}"
+            ));
+        }
+        if !got.ends_with(&unique) {
+            return Err(format!(
+                "bounded tail must keep the unique suffix; got {got:?}"
+            ));
+        }
+        let (_, bytes_read) = read_stderr_tail_window(&staging.stderr, STDERR_TAIL_READ_WINDOW)
+            .ok_or_else(|| "window helper must open the capture".to_string())?;
+        if bytes_read > STDERR_TAIL_READ_WINDOW {
+            return Err(format!(
+                "window helper read {bytes_read} bytes; bound is {STDERR_TAIL_READ_WINDOW}"
+            ));
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn stderr_tail_returns_none_for_empty_or_whitespace_only_captures() -> Result<(), String> {
+        let dir = stderr_tail_scratch("empty")?;
+        let empty = write_stderr_capture(&dir, b"")?;
+        if empty.stderr_tail().is_some() {
+            return Err("empty capture must return None".to_string());
+        }
+        let whitespace = write_stderr_capture(&dir, b"  \n\t\r\n   ")?;
+        if whitespace.stderr_tail().is_some() {
+            return Err("whitespace-only capture must return None".to_string());
+        }
+        let missing = PerlProducerStaging::create(&dir, "8796missing")?;
+        if missing.stderr_tail().is_some() {
+            return Err("missing capture must return None".to_string());
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
         Ok(())
     }
 }
