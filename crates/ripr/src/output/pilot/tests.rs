@@ -938,7 +938,7 @@ fn pilot_summary_md_spells_out_first_screen_recommendation() {
         "- Focused test: none: this seam has no test target that `ripr agent repair` can use (for example, the only tests are inline `#[cfg(test)]` in a file outside the test-surface paths, the only tests are in another crate, or static evidence names no exact discriminator), so it will not start a repair attempt here",
         "Target seam:",
         "Target placement blocked:",
-        "## Ranked Seams\n\nNone of these seams can start a repair attempt (`ripr agent repair`); they are ranked for inspection by hand. Repair scope: `ripr agent repair --help`.",
+        "## Ranked Seams\n\nExploratory seams, not ranked by expected mutant yield.\n\nNone of these seams can start a repair attempt (`ripr agent repair`); they are ranked for inspection by hand. Repair scope: `ripr agent repair --help`.",
         "## Next Commands",
         "No repair attempt is available for the top seam. Next, add a test for `pricing::discounted_total` in the crate that owns src/pricing.rs, then rerun repo exposure and compare the snapshots:",
         "ripr outcome --before <cwd>/target/ripr/pilot/repo-exposure.json",
@@ -950,6 +950,72 @@ fn pilot_summary_md_spells_out_first_screen_recommendation() {
     assert!(!md.contains("## Ranked Actionable Seams"), "{md}");
     assert!(
         !md.contains("- Focused test: not applicable (route limited"),
+        "{md}"
+    );
+}
+
+#[test]
+fn pilot_human_output_labels_seams_exploratory_not_ranked_by_mutant_yield() {
+    // Published pilot precision (docs/PUBLIC_PROOF.md: 8.3% top-5, 5.9%
+    // top-10 against a >=60% bar) does not support presenting these picks
+    // as recommendations ranked by expected mutant yield. Human output
+    // must carry the exploratory label; structured output must not change.
+    let weak = classified_with(
+        SeamGripClass::WeaklyGripped,
+        "src/pricing.rs",
+        88,
+        vec![missing()],
+        vec![related_test()],
+    );
+    let ungripped = classified_with(
+        SeamGripClass::Ungripped,
+        "src/other.rs",
+        10,
+        Vec::new(),
+        Vec::new(),
+    );
+    let entries = [ungripped, weak];
+    let artifacts = pilot_artifacts();
+
+    let md = render_pilot_summary_md(&entries, pilot_context(&artifacts));
+    assert!(
+        md.contains("Exploratory seams, not ranked by expected mutant yield"),
+        "{md}"
+    );
+    // The label sits with the list it describes, not only in a header.
+    let ranked = md.find("## Ranked").map_or("", |start| &md[start..]);
+    assert!(
+        ranked.contains("Exploratory seams, not ranked by expected mutant yield."),
+        "{md}"
+    );
+
+    let terminal = render_pilot_terminal(&entries, pilot_context(&artifacts));
+    assert!(
+        terminal.contains("Exploratory seams, not ranked by expected mutant yield"),
+        "{terminal}"
+    );
+
+    // Ordering is unchanged (label-only): the existing static-evidence
+    // order still puts the weakly gripped seam first, in every surface.
+    let ranked = top_actionable_seams(&entries, 5, None);
+    assert_eq!(ranked[0].class, SeamGripClass::WeaklyGripped);
+    assert_eq!(ranked[1].class, SeamGripClass::Ungripped);
+
+    // Control: JSON carries no exploratory label and keeps the same seam
+    // order as the human list, so structured consumers are byte-stable
+    // apart from pre-existing fields (pinned by the JSON assertions in
+    // `pilot_summary_json_*` and verified byte-identical against
+    // origin/main for this fixture in the PR body).
+    let json = render_pilot_summary_json(&entries, pilot_context(&artifacts));
+    assert!(!json.contains("Exploratory"), "{json}");
+    assert!(!json.contains("mutant yield"), "{json}");
+    let weak_at = json.find("src/pricing.rs").unwrap_or(usize::MAX);
+    let ungripped_at = json.find("src/other.rs").unwrap_or(usize::MAX);
+    assert!(weak_at < ungripped_at, "{json}");
+    let md_weak_at = md.find("src/pricing.rs").unwrap_or(usize::MAX);
+    let md_ungripped_at = md.rfind("src/other.rs").unwrap_or(usize::MAX);
+    assert!(
+        md_weak_at != usize::MAX && md_ungripped_at != usize::MAX,
         "{md}"
     );
 }
@@ -3666,7 +3732,13 @@ fn pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change()
     let (terminal, md, json) = render(Some(&changed("src/pricing.rs", 88)))?;
     assert!(
         terminal.contains(
-            "Top recommendation:\n  current change: part of it (this seam is on a line changed since origin/main)\n  inspected seam: "
+            "Top recommendation:\n  Exploratory seams, not ranked by expected mutant yield:"
+        ),
+        "{terminal}"
+    );
+    assert!(
+        terminal.contains(
+            "  current change: part of it (this seam is on a line changed since origin/main)\n  inspected seam: "
         ),
         "{terminal}"
     );

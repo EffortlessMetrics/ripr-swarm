@@ -295,6 +295,14 @@ Known limits, all weak-only: a module-level rebinding such as
 `helper = wrap(helper)` is not detected, and a call inside a nested `def` or
 lambda counts as an edge of the enclosing owner.
 
+A pytest test that names a module-level `@pytest.fixture` function (in its own
+module or a `conftest.py` up its directory chain, nearest wins) as a parameter
+is related, with the weak `fixture_owner_call` relation, when that fixture's
+body calls the owner by the rules a test body uses (#4563). One hop only; a
+renamed fixture (`name=`) and a test that rebinds the parameter name make no
+edge. The relation is uncertain, carries no oracle, and never reaches
+`exposed`.
+
 A Python test is related to an owner only when the test references the owner.
 Same-stem file, test-name, and fixture-name proximity only rank a test that
 already references the owner without a recognized call shape; they never

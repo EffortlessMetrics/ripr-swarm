@@ -277,10 +277,16 @@ pub(super) fn degradation_log_message(outcomes: &[ComponentOutcome]) -> Option<S
     Some(format!("ripr analysis limited: {}", degraded.join("; ")))
 }
 
+/// Client-visible LSP detail budget (#1997, #8584). Truncation keeps a
+/// one-character marker inside this count so `ripr/analysisStatus` summaries
+/// never grow past the bound and never look complete when text was dropped.
+pub(super) const CLIENT_VISIBLE_MESSAGE_CHAR_BOUND: usize = 240;
+
 /// Normalize, path-redact, and size-bound one free-text detail string before
 /// it can reach a client surface. Single source for the LSP path: the
 /// backend's health-failure messages delegate here so error text is governed
-/// once (#1997).
+/// once (#1997). When the redacted text exceeds the bound, the result ends
+/// with `…` and still fits in the 240-character budget (#8584).
 pub(super) fn bounded_message(message: &str) -> String {
     let normalized = message
         .chars()
@@ -306,10 +312,14 @@ pub(super) fn bounded_message(message: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ");
-    let mut bounded = path_safe.chars().take(240).collect::<String>();
-    if path_safe.chars().count() > 240 {
-        bounded.push('…');
+    if path_safe.chars().count() <= CLIENT_VISIBLE_MESSAGE_CHAR_BOUND {
+        return path_safe;
     }
+    let mut bounded = path_safe
+        .chars()
+        .take(CLIENT_VISIBLE_MESSAGE_CHAR_BOUND.saturating_sub(1))
+        .collect::<String>();
+    bounded.push('…');
     bounded
 }
 
@@ -400,13 +410,80 @@ mod tests {
         if message.contains("/home/user") {
             return Err(format!("message leaked an absolute path: {message}"));
         }
-        if message.chars().count() > 241 {
+        if message.chars().count() > super::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND {
             return Err(format!("message exceeded the bound: {message}"));
+        }
+        if !message.ends_with('…') {
+            return Err(format!("truncated message must carry a marker: {message}"));
         }
         if !message.contains("<path>") {
             return Err(format!("message must redact the path token: {message}"));
         }
         Ok(())
+    }
+
+    /// #8584: clients must see that status-summary text was dropped, and the
+    /// marker must stay inside the published 240-character bound.
+    #[test]
+    fn bounded_message_marks_truncation_inside_the_char_bound() {
+        let message = format!("cargo metadata failed: {}", "x".repeat(400));
+        let bounded = super::bounded_message(&message);
+        assert!(
+            bounded.ends_with('…'),
+            "truncated status text must carry a marker: {bounded}"
+        );
+        assert_eq!(
+            bounded.chars().count(),
+            super::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND,
+            "the marker must stay inside the published bound: {bounded}"
+        );
+        assert!(
+            !bounded.contains('\n') && !bounded.contains('\t'),
+            "{bounded}"
+        );
+        assert!(bounded.starts_with("cargo metadata failed: "), "{bounded}");
+    }
+
+    #[test]
+    fn bounded_message_leaves_an_exact_bound_text_unmarked() {
+        let message = "a".repeat(super::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND);
+        let bounded = super::bounded_message(&message);
+        assert_eq!(bounded, message);
+        assert!(!bounded.ends_with('…'));
+        assert_eq!(
+            bounded.chars().count(),
+            super::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND
+        );
+    }
+
+    #[test]
+    fn bounded_message_redacts_a_long_path_instead_of_slicing_it() {
+        let message = format!("/{}", "secret-segment/".repeat(40));
+        let bounded = super::bounded_message(&message);
+        assert_eq!(bounded, "<path>");
+        assert!(!bounded.contains("secret-segment"));
+        assert!(!bounded.ends_with('…'));
+    }
+
+    #[test]
+    fn bounded_message_redacts_paths_that_remain_after_the_cut() {
+        let message = format!(
+            "read {} failed: {}",
+            "/tmp/ripr-failure-secret.toml",
+            "y".repeat(400)
+        );
+        let bounded = super::bounded_message(&message);
+        assert!(bounded.contains("<path>"), "{bounded}");
+        assert!(
+            !bounded.contains("/tmp/ripr-failure-secret.toml"),
+            "redaction must cover the text that remains: {bounded}"
+        );
+        assert!(bounded.ends_with('…'), "{bounded}");
+        assert_eq!(
+            bounded.chars().count(),
+            super::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND,
+            "{bounded}"
+        );
     }
 
     #[test]

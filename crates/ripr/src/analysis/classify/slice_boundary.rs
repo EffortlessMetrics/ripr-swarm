@@ -127,6 +127,11 @@ fn boundary_values(
         ) {
             return Some(Err(unresolved()));
         }
+        // A line at the call-fact budget may have lost the owner's call, so
+        // the single-call absence proof below cannot be trusted.
+        if crate::analysis::extract::has_saturated_line(test.body_calls()) {
+            return Some(Err(unresolved()));
+        }
         let calls: Vec<_> = test
             .body_calls()
             .filter(|call| call.name == owner.name)

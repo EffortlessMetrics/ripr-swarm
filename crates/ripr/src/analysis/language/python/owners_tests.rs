@@ -391,6 +391,7 @@ pub(super) fn collect_tests_from_statements(
                         super::test_activation::DeclarationSite::Function,
                     ),
                     fixtures,
+                    fixture_defs: Vec::new(),
                     parametrized: is_parametrized(&function.decorator_list),
                     parametrize: parametrize
                         .and_then(|cases| cases.excluding_body_bindings(&function.body)),
@@ -460,6 +461,7 @@ pub(super) fn collect_tests_from_statements(
                         super::test_activation::DeclarationSite::Function,
                     ),
                     fixtures,
+                    fixture_defs: Vec::new(),
                     parametrized: is_parametrized(&function.decorator_list),
                     parametrize: parametrize
                         .and_then(|cases| cases.excluding_body_bindings(&function.body)),
@@ -569,7 +571,11 @@ pub(super) fn collect_tests_from_statements(
 /// the rest of the test (#4567). A later import of the same name replaces the
 /// earlier one, as Python binds it: `from owner import sign` followed by
 /// `from other import sign` leaves only `other.sign`.
-fn test_imports(file: &Path, module_imports: &[PythonImport], body: &[Stmt]) -> Vec<PythonImport> {
+pub(super) fn test_imports(
+    file: &Path,
+    module_imports: &[PythonImport],
+    body: &[Stmt],
+) -> Vec<PythonImport> {
     let mut imports = module_imports.to_vec();
     for import in collect_imports_from_statements(file, body) {
         imports.retain(|earlier| earlier.alias != import.alias);
