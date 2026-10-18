@@ -737,7 +737,28 @@ fn read_stderr_tail_window(path: &Path, window: usize) -> Option<(String, usize)
     let mut buf = vec![0_u8; usize::try_from(read_len).ok()?];
     let n = file.read(&mut buf).ok()?;
     buf.truncate(n);
-    Some((String::from_utf8_lossy(&buf).into_owned(), n))
+    // A mid-file window can start inside a UTF-8 scalar. Lossy-decoding that
+    // prefix inserts U+FFFD, which is not whitespace, so a window of trailing
+    // multibyte spaces would look like a real message and skip the fallback.
+    let decode = if len > window_u64 {
+        drop_incomplete_leading_utf8(&buf)
+    } else {
+        buf.as_slice()
+    };
+    Some((String::from_utf8_lossy(decode).into_owned(), n))
+}
+
+/// Skip leading UTF-8 continuation bytes so a window that started after byte
+/// zero does not turn a split scalar into U+FFFD.
+fn drop_incomplete_leading_utf8(buf: &[u8]) -> &[u8] {
+    let mut start = 0;
+    while buf
+        .get(start)
+        .is_some_and(|byte| byte & 0b1100_0000 == 0b1000_0000)
+    {
+        start += 1;
+    }
+    buf.get(start..).unwrap_or(&[])
 }
 
 fn trim_stderr_char_tail(text: &str) -> Option<String> {
@@ -1910,6 +1931,47 @@ mod tests {
         let missing = PerlProducerStaging::create(&dir, "8796missing")?;
         if missing.stderr_tail().is_some() {
             return Err("missing capture must return None".to_string());
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn stderr_tail_fallback_survives_multibyte_whitespace_split_at_the_window() -> Result<(), String>
+    {
+        // U+3000 is 3-byte UTF-8 whitespace. Enough of it that the 16 KiB
+        // window starts on a continuation byte; without dropping that prefix,
+        // lossy-decode yields U+FFFD and the fallback never sees `export failed`.
+        let dir = stderr_tail_scratch("ideographic-ws")?;
+        let message = "export failed";
+        let ideographic = "\u{3000}";
+        let ideographic_len = ideographic.len();
+        if ideographic_len != 3 {
+            return Err(format!(
+                "fixture requires 3-byte U+3000, got {ideographic_len}"
+            ));
+        }
+        let spaces = STDERR_TAIL_READ_WINDOW / ideographic_len + 50;
+        let mut bytes = Vec::from(message.as_bytes());
+        for _ in 0..spaces {
+            bytes.extend_from_slice(ideographic.as_bytes());
+        }
+        let staging = write_stderr_capture(&dir, &bytes)?;
+        let got = staging.stderr_tail().ok_or_else(|| {
+            "fallback must recover the exporter message from before the whitespace".to_string()
+        })?;
+        if got != message {
+            return Err(format!(
+                "expected {message:?} after skipping a split U+3000 at the window start, got {got:?}"
+            ));
+        }
+        let (_, bytes_read) = read_stderr_tail_window(&staging.stderr, STDERR_TAIL_READ_WINDOW)
+            .ok_or_else(|| "window helper must open the capture".to_string())?;
+        if bytes_read > STDERR_TAIL_READ_WINDOW {
+            return Err(format!(
+                "window helper read {bytes_read} bytes; bound is {STDERR_TAIL_READ_WINDOW}"
+            ));
         }
 
         let _ = std::fs::remove_dir_all(&dir);
