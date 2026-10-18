@@ -300,8 +300,20 @@ module or a `conftest.py` up its directory chain, nearest wins) as a parameter
 is related, with the weak `fixture_owner_call` relation, when that fixture's
 body calls the owner by the rules a test body uses (#4563). One hop only; a
 renamed fixture (`name=`) and a test that rebinds the parameter name make no
-edge. The relation is uncertain, carries no oracle, and never reaches
-`exposed`.
+edge, nor does a parameter that a pytest `parametrize` names as an argname,
+read syntactically (variable argvalues, `pytest.param(marks=...)` and
+unreadable `indirect` values still count) unless `indirect=` is the literal
+`True` or a literal list naming it. A class-level `parametrize` (on the test's
+class or a local ancestor) counts the same way. When a file defines the same
+fixture name twice the last definition wins, and the analyzer attaches at most
+eight fixture definitions to one test (an implementation limit, not a pytest
+rule). A later ordinary `def` of the same name replaces the fixture and
+is not attached. Not covered: module-level or class-body
+`pytestmark = pytest.mark.parametrize(...)`, aliased or bare parametrize forms (`import pytest as pt`, `from pytest.mark
+import parametrize`), fixtures defined inside a class, `mock` or rebinding
+inside the fixture body, parameters with defaults or supplied by `@patch`,
+`autouse` fixtures and fixtures of fixtures. The relation is uncertain,
+carries no oracle, and never reaches `exposed`.
 
 A Python test is related to an owner only when the test references the owner.
 Same-stem file, test-name, and fixture-name proximity only rank a test that
