@@ -73,23 +73,26 @@ pub(crate) fn probes_for_file_with_relations(
     let mut skip_removed = structural_lines_covered_by_run(&changed.removed_lines);
     // A positional replacement that is only an elided-lifetime or primitive
     // constant path respelling changes no behavior: no probe on either side.
+    let added_at = changed
+        .added_lines
+        .iter()
+        .enumerate()
+        .map(|(index, line)| (line.new_side_line, index))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let removed_at = changed
+        .removed_lines
+        .iter()
+        .enumerate()
+        .map(|(index, line)| (line.line, index))
+        .collect::<std::collections::BTreeMap<_, _>>();
     for (new_side_line, removed) in changed.replacement_counterparts() {
-        let Some(added_index) = changed
-            .added_lines
-            .iter()
-            .position(|line| line.new_side_line == new_side_line)
+        let (Some(&added_index), Some(&removed_index)) =
+            (added_at.get(&new_side_line), removed_at.get(&removed.line))
         else {
             continue;
         };
-        if !is_behavior_neutral_respelling(&changed.added_lines[added_index].text, &removed.text) {
-            continue;
-        }
-        skip_added[added_index] = true;
-        if let Some(removed_index) = changed
-            .removed_lines
-            .iter()
-            .position(|line| line.line == removed.line)
-        {
+        if is_behavior_neutral_respelling(&changed.added_lines[added_index].text, &removed.text) {
+            skip_added[added_index] = true;
             skip_removed[removed_index] = true;
         }
     }
@@ -621,7 +624,13 @@ fn dedup_probe_ids(probes: &mut [SeededProbe]) {
 /// including a line that differs elsewhere, stays probed.
 fn is_behavior_neutral_respelling(after: &str, before: &str) -> bool {
     let (after, before) = (after.trim(), before.trim());
-    after != before && neutral_spelling(after) == neutral_spelling(before)
+    // String and comment text is output or prose, so a line holding either is
+    // never a respelling.
+    let prose = |line: &str| line.contains('"') || line.contains("//") || line.contains("/*");
+    !prose(after)
+        && !prose(before)
+        && after != before
+        && neutral_spelling(after) == neutral_spelling(before)
 }
 
 fn neutral_spelling(line: &str) -> String {
@@ -632,7 +641,23 @@ fn neutral_spelling(line: &str) -> String {
     for int in INTS {
         for root in ["core", "std"] {
             for item in ["MAX", "MIN"] {
-                out = out.replace(&format!("{root}::{int}::{item}"), &format!("{int}::{item}"));
+                let from = format!("{root}::{int}::{item}");
+                let to = format!("{int}::{item}");
+                let mut rewritten = String::with_capacity(out.len());
+                let mut rest = out.as_str();
+                while let Some(at) = rest.find(&from) {
+                    // Only a free-standing path: a longer path or identifier
+                    // ending in `core`/`std` resolves differently.
+                    let free = rest[..at]
+                        .chars()
+                        .next_back()
+                        .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_' || ch == ':'));
+                    rewritten.push_str(&rest[..at]);
+                    rewritten.push_str(if free { &to } else { &from });
+                    rest = &rest[at + from.len()..];
+                }
+                rewritten.push_str(rest);
+                out = rewritten;
             }
         }
     }
@@ -1830,6 +1855,12 @@ mod tests {
             ("let max = u32::MAX;", "let max = u32::MIN;"),
             ("let max = i32::MAX - 1;", "let max = core::i32::MAX;"),
             ("let max = u32::MAX;", "let max = u32::MAX;"),
+            (
+                r#"panic!("bad i32::MAX")"#,
+                r#"panic!("bad core::i32::MAX")"#,
+            ),
+            ("x = myi32::MAX;", "x = mycore::i32::MAX;"),
+            ("x = foo::u8::MAX;", "x = foo::std::u8::MAX;"),
         ] {
             assert!(!is_behavior_neutral_respelling(added, removed), "{added}");
         }
