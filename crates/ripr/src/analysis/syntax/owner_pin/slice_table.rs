@@ -330,3 +330,156 @@ fn slice_observation(method: &ast::MethodCallExpr, column: &str, rows: &[String]
     };
     shape && slice_observation(&previous, column, rows)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn table(body: &str) -> String {
+        format!(
+            "fn t() {{\n    let rows: [&[u64]; 2] = [&[1], &[2, 3]];\n    for s in rows {{\n        {body}\n    }}\n}}"
+        )
+    }
+
+    fn column(text: &str) -> Option<(Vec<String>, String, usize)> {
+        constant_table_call_column(text, "mean", 0)
+    }
+
+    #[test]
+    fn eager_table_call_yields_rows_call_text_and_assertion_count() {
+        let rows = vec!["&[1]".to_string(), "&[2, 3]".to_string()];
+        assert_eq!(
+            column(&table("let r = mean(s); assert!(r > 0); assert_eq!(r, 1);")),
+            Some((rows.clone(), "mean(s)".to_string(), 2))
+        );
+        assert_eq!(
+            column(&table("let _ = mean(s);")),
+            Some((rows, "mean(s)".to_string(), 0))
+        );
+    }
+
+    #[test]
+    fn suspended_nested_or_unresolved_control_flow_refuses_the_table() {
+        for body in [
+            "let r = mean(s)?; assert!(r > 0);",
+            "let c = || mean(s); let _ = c();",
+            "loop { let _ = mean(s); break; }",
+            "while false { let _ = mean(s); }",
+            "let r = mean(s); other(); assert!(r > 0);",
+            "let r = mean(s); println!(\"{r}\");",
+            "let _ = mean(s); let _ = mean(s);",
+            "let r = foo::mean(s); assert!(r > 0);",
+            "let r = mean(s); let alias = mean; assert!(r > 0);",
+        ] {
+            assert_eq!(column(&table(body)), None, "{body}");
+        }
+        let asynchronous = table("let _ = mean(s);").replacen("fn t", "async fn t", 1);
+        assert_eq!(column(&asynchronous), None);
+    }
+
+    #[test]
+    fn non_path_arguments_and_missing_parameters_are_refused() {
+        let text = table("let _ = mean(s);");
+        assert_eq!(constant_table_call_column(&text, "mean", 1), None);
+        assert_eq!(
+            constant_table_call_column(&table("let _ = mean(&s);"), "mean", 0),
+            None
+        );
+        assert_eq!(
+            constant_table_call_column(&table("let _ = mean(rows::s);"), "mean", 0),
+            None
+        );
+        assert_eq!(constant_table_call_column("not rust {", "mean", 0), None);
+    }
+
+    #[test]
+    fn column_bounds_refuse_oversized_tables() {
+        let many = vec!["&[1]"; 65].join(", ");
+        let wide = format!("&[{}]", vec!["1"; 2100].join(", "));
+        for rows in [many, wide] {
+            let text =
+                format!("fn t() {{ let rows = [{rows}]; for s in rows {{ let _ = mean(s); }} }}");
+            assert_eq!(column(&text), None);
+        }
+        let sixty_four = vec!["&[1]"; 64].join(", ");
+        let text =
+            format!("fn t() {{ let rows = [{sixty_four}]; for s in rows {{ let _ = mean(s); }} }}");
+        assert_eq!(column(&text).map(|(rows, _, _)| rows.len()), Some(64));
+    }
+
+    #[test]
+    fn assertion_operands_may_read_only_the_column_or_result() {
+        for body in [
+            "let r = mean(s); assert!(r > 0);",
+            "let r = mean(s); assert!(s.iter().min().unwrap() > &0);",
+            "let r = mean(s); assert!(s.iter().max().unwrap_or(&0) > &0);",
+        ] {
+            assert!(column(&table(body)).is_some(), "{body}");
+        }
+        for body in [
+            "let r = mean(s); assert!(other > 0);",
+            "let r = mean(s); assert!(helper(r));",
+            "let r = mean(s); assert!(s[0] > 0);",
+            "let r = mean(s); assert!(s.len() > 0);",
+            "let r = mean(s); assert!(s.iter::<u8>().count() > 0);",
+            "let r = mean(s); assert!(s.iter().min().unwrap_or(&mut 0) > &0);",
+            "let r = mean(s); assert!(s.iter().min().unwrap_or(&x) > &0);",
+            "let r = mean(s); assert!(Point { x: r }.x > 0);",
+        ] {
+            assert_eq!(column(&table(body)), None, "{body}");
+        }
+    }
+
+    #[test]
+    fn unwrap_needs_every_row_to_be_nonempty() {
+        let body = "let r = mean(s); assert!(s.iter().min().unwrap() > &0);";
+        assert!(column(&table(body)).is_some());
+        let with_empty = table(body).replace("&[1]", "&[]");
+        assert_eq!(column(&with_empty), None);
+        let guarded = with_empty.replace(
+            "s.iter().min().unwrap() > &0",
+            "s.iter().min().unwrap_or(&0) >= &0",
+        );
+        assert!(column(&guarded).is_some());
+    }
+
+    #[test]
+    fn owner_references_count_identifier_uses_in_clean_source() {
+        assert_eq!(
+            owner_reference_count("fn mean() {}\nfn t() { mean(); }", "mean"),
+            Some(2)
+        );
+        assert_eq!(owner_reference_count("fn r#mean() {}", "mean"), Some(1));
+        assert_eq!(owner_reference_count("fn other() {}", "mean"), Some(0));
+        assert_eq!(
+            owner_reference_count("fn t() { assert_eq!(mean(1), 0); }", "mean"),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn owner_references_are_unknown_when_hidden_uses_are_possible() {
+        for source in [
+            "use crate::mean;",
+            "use super::mean;\nfn t() { mean(); }",
+            "struct S;",
+            "enum E {}",
+            "trait T {}",
+            "impl S {}",
+            "type A = u8;",
+            "extern crate foo;",
+            "fn t() { unknown!(mean); }",
+            "fn t() { assert!(mean!()); }",
+            "#[inline]\nfn mean() {}",
+            "/** mean(&[]) */\nfn mean() {}",
+            "//! ```\n//! mean(&[]);\n//! ```\nfn x() {}",
+            "///     mean(&[]);\nfn x() {}",
+            "not rust {",
+        ] {
+            assert_eq!(owner_reference_count(source, "mean"), None, "{source}");
+        }
+        // Test-only attributes and the parent glob import are the admitted ones.
+        let admitted = "use super::*;\n#[cfg(test)]\nmod m { #[test] fn t() { mean(); } }";
+        assert_eq!(owner_reference_count(admitted, "mean"), Some(1));
+    }
+}

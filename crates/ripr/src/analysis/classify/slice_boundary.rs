@@ -322,3 +322,99 @@ fn literal_slice_length(text: &str) -> Option<usize> {
         }))
     .then_some(elements.len())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analysis::facts::FunctionSourceRole;
+    use crate::domain::SymbolId;
+    use std::path::PathBuf;
+
+    fn owner_with_body(body: &str) -> FunctionSummary {
+        FunctionSummary {
+            id: SymbolId("src/lib.rs::mean".to_string()),
+            name: "mean".to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            end_line: 3,
+            body: body.to_string().into(),
+            calls: Vec::new(),
+            returns: Vec::new(),
+            literals: Vec::new(),
+            source_role: FunctionSourceRole::Production,
+            attrs: Vec::new(),
+            impl_attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
+        }
+    }
+
+    #[test]
+    fn literal_slice_length_counts_only_plain_immutable_literal_rows() {
+        for (text, length) in [
+            ("&[]", Some(0)),
+            ("&[1, 2, 3]", Some(3)),
+            ("&[-1, 2]", Some(2)),
+            ("&[\"a\", \"b\"]", Some(2)),
+            ("&mut [1]", None),
+            ("&raw const [1]", None),
+            ("[1, 2]", None),
+            ("&[0; 4]", None),
+            ("&[1 + 1]", None),
+            ("&[x]", None),
+            ("&[-x]", None),
+            ("&[!1]", None),
+            ("&[#[cfg(a)] 1]", None),
+            ("&values", None),
+        ] {
+            assert_eq!(literal_slice_length(text), length, "{text}");
+        }
+    }
+
+    #[test]
+    fn literal_slice_length_enforces_element_and_size_bounds() {
+        let at_limit = format!("&[{}]", vec!["1"; 256].join(", "));
+        assert_eq!(literal_slice_length(&at_limit), Some(256));
+        let over_elements = format!("&[{}]", vec!["1"; 257].join(", "));
+        assert_eq!(literal_slice_length(&over_elements), None);
+        let over_bytes = format!("&[\"{}\"]", "a".repeat(4096));
+        assert_eq!(literal_slice_length(&over_bytes), None);
+    }
+
+    #[test]
+    fn slice_parameter_finds_the_position_of_an_immutable_slice_reference() {
+        let owner = owner_with_body("fn mean(scale: u64, xs: &[u64]) -> u64 { 0 }");
+        assert_eq!(slice_parameter(&owner, "xs"), Some(1));
+        assert_eq!(slice_parameter(&owner, "scale"), None);
+        assert_eq!(slice_parameter(&owner, "missing"), None);
+    }
+
+    #[test]
+    fn slice_parameter_refuses_shapes_that_change_the_len_receiver() {
+        for body in [
+            "fn mean(xs: &mut [u64]) -> u64 { 0 }",
+            "fn mean(mut xs: &[u64]) -> u64 { 0 }",
+            "fn mean(xs: &Vec<u64>) -> u64 { 0 }",
+            "fn mean(xs: [u64; 2]) -> u64 { 0 }",
+            "fn mean(ref xs: &[u64]) -> u64 { 0 }",
+            "fn mean(xs: &[u64]) -> String { String::new() }",
+            "fn mean(xs: &[u64]) { }",
+            "fn mean<T>(xs: &[T]) -> u64 { 0 }",
+            "async fn mean(xs: &[u64]) -> u64 { 0 }",
+            "fn mean(&self, xs: &[u64]) -> u64 { 0 }",
+            "fn mean(xs: &[u64]) -> u64 { let xs = &[1u64][..]; xs.len() as u64 }",
+            "fn mean(xs: &[u64]) -> u64 { println!(\"x\"); 0 }",
+            "not rust {",
+        ] {
+            assert_eq!(
+                slice_parameter(&owner_with_body(body), "xs"),
+                None,
+                "{body}"
+            );
+        }
+        let float = owner_with_body("fn mean(xs: &[f64]) -> f64 { 0.0 }");
+        assert_eq!(slice_parameter(&float, "xs"), Some(0));
+    }
+}
