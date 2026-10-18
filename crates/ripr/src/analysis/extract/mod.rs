@@ -10,7 +10,7 @@ mod text;
 
 pub(crate) use calls::{
     attribute_ranges, call_name_bounds_before_paren, extract_call_facts, has_saturated_line,
-    runs_its_arguments,
+    line_at_call_budget, runs_its_arguments,
 };
 pub(crate) use groups::{delimiters_balance, group_end};
 pub(crate) use literals::{extract_literal_facts, extract_literals};

@@ -1062,6 +1062,9 @@ impl ArmSelector {
             return false;
         };
         loan.call_lines.iter().any(|line| {
+            if crate::analysis::extract::line_at_call_budget(test.calls.iter(), *line) {
+                return false;
+            }
             let mut on_line = test.calls.iter().filter(|call| call.line == *line);
             let Some(helper_call) = on_line.next() else {
                 return false;
