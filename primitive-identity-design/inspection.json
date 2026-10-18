@@ -1,0 +1,38 @@
+{
+  "kind": "design-inspection-only",
+  "producer": "c4a8f7828e15426c4d872718f66bd4bac3ab0daf",
+  "consumer": "278253a03b00d1aa777eeba7633954122163890f",
+  "retainedEvidence": "51324e92c482f4f27d7eac7eec4a5af9c547433d",
+  "decision": "NOT_ESTABLISHED",
+  "receiptProduced": false,
+  "reason": "No existing exact-source typed builtin identity authority through opaque import/export expansions",
+  "custody_command": "git rev-parse HEAD HEAD^{tree}; git rev-parse HEAD:src/proof/budget.rs HEAD:src/proof/mod.rs HEAD:src/main.rs HEAD:src/cli.rs HEAD:Cargo.toml HEAD:Cargo.lock; sha256sum ...; find . -name '*.rmeta' -o -name '*.mir'; git status --porcelain=v1",
+  "custody_native_exit": 0,
+  "custody_output": "278253a03b00d1aa777eeba7633954122163890f\n6e288c65d71e1a7f7f38fa064221e53163c9b47d\n0a188ce56d24c4fcc46182e24e3fa4ad278fdb9a\n933cb5edbf8de3da5fb66d96716e1efcde20c424\naf574ddd02f9a6ed3dfbe3bac7692eef52e7dfc7\nd3d992902ddc8bd4e15fb2e192c347de9db41d91\n3af5ba8e6450ed916e1dd711993598f3a420584a\n8af0176d3badb6e577e707225d7cfc8c413107ea\n05e215b8e175fdbb608db9a9eb405fa9ab59284ec8568f974079de1fde9b15c9  src/proof/budget.rs\na4ff6392aba82f8d76d83bb0e4bb16fdf29bd03e3f9f8f6e8457bf07ad900ec4  src/proof/mod.rs\n8a7126b5d34db6f3c9cb981e863d73b477f2a04862531cd2c037213c3092c7f4  src/main.rs\n79bfd862036d12f873af8166f5e8eb92840bdb9573bd553bd14bfcf040703903  src/cli.rs\n41dc91cbf7172ba862c4591b6e8f4ba2a7ff0d4fd05e795c9058057badf2ba40  Cargo.toml\nebc1880b0c3e6ccc3bd77df41179acd66ec8c4c6407d8dff4cfdf7867ba38351  Cargo.lock\n",
+  "rustc": "1.95.0 (59807616e1fa2540724bfbac14d7976d7e4a3860); x86_64-unknown-linux-gnu; LLVM22.1.2",
+  "compiler": "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/rustc",
+  "compiler_actions": [
+    "-vV",
+    "--print sysroot",
+    "--help"
+  ],
+  "fresh_compilation": false,
+  "fresh_analyzer_replay": false,
+  "currentOwners": [
+    {
+      "number": 8772,
+      "head": "cb6f7667430ad12f1cea5bb8b23ad98e078400b9",
+      "state": "open",
+      "draft": true
+    },
+    {
+      "number": 8597,
+      "head": "5aa226a14a0012dfb3638e2ebbfdf58dbf2e75a7",
+      "state": "open",
+      "draft": false
+    }
+  ],
+  "local_source_main": "9d3fbe9fcf3dbc5913d88c315afa177a7dec4ac9",
+  "controls": "Prior immutable packet reused as evidence; no controls rerun or changed.",
+  "negative_result_scope": "Existing supported facts on frozen consumer under no untrusted expansion execution; not a universal impossibility theorem."
+}
