@@ -44,6 +44,17 @@ Partially delivered work stays open with landed and residual acceptance separate
 
 Search related work by claim identity and explicit dependency, not by touched-file proximity. Material facts needed by another lane belong in an ordinary issue or PR comment; no lane telemetry is required.
 
+## Issue claim comment
+
+The claim is one ordinary comment on the issue, not a lock or state file. `deliver-pr` and `finish-pr` apply these rules. Keep it cheap: full CI runs only at qualification, so a stray duplicate draft costs little. Avoid duplicates where a quick check does it, never block work on ceremony, and hold the one hard rule: only one candidate per claim goes to qualification.
+
+- **Shape.** One comment per claim, edited in place and never re-posted. First line: `Claiming #N: <one-line boundary>`. Add `Branch: <name>` once it is pushed and `PR: #M` once it exists. Add a `State:` line of `candidate`, `qualification-requested`, `qualifying` or `qualified`; it is the next-action signal for anyone reading the issue.
+- **Check.** Before claiming and before the first push, read the issue's claim comments as well as searching PRs. Search again right after opening a PR for other PRs that reference the issue.
+- **Live claim.** A claim is live while the issue, its branch or its PR shows activity within the last 3 hours. Prefer to join or review the existing PR, or take other work, and link the claim you found. A draft built anyway is allowed; it just may not be the one qualified.
+- **Stale claim.** With no activity for 3 hours, the claim may be taken over. Comment on the issue naming the stale claim before starting, and edit the old claim to say it was superseded.
+- **Competing PRs.** If two PRs for one claim exist, only one goes to qualification, chosen on merit (design, proof, review state). Creation order is a tie-break, not the rule. The other contributes any unique residual to the chosen PR and is closed with a link.
+- **Release.** When abandoning, edit the claim comment to say so.
+
 # Subagents
 
 Focused read-only subagents may map source authority, GitHub history, external semantics, or adversarial premise risk. The lead Claude context verifies citations and writes one integrated issue.

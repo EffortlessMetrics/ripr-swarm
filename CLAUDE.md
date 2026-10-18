@@ -256,6 +256,10 @@ alternatives may be compared with focused proof; select one to land before expen
 qualification. Do not create rival implementations merely to consume parallel
 capacity. Disjoint pieces may be delegated through one integrating candidate owner.
 
+An issue claim is one ordinary comment (branch, PR and candidate/qualification state), live for 3 hours of activity and
+then takeable with a note; duplicate drafts are tolerated, but only one PR per claim, chosen on merit, goes to qualification (see
+`prepare-issue` Issue claim comment).
+
 Do not create repository-global active-goal, current-writer, current-stage,
 liveness, lease, lock, candidate-frontier, or worker-state files. GitHub issues,
 PRs, reviews, checks, and committed evidence are durable state. Claude sessions,
