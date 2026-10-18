@@ -488,3 +488,142 @@ fn init_followups_replay_utf8_targets_from_a_non_utf8_cwd() -> TestResult {
     std::fs::remove_dir_all(&scratch)?;
     result
 }
+
+/// Observe the destination of the printed write command: a successful refresh
+/// against the caller would otherwise look indistinguishable from success.
+fn workflow_refresh_replays_selected_root(doctor: bool) -> TestResult {
+    let scratch = unique_temp_workspace("workflow-refresh-root");
+    let selected = scratch.join("selected répo it's");
+    let decoy = scratch.join("decoy");
+    let config = "[analysis]\nmode = \"deep\"\n";
+    let sentinel = "name: caller sentinel\n";
+    let result: TestResult = (|| {
+        rust_repo(&selected)?;
+        rust_repo(&decoy)?;
+        for root in [&selected, &decoy] {
+            std::fs::write(root.join("ripr.toml"), config)?;
+            std::fs::create_dir_all(root.join(".github/workflows"))?;
+        }
+        let absolute = selected.to_str().ok_or("UTF-8 fixture root")?;
+        for (cwd, root_args) in [
+            (&decoy, vec!["--root", absolute]),
+            (&scratch, vec!["--root", "selected répo it's"]),
+            (&selected, vec![]),
+        ] {
+            for preview in [false, true] {
+                let mut args = vec![if doctor { "doctor" } else { "init" }];
+                args.extend(&root_args);
+                if doctor {
+                    // Both historical forms must get a usable refresh route.
+                    let old_workflow = if preview {
+                        "run: cargo install ripr --locked\n"
+                    } else {
+                        "run: cargo install ripr --version 0.0.1 --locked\n"
+                    };
+                    std::fs::write(selected.join(".github/workflows/ripr.yml"), old_workflow)?;
+                } else {
+                    args.extend(["--ci", "github", "--force"]);
+                    if preview {
+                        args.push("--dry-run");
+                    }
+                }
+                let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(cwd), &args)?;
+                assert!(output.status.success(), "{output:?}");
+                let text = String::from_utf8(if doctor { output.stdout } else { output.stderr })?;
+                if !doctor && !text.contains("is not released") {
+                    // A released generator legitimately has no upgrade warning.
+                    // Pin that state to the real self-pinned template instead
+                    // of accepting a silently missing development warning.
+                    let template = if preview {
+                        run_command(env!("CARGO_BIN_EXE_ripr"), Some(cwd), &args)?.stdout
+                    } else {
+                        std::fs::read(selected.join(".github/workflows/ripr.yml"))?
+                    };
+                    assert!(
+                        String::from_utf8(template)?
+                            .contains(&format!("version={}\n", env!("CARGO_PKG_VERSION")))
+                    );
+                    continue;
+                }
+                let command = text
+                    .split('`')
+                    .find(|part| part.starts_with("ripr init"))
+                    .ok_or_else(|| format!("missing refresh command: {text}"))?;
+                std::fs::write(
+                    selected.join(".github/workflows/ripr.yml"),
+                    "name: selected sentinel\n",
+                )?;
+                std::fs::write(decoy.join(".github/workflows/ripr.yml"), sentinel)?;
+                let refreshed = replay_printed_ripr(command, &decoy)?;
+                assert!(refreshed.status.success(), "{command}: {refreshed:?}");
+                let after = std::fs::read_to_string(selected.join(".github/workflows/ripr.yml"))?;
+                assert!(
+                    after.starts_with("name: RIPR\n"),
+                    "selected workflow unchanged: {command}: {after}"
+                );
+                assert!(text.contains("(PowerShell) `ripr init"), "{text}");
+                assert!(!text.contains("\\u{0a}(PowerShell)"), "{text}");
+                assert_eq!(
+                    std::fs::read_to_string(decoy.join(".github/workflows/ripr.yml"))?,
+                    sentinel
+                );
+                for root in [&selected, &decoy] {
+                    assert_eq!(std::fs::read_to_string(root.join("ripr.toml"))?, config);
+                }
+            }
+        }
+        Ok(())
+    })();
+    std::fs::remove_dir_all(&scratch)?;
+    result
+}
+
+#[test]
+fn init_upgrade_warning_refresh_replays_selected_root() -> TestResult {
+    workflow_refresh_replays_selected_root(false)
+}
+
+#[test]
+fn doctor_workflow_warning_refresh_replays_selected_root() -> TestResult {
+    workflow_refresh_replays_selected_root(true)
+}
+
+#[cfg(unix)]
+#[test]
+fn workflow_warning_omits_refresh_for_unrepresentable_root() -> TestResult {
+    use std::os::unix::ffi::OsStringExt;
+    let scratch = unique_temp_workspace("workflow-refresh-lossless");
+    let root = scratch.join(std::ffi::OsString::from_vec(b"selected-\xff".to_vec()));
+    let result: TestResult = (|| {
+        rust_repo(&root)?;
+        let init = run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            Some(&root),
+            &["init", "--ci", "github"],
+        )?;
+        assert!(init.status.success(), "{init:?}");
+        let stderr = String::from_utf8(init.stderr)?;
+        if stderr.contains("is not released") {
+            assert!(stderr.contains("refresh command omitted"), "{stderr}");
+            assert!(stderr.contains("UTF-8"), "{stderr}");
+            assert!(!stderr.contains("`ripr init"), "{stderr}");
+        }
+        std::fs::write(
+            root.join(".github/workflows/ripr.yml"),
+            "run: cargo install ripr --locked\n",
+        )?;
+        let doctor = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &["doctor"])?;
+        assert!(doctor.status.success(), "{doctor:?}");
+        let stdout = String::from_utf8(doctor.stdout)?;
+        let line = stdout
+            .lines()
+            .find(|line| line.contains("Generated workflow:"))
+            .ok_or_else(|| format!("missing advisory: {stdout}"))?;
+        assert!(line.contains("refresh command omitted"), "{line}");
+        assert!(line.contains("UTF-8"), "{line}");
+        assert!(!line.contains("`ripr init"), "{line}");
+        Ok(())
+    })();
+    std::fs::remove_dir_all(&scratch)?;
+    result
+}
