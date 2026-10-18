@@ -623,20 +623,31 @@ fn method_call_site(text: &str, callee_name: &str) -> Option<(usize, MethodRecei
         if receiver == "self" || receiver.ends_with(" self") || receiver.ends_with("(self") {
             return Some((paren, MethodReceiver::SelfReceiver));
         }
-        if let Some(open) = receiver.rfind(['}', ')']) {
-            let close_char = receiver.as_bytes()[open];
-            let (open_char, _) = if close_char == b'}' {
-                ('{', '}')
-            } else {
-                ('(', ')')
-            };
+        // A constructed receiver is only the expression the method is
+        // called on, so the trimmed receiver text must end with that
+        // expression's closing bracket (`Parser::new(1).parse()`,
+        // `Parser { .. }.parse()`). A receiver ending in a variable
+        // (`check(Parser::new(1), p.parse())`, where `p` is the actual
+        // receiver) never binds to an earlier constructed argument.
+        let brackets = match receiver.as_bytes().last() {
+            Some(b'}') => Some(('{', '}')),
+            Some(b')') => Some(('(', ')')),
+            _ => None,
+        };
+        if let Some((open_char, close_char)) = brackets {
+            // Scan backward from that closing bracket only. An opener
+            // with no matching closer aborts the scan (fail closed)
+            // instead of underflowing `depth`.
             let mut depth = 0usize;
             let mut start = None;
             for (at, ch) in receiver.char_indices().rev() {
-                if ch == close_char as char {
+                if ch == close_char {
                     depth += 1;
                 } else if ch == open_char {
-                    depth -= 1;
+                    let Some(next) = depth.checked_sub(1) else {
+                        break;
+                    };
+                    depth = next;
                     if depth == 0 {
                         start = Some(at);
                         break;
@@ -2925,6 +2936,47 @@ mod tests {
         ));
         assert!(is_direct_call_site("let x = helper();", "helper"));
         Ok(())
+    }
+
+    // #8633 Graphite review: the backward bracket scan in
+    // `method_call_site` must fail closed, never panic or bind a
+    // variable receiver to an earlier constructed argument.
+    #[test]
+    fn method_call_site_unmatched_opener_does_not_panic_or_bind() {
+        // Reverse scan reaches the unmatched `(` of `(y` at depth 0.
+        assert_eq!(method_call_site("Foo::new(1) + (y.total()", "total"), None);
+        assert_eq!(method_call_site("Foo::new(1) + (y.secs()", "secs"), None);
+    }
+
+    #[test]
+    fn method_call_site_variable_receiver_after_constructed_argument_does_not_bind() {
+        // The actual receiver is the variable `p`; the earlier
+        // `Parser::new(1)` argument must not earn Constructed credit.
+        assert_eq!(
+            method_call_site("check(Parser::new(1), p.total())", "total"),
+            None
+        );
+        assert_eq!(
+            method_call_site("check(Parser { n: 1 }, p.total())", "total"),
+            None
+        );
+    }
+
+    #[test]
+    fn method_call_site_genuine_constructed_receiver_still_binds() {
+        for (text, callee, ty) in [
+            ("Parser::new(1).total()", "total", "Parser"),
+            ("Parser { n: 1 }.total()", "total", "Parser"),
+            ("Parser::new(1).secs()", "secs", "Parser"),
+        ] {
+            assert!(
+                matches!(
+                    method_call_site(text, callee),
+                    Some((_, MethodReceiver::Constructed(ref found))) if found == ty
+                ),
+                "{text}"
+            );
+        }
     }
 
     fn one_hop_chain(caller_body: &str) -> HelperChain {
