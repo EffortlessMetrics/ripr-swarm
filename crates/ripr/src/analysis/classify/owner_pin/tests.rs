@@ -8367,6 +8367,29 @@ fn an_expected_value_a_macro_or_a_static_rebinds_from_the_owner_is_not_a_pin() {
             "static mut EXPECTED: u32 = 0;\n\n",
             "EXPECTED = crate::weight(4);\n        assert_eq!(crate::weight(4), EXPECTED);",
         ),
+        // Non-atomic writes: a field, a tuple field, an index, a listed
+        // mutator that is not a `store`, and a mutator in a struct-literal
+        // field value (not a `let` annotation).
+        (
+            "struct E { v: u32 }\n\n",
+            "let mut expected = E { v: 0 };\n        expected.v = crate::weight(4);\n        assert_eq!(crate::weight(4), expected.v);",
+        ),
+        (
+            "",
+            "let mut expected = (0, 0);\n        expected.0 = crate::weight(4);\n        assert_eq!(crate::weight(4), expected.0);",
+        ),
+        (
+            "",
+            "let mut expected = [0; 2];\n        expected[1] = crate::weight(4);\n        assert_eq!(crate::weight(4), expected[1]);",
+        ),
+        (
+            "",
+            "let mut expected = [0; 2];\n        expected.fill(crate::weight(4));\n        assert_eq!(crate::weight(4), expected[0]);",
+        ),
+        (
+            "struct S { f: u32 }\nstatic EXPECTED: AtomicU32 = AtomicU32::new(0);\n\n",
+            "let _s = S { f: EXPECTED.swap(crate::weight(4), Ordering::SeqCst) };\n        assert_eq!(crate::weight(4), EXPECTED.load(Ordering::SeqCst));",
+        ),
     ] {
         let lib = unit_tests(prelude, body);
         assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{body}");
