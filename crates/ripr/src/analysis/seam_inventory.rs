@@ -5421,11 +5421,11 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         )?;
         write_file(
             &root.join("src/lib.rs"),
-            "pub mod other;\n\npub fn discount(total: i32) -> i32 {\n    if total >= 100 { total / 10 } else { 0 }\n}\n\nfn check_discount() -> bool {\n    discount(200) == 20\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn high_total_gets_discount() {\n        assert_eq!(discount(200), 20);\n    }\n}\n",
+            "pub mod other;\n\npub fn discount(total: i32) -> i32 {\n    if total >= 100 { total / 10 } else { 0 }\n}\n\nfn check_discount() -> bool {\n    discount(200) == 20\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    fn check_discount_helper(total: i32) {\n        assert_eq!(discount(total), 20);\n    }\n\n    #[test]\n    fn high_total_gets_discount() {\n        assert_eq!(discount(200), 20);\n    }\n\n    #[test]\n    fn high_total_uses_helper() {\n        check_discount_helper(200);\n    }\n}\n",
         )?;
         write_file(
             &root.join("src/other.rs"),
-            "pub fn shipping(total: i32) -> i32 {\n    if total >= 50 { 0 } else { 5 }\n}\n",
+            "pub fn shipping(total: i32) -> i32 {\n    if total >= 50 { 0 } else { 5 }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn shipping_is_free_over_threshold() {\n        assert_eq!(shipping(60), 0);\n    }\n}\n",
         )?;
         write_file(
             &root.join("tests/it.rs"),
@@ -5450,33 +5450,52 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             rust_index::reuse_cached_index_with_loaded_files(core, &root, &all_files, &[])?;
         let fresh = rust_index::build_analysis_index_from_loaded_files(&root, &all_files, &[])?;
 
+        // Full facts, not name lists: calls and assertions are where
+        // helper credit and stale flat memberships would inflate or
+        // duplicate evidence.
         let facts_of = |index: &RustIndex| {
-            let mut tests: Vec<String> = index
-                .tests()
-                .iter()
-                .map(|test| format!("{}:{}:{}", test.file.display(), test.name, test.start_line))
-                .collect();
-            tests.sort();
-            let mut functions: Vec<String> = index
-                .functions()
-                .iter()
-                .map(|function| {
-                    format!(
-                        "{}:{}:{}:{}",
-                        function.file.display(),
-                        function.name,
-                        function.start_line,
-                        function.end_line
-                    )
-                })
-                .collect();
-            functions.sort();
+            let mut tests: Vec<crate::analysis::facts::TestFact> =
+                index.tests().iter().cloned().collect();
+            tests.sort_by(|left, right| {
+                left.file
+                    .cmp(&right.file)
+                    .then(left.start_line.cmp(&right.start_line))
+                    .then(left.name.cmp(&right.name))
+            });
+            let mut functions: Vec<crate::analysis::facts::FunctionFact> =
+                index.functions().iter().cloned().collect();
+            functions.sort_by(|left, right| {
+                left.file
+                    .cmp(&right.file)
+                    .then(left.start_line.cmp(&right.start_line))
+                    .then(left.name.cmp(&right.name))
+            });
             (tests, functions)
         };
         if facts_of(&reused.index) != facts_of(&fresh.index) {
             return Err(
-                "reused core index must carry the fresh build's test/function facts".into(),
+                "reused core index must carry the fresh build's full test/function facts".into(),
             );
+        }
+        // The helper-credited test must carry the helper's call and
+        // assertion exactly once in both builds.
+        for (label, index) in [("reused", &reused.index), ("fresh", &fresh.index)] {
+            let helper_test = index
+                .tests()
+                .iter()
+                .find(|test| test.name == "high_total_uses_helper")
+                .ok_or("reuse fixture must index the helper-credited test")?;
+            let credited_calls = helper_test
+                .calls
+                .iter()
+                .filter(|call| call.name == "discount")
+                .count();
+            if credited_calls != 1 || helper_test.assertions.len() != 1 {
+                return Err(format!(
+                    "{label} helper-credited test must carry one credited call and assertion, got {credited_calls} calls and {} assertions",
+                    helper_test.assertions.len()
+                ));
+            }
         }
         let production = vec![PathBuf::from("src/lib.rs"), PathBuf::from("src/other.rs")];
         let reused_seams = inventory_seams_from_index(&production, &reused.index);
@@ -5486,6 +5505,84 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         }
         if reused_seams.is_empty() {
             return Err("reuse fixture must yield at least one seam".into());
+        }
+        // Dropped file: a core file absent from the main list must
+        // disappear from the flat test/function views, not survive as
+        // related-test evidence.
+        let dropped_core =
+            rust_index::build_analysis_index_from_loaded_files(&root, &all_files, &[])?;
+        let dropped_target = loaded(&["src/lib.rs", "src/other.rs"]);
+        let dropped_reused = rust_index::reuse_cached_index_with_loaded_files(
+            dropped_core,
+            &root,
+            &dropped_target,
+            &[],
+        )?;
+        let dropped_fresh =
+            rust_index::build_analysis_index_from_loaded_files(&root, &dropped_target, &[])?;
+        if facts_of(&dropped_reused.index) != facts_of(&dropped_fresh.index) {
+            return Err("dropped-file reuse must carry the fresh build's full facts".into());
+        }
+        if dropped_reused
+            .index
+            .tests()
+            .iter()
+            .any(|test| test.name == "discount_from_integration")
+            || dropped_reused
+                .index
+                .files()
+                .get(&PathBuf::from("tests/it.rs"))
+                .is_some()
+        {
+            return Err("dropped file must disappear from tests() and files()".into());
+        }
+        // Changed file: the main list carries new bytes for a core file;
+        // its old facts must be replaced, not duplicated next to the new
+        // ones in the flat views.
+        let changed_core =
+            rust_index::build_analysis_index_from_loaded_files(&root, &core_files, &[])?;
+        let changed_lib_text = std::fs::read_to_string(root.join("src/lib.rs"))
+            .map_err(|err| err.to_string())?
+            .replace("total >= 100", "total >= 90");
+        if !changed_lib_text.contains("total >= 90") {
+            return Err("changed-file fixture must contain the discount threshold".into());
+        }
+        let changed_lib = changed_lib_text.into_bytes();
+        let changed_files: Vec<(PathBuf, Vec<u8>)> = core_files
+            .iter()
+            .map(|(path, bytes)| {
+                if path == &PathBuf::from("src/lib.rs") {
+                    (path.clone(), changed_lib.clone())
+                } else {
+                    (path.clone(), bytes.clone())
+                }
+            })
+            .collect();
+        let changed_reused = rust_index::reuse_cached_index_with_loaded_files(
+            changed_core,
+            &root,
+            &changed_files,
+            &[],
+        )?;
+        let changed_fresh =
+            rust_index::build_analysis_index_from_loaded_files(&root, &changed_files, &[])?;
+        if facts_of(&changed_reused.index) != facts_of(&changed_fresh.index) {
+            return Err("changed-file reuse must carry the fresh build's full facts".into());
+        }
+        let lib_test_names: Vec<&str> = changed_reused
+            .index
+            .tests()
+            .iter()
+            .filter(|test| test.file.as_path() == Path::new("src/lib.rs"))
+            .map(|test| test.name.as_str())
+            .collect();
+        let mut deduped = lib_test_names.clone();
+        deduped.sort_unstable();
+        deduped.dedup();
+        if lib_test_names.len() != deduped.len() {
+            return Err(format!(
+                "changed file must not duplicate its tests in tests(): {lib_test_names:?}"
+            ));
         }
         // An unchanged file list reuses the built index untouched: no
         // file is re-parsed, re-decoded, or dropped.
@@ -5537,13 +5634,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             classify_seams_in_file_with_shared_index(&root, &config, &lib, &evidence, &mut None)?;
         let seams_fresh = scoped_file_seams(&root, &config, &lib, &mut None)?;
 
-        let seam_ids = |seams: &[RepoSeam]| {
-            seams
-                .iter()
-                .map(|seam| seam.id().as_str().to_string())
-                .collect::<Vec<_>>()
-        };
-        if seam_ids(&seams_shared) != seam_ids(&seams_fresh) || seams_shared.is_empty() {
+        if seams_shared != seams_fresh || seams_shared.is_empty() {
             return Err("shared seam shapes must match the unshared builder".into());
         }
         let classified_ids = |classified: &[ClassifiedSeam]| {
@@ -5554,6 +5645,102 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         };
         if classified_ids(&classified_shared) != classified_ids(&classified_fresh) {
             return Err("shared classification must match the unshared builder".into());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #8547 acceptance 1, build-count proof: a check-shaped sequence
+    /// (admission core, main reuse, then both human-output routes over a
+    /// shared seam index) starts exactly one workspace index build and
+    /// one bounded route build. The reuse step parses only the admitted
+    /// extra file through the cache — it is not a second workspace build
+    /// — and the second route consumer builds nothing. Counts are the
+    /// `index_cached_parse` phase starts the latency trace emits.
+    #[test]
+    fn check_shaped_sequence_builds_one_workspace_and_one_route_index() -> Result<(), String> {
+        use crate::analysis::facts::index_build_probe::observe;
+        let root = make_tempdir("build-count-8547")?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"count8547\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub fn discount(total: i32) -> i32 {\n    if total >= 100 { total / 10 } else { 0 }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn high_total_gets_discount() {\n        assert_eq!(discount(200), 20);\n    }\n}\n",
+        )?;
+        write_file(
+            &root.join("tests/it.rs"),
+            "use count8547::discount;\n\n#[test]\nfn discount_from_integration() {\n    assert_eq!(discount(50), 0);\n}\n",
+        )?;
+        let loaded = |paths: &[&str]| -> Vec<(PathBuf, Vec<u8>)> {
+            paths
+                .iter()
+                .map(|path| {
+                    (
+                        PathBuf::from(path),
+                        std::fs::read(root.join(path)).unwrap_or_default(),
+                    )
+                })
+                .collect()
+        };
+        let core_files = loaded(&["src/lib.rs"]);
+        let all_files = loaded(&["src/lib.rs", "tests/it.rs"]);
+
+        let (core, workspace_builds) =
+            observe(|| rust_index::build_analysis_index_from_loaded_files(&root, &core_files, &[]));
+        let core = core?;
+        if workspace_builds != 1 {
+            return Err(format!(
+                "admission core must be one workspace index build, got {workspace_builds}"
+            ));
+        }
+        let core_lookups = core.file_fact_cache.hits + core.file_fact_cache.misses;
+        let (reused, reuse_builds) = observe(|| {
+            rust_index::reuse_cached_index_with_loaded_files(core, &root, &all_files, &[])
+        });
+        let reused = reused?;
+        // One incremental parse phase over only the admitted extra: the
+        // cache-lookup total grows by that one file, never by the whole
+        // file list a second time.
+        let reuse_lookups = reused.file_fact_cache.hits + reused.file_fact_cache.misses;
+        if reuse_builds != 1 || reuse_lookups != core_lookups + 1 {
+            return Err(format!(
+                "main reuse must parse only the admitted extra (builds={reuse_builds}, lookups {core_lookups} -> {reuse_lookups})"
+            ));
+        }
+        let (again, unchanged_builds) = observe(|| {
+            rust_index::reuse_cached_index_with_loaded_files(reused, &root, &all_files, &[])
+        });
+        again?;
+        if unchanged_builds != 0 {
+            return Err(format!(
+                "unchanged reuse must build nothing, got {unchanged_builds}"
+            ));
+        }
+        let config = RiprConfig::default();
+        let lib = PathBuf::from("src/lib.rs");
+        let evidence = vec![PathBuf::from("tests/it.rs")];
+        let mut shared: Option<FileSeamIndex> = None;
+        let (routes, route_builds) = observe(|| {
+            let classified = classify_seams_in_file_with_shared_index(
+                &root,
+                &config,
+                &lib,
+                &evidence,
+                &mut shared,
+            )?;
+            let seams = scoped_file_seams(&root, &config, &lib, &mut shared)?;
+            Ok::<_, String>((classified, seams))
+        });
+        let (_, seams) = routes?;
+        if route_builds != 1 {
+            return Err(format!(
+                "both routes together must build one bounded seam index, got {route_builds}"
+            ));
+        }
+        if seams.is_empty() {
+            return Err("build-count fixture must yield at least one route seam".into());
         }
         let _ = std::fs::remove_dir_all(&root);
         Ok(())

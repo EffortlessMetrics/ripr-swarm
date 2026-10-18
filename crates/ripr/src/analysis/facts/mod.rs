@@ -1,4 +1,30 @@
 mod build;
+/// Test-only count of the index-build phases (`index_parse` /
+/// `index_cached_parse`) started on the observing thread, mirroring the
+/// phase names the latency trace emits (#8547 build-count proof). Thread
+/// local, so parallel tests never pollute each other's counts; the parse
+/// phases themselves run on the caller's thread even when their inner
+/// batch work uses rayon.
+#[cfg(test)]
+pub(crate) mod index_build_probe {
+    use std::cell::Cell;
+
+    thread_local! {
+        static BUILDS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(super) fn record() {
+        BUILDS.with(|builds| builds.set(builds.get() + 1));
+    }
+
+    /// Run `work` with a zeroed counter and return its result plus the
+    /// number of index-build phases it started.
+    pub(crate) fn observe<T>(work: impl FnOnce() -> T) -> (T, usize) {
+        BUILDS.with(|builds| builds.set(0));
+        let result = work();
+        (result, BUILDS.with(Cell::get))
+    }
+}
 pub(crate) use build::CachedRustIndex;
 use build::MissAttribution;
 #[cfg(test)]
@@ -306,6 +332,10 @@ pub(crate) use model::source_digest;
 /// Phase tracing extends the existing opt-in latency stream; normal output is
 /// unchanged. A cancelled intermediate index is never returned as complete.
 fn index_phase<T>(name: &str, work: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    #[cfg(test)]
+    if matches!(name, "index_parse" | "index_cached_parse") {
+        index_build_probe::record();
+    }
     crate::analysis::cancellation::checkpoint()?;
     let started = std::time::Instant::now();
     let trace = std::env::var_os("RIPR_REPO_EXPOSURE_LATENCY_TRACE").is_some();
