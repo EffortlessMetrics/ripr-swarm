@@ -3268,3 +3268,68 @@ fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// An unusable `--root` must announce itself once on stderr at startup while
+/// stdout stays protocol-only; a usable root stays silent (docs/interop/mcp.md:
+/// "operational failures use stderr").
+#[test]
+fn unusable_root_warns_once_on_stderr_and_keeps_stdout_clean() -> Result<(), String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let base =
+        std::env::temp_dir().join(format!("ripr-mcp-root-warn-{}-{stamp}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let plain_dir = base.join("plain");
+    let git_dir = base.join("repo");
+    std::fs::create_dir_all(&plain_dir).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(&git_dir).map_err(|error| error.to_string())?;
+    let file = base.join("file.txt");
+    std::fs::write(&file, "x").map_err(|error| error.to_string())?;
+    fixture_git_ok(&git_dir, &["-c", "init.defaultBranch=main", "init", "-q"])?;
+    std::fs::write(
+        git_dir.join("Cargo.toml"),
+        "[package]\nname = \"w\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+
+    let run = |root: &Path| -> Result<Output, String> {
+        Command::new(env!("CARGO_BIN_EXE_ripr"))
+            .args(["mcp", "--stdio", "--root"])
+            .arg(root)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|error| error.to_string())
+    };
+    let mut failures = Vec::new();
+    for (label, root) in [
+        ("nonexistent", base.join("missing")),
+        ("file", file.clone()),
+        ("non-git dir", plain_dir.clone()),
+    ] {
+        let output = run(&root)?;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.lines().count() != 1 || !stderr.contains("workspace root unavailable") {
+            failures.push(format!(
+                "{label}: expected one warning line, got {stderr:?}"
+            ));
+        }
+        if !output.stdout.is_empty() {
+            failures.push(format!("{label}: stdout must stay protocol-only"));
+        }
+    }
+    let usable = run(&git_dir)?;
+    if !usable.stderr.is_empty() {
+        failures.push(format!(
+            "usable root must stay silent, got {:?}",
+            String::from_utf8_lossy(&usable.stderr)
+        ));
+    }
+    let _ = std::fs::remove_dir_all(&base);
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
