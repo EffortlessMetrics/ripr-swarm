@@ -152,7 +152,7 @@ mapping specifies successor proof; it does not claim that it has run.
 | Fragmented message | Retained FrameReader and split public initialize controls |
 | Oversize discard/recovery | Retained bounded FrameReader cap/recovery control |
 | Over-cap response keeps known ID | Typed bounded writer fallback control |
-| Unreadable ID becomes null | Transport null-id Invalid Request frame control (`protocol_error_frame` bypassing the SDK type, #5254 item 3); SDK omission retained for dispatched errors, no arbitrary Value ID in production |
+| Unreadable ID becomes null; recoverable ID is echoed | Transport Invalid Request frame control (`protocol_error_frame` bypassing the SDK type, #5254 item 3): a frame with a `method` and a string or integer `id` but wrong-shape `params` echoes that ID verbatim; notifications and null, boolean, float or structured IDs answer `"id": null`. SDK omission retained for dispatched errors |
 
 All three original public stdio controls remain: legacy status/tool-resource
 equality, rejection arms, and discovery metadata/ping/unavailable recovery.
