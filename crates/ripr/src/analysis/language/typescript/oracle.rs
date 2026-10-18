@@ -828,18 +828,33 @@ pub(crate) fn expect_assertion_from_expression(
     };
     let matcher = outer_member.property.name.as_str();
 
-    // Inner shape is either `expect(...)` directly or an
-    // `expect(...).resolves` / `.rejects` chain.
+    // Inner shape is `expect(...)` plus up to two chain hops between the
+    // `expect(...)` call and the matcher: a `.resolves` / `.rejects` async
+    // modifier and/or a `.not` negation, in either order
+    // (`expect(x).not.toBe(y)`, `expect(x).rejects.not.toBe(y)`;
+    // RIPR-SPEC-0243 rule 2).
     let inner = &outer_member.object;
-    let async_modifier = expect_assertion_chain_modifier(inner);
-    let expect_call = expect_call_from_assertion_inner(inner)?;
+    let (expect_call, async_modifier, negated) = expect_assertion_chain(inner)?;
 
-    let mock_payload = mock_payload_from_assertion(matcher, expect_call, outer_call, source);
-    let error_payload = error_payload_from_assertion(matcher, async_modifier, outer_call, source);
+    // RIPR-SPEC-0243 rule 2 (#8712): under `.not` the matcher operand is not
+    // an expected value, so neither a mock-call payload nor an exact error
+    // payload is read.
+    let mock_payload = if negated {
+        None
+    } else {
+        mock_payload_from_assertion(matcher, expect_call, outer_call, source)
+    };
+    let error_payload = if negated {
+        None
+    } else {
+        error_payload_from_assertion(matcher, async_modifier, outer_call, source)
+    };
     // RIPR-SPEC-0262: the file's own matcher passes only on `===`. The same
     // credit carries reference identity for RIPR-SPEC-0246 rule 1; `toEqual`
-    // is also `exact_value` and must not inherit that property.
-    let credited_strict_custom = async_modifier != Some("rejects")
+    // is also `exact_value` and must not inherit that property. A negated
+    // matcher earns capped weak credit, so no strict identity credit either.
+    let credited_strict_custom = !negated
+        && async_modifier != Some("rejects")
         && bindings.strict_matchers.iter().any(|name| name == matcher)
         && outer_call.arguments.len() == 1
         && outer_call
@@ -873,12 +888,17 @@ pub(crate) fn expect_assertion_from_expression(
 
     // Extract expected_value_or_variant from the first matcher argument when it
     // is a concrete resolvable literal. Detect dynamic args to emit the
-    // typescript_dynamic_assertion_unresolved limitation.
-    let (expected_value_or_variant, has_dynamic_matcher_arg) =
+    // typescript_dynamic_assertion_unresolved limitation. RIPR-SPEC-0243 rule 2
+    // (#8712): a negated matcher operand is not an expected value, so a negated
+    // assertion carries no expected value and no expected-value evidence line.
+    let (expected_value_or_variant, has_dynamic_matcher_arg) = if negated {
+        (None, false)
+    } else {
         match instance_class_argument(matcher, async_modifier, outer_call) {
             Some(class) => (Some(class), false),
             None => extract_matcher_expected_value(matcher, &error_payload, outer_call, source),
-        };
+        }
+    };
 
     // RIPR-SPEC-0243 rule 9 (#8713): a self-comparing exact matcher with a
     // dynamic expected — `expect(price(150)).toBe(price(150))`, or the
@@ -889,12 +909,24 @@ pub(crate) fn expect_assertion_from_expression(
     // strong. Literal-vs-literal spellings stay strong here: the value-family
     // observation guard and the predicate self-comparing guard already refuse
     // them credit at the classifier.
-    if has_dynamic_matcher_arg
+    if !negated
+        && has_dynamic_matcher_arg
         && matches!(matcher, "toBe" | "toEqual" | "toStrictEqual")
         && self_comparing_matcher_argument(outer_call, source, observed_expression.as_deref())
     {
         oracle_kind = OracleKind::RelationalCheck;
         oracle_strength = OracleStrength::Weak;
+    }
+
+    // RIPR-SPEC-0243 rule 2 (#8712): a negated matcher earns capped credit —
+    // exact and relational matchers read `relational_check` / weak, the smoke
+    // list stays smoke, `toThrow*` reads `broad_error` / weak with no exact
+    // payload override, the mock list reads `mock_expectation` / weak, and
+    // anything else (including snapshots) reads `unknown` / unknown. The cap
+    // never raises a grade: chai `.not` and AVA `t.not` already read weak, and
+    // this brings the Jest/Vitest spelling to the same capped credit.
+    if negated {
+        (oracle_kind, oracle_strength) = negated_oracle_cap(matcher);
     }
 
     // A rejection equality observes the rejected reason, not the fulfilled
@@ -1953,38 +1985,73 @@ pub(crate) fn chai_expect_assertion_from_expression(
     })
 }
 
-pub(crate) fn expect_assertion_chain_modifier<'a>(inner: &'a Expression<'a>) -> Option<&'a str> {
-    match inner {
-        Expression::StaticMemberExpression(inner_member) => {
-            Some(inner_member.property.name.as_str())
-                .filter(|modifier| *modifier == "resolves" || *modifier == "rejects")
+/// Unwrap the chain between `expect(...)` and the matcher call: the
+/// `expect(...)` call itself plus up to two modifier hops — a `.resolves` /
+/// `.rejects` async modifier and/or a `.not` negation, in either order
+/// (`expect(x).not.toBe(y)`, `expect(x).rejects.not.toBe(y)`,
+/// `expect(x).not.resolves.toBe(y)`; RIPR-SPEC-0243 rule 2). Returns the
+/// `expect(...)` call, the async modifier when present, and whether the chain
+/// is negated. Anything longer or unrecognized yields no assertion (fail
+/// closed), matching the previous two-hop acceptance exactly.
+pub(crate) fn expect_assertion_chain<'a>(
+    inner: &'a Expression<'a>,
+) -> Option<(&'a oxc_ast::ast::CallExpression<'a>, Option<&'a str>, bool)> {
+    let (mut async_modifier, mut negated) = (None, false);
+    let mut current = inner;
+    // Two modifier hops (`.resolves.not`) plus the terminal `expect(...)`
+    // match; a third hop yields no assertion.
+    for _ in 0..3 {
+        match current {
+            Expression::CallExpression(call) if call_expression_is_expect(call) => {
+                return Some((call, async_modifier, negated));
+            }
+            Expression::StaticMemberExpression(member) => match member.property.name.as_str() {
+                "resolves" | "rejects" if async_modifier.is_none() => {
+                    async_modifier = Some(member.property.name.as_str());
+                    current = &member.object;
+                }
+                "not" if !negated => {
+                    negated = true;
+                    current = &member.object;
+                }
+                _ => return None,
+            },
+            _ => return None,
         }
-        _ => None,
     }
+    None
 }
 
-pub(crate) fn expect_call_from_assertion_inner<'a>(
-    inner: &'a Expression<'a>,
-) -> Option<&'a oxc_ast::ast::CallExpression<'a>> {
-    match inner {
-        // Direct: expect(...).matcher(...)
-        Expression::CallExpression(inner_call) if call_expression_is_expect(inner_call) => {
-            Some(inner_call)
+/// RIPR-SPEC-0243 rule 2 (#8712): the capped oracle read for a negated Jest /
+/// Vitest matcher. Exact and relational matchers lose their strong/exact
+/// reading; the smoke list stays smoke; `toThrow*` reads broad error with no
+/// exact-payload override (the caller skips the payload extraction); the mock
+/// list reads weak; anything else, including snapshots, reads unknown.
+fn negated_oracle_cap(matcher: &str) -> (OracleKind, OracleStrength) {
+    match matcher {
+        "toBe"
+        | "toEqual"
+        | "toStrictEqual"
+        | "toContain"
+        | "toMatch"
+        | "toBeGreaterThan"
+        | "toBeGreaterThanOrEqual"
+        | "toBeLessThan"
+        | "toBeLessThanOrEqual"
+        | "toHaveLength"
+        | "toHaveProperty"
+        | "toBeInstanceOf"
+        | "toMatchObject" => (OracleKind::RelationalCheck, OracleStrength::Weak),
+        "toBeTruthy" | "toBeFalsy" | "toBeDefined" | "toBeUndefined" | "toBeNull" | "toBeNaN" => {
+            (OracleKind::SmokeOnly, OracleStrength::Smoke)
         }
-        // Async chain: expect(...).resolves.matcher(...) etc.
-        Expression::StaticMemberExpression(inner_member) => {
-            let modifier = inner_member.property.name.as_str();
-            if modifier != "resolves" && modifier != "rejects" {
-                return None;
-            }
-            match &inner_member.object {
-                Expression::CallExpression(inner_call) if call_expression_is_expect(inner_call) => {
-                    Some(inner_call)
-                }
-                _ => None,
-            }
-        }
-        _ => None,
+        "toThrow" | "toThrowError" => (OracleKind::BroadError, OracleStrength::Weak),
+        "toHaveBeenCalled"
+        | "toHaveBeenCalledWith"
+        | "toHaveBeenCalledTimes"
+        | "toHaveBeenLastCalledWith"
+        | "toHaveBeenNthCalledWith" => (OracleKind::MockExpectation, OracleStrength::Weak),
+        _ => (OracleKind::Unknown, OracleStrength::Unknown),
     }
 }
 

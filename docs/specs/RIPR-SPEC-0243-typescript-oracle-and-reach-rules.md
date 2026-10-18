@@ -30,6 +30,7 @@ Linked issues:
 Linked PRs:
 
 - #6686 (TypeScript verdict corpus; mutation evidence for rule 10)
+- #8712 (rule 2 implementation: negated Jest assertions earn capped credit)
 - #8713 (rule 9 implementation: self-comparing exact matchers)
 
 
@@ -84,7 +85,7 @@ were not committed; each row below states its input.
 
 | Test snippet | Today | What it pins |
 | --- | --- | --- |
-| `expect(price(150)).not.toBe(150)` | `unknown` / unknown, `weakly_exposed`, plus `typescript_oracle_helper_gated` naming `expect(...)` | that the result is not 150 |
+| `expect(price(150)).not.toBe(150)` | `relational_check` / weak, `weakly_exposed` (rule 2, #8712; before: `unknown` / unknown plus `typescript_oracle_helper_gated` naming `expect(...)`) | that the result is not 150 |
 | file-local `const expect = (x) => ({ toBe() {} })`, then `expect(price(150)).toBe(999)` | `exact_value` / strong, `exposed` | nothing |
 | chai-imported `expect(price(150)).toBe(140)` | `exact_value` / strong, `exposed` | nothing: chai has no `toBe` |
 | `toThrow(Error)` after `"empty"` changed to `"blank"` | `exact_error_variant` / strong, `exposed` | any thrown `Error` |
@@ -243,7 +244,8 @@ A negated matcher operand is not an expected value: a negated assertion
 has no `expected_value_or_variant` and no `typescript_oracle_expected`
 evidence line, so RIPR-SPEC-0087 G-C never borrows it as a concrete
 expected value. A test whose only assertion is negated no longer reports
-`typescript_oracle_helper_gated`.
+`typescript_oracle_helper_gated`. Implemented 2026-10-18 (#8712);
+`.not` composes with `.resolves` / `.rejects` in either order.
 
 **Rule 3. `expect` must be a test-runner `expect`.** Step 2 accepts an
 identifier callee `expect` only when that name is not bound in the file; or
@@ -757,10 +759,10 @@ to `amount - 20`, and `tests/lib.test.ts` has
 4. `price(150);` with no assertion: oracle `unknown`, `weakly_exposed`
    (unchanged; never `reachable_unrevealed`).
 5. `expect(price(150)).not.toBe(150)`: `relational_check` / weak,
-   `weakly_exposed`, no `typescript_oracle_helper_gated` (today `unknown`
-   / unknown with that limitation).
+   `weakly_exposed`, no `typescript_oracle_helper_gated` (rule 2, #8712;
+   before: `unknown` / unknown with that limitation).
 6. `expect(() => price(150)).not.toThrow()`: `broad_error` / weak,
-   `weakly_exposed` (today `unknown` / unknown).
+   `weakly_exposed` (rule 2, #8712; before: `unknown` / unknown).
 7. `const expect = (x: unknown) => ({ toBe(_: unknown) {} });` at file
    level, then `expect(price(150)).toBe(999)`: no assertion, oracle
    `unknown`, `weakly_exposed` (today `exact_value` / strong, `exposed`).

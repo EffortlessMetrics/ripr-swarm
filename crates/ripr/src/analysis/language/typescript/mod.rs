@@ -78,6 +78,8 @@ mod match_object_guard;
 mod mock_payload_guard;
 mod module_entries;
 #[cfg(test)]
+mod negated_jest_assertion_tests;
+#[cfg(test)]
 mod new_declaration_tests;
 mod oracle;
 #[cfg(test)]
