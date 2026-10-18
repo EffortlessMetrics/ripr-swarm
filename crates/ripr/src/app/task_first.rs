@@ -446,7 +446,12 @@ pub(crate) fn check_repair_route(
         .readiness
         .test_target
         .as_ref()
-        .map(|target| target.file().to_string_lossy().replace('\\', "/"))
+        .map(|target| {
+            let file = target.file();
+            let relative = file.strip_prefix(root).unwrap_or(file);
+            relative.to_string_lossy().replace('\\', "/")
+        })
+        .filter(|file| !Path::new(file).is_absolute())
         .filter(|file| {
             !crate::analysis::is_test_surface_path(file)
                 && Path::new(file).extension().is_some_and(|ext| ext == "rs")

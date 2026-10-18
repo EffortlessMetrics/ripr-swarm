@@ -413,9 +413,8 @@ fn inline_target_copies_at_head(
 /// because its worktree or index copy differs from HEAD. Uses the same
 /// predicate as the attempt's baseline capture ([`require_inline_target_at_head`])
 /// so `ripr check` can withhold a repair start the attempt would refuse.
-/// Fails open: when git cannot establish the copies (no HEAD, not a
-/// repository, unreadable file), this reports `false` and the attempt's own
-/// refusal remains the authority.
+/// Fails open when git cannot establish HEAD (no HEAD, not a repository),
+/// reporting `false`; the attempt's own refusal remains the authority.
 pub(crate) fn inline_target_is_uncommitted(root: &Path, path: &str) -> bool {
     let Some(head) = git_text(root, &["rev-parse", "--verify", "--quiet", "HEAD"])
         .ok()
@@ -438,7 +437,10 @@ pub(crate) fn inline_target_is_uncommitted(root: &Path, path: &str) -> bool {
         return true;
     };
     let Ok(worktree) = git_text(root, &["hash-object", "--", path]) else {
-        return false;
+        // HEAD carries the file but the worktree copy cannot be hashed
+        // (deleted or unreadable): it differs from HEAD, and the attempt
+        // refuses it as well.
+        return true;
     };
     let staged = git_text(root, &["ls-files", "--stage", "--", path])
         .ok()
@@ -2618,6 +2620,18 @@ mod tests {
         // A path HEAD does not carry is uncommitted; a repository with no
         // HEAD fails open to the attempt's own refusal.
         assert!(inline_target_is_uncommitted(&fixture.root, "src/new.rs"));
+        // A tracked file deleted from the worktree differs from HEAD too.
+        git_ok(&fixture.root, &["reset", "-q", "--hard"])?;
+        assert!(!inline_target_is_uncommitted(
+            &fixture.root,
+            "src/pricing.rs"
+        ));
+        fs::remove_file(fixture.root.join("src/pricing.rs"))
+            .map_err(|err| format!("delete target: {err}"))?;
+        assert!(inline_target_is_uncommitted(
+            &fixture.root,
+            "src/pricing.rs"
+        ));
         let unborn = external_fixture("inline-uncommitted-unborn")?;
         git_ok(&unborn.root, &["-c", "init.templateDir=", "init", "-q"])?;
         assert!(!inline_target_is_uncommitted(
