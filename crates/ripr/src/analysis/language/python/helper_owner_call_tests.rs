@@ -254,3 +254,23 @@ fn given_a_skipped_caller_test_then_the_helper_relation_is_activation_limited() 
     );
     Ok(())
 }
+
+#[test]
+fn given_a_triple_quote_inside_a_single_line_string_or_comment_then_a_later_call_is_kept() {
+    for prefix in [
+        "text = '\"\"\"'\n",
+        "text = \"'''\"\n",
+        "# \"\"\" opens nothing\n",
+        "text = 'it\\'s \"\"\"'\n",
+    ] {
+        let body = format!("{prefix}helper(1)\n");
+        assert!(
+            related_tests::contains_call_name(&body, "helper"),
+            "{prefix}"
+        );
+    }
+    let docstring = "\"\"\"\nmentions helper(1)\n\"\"\"\nx = 1\n";
+    assert!(!related_tests::contains_call_name(docstring, "helper"));
+    let after = "\"\"\"doc\"\"\"\nhelper(1)\n";
+    assert!(related_tests::contains_call_name(after, "helper"));
+}

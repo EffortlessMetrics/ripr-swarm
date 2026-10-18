@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- Python: the `helper_owner_call` relation (#4568) now ignores decorated callers (including unreadable decorators) and shares its call-site test with direct owner calls; direct test-to-owner call detection now also ignores call text inside docstrings and string literals.
+- Python: the `helper_owner_call` relation (#4568) now ignores callers wrapped by any decorator other than a bare `classmethod`, `staticmethod` or `property` (those callers stay eligible, as do `async def` callers) and shares its call-site test with direct owner calls; direct test-to-owner call detection also ignores call text inside docstrings and string literals, without being fooled by triple quotes inside single-line strings or comments.

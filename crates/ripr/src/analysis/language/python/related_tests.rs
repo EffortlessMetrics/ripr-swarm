@@ -2050,28 +2050,58 @@ pub(super) fn python_text_hides_code(text: &str, idx: usize) -> bool {
         || inside_triple_quoted_string(text, idx)
 }
 
+/// Whether `idx` falls inside an open triple-quoted string. A small lexer:
+/// triple delimiters inside ordinary single-line strings (`'"""'`) and `#`
+/// comments do not open a docstring, and a backslash escapes the next char.
 fn inside_triple_quoted_string(text: &str, idx: usize) -> bool {
-    let mut open: Option<&str> = None;
+    let mut triple: Option<&str> = None;
     let mut cursor = 0;
     while cursor < idx {
         let rest = &text[cursor..];
-        match open {
-            Some(delimiter) if rest.starts_with(delimiter) => {
-                open = None;
+        if let Some(delimiter) = triple {
+            if rest.starts_with('\\') {
+                cursor += 1 + rest[1..].chars().next().map_or(0, char::len_utf8);
+            } else if rest.starts_with(delimiter) {
+                triple = None;
                 cursor += delimiter.len();
+            } else {
+                cursor += rest.chars().next().map_or(1, char::len_utf8);
             }
-            None if rest.starts_with("\"\"\"") => {
-                open = Some("\"\"\"");
-                cursor += 3;
-            }
-            None if rest.starts_with("'''") => {
-                open = Some("'''");
-                cursor += 3;
-            }
-            _ => cursor += rest.chars().next().map_or(1, char::len_utf8),
+            continue;
+        }
+        if rest.starts_with("\"\"\"") {
+            triple = Some("\"\"\"");
+            cursor += 3;
+        } else if rest.starts_with("'''") {
+            triple = Some("'''");
+            cursor += 3;
+        } else if rest.starts_with('#') {
+            cursor += rest.find('\n').unwrap_or(rest.len());
+        } else if rest.starts_with('"') || rest.starts_with('\'') {
+            cursor += single_line_string_len(rest);
+        } else {
+            cursor += rest.chars().next().map_or(1, char::len_utf8);
         }
     }
-    open.is_some()
+    triple.is_some()
+}
+
+/// Byte length of the ordinary single-line string literal at the start of
+/// `rest` (which begins with its quote): through the closing quote, or to the
+/// end of the line when unterminated.
+fn single_line_string_len(rest: &str) -> usize {
+    let quote = rest.as_bytes()[0];
+    let bytes = rest.as_bytes();
+    let mut index = 1;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' => index += 2,
+            b'\n' => return index,
+            byte if byte == quote => return index + 1,
+            _ => index += 1,
+        }
+    }
+    rest.len()
 }
 
 pub(super) fn same_stem_related(test: &PythonTest, owner: &PythonOwner) -> bool {
