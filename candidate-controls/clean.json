@@ -1,0 +1,312 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "ready",
+  "root": "/workspace/scratch/8265-reconstruction/controls/clean",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":2,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:d4d94b4407af47c4faa3981551c2bd144beea83a4303246e37369bdf59a063c5","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:predicate:d545be08",
+      "canonical_gap_id": "gap:rust:src/lib.rs:gate:predicate_boundary:predicate:10==value",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:gate:predicate_boundary:predicate:10==value",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "gate",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "10==value"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:d545be08",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "10 <= value"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach gate: pins, pins_internal"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Detected related test input at the changed boundary"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: 10 <= value"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach gate: pins, pins_internal", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: 10 <= value", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: 10 <= value (line 2)", "related test tests/buf_tests.rs:4 pins uses strong exact value oracle: assert_eq!(gate(10), true);", "related test src/lib.rs:9 pins_internal uses strong exact value oracle: assert_eq!(gate(10), true);", "source assertion argument value true at line 5", "source function argument value value = 10 at line 5", "source function argument value value == 10 at line 5", "source assertion argument value true at line 9", "source function argument value value = 10 at line 9", "source function argument value value == 10 at line 9"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"10 <= value","line":2}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: 10 <= value", "Detected related test input at the changed boundary", "Related tests appear to reach gate: pins, pins_internal", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "5": "assert_eq!(gate(10), true);",
+        "9": "assert_eq!(gate(10), true);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 5,
+            "value": "true",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 5,
+            "value": "value = 10",
+            "context": "function_argument"
+          },
+          {
+            "line": 5,
+            "value": "value == 10",
+            "context": "function_argument",
+            "provenance": "assert_eq!(gate(10), true); | exact input value = 10; literal operand 10 = 10"
+          },
+          {
+            "line": 9,
+            "value": "true",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 9,
+            "value": "value = 10",
+            "context": "function_argument",
+            "provenance": "fn pins_internal() { assert_eq!(gate(10), true); }"
+          },
+          {
+            "line": 9,
+            "value": "value == 10",
+            "context": "function_argument",
+            "provenance": "fn pins_internal() { assert_eq!(gate(10), true); } | exact input value = 10; literal operand 10 = 10"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 5,
+          "value": "true",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 5,
+          "value": "value = 10",
+          "context": "function_argument"
+        },
+        {
+          "line": 5,
+          "value": "value == 10",
+          "context": "function_argument",
+          "provenance": "assert_eq!(gate(10), true); | exact input value = 10; literal operand 10 = 10"
+        },
+        {
+          "line": 9,
+          "value": "true",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 9,
+          "value": "value = 10",
+          "context": "function_argument",
+          "provenance": "fn pins_internal() { assert_eq!(gate(10), true); }"
+        },
+        {
+          "line": 9,
+          "value": "value == 10",
+          "context": "function_argument",
+          "provenance": "fn pins_internal() { assert_eq!(gate(10), true); } | exact input value = 10; literal operand 10 = 10"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "pins",
+          "file": "tests/buf_tests.rs",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(gate(10), true);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "pins_internal",
+          "file": "src/lib.rs",
+          "line": 9,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(gate(10), true);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:a3aaa801",
+      "canonical_gap_id": "gap:rust:src/lib.rs:gate:return_value:return_value:10<=value",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:gate:return_value:return_value:10<=value",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "gate",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "10<=value"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:a3aaa801",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "10 <= value"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach gate: pins, pins_internal"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: 10 <= value"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach gate: pins, pins_internal", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: 10 <= value", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: 10 <= value (line 2)", "related test tests/buf_tests.rs:4 pins uses strong exact value oracle: assert_eq!(gate(10), true);", "related test src/lib.rs:9 pins_internal uses strong exact value oracle: assert_eq!(gate(10), true);", "source assertion argument value true at line 5", "source function argument value value = 10 at line 5", "source function argument value value == 10 at line 5", "source assertion argument value true at line 9", "source function argument value value = 10 at line 9", "source function argument value value == 10 at line 9"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"10 <= value","line":2}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: 10 <= value", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach gate: pins, pins_internal", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "5": "assert_eq!(gate(10), true);",
+        "9": "assert_eq!(gate(10), true);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 5,
+            "value": "true",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 5,
+            "value": "value = 10",
+            "context": "function_argument"
+          },
+          {
+            "line": 5,
+            "value": "value == 10",
+            "context": "function_argument",
+            "provenance": "assert_eq!(gate(10), true); | exact input value = 10; literal operand 10 = 10"
+          },
+          {
+            "line": 9,
+            "value": "true",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 9,
+            "value": "value = 10",
+            "context": "function_argument",
+            "provenance": "fn pins_internal() { assert_eq!(gate(10), true); }"
+          },
+          {
+            "line": 9,
+            "value": "value == 10",
+            "context": "function_argument",
+            "provenance": "fn pins_internal() { assert_eq!(gate(10), true); } | exact input value = 10; literal operand 10 = 10"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 5,
+          "value": "true",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 5,
+          "value": "value = 10",
+          "context": "function_argument"
+        },
+        {
+          "line": 5,
+          "value": "value == 10",
+          "context": "function_argument",
+          "provenance": "assert_eq!(gate(10), true); | exact input value = 10; literal operand 10 = 10"
+        },
+        {
+          "line": 9,
+          "value": "true",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 9,
+          "value": "value = 10",
+          "context": "function_argument",
+          "provenance": "fn pins_internal() { assert_eq!(gate(10), true); }"
+        },
+        {
+          "line": 9,
+          "value": "value == 10",
+          "context": "function_argument",
+          "provenance": "fn pins_internal() { assert_eq!(gate(10), true); } | exact input value = 10; literal operand 10 = 10"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "pins",
+          "file": "tests/buf_tests.rs",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(gate(10), true);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "pins_internal",
+          "file": "src/lib.rs",
+          "line": 9,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(gate(10), true);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "canonical_next_action": {"schema_version":"canonical_next_action.v1","producer":"check_top_result","subject":{"root":"/workspace/scratch/8265-reconstruction/controls/clean","diff_source":{"committed":{"base":null,"head":null}},"item":"probe:src_lib.rs:predicate:d545be08"},"currentness":{"head_expected":null,"head_observed":null,"config_expected":null,"config_observed":null},"action_class":"terminal_no_action","stop":{"kind":"check_triage","case":"no_diff_finding","detail_route":"ripr explain --root /workspace/scratch/8265-reconstruction/controls/clean --diff /workspace/scratch/8265-reconstruction/controls/clean/change.diff --mode ready probe:src_lib.rs:predicate:d545be08"},"alternatives":[{"label":"considered finding probe:src_lib.rs:return_value:a3aaa801","route":"ripr explain --root /workspace/scratch/8265-reconstruction/controls/clean --diff /workspace/scratch/8265-reconstruction/controls/clean/change.diff --mode ready probe:src_lib.rs:return_value:a3aaa801"}],"non_claim":"Advisory selection from producer-bound state; it does not execute, complete, or prove the repair, and the display string is never execution authority."}
+}

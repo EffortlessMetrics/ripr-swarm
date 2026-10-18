@@ -1,0 +1,17 @@
+{
+  "head": "36113bd6ade41a5a9a5fb67b209323958121cc96",
+  "driver_sha256": "9c8468f92bca4240b5e2e7af9024a3c6899ccb1c8e46b2afad56e9ee1e31a5d6",
+  "wrong_sha256": {
+    "check.json": "e8a21e1c8964c399d5225aa80c202d2bbaa5ed7cf0ff6bdcecf58668a8844017",
+    "human.txt": "2516aeabeda690758a67235f164207854598bf5479dc145d8aa0ae844d9726a5",
+    "human-full.txt": "cc63fc4856399017a0652e7d96681b39f22d12cb57701a4a54fee9a954296186"
+  },
+  "good_sha256": {
+    "check.json": "8d3a973ba6fcedc66209cd68df8df75144de7e20d9a5347d980013a830fa3fed",
+    "human.txt": "2516aeabeda690758a67235f164207854598bf5479dc145d8aa0ae844d9726a5",
+    "human-full.txt": "7a61e42559a3d6dfda0f5fa416ff61cb680dad502eacc837203b167e16951084"
+  },
+  "wrong_exit": 1,
+  "restored_exit": 0,
+  "wrong_case": "coherent two-finding reachable_unrevealed classification/summary/human mutation rejected by unchanged expected_class static_unknown corpus assertion"
+}

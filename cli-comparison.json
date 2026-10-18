@@ -1,0 +1,202 @@
+[
+  {
+    "case": "clean",
+    "whole_json_equal": true,
+    "baseline_summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 2,
+      "weakly_exposed": 0,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 0,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    },
+    "candidate_summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 2,
+      "weakly_exposed": 0,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 0,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    }
+  },
+  {
+    "case": "same-path-rank",
+    "whole_json_equal": true,
+    "baseline_summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 0,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 2,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    },
+    "candidate_summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 0,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 2,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    }
+  },
+  {
+    "case": "scoped-public-only",
+    "whole_json_equal": false,
+    "baseline_summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 0,
+      "reachable_unrevealed": 2,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 0,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    },
+    "candidate_summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 0,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 2,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    }
+  },
+  {
+    "case": "scoped-rest",
+    "whole_json_equal": true,
+    "baseline_summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 0,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 2,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    },
+    "candidate_summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 0,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 2,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    }
+  },
+  {
+    "case": "trusted-subset",
+    "whole_json_equal": false,
+    "baseline_summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 0,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 2,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    },
+    "candidate_summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 0,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 2,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    }
+  }
+]

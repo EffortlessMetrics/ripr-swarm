@@ -1,0 +1,91 @@
+No actionable source or oracle findings emitted for the successor.
+
+reviewed_head_sha: 9fc6a47f29b5ad581a527244681d4c4bf0d4714b
+reviewed_tree: 78bb14ec667570f0877f7c369e98bf0be1967f96
+integration_basis: 006eaf853fce5713a2e9044ba9c8d6a9a873f3d0
+integration_basis_tree: 04c46674cd658ed5102e26973910964332ea1c12
+repository: EffortlessMetrics/ripr-swarm
+candidate_branch: codex/8265-macro-site-parity
+review_timestamp: 2026-10-18T07:40:14.140506+00:00
+claim_boundary: refresh of the independently reviewed reconstructed #8265 macro-site retention parity candidate after removing unnecessary fixture dependency metadata.
+
+changed_surfaces_and_semantic_owners_inspected:
+- Independently read the complete 36113bd6ade41a5a9a5fb67b209323958121cc96..9fc6a47f29b5ad581a527244681d4c4bf0d4714b diff. Its only change deletes fixtures/macro_site_scoped_rest_limit/input/Cargo.lock: seven lines containing lock format version 4 and this fixture's own demo 0.0.0 package. The Cargo.toml has no dependencies and an isolated workspace declaration.
+- Verified equal Git subtree/blob identities between prior reviewed candidate and successor: crates/ripr/src d81a42381070352fba63b3f3e138e2088868c55f; traceability 1aec603a6dca4401cc14ab1031f1bde6325dbc6a; corpus b121a038b7ca0196c510ea4f6a211123976468c1; fixture expected subtree 98570e2fe3153237a5507f98ba8ef8bde9451567. Source and test evidence remains current through those identities, rather than a new execution claim.
+- Dependency gate source xtask/src/main.rs blob 26073f6aa04d9e52169de7c5a4395da88169093d and dependency allowlist blob a8832e36837c828fb719d0fe6f4279b8177cd4e2 are identical across reconstruction basis, prior reviewed candidate, successor, and exact main ddfa2a138ae816cdd46e639c532900d2abe60b27. No policy exception or enforcement weakening was added.
+
+Independent source/oracle judgment carried forward:
+- The semantic scanner body matches the basis after tree-reference substitutions; singleton trust/prefilter contexts remain distinct from union admission; scoped sites are excluded from both initial/deferred workspace retention; (path, producer position) reductions preserve same-file and same-line order across global/root buckets; rebinding/local/root reach priorities remain intact; lazy completion bounds workspace passes.
+- The nonempty, whole-fixture expected_class corpus assertion rejects either-family promotion and empty or all-exposed re-blessing. All eight tests and fixture/output relationships remain unchanged and registered.
+- Full original substantive review and its directly inspected evidence are retained at /workspace/scratch/8265-independent-review/review-36113bd6a.txt, appended below for self-contained source/oracle details. Its reviewed subject remains the prior head; this refresh binds that unchanged semantic content to the successor explicitly.
+
+proof_and_ci_observed_since_prior_review:
+- dependency-baseline-classification.json records native exit 0 for check-dependencies on isolated exact main ddfa2a138ae816cdd46e639c532900d2abe60b27, tree 91167253ddfb48056073b4797ee5848e48fadfbb. The retained prior candidate dependency report specifically fails on the new unallowlisted fixture Cargo.lock. Removing this unused metadata addresses that candidate-specific failure without widening policy. Baseline native execution was inspected through its retained record, not rerun by reviewer.
+- fixture-no-lock-observation.json records frozen reviewed-head CLI native exit 0 on the lock-free fixture, no regenerated lock, two findings. Independently inspected fixture-no-lock-check.json: predicate and return_value both static_unknown, no gap_id or canonical_gap_id, rust_assertion_context_unresolved and gap_evidence_unresolved, same unscoped src/globs.rs foreign-glob disclosure. The old CLI producer is appropriate here because all production bytes match the successor; this is not a new-successor build claim.
+- check-fast-r2.json records prior reviewed head native exit 0. Retained reports show a stable origin/main selector with 19 changed files, 14 executed gates (including fmt and workspace/all-target Clippy), and explicit support-tier/help skips. This receipt predates the metadata-only successor and is not mislabeled as a successor invocation.
+- corpus-tests.json and stdout record prior reviewed head native exit 0, 80 matching evidence_promotion tests passed, 3859 filtered out. Relevant source/corpus blobs are unchanged.
+- First precommit golden drift report has zero drift entries and one fixture infrastructure error: offline cargo metadata cannot download pinned anyhow 1.0.100 for unrelated owner_return_pin_fallible_literal. This was an availability failure, not evidence that its expected outputs need re-blessing. Later environment preparation/new precommit were still pending at inspection.
+- Earlier directly inspected intended-red 6 failures/2 controls, repaired parity 8/8, owner_pin 260/260, frozen final-head five-control CLI comparisons and coherent wrong-golden corpus rejection remain applicable to unchanged semantic dimensions. Their exact producer heads and hashes are retained in the prior record.
+
+blocking_findings: none established in successor source/oracles
+non_blocking_suggestions: none
+refuted_or_stale_findings: the prior candidate-specific lockfile dependency violation is addressed by its complete removal; a passing successor precommit receipt is still missing, so this is a source-level repair judgment, not a fabricated native gate pass.
+proof_or_review_missing: final successor precommit/fullpolicy completion and successful full goldens after preparing the pinned dependency; exact published-head hosted checks/jobs/artifacts, remote review/conversation state, and final integration evidence. Source push success was reported by parent but not independently verified by this read-only review.
+affected_currentness_dimensions: fixture dependency metadata and candidate identity refreshed; production, test stimulus/oracle, public claim, golden bytes, corpus and traceability remain unchanged.
+residual_assumptions_and_non_claims: preserves existing singleton scanner semantics, not full Rust macro resolution/soundness; no runtime/test-adequacy, external accuracy, broad performance, release, merge readiness or acceptance claim. Reviewer ran no build, CLI, CI or mutation in the author checkout and moved no HEAD.
+disposition: REVIEW_INCOMPLETE (source/oracle review complete with no blocking finding; final policy/environment and hosted integration evidence missing).
+
+--- Prior immutable subject review, retained for source/oracle detail ---
+
+No actionable source or oracle findings emitted.
+
+reviewed_head_sha: 36113bd6ade41a5a9a5fb67b209323958121cc96
+reviewed_tree: b10b062daf02ab9af2305644574866d7a462f8ca
+integration_basis: 006eaf853fce5713a2e9044ba9c8d6a9a873f3d0
+integration_basis_tree: 04c46674cd658ed5102e26973910964332ea1c12
+repository: EffortlessMetrics/ripr-swarm
+candidate_branch: codex/8265-macro-site-parity
+claim_boundary: reconstructed #8265 retained workspace macro-site disclosure parity, scoped deferred definitions, singleton trust/prefilter contexts, stable same-file ordering, genuine rebinding/root reachability, bounded workspace passes.
+review_timestamp: 2026-10-18T07:25:18.311432+00:00
+
+changed_surfaces_and_semantic_owners_inspected:
+- Complete basis..candidate diff; production syntax scanner, stored candidate prefilter, retained site rank/merge, ambiguity admission and deferred completion, workspace/root/local refusal precedence, is_analyzer_limit, gap-admission withholding, eight new tests and existing convergence/rank controls, new fixture inputs/diff/JSON/human goldens, honesty corpus registration/evaluator, traceability, changelog, RIPR-SPEC-0240.
+- Instructions: root AGENTS, .agents/skills/review-pr/SKILL.md and applicable checked-in Rust/security/workflow/review context.
+
+Independent correctness/oracle challenges:
+1. Shared-oracle trap: the old and retained paths now share macro_binding_sites_in_tree. Independently extracted its semantic body from the basis and candidate. The bodies are byte-identical after replacing parse.tree().syntax() with tree.syntax() and shared binding_free reference syntax. The new scan-needed predicate reproduces the original disjunction; the failure-to-parse branch preserves original singleton admission via per-name filtering. Thus green parity does not hide an observed semantic rewrite of the common scanner.
+2. Union-vs-singleton trust: stringify!(assert_eq) is transparent in the all-name union but opaque in the assert_eq singleton context. Production now computes these separately; retained disclosure uses singleton results while admission keeps the union. Existing stored candidates prune singleton names exactly as the old macro_binding_sites wrapper does.
+3. Scoped deferred definitions: both initial and deferred retention use the same scope-excluding function. Scoped sites remain in ambiguity/local handling and cannot outrank the global uncertainty site in workspace disclosure. A covering local Definition/Import still explicitly outranks workspace uncertainty in equality_assertion_refusal.
+4. Rank reduction: for each name, the singleton vector preserves that name's original producer order; the numeric position remains comparable when same-file global/root buckets merge. Keeping the minimum (path, position) separately for Definition/Import versus may-rebind sites reproduces the reference scan, including same-line private/public ordering. Absolute positions of different names never compete. File partitions are disjoint, so completing rest cannot mix two scans of the same file.
+5. Root reach: recognized crate-local sites are bucketed by root, unknown-root sites remain global, and a rootless query folds all root buckets. This matches the reference reach predicate. Rebinding priority is preserved independently of path order.
+6. Bounded scans: the complete flag and lazy initialization permit one initial ambiguity pass and at most one rest completion; repeated queries cannot re-run completion. One parser tree and binding-free index are shared within each candidate-file pass. This is not a wall-clock speedup claim: per-name semantic walks still occur.
+7. Fixture independence: all five new fixture input files are byte-identical to retained baseline control scoped-public-only. That baseline has two reachable_unrevealed findings without limits and names the unrelated definition. Candidate goldens instead contain two static_unknown findings (predicate and return_value), the global src/globs.rs:1 refusal, rust_assertion_context_unresolved, gap_evidence_unresolved, typed limitation edges, and no gap IDs. The baseline control named scoped-rest is a different input (private glob and an internal test) and is not the fixture's red witness.
+8. Dishonest re-blessing: the new corpus row intentionally has no probe_family selector. expected_class iterates every finding and separately rejects empty findings; thus empty/all-exposed or either-family gap re-blessings fail. must_not_report_clean and must_not_promote alone would be weaker, but expected_class supplies the necessary negative discriminator. Human class projections are also checked by the evaluator. All eight test symbols and the fixture/output are registered under RIPR-SPEC-0240.
+
+blocking_findings: none established
+non_blocking_suggestions: none
+refuted_or_stale_findings: no previous lost-candidate review reused; this is a fresh review of the reconstruction.
+
+proof_and_ci_observed:
+- Read raw /workspace/scratch/8265-reconstruction/red-r3.{json,stdout,stderr}: committed test-only head 8a8ade0fdeda1eee0972c3e53900f826ac84df48, native exit 101, 6 intended test failures / 2 controls passing, not a compile/setup failure.
+- Read green.{json,stdout,stderr}: repaired core 42892b84916f93ee101c7f78e76b105fa5967857, native exit 0, 8/8 parity tests pass.
+- Read owner-pin.{json,stdout,stderr}: same core, native exit 0, 260/260 matching tests pass, 9515 filtered out. This is not a complete library suite.
+- Verified test source unchanged from test-only red head to reviewed candidate, and all crates/ripr/src bytes unchanged from green core to candidate; green evidence therefore applies to the inspected production/tests dimension, not newly added artifact/policy dimensions.
+- Read red/green binary identity receipts and baseline CLI build/control receipts, including input equivalence described above. Did not independently re-run or restore archived executables.
+- Worktree clean and HEAD/tree unchanged on final identity read.
+
+proof_or_review_missing:
+- Published-head hosted checks, full job/artifact inspection, current remote reviews/threads, and final integration evidence were not inspected; they are outside this delegated read-only source/oracle pass.
+- Fullpolicy/check-fast completion was not observed. Candidate CLI was not re-executed by the reviewer; newly retained final-head native CLI execution evidence was inspected as detailed below.
+- No reviewer builds, executable mutation/removal experiments, shared-target writes, worktree mutations, CI requests, external comments or thread-resolution actions were performed, as explicitly constrained. Retained intended-red controls and source-level counterexamples supply the bounded oracle challenge; no platform/runtime execution claim is made.
+
+affected_currentness_dimensions: production implementation; test stimulus and oracle; fixture/public claim; generated goldens; corpus/traceability relationships; integration basis; exact candidate identity.
+residual_assumptions_and_non_claims: preserves existing singleton scanner semantics, not full Rust macro name resolution or soundness; no external accuracy, runtime execution/test adequacy, broad performance, release, merge-readiness or acceptance claim. No new OS-specific code path, output schema, dependency, packaging or workflow change engaged.
+disposition: REVIEW_INCOMPLETE (source/oracle review complete with no blocking finding; hosted/current published-head integration proof missing).
+
+
+Late-arriving final-head evidence independently inspected before handback:
+- candidate-binary.json and candidate-cli-build.json bind the default-feature native CLI to reviewed head/tree, version and SHA256 3d78b16bc7084da16f5483417dd349e5a23058c6369598237cb9daa0be3cd3ee. Independently hashed the frozen candidate-ripr and verified equality.
+- Read candidate-controls/receipts.json, complete scoped-public-only/trusted-subset JSON findings, cli-comparison.json and compare-controls.py. All five CLI controls have native exit 0, no censoring, nonempty complete analysis, and matching binary identity. Independently verified every output receipt digest and every fixed input digest. The three neutral cases have whole-JSON parity; scoped-public-only changes two real-gap classifications to two unknowns with typed limits/no gap IDs and the unscoped glob; trusted-subset preserves summary and corrects disclosure from src/z.rs glob to src/a.rs stringify MacroArgument.
+- Read corpus-negative.json, corpus-wrong/restored native status records and terminal stdout/stderr. Coherent reachable_unrevealed JSON/summary/human re-blessing is rejected (native 1) by this exact corpus row, for both findings and human class projection. Restoration passes (native 0). Independently verified restored golden bytes against good_sha256. Thus the independent corpus assertion is demonstrated to reject the specific dishonest alternate classification rather than merely described as capable of it.
+- These receipts complete the bounded rendered CLI and negative corpus dimensions of this source/oracle review. Disposition remains REVIEW_INCOMPLETE only for uninspected final hosted/current published-head integration evidence and remaining fullpolicy/check-fast evidence; no source repair is requested.

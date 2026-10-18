@@ -1,0 +1,2 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/main.rs (/workspace/ripr-swarm/target/debug/deps/xtask-4506d76d7e4bca3a)

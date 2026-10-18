@@ -1,0 +1,13 @@
+{
+  "head": "ddfa2a138ae816cdd46e639c532900d2abe60b27",
+  "tree": "91167253ddfb48056073b4797ee5848e48fadfbb",
+  "argv": [
+    "/workspace/ripr-swarm/target/debug/xtask",
+    "check-dependencies"
+  ],
+  "driver_sha256": "d320c3adb032988f99c61a1b8e17d73b8f090d264066722bce80ead058547220",
+  "exit": 0,
+  "utc": "2026-10-18T07:37:53.822555+00:00",
+  "classification": "candidate: new fixture Cargo.lock is absent on current main; gate passes on main, fails at candidate",
+  "gate_source_binding": "xtask/src/main.rs and policy/dependency_allowlist.txt unchanged between reconstruction basis, candidate and current main"
+}

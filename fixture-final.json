@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "cargo",
+    "xtask",
+    "fixtures",
+    "macro_site_scoped_rest_limit"
+  ],
+  "head": "36113bd6ade41a5a9a5fb67b209323958121cc96",
+  "tree": "b10b062daf02ab9af2305644574866d7a462f8ca",
+  "started_utc": "2026-10-18T07:35:24.522697+00:00",
+  "finished_utc": "2026-10-18T07:35:26.531264+00:00",
+  "elapsed_s": 2.0085728969997945,
+  "exit": 0,
+  "abort": null,
+  "process_group": 9523,
+  "owned_cleanup": {
+    "before": {},
+    "after": {}
+  },
+  "free_after": 26497421312
+}

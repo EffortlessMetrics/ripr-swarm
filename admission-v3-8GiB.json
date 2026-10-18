@@ -1,0 +1,25 @@
+{
+  "initial_free": 31848247296,
+  "reserve": 10737418240,
+  "peak_additional": 8589934592,
+  "worktree": "/workspace/macro-site-parity",
+  "target": "/workspace/ripr-swarm/target",
+  "retention": "source remotely preserved; new receipts and distinct RED/GREEN witnesses retained; shared target untouched except ordinary Cargo writes; no destructive cleanup",
+  "base": "006eaf853fce5713a2e9044ba9c8d6a9a873f3d0",
+  "reconstruction": true,
+  "revision_utc": "2026-10-18T07:28:31.681350+00:00",
+  "revision_reason": "repository check-fast file-policy combined test-valued covered_by warmup needs additional test-target linkage beyond focused product/CLI build; prior4GiB guard outcome retained, no live owned process remains, reserve/analyzer budgets unchanged",
+  "previous_groups": [
+    {
+      "pid": 4444,
+      "state": "Z",
+      "ppid": 1
+    }
+  ],
+  "preflight_error": "first check treated a defunct adopted compiler as active; accidental retry was guard-stopped in4ms before compilation",
+  "stopped_check_fast_group": {
+    "group": 7326,
+    "remaining": [],
+    "free_bytes": 27427680256
+  }
+}

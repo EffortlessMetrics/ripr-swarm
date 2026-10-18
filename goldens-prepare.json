@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "/workspace/ripr-swarm/target/debug/xtask",
+    "goldens",
+    "prepare"
+  ],
+  "head": "9fc6a47f29b5ad581a527244681d4c4bf0d4714b",
+  "tree": "78bb14ec667570f0877f7c369e98bf0be1967f96",
+  "started_utc": "2026-10-18T07:39:13.460956+00:00",
+  "finished_utc": "2026-10-18T07:39:15.467280+00:00",
+  "elapsed_s": 2.0063287030002357,
+  "exit": 0,
+  "abort": null,
+  "process_group": 23708,
+  "owned_cleanup": {
+    "before": {},
+    "after": {}
+  },
+  "free_after": 26301784064
+}

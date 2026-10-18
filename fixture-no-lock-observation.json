@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "/workspace/scratch/8265-reconstruction/candidate-ripr",
+    "check",
+    "--root",
+    "/workspace/macro-site-parity/fixtures/macro_site_scoped_rest_limit/input",
+    "--diff",
+    "/workspace/macro-site-parity/fixtures/macro_site_scoped_rest_limit/diff.patch",
+    "--format",
+    "json",
+    "--mode",
+    "ready"
+  ],
+  "producer_head": "36113bd6ade41a5a9a5fb67b209323958121cc96",
+  "exit": 0,
+  "lock_regenerated": false,
+  "candidate_edit": "remove unneeded zero-external-dependency fixture Cargo.lock after main dependency gate classification",
+  "findings": 2
+}

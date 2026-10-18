@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "cargo",
+    "build",
+    "--locked",
+    "-p",
+    "ripr",
+    "--bin",
+    "ripr",
+    "--message-format=json"
+  ],
+  "head": "8a8ade0fdeda1eee0972c3e53900f826ac84df48",
+  "tree": "4bcb58d44851bfbf4af1df88b12459f5b5cb9ef5",
+  "started_utc": "2026-10-18T07:09:46.924835+00:00",
+  "finished_utc": "2026-10-18T07:11:14.943207+00:00",
+  "elapsed_s": 88.01837905900015,
+  "exit": 0,
+  "abort": null,
+  "process_group": 4676,
+  "free_after": 29418057728
+}

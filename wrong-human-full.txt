@@ -1,0 +1,85 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/macro_site_scoped_rest_limit/input
+
+Summary: 2 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 2 reachable_unrevealed; 2 of 2 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+
+Shared evidence and guidance
+  E1 [findings 1, 2]: reach yes: Related tests appear to reach gate: pins
+  E2 [findings 1, 2]: observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  E3 [findings 1, 2]: discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  E4 [findings 1, 2]: local flow reaches returned value: 10 <= value (line 3)
+  E5 [findings 1, 2]: related test tests/buf_tests.rs:10 pins uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
+  E6 [findings 1, 2]: source assertion argument value true at line 11
+  E7 [findings 1, 2]: source function argument value value = 10 at line 11
+  E8 [findings 1, 2]: source function argument value value == 10 at line 11
+  N1 [findings 1, 2]: ripr could not read whether the assertions in `pins` (tests/buf_tests.rs:10) run as the standard `assert_eq!`, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does
+
+Finding 1: NOTE ./src/lib.rs:3
+  id: probe:src_lib.rs:predicate:d545be08
+Changed
+  before: 11 <= value
+  after:  10 <= value
+Probe
+  family: predicate
+  delta:  control
+  owner:  src/lib.rs::gate
+Static exposure
+  reachable_unrevealed (note, confidence 0.64)
+Evidence
+  shared evidence: E1
+  - infection yes: Detected related test input at the changed boundary
+  - propagation yes: Changed behavior appears to influence returned value: 10 <= value
+  shared evidence: E2, E3, E4, E5, E6, E7, E8
+Weakness
+  - A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse, the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a gap; this is a named limitation, not a coverage claim
+Stop reasons:
+  - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
+Static limitation
+  rust_assertion_context_unresolved — A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse, the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a gap; this is a named limitation, not a coverage claim.
+Limitation detail
+  last established edge: related tests `pins` (tests/buf_tests.rs:10)
+  first unresolved edge: whether the refused related assertions run as the standard `assert_eq!`
+  analyzer route: analysis/classify/gap-admission
+  non-claim: no missing test, no weak oracle, and no test adequacy is established
+Next step
+  shared guidance: N1
+Drill in:
+  ripr explain --root <cwd>/fixtures/macro_site_scoped_rest_limit/input --diff <cwd>/fixtures/macro_site_scoped_rest_limit/diff.patch --mode fast probe:src_lib.rs:predicate:d545be08
+  ripr context --root <cwd>/fixtures/macro_site_scoped_rest_limit/input --diff <cwd>/fixtures/macro_site_scoped_rest_limit/diff.patch --mode fast --at probe:src_lib.rs:predicate:d545be08
+
+Finding 2: NOTE ./src/lib.rs:3
+  id: probe:src_lib.rs:return_value:a3aaa801
+Changed
+  before: 11 <= value
+  after:  10 <= value
+Probe
+  family: return_value
+  delta:  value
+  owner:  src/lib.rs::gate
+Static exposure
+  reachable_unrevealed (note, confidence 0.64)
+Evidence
+  shared evidence: E1
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches returned value: 10 <= value
+  shared evidence: E2, E3, E4, E5, E6, E7, E8
+Weakness
+  - A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse, the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a gap; this is a named limitation, not a coverage claim
+Stop reasons:
+  - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
+Static limitation
+  rust_assertion_context_unresolved — A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse, the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a gap; this is a named limitation, not a coverage claim.
+Limitation detail
+  last established edge: related tests `pins` (tests/buf_tests.rs:10)
+  first unresolved edge: whether the refused related assertions run as the standard `assert_eq!`
+  analyzer route: analysis/classify/gap-admission
+  non-claim: no missing test, no weak oracle, and no test adequacy is established
+Next step
+  shared guidance: N1
+Drill in:
+  ripr explain --root <cwd>/fixtures/macro_site_scoped_rest_limit/input --diff <cwd>/fixtures/macro_site_scoped_rest_limit/diff.patch --mode fast probe:src_lib.rs:return_value:a3aaa801
+  ripr context --root <cwd>/fixtures/macro_site_scoped_rest_limit/input --diff <cwd>/fixtures/macro_site_scoped_rest_limit/diff.patch --mode fast --at probe:src_lib.rs:return_value:a3aaa801

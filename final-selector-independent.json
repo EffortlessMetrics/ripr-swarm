@@ -1,0 +1,28 @@
+{
+  "head": "9fc6a47f29b5ad581a527244681d4c4bf0d4714b",
+  "tree": "78bb14ec667570f0877f7c369e98bf0be1967f96",
+  "base": "006eaf853fce5713a2e9044ba9c8d6a9a873f3d0",
+  "main": "ddfa2a138ae816cdd46e639c532900d2abe60b27",
+  "selector_paths": [
+    ".ripr/traceability.toml",
+    "changelog.d/8265-macro-site-parity.md",
+    "crates/ripr/src/analysis/classify/owner_pin.rs",
+    "crates/ripr/src/analysis/classify/owner_pin/tests.rs",
+    "crates/ripr/src/analysis/classify/owner_pin/tests/retention_parity.rs",
+    "crates/ripr/src/analysis/syntax/mod.rs",
+    "crates/ripr/src/analysis/syntax/owner_pin.rs",
+    "fixtures/evidence-promotion-honesty-corpus/corpus.json",
+    "fixtures/macro_site_scoped_rest_limit/SPEC.md",
+    "fixtures/macro_site_scoped_rest_limit/diff.patch",
+    "fixtures/macro_site_scoped_rest_limit/expected/CHANGELOG.md",
+    "fixtures/macro_site_scoped_rest_limit/expected/check.json",
+    "fixtures/macro_site_scoped_rest_limit/expected/human-full.txt",
+    "fixtures/macro_site_scoped_rest_limit/expected/human.txt",
+    "fixtures/macro_site_scoped_rest_limit/input/Cargo.toml",
+    "fixtures/macro_site_scoped_rest_limit/input/src/globs.rs",
+    "fixtures/macro_site_scoped_rest_limit/input/src/lib.rs",
+    "fixtures/macro_site_scoped_rest_limit/input/tests/buf_tests.rs"
+  ],
+  "later_main_changed_affected_paths": [],
+  "previous_head": "36113bd6ade41a5a9a5fb67b209323958121cc96"
+}

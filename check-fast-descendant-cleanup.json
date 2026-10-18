@@ -1,0 +1,20 @@
+{
+  "utc": "2026-10-18T07:29:40.544452+00:00",
+  "before": [
+    {
+      "pid": 7497,
+      "ppid": 1,
+      "state": "R",
+      "cmd": "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo test --no-run -p ripr -p xtask --bin xtask --test causal_delta_fixture --test contabo_result_policy --test mcp_stdio --test portable_consumer_packet --test uncertain_delivery_helper "
+    }
+  ],
+  "after": [
+    {
+      "pid": 7497,
+      "ppid": 1,
+      "state": "Z",
+      "cmd": ""
+    }
+  ],
+  "correction": "Outer guard group was empty, but repository covered_by capture starts an owned separate process group. Exact known descendant group7497 survived outer guard. Terminated only this verified owned group; first guard receipt remains infrastructure interruption. Its orphan native outcome is unavailable, not pass. r2 waited on its artifact lock and can now continue serially."
+}

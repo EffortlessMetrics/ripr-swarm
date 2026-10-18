@@ -1,0 +1,65 @@
+{
+  "source_receipt": {
+    "argv": [
+      "cargo",
+      "build",
+      "--locked",
+      "-p",
+      "ripr",
+      "--bin",
+      "ripr",
+      "--message-format=json"
+    ],
+    "head": "36113bd6ade41a5a9a5fb67b209323958121cc96",
+    "tree": "b10b062daf02ab9af2305644574866d7a462f8ca",
+    "started_utc": "2026-10-18T07:23:23.506917+00:00",
+    "finished_utc": "2026-10-18T07:24:47.526406+00:00",
+    "elapsed_s": 84.01949744800004,
+    "exit": 0,
+    "abort": null,
+    "process_group": 6817,
+    "free_after": 28675551232
+  },
+  "artifact": {
+    "reason": "compiler-artifact",
+    "package_id": "path+file:///workspace/macro-site-parity/crates/ripr#0.11.0",
+    "manifest_path": "/workspace/macro-site-parity/crates/ripr/Cargo.toml",
+    "target": {
+      "kind": [
+        "bin"
+      ],
+      "crate_types": [
+        "bin"
+      ],
+      "name": "ripr",
+      "src_path": "/workspace/macro-site-parity/crates/ripr/src/main.rs",
+      "edition": "2024",
+      "doc": true,
+      "doctest": false,
+      "test": true
+    },
+    "profile": {
+      "opt_level": "0",
+      "debuginfo": "line-tables-only",
+      "debug_assertions": true,
+      "overflow_checks": true,
+      "test": false
+    },
+    "features": [
+      "default",
+      "lang-python",
+      "lang-rust",
+      "lang-typescript"
+    ],
+    "filenames": [
+      "/workspace/ripr-swarm/target/debug/ripr"
+    ],
+    "executable": "/workspace/ripr-swarm/target/debug/ripr",
+    "fresh": false
+  },
+  "version": "ripr 0.11.0 (36113bd6ade41a5a9a5fb67b209323958121cc96)",
+  "binary_sha256": "3d78b16bc7084da16f5483417dd349e5a23058c6369598237cb9daa0be3cd3ee",
+  "binary_bytes": 227872792,
+  "copy": "/workspace/scratch/8265-reconstruction/candidate-ripr",
+  "baseline_profile_features_match": true
+}

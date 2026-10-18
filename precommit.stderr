@@ -1,0 +1,8 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running `/workspace/ripr-swarm/target/debug/xtask precommit`
+$ cargo fmt --check
+$ CARGO_HOME=/workspace/.cargo RUSTUP_TOOLCHAIN=1.95.0 RUSTUP_HOME=/workspace/.rustup cargo build -p ripr
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.10s
+xtask: check-dependencies failed; see target/ripr/reports/dependencies.md
+dependency surface is not allowlisted: fixtures/macro_site_scoped_rest_limit/input/Cargo.lock
+  preferred: keep dependency managers scoped to approved Cargo, VS Code, or fixture surfaces

@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "cargo",
+    "xtask",
+    "goldens",
+    "bless",
+    "macro_site_scoped_rest_limit",
+    "--reason",
+    "RIPR-SPEC-0240: scoped deferred definitions retain uncertainty (#8265)"
+  ],
+  "head": "42892b84916f93ee101c7f78e76b105fa5967857",
+  "tree": "368667c2aa7672a0c99c02f3ac475069c0378a99",
+  "started_utc": "2026-10-18T07:20:25.506172+00:00",
+  "finished_utc": "2026-10-18T07:22:43.527440+00:00",
+  "elapsed_s": 138.0212714039999,
+  "exit": 0,
+  "abort": null,
+  "process_group": 6265,
+  "free_after": 29104599040
+}

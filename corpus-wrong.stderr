@@ -1,0 +1,4 @@
+xtask: check-evidence-promotion-honesty failed; see target/ripr/reports/evidence-promotion-honesty.md
+evidence promotion honesty case `rust_macro_site_scoped_rest_limit` (fixture `fixtures/macro_site_scoped_rest_limit`): finding `probe:src_lib.rs:predicate:d545be08` has classification `reachable_unrevealed`, expected_class `static_unknown`
+evidence promotion honesty case `rust_macro_site_scoped_rest_limit` (fixture `fixtures/macro_site_scoped_rest_limit`): finding `probe:src_lib.rs:return_value:a3aaa801` has classification `reachable_unrevealed`, expected_class `static_unknown`
+evidence promotion honesty case `rust_macro_site_scoped_rest_limit` (fixture `fixtures/macro_site_scoped_rest_limit`): `expected_class` requires fixture human output to project class `static_unknown` for 2 finding(s), but found 0 projection(s)

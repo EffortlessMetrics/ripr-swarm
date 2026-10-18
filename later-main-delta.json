@@ -1,0 +1,9 @@
+{
+  "main": "ddfa2a138ae816cdd46e639c532900d2abe60b27",
+  "delta": [
+    "ddfa2a138 perf(diff): map added-run starts once per file (#7524)",
+    "ab64ae7a6 fix(python): sole-argument materializers are transparent to owner sink alignment (#8562) (#8605)"
+  ],
+  "assessment": "No delta on changed paths; later Python owner sink and diff added-run mapping changes remain unexecuted integration dimensions. No behind-only restack or broad performance repeat.",
+  "utc": "2026-10-18T07:32:10.611258+00:00"
+}

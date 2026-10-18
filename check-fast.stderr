@@ -1,0 +1,4 @@
+   Compiling xtask v0.1.0 (/workspace/macro-site-parity/xtask)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 53.42s
+     Running `/workspace/ripr-swarm/target/debug/xtask check-fast`
+$ cargo fmt --check

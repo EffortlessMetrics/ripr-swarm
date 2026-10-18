@@ -1,0 +1,17 @@
+{
+  "final_head": "9fc6a47f29b5ad581a527244681d4c4bf0d4714b",
+  "production_blobs": {
+    "crates/ripr/src/analysis/classify/owner_pin.rs": "ed3d803a6a66959d2e0d05eaf996d70e0eb96994",
+    "crates/ripr/src/analysis/syntax/owner_pin.rs": "aa934f1393e6ace1804c0bad698ca797a0027610",
+    "crates/ripr/src/analysis/syntax/mod.rs": "2dc85f227ab2de0d7ceba613a4149de0e25f69b0"
+  },
+  "test_blobs": {
+    "crates/ripr/src/analysis/classify/owner_pin/tests.rs": "1352f71f1b858a7550a42891ee8b328dc5bd38d1",
+    "crates/ripr/src/analysis/classify/owner_pin/tests/retention_parity.rs": "70923e5b41bd2ffe9b481853fff2c2c0d6bbf50a"
+  },
+  "green_core_head": "42892b84916f93ee101c7f78e76b105fa5967857",
+  "red_test_only_head": "8a8ade0fdeda1eee0972c3e53900f826ac84df48",
+  "bindings": "Final metadata-only commit preserves exact production/test blobs from fresh focused executions; final-head default CLI rebuilt and frozen separately.",
+  "previous_metadata_head": "36113bd6ade41a5a9a5fb67b209323958121cc96",
+  "latest_metadata_delta": "Removal of unnecessary self-only new fixture Cargo.lock; no production/test/corpus/golden byte change"
+}

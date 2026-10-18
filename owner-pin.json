@@ -1,0 +1,26 @@
+{
+  "argv": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--no-default-features",
+    "--features",
+    "lang-rust",
+    "--lib",
+    "owner_pin",
+    "--message-format=json",
+    "--",
+    "--nocapture"
+  ],
+  "head": "42892b84916f93ee101c7f78e76b105fa5967857",
+  "tree": "368667c2aa7672a0c99c02f3ac475069c0378a99",
+  "started_utc": "2026-10-18T07:19:43.832031+00:00",
+  "finished_utc": "2026-10-18T07:19:49.836155+00:00",
+  "elapsed_s": 6.004126840000026,
+  "exit": 0,
+  "abort": null,
+  "process_group": 5644,
+  "free_after": 29105909760
+}

@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "/workspace/ripr-swarm/target/debug/xtask",
+    "check-evidence-promotion-honesty"
+  ],
+  "head": "36113bd6ade41a5a9a5fb67b209323958121cc96",
+  "tree": "b10b062daf02ab9af2305644574866d7a462f8ca",
+  "started_utc": "2026-10-18T07:25:07.145271+00:00",
+  "finished_utc": "2026-10-18T07:25:09.149683+00:00",
+  "elapsed_s": 2.0044195939999554,
+  "exit": 0,
+  "abort": null,
+  "process_group": 7294,
+  "free_after": 28447318016
+}

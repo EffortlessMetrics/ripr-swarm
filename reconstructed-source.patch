@@ -1,0 +1,1175 @@
+diff --git a/.ripr/traceability.toml b/.ripr/traceability.toml
+index 1d8755064..1aec603a6 100644
+--- a/.ripr/traceability.toml
++++ b/.ripr/traceability.toml
+@@ -16214,6 +16214,14 @@ id = "RIPR-SPEC-0240"
+ name = "Unknown, not a gap"
+ spec = "docs/specs/RIPR-SPEC-0240-unknown-not-a-gap.md"
+ tests = [
++  "crates/ripr/src/analysis/classify/owner_pin/tests/retention_parity.rs::reconstructed_parity_inline_scope",
++  "crates/ripr/src/analysis/classify/owner_pin/tests/retention_parity.rs::reconstructed_parity_function_scope",
++  "crates/ripr/src/analysis/classify/owner_pin/tests/retention_parity.rs::reconstructed_parity_singleton_arguments",
++  "crates/ripr/src/analysis/classify/owner_pin/tests/retention_parity.rs::reconstructed_parity_unparsed_prefilter",
++  "crates/ripr/src/analysis/classify/owner_pin/tests/retention_parity.rs::reconstructed_parity_newline_private_first",
++  "crates/ripr/src/analysis/classify/owner_pin/tests/retention_parity.rs::reconstructed_parity_same_line_private_first",
++  "crates/ripr/src/analysis/classify/owner_pin/tests/retention_parity.rs::reconstructed_parity_same_line_public_first",
++  "crates/ripr/src/analysis/classify/owner_pin/tests/retention_parity.rs::reconstructed_parity_rebinding_and_root_control",
+   "crates/ripr/tests/parser_assertion_provenance.rs::unrelated_reason_literal_cannot_supply_parser_discrimination",
+   "crates/ripr/tests/parser_assertion_provenance.rs::direct_reason_oracle_keeps_credit_beside_the_decoy",
+   "crates/ripr/src/analysis/classify/gap_admission.rs::tests::analyzer_limit_refusals_withhold_the_gap_and_name_the_test",
+@@ -16247,6 +16255,7 @@ tests = [
+   "crates/ripr/tests/owner_pin_execution.rs::macro_use_module_admission_matches_runtime",
+ ]
+ fixtures = [
++  "fixtures/macro_site_scoped_rest_limit",
+   "fixtures/parser_formatted_input_provenance",
+   "fixtures/gap_withheld_feature_gated_test",
+   "fixtures/gap_kept_ignored_test",
+@@ -16260,6 +16269,7 @@ code = [
+   "crates/ripr/src/analysis/language/rust/mod.rs",
+ ]
+ outputs = [
++  "fixtures/macro_site_scoped_rest_limit/expected/check.json",
+   "fixtures/gap_withheld_feature_gated_test/expected/check.json",
+   "fixtures/gap_kept_ignored_test/expected/check.json",
+ ]
+diff --git a/changelog.d/8265-macro-site-parity.md b/changelog.d/8265-macro-site-parity.md
+new file mode 100644
+index 000000000..ddd002588
+--- /dev/null
++++ b/changelog.d/8265-macro-site-parity.md
+@@ -0,0 +1,4 @@
++<!-- section: Fixed -->
++- Rust macro-binding disclosures preserve per-name argument context and
++  same-file order, and exclude unrelated scoped definitions during deferred
++  completion, preventing false actionable gaps from analyzer uncertainty (#8265).
+diff --git a/crates/ripr/src/analysis/classify/owner_pin.rs b/crates/ripr/src/analysis/classify/owner_pin.rs
+index 1e531fc90..ed3d803a6 100644
+--- a/crates/ripr/src/analysis/classify/owner_pin.rs
++++ b/crates/ripr/src/analysis/classify/owner_pin.rs
+@@ -73,7 +73,8 @@ use crate::analysis::syntax::{
+     attribute_settles_test_outcome, drop_in_assertion_leaf, empty_macro_binding_ambiguities,
+     err_return_guard_key, generated_test_pins, local_empty_macro_names, macro_binding_scan,
+     owner_pin_assertions, parse_clean_source_file, pattern_pins, returns_leave_the_function,
+-    source_binds_value_name, source_declares_value_name, trusted_macro_binding_sites,
++    source_binds_value_name, source_declares_value_name, trusted_macro_binding_site_sets,
++    trusted_macro_binding_sites,
+ };
+ use crate::domain::{Probe, ProbeFamily};
+ use ra_ap_syntax::{
+@@ -860,8 +861,8 @@ impl OwnerPinSyntax {
+         self.complete_workspace_site_scan(index);
+         let scan = self.workspace_site_scan.borrow();
+         let retained = scan.as_ref()?;
+-        let mut rebinding: Option<&(PathBuf, MacroBindingSite)> = None;
+-        let mut may_rebind: Option<&(PathBuf, MacroBindingSite)> = None;
++        let mut rebinding: Option<&OrderedMacroSite> = None;
++        let mut may_rebind: Option<&OrderedMacroSite> = None;
+         if let Some(rank) = retained.global.get(name) {
+             merge_macro_site_rank(&mut rebinding, &mut may_rebind, rank);
+         }
+@@ -881,7 +882,9 @@ impl OwnerPinSyntax {
+                 }
+             }
+         }
+-        rebinding.cloned().or_else(|| may_rebind.cloned())
++        rebinding
++            .or(may_rebind)
++            .map(|site| (site.path.clone(), site.site.clone()))
+     }
+ 
+     /// #8255: finish the retained-site scan the ambiguity pass skipped. It
+@@ -923,28 +926,7 @@ impl OwnerPinSyntax {
+         if retained.complete {
+             return;
+         }
+-        for (path, name, site) in sites {
+-            match site.crate_local.then(|| roots.root(&path, index)).flatten() {
+-                Some(root) => {
+-                    retained
+-                        .by_root
+-                        .entry(root)
+-                        .or_default()
+-                        .entry(name)
+-                        .or_default()
+-                        .absorb(&path, &site);
+-                }
+-                // A site whose file has no recognized root reaches tests of
+-                // every root, exactly as the reach rule reads it.
+-                None => {
+-                    retained
+-                        .global
+-                        .entry(name)
+-                        .or_default()
+-                        .absorb(&path, &site);
+-                }
+-            }
+-        }
++        retain_macro_sites(sites.retained, retained, roots, index);
+         retained.complete = true;
+         #[cfg(test)]
+         self.workspace_scan_passes
+@@ -1329,43 +1311,56 @@ struct WorkspaceMacroSiteIndex {
+ /// site.
+ #[derive(Clone, Debug, Default)]
+ struct MacroSiteRank {
+-    rebinding: Option<(PathBuf, MacroBindingSite)>,
+-    may_rebind: Option<(PathBuf, MacroBindingSite)>,
++    rebinding: Option<OrderedMacroSite>,
++    may_rebind: Option<OrderedMacroSite>,
++}
++
++/// Producer position, rather than line number, preserves same-line order
++/// when global and crate-local buckets are merged.
++#[derive(Clone, Debug)]
++struct OrderedMacroSite {
++    path: PathBuf,
++    position: usize,
++    site: MacroBindingSite,
+ }
+ 
++impl OrderedMacroSite {
++    fn precedes(&self, other: &Self) -> bool {
++        (&self.path, self.position) < (&other.path, other.position)
++    }
++}
+ impl MacroSiteRank {
+-    /// Keep the earlier of the retained and a fresh site. Sites arrive in
+-    /// path order within one scan pass, so equal paths keep the
+-    /// first-in-source-order site.
+-    fn absorb(&mut self, path: &Path, site: &MacroBindingSite) {
++    fn absorb(&mut self, path: &Path, position: usize, site: &MacroBindingSite) {
+         let slot = if rebinds(site) {
+             &mut self.rebinding
+         } else {
+             &mut self.may_rebind
+         };
+-        if slot.as_ref().is_none_or(|(kept, _)| path < kept) {
+-            *slot = Some((path.to_path_buf(), site.clone()));
++        if slot
++            .as_ref()
++            .is_none_or(|kept| (path, position) < (kept.path.as_path(), kept.position))
++        {
++            *slot = Some(OrderedMacroSite {
++                path: path.to_path_buf(),
++                position,
++                site: site.clone(),
++            });
+         }
+     }
+ }
+-
+-/// Keep the earlier of a retained site reference and a candidate, by path.
+ fn keep_earliest_site<'a>(
+-    slot: &mut Option<&'a (PathBuf, MacroBindingSite)>,
+-    candidate: Option<&'a (PathBuf, MacroBindingSite)>,
++    slot: &mut Option<&'a OrderedMacroSite>,
++    candidate: Option<&'a OrderedMacroSite>,
+ ) {
+     if let Some(candidate) = candidate
+-        && slot.as_ref().is_none_or(|(kept, _)| candidate.0 < *kept)
++        && slot.as_ref().is_none_or(|kept| candidate.precedes(kept))
+     {
+         *slot = Some(candidate);
+     }
+ }
+-
+-/// Fold one name's retained sites into the running earliest rebinding and
+-/// may-rebind candidates of a lookup.
+ fn merge_macro_site_rank<'a>(
+-    rebinding: &mut Option<&'a (PathBuf, MacroBindingSite)>,
+-    may_rebind: &mut Option<&'a (PathBuf, MacroBindingSite)>,
++    rebinding: &mut Option<&'a OrderedMacroSite>,
++    may_rebind: &mut Option<&'a OrderedMacroSite>,
+     rank: &'a MacroSiteRank,
+ ) {
+     keep_earliest_site(rebinding, rank.rebinding.as_ref());
+@@ -1987,26 +1982,36 @@ fn partition_macro_scan_files(
+         .partition(|(_, source, _)| may_saturate_macro_ambiguity(source))
+ }
+ 
+-/// Every trusted name's sites in `files`, in path then source order. Files
+-/// whose stored candidates rule out every trusted name are not parsed.
++#[derive(Default)]
++struct ScannedMacroSites {
++    ambiguities: Vec<(PathBuf, String, MacroBindingSite)>,
++    retained: Vec<(PathBuf, String, usize, MacroBindingSite)>,
++}
++
++/// One parse per candidate file in the bounded pass. Singleton queries share
++/// that tree/index, and stored candidates prune impossible names.
+ fn scan_macro_sites(
+     files: &[MacroScanFile<'_>],
+     index: &RustIndex,
+     module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
+-) -> Vec<(PathBuf, String, MacroBindingSite)> {
+-    let context_macros = assertion_context_macros();
+-    files
++) -> ScannedMacroSites {
++    let names = assertion_context_macros();
++    let per_file: Vec<_> = files
+         .par_iter()
+-        // A file whose stored candidates rule out every trusted name
+-        // reports no site, so it is not parsed.
+         .filter(|(_, _, candidates)| {
+             candidates.is_none_or(MacroBindingCandidates::may_bind_any_trusted)
+         })
+-        .flat_map_iter(|(path, source, _)| {
+-            trusted_macro_binding_sites(
++        .map(|(path, source, candidates)| {
++            let singleton_names: Vec<_> = names
++                .iter()
++                .copied()
++                .filter(|name| candidates.is_none_or(|c| c.may_bind(name)))
++                .collect();
++            let (union, singleton) = trusted_macro_binding_site_sets(
+                 source,
+                 index.macro_scope_crates(),
+-                &context_macros,
++                &names,
++                &singleton_names,
+                 &|line, declaration| module_resolved(path, line, declaration),
+                 &|krate| {
+                     if krate == "serde_json" {
+@@ -2015,11 +2020,47 @@ fn scan_macro_sites(
+                         index.drop_in_manifests.verified(path, krate)
+                     }
+                 },
+-            )
+-            .into_iter()
+-            .map(|(name, site)| ((*path).clone(), name, site))
++            );
++            (*path, union, singleton)
+         })
+-        .collect()
++        .collect();
++    let mut scanned = ScannedMacroSites::default();
++    for (path, union, singleton) in per_file {
++        scanned.ambiguities.extend(
++            union
++                .into_iter()
++                .map(|(name, site)| (path.clone(), name, site)),
++        );
++        scanned.retained.extend(
++            singleton
++                .into_iter()
++                .enumerate()
++                .map(|(position, (name, site))| (path.clone(), name, position, site)),
++        );
++    }
++    scanned
++}
++
++/// Both initial absorption and deferred completion exclude every scoped site.
++fn retain_macro_sites(
++    sites: Vec<(PathBuf, String, usize, MacroBindingSite)>,
++    retained: &mut WorkspaceMacroSiteIndex,
++    roots: &TargetRoots,
++    index: &RustIndex,
++) {
++    for (path, name, position, site) in sites {
++        if site.scope.is_some() {
++            continue;
++        }
++        let names = match site.crate_local.then(|| roots.root(&path, index)).flatten() {
++            Some(root) => retained.by_root.entry(root).or_default(),
++            None => &mut retained.global,
++        };
++        names
++            .entry(name)
++            .or_default()
++            .absorb(&path, position, &site);
++    }
+ }
+ 
+ /// Route scanned sites into the ambiguity name sets, the scoped-site map,
+@@ -2031,7 +2072,7 @@ fn scan_macro_sites(
+     reason = "one ordered fold over four run-scoped ambiguity outputs and the retention index"
+ )]
+ fn absorb_macro_sites(
+-    sites: Vec<(PathBuf, String, MacroBindingSite)>,
++    sites: ScannedMacroSites,
+     global: &mut BTreeSet<String>,
+     scoped: &mut ScopedMacroBindings,
+     by_root: &mut CrateMacroBindings,
+@@ -2039,28 +2080,17 @@ fn absorb_macro_sites(
+     roots: &TargetRoots,
+     index: &RustIndex,
+ ) {
+-    for (path, name, site) in sites {
++    retain_macro_sites(sites.retained, retained, roots, index);
++    for (path, name, site) in sites.ambiguities {
+         if site.scope.is_some() {
+             scoped.entry(path).or_default().push((name, site));
+             continue;
+         }
+         match site.crate_local.then(|| roots.root(&path, index)).flatten() {
+             Some(root) => {
+-                retained
+-                    .by_root
+-                    .entry(root.clone())
+-                    .or_default()
+-                    .entry(name.clone())
+-                    .or_default()
+-                    .absorb(&path, &site);
+                 by_root.entry(root).or_default().insert(name);
+             }
+             None => {
+-                retained
+-                    .global
+-                    .entry(name.clone())
+-                    .or_default()
+-                    .absorb(&path, &site);
+                 global.insert(name);
+             }
+         }
+diff --git a/crates/ripr/src/analysis/classify/owner_pin/tests.rs b/crates/ripr/src/analysis/classify/owner_pin/tests.rs
+index f3a2021f0..1352f71f1 100644
+--- a/crates/ripr/src/analysis/classify/owner_pin/tests.rs
++++ b/crates/ripr/src/analysis/classify/owner_pin/tests.rs
+@@ -1,4 +1,5 @@
+ mod json_construction;
++mod retention_parity;
+ 
+ use super::*;
+ use crate::analysis::facts::{FunctionItemFact, SourceRoleProvenance, SourceRoleProvenanceEdge};
+diff --git a/crates/ripr/src/analysis/classify/owner_pin/tests/retention_parity.rs b/crates/ripr/src/analysis/classify/owner_pin/tests/retention_parity.rs
+new file mode 100644
+index 000000000..70923e5b4
+--- /dev/null
++++ b/crates/ripr/src/analysis/classify/owner_pin/tests/retention_parity.rs
+@@ -0,0 +1,127 @@
++use super::*;
++
++const GATE: &str = "pub fn gate(value: u32) -> bool {\n    10 <= value\n}\n";
++const PINS: &str = "use demo::gate;\n\n#[test]\nfn pins() {\n    assert_eq!(gate(10), true);\n}\n";
++
++fn parity(files: &[(&str, &str)]) {
++    let index = index(files);
++    let syntax = OwnerPinSyntax::default();
++    let _ = syntax.trusted_macro_ambiguities(&index);
++    assert!(
++        syntax
++            .workspace_site_scan
++            .borrow()
++            .as_ref()
++            .is_some_and(|scan| !scan.complete)
++    );
++    let names = assertion_context_macros();
++    assert!(!names.is_empty());
++    let roots = syntax.target_roots(&index);
++    let modules = syntax.resolved_module_declarations(&index);
++    let resolved = |path: &Path, line: usize, declaration: &str| {
++        modules.contains(&(path.to_path_buf(), line, declaration.to_string()))
++    };
++    let mut failures = Vec::new();
++    let mut count = 0;
++    for name in &names {
++        for root in [None, Some(Path::new(LIB)), Some(Path::new(TESTS))] {
++            let expected = workspace_macro_binding_site(name, root, &index, roots, &resolved);
++            let actual = syntax.workspace_macro_site(name, root, &index);
++            if actual != expected {
++                failures.push(format!(
++                    "{name} at {root:?}: expected={expected:?}, actual={actual:?}"
++                ));
++            }
++            count += 1;
++        }
++    }
++    assert_eq!(count, names.len() * 3);
++    assert_eq!(syntax.workspace_scan_passes(), 2);
++    assert!(failures.is_empty(), "retention parity: {failures:#?}");
++}
++
++fn scoped(container: &str) {
++    let tests = format!(
++        "{container} {{\n    macro_rules! assert_eq {{\n        ($($tokens:tt)*) => {{}};\n    }}\n}}\n\n{PINS}"
++    );
++    let files = [
++        (CONVERGENCE_GLOB, "pub use std::io::prelude::*;\n"),
++        (LIB, GATE),
++        (TESTS, tests.as_str()),
++    ];
++    let index = index(&files);
++    let syntax = OwnerPinSyntax::default();
++    let selected = syntax.workspace_macro_site("assert_eq", None, &index);
++    assert!(
++        matches!(selected, Some((path, site)) if path == Path::new(CONVERGENCE_GLOB)
++        && site.scope.is_none() && matches!(site.kind, MacroBindingKind::ForeignGlob(_)))
++    );
++    parity(&files);
++}
++
++#[test]
++fn reconstructed_parity_inline_scope() {
++    scoped("mod unrelated");
++}
++
++#[test]
++fn reconstructed_parity_function_scope() {
++    scoped("fn unrelated()");
++}
++
++#[test]
++fn reconstructed_parity_singleton_arguments() {
++    parity(&[
++        (
++            "src/a.rs",
++            "pub fn noise() { let _ = stringify!(assert_eq); }\n",
++        ),
++        ("src/z.rs", "pub use std::fmt::*;\n"),
++        (LIB, GATE),
++        (TESTS, PINS),
++    ]);
++}
++
++#[test]
++fn reconstructed_parity_unparsed_prefilter() {
++    parity(&[
++        ("src/a.rs", "serde_json ???"),
++        ("src/z.rs", "pub use std::fmt::*;\n"),
++        (LIB, GATE),
++        (TESTS, PINS),
++    ]);
++}
++
++fn ordered(imports: &str) {
++    parity(&[(LIB, &format!("{imports}{GATE}")), (TESTS, PINS)]);
++}
++
++#[test]
++fn reconstructed_parity_newline_private_first() {
++    ordered("use std::io::prelude::*;\npub use std::fmt::*;\n");
++}
++
++#[test]
++fn reconstructed_parity_same_line_private_first() {
++    ordered("use std::io::prelude::*; pub use std::fmt::*;\n");
++}
++
++#[test]
++fn reconstructed_parity_same_line_public_first() {
++    ordered("pub use std::fmt::*; use std::io::prelude::*;\n");
++}
++
++#[test]
++fn reconstructed_parity_rebinding_and_root_control() {
++    let index = convergence_index();
++    let syntax = OwnerPinSyntax::default();
++    assert!(
++        matches!(syntax.workspace_macro_site("matches", None, &index),
++        Some((path, MacroBindingSite { kind: MacroBindingKind::Definition, .. })) if path == Path::new(LIB))
++    );
++    assert!(
++        matches!(syntax.workspace_macro_site("matches", Some(Path::new(TESTS)), &index),
++        Some((path, MacroBindingSite { kind: MacroBindingKind::ForeignGlob(_), .. })) if path == Path::new(CONVERGENCE_GLOB))
++    );
++    assert!(syntax.workspace_scan_passes() <= 2);
++}
+diff --git a/crates/ripr/src/analysis/syntax/mod.rs b/crates/ripr/src/analysis/syntax/mod.rs
+index 2fb63e84b..2dc85f227 100644
+--- a/crates/ripr/src/analysis/syntax/mod.rs
++++ b/crates/ripr/src/analysis/syntax/mod.rs
+@@ -16,8 +16,8 @@ pub(crate) use owner_pin::{
+     empty_local_macro_invocation_ranges, empty_macro_binding_ambiguities, err_return_guard_key,
+     local_empty_macro_names, macro_binding_scan, macro_call_is_statement, owner_pin_assertions,
+     owner_reference_count, returns_leave_the_function, source_binds_value_name,
+-    source_declares_value_name, supported_targeted_item_context, trusted_macro_binding_sites,
+-    use_rebinds_crate_name,
++    source_declares_value_name, supported_targeted_item_context, trusted_macro_binding_site_sets,
++    trusted_macro_binding_sites, use_rebinds_crate_name,
+ };
+ pub(crate) use owner_pin::{decimal_u8, literal_check_syntax, literal_owner_syntax};
+ pub(crate) use pattern_pin::{PatternPins, pattern_pins};
+diff --git a/crates/ripr/src/analysis/syntax/owner_pin.rs b/crates/ripr/src/analysis/syntax/owner_pin.rs
+index d663a0a73..aa934f139 100644
+--- a/crates/ripr/src/analysis/syntax/owner_pin.rs
++++ b/crates/ripr/src/analysis/syntax/owner_pin.rs
+@@ -550,6 +550,16 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
+ // [`macro_binding_candidates`] is a stored over-approximation of this scan:
+ // a new site kind, or a wider existing one, must widen it too and bump
+ // `FILE_FACT_CACHE_SCHEMA_VERSION`, or cached candidates hide the new sites.
++fn macro_binding_scan_needed(source: &str, trusted: &[&str]) -> bool {
++    trusted.contains(&"json") && source.contains("serde_json")
++        || source.contains("macro")
++        || source.contains("use")
++        || source.contains("no_implicit_prelude")
++        || source.contains('!')
++}
++
++type NamedMacroSites = Vec<(String, MacroBindingSite)>;
++
+ fn macro_binding_ambiguities(
+     source: &str,
+     packages: &BTreeSet<String>,
+@@ -558,15 +568,103 @@ fn macro_binding_ambiguities(
+     module_resolved: &dyn Fn(usize, &str) -> bool,
+     drop_in_verified: &dyn Fn(&str) -> bool,
+ ) -> Vec<(String, MacroBindingSite)> {
+-    let mut ambiguous = Vec::new();
+-    if !(trusted.contains(&"json") && source.contains("serde_json")
+-        || source.contains("macro")
+-        || source.contains("use")
+-        || source.contains("no_implicit_prelude")
+-        || source.contains('!'))
+-    {
+-        return ambiguous;
++    macro_binding_ambiguity_sets(
++        source,
++        packages,
++        trusted,
++        allowed_empty,
++        module_resolved,
++        drop_in_verified,
++        None,
++    )
++    .0
++}
++
++/// Returns the admission union and per-name disclosure queries. Their trust
++/// contexts differ; only the parse and binding-free wrapper index are shared.
++pub(crate) fn trusted_macro_binding_site_sets(
++    source: &str,
++    packages: &BTreeSet<String>,
++    trusted: &[&str],
++    singleton_names: &[&str],
++    module_resolved: &dyn Fn(usize, &str) -> bool,
++    drop_in_verified: &dyn Fn(&str) -> bool,
++) -> (NamedMacroSites, NamedMacroSites) {
++    macro_binding_ambiguity_sets(
++        source,
++        packages,
++        trusted,
++        &BTreeSet::new(),
++        module_resolved,
++        drop_in_verified,
++        Some(singleton_names),
++    )
++}
++
++fn macro_binding_ambiguity_sets(
++    source: &str,
++    packages: &BTreeSet<String>,
++    trusted: &[&str],
++    allowed_empty: &BTreeSet<String>,
++    module_resolved: &dyn Fn(usize, &str) -> bool,
++    drop_in_verified: &dyn Fn(&str) -> bool,
++    singleton_names: Option<&[&str]>,
++) -> (NamedMacroSites, NamedMacroSites) {
++    if !macro_binding_scan_needed(source, trusted) {
++        return (Vec::new(), Vec::new());
+     }
++    let Some(parse) = parse_clean_source_file(source) else {
++        let site = MacroBindingSite {
++            line: 0,
++            kind: MacroBindingKind::Unparsed,
++            scope: None,
++            crate_local: false,
++        };
++        let union: NamedMacroSites = trusted
++            .iter()
++            .map(|name| ((*name).to_string(), site.clone()))
++            .collect();
++        let singletons = singleton_names
++            .into_iter()
++            .flatten()
++            .filter(|name| macro_binding_scan_needed(source, &[name]))
++            .map(|name| ((*name).to_string(), site.clone()))
++            .collect();
++        return (union, singletons);
++    };
++    let tree = parse.tree();
++    let binding_free = BindingFreeFileIndex::collect(tree.syntax());
++    let scan = |names: &[&str]| {
++        macro_binding_sites_in_tree(
++            source,
++            packages,
++            names,
++            allowed_empty,
++            module_resolved,
++            drop_in_verified,
++            (&tree, &binding_free),
++        )
++    };
++    let union = scan(trusted);
++    let singletons = singleton_names
++        .into_iter()
++        .flatten()
++        .filter(|name| macro_binding_scan_needed(source, &[name]))
++        .flat_map(|name| scan(&[name]))
++        .collect();
++    (union, singletons)
++}
++
++fn macro_binding_sites_in_tree(
++    source: &str,
++    packages: &BTreeSet<String>,
++    trusted: &[&str],
++    allowed_empty: &BTreeSet<String>,
++    module_resolved: &dyn Fn(usize, &str) -> bool,
++    drop_in_verified: &dyn Fn(&str) -> bool,
++    (tree, binding_free): (&ast::SourceFile, &BindingFreeFileIndex),
++) -> NamedMacroSites {
++    let mut ambiguous = Vec::new();
+     let all = |line: usize, kind: MacroBindingKind, crate_local: bool| {
+         trusted
+             .iter()
+@@ -583,14 +681,6 @@ fn macro_binding_ambiguities(
+             })
+             .collect::<Vec<_>>()
+     };
+-    let Some(parse) = parse_clean_source_file(source) else {
+-        return all(0, MacroBindingKind::Unparsed, false);
+-    };
+-    let tree = parse.tree();
+-    // `binding_free_local_wrapper` used to walk every descendant for each
+-    // untrusted macro. On a 20k-line test file that is macros × file size
+-    // and hung PR evidence after the unseen-reach cache landed.
+-    let binding_free = BindingFreeFileIndex::collect(tree.syntax());
+     // Built only when a binding site is found, which most files lack.
+     let lines = std::cell::OnceCell::new();
+     let line_of = |node: &SyntaxNode| {
+@@ -617,7 +707,7 @@ fn macro_binding_ambiguities(
+         packages
+             .iter()
+             .any(|package| package.replace('-', "_") == root)
+-            || parse.tree().syntax().descendants().any(|node| {
++            || tree.syntax().descendants().any(|node| {
+                 ast::Rename::cast(node.clone())
+                     .and_then(|rename| rename.name())
+                     .is_some_and(named)
+@@ -627,7 +717,7 @@ fn macro_binding_ambiguities(
+                             .is_some_and(named)
+             })
+     };
+-    for node in parse.tree().syntax().descendants() {
++    for node in tree.syntax().descendants() {
+         // An extern-crate alias or module in another file can defeat this
+         // import's root even when that file never mentions `json` itself.
+         if trusted.contains(&"json") && json_namespace_rebound(&node) {
+@@ -805,7 +895,7 @@ fn macro_binding_ambiguities(
+             // tests then use it. The one exception is a wrapper whose only
+             // definition this file shows and whose expansion cannot bind a
+             // name at all (#6648).
+-            if binding_free_local_wrapper(&binding_free, &call, &tokens, trusted) {
++            if binding_free_local_wrapper(binding_free, &call, &tokens, trusted) {
+                 continue;
+             }
+             for token in &tokens {
+@@ -916,7 +1006,7 @@ fn macro_binding_ambiguities(
+     // are no `MacroCall` nodes: the parser keeps `vec ! (..)` flat beside a
+     // nested tree. They count as calls of their bare name too (#8446).
+     let mut sites = Vec::new();
+-    for node in parse.tree().syntax().descendants() {
++    for node in tree.syntax().descendants() {
+         if let Some(call) = ast::MacroCall::cast(node.clone()) {
+             if let (Some(path), Some(tree)) = (call.path(), call.token_tree()) {
+                 sites.push((
+@@ -964,7 +1054,7 @@ fn macro_binding_ambiguities(
+             // A nested call has no node to locate that definition from, so
+             // it never takes the exemption.
+             if call.as_ref().is_some_and(|call| {
+-                binding_free_local_wrapper(&binding_free, call, &tokens, trusted)
++                binding_free_local_wrapper(binding_free, call, &tokens, trusted)
+             }) {
+                 continue;
+             }
+diff --git a/fixtures/evidence-promotion-honesty-corpus/corpus.json b/fixtures/evidence-promotion-honesty-corpus/corpus.json
+index b3aec96eb..b121a038b 100644
+--- a/fixtures/evidence-promotion-honesty-corpus/corpus.json
++++ b/fixtures/evidence-promotion-honesty-corpus/corpus.json
+@@ -10049,6 +10049,25 @@
+         { "type": "expected_class", "class": "weakly_exposed" },
+         { "type": "expected_oracle", "kind": "unknown", "strength": "unknown" }
+       ]
++    },
++    {
++      "id": "rust_macro_site_scoped_rest_limit",
++      "language": "rust",
++      "tier": "pure",
++      "source_fixture": "fixtures/macro_site_scoped_rest_limit",
++      "vector": "scoped_rest_definition_cannot_promote_binding_uncertainty_to_a_gap",
++      "assertions": [
++        {
++          "type": "must_not_report_clean"
++        },
++        {
++          "type": "expected_class",
++          "class": "static_unknown"
++        },
++        {
++          "type": "must_not_promote"
++        }
++      ]
+     }
+   ]
+ }
+diff --git a/fixtures/macro_site_scoped_rest_limit/SPEC.md b/fixtures/macro_site_scoped_rest_limit/SPEC.md
+new file mode 100644
+index 000000000..5f81ef33a
+--- /dev/null
++++ b/fixtures/macro_site_scoped_rest_limit/SPEC.md
+@@ -0,0 +1,27 @@
++# Fixture: macro_site_scoped_rest_limit
++
++Spec: RIPR-SPEC-0240
++
++Issue: #8265
++
++## Given
++
++A foreign glob makes assertion bindings uncertain. An unrelated inline module
++in the integration-test file defines `assert_eq`, outside the real assertion's
++scope. The likely-file pass saturates on the glob and defers that definition.
++
++## When
++
++`cargo xtask fixtures macro_site_scoped_rest_limit` analyzes the changed bound.
++
++## Then
++
++The nonempty findings remain `static_unknown`, retain
++`rust_assertion_context_unresolved` and `gap_evidence_unresolved`, and name the
++unscoped foreign glob. They have no canonical gap IDs.
++
++## Must Not
++
++- Select the unrelated scoped definition as the workspace refusal.
++- Promote analyzer uncertainty to an actionable gap or claim test adequacy.
++- Accept an empty or all-exposed re-blessing.
+diff --git a/fixtures/macro_site_scoped_rest_limit/diff.patch b/fixtures/macro_site_scoped_rest_limit/diff.patch
+new file mode 100644
+index 000000000..26c128646
+--- /dev/null
++++ b/fixtures/macro_site_scoped_rest_limit/diff.patch
+@@ -0,0 +1,5 @@
++--- a/src/lib.rs
+++++ b/src/lib.rs
++@@ -3 +3 @@
++-    11 <= value
+++    10 <= value
+diff --git a/fixtures/macro_site_scoped_rest_limit/expected/CHANGELOG.md b/fixtures/macro_site_scoped_rest_limit/expected/CHANGELOG.md
+new file mode 100644
+index 000000000..0c6b5fb95
+--- /dev/null
++++ b/fixtures/macro_site_scoped_rest_limit/expected/CHANGELOG.md
+@@ -0,0 +1,14 @@
++# Golden Output Changes
++
++## Pending — macro_site_scoped_rest_limit (1)
++
++Reason:
++RIPR-SPEC-0240: scoped deferred definitions retain uncertainty (#8265)
++
++Command:
++`cargo xtask goldens bless macro_site_scoped_rest_limit --reason "..."`
++
++Updated:
++- `expected/check.json`
++- `expected/human.txt`
++- `expected/human-full.txt`
+diff --git a/fixtures/macro_site_scoped_rest_limit/expected/check.json b/fixtures/macro_site_scoped_rest_limit/expected/check.json
+new file mode 100644
+index 000000000..b5357319d
+--- /dev/null
++++ b/fixtures/macro_site_scoped_rest_limit/expected/check.json
+@@ -0,0 +1,217 @@
++{
++  "schema_version": "0.2",
++  "tool": "ripr",
++  "mode": "fast",
++  "root": "fixtures/macro_site_scoped_rest_limit/input",
++  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":2,"changed_files_by_language":[{"language":"rust","files":1}]},
++  "analysis_outcome": {
++    "analysis_complete": true,
++    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:f7451522dad108db66b9eaa7df604673a26cdeb08c46fb94dd493014496ebd4a","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
++  },
++  "findings": [
++    {
++      "id": "probe:src_lib.rs:predicate:d545be08",
++      "classification": "static_unknown",
++      "severity": "note",
++      "confidence": 0.64,
++      "probe": {
++        "id": "probe:src_lib.rs:predicate:d545be08",
++        "family": "predicate",
++        "delta": "control",
++        "file": "./src/lib.rs",
++        "line": 3,
++        "expression": "10 <= value"
++       },
++      "ripr": {
++        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach gate: pins"},
++        "infect": {"state":"yes","confidence":"medium","summary":"Detected related test input at the changed boundary"},
++        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: 10 <= value"},
++        "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
++        "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
++       },
++      "evidence_path": ["reach yes: Related tests appear to reach gate: pins", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: 10 <= value", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches returned value: 10 <= value (line 3)", "related test tests/buf_tests.rs:10 pins uses none unknown oracle", "source assertion argument value true at line 11", "source function argument value value = 10 at line 11", "source function argument value value == 10 at line 11"],
++      "flow_sinks": [
++        {"kind":"return_value","text":"10 <= value","line":3}
++      ],
++      "evidence": ["Changed behavior appears to influence returned value: 10 <= value", "Detected related test input at the changed boundary", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Related tests appear to reach gate: pins", "assertion not credited: `assert_eq!` in pins at tests/buf_tests.rs:11: `pub use std::io::prelude::*;` at src/globs.rs:1 glob-imports from outside the workspace, which may bring in a different `assert_eq!`", "gap_withheld: reachable_unrevealed is not claimed; whether the refused related assertions run as the standard `assert_eq!` (rust_assertion_context_unresolved)", "limitation_last_established_edge: related tests `pins` (tests/buf_tests.rs:10)", "limitation_first_unresolved_edge: whether the refused related assertions run as the standard `assert_eq!`", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
++      "missing": ["A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse, the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a gap; this is a named limitation, not a coverage claim."],
++      "assertion_texts": {
++        "11": "assert_eq!(gate(10), true);"
++      },
++      "activation": {
++        "observed_values": [
++          {
++            "line": 11,
++            "value": "true",
++            "context": "assertion_argument"
++          },
++          {
++            "line": 11,
++            "value": "value = 10",
++            "context": "function_argument"
++          },
++          {
++            "line": 11,
++            "value": "value == 10",
++            "context": "function_argument",
++            "provenance": "assert_eq!(gate(10), true); | exact input value = 10; literal operand 10 = 10"
++          }
++        ],
++        "missing_discriminators": [
++        ]
++      },
++      "observed_values": [
++        {
++          "line": 11,
++          "value": "true",
++          "context": "assertion_argument"
++        },
++        {
++          "line": 11,
++          "value": "value = 10",
++          "context": "function_argument"
++        },
++        {
++          "line": 11,
++          "value": "value == 10",
++          "context": "function_argument",
++          "provenance": "assert_eq!(gate(10), true); | exact input value = 10; literal operand 10 = 10"
++        }
++      ],
++      "missing_discriminators": [
++      ],
++      "related_tests_total": 1,
++      "related_tests": [
++        {
++          "name": "pins",
++          "file": "tests/buf_tests.rs",
++          "line": 10,
++          "oracle_strength": "none",
++          "oracle_kind": "unknown",
++          "oracle": "",
++          "relation_reason": "direct_owner_call",
++          "relation_confidence": "high",
++          "miss": "assertion_not_credited",
++          "why": "assertion not credited: ripr could not establish that it runs as the standard macro"
++        }
++      ],
++      "stop_reasons": ["gap_evidence_unresolved"],
++      "oracle_kind": "unknown",
++      "oracle_strength": "none",
++      "recommended_next_step": "ripr could not read whether the assertions in `pins` (tests/buf_tests.rs:10) run as the standard `assert_eq!`, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does.",
++      "suggested_next_action": "ripr could not read whether the assertions in `pins` (tests/buf_tests.rs:10) run as the standard `assert_eq!`, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does.",
++      "language": "rust",
++      "static_limit_kind": "rust_assertion_context_unresolved",
++      "static_limitation": {
++        "analyzer_route": "analysis/classify/gap-admission",
++        "first_unresolved_edge": "whether the refused related assertions run as the standard `assert_eq!`",
++        "kind": "rust_assertion_context_unresolved",
++        "last_established_edge": "related tests `pins` (tests/buf_tests.rs:10)",
++        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
++      },
++      "source_currentness": "candidate_current"
++    },
++    {
++      "id": "probe:src_lib.rs:return_value:a3aaa801",
++      "classification": "static_unknown",
++      "severity": "note",
++      "confidence": 0.64,
++      "probe": {
++        "id": "probe:src_lib.rs:return_value:a3aaa801",
++        "family": "return_value",
++        "delta": "value",
++        "file": "./src/lib.rs",
++        "line": 3,
++        "expression": "10 <= value"
++       },
++      "ripr": {
++        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach gate: pins"},
++        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
++        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: 10 <= value"},
++        "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
++        "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
++       },
++      "evidence_path": ["reach yes: Related tests appear to reach gate: pins", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: 10 <= value", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches returned value: 10 <= value (line 3)", "related test tests/buf_tests.rs:10 pins uses none unknown oracle", "source assertion argument value true at line 11", "source function argument value value = 10 at line 11", "source function argument value value == 10 at line 11"],
++      "flow_sinks": [
++        {"kind":"return_value","text":"10 <= value","line":3}
++      ],
++      "evidence": ["Complete propagation witness reaches returned value: 10 <= value", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach gate: pins", "assertion not credited: `assert_eq!` in pins at tests/buf_tests.rs:11: `pub use std::io::prelude::*;` at src/globs.rs:1 glob-imports from outside the workspace, which may bring in a different `assert_eq!`", "gap_withheld: reachable_unrevealed is not claimed; whether the refused related assertions run as the standard `assert_eq!` (rust_assertion_context_unresolved)", "limitation_last_established_edge: related tests `pins` (tests/buf_tests.rs:10)", "limitation_first_unresolved_edge: whether the refused related assertions run as the standard `assert_eq!`", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
++      "missing": ["A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse, the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a gap; this is a named limitation, not a coverage claim."],
++      "assertion_texts": {
++        "11": "assert_eq!(gate(10), true);"
++      },
++      "activation": {
++        "observed_values": [
++          {
++            "line": 11,
++            "value": "true",
++            "context": "assertion_argument"
++          },
++          {
++            "line": 11,
++            "value": "value = 10",
++            "context": "function_argument"
++          },
++          {
++            "line": 11,
++            "value": "value == 10",
++            "context": "function_argument",
++            "provenance": "assert_eq!(gate(10), true); | exact input value = 10; literal operand 10 = 10"
++          }
++        ],
++        "missing_discriminators": [
++        ]
++      },
++      "observed_values": [
++        {
++          "line": 11,
++          "value": "true",
++          "context": "assertion_argument"
++        },
++        {
++          "line": 11,
++          "value": "value = 10",
++          "context": "function_argument"
++        },
++        {
++          "line": 11,
++          "value": "value == 10",
++          "context": "function_argument",
++          "provenance": "assert_eq!(gate(10), true); | exact input value = 10; literal operand 10 = 10"
++        }
++      ],
++      "missing_discriminators": [
++      ],
++      "related_tests_total": 1,
++      "related_tests": [
++        {
++          "name": "pins",
++          "file": "tests/buf_tests.rs",
++          "line": 10,
++          "oracle_strength": "none",
++          "oracle_kind": "unknown",
++          "oracle": "",
++          "relation_reason": "direct_owner_call",
++          "relation_confidence": "high",
++          "miss": "assertion_not_credited",
++          "why": "assertion not credited: ripr could not establish that it runs as the standard macro"
++        }
++      ],
++      "stop_reasons": ["gap_evidence_unresolved"],
++      "oracle_kind": "unknown",
++      "oracle_strength": "none",
++      "recommended_next_step": "ripr could not read whether the assertions in `pins` (tests/buf_tests.rs:10) run as the standard `assert_eq!`, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does.",
++      "suggested_next_action": "ripr could not read whether the assertions in `pins` (tests/buf_tests.rs:10) run as the standard `assert_eq!`, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does.",
++      "language": "rust",
++      "static_limit_kind": "rust_assertion_context_unresolved",
++      "static_limitation": {
++        "analyzer_route": "analysis/classify/gap-admission",
++        "first_unresolved_edge": "whether the refused related assertions run as the standard `assert_eq!`",
++        "kind": "rust_assertion_context_unresolved",
++        "last_established_edge": "related tests `pins` (tests/buf_tests.rs:10)",
++        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
++      },
++      "source_currentness": "candidate_current"
++    }
++  ]
++}
+diff --git a/fixtures/macro_site_scoped_rest_limit/expected/human-full.txt b/fixtures/macro_site_scoped_rest_limit/expected/human-full.txt
+new file mode 100644
+index 000000000..4fd316338
+--- /dev/null
++++ b/fixtures/macro_site_scoped_rest_limit/expected/human-full.txt
+@@ -0,0 +1,85 @@
++ripr static RIPR exposure analysis
++mode: fast
++root: fixtures/macro_site_scoped_rest_limit/input
++
++Summary: 2 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 2 static_unknown; 2 of 2 finding(s) unsuppressed
++
++Analysis outcome: findings below (analysis complete; complete_with_findings)
++  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
++
++Shared evidence and guidance
++  E1 [findings 1, 2]: reach yes: Related tests appear to reach gate: pins
++  E2 [findings 1, 2]: observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
++  E3 [findings 1, 2]: discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
++  E4 [findings 1, 2]: local flow reaches returned value: 10 <= value (line 3)
++  E5 [findings 1, 2]: related test tests/buf_tests.rs:10 pins uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
++  E6 [findings 1, 2]: source assertion argument value true at line 11
++  E7 [findings 1, 2]: source function argument value value = 10 at line 11
++  E8 [findings 1, 2]: source function argument value value == 10 at line 11
++  N1 [findings 1, 2]: ripr could not read whether the assertions in `pins` (tests/buf_tests.rs:10) run as the standard `assert_eq!`, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does
++
++Finding 1: NOTE ./src/lib.rs:3
++  id: probe:src_lib.rs:predicate:d545be08
++Changed
++  before: 11 <= value
++  after:  10 <= value
++Probe
++  family: predicate
++  delta:  control
++  owner:  src/lib.rs::gate
++Static exposure
++  static_unknown (note, confidence 0.64)
++Evidence
++  shared evidence: E1
++  - infection yes: Detected related test input at the changed boundary
++  - propagation yes: Changed behavior appears to influence returned value: 10 <= value
++  shared evidence: E2, E3, E4, E5, E6, E7, E8
++Weakness
++  - A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse, the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a gap; this is a named limitation, not a coverage claim
++Stop reasons:
++  - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
++Static limitation
++  rust_assertion_context_unresolved — A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse, the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a gap; this is a named limitation, not a coverage claim.
++Limitation detail
++  last established edge: related tests `pins` (tests/buf_tests.rs:10)
++  first unresolved edge: whether the refused related assertions run as the standard `assert_eq!`
++  analyzer route: analysis/classify/gap-admission
++  non-claim: no missing test, no weak oracle, and no test adequacy is established
++Next step
++  shared guidance: N1
++Drill in:
++  ripr explain --root <cwd>/fixtures/macro_site_scoped_rest_limit/input --diff <cwd>/fixtures/macro_site_scoped_rest_limit/diff.patch --mode fast probe:src_lib.rs:predicate:d545be08
++  ripr context --root <cwd>/fixtures/macro_site_scoped_rest_limit/input --diff <cwd>/fixtures/macro_site_scoped_rest_limit/diff.patch --mode fast --at probe:src_lib.rs:predicate:d545be08
++
++Finding 2: NOTE ./src/lib.rs:3
++  id: probe:src_lib.rs:return_value:a3aaa801
++Changed
++  before: 11 <= value
++  after:  10 <= value
++Probe
++  family: return_value
++  delta:  value
++  owner:  src/lib.rs::gate
++Static exposure
++  static_unknown (note, confidence 0.64)
++Evidence
++  shared evidence: E1
++  - infection yes: Reachable tests can plausibly activate this changed behavior
++  - propagation yes: Complete propagation witness reaches returned value: 10 <= value
++  shared evidence: E2, E3, E4, E5, E6, E7, E8
++Weakness
++  - A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse, the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a gap; this is a named limitation, not a coverage claim
++Stop reasons:
++  - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
++Static limitation
++  rust_assertion_context_unresolved — A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse, the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a gap; this is a named limitation, not a coverage claim.
++Limitation detail
++  last established edge: related tests `pins` (tests/buf_tests.rs:10)
++  first unresolved edge: whether the refused related assertions run as the standard `assert_eq!`
++  analyzer route: analysis/classify/gap-admission
++  non-claim: no missing test, no weak oracle, and no test adequacy is established
++Next step
++  shared guidance: N1
++Drill in:
++  ripr explain --root <cwd>/fixtures/macro_site_scoped_rest_limit/input --diff <cwd>/fixtures/macro_site_scoped_rest_limit/diff.patch --mode fast probe:src_lib.rs:return_value:a3aaa801
++  ripr context --root <cwd>/fixtures/macro_site_scoped_rest_limit/input --diff <cwd>/fixtures/macro_site_scoped_rest_limit/diff.patch --mode fast --at probe:src_lib.rs:return_value:a3aaa801
+diff --git a/fixtures/macro_site_scoped_rest_limit/expected/human.txt b/fixtures/macro_site_scoped_rest_limit/expected/human.txt
+new file mode 100644
+index 000000000..ccafa6f30
+--- /dev/null
++++ b/fixtures/macro_site_scoped_rest_limit/expected/human.txt
+@@ -0,0 +1,38 @@
++ripr static RIPR exposure analysis
++mode: fast
++root: fixtures/macro_site_scoped_rest_limit/input
++
++Summary: 2 probes (0 exposed, 0 weak, 0 unrevealed, 0 no path, 2 unknown); 2 of 2 findings unsuppressed
++
++Analysis outcome: findings below (analysis complete)
++  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
++
++Start here:
++  State: limited by static analysis
++  Safe next action: inspect the named static limitation before treating this as repair-ready
++  File: ./src/lib.rs:3
++  Static exposure: unknown (severity: note, confidence 0.64)
++  Why unknown: the analysis could not determine a static exposure state
++  Not credited: `assert_eq!` in pins at tests/buf_tests.rs:11: `pub use std::io::prelude::*;` at
++    src/globs.rs:1 glob-imports from outside the workspace, which may bring in a different
++    `assert_eq!`
++  Changed behavior: 10 <= value
++  Analyzer limit: A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse,…
++  Related test: tests/buf_tests.rs:10 pins (assertion not credited: ripr could not establish that it runs as the standard macro)
++  Next step: ripr could not read whether the assertions in `pins` (tests/buf_tests.rs:10) run as the
++    standard `assert_eq!`, so it does not report a gap. Check that one of them compares the changed
++    value; add a test only if none does
++  Evidence: reach yes · infection yes · propagation yes · observation no · discriminator no
++    - reach yes: Related tests appear to reach gate: pins
++    - infection yes: Detected related test input at the changed boundary
++    - 8 more detail line(s) in --format human-full
++
++Next: drill into the top finding:
++  ripr explain --root <cwd>/fixtures/macro_site_scoped_rest_limit/input --diff <cwd>/fixtures/macro_site_scoped_rest_limit/diff.patch --mode fast probe:src_lib.rs:predicate:d545be08
++  ripr context --root <cwd>/fixtures/macro_site_scoped_rest_limit/input --diff <cwd>/fixtures/macro_site_scoped_rest_limit/diff.patch --mode fast --at probe:src_lib.rs:predicate:d545be08
++
++Hidden:
++  1 lower-priority finding(s) omitted from default human output.
++    - ./src/lib.rs:3 (unknown)
++  Full evidence: rerun with --format human-full
++  Machine data: rerun with --format json
+diff --git a/fixtures/macro_site_scoped_rest_limit/input/Cargo.toml b/fixtures/macro_site_scoped_rest_limit/input/Cargo.toml
+new file mode 100644
+index 000000000..1642b55e7
+--- /dev/null
++++ b/fixtures/macro_site_scoped_rest_limit/input/Cargo.toml
+@@ -0,0 +1,5 @@
++[package]
++name="demo"
++version="0.0.0"
++edition="2024"
++[workspace]
+diff --git a/fixtures/macro_site_scoped_rest_limit/input/src/globs.rs b/fixtures/macro_site_scoped_rest_limit/input/src/globs.rs
+new file mode 100644
+index 000000000..af94b1daf
+--- /dev/null
++++ b/fixtures/macro_site_scoped_rest_limit/input/src/globs.rs
+@@ -0,0 +1,2 @@
++pub use std::io::prelude::*;
++pub fn drain(input: &mut Vec<u8>) { input.clear(); }
+diff --git a/fixtures/macro_site_scoped_rest_limit/input/src/lib.rs b/fixtures/macro_site_scoped_rest_limit/input/src/lib.rs
+new file mode 100644
+index 000000000..1ef5d0f89
+--- /dev/null
++++ b/fixtures/macro_site_scoped_rest_limit/input/src/lib.rs
+@@ -0,0 +1,4 @@
++pub mod globs;
++pub fn gate(value: u32) -> bool {
++    10 <= value
++}
+diff --git a/fixtures/macro_site_scoped_rest_limit/input/tests/buf_tests.rs b/fixtures/macro_site_scoped_rest_limit/input/tests/buf_tests.rs
+new file mode 100644
+index 000000000..b4e50ee58
+--- /dev/null
++++ b/fixtures/macro_site_scoped_rest_limit/input/tests/buf_tests.rs
+@@ -0,0 +1,12 @@
++mod unrelated {
++    macro_rules! assert_eq {
++        ($($tokens:tt)*) => {};
++    }
++}
++
++use demo::gate;
++
++#[test]
++fn pins() {
++    assert_eq!(gate(10), true);
++}
