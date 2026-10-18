@@ -318,6 +318,9 @@ fn loan_pairs_boundary_call(
         // Every call fact on the line is the helper call: a call buried in a
         // macro (`assert!(passes(50) || true)`) or chained after it is
         // another source of the line's `==` fact.
+        if crate::analysis::extract::line_at_call_budget(test.calls.iter(), *line) {
+            return false;
+        }
         let mut on_line = test.calls.iter().filter(|call| call.line == *line);
         let Some(helper_call) = on_line.next() else {
             return false;
@@ -345,7 +348,7 @@ fn loan_pairs_boundary_call(
             fact.line == *line
                 && matches!(fact.context, ValueContext::FunctionArgument)
                 && !fact.text.is_empty()
-                && fact.text.contains(&helper_call.text)
+                && fact.text.contains(&*helper_call.text)
                 && fact_matches_fed_literals(&fact.value, &fed)
         })
     })
@@ -392,7 +395,9 @@ fn test_pairs_boundary_element(
         }
         whole_owner_call_operands(test, &assertion.text, owner)
             .iter()
-            .any(|arguments| arguments_feed_boundary_element(test, None, arguments, element))
+            .any(|arguments| {
+                arguments_feed_boundary_element(test, None, arguments, &assertion.text, element)
+            })
     })
 }
 
@@ -402,11 +407,12 @@ fn arguments_feed_boundary_element(
     test: &TestSummary,
     loan: Option<&HelperLoan>,
     arguments: &[String],
+    site: &str,
     (tail, boundary): &(AdaptorTail, String),
 ) -> bool {
     arguments
         .get(tail.position)
-        .and_then(|argument| argument_sequences(test, loan, argument))
+        .and_then(|argument| argument_sequences(test, loan, argument, site))
         .is_some_and(|runs| {
             runs.iter()
                 .any(|run| tail.run_reaches_boundary(run, boundary))
@@ -429,7 +435,9 @@ fn loan_pairs_boundary_element(
     }
     whole_owner_call_operands(test, assertion_text, owner)
         .iter()
-        .any(|arguments| arguments_feed_boundary_element(test, Some(loan), arguments, element))
+        .any(|arguments| {
+            arguments_feed_boundary_element(test, Some(loan), arguments, assertion_text, element)
+        })
 }
 
 /// The argument lists of the asserted operands that are exactly one whole
@@ -622,6 +630,7 @@ fn assertion_observes_boundary_owner_call(
     // `value.name(..)` call is never the owner's (#6713).
     lists.len() == 1
         && owner_call_sites(&assertion.text, owner).len() == 1
+        && !crate::analysis::extract::line_at_call_budget(test.calls.iter(), assertion.line)
         && line_owner_call_count(test, assertion.line, owner) <= 1
         && owner_call_arguments_admit_activation_fallback(probe, owner, &lists[0])
         && activation_marks_boundary_call(
@@ -629,7 +638,7 @@ fn assertion_observes_boundary_owner_call(
             &CallFact {
                 line: assertion.line,
                 name: owner.name.clone(),
-                text: assertion.text.clone(),
+                text: assertion.text.clone().into(),
             },
         )
 }
@@ -690,7 +699,7 @@ fn boundary_bound_locals(
             let call = CallFact {
                 line: line_number,
                 name: owner.name.clone(),
-                text: original_line.trim().to_string(),
+                text: original_line.trim().to_string().into(),
             };
             let is_boundary = owner_call_activates_boundary(probe, owner, test, &call, activation);
             if let Some(existing) = last.iter_mut().find(|(tracked, _)| tracked == name) {
@@ -1233,7 +1242,7 @@ fn activation_marks_boundary_call(activation: &ActivationEvidence, call: &CallFa
     activation.observed_values.iter().any(|fact| {
         fact.line == call.line
             && fact.value.contains(" == ")
-            && (fact.text.is_empty() || fact.text.contains(&call.text))
+            && (fact.text.is_empty() || fact.text.contains(&*call.text))
     })
 }
 
@@ -3037,6 +3046,64 @@ mod tests {
     }
 
     #[test]
+    fn a_line_at_the_call_fact_budget_keeps_the_activation_fallback_closed() {
+        use crate::analysis::extract::MAX_CALL_FACTS_PER_LINE;
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let line = "assert!(gate(n));";
+        let activation = ActivationEvidence {
+            observed_values: vec![ValueFact {
+                line: 1,
+                text: String::new(),
+                value: "input == 10".to_string(),
+                context: ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        };
+        let with_facts = |count: usize| {
+            test_summary(
+                "budget",
+                line,
+                (0..count).map(|_| call("gate", line)).collect(),
+                vec![exact(line)],
+                &[],
+            )
+        };
+        assert!(
+            pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&with_facts(MAX_CALL_FACTS_PER_LINE - 1)],
+                &activation
+            ),
+            "control: a line one fact under the budget keeps the fallback"
+        );
+        // Identical facts count once, so only the budget guard refuses.
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&with_facts(MAX_CALL_FACTS_PER_LINE)],
+                &activation
+            ),
+            "a line at the budget may have dropped another owner call"
+        );
+    }
+
+    #[test]
+    fn a_loan_call_line_at_the_call_fact_budget_does_not_pair() {
+        use crate::analysis::extract::MAX_CALL_FACTS_PER_LINE;
+        let (mut test, assertion, loan, activation) = loan_case(CHECK, "check(10, true);", 2);
+        assert!(loan_pairs(&test, &assertion, &loan, &activation), "control");
+        let helper_call = test.calls[0].clone();
+        // Identical helper facts pass the "every fact is the helper call"
+        // check, so only the budget guard can refuse the full line.
+        test.calls
+            .extend((1..MAX_CALL_FACTS_PER_LINE).map(|_| helper_call.clone()));
+        assert!(!loan_pairs(&test, &assertion, &loan, &activation));
+    }
+
+    #[test]
     fn line_activation_does_not_pair_through_another_owner_call_on_the_line() {
         let probe = predicate_probe("input >= 10");
         let owner = gate_owner();
@@ -3670,7 +3737,7 @@ mod tests {
         CallFact {
             line: 1,
             name: name.to_string(),
-            text: text.to_string(),
+            text: text.to_string().into(),
         }
     }
 

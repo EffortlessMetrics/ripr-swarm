@@ -960,9 +960,19 @@ commitments and dependent verify/receipt byte hashes follow that exact change.
 Routing, unchanged movement, incomplete receipt and all tamper controls remain.
 The live producer normalization test validates this bounded fixture update.
 
+### #5500 / #5502 — direct-record selector cache generation
+
+The unchanged-after-attempt portable snapshots follow the internal semantic
+cache generation from 1.82 to 1.83. Their content commitments, native verify
+commitments and receipt byte hashes bind that exact metadata change. Semantic
+evidence, historical/noncurrent status, weak/unchanged movement and incomplete
+receipt routing remain unchanged; the producer-equality and tamper tests remain
+strict. The receipt is an existing portable negative-control input, not a new
+receipt-presentation golden.
+
 ### #8592 — classified-cache generation parity
 
-The unchanged-after-attempt before/after corpus generation moves from 1.82 to
-1.83 for check-helper argument pins (RIPR-SPEC-0197). Content commitments and
+The unchanged-after-attempt before/after corpus generation moves from 1.83 to
+1.84 for check-helper argument pins (RIPR-SPEC-0197). Content commitments and
 dependent verify/receipt byte hashes follow that exact change. Routing,
 unchanged movement, incomplete receipt and all tamper controls remain.

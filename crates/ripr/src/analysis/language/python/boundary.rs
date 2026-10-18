@@ -4,7 +4,9 @@
 //! behaves differently when its operands are EQUAL. A strong exact-value
 //! assertion that calls the owner away from that boundary (`reserve(10, 3)`)
 //! still passes after the change, so reach plus a strong oracle does not
-//! discriminate it.
+//! discriminate it. The same rule covers an equality-to-equality constant
+//! change (`n == 11` -> `n == 10`): input 20 takes the else branch both ways.
+//! `!=` and `is` stay outside this gate.
 //!
 //! This mirrors the Rust activation rule
 //! (`analysis/classify/activation.rs::missing_boundary_discriminator`):
@@ -138,20 +140,26 @@ pub(super) struct PythonBoundaryEvidence {
 }
 
 /// Boundary evidence for a changed Predicate line that contains a relational
-/// comparison (`<`, `<=`, `>`, `>=`). Returns None when the line has no
-/// relational comparison (for example `if flag:` or `if x == 5:`), leaving the
-/// caller's existing classification untouched.
+/// comparison (`<`, `<=`, `>`, `>=`) or a same-operator equality (`==` ->
+/// `==`). Returns None when the line has no such comparison (for example
+/// `if flag:`, `if x != 5:`, or `if x is None:`), leaving the caller's
+/// existing classification untouched. `relational_operators` still skips
+/// `==`/`!=` so returned equalities stay return-value probes.
 pub(super) fn python_boundary_evidence(
     line_text: &str,
+    old_line_text: Option<&str>,
     owner: &PythonOwner,
     related_candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
 ) -> Option<PythonBoundaryEvidence> {
     let condition = predicate_condition(line_text);
-    let operators = relational_operators(&condition);
-    if operators.is_empty() {
-        return None;
-    }
+    let relational = relational_operators(&condition);
+    let (operators, old_equality_operands) = if relational.is_empty() {
+        let gate = equality_predicate_gate(&condition, old_line_text)?;
+        (gate.operators, gate.old_operands)
+    } else {
+        (relational, None)
+    };
     let operands = match operators.as_slice() {
         [(start, len)] => simple_comparison_operands(&condition, *start, *len),
         _ => None,
@@ -207,7 +215,8 @@ pub(super) fn python_boundary_evidence(
         });
     };
 
-    let mut observed = false;
+    let mut observed_new = false;
+    let mut observed_old = false;
     let mut left_values = Vec::new();
     let mut right_values = Vec::new();
     for row in &rows {
@@ -216,7 +225,7 @@ pub(super) fn python_boundary_evidence(
         if let (Some(left_value), Some(right_value)) = (&left_value, &right_value)
             && literals_equal(left_value, right_value)
         {
-            observed = true;
+            observed_new = true;
             observed_values.push(ValueFact {
                 line: row.line,
                 text: format!(
@@ -231,7 +240,29 @@ pub(super) fn python_boundary_evidence(
         }
         left_values.extend(left_value);
         right_values.extend(right_value);
+        if let Some((old_left, old_right)) = &old_equality_operands {
+            let old_left_value = resolve_operand(old_left, row, &constants);
+            let old_right_value = resolve_operand(old_right, row, &constants);
+            if let (Some(old_left_value), Some(old_right_value)) =
+                (&old_left_value, &old_right_value)
+                && literals_equal(old_left_value, old_right_value)
+            {
+                observed_old = true;
+                observed_values.push(ValueFact {
+                    line: row.line,
+                    text: format!(
+                        "{} | {}; {}",
+                        row.text,
+                        operand_provenance(old_left, old_left_value, &constants),
+                        operand_provenance(old_right, old_right_value, &constants)
+                    ),
+                    value: format!("{old_left} == {old_right}"),
+                    context: ValueContext::FunctionArgument,
+                });
+            }
+        }
     }
+    let observed = observed_new || observed_old;
     observed_values.sort_by(|a, b| {
         a.line
             .cmp(&b.line)
@@ -255,8 +286,12 @@ pub(super) fn python_boundary_evidence(
     } else {
         None
     };
-    let reason = if observed {
+    let reason = if observed_new {
         format!("A strong related test call places {left} equal to {right}")
+    } else if let Some((old_left, old_right)) = &old_equality_operands
+        && observed_old
+    {
+        format!("A strong related test call places {old_left} equal to {old_right}")
     } else {
         // A literal operand is its own value and a module constant names its
         // one value; only operands that vary with the test input are listed.
@@ -272,8 +307,14 @@ pub(super) fn python_boundary_evidence(
             .filter_map(|operand| module_constant(operand, &constants))
             .map(|constant| format!(" (module constant {})", constant_provenance(constant)))
             .collect::<String>();
+        let place = match &old_equality_operands {
+            Some((old_left, old_right)) if *old_left != left || *old_right != right => {
+                format!("{left} equal to {right} or {old_left} equal to {old_right}")
+            }
+            _ => format!("{left} equal to {right}"),
+        };
         format!(
-            "No strong related test call places {left} equal to {right}{constants}; {}",
+            "No strong related test call places {place}{constants}; {}",
             observed_lists.join("; ")
         )
     };
@@ -424,6 +465,110 @@ fn relational_operators(text: &str) -> Vec<(usize, usize)> {
         idx += 1;
     }
     operators
+}
+
+struct EqualityGate {
+    operators: Vec<(usize, usize)>,
+    old_operands: Option<(String, String)>,
+}
+
+/// `==` -> `==` only. Mixed old forms (`!=`, `is`, relational) stay outside
+/// the gate so complementary mutations keep today's verdict.
+fn equality_predicate_gate(condition: &str, old_line_text: Option<&str>) -> Option<EqualityGate> {
+    if contains_ungated_identity_or_inequality(condition) {
+        return None;
+    }
+    let operators = equality_operators(condition);
+    if operators.len() != 1 {
+        return None;
+    }
+    // `==` -> `==` only: an added line has no old equality to compare.
+    let old = old_line_text?;
+    let old_condition = predicate_condition(old);
+    if contains_ungated_identity_or_inequality(&old_condition)
+        || !relational_operators(&old_condition).is_empty()
+    {
+        return None;
+    }
+    let old_eq = equality_operators(&old_condition);
+    let [(start, len)] = old_eq.as_slice() else {
+        return None;
+    };
+    let old_operands = simple_comparison_operands(&old_condition, *start, *len);
+    Some(EqualityGate {
+        operators,
+        old_operands,
+    })
+}
+
+/// Byte offset and length of every `==` comparison outside string literals.
+/// `!=` is not an equality boundary (handle `==` only).
+fn equality_operators(text: &str) -> Vec<(usize, usize)> {
+    let bytes = text.as_bytes();
+    let mut operators = Vec::new();
+    let mut quote: Option<u8> = None;
+    let mut escaped = false;
+    let mut idx = 0usize;
+    while idx < bytes.len() {
+        let byte = bytes[idx];
+        if escaped {
+            escaped = false;
+            idx += 1;
+            continue;
+        }
+        if byte == b'\\' {
+            escaped = true;
+            idx += 1;
+            continue;
+        }
+        if let Some(active) = quote {
+            if byte == active {
+                quote = None;
+            }
+            idx += 1;
+            continue;
+        }
+        match byte {
+            b'\'' | b'"' => quote = Some(byte),
+            b'#' => break,
+            b'=' => {
+                let next = bytes.get(idx + 1).copied();
+                let prev = idx.checked_sub(1).map(|p| bytes[p]);
+                if next == Some(b'=') && prev != Some(b'!') && prev != Some(b'=') {
+                    operators.push((idx, 2));
+                    idx += 2;
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        idx += 1;
+    }
+    operators
+}
+
+fn contains_ungated_identity_or_inequality(text: &str) -> bool {
+    live_token(text, "!=") || live_keyword(text, "is")
+}
+
+fn live_token(text: &str, token: &str) -> bool {
+    text.match_indices(token)
+        .any(|(idx, _)| !python_text_hides_code(text, idx))
+}
+
+fn live_keyword(text: &str, keyword: &str) -> bool {
+    text.match_indices(keyword).any(|(idx, _)| {
+        let end = idx + keyword.len();
+        !python_text_hides_code(text, idx)
+            && !text[..idx]
+                .chars()
+                .next_back()
+                .is_some_and(is_python_identifier_char)
+            && !text[end..]
+                .chars()
+                .next()
+                .is_some_and(is_python_identifier_char)
+    })
 }
 
 /// The two operands of the only relational comparison in `condition`, when
@@ -690,7 +835,7 @@ pub(super) fn strong_owner_call_rows_with_gaps(
                     };
                     candidate_rows += 1;
                     let line = first_line + text[..offset].matches('\n').count();
-                    let text = call_line_text(text, offset);
+                    let text = call_line_text(text, offset, name.len() + arglist.len() + 2);
                     match (&candidate.test.parametrize, case_arguments.is_empty()) {
                         (Some(parametrize), false) => {
                             rows.extend(parametrize.cases.iter().map(|case| {
@@ -735,12 +880,44 @@ fn owner_call_names(owner: &PythonOwner, test: &PythonTest, method_call: bool) -
     names
 }
 
-fn call_line_text(body: &str, offset: usize) -> String {
+/// The longest source excerpt, in bytes, a call row keeps as evidence text.
+/// A row is kept per owner call and its text is cloned into every value fact
+/// of that call, so an unbounded physical line (`assert f(0) == 1 and f(1) == 1
+/// and ...`) would cost O(calls x line length) memory. An ordinary line is
+/// shown whole; only a longer one is cut to a window of at most this many
+/// bytes around the call (plus up to six bytes of `...` cut markers).
+const CALL_ROW_TEXT_LIMIT: usize = 240;
+/// How much of a cut line is kept before the call; the rest follows it.
+const CALL_ROW_TEXT_LEAD: usize = 60;
+
+fn call_line_text(body: &str, offset: usize, call_len: usize) -> String {
     let start = body[..offset].rfind('\n').map_or(0, |idx| idx + 1);
     let end = body[offset..]
         .find('\n')
         .map_or(body.len(), |idx| offset + idx);
-    body[start..end].trim().to_string()
+    let line = body[start..end].trim();
+    if line.len() <= CALL_ROW_TEXT_LIMIT {
+        return line.to_string();
+    }
+    // Cut to a window that starts a little before the call, on character
+    // boundaries, and mark each cut side.
+    // A call that fits the window is kept whole: the lead shrinks so its
+    // closing parenthesis stays inside.
+    let lead = CALL_ROW_TEXT_LEAD.min(CALL_ROW_TEXT_LIMIT.saturating_sub(call_len));
+    let mut from = offset.saturating_sub(lead).max(start);
+    while !body.is_char_boundary(from) {
+        from -= 1;
+    }
+    let mut to = (from + CALL_ROW_TEXT_LIMIT).min(end);
+    while !body.is_char_boundary(to) {
+        to -= 1;
+    }
+    let window = body[from..to].trim();
+    format!(
+        "{}{window}{}",
+        if from > start { "..." } else { "" },
+        if to < end { "..." } else { "" }
+    )
 }
 
 /// Bind a call's literal arguments to owner parameters. Positional arguments

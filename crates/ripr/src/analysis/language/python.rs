@@ -120,9 +120,9 @@ use related_tests::{
     verify_command_for_test,
 };
 use related_tests::{
-    first_parenthesized_string_argument, import_source_module_matches_owner,
-    strong_test_calls_owner_method_on_bound_receiver, strong_test_imports_owner_from_module,
-    strong_tests_import_only_rival_modules,
+    assertion_calls_method_only_on_foreign_receiver, first_parenthesized_string_argument,
+    import_source_module_matches_owner, strong_test_calls_owner_method_on_bound_receiver,
+    strong_test_imports_owner_from_module, strong_tests_import_only_rival_modules,
 };
 #[cfg(test)]
 use sink_alignment::strong_oracle_observes_owner;
@@ -138,6 +138,8 @@ pub(crate) use source_facts::{detect_python_test_framework, detect_python_test_f
 use source_facts::{extract_source_facts, source_fact_snapshot_observation};
 mod source_utils;
 use source_utils::{is_test_file, normalized_path};
+mod fixtures;
+mod module_callees;
 mod same_class_callees;
 mod static_limits;
 mod term_activation;
@@ -211,6 +213,10 @@ struct PythonOwner {
     /// non-methods and `@staticmethod`. Used only to name a Python
     /// transitive-reach limitation on silent `no_static_path` findings (#4765).
     same_class_callees: Vec<String>,
+    /// Names this function/method body calls as bare `name(` calls, minus
+    /// parameters and names it rebinds. Used only to relate a test that calls
+    /// a same-module caller of a changed helper (`helper_owner_call`, #4568).
+    module_callees: Vec<String>,
     /// Dotted path of the enclosing classes of a method owner, outermost
     /// first (`Outer.Inner` for `Outer.Inner.__init__`). Empty for other
     /// owners. `qualified_name` keeps only the innermost class.
@@ -289,7 +295,14 @@ struct PythonTest {
     /// Recognized test controls resolved before test-body imports can shadow aliases.
     activation_controls: Vec<test_activation::PythonActivationControl>,
     fixtures: Vec<String>,
+    /// Definitions the `fixtures` parameters resolve to, in the test's module
+    /// or a `conftest.py` up its directory chain. Filled by the workspace
+    /// pass (`fixtures.rs`); empty until then.
+    fixture_defs: Vec<PythonFixtureDef>,
     parametrized: bool,
+    /// Argnames a pytest parametrize decorator supplies directly (not routed
+    /// to a fixture by `indirect=`); never resolved as fixtures (#4563).
+    direct_parametrized: Vec<String>,
     /// Literal `@pytest.mark.parametrize` cases, when statically certain (#4559).
     parametrize: Option<parametrize::PythonParametrizeCases>,
     /// Parameters Hypothesis `@given(...)` supplies (#6601); never fixtures.
@@ -302,6 +315,16 @@ struct PythonTest {
     /// How the test and its module can rebind names and attributes; guards
     /// module-constant boundary resolution (`boundary.rs`, #4227).
     constant_rebinding: module_constants::PythonTestRebinding,
+}
+
+/// A module-level `@pytest.fixture` function: its body is read with the same
+/// relation rules as a test body when a test names it as a parameter (#4563).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PythonFixtureDef {
+    name: String,
+    file: PathBuf,
+    body_text: String,
+    imports: Vec<PythonImport>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -663,6 +686,7 @@ impl PythonAdapter {
         );
         let mut all_owners: Vec<PythonOwner> = Vec::new();
         let mut all_tests: Vec<PythonTest> = Vec::new();
+        let mut fixture_defs_by_file: BTreeMap<PathBuf, Vec<PythonFixtureDef>> = BTreeMap::new();
         let mut docstring_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
             BTreeMap::new();
         let mut import_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
@@ -698,12 +722,16 @@ impl PythonAdapter {
             }
             docstring_ranges_by_file.insert(relative.clone(), facts.docstring_line_ranges.clone());
             import_ranges_by_file.insert(relative.clone(), facts.import_line_ranges.clone());
+            if !facts.fixtures.is_empty() {
+                fixture_defs_by_file.insert(relative.clone(), facts.fixtures.clone());
+            }
             if is_test_file(relative) {
                 all_tests.extend(facts.tests);
             } else {
                 all_owners.extend(facts.owners);
             }
         }
+        fixtures::attach_fixture_defs(&mut all_tests, &fixture_defs_by_file);
         reexports::apply_package_reexports(&mut all_owners, |file| {
             workspace_read.sources.get(file).map(String::as_str)
         });
@@ -1031,6 +1059,12 @@ mod assertion_selection_tests;
 
 #[cfg(test)]
 mod deleted_lines_tests;
+
+#[cfg(test)]
+mod fixtures_tests;
+
+#[cfg(test)]
+mod helper_owner_call_tests;
 
 #[cfg(test)]
 mod new_declaration_tests;

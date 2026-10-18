@@ -355,10 +355,23 @@ The established selector remains `origin/main...HEAD`; while authoring
 uncommitted or untracked specs, run `cargo xtask check-support-tiers` explicitly.
 This is one applicable local scan; precommit and hosted routing are unchanged.
 
+`check-fast` runs the existing exact help/parser parity library test when the
+committed diff touches Rust source in the command-parser owners `cli`, `app`,
+`mcp`, or `output/first_pr` (module files and directories). This catches parser
+extractions whose help-owner mapping was left behind, including parser-only
+edits. The validator's registration, resolution and bidirectional flag checks
+remain unchanged. Native failure or zero/ignored/missing test execution fails
+the gate; unrelated analyzer, renderer and documentation paths skip it. The
+report and strict selector receipt retain the `cli-help-parity` obligation.
+Cold library-test compilation is additional work; the single selected case
+does not claim full CLI/runtime or hosted qualification. Uncommitted edits keep
+the existing selector semantics; run the focused test directly while authoring.
+
 Local command diagnostics reuse the existing reports: `precommit-v2.{json,md}`
 records diff-check and selected Clippy children, `file-policy.md` records actual
-covered-by warmup/list children, and `check-fast.md` records fmt and workspace
-Clippy children. Other commands are outside this bounded capture scope. Reused
+covered-by warmup/list children, and `check-fast.md` records fmt, selected CLI
+help parity and workspace Clippy children. Other commands are outside this
+bounded capture scope. Reused
 selectors and skipped warmups create no execution rows. Precommit diagnostics
 remain bound by its report digest; they add no acceptance or waiver authority.
 The nullable numeric `exit_code` comes directly from the observed native status;

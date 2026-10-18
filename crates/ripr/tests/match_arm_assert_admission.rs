@@ -148,6 +148,20 @@ fn shadowed_and_deferred_helper_assertions_are_refused() -> Result<(), String> {
     )
 }
 #[test]
+fn plain_import_binding_the_std_root_keeps_the_glob_foreign() -> Result<(), String> {
+    let body = "assert!(matches!(actual, super::SelectionRequest::Unresolved(_)));";
+    check("use other::std;\nuse std::prelude::v1::*;", body, false)
+}
+#[test]
+fn self_import_binding_the_std_root_keeps_the_glob_foreign() -> Result<(), String> {
+    let body = "assert!(matches!(actual, super::SelectionRequest::Unresolved(_)));";
+    check(
+        "use other::std::{self};\nuse std::prelude::v1::*;",
+        body,
+        false,
+    )
+}
+#[test]
 fn unrelated_assertion_remains_unconfirmed() -> Result<(), String> {
     let finding = analyze("", "assert!(true);")?;
     assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
@@ -161,7 +175,7 @@ fn unrelated_assertion_remains_unconfirmed() -> Result<(), String> {
 #[test]
 fn unestablished_plain_assertion_names_its_macro_in_human_and_json() -> Result<(), String> {
     let output = analyze_output(
-        "use std::prelude::v1::*;",
+        "use rayon::prelude::*;",
         "assert!(matches!(actual, super::SelectionRequest::Unresolved(_)));",
     )?;
     let finding = output

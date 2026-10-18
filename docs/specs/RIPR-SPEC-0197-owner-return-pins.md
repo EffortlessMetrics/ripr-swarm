@@ -2389,8 +2389,8 @@ assertions. This repair shares the existing callback without that larger migrati
   check-helper argument substitution, literal expected values and rendered
   template reading; `OwnerReturnPin::substituted_helper_operands` and
   `substituted_pin` apply them before the operand readings, and the
-  seam-cache generations move to classified full `1.83`, sharded and
-  compact `0.89`.
+  seam-cache generations move to classified full `1.84`, sharded and
+  compact `0.90`.
 - `crates/ripr/src/analysis/classify/operand_pin.rs`: rule 7's
   operand-only pin, applied in `classifier/evidence.rs`.
 - `crates/ripr/src/analysis/classifier/evidence.rs`: establishes the pin
