@@ -900,36 +900,67 @@ fn macro_binding_ambiguities(
     // own calls opaque in turn.
     let mut bound: BTreeSet<String> = ambiguous.iter().map(|(name, _)| name.clone()).collect();
     let mut reported = BTreeSet::new();
+    // Calls spelled as tokens inside another call's tree (`dbg!(vec!(..))`)
+    // are no `MacroCall` nodes: the parser keeps `vec ! (..)` flat beside a
+    // nested tree. They count as calls of their bare name too (#8446).
+    let mut sites = Vec::new();
+    for node in parse.tree().syntax().descendants() {
+        if let Some(call) = ast::MacroCall::cast(node.clone()) {
+            if let (Some(path), Some(tree)) = (call.path(), call.token_tree()) {
+                sites.push((
+                    path.syntax().text().to_string(),
+                    tree,
+                    node.clone(),
+                    Some(call),
+                ));
+            }
+        } else if let Some(tree) = ast::TokenTree::cast(node.clone())
+            && let Some(name) = nested_call_name(&tree)
+        {
+            sites.push((name, tree, node.clone(), None));
+        }
+    }
     loop {
         let before = bound.len();
-        for node in parse.tree().syntax().descendants() {
-            let Some(call) = ast::MacroCall::cast(node.clone()) else {
-                continue;
-            };
-            let Some(path) = call.path() else { continue };
-            let path = path.syntax().text().to_string();
-            if !bound.contains(path.trim_start_matches("r#")) || !is_trusted_macro(&path, trusted) {
+        for (path, tree, node, call) in &sites {
+            if !bound.contains(path.trim_start_matches("r#")) || !is_trusted_macro(path, trusted) {
                 continue;
             }
-            let Some(tree) = call.token_tree() else {
-                continue;
-            };
             let tokens: Vec<_> = tree
                 .syntax()
                 .descendants_with_tokens()
                 .filter_map(|element| element.into_token())
                 .filter(|token| !token.kind().is_trivia())
                 .collect();
+            // As for an untrusted wrapper: an attribute in the arguments may
+            // be applied by the expansion to an item.
+            if let Some(attribute) = tokens.iter().find_map(|token| {
+                let word = token.text().trim_start_matches("r#");
+                matches!(word, "macro_use" | "no_implicit_prelude").then_some(word)
+            }) {
+                return all(
+                    line_of(node),
+                    MacroBindingKind::ArgumentAttribute {
+                        wrapper: path.clone(),
+                        attribute: attribute.to_string(),
+                    },
+                    false,
+                );
+            }
             // As for an untrusted wrapper: a macro whose only definition
             // shows an expansion that cannot bind a name stays transparent.
-            if binding_free_local_wrapper(&binding_free, &call, &tokens, trusted) {
+            // A nested call has no node to locate that definition from, so
+            // it never takes the exemption.
+            if call.as_ref().is_some_and(|call| {
+                binding_free_local_wrapper(&binding_free, call, &tokens, trusted)
+            }) {
                 continue;
             }
             for token in &tokens {
                 let name = token.text().trim_start_matches("r#");
                 if trusted.contains(&name) {
                     bound.insert(name.to_string());
-                    let line = line_of(&node);
+                    let line = line_of(node);
                     if !reported.insert((name.to_string(), line, path.clone())) {
                         continue;
                     }
@@ -950,6 +981,23 @@ fn macro_binding_ambiguities(
         }
     }
     ambiguous
+}
+
+/// The bare name of a macro call written as `name ! (..)` tokens directly
+/// before a nested token tree, if any. A top-level call is a `MacroCall`
+/// node whose `!` follows a path node, so it never matches.
+fn nested_call_name(tree: &ast::TokenTree) -> Option<String> {
+    let mut previous = std::iter::successors(tree.syntax().prev_sibling_or_token(), |element| {
+        element.prev_sibling_or_token()
+    })
+    .filter(|element| !matches!(element, ra_ap_syntax::NodeOrToken::Token(token) if token.kind().is_trivia()));
+    let bang = previous.next()?.into_token()?;
+    if bang.text() != "!" {
+        return None;
+    }
+    let name = previous.next()?.into_token()?;
+    (name.kind() == ra_ap_syntax::SyntaxKind::IDENT)
+        .then(|| name.text().trim_start_matches("r#").to_string())
 }
 
 /// `pretty_assertions` exports `assert_eq!`/`assert_ne!` as drop-in
