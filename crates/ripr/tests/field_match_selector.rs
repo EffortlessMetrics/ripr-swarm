@@ -546,6 +546,26 @@ fn helper_mutable_field_projection_refuses_unrelated_or_invalidated_values()
             "let mut lease = fixture(); lease.settled_elapsed_ms = Some(1001); lease.settled_elapsed_ms.take(); assert_eq!(charge(&lease), 600);",
         ),
         (
+            "parenthesized implicit borrow",
+            "let mut lease = fixture(); lease.settled_elapsed_ms = Some(1001); ((lease.settled_elapsed_ms)).take(); assert_eq!(charge(&lease), 600);",
+        ),
+        (
+            "parenthesized mutable field borrow",
+            "let mut lease = fixture(); lease.settled_elapsed_ms = Some(1001); *(&mut (lease.settled_elapsed_ms)) = None; assert_eq!(charge(&lease), 600);",
+        ),
+        (
+            "field write in macro",
+            "let mut lease = fixture(); lease.settled_elapsed_ms = Some(1001); assert_eq!({ lease.settled_elapsed_ms = None; charge(&lease) }, 600);",
+        ),
+        (
+            "attributed local shadow",
+            "let lease = fixture(); #[cfg(any())] let lease = Lease { timeout_sec: 600, settled_elapsed_ms: Some(1001) }; assert_eq!(charge(&lease), 600);",
+        ),
+        (
+            "attributed field write",
+            "let mut lease = fixture(); lease.settled_elapsed_ms = Some(1001); #[cfg(all())] { lease.settled_elapsed_ms = None; } assert_eq!(charge(&lease), 600);",
+        ),
+        (
             "implicit borrow in macro",
             "let mut lease = fixture(); lease.settled_elapsed_ms = Some(1001); assert_eq!(lease.settled_elapsed_ms.take(), Some(1001)); assert_eq!(charge(&lease), 600);",
         ),
@@ -621,5 +641,30 @@ fn helper_mutable_field_projection_refuses_unrelated_or_invalidated_values()
             "{case}: unsupported input stays named"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn a_callable_module_binding_cannot_borrow_a_root_helpers_record()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = "struct Lease { elapsed: Option<u128>, timeout: u64 }\nfn fixture() -> Lease { Lease { elapsed: Some(1001), timeout: 600 } }\nfn charge(lease: &Lease) -> u64 {\n    match lease.elapsed {\n        Some(ms) => ms as u64,\n        None => lease.timeout,\n    }\n}\n#[cfg(test)] mod tests {\n    use super::*;\n    const fixture: fn() -> Lease = || Lease { elapsed: None, timeout: 600 };\n    #[test] fn legacy() {\n        let lease = fixture();\n        assert_eq!(charge(&lease), 600);\n    }\n}\n";
+    let diff = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -5 +5 @@\n-        Some(ms) => 0,\n+        Some(ms) => ms as u64,\n";
+    let fixture = Fixture::new(source, diff)?;
+    let output = fixture.check()?;
+    assert!(!output.findings.is_empty());
+    assert!(
+        output
+            .findings
+            .iter()
+            .all(|finding| finding.class != ExposureClass::Exposed)
+    );
+    assert!(
+        output
+            .findings
+            .iter()
+            .any(|finding| finding.static_limit_kind
+                == Some(ripr::domain::StaticLimitKind::RustFieldMatchSelectorUnresolved)),
+        "the helper namespace remains unresolved, not an established sibling"
+    );
     Ok(())
 }

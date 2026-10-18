@@ -47,6 +47,15 @@ impl ValueEnvFacts {
         let parsed_source = crate::analysis::syntax::parse_clean_source_file(source)?;
         let test_tree = parsed_test.tree();
         let tree = parsed_source.tree();
+        // Conditional attributes can remove bindings or writes without changing
+        // their lexical order. This slice has no cfg evaluation authority.
+        if test_tree
+            .syntax()
+            .descendants()
+            .any(|node| ast::Attr::can_cast(node.kind()))
+        {
+            return None;
+        }
         let binding = test_tree
             .syntax()
             .descendants()
@@ -225,6 +234,18 @@ fn closed_record_field(
             let [function] = functions.as_slice() else {
                 return None;
             };
+            if source
+                .syntax()
+                .descendants()
+                .filter_map(ast::Name::cast)
+                .any(|bound| {
+                    let text = bound.text();
+                    text.strip_prefix("r#").unwrap_or(text) == name
+                        && bound.syntax().parent().as_ref() != Some(function.syntax())
+                })
+            {
+                return None;
+            }
             if function.async_token().is_some()
                 || function.unsafe_token().is_some()
                 || function.const_token().is_some()
@@ -320,7 +341,7 @@ pub(super) fn closed_option(text: &str) -> Option<String> {
 }
 
 fn field_use_is_closed(field: &ast::FieldExpr) -> bool {
-    let Some(parent) = field.syntax().parent() else {
+    let Some(parent) = field_context(field) else {
         return false;
     };
     !ast::MethodCallExpr::can_cast(parent.kind())
@@ -344,7 +365,7 @@ fn macro_uses_are_closed(call: &ast::MacroCall, object: &str, depth: usize) -> O
         }
         let parent = path.syntax().parent()?;
         if let Some(field) = ast::FieldExpr::cast(parent.clone()) {
-            if field_use_is_closed(&field) {
+            if field_use_is_closed(&field) && !field_is_assignment_target(&field) {
                 continue;
             }
             return Some(false);
@@ -360,4 +381,18 @@ fn macro_uses_are_closed(call: &ast::MacroCall, object: &str, depth: usize) -> O
         }
     }
     Some(true)
+}
+
+fn field_context(field: &ast::FieldExpr) -> Option<ra_ap_syntax::SyntaxNode> {
+    let mut parent = field.syntax().parent()?;
+    while ast::ParenExpr::can_cast(parent.kind()) {
+        parent = parent.parent()?;
+    }
+    Some(parent)
+}
+
+fn field_is_assignment_target(field: &ast::FieldExpr) -> bool {
+    field_context(field)
+        .and_then(ast::BinExpr::cast)
+        .is_some_and(|binary| matches!(binary.op_kind(), Some(ast::BinaryOp::Assignment { .. })))
 }
