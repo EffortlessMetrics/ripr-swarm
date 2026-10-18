@@ -189,8 +189,8 @@ enum SnapshotRunner {
 }
 
 /// What the runner configs above the test file say.
-struct RunnerConfigs {
-    mentions_vitest: bool,
+pub(super) struct RunnerConfigs {
+    pub(super) mentions_vitest: bool,
 }
 
 /// Text that moves snapshot files away from the default location or makes
@@ -219,25 +219,55 @@ fn mentions_update_key(text: &str) -> bool {
     })
 }
 
-/// `true` when a `package.json` script passes a runner config by path
-/// (`--config x`, `--config=x`, `-c x`) or a project list, so the config the
-/// runner uses may be one the directory walk does not read.
+/// Flags that point a runner at a config, project list or root the
+/// directory walk does not read.
+const CONFIG_FLAGS: [&str; 7] = [
+    "--config",
+    "--projects",
+    "--rootDir",
+    "--root",
+    "--dir",
+    "--workspace",
+    "-r",
+];
+
+/// `true` when a `package.json` passes a runner config, project list or root
+/// by path: a script flag (`--config x`, `--config=x`, `-c x`, `-cx`,
+/// `--rootDir`, Vitest `--root` / `-r` / `--dir` / `--workspace`) or a
+/// `"projects"` / `"rootDir"` key under the `jest` key. Either way the
+/// config the runner uses may be one the directory walk does not read.
+/// Over-matching (a `node -r` preload) only refuses.
 fn passes_config_by_path(text: &str) -> bool {
-    text.split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | '[' | ']'))
-        .any(|token| token == "-c" || token.starts_with("--config") || token == "--projects")
+    text.contains("\"projects\"")
+        || text.contains("\"rootDir\"")
+        || text
+            .split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | '[' | ']'))
+            .any(|token| {
+                let flag = token.split('=').next().unwrap_or(token);
+                CONFIG_FLAGS.contains(&flag)
+                    || token.starts_with("--config")
+                    || (token.starts_with("-c") && !token.starts_with("--"))
+            })
 }
 
 /// Read every runner config and `package.json` directly in `directory` into
 /// `configs`, or `None` when one mentions a snapshot override, passes a
 /// config by path, cannot be read, or sits in a symlinked directory.
-fn scan_config_directory(directory: &Path, configs: &mut RunnerConfigs) -> Option<()> {
+/// `allow_symlink` is `true` only for the analysis root itself, whose path is
+/// the user's own checkout path and may be a link.
+fn scan_config_directory(
+    directory: &Path,
+    allow_symlink: bool,
+    configs: &mut RunnerConfigs,
+) -> Option<()> {
     // `read_dir` follows a symlinked directory, so a link could point at a
     // tree this reader never judged; `read_config_capped` already refuses a
     // symlinked file.
-    if std::fs::symlink_metadata(directory)
-        .ok()?
-        .file_type()
-        .is_symlink()
+    if !allow_symlink
+        && std::fs::symlink_metadata(directory)
+            .ok()?
+            .file_type()
+            .is_symlink()
     {
         return None;
     }
@@ -273,16 +303,24 @@ fn scan_config_directory(directory: &Path, configs: &mut RunnerConfigs) -> Optio
 const ABOVE_ROOT_LIMIT: usize = 16;
 
 /// The directories above `root` up to and including the first one that holds
-/// a repository marker, looking at most `limit` levels up. Empty when `root`
-/// is itself the repository top, and when no marker is in reach: a config
-/// above an unknown boundary cannot be told from an unrelated file.
-pub(super) fn directories_above_root(root: &Path, limit: usize) -> Vec<&Path> {
+/// a repository marker, looking at most `limit` levels up. The root is
+/// canonicalized first so a symlinked analysis root climbs its real parents.
+/// Empty when `root` is itself the repository top, and when no marker is in
+/// reach (a tree exported without one, or one nested deeper than `limit`):
+/// without a boundary there is no monorepo this tree can be known to sit in,
+/// so nothing above the root is read.
+pub(super) fn directories_above_root(root: &Path, limit: usize) -> Vec<PathBuf> {
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     if root.join(".git").exists() {
         return Vec::new();
     }
     let above: Vec<&Path> = root.ancestors().skip(1).take(limit).collect();
     match above.iter().position(|dir| dir.join(".git").exists()) {
-        Some(boundary) => above.into_iter().take(boundary + 1).collect(),
+        Some(boundary) => above
+            .into_iter()
+            .take(boundary + 1)
+            .map(Path::to_path_buf)
+            .collect(),
         None => Vec::new(),
     }
 }
@@ -295,6 +333,15 @@ pub(super) fn directories_above_root(root: &Path, limit: usize) -> Vec<&Path> {
 /// boundary within reach nothing above `root` is read: a monorepo config
 /// there cannot be told from an unrelated file.
 fn runner_configs(root: &Path, directory: &Path) -> Option<RunnerConfigs> {
+    runner_configs_within(root, directory, ABOVE_ROOT_LIMIT)
+}
+
+/// [`runner_configs`] with an explicit look-up limit above the root.
+pub(super) fn runner_configs_within(
+    root: &Path,
+    directory: &Path,
+    above_root_limit: usize,
+) -> Option<RunnerConfigs> {
     let mut configs = RunnerConfigs {
         mentions_vitest: false,
     };
@@ -303,11 +350,15 @@ fn runner_configs(root: &Path, directory: &Path) -> Option<RunnerConfigs> {
         if crate::analysis::committed_source::snapshot_inputs_differ_in(root, relative) {
             return None;
         }
-        scan_config_directory(&root.join(relative), &mut configs)?;
+        scan_config_directory(
+            &root.join(relative),
+            relative.as_os_str().is_empty(),
+            &mut configs,
+        )?;
         current = relative.parent();
     }
-    for dir in directories_above_root(root, ABOVE_ROOT_LIMIT) {
-        scan_config_directory(dir, &mut configs)?;
+    for dir in directories_above_root(root, above_root_limit) {
+        scan_config_directory(&dir, false, &mut configs)?;
     }
     Some(configs)
 }

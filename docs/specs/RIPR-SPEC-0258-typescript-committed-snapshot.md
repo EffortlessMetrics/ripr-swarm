@@ -85,8 +85,19 @@ runner's entry for it can be named and is committed:
   to the root mentions `snapshotResolver`, `resolveSnapshotPath`,
   `snapshotEnvironment`, `updateSnapshot`, `--update`, ` -u` or `"-u"`, no
   runner config holds an `update` key (`update:`, `update :`,
-  `"update":`), and each such file reads; a moved file or a run that
-  rewrites snapshots no longer fails on a changed value;
+  `"update":`), no `package.json` passes a config, project list or root
+  by path (a script flag `--config`, `--config=`, `-c`, `-cx`, `--projects`,
+  `--rootDir`, `--root`, `-r`, `--dir` or `--workspace`, or a `"projects"` or
+  `"rootDir"` key), and each such file reads; a `<stem>.config.<ext>` whose
+  stem has a `.`, `-` or `_` separated part `jest`, `vitest` or `vite`
+  (`jest.unit.config.js`) is read the same way; a moved file or a run that
+  rewrites snapshots no longer fails on a changed value. The walk continues
+  above the analysis root, starting from the canonicalized root so a
+  symlinked root climbs its real parents, up to the first directory holding
+  a repository marker (at most 16 levels). With no marker in reach (a tree
+  exported without one, or nested deeper than 16 levels) nothing above the
+  root is read and credit is kept: that case has no known monorepo. A
+  symlinked directory inside the root is refused;
 - the header agrees with the runner those files name: a Vitest header
   needs a `vite*` config or a mention of `vitest`, and a Jest header needs
   neither. The header names the runner that wrote the file, and the other
@@ -163,6 +174,8 @@ RIPR-SPEC-0243 ladder, including the observation guard.
 - A runner config passed by path is not read; a `package.json` script that
   passes one refuses instead. A config above the repository boundary, or
   above the root when no boundary is in reach, is not read.
+- Scripts that call a shell script or Makefile, and configs reached
+  through them, are not seen.
 - A committed-history run does not compare configs above the analysis root
   with `HEAD`.
 - An untracked or ignored `.snap` file is refused only in a
@@ -242,7 +255,9 @@ RIPR-SPEC-0243 ladder, including the observation guard.
   `snapshot_input_differing_from_head_stays_medium` pins example 6;
   `config_passed_by_path_or_custom_named_stays_medium`,
   `config_above_the_analysis_root_is_read_up_to_the_repository`,
-  `config_above_the_root_without_a_repository_boundary_is_not_read` and
+  `config_above_the_root_is_read_only_within_reach_of_the_marker`,
+  `symlinked_analysis_root_reads_the_real_parents`,
+  `flags_and_keys_that_move_the_runner_config_stay_medium` and
   `symlinked_test_directory_stays_medium` pin example 7.
 - `crates/ripr/src/analysis/committed_source/tests.rs`:
   `porcelain_parser_records_unrouted_snapshot_inputs` and

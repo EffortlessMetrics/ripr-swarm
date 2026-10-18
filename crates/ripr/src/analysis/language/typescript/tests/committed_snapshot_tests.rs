@@ -585,21 +585,97 @@ fn config_above_the_analysis_root_is_read_up_to_the_repository() -> Result<(), S
 #[test]
 fn directories_above_the_root_stop_at_the_repository_boundary() -> Result<(), String> {
     let (outer, package_root) = monorepo("snap-boundary", Some(".git/HEAD"))?;
-    let reached: Vec<PathBuf> = directories_above_root(&package_root, 16)
-        .into_iter()
-        .map(Path::to_path_buf)
-        .collect();
+    let outer = outer.canonicalize().map_err(|err| err.to_string())?;
+    let reached = directories_above_root(&package_root, 16);
     // A marker beyond the look-up limit is not in reach, so nothing is read.
-    let beyond: Vec<PathBuf> = directories_above_root(&package_root, 1)
-        .into_iter()
-        .map(Path::to_path_buf)
-        .collect();
+    let beyond = directories_above_root(&package_root, 1);
     // The repository top itself has nothing above it to read.
     let top = directories_above_root(&outer, 16).len();
     let _ = std::fs::remove_dir_all(&outer);
     assert_eq!(reached, vec![outer.join("packages"), outer.clone()]);
     assert!(beyond.is_empty(), "{beyond:?}");
     assert_eq!(top, 0);
+    Ok(())
+}
+
+/// The credit for `test/price.test.ts` under `package_root` when the walk
+/// above the root may climb `limit` levels.
+fn strengths_within(package_root: &Path, limit: usize) -> Option<()> {
+    runner_configs_within(package_root, Path::new("test"), limit).map(|_| ())
+}
+
+/// RIPR-SPEC-0258 example 7, end to end through the config walk: a monorepo
+/// config with a `snapshotResolver` above the root refuses when the walk
+/// reaches the repository marker, and is not read (credit is kept, as the
+/// spec states) when the marker is beyond the look-up limit.
+#[test]
+fn config_above_the_root_is_read_only_within_reach_of_the_marker() -> Result<(), String> {
+    let (outer, package_root) = monorepo("snap-reach", Some(".git/HEAD"))?;
+    let written = ts_write_file(&outer.join("jest.config.js"), RESOLVER_CONFIG);
+    let reached = strengths_within(&package_root, 16);
+    let out_of_reach = strengths_within(&package_root, 1);
+    let _ = std::fs::remove_dir_all(&outer);
+    written?;
+    assert!(reached.is_none(), "boundary in reach: refuse");
+    assert!(out_of_reach.is_some(), "boundary out of reach: not read");
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_analysis_root_reads_the_real_parents() -> Result<(), String> {
+    let (outer, package_root) = monorepo("snap-root-link", Some(".git/HEAD"))?;
+    let link_parent = ts_unique_tempdir("snap-root-link-parent")?;
+    let link = link_parent.join("pkg-link");
+    let linked = std::os::unix::fs::symlink(&package_root, &link).map_err(|err| err.to_string());
+    let plain = strengths_at(&link);
+    let written = ts_write_file(&outer.join("jest.config.js"), RESOLVER_CONFIG);
+    let moved = strengths_at(&link);
+    let _ = std::fs::remove_dir_all(&outer);
+    let _ = std::fs::remove_dir_all(&link_parent);
+    linked?;
+    written?;
+    assert_eq!(plain, vec![OracleStrength::Strong]);
+    assert_eq!(moved, vec![OracleStrength::Medium]);
+    Ok(())
+}
+
+#[test]
+fn flags_and_keys_that_move_the_runner_config_stay_medium() -> Result<(), String> {
+    let snap = jest_snap(&[("price 1", "140")]);
+    for text in [
+        "{ \"scripts\": { \"test\": \"jest -cconfig/jest.js\" } }",
+        "{ \"scripts\": { \"test\": \"jest --rootDir src\" } }",
+        "{ \"scripts\": { \"test\": \"vitest --root pkg\" } }",
+        "{ \"scripts\": { \"test\": \"vitest -r pkg\" } }",
+        "{ \"scripts\": { \"test\": \"vitest --dir pkg\" } }",
+        "{ \"scripts\": { \"test\": \"vitest --workspace w.ts\" } }",
+        "{ \"jest\": { \"projects\": [\"<rootDir>/a\"] } }",
+        "{ \"jest\": { \"rootDir\": \"src\" } }",
+    ] {
+        assert_eq!(
+            strengths(
+                "snap-flags",
+                PRICE_TEST,
+                &[(SNAP_PATH, &snap), ("package.json", text)]
+            )?,
+            vec![OracleStrength::Medium],
+            "{text}"
+        );
+    }
+    // Names that merely contain a runner's letters are not runner configs, so
+    // an override-looking word in them does not refuse.
+    for name in ["invited.config.json", "service.config.ts"] {
+        assert_eq!(
+            strengths(
+                "snap-not-runner",
+                PRICE_TEST,
+                &[(SNAP_PATH, &snap), (name, RESOLVER_CONFIG)]
+            )?,
+            vec![OracleStrength::Strong],
+            "{name}"
+        );
+    }
     Ok(())
 }
 
