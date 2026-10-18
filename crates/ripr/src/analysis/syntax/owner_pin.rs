@@ -478,7 +478,9 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
         {
             names.extend(trusted(name.text()));
         }
-        if let Some(body) = macro_body_bindings(&node, &|name| trusted(name).is_some()) {
+        if let Some(body) =
+            macro_body_bindings(&node, &|name| trusted(name).is_some(), &|_, _, _| false)
+        {
             let trusted_name = ast::MacroRules::cast(node.clone())
                 .and_then(|item| item.name())
                 .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()))
@@ -661,7 +663,17 @@ fn macro_binding_ambiguities(
                 ));
             }
         }
-        if let Some(body) = macro_body_bindings(&node, &|name| trusted.contains(&name)) {
+        if let Some(body) = macro_body_bindings(
+            &node,
+            &|name| trusted.contains(&name),
+            // The same rule as a `use` item outside a macro: a verified,
+            // unshadowed drop-in import keeps the assertion's meaning (#8149).
+            &|root, name, external| {
+                drop_in_crates(name).contains(&root)
+                    && !drop_in_shadowed(root, external)
+                    && drop_in_verified(root)
+            },
+        ) {
             let macro_name = ast::MacroRules::cast(node.clone())
                 .and_then(|item| item.name())
                 .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()))
@@ -1011,13 +1023,18 @@ const DROP_IN_ASSERTION_CRATES: &[&str] = &["pretty_assertions"];
 /// is the one binding that makes the bare macro expect-test's.
 const EXPECT_TEST_CRATES: &[&str] = &["expect_test"];
 
-fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
-    let crates = match name {
+/// The crates whose export under `name` is a drop-in for the trusted macro.
+fn drop_in_crates(name: &str) -> &'static [&'static str] {
+    match name {
         "assert_eq" | "assert_ne" => DROP_IN_ASSERTION_CRATES,
         "expect" | "expect_file" => EXPECT_TEST_CRATES,
         "json" => &["serde_json"],
-        _ => return false,
-    };
+        _ => &[],
+    }
+}
+
+fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
+    let crates = drop_in_crates(name);
     // Ancestor trees run inner to outer; reverse each path, then the whole.
     let mut segments: Vec<String> = item
         .syntax()
@@ -1482,6 +1499,7 @@ fn transcriber_tokens(tokens: &[ra_ap_syntax::SyntaxToken]) -> Vec<&ra_ap_syntax
 fn macro_body_bindings(
     definition: &SyntaxNode,
     trusted: &dyn Fn(&str) -> bool,
+    drop_in_ok: &dyn Fn(&str, &str, bool) -> bool,
 ) -> Option<MacroBodyBindings> {
     use ra_ap_syntax::SyntaxKind::{BANG, COLON, COLON2, COMMA, DOLLAR, R_CURLY, SEMICOLON, STAR};
     if !ast::MacroRules::can_cast(definition.kind()) && !ast::MacroDef::can_cast(definition.kind())
@@ -1541,6 +1559,23 @@ fn macro_body_bindings(
                 let mut start = index + 1;
                 while matches!(kind(start), Some(COLON | COLON2)) {
                     start += 1;
+                }
+                // `use root::name;` of a verified drop-in binds the standard
+                // assertion's meaning, as it does outside a macro (#8149).
+                // A token tree keeps `::` as two `:` tokens, so accept both.
+                let separator = if kind(start + 1) == Some(COLON2) {
+                    1
+                } else if kind(start + 1) == Some(COLON) && kind(start + 2) == Some(COLON) {
+                    2
+                } else {
+                    0
+                };
+                if separator > 0
+                    && end == start + 2 + separator
+                    && let (Some(root), Some(name)) = (word(start), word(start + 1 + separator))
+                    && drop_in_ok(root, name, start > index + 1)
+                {
+                    continue;
                 }
                 // `$crate` is this crate; any other fragment is unknown.
                 let root = if kind(start) == Some(DOLLAR) {
