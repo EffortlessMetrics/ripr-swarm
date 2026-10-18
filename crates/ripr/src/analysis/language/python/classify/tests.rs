@@ -1,6 +1,7 @@
 //! Discriminator narration must follow the final classification, not oracle rank.
 
 use super::super::owners_tests::{extract_owners, extract_tests};
+use super::super::related_tests::TestLookup;
 use super::classify_change_with_old;
 use super::classify_change_with_source;
 use crate::domain::{ExposureClass, Finding, OracleStrength, StageState};
@@ -1705,5 +1706,40 @@ fn guarded_arm_gate_stays_off_without_source() -> Result<(), String> {
     )
     .ok_or_else(|| "behavioral fixture must produce a finding".to_string())?;
     assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+// Many trivial tests: joining each related test back to its source facts must
+// be an identity lookup, not a scan of every test (the scan made one finding
+// cost O(tests^2)). Counting assertions, not wall-clock.
+#[test]
+fn many_tests_join_related_tests_by_identity_and_keep_credit() -> Result<(), String> {
+    const TESTS: usize = 400;
+    let mut tests = String::from("from src.subject import score\n");
+    for index in 0..TESTS {
+        tests.push_str(&format!(
+            "\ndef test_score_{index}():\n    assert score({index}) == 8\n"
+        ));
+    }
+    let finding = classify_case(
+        "def score(value):\n    return 8\n",
+        &tests,
+        2,
+        "    return 7",
+        "    return 8",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert_eq!(finding.related_tests.len(), TESTS);
+
+    let extracted = extract_tests(Path::new("tests/test_subject.py"), &tests);
+    assert_eq!(extracted.len(), TESTS);
+    let lookup = TestLookup::new(&extracted);
+    assert_eq!(lookup.identity_count(), TESTS);
+    for related in &finding.related_tests {
+        let joined: Vec<_> = lookup.matching(related).collect();
+        assert_eq!(joined.len(), 1, "{}", related.name);
+        assert_eq!(joined[0].name, related.name);
+        assert_eq!(joined[0].file, related.file);
+    }
     Ok(())
 }

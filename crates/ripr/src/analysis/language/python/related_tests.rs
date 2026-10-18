@@ -5,7 +5,7 @@ use super::{
     python_callee_start_has_boundary, python_prefix_hides_code, python_string_literal_value,
 };
 use crate::domain::{ExposureClass, OracleKind, OracleStrength, OwnerKind, RelatedTest};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 #[cfg(test)]
@@ -1279,6 +1279,44 @@ pub(super) fn import_source_module_matches_owner(
     names_owner_module && module_name_identifies_owner_for(owner, &import.source_module, test_file)
 }
 
+/// Identity index over the parsed tests: a related test is joined back to its
+/// source facts by `(file, name)`. Built once per finding so the join is a hash
+/// lookup rather than a scan of every test per related test (which made a
+/// finding with N related tests cost O(N^2)). Insertion keeps source order, so
+/// `matching` yields the same tests in the same order as a linear filter.
+pub(super) struct TestLookup<'a> {
+    by_name: HashMap<&'a str, Vec<&'a PythonTest>>,
+}
+
+impl<'a> TestLookup<'a> {
+    pub(super) fn new(all_tests: &'a [PythonTest]) -> Self {
+        let mut by_name: HashMap<&'a str, Vec<&'a PythonTest>> = HashMap::new();
+        for test in all_tests {
+            by_name.entry(test.name.as_str()).or_default().push(test);
+        }
+        Self { by_name }
+    }
+
+    /// Every test whose file and name equal the related test's.
+    pub(super) fn matching<'b>(
+        &'b self,
+        related: &'b RelatedTest,
+    ) -> impl Iterator<Item = &'a PythonTest> + 'b {
+        self.by_name
+            .get(related.name.as_str())
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(move |test| test.file == related.file)
+    }
+
+    /// Number of distinct test names indexed.
+    #[cfg(test)]
+    pub(super) fn identity_count(&self) -> usize {
+        self.by_name.len()
+    }
+}
+
 /// Free-function module-identity evidence: a strong observing test imports the
 /// owner's function *from the owner's module*. This is what distinguishes a
 /// genuine `from src.handler import validate` from a same-named function pulled in
@@ -1286,14 +1324,12 @@ pub(super) fn import_source_module_matches_owner(
 /// not identity-bearing for a free-function owner.
 pub(super) fn strong_test_imports_owner_from_module(
     strong_tests: &[&RelatedTest],
-    all_tests: &[PythonTest],
+    all_tests: &TestLookup<'_>,
     owner: &PythonOwner,
 ) -> bool {
     strong_tests.iter().any(|related_test| {
-        all_tests.iter().any(|test| {
-            test.name == related_test.name
-                && test.file == related_test.file
-                && super::test_activation::activation_control(test).is_none()
+        all_tests.matching(related_test).any(|test| {
+            super::test_activation::activation_control(test).is_none()
                 && test.imports.iter().any(|import| {
                     import.imported == owner.name
                         && import_source_module_matches_owner(import, owner, &test.file)
@@ -1552,16 +1588,14 @@ pub(super) fn strong_test_calls_owner_method_on_bound_receiver(
     owner_class_token: Option<&String>,
     method_name: Option<&String>,
     strong_tests: &[&RelatedTest],
-    all_tests: &[PythonTest],
+    all_tests: &TestLookup<'_>,
 ) -> bool {
     let (Some(class), Some(method)) = (owner_class_token, method_name) else {
         return false;
     };
     strong_tests.iter().any(|related_test| {
-        all_tests.iter().any(|test| {
-            test.name == related_test.name
-                && test.file == related_test.file
-                && super::test_activation::activation_control(test).is_none()
+        all_tests.matching(related_test).any(|test| {
+            super::test_activation::activation_control(test).is_none()
                 && owner_class_locals(test, owner, class).iter().any(|local| {
                     body_calls_method_on_owner_bound_receiver(&test.body_text, local, method)
                 })
@@ -1577,16 +1611,14 @@ pub(super) fn strong_test_calls_owner_method_on_bound_receiver(
 pub(super) fn strong_tests_import_only_rival_modules(
     owner: &PythonOwner,
     strong_tests: &[&RelatedTest],
-    all_tests: &[PythonTest],
+    all_tests: &TestLookup<'_>,
 ) -> bool {
     if owner.ambiguous_src_modules.is_empty() || strong_tests.is_empty() {
         return false;
     }
     strong_tests.iter().all(|related_test| {
-        all_tests.iter().any(|test| {
-            test.name == related_test.name
-                && test.file == related_test.file
-                && super::test_activation::activation_control(test).is_none()
+        all_tests.matching(related_test).any(|test| {
+            super::test_activation::activation_control(test).is_none()
                 && test
                     .imports
                     .iter()

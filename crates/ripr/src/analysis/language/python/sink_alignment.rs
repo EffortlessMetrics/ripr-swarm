@@ -4,6 +4,7 @@ use super::effect_alignment::{
 };
 use super::owners_tests::collect_imports_from_statements;
 use super::probe_shape::classify_probe_shape;
+use super::related_tests::TestLookup;
 use super::related_tests::{
     oracle_operand_calls, oracle_operand_names, owner_module_callees, owner_result_locals,
 };
@@ -527,16 +528,17 @@ pub(super) fn classify_sink_alignment_with_old(
     // behavior family (a `pytest.raises` for a changed `return`) never
     // credits, whichever branch its text would pass.
     let focus = PythonAssertionFocus::for_change(family, line_text, old_line_text);
+    let test_lookup = TestLookup::new(all_tests);
     let mut units = alignment_units(
         &strong_tests,
-        all_tests,
+        &test_lookup,
         error_path,
         &focus,
         effect.as_ref(),
     );
     units.extend(alignment_units(
         &mock_tests,
-        all_tests,
+        &test_lookup,
         error_path,
         &focus,
         effect.as_ref(),
@@ -712,7 +714,7 @@ pub(super) fn classify_sink_alignment_with_old(
             owner_class_token.as_ref(),
             method_name_token.as_ref(),
             &[unit.related],
-            all_tests,
+            &test_lookup,
         )
     });
     // Free-function module identity: a non-method owner's bare function-name token
@@ -721,13 +723,14 @@ pub(super) fn classify_sink_alignment_with_old(
     // module (`from src.checker import validate` for owner `src.handler.validate`)
     // is not identity-bearing — the false-`exposed` guard for free functions.
     let free_fn_module_identity = per_related_test(|unit: &AlignmentUnit<'_>| {
-        !is_method_owner && strong_test_imports_owner_from_module(&[unit.related], all_tests, owner)
+        !is_method_owner
+            && strong_test_imports_owner_from_module(&[unit.related], &test_lookup, owner)
     });
     // Method-owner identity is class and method name; a test whose imports
     // name a same-named module of another project uses that project's class.
     let method_owner_identity = per_related_test(|unit: &AlignmentUnit<'_>| {
         is_method_owner
-            && !strong_tests_import_only_rival_modules(owner, &[unit.related], all_tests)
+            && !strong_tests_import_only_rival_modules(owner, &[unit.related], &test_lookup)
     });
     // Owner output observed through a module-identified call (#4567): the
     // assertion calls the owner through its module (`utils.sign(0) == 0`,
@@ -992,7 +995,7 @@ struct AlignmentUnit<'a> {
 /// `all_tests` contributes its one reported oracle.
 fn alignment_units<'a>(
     strong_tests: &[&'a RelatedTest],
-    all_tests: &'a [PythonTest],
+    all_tests: &TestLookup<'a>,
     error_path: bool,
     focus: &PythonAssertionFocus,
     effect: Option<&ChangedEffect>,
@@ -1001,11 +1004,8 @@ fn alignment_units<'a>(
     let admits_mock = effect.is_some_and(ChangedEffect::admits_mock_assertion);
     let mut units = Vec::new();
     for related in strong_tests {
-        let test = all_tests.iter().find(|test| {
-            test.name == related.name
-                && test.file == related.file
-                && test.line == related.line
-                && super::test_activation::activation_control(test).is_none()
+        let test = all_tests.matching(related).find(|test| {
+            test.line == related.line && super::test_activation::activation_control(test).is_none()
         });
         let before = units.len();
         if let Some(test) = test {
