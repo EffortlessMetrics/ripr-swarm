@@ -6568,6 +6568,18 @@ mod tests {
                     "{markdown}"
                 );
                 assert!(markdown.contains("--base HEAD~1"), "{markdown}");
+                let next = check["next_command"]
+                    .as_str()
+                    .ok_or("git_diff next_command missing")?;
+                let suggested_base = shell_arg(&format!("{head}~1"));
+                assert!(
+                    next.contains(&format!("--base {suggested_base}")),
+                    "no-diff next_command must shell_arg <head>~1, got {next}"
+                );
+                assert!(
+                    next.contains(&format!("--head {}", shell_arg(head))),
+                    "no-diff next_command must shell_arg --head, got {next}"
+                );
             }
             for (index, command) in commands.iter().enumerate() {
                 let bash = command.as_str().ok_or("recovery command is not a string")?;
