@@ -4061,14 +4061,24 @@ fn extract_tests_withholds_assertions_a_finalizer_completion_can_replace() {
         format!("try {{ f(); }} catch {{ {check} }} finally {{ return; }}"),
         format!("try {{ {check} }} finally {{ if (x) {{ f(); }} else {{ return; }} }}"),
         format!("try {{ {check} }} finally {{ {{ throw 1; }} }}"),
-        format!("try {{ {check} }} finally {{ while (x) {{ continue outer; }} }}"),
+        format!(
+            "outer: for (;;) {{ try {{ {check} }} finally {{ while (x) {{ continue outer; }} }} }}"
+        ),
         format!("try {{ {check} }} finally {{ for (const k in o) {{ return; }} }}"),
-        format!("try {{ {check} }} finally {{ for (const k of o) {{ break out; }} }}"),
-        format!("try {{ {check} }} finally {{ do {{ break out; }} while (x); }}"),
+        format!(
+            "out: for (;;) {{ try {{ {check} }} finally {{ for (const k of o) {{ break out; }} }} }}"
+        ),
+        format!(
+            "out: for (;;) {{ try {{ {check} }} finally {{ do {{ break out; }} while (x); }} }}"
+        ),
         format!("try {{ {check} }} finally {{ lbl: {{ return; }} }}"),
         format!("try {{ {check} }} finally {{ switch (x) {{ case 1: return; }} }}"),
-        format!("try {{ {check} }} finally {{ switch (x) {{ case 1: continue; }} }}"),
+        format!(
+            "for (;;) {{ try {{ {check} }} finally {{ switch (x) {{ case 1: continue; }} }} }}"
+        ),
         format!("try {{ {check} }} finally {{ try {{ f(); }} catch {{ return; }} }}"),
+        // Deliberately non-strict input: `with` is a syntax error in strict mode,
+        // but this checks the walker's With arm recurses into the body.
         format!("try {{ {check} }} finally {{ with (o) {{ return; }} }}"),
     ] {
         assert!(assertions(&replaced).is_empty(), "{replaced}");
