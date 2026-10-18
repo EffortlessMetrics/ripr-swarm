@@ -103,6 +103,15 @@ fn try_admit_new_integration_test(
     })
 }
 
+/// Library crate name of the Cargo package whose library root is exactly
+/// `owner_file`, so an integration test can `use` crate-root items of that
+/// file. `None` when the file is not a package's library root.
+pub(crate) fn library_crate_name_for_root_file(root: &Path, owner_file: &Path) -> Option<String> {
+    let package = owning_package(root, owner_file).ok()?;
+    (package.has_library_target && normalize_relative(owner_file) == package.library_root)
+        .then_some(package.library_crate_name)
+}
+
 struct PackageFacts {
     package_dir: PathBuf,
     library_root: PathBuf,

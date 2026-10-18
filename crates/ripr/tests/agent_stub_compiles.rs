@@ -2090,6 +2090,86 @@ pub mod extra {
     Ok(())
 }
 
+/// #8741: when the gap's related test is an existing `tests/*.rs` file, the
+/// stub is appended to that file (the only path the repair packet's edit cage
+/// allows) instead of adding an inline module to the production file.
+#[test]
+fn stub_for_an_existing_integration_test_target_appends_to_that_file() -> Result<(), String> {
+    const SOURCE: &str =
+        "pub fn discount(qty: u32, rate: u32) -> u32 {\n    if qty > 10 { rate } else { 0 }\n}\n";
+    const TEST: &str = "use stub_existing::discount;\n\n#[test]\nfn small() {\n    assert!(discount(5, 2) == 0);\n}\n";
+    let scratch = Scratch::new()?;
+    let root = scratch.directory.clone();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"stub_existing\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n# Keep this scratch crate out of a parent Cargo workspace.\n[workspace]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), SOURCE).map_err(|error| error.to_string())?;
+    std::fs::create_dir(root.join("tests")).map_err(|error| error.to_string())?;
+    std::fs::write(root.join("tests/discount.rs"), TEST).map_err(|error| error.to_string())?;
+
+    let stub = ripr_stub_write(&root, "src/lib.rs:2");
+    let output = run_bounded(stub, &root, "stub", Duration::from_mins(2))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(output.status.success(), "stub: {stdout}{stderr}");
+    let document: serde_json::Value =
+        serde_json::from_str(&stdout).map_err(|error| format!("stub JSON: {error}: {stdout}"))?;
+    assert_eq!(
+        document["placement"]["kind"], "existing_integration_file",
+        "an existing tests/ target must receive the stub: {stdout}"
+    );
+    assert_eq!(
+        document["placement"]["file"], "tests/discount.rs",
+        "{stdout}"
+    );
+    assert_eq!(document["written"], true, "{stdout}");
+    assert_eq!(
+        std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?,
+        SOURCE,
+        "the production file must not be touched"
+    );
+    let test_name = document["test_name"]
+        .as_str()
+        .ok_or_else(|| "test_name".to_string())?;
+    let written = std::fs::read_to_string(root.join("tests/discount.rs"))
+        .map_err(|error| error.to_string())?;
+    assert!(
+        written.starts_with(TEST),
+        "existing content kept:\n{written}"
+    );
+    assert!(
+        written.contains(&format!("fn {test_name}(")) && written.contains("use stub_existing::*;"),
+        "{written}"
+    );
+    assert!(
+        !written.contains("mod ripr_tests"),
+        "no inline module in the integration file: {written}"
+    );
+
+    let run = document["run_command"]
+        .as_str()
+        .ok_or_else(|| format!("run_command: {stdout}"))?;
+    assert!(
+        run.contains("--test discount") && run.contains(test_name),
+        "{run}"
+    );
+    let cargo = cargo_from_run_command(run, &root)?;
+    let cargo_run = run_bounded(cargo, &root, "cargo-test", Duration::from_mins(2))?;
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&cargo_run.stdout),
+        String::from_utf8_lossy(&cargo_run.stderr)
+    );
+    assert!(
+        !cargo_run.status.success() && text.contains("not yet implemented: ripr:"),
+        "the appended stub must compile and stop at its own todo:\n{text}\n{written}"
+    );
+    scratch.cleanup()?;
+    Ok(())
+}
+
 fn cargo_from_run_command(run: &str, root: &Path) -> Result<Command, String> {
     let mut parts = run.split_whitespace();
     let program = parts
