@@ -8,6 +8,7 @@ mod nesting;
 mod owner_pin;
 mod pattern_pin;
 pub(crate) mod run_memo;
+pub(crate) use owner_pin::debug_assert_eq_calls;
 pub(crate) use owner_pin::macro_binding_candidates;
 pub(crate) use owner_pin::{
     AssertionContextRefusal, HelperLoan, MacroBindingCandidates, MacroBindingKind,

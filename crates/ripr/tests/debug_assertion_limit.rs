@@ -111,9 +111,10 @@ fn a_debug_assert_eq_owner_pin_reads_as_a_profile_limit() -> Result<(), String> 
     for body in [
         "debug_assert_eq!(one(), 1);",
         "debug_assert_eq!(1, one());",
-        "std::debug_assert_eq!(one(), 1);",
         "debug_assert_eq!(one(), 1, \"one, as ever\");",
         "debug_assert_eq!(one(), 1, \"x(y\");",
+        // A binding that only reads the owner does not rebind it.
+        "let v = one(); debug_assert_eq!(one(), 1); assert!(v > 0);",
     ] {
         let finding = return_finding("", body)?;
         assert_eq!(finding.class, ExposureClass::StaticUnknown, "{body}");
@@ -134,50 +135,86 @@ fn a_debug_assert_eq_owner_pin_reads_as_a_profile_limit() -> Result<(), String> 
     Ok(())
 }
 
+/// Bodies whose `debug_assert_eq!` spelling must read exactly as the owner
+/// pin reads the `assert_eq!` twin: a profile limit where the twin is
+/// credited, the twin's own gap otherwise.
+const TWIN_BODIES: &[(&str, &str)] = &[
+    ("", "ASSERT!(one(), 1);"),
+    ("", "ASSERT!(1, one());"),
+    ("", "let v = one(); ASSERT!(2 + 2, 4); assert!(v > 0);"),
+    ("", "ASSERT!(one() + 1, 2);"),
+    ("", "ASSERT!(one(), one());"),
+    ("", "one(); other::ASSERT!(one(), 1);"),
+    ("", "one(); (|| ASSERT!(one(), 1));"),
+    ("", "one(); if false { ASSERT!(one(), 1); }"),
+    ("", "one(); fn helper() { ASSERT!(one(), 1); }"),
+    ("", "if false { return; } ASSERT!(one(), 1);"),
+    (
+        "",
+        "let Some(_v) = Some(1) else { return; }; ASSERT!(one(), 1);",
+    ),
+    ("", "return; ASSERT!(one(), 1);"),
+    ("", "let v = one(); ASSERT!(one(), v);"),
+    ("", "ASSERT![one(), 1];"),
+    ("#[should_panic]", "ASSERT!(one(), 2);"),
+    ("#[ignore]", "ASSERT!(one(), 1);"),
+];
+
 #[test]
-fn standard_assertions_and_other_debug_checks_keep_their_class() -> Result<(), String> {
-    // The standard macro is credited.
-    let finding = return_finding("", "assert_eq!(one(), 1);")?;
-    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
-    assert_eq!(finding.static_limit_kind, None);
-    for (attrs, body) in [
+fn a_debug_assert_eq_reads_as_its_assert_eq_twin_or_a_profile_limit() -> Result<(), String> {
+    for (attrs, template) in TWIN_BODIES {
+        let standard = return_finding(attrs, &template.replace("ASSERT", "assert_eq"))?;
+        let debug = return_finding(attrs, &template.replace("ASSERT", "debug_assert_eq"))?;
+        assert_ne!(debug.class, ExposureClass::Exposed, "{attrs} {template}");
+        if standard.class == ExposureClass::Exposed {
+            assert_eq!(
+                debug.class,
+                ExposureClass::StaticUnknown,
+                "{attrs} {template}"
+            );
+            assert_eq!(
+                debug.static_limit_kind.map(|kind| kind.as_str()),
+                Some("rust_debug_assertion_profile_unresolved"),
+                "{attrs} {template}"
+            );
+        } else {
+            // The `debug_` forms are not oracle facts, so a weak twin's
+            // credit does not carry over; the debug spelling keeps a gap.
+            assert!(
+                matches!(
+                    debug.class,
+                    ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+                ),
+                "{attrs} {template}: {debug:?}"
+            );
+            assert_ne!(
+                debug.static_limit_kind.map(|kind| kind.as_str()),
+                Some("rust_debug_assertion_profile_unresolved"),
+                "{attrs} {template}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn other_debug_checks_keep_their_gap() -> Result<(), String> {
+    for body in [
         // Passes for every value other than the one named.
-        ("", "debug_assert_ne!(one(), 2);"),
+        "debug_assert_ne!(one(), 2);",
         // Not an equality pin of the result.
-        ("", "debug_assert!(one() == 1);"),
-        ("", "debug_assert!(one() > 0);"),
-        // The equality does not compare the owner's result.
-        (
-            "",
-            "let v = one(); debug_assert_eq!(2 + 2, 4); assert!(v > 0);",
-        ),
-        ("", "debug_assert_eq!(one() + 1, 2);"),
-        ("", "debug_assert_eq!(one(), one());"),
-        // Another macro that merely ends in the name.
-        ("", "let _ = one(); other::debug_assert_eq!(one(), 1);"),
-        // An ignored test never runs by default.
-        ("#[ignore]", "debug_assert_eq!(one(), 1);"),
-        // Checks that never run: a closure never called, a dead branch, a
-        // nested helper never called.
-        ("", "let _ = one(); let _c = || debug_assert_eq!(one(), 1);"),
-        (
-            "",
-            "let _ = one(); if false { debug_assert_eq!(one(), 1); }",
-        ),
-        (
-            "",
-            "let _ = one(); fn helper() { debug_assert_eq!(one(), 1); }",
-        ),
+        "debug_assert!(one() == 1);",
+        "debug_assert!(one() > 0);",
     ] {
-        let finding = return_finding(attrs, body)?;
+        let finding = return_finding("", body)?;
         assert!(
             matches!(
                 finding.class,
                 ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
             ),
-            "{attrs} {body}: {finding:?}"
+            "{body}: {finding:?}"
         );
-        assert_eq!(finding.static_limit_kind, None, "{attrs} {body}");
+        assert_eq!(finding.static_limit_kind, None, "{body}");
     }
     Ok(())
 }
@@ -253,9 +290,11 @@ fn a_debug_check_never_earns_exposed_in_any_family() -> Result<(), String> {
     for finding in &output.findings {
         families.push(finding.probe.family.clone());
         assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
-        if !matches!(
+        // The owner pin reads a bool owner's whole predicate as its return
+        // value; the arm and field changes are not pinned by these checks.
+        if matches!(
             finding.probe.family,
-            ripr::ProbeFamily::ReturnValue | ripr::ProbeFamily::ErrorPath
+            ripr::ProbeFamily::MatchArm | ripr::ProbeFamily::FieldConstruction
         ) {
             assert_ne!(
                 finding.static_limit_kind.map(|kind| kind.as_str()),

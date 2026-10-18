@@ -1326,9 +1326,9 @@ fn apply_probe_and_oracle_limits(
     // RIPR-SPEC-0240: a `#[should_panic]` test's panic outcome is an oracle
     // ripr does not resolve, not a missing assertion.
     classify::withhold_should_panic_gap(finding, index);
-    // #8051: a strong `debug_assert_eq!` discriminates only in a profile
-    // with debug assertions, which ripr does not resolve.
-    classify::withhold_debug_assertion_gap(finding, index, owner_name.as_deref());
+    // #8051: a `debug_assert_eq!` the owner pin admits discriminates only in
+    // a profile with debug assertions, which ripr does not resolve.
+    classify::withhold_debug_assertion_gap(finding);
     // RIPR-SPEC-0240 runs last so a producer-named limit keeps its finding.
     classify::withhold_unsupported_gap(finding);
 }

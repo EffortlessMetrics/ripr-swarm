@@ -2607,6 +2607,40 @@ impl OwnerReturnPin {
         imports_foreign: ForeignImport<'_>,
         syntax: &OwnerPinSyntax,
     ) -> bool {
+        self.admits_spelled(test, assertion, index, imports_foreign, syntax, "assert_eq")
+    }
+
+    /// #8051: whether a bare `debug_assert_eq!` would pin the owner under
+    /// every gate [`Self::admits`] applies to `assert_eq!`. It runs only
+    /// where debug assertions are on, so this is never credit: the
+    /// gap-admission post-pass reads it as a profile limit.
+    pub(in crate::analysis) fn admits_debug_assert_eq(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        imports_foreign: ForeignImport<'_>,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        self.admits_spelled(
+            test,
+            assertion,
+            index,
+            imports_foreign,
+            syntax,
+            "debug_assert_eq",
+        )
+    }
+
+    fn admits_spelled(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        imports_foreign: ForeignImport<'_>,
+        syntax: &OwnerPinSyntax,
+        spelling: &str,
+    ) -> bool {
         // A `#[should_panic]` test passes when the values differ.
         if test
             .attrs
@@ -2636,7 +2670,12 @@ impl OwnerReturnPin {
         let indexes = !is_guard && is_assert_eq_over(&assertion.text, "vec");
         let reads_assert_eq = renders
             || indexes
-            || (!is_guard && is_plain_or_std_macro(&assertion.text, "assert_eq"));
+            || (!is_guard
+                && if spelling == "assert_eq" {
+                    is_plain_or_std_macro(&assertion.text, spelling)
+                } else {
+                    is_plain_macro(&assertion.text, spelling)
+                });
         let equality = if reads_assert_eq {
             None
         } else {

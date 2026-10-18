@@ -17,7 +17,6 @@
 //! every other limit post-pass and never upgrades a class: it only withholds a
 //! gap, which keeps the actionability flip fail-closed.
 
-use super::OwnerReturnPin;
 use super::decision::confidence_score;
 use super::reveal::ASSERTION_CONTEXT_UNESTABLISHED;
 use crate::analysis::facts::{FunctionContainer, TestFact};
@@ -814,81 +813,38 @@ pub(in crate::analysis) fn withhold_should_panic_gap(
 const DEBUG_ASSERTION_LIMIT: StaticLimitKind = StaticLimitKind::RustDebugAssertionProfileUnresolved;
 const DEBUG_ASSERTION_FIRST_UNRESOLVED_EDGE: &str =
     "whether the tests run with debug assertions, which the `debug_assert_eq!` check needs";
+/// Evidence marker carrying one `debug_assert_eq!` pin from the classifier
+/// (`ClassifiedProbeEvidence::debug_assert_eq_pins`) to this post-pass.
+pub(in crate::analysis) const DEBUG_ASSERT_EQ_PIN_PREFIX: &str =
+    "gap_admission: debug_assert_eq! pin by ";
 
-/// #8051: a related test that calls a free-function owner directly and pins
-/// its whole result with `debug_assert_eq!(owner(..), expected)` would be
-/// credited by the owner-return pin if it were `assert_eq!`. It discriminates
-/// under the default `cargo test` profile, where debug assertions run, and
-/// never under `--release`, where they are compiled out. ripr does not
-/// resolve which profile runs the tests, so neither the gap nor credit is
-/// established: the gap is withheld under its own limit. The owner side is
-/// the owner pin's own gate ([`OwnerReturnPin::establish`]), and the expected
-/// value must be one only the changed expression produces
-/// ([`expected_value_reaches`]), so a change the pin could not observe keeps
-/// its gap. The `debug_` macros are not
-/// assertion facts (the parser and the owner pin both refuse them,
-/// RIPR-SPEC-0197), so the test side reads the test body: the invocation
-/// must be a statement of the test's own block, not inside a closure,
-/// branch or nested item, and the body must not bind the owner name. This
-/// never upgrades a class. Returns `true` when the finding was rewritten to
-/// `static_unknown`.
-pub(in crate::analysis) fn withhold_debug_assertion_gap(
-    finding: &mut Finding,
-    index: &RustIndex,
-    owner_name: Option<&str>,
-) -> bool {
-    let Some(owner) = owner_name else {
-        return false;
-    };
-    if finding.static_limit_kind.is_some()
+/// #8051: a related direct-call test whose bare `debug_assert_eq!` the
+/// owner-return pin admits under every gate it applies to `assert_eq!`
+/// (`OwnerReturnPin::admits_debug_assert_eq`) discriminates under the
+/// default `cargo test` profile, where debug assertions run, and never under
+/// `--release`, where they are compiled out. ripr does not resolve which
+/// profile runs the tests, so neither the gap nor credit is established: the
+/// gap is withheld under its own limit. The decision is the owner pin's;
+/// this post-pass only consumes its marker, after every producer-named
+/// limit. Returns `true` when the finding was rewritten to `static_unknown`.
+pub(in crate::analysis) fn withhold_debug_assertion_gap(finding: &mut Finding) -> bool {
+    let mut checking = Vec::new();
+    finding
+        .evidence
+        .retain(|line| match line.strip_prefix(DEBUG_ASSERT_EQ_PIN_PREFIX) {
+            Some(label) => {
+                checking.push(label.to_string());
+                false
+            }
+            None => true,
+        });
+    if checking.is_empty()
+        || finding.static_limit_kind.is_some()
         || !matches!(
             finding.class,
             ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
         )
-        || !matches!(
-            finding.probe.family,
-            ProbeFamily::ReturnValue | ProbeFamily::ErrorPath
-        )
     {
-        return false;
-    }
-    let Some(owner_fn) = finding.probe.owner.as_ref().and_then(|id| {
-        index.functions().iter().find(|function| {
-            function.id == *id
-                && function.name == owner
-                && OwnerReturnPin::establish(&finding.probe, function, index).is_some()
-        })
-    }) else {
-        return false;
-    };
-    // The rewrite below borrows the finding mutably, so the gate keeps its
-    // own copy of the probe.
-    let probe = finding.probe.clone();
-    let expected_reaches = expected_value_reaches(&probe, &owner_fn.body);
-    let checking: Vec<String> = finding
-        .related_tests
-        .iter()
-        .filter(|related| {
-            related.relation_reason == Some(RelationReason::DirectOwnerCall)
-                && !related.is_unmatched()
-                && index.tests().iter().any(|test| {
-                    test.name == related.name
-                        && test.file == related.file
-                        && test.start_line == related.line
-                        && !is_ignored(test)
-                        && pins_owner_with_debug_assert_eq(test, owner, &expected_reaches)
-                })
-        })
-        .map(|related| {
-            format!(
-                "`{}` ({}:{})",
-                related.name,
-                related.file.display().to_string().replace('\\', "/"),
-                related.line
-            )
-        })
-        .collect();
-    if checking.is_empty() {
         return false;
     }
     let next_step = format!(
@@ -903,151 +859,6 @@ pub(in crate::analysis) fn withhold_debug_assertion_gap(
         &checking,
     );
     true
-}
-
-/// Whether `test`'s body invokes `debug_assert_eq!` (bare, or under a `std`
-/// or `core` root) as a statement of the test's own block, with one compared
-/// operand that is a bare call of `owner` and nothing else and another that
-/// does not call `owner`. An optional third operand is the failure message.
-/// A body that binds `owner` itself (`use`, a nested `fn`, a `let`) may
-/// name another item, so it never matches.
-fn pins_owner_with_debug_assert_eq(
-    test: &TestFact,
-    owner: &str,
-    expected_reaches: &dyn Fn(&str) -> bool,
-) -> bool {
-    const NAME: &str = "debug_assert_eq";
-    let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
-    let binds_owner = masked.split([';', '{', '}']).any(|statement| {
-        let statement = statement.trim_start();
-        ["use ", "pub use ", "fn ", "let "]
-            .iter()
-            .any(|keyword| statement.starts_with(keyword))
-            && contains_as_word(statement, owner)
-    });
-    if binds_owner {
-        return false;
-    }
-    masked.match_indices(NAME).any(|(at, _)| {
-        let before = &masked[..at];
-        let before = before
-            .strip_suffix("std::")
-            .or_else(|| before.strip_suffix("core::"))
-            .map_or(before, |root| root.strip_suffix("::").unwrap_or(root));
-        // A statement of the test's own block: one brace deep, and nothing
-        // since the previous statement boundary (no closure, `if`, `let`).
-        let one_deep = before.matches('{').count() == before.matches('}').count() + 1;
-        if !one_deep || !before.trim_end().ends_with([';', '{', '}']) {
-            return false;
-        }
-        let Some(after_bang) = masked[at + NAME.len()..].trim_start().strip_prefix('!') else {
-            return false;
-        };
-        let open = masked.len() - after_bang.trim_start().len();
-        let Some(close) = closing_bracket(&masked, open) else {
-            return false;
-        };
-        let inner = &masked[open + 1..close];
-        let (commas, _) = top_level_separators(inner);
-        let mut operands = Vec::new();
-        let mut start = 0;
-        for comma in commas {
-            operands.push(inner[start..comma].trim());
-            start = comma + 1;
-        }
-        operands.push(inner[start..].trim());
-        if operands.last().is_some_and(|last| last.is_empty()) {
-            operands.pop();
-        }
-        match operands.as_slice() {
-            [left, right] | [left, right, _] => {
-                [(left, right), (right, left)]
-                    .iter()
-                    .any(|(call, expected)| {
-                        is_bare_owner_call(call, owner)
-                            && free_call_offsets(expected, owner).is_empty()
-                            && expected_reaches(expected)
-                    })
-            }
-            _ => false,
-        }
-    })
-}
-
-/// Whether a pinned expected value can only be produced through the changed
-/// expression, so the pin would observe it. The owner pin's own expected-value
-/// reading is bound to parser-collected `assert_eq!` facts, so this is its
-/// bounded mirror, failing closed: a changed `Err(..)` pins only an
-/// `Err(..)` naming the changed variant, and beside another exit (`return`,
-/// `?`) any other changed return value pins only an `Ok(..)` or `Some(..)`.
-fn expected_value_reaches<'a>(probe: &'a Probe, owner_body: &str) -> impl Fn(&str) -> bool + 'a {
-    let masked_owner = crate::analysis::extract::mask_comments_and_strings(owner_body);
-    let other_exits = contains_as_word(&masked_owner, "return") || masked_owner.contains('?');
-    let changed_variant = error_variant_name(&probe.expression);
-    move |expected: &str| {
-        let expected = expected.trim();
-        // A changed `Err(..)` constructor, whatever its family, is pinned
-        // only by an `Err(..)` naming its variant.
-        match changed_variant.as_deref() {
-            Some(variant) => expected.starts_with("Err(") && contains_as_word(expected, variant),
-            None if probe.family == ProbeFamily::ErrorPath => false,
-            None if other_exits => expected.starts_with("Ok(") || expected.starts_with("Some("),
-            None => !expected.starts_with("Err(") && expected != "None",
-        }
-    }
-}
-
-/// The last path segment of the value inside the first `Err(..)` of a
-/// changed expression (`return Err(E::Worse);` gives `Worse`).
-fn error_variant_name(expression: &str) -> Option<String> {
-    let inner = expression.split_once("Err(")?.1.trim_start();
-    let end = inner
-        .find(|ch: char| !(ch.is_alphanumeric() || ch == '_' || ch == ':'))
-        .unwrap_or(inner.len());
-    let name = inner[..end].rsplit("::").next()?;
-    (!name.is_empty() && name.chars().next().is_some_and(char::is_uppercase))
-        .then(|| name.to_string())
-}
-
-/// Whether `name` occurs in `code` as a whole identifier.
-fn contains_as_word(code: &str, name: &str) -> bool {
-    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
-    code.match_indices(name).any(|(at, _)| {
-        !code[..at].chars().next_back().is_some_and(ident)
-            && !code[at + name.len()..].chars().next().is_some_and(ident)
-    })
-}
-
-/// The byte offset of the bracket that closes the one opening at `open` of
-/// masked `code`, when `open` is an opening bracket that closes in `code`.
-fn closing_bracket(code: &str, open: usize) -> Option<usize> {
-    if !code[open..].starts_with(['(', '[', '{']) {
-        return None;
-    }
-    let mut depth = 0usize;
-    for (offset, ch) in code[open..].char_indices() {
-        match ch {
-            '(' | '[' | '{' => depth += 1,
-            ')' | ']' | '}' => {
-                depth = depth.checked_sub(1)?;
-                if depth == 0 {
-                    return Some(open + offset);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-/// Whether masked `operand` is exactly one bare call `owner(..)`: no path,
-/// receiver, projection or trailing operator.
-fn is_bare_owner_call(operand: &str, owner: &str) -> bool {
-    operand
-        .strip_prefix(owner)
-        .is_some_and(|rest| rest.starts_with('('))
-        && free_call_offsets(operand, owner) == [0]
-        && closing_bracket(operand, owner.len()) == Some(operand.len() - 1)
 }
 
 /// The byte ranges of the bracketed arguments of every panicking macro
@@ -1091,7 +902,7 @@ fn panic_macro_arguments(masked: &str, from: usize) -> Vec<std::ops::Range<usize
 }
 
 /// Whether `test` carries `#[ignore]`, so a default run never executes it.
-fn is_ignored(test: &TestFact) -> bool {
+pub(in crate::analysis) fn is_ignored(test: &TestFact) -> bool {
     test.attrs.iter().any(|attr| {
         let compact: String = attr.chars().filter(|ch| !ch.is_whitespace()).collect();
         compact == "#[ignore]" || compact.starts_with("#[ignore=")

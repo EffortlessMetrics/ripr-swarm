@@ -177,6 +177,19 @@ pub(in crate::analysis) fn build_finding(
     {
         evidence_lines.push(crate::analysis::classify::REFUSALS_ARE_ANALYZER_LIMITS.to_string());
     }
+    // #8051: hand the `debug_assert_eq!` pins to the gap-admission post-pass,
+    // which consumes the marker.
+    if matches!(
+        class,
+        ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+    ) {
+        evidence_lines.extend(evidence.debug_assert_eq_pins.iter().map(|label| {
+            format!(
+                "{}{label}",
+                crate::analysis::classify::DEBUG_ASSERT_EQ_PIN_PREFIX
+            )
+        }));
+    }
     if invalid_propagation_witness {
         evidence_lines
             .push("propagation witness digest invalid; diagnostic witness withheld".to_string());
@@ -949,6 +962,7 @@ mod tests {
             reach_ruled_out: true,
             assertion_refusal: None,
             refusals_are_analyzer_limits: false,
+            debug_assert_eq_pins: Vec::new(),
         }
     }
 

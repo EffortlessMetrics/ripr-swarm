@@ -209,63 +209,51 @@ gap or credit.
 compiled out under `--release` (unless the profile turns debug assertions
 back on). A test that pins the owner's result only with it discriminates in
 the first profile and never in the second. The parser does not collect the
-`debug_` forms as assertion facts and the owner pin refuses them
-(RIPR-SPEC-0197), so such a test reads as having no assertion and the
-finding as a certain gap. `gap_admission::withhold_debug_assertion_gap`
-withholds that gap under `rust_debug_assertion_profile_unresolved` when:
+`debug_` forms as assertion facts, so such a test reads as having no
+assertion and the finding as a certain gap.
 
-- the finding is `weakly_exposed` or `reachable_unrevealed`, from a
-  `return_value` or `error_path` probe, with no `static_limit_kind`, and its
-  owner is a free function;
-- the owner pin's own owner-side gate holds (`OwnerReturnPin::establish`):
-  the changed expression is a return path the pin could observe;
-- a related row with a `direct_owner_call` relation, not an unmatched
-  examined test, binds (by name, file and start line) a test without
-  `#[ignore]` whose body (comments and strings masked) does not bind the
-  owner name (`use`, `fn`, `let`) and has, as a statement of the test's own
-  block (not in a closure, branch or nested item), `debug_assert_eq!`, bare
-  or under a `std` or `core` root, with one compared operand that is
-  exactly a bare `owner(..)` call and another (the expected value) that
-  does not call the owner (an optional third operand is the message, and a
-  trailing comma is allowed);
-- the expected value is one only the changed expression produces: for a
-  changed `Err(..)` constructor (any family) an `Err(..)` naming the changed
-  variant, and none for an `error_path` change ripr cannot name; beside
-  another exit (`return`, `?`) an `Ok(..)` or `Some(..)`; otherwise anything
-  but `Err(..)` or `None`.
-
-The test side reads the test body instead of oracle facts, so it never
-feeds the shared discriminate decision and never upgrades a class. The
-expected-value rule is a bounded mirror of the owner pin's own reading,
-which binds to parser-collected `assert_eq!` facts; where they differ it
-keeps the gap. It runs after the
-`#[should_panic]` limit and before `withhold_unsupported_gap`.
+The decision belongs to the owner-return pin (RIPR-SPEC-0197). The owner-pin
+syntax pass records the assertion context of bare `debug_assert_eq!` calls
+beside `assert_eq!` and `assert!`, and
+`OwnerReturnPin::admits_debug_assert_eq` runs every gate `admits` applies to
+`assert_eq!` (owner-side return paths, operand shape, expected value, eager
+statement path, earlier returns, `#[should_panic]`, macro bindings) with the
+macro spelled `debug_assert_eq`. The classifier records each related
+`direct_owner_call` test without `#[ignore]` that it admits
+(`ClassifiedProbeEvidence::debug_assert_eq_pins`) and hands them to the
+post-pass as an evidence marker. `gap_admission::withhold_debug_assertion_gap`
+consumes the marker and withholds a `weakly_exposed` or
+`reachable_unrevealed` finding with no `static_limit_kind` under
+`rust_debug_assertion_profile_unresolved`, naming those tests. It runs after
+the `#[should_panic]` limit and before `withhold_unsupported_gap`. The
+admission never credits: the `debug_` facts never enter a test's assertions.
 
 Decision (#8051, reversible): withhold rather than credit. Crediting would
 claim a discriminator that a `--release` test run never executes, and ripr
 does not read the CI command or the profile settings; keeping the gap would
 claim a missing test the default run does have. This matches the corpus
 precedent for a production `debug_assert!` (`mined-debug-assert-only-oracle`,
-RIPR-SPEC-0219), which scores `static_unknown` as `abstained`. The first cut
-collected `debug_` forms as parser oracles, which let predicate, match-arm
-and field-projection paths credit them as `exposed` and filled the empty
-assertion list the `#[should_panic]` rule requires; review rejected it, so
-the rule reads the body. A second review found the body read
-withheld gaps an `assert_eq!` would also keep (an `Ok(1)` pin of a changed
-early `Err` exit, a check in a closure never called), so the owner-side gate,
-the statement position and the expected-value rule were added. Everything
-else keeps the gap: `debug_assert_ne!`, `debug_assert!` in any form, an
-equality that does not compare the owner call alone
-(`debug_assert_eq!(2 + 2, 4)`, `one() + 1`), an ignored test, methods, and
-predicate, match-arm, field and side-effect probes.
+RIPR-SPEC-0219), which scores `static_unknown` as `abstained`.
+
+Two earlier cuts were rejected in review. Collecting `debug_` forms as
+parser oracles let predicate, match-arm and field-projection paths credit
+them as `exposed` and filled the empty assertion list the `#[should_panic]`
+rule requires. A hand-written mirror of the pin's gates read the test body
+and kept diverging from it (an `Ok(1)` pin of a changed early `Err` exit,
+checks after an earlier `return`, `#[should_panic]` tests, `Some(..)` tails,
+`async` owners), withholding gaps the `assert_eq!` twin keeps. The
+`debug_assertion_limit` tests pin the twin contract: for each body, the
+`debug_assert_eq!` spelling reads as a profile limit exactly where the
+`assert_eq!` twin is credited, and keeps a gap otherwise. `debug_assert_ne!`
+and `debug_assert!` in any form are not read.
 
 ## Scope boundary
 
 - Rust check findings only. The pilot seam rule is RIPR-SPEC-0230 (#5569).
 - `weakly_exposed` findings are out of scope: a credited weak oracle is read
   evidence even when a stronger assertion was refused. The one exception is
-  the profile-dependent `debug_` assertion above, whose oracle is strong and
-  weak only because it may not run.
+  the profile-dependent `debug_assert_eq!` above, which the owner pin would
+  credit as `assert_eq!`.
 - Two broader rules were built and dropped. Withholding every refused-context
   gap hid the runtime-controlled gaps above. Withholding `weakly_exposed` when
   a strong oracle's text does not name the changed arm hid the sibling-arm
