@@ -236,9 +236,13 @@ payload reads `mock_expectation` / strong when all of these hold:
   shorthands `m(params): T { ... }` whose bodies make no call and name
   nothing but their parameters and the owner words above outside member
   names (amended 2026-10-17: the spy wraps the original method, so a
-  method that calls anything, itself through `this` included, or a
-  spread, computed key, getter or property value could record the
-  asserted payload whatever the owner sent);
+  method that calls anything, itself through `this` included, has a
+  parameter default (which runs inside the call), or is a spread,
+  computed key, getter or property value could record the asserted
+  payload whatever the owner sent), and the module has no `import`,
+  `require` or `eval` and names `o` only in that declaration and the
+  owner's call (`o.m = jest.fn(); o.m("x")` at the module's top level
+  would leave a mock with calls);
 - the test file imports `o` by name (renaming allowed) from a specifier
   that resolves to the owner's module, and its callback declares
   `const|let|var spy = jest.spyOn(o, "m")` (or `vi.spyOn`) at its top
@@ -247,9 +251,10 @@ payload reads `mock_expectation` / strong when all of these hold:
   `var`, `spy`, `o`, `jest`, `vi`, `spyOn`, the owner's name, `expect`,
   `toHaveBeenCalledWith`, `true`, `false` and `null`, with no template
   literal and no non-ASCII character;
-- the test file's top level is named imports, each from the owner's
-  module, `@jest/globals` or `vitest`, and then exactly one `test(...)`
-  or `it(...)` call (amended 2026-10-17: a hook, an earlier test, a
+- the test file's top level is imports that each bind a name (no empty
+  `{}` and no `type` clause), each from the owner's module,
+  `@jest/globals` or `vitest`, and then exactly one `test(...)` or
+  `it(...)` call (amended 2026-10-17: a hook, an earlier test, a
   top-level statement or another module's top level runs before the test
   body and can leave a mock with calls on `o.m`, and `spyOn` on a method
   that is already a mock returns that mock with those calls);
@@ -525,22 +530,27 @@ and the rejected alternative. Recorded on #6654.
     mailer.send("order " + id); }`; the test imports `{ announceMail,
     mailer }` from it and runs `const send = jest.spyOn(mailer, "send");
     announceMail(7); expect(send).toHaveBeenCalledWith("order 7");`:
-    `mock_expectation` / strong, `exposed`, with `vi.spyOn`, a renamed
-    import, or other tests in the file that do not spy. The same stays
+    `mock_expectation` / strong, `exposed`, with `vi.spyOn`, `it`, a
+    renamed import, or imports from `@jest/globals`. The same stays
     `weakly_exposed` with any of these in the owner: a second call
     (`log(id)`, `id.toFixed(0)`), a second mention of `mailer`, a read
     of another module binding (`void config.suffix`), a parameter
     default (`pre = warm()`), a non-ASCII name, `export let mailer`, an
     unexported or imported `mailer`, `new Date`, or a getter read inside a
-    template (`` `${config.suffix}` ``);
-    in the test: `mailer.send("order 7")`, `send("order 7")`, a second
+    template (`` `${config.suffix}` ``); in the owner's module: a method
+    that calls (`this.send(...)`, `relay(m)`), has a parameter default,
+    or is a property value, spread or getter, `export const mailer:
+    Mailer =`, `mailer.send = jest.fn()` after the object, or an
+    `import`; in the test: `mailer.send("order 7")`, `send("order 7")`, a second
     `announceMail(...)`, a helper call, a getter read (`other.warm`), a
     non-ASCII helper name, `` announceMail`7` ``, `await`, an arrow, the
     spy in a nested block, a spy on `"other"`, `.mockImplementation(...)`,
     or `mailer` imported from another module; or in the file: a second
     or commented `spyOn`, a `\u` escape, a dynamic `import(`,
     `test.each`, `test.concurrent`, `jest.mock(...)` or
-    `jest.retryTimes(...)`.
+    `jest.retryTimes(...)`, a hook (`beforeEach`), an earlier test, a
+    `describe` wrapper, a top-level statement, a side-effect, empty or
+    `type` import, or an import from any other module.
 
 ## Test Mapping
 

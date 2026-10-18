@@ -86,8 +86,15 @@ pub(super) fn module_object_calls(
         return Vec::new();
     }
     let masked_module = ts_mask_literals_and_comments(module_source);
-    if !line_start(&masked_module, owner_start_line)
-        .is_some_and(|at| at_module_top_level(&masked_module, at))
+    // Module code that imports, or that names the object anywhere but its
+    // declaration and the owner's call, can leave a mock with calls on the
+    // method (`o.m = jest.fn(); o.m(...)`) before the test's spy installs.
+    let imports_or_requires = ["import", "require", "eval"]
+        .iter()
+        .any(|word| identifier_or_member_offsets(&masked_module, word) != 0);
+    if imports_or_requires
+        || !line_start(&masked_module, owner_start_line)
+            .is_some_and(|at| at_module_top_level(&masked_module, at))
     {
         return Vec::new();
     }
@@ -96,6 +103,7 @@ pub(super) fn module_object_calls(
         .filter(|call| call.depth == 1 && call.root != "this")
         .filter(|call| {
             identifier_offsets(&masked_owner, &call.root).len() == 1
+                && identifier_offsets(&masked_module, &call.root).len() == 2
                 && exports_top_level_const(&masked_module, &call.root)
         })
         .map(|call| ModuleObjectCall {
@@ -238,6 +246,9 @@ fn plain_methods(body: &str) -> bool {
         else {
             return false;
         };
+        if after_name[1..params_end - 1].contains(['=', '(']) {
+            return false;
+        }
         let params: Vec<&str> = after_name[1..params_end - 1]
             .split(',')
             .filter_map(|param| words(param).next())
@@ -305,6 +316,7 @@ pub(super) fn spy_safe_test_file(source: &str) -> bool {
     let masked = ts_mask_literals_and_comments(source);
     source.matches("spyOn").count() == 1
         && one_test_after_imports(&masked)
+        && imports_bind_names(&masked)
         && !source.contains("\\u")
         && !masked.contains("import(")
         && RUNS_OR_REPLACES
@@ -360,6 +372,28 @@ fn one_test_after_imports(masked: &str) -> bool {
         tests += 1;
     }
     tests == 1
+}
+
+/// `true` when every import clause of the masked file binds a name that is
+/// not a `type` one: `import {} from "x"` and `import { type T } from "x"`
+/// bind nothing at run time yet still load the module (under
+/// `verbatimModuleSyntax` or Babel), and the import list the source check
+/// reads would not hold them.
+fn imports_bind_names(masked: &str) -> bool {
+    masked.match_indices("import").all(|(at, _)| {
+        if !word_boundary_before(masked, at) {
+            return true;
+        }
+        let clause = masked[at + "import".len()..]
+            .split(" from ")
+            .next()
+            .unwrap_or_default();
+        let inner = clause
+            .split_once('{')
+            .map_or("", |(_, inner)| inner.split('}').next().unwrap_or_default());
+        !words(clause).any(|word| word == "type")
+            && (!clause.contains('{') || inner.trim_start().starts_with(is_identifier_start))
+    })
 }
 
 /// Whole-word occurrences of `name`, member names included.

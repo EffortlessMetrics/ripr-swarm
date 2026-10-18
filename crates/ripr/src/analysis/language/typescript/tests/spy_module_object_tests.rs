@@ -18,6 +18,13 @@ fn spy_class(
     line: (usize, &str),
     test: &str,
 ) -> Result<ExposureClass, String> {
+    // A refusal that reads the wrong line proves nothing about its guard.
+    if owner.lines().nth(line.0 - 1) != Some(line.1) {
+        return Err(format!(
+            "{label}: changed line {} is not `{}`",
+            line.0, line.1
+        ));
+    }
     let root = ts_unique_tempdir(label)?;
     ts_write_file(&root.join("src/mail.ts"), owner)?;
     ts_write_file(
@@ -66,6 +73,15 @@ fn assert_all(
     } else {
         Err(misses.join("; "))
     }
+}
+
+/// The 1-based line of the changed call in `owner`, wherever the case's
+/// edit moved it.
+fn line_of(owner: &str) -> usize {
+    owner
+        .lines()
+        .position(|line| line == LINE.1)
+        .map_or(0, |at| at + 1)
 }
 
 fn test_with(body: &str) -> String {
@@ -196,6 +212,23 @@ fn spy_on_a_module_object_refuses_every_other_path_to_the_spy() -> Result<(), St
             .replace("\n\nexport function", "\nexport function"),
         ),
         (
+            // The method's default runs inside the spied call.
+            "owner-method-default",
+            OWNER.replace(
+                "  send(message: string): string {",
+                "  send(message: string, n = 0): string {",
+            ),
+        ),
+        (
+            // Module code outside the object can leave a mock with calls.
+            "owner-module-reassigns",
+            OWNER.to_string() + "mailer.send = jest.fn();\nmailer.send(\"order 7\");\n",
+        ),
+        (
+            "owner-module-imports",
+            OWNER.replace("export const mailer", "import \"./patch\";\nexport const mailer").replacen("\n\nexport function", "\nexport function", 1),
+        ),
+        (
             "owner-annotated",
             OWNER.replace("export const mailer = {", "export const mailer: Mailer = {")
                 + "type Mailer = { send(m: string): string };\n",
@@ -207,7 +240,6 @@ fn spy_on_a_module_object_refuses_every_other_path_to_the_spy() -> Result<(), St
                 "export const mailer = makeMailer();\nfunction makeMailer() {\n  return { send(m: string) { return m; } };\n}",
             ),
         ),
-        ("owner-let", OWNER.replace("export const mailer", "export let mailer")),
         (
             "owner-unexported",
             OWNER.replace("export const mailer", "const mailer"),
@@ -235,7 +267,14 @@ fn spy_on_a_module_object_refuses_every_other_path_to_the_spy() -> Result<(), St
     ];
     let mut cases: Vec<(&str, &str, (usize, &str), String)> = refused_owners
         .iter()
-        .map(|(label, owner)| (*label, owner.as_str(), LINE, format!("{IMPORT}{SPY_TEST}")))
+        .map(|(label, owner)| {
+            (
+                *label,
+                owner.as_str(),
+                (line_of(owner), LINE.1),
+                format!("{IMPORT}{SPY_TEST}"),
+            )
+        })
         .collect();
     let refused_tests = [
         (
@@ -340,6 +379,14 @@ fn spy_on_a_module_object_refuses_every_other_path_to_the_spy() -> Result<(), St
         (
             "file-side-effect-import",
             format!("{IMPORT}import \"../src/other\";\n{SPY_TEST}"),
+        ),
+        (
+            "file-empty-import",
+            format!("{IMPORT}import {{}} from \"../src/other\";\n{SPY_TEST}"),
+        ),
+        (
+            "file-type-import",
+            format!("{IMPORT}import {{ type X }} from \"../src/other\";\n{SPY_TEST}"),
         ),
         (
             "file-helper-import",
