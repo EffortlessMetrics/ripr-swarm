@@ -5098,13 +5098,61 @@ mod harness_limitation_assertion_tests {
     }
 
     #[test]
-    fn pinned_external_patch_paths_are_diff_sourced() {
+    fn pinned_external_patch_paths_are_diff_sourced() -> Result<(), String> {
+        // Extension-based positives do not consult the filesystem, so they
+        // stay true from any process cwd (#8657).
         assert!(evidence_promotion_case_is_diff_sourced(Some(
             "fixtures/evidence-promotion-honesty-corpus/patches/semver-matches-greater.diff"
         )));
-        assert!(!evidence_promotion_case_is_diff_sourced(None));
-        assert!(!evidence_promotion_case_is_diff_sourced(Some(
-            "fixtures/split_test_boundary_oracle"
+        assert!(evidence_promotion_case_is_diff_sourced(Some(
+            "does-not-need-to-exist.patch"
         )));
+        assert!(!evidence_promotion_case_is_diff_sourced(None));
+
+        // The exists(diff.patch) branch is cwd-relative. Pin it with
+        // absolute temp directories rather than a repo fixture whose
+        // patch file is visible from the workspace root but not from
+        // `xtask/` (the coverage failure on main 16953fb).
+        let temp_root = std::env::temp_dir();
+        std::fs::create_dir_all(&temp_root)
+            .map_err(|err| format!("create temp_dir root {}: {err}", temp_root.display()))?;
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let sandbox = temp_root.join(format!(
+            "ripr-8657-diff-sourced-{}-{stamp}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&sandbox);
+        std::fs::create_dir(&sandbox)
+            .map_err(|err| format!("create sandbox {}: {err}", sandbox.display()))?;
+
+        let with_patch = sandbox.join("with-patch");
+        let without_patch = sandbox.join("without-patch");
+        std::fs::create_dir(&with_patch)
+            .map_err(|err| format!("create {}: {err}", with_patch.display()))?;
+        std::fs::create_dir(&without_patch)
+            .map_err(|err| format!("create {}: {err}", without_patch.display()))?;
+        std::fs::write(with_patch.join("diff.patch"), b"")
+            .map_err(|err| format!("write diff.patch: {err}"))?;
+
+        let with_patch = with_patch
+            .to_str()
+            .ok_or_else(|| "with-patch temp path is not utf-8".to_string())?;
+        let without_patch = without_patch
+            .to_str()
+            .ok_or_else(|| "without-patch temp path is not utf-8".to_string())?;
+        assert!(
+            evidence_promotion_case_is_diff_sourced(Some(with_patch)),
+            "directory with diff.patch must be diff-sourced regardless of cwd"
+        );
+        assert!(
+            !evidence_promotion_case_is_diff_sourced(Some(without_patch)),
+            "directory without diff.patch must not be diff-sourced regardless of cwd"
+        );
+
+        let _ = std::fs::remove_dir_all(&sandbox);
+        Ok(())
     }
 }
