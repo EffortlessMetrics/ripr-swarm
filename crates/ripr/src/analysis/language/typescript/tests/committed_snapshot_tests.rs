@@ -896,6 +896,21 @@ fn runner_config_that_delegates_stays_medium() -> Result<(), String> {
             "export default { test: { root: \"./pkg\" } };",
             &vitest,
         ),
+        (
+            "jest.config.js",
+            "const projects = [\"<rootDir>/config/app.jest.js\"];\nmodule.exports = { projects };",
+            &jest,
+        ),
+        (
+            "vitest.config.ts",
+            "const workspace = [\"./packages/*\"];\nexport default { workspace };",
+            &vitest,
+        ),
+        (
+            "vitest.config.ts",
+            "const root = \"./pkg\";\nexport default { root };",
+            &vitest,
+        ),
     ] {
         assert_eq!(
             strengths(

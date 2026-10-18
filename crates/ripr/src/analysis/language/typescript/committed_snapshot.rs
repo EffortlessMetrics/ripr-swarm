@@ -224,21 +224,18 @@ const SNAPSHOT_OVERRIDES: [&str; 7] = [
 ];
 
 /// `true` when `text` holds `key` as an object key (`key:`, `key :`,
-/// `"key":`, `'key':`). A longer identifier (`rootDir`, `roots`) does not
-/// match `root`.
+/// `"key":`, `'key':`, or JS shorthand `{ key }` / `{ key, ... }`). A
+/// longer identifier (`rootDir`, `roots`) does not match `root`.
 fn mentions_named_key(text: &str, key: &str) -> bool {
     text.match_indices(key).any(|(index, matched)| {
-        let preceded_by_ident = index
-            .checked_sub(1)
-            .and_then(|before| text.get(before..index))
-            .and_then(|before| before.chars().next())
+        let preceded_by_ident = text
+            .get(..index)
+            .and_then(|before| before.chars().next_back())
             .is_some_and(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$'));
         !preceded_by_ident
             && text.get(index + matched.len()..).is_some_and(|rest| {
-                rest.strip_prefix(['"', '\''])
-                    .unwrap_or(rest)
-                    .trim_start()
-                    .starts_with(':')
+                let rest = rest.strip_prefix(['"', '\'']).unwrap_or(rest).trim_start();
+                rest.starts_with(':') || rest.starts_with([',', '}'])
             })
     })
 }
@@ -262,12 +259,9 @@ fn delegates_to_other_config(text: &str) -> bool {
 /// (`jest -u`, `jest\t-u`). `"-u"` is in [`SNAPSHOT_OVERRIDES`].
 fn mentions_short_update_flag(text: &str) -> bool {
     text.match_indices("-u").any(|(index, _)| {
-        index > 0
-            && text
-                .as_bytes()
-                .get(index - 1)
-                .copied()
-                .is_some_and(|before| before.is_ascii_whitespace())
+        text.get(..index)
+            .and_then(|before| before.chars().next_back())
+            .is_some_and(char::is_whitespace)
     })
 }
 
