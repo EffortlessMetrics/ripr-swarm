@@ -4040,9 +4040,12 @@ fn extract_tests_withholds_caught_assertions_but_reads_handler_and_finally() {
 
 #[test]
 fn extract_tests_withholds_assertions_a_finalizer_completion_can_replace() {
-    let assertions = |body: &str| {
+    let assertions_at = |path: &str, body: &str| {
         let source = format!("test(\"t\", async () => {{\n{body}\n}});\n");
-        let tests = extract_tests(Path::new("tests/lib.test.ts"), &source);
+        // Every input must parse: a parse failure would otherwise yield no
+        // assertions and satisfy the `is_empty()` checks vacuously.
+        assert_eq!(parse_error_reason(Path::new(path), &source), None, "{body}");
+        let tests = extract_tests(Path::new(path), &source);
         assert_eq!(tests.len(), 1, "{body}");
         tests[0]
             .assertions
@@ -4050,6 +4053,7 @@ fn extract_tests_withholds_assertions_a_finalizer_completion_can_replace() {
             .map(|assertion| assertion.matcher.clone())
             .collect::<Vec<_>>()
     };
+    let assertions = |body: &str| assertions_at("tests/lib.test.ts", body);
     let check = "expect(a).toBe(1);";
     for replaced in [
         format!("try {{ {check} }} finally {{ return; }}"),
@@ -4077,9 +4081,6 @@ fn extract_tests_withholds_assertions_a_finalizer_completion_can_replace() {
             "for (;;) {{ try {{ {check} }} finally {{ switch (x) {{ case 1: continue; }} }} }}"
         ),
         format!("try {{ {check} }} finally {{ try {{ f(); }} catch {{ return; }} }}"),
-        // Deliberately non-strict input: `with` is a syntax error in strict mode,
-        // but this checks the walker's With arm recurses into the body.
-        format!("try {{ {check} }} finally {{ with (o) {{ return; }} }}"),
     ] {
         assert!(assertions(&replaced).is_empty(), "{replaced}");
     }
@@ -4098,6 +4099,13 @@ fn extract_tests_withholds_assertions_a_finalizer_completion_can_replace() {
     ] {
         assert_eq!(assertions(&kept), ["toBe"], "{kept}");
     }
+    // `with` is a syntax error in module/strict `.ts`, so it is exercised as
+    // sloppy-mode `.cjs`, with a positive control that keeps its assertion.
+    let sloppy = |body: &str| assertions_at("tests/lib.test.cjs", body);
+    let with_return = format!("try {{ {check} }} finally {{ with (o) {{ return; }} }}");
+    assert!(sloppy(&with_return).is_empty(), "{with_return}");
+    let with_benign = format!("try {{ {check} }} finally {{ with (o) {{ f(); }} }}");
+    assert_eq!(sloppy(&with_benign), ["toBe"], "{with_benign}");
 }
 
 #[test]
