@@ -1287,7 +1287,11 @@ fn mock_factories(statements: &[Statement<'_>], code: &str) -> Vec<(String, Stri
 /// source. A plain `const` object nobody else names cannot change before a
 /// spread copies it (RIPR-SPEC-0247 rule 1, amended 2026-10-18).
 fn mock_spread_sources(statements: &[Statement<'_>], code: &str) -> Vec<(String, String)> {
-    if file_is_opaque(code) {
+    // The masker shrinks multi-byte characters inside strings and comments,
+    // so offsets into `code` only index `masked` when the lengths agree;
+    // otherwise nothing is recorded.
+    let masked = ts_mask_literals_and_comments(code);
+    if file_is_opaque(code) || masked.len() != code.len() {
         return Vec::new();
     }
     statements
@@ -1313,14 +1317,16 @@ fn mock_spread_sources(statements: &[Statement<'_>], code: &str) -> Vec<(String,
             Some((id.name.to_string(), id.span.start as usize, literal))
         })
         .filter(|(name, declared_at, _)| {
-            let masked = ts_mask_literals_and_comments(code);
             word_occurrences(code, name).all(|at| {
                 at == *declared_at
-                    || masked.get(..at).is_some_and(|before| {
-                        before.trim_end().strip_suffix("...").is_some_and(|before| {
-                            !before.ends_with('.') && inside_expression_literal(before)
-                        })
-                    })
+                    || (masked[at + name.len()..]
+                        .trim_start()
+                        .starts_with([',', '}'])
+                        && masked.get(..at).is_some_and(|before| {
+                            before.trim_end().strip_suffix("...").is_some_and(|before| {
+                                !before.ends_with('.') && inside_expression_literal(before)
+                            })
+                        }))
             })
         })
         .map(|(name, _, literal)| (name, literal))

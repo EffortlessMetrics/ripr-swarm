@@ -161,3 +161,36 @@ fn rest_binding_in_a_parameter_list_or_assignment_is_not_a_spread_use() {
     // A spread used as a call argument is not the `const x = { ... }` form.
     assert_eq!(names("use({ ...defaults });"), 0);
 }
+
+#[test]
+fn offsets_and_trailing_text_cannot_smuggle_a_mutation_past_the_spread_check() {
+    let names = |source: &str| {
+        extract_tests(Path::new("test/save.test.ts"), source)
+            .first()
+            .map_or(0, |test| test.mock_spread_sources_in_file.len())
+    };
+    let test = "test(\"t\", () => {\n  const x = 1;\n});\n";
+    // Multi-byte text in a string before the name must not shift the check
+    // onto text after it (`d.z = 1, ...`).
+    let drift = format!(
+        "const d = {{ a: 1 }};\nconst s = \"{}\";\nconst o = {{ k: d.z = 1, ...q }};\n{test}",
+        "\u{e9}".repeat(12)
+    );
+    assert_eq!(names(&drift), 0);
+    // Text after the name: a rest target assigns through the source.
+    let after = format!("const d = {{ a: 1 }};\nconst x = {{ ...d.write }} = y;\n{test}");
+    assert_eq!(names(&after), 0);
+    let ok = format!("const d = {{ a: 1 }};\nconst x = {{ k: 1, ...d }};\n{test}");
+    assert_eq!(names(&ok), 1);
+    for shadow in [
+        "for (const { ...d } of xs) {}",
+        "try {} catch ({ ...d }) {}",
+        "function f(...d) {}",
+        "function g(d) {}",
+        "// reset d...\nd.write = 1;",
+    ] {
+        let source =
+            format!("const d = {{ a: 1 }};\nconst x = {{ k: 1, ...d }};\n{shadow}\n{test}");
+        assert_eq!(names(&source), 0, "{shadow}");
+    }
+}
