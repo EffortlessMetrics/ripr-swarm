@@ -43,7 +43,13 @@ pub(crate) enum RepairStartDecision {
     Action(Box<CanonicalNextActionV1>),
     NoEligible {
         total_seams: usize,
+        /// Distinct ineligibility reasons rendered in the bounded list.
         reasons: Vec<String>,
+        /// The total count of distinct ineligibility reasons across the
+        /// visible seams (#8728). Greater than `reasons.len()` when the
+        /// bounded list was truncated; the renderer discloses the
+        /// remainder instead of presenting three as the whole story.
+        reasons_total: usize,
     },
 }
 
@@ -60,6 +66,10 @@ pub(crate) struct RepairStartFacts<'a> {
     /// Distinct ineligibility reasons across the visible seams, bounded by
     /// the gatherer. Empty when every visible seam is eligible.
     pub(crate) ineligible_reasons: &'a [String],
+    /// The total count of distinct ineligibility reasons across the
+    /// visible seams, tracked alongside the bounded list so a truncated
+    /// list can disclose its remainder (#8728).
+    pub(crate) ineligible_reasons_total: usize,
     /// The current HEAD, when it could be read.
     pub(crate) head: Option<&'a str>,
     /// The before-phase command for the single candidate, if any. Ignored
@@ -78,6 +88,7 @@ pub(crate) fn decide_repair_start(
         return Ok(RepairStartDecision::NoEligible {
             total_seams: facts.total_seams,
             reasons: facts.ineligible_reasons.to_vec(),
+            reasons_total: facts.ineligible_reasons_total,
         });
     }
     let single = facts.eligible_ids.len() == 1;
@@ -191,8 +202,6 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
             info.analyzed, info.total
         ));
     }
-    let mut eligible_ids = Vec::new();
-    let mut reasons: Vec<String> = Vec::new();
     // The before-phase packet producer refuses policy-omitted seams
     // (#4332), so the auto selector must apply the same omission: a
     // severity-off seam is never a start candidate, and the omission is
@@ -200,14 +209,25 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
     // classes this selector already excludes, or for configured-off
     // classes, so no eligible seam is lost.
     let policy = AgentBriefPolicy::from_config(&config);
+    /// The bounded no-eligible reason list renders at most this many
+    /// distinct reasons; the total count keeps tracking so the renderer
+    /// can disclose the remainder instead of presenting the bound as the
+    /// whole story (#8728).
+    const MAX_LISTED_REASONS: usize = 3;
+    let mut eligible_ids = Vec::new();
+    let mut reasons: Vec<String> = Vec::new();
+    let mut reasons_total = 0usize;
     for entry in &classified {
         match repair_refusal_reason(entry, policy) {
             None => eligible_ids.push(entry.seam.id().as_str().to_string()),
             Some(reason) => {
                 // Name the shared gate's own reason among the no-eligible
                 // reasons so the limitation is diagnosable.
-                if reasons.len() < 3 && !reasons.contains(&reason) {
-                    reasons.push(reason);
+                if !reasons.contains(&reason) {
+                    reasons_total += 1;
+                    if reasons.len() < MAX_LISTED_REASONS {
+                        reasons.push(reason);
+                    }
                 }
             }
         }
@@ -224,6 +244,7 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
         eligible_ids: &eligible_ids,
         total_seams: classified.len(),
         ineligible_reasons: &reasons,
+        ineligible_reasons_total: reasons_total,
         head: head.as_deref(),
         start_spec: spec.as_ref(),
     })
@@ -795,6 +816,7 @@ mod tests {
         eligible_ids: &'a [String],
         total_seams: usize,
         reasons: &'a [String],
+        reasons_total: usize,
         start_spec: Option<&'a CommandSpec>,
     ) -> RepairStartFacts<'a> {
         RepairStartFacts {
@@ -802,6 +824,7 @@ mod tests {
             eligible_ids,
             total_seams,
             ineligible_reasons: reasons,
+            ineligible_reasons_total: reasons_total,
             head: Some("head1"),
             start_spec,
         }
@@ -809,12 +832,13 @@ mod tests {
 
     #[test]
     fn decide_zero_visible_seams_yields_setup_outcome() -> Result<(), String> {
-        match decide_repair_start(&facts(&[], 0, &[], None))? {
+        match decide_repair_start(&facts(&[], 0, &[], 0, None))? {
             RepairStartDecision::NoEligible {
                 total_seams,
                 reasons,
+                reasons_total,
             } => {
-                if total_seams != 0 || !reasons.is_empty() {
+                if total_seams != 0 || !reasons.is_empty() || reasons_total != 0 {
                     return Err("setup outcome must carry zero seams".to_string());
                 }
                 Ok(())
@@ -828,13 +852,46 @@ mod tests {
     #[test]
     fn decide_zero_eligible_seams_yields_limitation_outcome() -> Result<(), String> {
         let reasons = vec!["repair route not ready".to_string()];
-        match decide_repair_start(&facts(&[], 2, &reasons, None))? {
+        match decide_repair_start(&facts(&[], 2, &reasons, 1, None))? {
             RepairStartDecision::NoEligible {
                 total_seams,
                 reasons,
+                reasons_total,
             } => {
-                if total_seams != 2 || reasons != ["repair route not ready".to_string()] {
+                if total_seams != 2
+                    || reasons != ["repair route not ready".to_string()]
+                    || reasons_total != 1
+                {
                     return Err("limitation outcome must carry the evidence".to_string());
+                }
+                Ok(())
+            }
+            RepairStartDecision::Start { .. } | RepairStartDecision::Action(_) => {
+                Err("zero eligible seams must not start or select".to_string())
+            }
+        }
+    }
+
+    /// #8728: the bounded reason list and its total travel together, so a
+    /// truncated list can disclose its remainder instead of reading as
+    /// complete.
+    #[test]
+    fn decide_zero_eligible_carries_reason_total_for_disclosure() -> Result<(), String> {
+        let reasons = vec![
+            "repair route not ready".to_string(),
+            "cross-language oracle visibility unresolved".to_string(),
+            "repair target unresolved".to_string(),
+        ];
+        match decide_repair_start(&facts(&[], 5, &reasons, 5, None))? {
+            RepairStartDecision::NoEligible {
+                reasons,
+                reasons_total,
+                ..
+            } => {
+                if reasons.len() != 3 || reasons_total != 5 {
+                    return Err(format!(
+                        "bounded list must stay at three with the total beside it: {reasons:?} of {reasons_total}"
+                    ));
                 }
                 Ok(())
             }
@@ -849,7 +906,7 @@ mod tests {
     #[test]
     fn decide_single_candidate_without_spec_does_not_start() -> Result<(), String> {
         let eligible = vec!["seam:demo".to_string()];
-        match decide_repair_start(&facts(&eligible, 1, &[], None))? {
+        match decide_repair_start(&facts(&eligible, 1, &[], 0, None))? {
             RepairStartDecision::Action(action) => {
                 if action.is_executable() {
                     return Err("an unoffered candidate must not execute".to_string());
