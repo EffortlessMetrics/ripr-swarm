@@ -7285,6 +7285,7 @@ id = "RIPR-SPEC-0088"
 name = "TypeScript repair-packet surface projection"
 spec = "docs/specs/RIPR-SPEC-0088-typescript-repair-packet-projection.md"
 tests = [
+  "crates/ripr/src/output/human.rs::tests::preview_limited_named_limitation_has_terminal_observation_check",
   # Human surface â€” field-note and named limitation
   "crates/ripr/src/app/explain.rs::tests::explain_finding_renders_typescript_actionable_packet_field_note",
   "crates/ripr/src/app/explain.rs::tests::explain_finding_renders_typescript_blocked_packet_limitation",
@@ -7309,6 +7310,7 @@ fixtures = [
   "fixtures/ts_already_observed"
 ]
 code = [
+  "crates/ripr/src/output/human/triage.rs",
   "crates/ripr/src/app/explain.rs",
   "crates/ripr/src/output/human/sections.rs",
   "crates/ripr/src/output/json/report.rs",
@@ -14637,6 +14639,10 @@ tests = [
   "xtask/src/work_portfolio.rs::tests::work_portfolio_explain_view_matches_snapshot_and_fails_closed",
   "xtask/src/work_portfolio.rs::tests::work_portfolio_markdown_derives_from_same_dto_without_strengthening",
   "xtask/src/work_portfolio.rs::tests::work_portfolio_markdown_renders_lists_as_plain_markdown_not_debug",
+  "xtask/src/work_portfolio.rs::tests::capture_notice_names_fixture_corpus_date_and_sha_under_the_title",
+  "xtask/src/work_portfolio.rs::tests::capture_notice_omits_fixture_banner_for_non_fixture_directories",
+  "xtask/src/work_portfolio.rs::tests::load_and_compile_marks_non_fixture_captured_dir_as_live",
+  "xtask/src/work_portfolio.rs::tests::committed_fixture_detection_fails_closed_for_unresolvable_paths",
   "xtask/src/work_portfolio.rs::tests::work_portfolio_committed_corpus_provenance_and_scenarios_hold",
   "xtask/src/work_portfolio.rs::tests::work_portfolio_argument_errors_fail_closed",
   "xtask/src/work_portfolio.rs::tests::work_portfolio_provenance_rejects_path_traversal",
@@ -15949,6 +15955,9 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::mock_payload_on_the_parameters_own_mock_is_credited",
   "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::mock_payload_on_a_test_file_factory_mock_is_credited",
   "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::mock_payload_binding_must_be_exactly_a_fresh_mock",
+  "crates/ripr/src/analysis/language/typescript/tests/spy_module_object_tests.rs::spy_on_an_exported_module_object_the_changed_line_calls_is_credited",
+  "crates/ripr/src/analysis/language/typescript/tests/spy_module_object_tests.rs::spy_on_a_module_object_refuses_every_other_path_to_the_spy",
+  "crates/ripr/src/analysis/language/typescript/mock_payload_guard/spy.rs::tests::module_object_call_needs_an_owner_at_the_module_top_level",
   "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::mock_payload_another_call_could_satisfy_is_not_credited",
   "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::mock_payload_on_another_target_is_not_credited",
   "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::loose_equality_with_a_coercion_safe_literal_reads_exact",
@@ -15969,6 +15978,7 @@ code = [
   "crates/ripr/src/analysis/language/typescript/classifier.rs",
   "crates/ripr/src/analysis/language/typescript/literal_matcher_guard.rs",
   "crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs",
+  "crates/ripr/src/analysis/language/typescript/mock_payload_guard/spy.rs",
   "crates/ripr/src/analysis/language/typescript/oracle.rs",
   "crates/ripr/src/analysis/language/typescript/static_limit.rs",
   "crates/ripr/src/analysis/language/typescript/tests_extract.rs",

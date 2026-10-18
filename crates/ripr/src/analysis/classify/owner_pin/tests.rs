@@ -4753,6 +4753,46 @@ fn any_mention_in_another_macros_arguments_stays_ambiguous() {
 }
 
 #[test]
+fn a_bound_trusted_call_hides_attributes_and_nested_calls_from_the_pin() {
+    // #8446: the second pass over a bound trusted name's calls must read an
+    // attribute in its arguments like the first pass does, and must reach a
+    // bound call nested inside another trusted call's token tree.
+    let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    let refused = |other: &str| {
+        matches!(
+            weight_refusal(tests, &[("src/other.rs", other)]),
+            Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::MacroBinding(_)
+            ))
+        )
+    };
+    for hidden in [
+        // Finding 1: an attribute in the arguments of a bound trusted call.
+        "use ext::vec;\nvec!(#[no_implicit_prelude] mod tests;);\n",
+        "use ext::vec;\nvec!(#[macro_use] mod tests;);\n",
+        // Finding 2: a bound call nested in another trusted call.
+        "use ext::vec;\nfn f() { dbg!(vec!(assert_eq!(#[cfg(test)] mod tests;))); }\n",
+        "use ext::vec;\nfn f() { dbg!(vec!(#[no_implicit_prelude] mod tests;)); }\n",
+        "use ext::vec;\nfn f() { dbg!(dbg!(vec![assert_eq!(1, 1)])); }\n",
+    ] {
+        assert!(refused(hidden), "{hidden}");
+    }
+    // Discriminating negatives: an inert attribute, an unbound nested name
+    // and a bound call that names no trusted macro keep the pin.
+    for kept in [
+        "use ext::vec;\nvec!(#[derive(Debug)] struct S;);\n",
+        "fn f() { dbg!(vec!(assert_eq!(1, 1))); }\n",
+        "use ext::vec;\nfn f() { dbg!(vec!(1, 2)); }\n",
+    ] {
+        assert_eq!(
+            weight_refusal(tests, &[("src/other.rs", kept)]),
+            None,
+            "{kept}"
+        );
+    }
+}
+
+#[test]
 fn a_bound_trusted_macros_arguments_are_opaque_to_other_trusted_names() {
     // #5941: a user-defined `vec!` is no longer std's, so `assert_eq!` named
     // only inside its arguments can be defined by the expansion together with
@@ -5136,6 +5176,79 @@ fn pretty_assertions_imported_under_its_own_name_is_the_standard_assertion() -> 
             "{other}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn a_verified_drop_in_import_in_a_macro_body_is_the_standard_assertion() -> Result<(), String> {
+    // #8149: the drop-in rule applies to `use` items a macro body emits.
+    let outside = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    let manifest = |dependency: &str| {
+        format!(
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dev-dependencies]\n{dependency}\n"
+        )
+    };
+    let plain = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-macro-plain",
+        &[("Cargo.toml", &manifest("pretty_assertions = \"1\""))],
+    )?;
+    let aliased = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-macro-aliased",
+        &[(
+            "Cargo.toml",
+            &manifest("pretty_assertions = { package = \"fake-assertions\", version = \"1\" }"),
+        )],
+    )?;
+    let refused = |refusal: Option<AssertionRefusal>| {
+        matches!(
+            refusal,
+            Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::MacroBinding(_)
+            ))
+        )
+    };
+    let mut results = Vec::new();
+    // Admitted under a verified manifest, refused without one or when aliased.
+    for other in [
+        "macro_rules! cases { ($n:ident) => { mod $n { use pretty_assertions::assert_eq; #[test] fn t() { assert_eq!(weight(4), 12); } } }; }\n",
+        "macro_rules! cases { () => { use ::pretty_assertions::assert_eq; }; }\n",
+    ] {
+        let others = [("src/other.rs", other)];
+        results.push((
+            other,
+            weight_refusal_under(outside, &others, Some(&plain)),
+            weight_refusal_under(outside, &others, Some(&aliased)),
+            weight_refusal(outside, &others),
+        ));
+    }
+    // Still refused even under a verified manifest.
+    let mut still_refused = Vec::new();
+    for other in [
+        "macro_rules! m { () => { use other::assert_eq; }; }\n",
+        "macro_rules! m { () => { use pretty_assertions::assert_ne as assert_eq; }; }\n",
+        "macro_rules! m { () => { use pretty_assertions::inner::assert_eq; }; }\n",
+        "macro_rules! m { () => { use pretty_assertions::assert_eq; }; }\nmod pretty_assertions {}\n",
+    ] {
+        still_refused.push((
+            other,
+            weight_refusal_under(outside, &[("src/other.rs", other)], Some(&plain)),
+        ));
+    }
+    // A literal `use` in a matcher binds nothing and cannot reach the next `;`.
+    let matcher =
+        "macro_rules! m { (use other::assert_eq) => { use pretty_assertions::assert_eq; }; }\n";
+    let matcher_result = weight_refusal_under(outside, &[("src/other.rs", matcher)], Some(&plain));
+    let _ = std::fs::remove_dir_all(&plain);
+    let _ = std::fs::remove_dir_all(&aliased);
+    for (other, under_plain, under_alias, unrooted) in results {
+        assert_eq!(under_plain, None, "{other}");
+        assert!(refused(under_alias), "{other}");
+        assert!(refused(unrooted), "{other}");
+    }
+    for (other, refusal) in still_refused {
+        assert!(refused(refusal), "{other}");
+    }
+    assert_eq!(matcher_result, None);
     Ok(())
 }
 
