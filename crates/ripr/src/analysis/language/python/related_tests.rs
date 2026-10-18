@@ -2058,6 +2058,13 @@ mod oracle_operand_tests {
             ("assert list(always_true(utils.sign(0))) == []", false),
             ("assert list(utils.sign(0), 1) == []", false),
             ("assert x.list(utils.sign(0)) == []", false),
+            ("assert list(utils.sign(0),) == []", false),
+            ("assert list(*utils.sign(0)) == []", false),
+            ("assert sorted(utils.sign(0), reverse=True) == []", false),
+            ("assert tuple(utils.sign(0), 1) == ()", false),
+            ("assert set(utils.sign(0))", true),
+            ("assert frozenset(utils.sign(0)) == frozenset()", true),
+            ("assert list(utils.sign(0))[0] == 1", true),
         ] {
             assert_eq!(oracle_operand_calls(text, "utils.sign"), expected, "{text}");
         }
