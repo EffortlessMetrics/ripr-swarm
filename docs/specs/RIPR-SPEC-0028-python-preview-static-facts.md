@@ -287,8 +287,9 @@ it (`Version.__init__` reaching `_validate_epoch`), following bare-name calls
 for at most three hops in the helper's file. The relation is uncertain,
 carries no oracle, and never reaches `exposed`; a duplicate helper name, a
 parameter or local rebinding of the name, an attribute call, and comment or
-string text make no edge, nor does a caller wrapped by a decorator other than
-`classmethod`, `staticmethod` or `property` (#4568). Known limits, all
+string text make no edge, nor does a caller wrapped by any decorator (including
+one whose name cannot be read) other than `classmethod`, `staticmethod` or
+`property`, alone or combined; an `async def` caller is allowed (#4568). Known limits, all
 weak-only: a module-level rebinding such as `helper = wrap(helper)` is not
 detected, and a call inside a nested `def` or lambda counts as an edge of the
 enclosing owner.

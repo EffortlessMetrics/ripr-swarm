@@ -174,11 +174,56 @@ fn given_a_decorated_caller_then_no_helper_relation_is_made() -> Result<(), Stri
 }
 
 #[test]
-fn given_a_docstring_mention_of_the_helper_then_no_helper_relation_is_made() -> Result<(), String> {
+fn given_unreadable_or_stacked_decorators_then_no_helper_relation_is_made() -> Result<(), String> {
     let tests = "from src.version import make\n\n\ndef test_make():\n    assert make(1)\n";
-    let source = "def helper(x):\n    return x > 0\n\n\ndef make(x):\n    \"\"\"Calls helper(x) when asked.\"\"\"\n    return x\n";
-    assert!(helper_relations(source, tests, "helper")?.is_empty());
+    for decorator in [
+        "@registry[\"x\"]",
+        "@(lambda f: f)",
+        "@decos[0]",
+        "@staticmethod\n@other",
+    ] {
+        let source = format!(
+            "def helper(x):\n    return x > 0\n\n\n{decorator}\ndef make(x):\n    return helper(x)\n"
+        );
+        assert!(
+            helper_relations(&source, tests, "helper")?.is_empty(),
+            "{decorator}"
+        );
+    }
     Ok(())
+}
+
+#[test]
+fn given_binding_or_async_wrappers_then_a_helper_relation_is_still_made() -> Result<(), String> {
+    let tests = "from src.version import make\n\n\ndef test_make():\n    assert make(1)\n";
+    let source = "def helper(x):\n    return x > 0\n\n\n@staticmethod\n@classmethod\ndef make(x):\n    return helper(x)\n";
+    assert_eq!(helper_relations(source, tests, "helper")?.len(), 1);
+    for header in [
+        "@property\ndef make(x):",
+        "@classmethod\ndef make(x):",
+        "async def make(x):",
+    ] {
+        let source =
+            format!("def helper(x):\n    return x > 0\n\n\n{header}\n    return helper(x)\n");
+        assert_eq!(
+            helper_relations(&source, tests, "helper")?.len(),
+            1,
+            "{header}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn given_call_text_inside_a_docstring_then_contains_call_name_ignores_it() {
+    assert!(!related_tests::contains_call_name(
+        "\"\"\"\nhelper(1)\n\"\"\"\nx = 1\n",
+        "helper"
+    ));
+    assert!(related_tests::contains_call_name(
+        "x = helper(1)\n",
+        "helper"
+    ));
 }
 
 #[test]

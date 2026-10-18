@@ -127,6 +127,7 @@ fn owner_from_function(
     is_async: bool,
 ) -> PythonOwner {
     let decorator_names = decorator_names(decorators);
+    let raw_decorator_count = decorators.len();
     // A decorator whose name cannot be read still wraps the call.
     let binding_only = !is_async
         && decorator_names.len() == decorators.len()
@@ -150,6 +151,10 @@ fn owner_from_function(
     let route_paths = collect_static_route_paths(context.source, decorators);
     let dynamic_route_decorators = collect_dynamic_route_decorators(context.source, decorators);
     let mut decorators = decorator_names;
+    if decorators.len() != raw_decorator_count {
+        // An unreadable decorator still wraps the call; mark it so guards reject.
+        decorators.push("unreadable_decorator".to_string());
+    }
     if is_async {
         decorators.push("async_def".to_string());
     }
