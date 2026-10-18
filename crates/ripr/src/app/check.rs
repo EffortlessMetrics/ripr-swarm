@@ -700,23 +700,31 @@ const STDERR_TAIL_CHAR_LIMIT: usize = 600;
 /// whole unbounded file.
 const STDERR_TAIL_READ_WINDOW: usize = 16 * 1024;
 
-/// One extra window when the first is whitespace-only, so a capture that
-/// ends in more trailing whitespace than the primary window still surfaces
-/// earlier text the old whole-file `trim()` would have found. Residual:
-/// more trailing whitespace than this window still returns `None`.
+/// One extra window when the first is whitespace-only or shorter than
+/// `STDERR_TAIL_CHAR_LIMIT`, so a capture that ends in more trailing
+/// whitespace than the primary window still surfaces earlier text the old
+/// whole-file `trim()` would have found. Residual: more trailing whitespace
+/// than this window still returns `None`.
 const STDERR_TAIL_FALLBACK_WINDOW: usize = 64 * 1024;
 
 fn extract_stderr_tail(path: &Path) -> Option<String> {
     let (text, _) = read_stderr_tail_window(path, STDERR_TAIL_READ_WINDOW)?;
-    if let Some(tail) = trim_stderr_char_tail(&text) {
-        return Some(tail);
+    let primary = trim_stderr_char_tail(&text);
+    if primary
+        .as_ref()
+        .is_some_and(|tail| tail.chars().count() >= STDERR_TAIL_CHAR_LIMIT)
+    {
+        return primary;
     }
     let len = std::fs::metadata(path).ok()?.len();
     if len > u64::try_from(STDERR_TAIL_READ_WINDOW).ok()? {
-        let (text, _) = read_stderr_tail_window(path, STDERR_TAIL_FALLBACK_WINDOW)?;
-        return trim_stderr_char_tail(&text);
+        if let Some((text, _)) = read_stderr_tail_window(path, STDERR_TAIL_FALLBACK_WINDOW) {
+            if let Some(tail) = trim_stderr_char_tail(&text) {
+                return Some(tail);
+            }
+        }
     }
-    None
+    primary
 }
 
 /// Open `path`, seek to `End(-window)` (clamped to the file length), and
@@ -735,8 +743,8 @@ fn read_stderr_tail_window(path: &Path, window: usize) -> Option<(String, usize)
     let back = i64::try_from(read_len).ok()?;
     file.seek(SeekFrom::End(-back)).ok()?;
     let mut buf = vec![0_u8; usize::try_from(read_len).ok()?];
-    let n = file.read(&mut buf).ok()?;
-    buf.truncate(n);
+    file.read_exact(&mut buf).ok()?;
+    let n = buf.len();
     // A mid-file window can start inside a UTF-8 scalar. Lossy-decoding that
     // prefix inserts U+FFFD, which is not whitespace, so a window of trailing
     // multibyte spaces would look like a real message and skip the fallback.
@@ -1971,6 +1979,31 @@ mod tests {
         if bytes_read > STDERR_TAIL_READ_WINDOW {
             return Err(format!(
                 "window helper read {bytes_read} bytes; bound is {STDERR_TAIL_READ_WINDOW}"
+            ));
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn stderr_tail_fallback_when_primary_window_holds_only_part_of_the_message()
+    -> Result<(), String> {
+        // 600-char message plus almost one primary window of ASCII spaces: the
+        // 16 KiB read keeps one character, which must not suppress the fallback.
+        let dir = stderr_tail_scratch("short-primary")?;
+        let message: String = (0..STDERR_TAIL_CHAR_LIMIT)
+            .map(|index| char::from(b'A' + (index % 26) as u8))
+            .collect();
+        let mut bytes = Vec::from(message.as_bytes());
+        bytes.resize(bytes.len() + STDERR_TAIL_READ_WINDOW - 1, b' ');
+        let staging = write_stderr_capture(&dir, &bytes)?;
+        let got = staging
+            .stderr_tail()
+            .ok_or_else(|| "fallback must recover the full message".to_string())?;
+        if !got.ends_with(&message) {
+            return Err(format!(
+                "expected the 600-char message via fallback, got {got:?}"
             ));
         }
 
