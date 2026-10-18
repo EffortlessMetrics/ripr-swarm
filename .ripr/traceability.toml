@@ -12796,6 +12796,15 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/tests/check_helper_argument_pins.rs::a_helper_comparing_its_parameters_pins_the_arguments_the_test_passes",
+  "crates/ripr/tests/check_helper_argument_pins.rs::a_direct_template_rendering_pins_a_scalar_owner",
+  "crates/ripr/tests/check_helper_argument_pins.rs::a_later_genuine_pin_counts_after_a_wrong_owner_call",
+  "crates/ripr/tests/check_helper_argument_pins.rs::decoy_helper_arguments_lend_no_pin",
+  "crates/ripr/src/analysis/classify/owner_pin/helper_arguments.rs::tests::reads_only_a_bare_call_statement",
+  "crates/ripr/src/analysis/classify/owner_pin/helper_arguments.rs::tests::reads_a_template_around_one_placeholder",
+  "crates/ripr/src/analysis/classify/owner_pin/helper_arguments.rs::tests::reads_only_literal_expected_values",
+  "crates/ripr/src/analysis/classify/owner_pin/helper_arguments.rs::tests::reads_parameter_types_without_spacing",
+  "crates/ripr/src/analysis/classify/owner_pin/helper_arguments.rs::tests::compares_only_one_by_value_type",
   "crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs::boolean_helper_pins_require_the_existing_execution_and_identity_gates",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_early_err_variant_return_is_pinned_when_no_other_exit_builds_it",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_early_err_variant_pin_admits_only_its_variant_through_derived_equality",
@@ -13143,6 +13152,7 @@ fixtures = [
   "fixtures/owner_return_pin_single_file_raw_rename_shadow",
 ]
 code = [
+  "crates/ripr/src/analysis/classify/owner_pin/helper_arguments.rs",
   "crates/ripr/src/analysis/classify/changed_span.rs",
   "crates/ripr/src/analysis/classify/call_identity.rs",
   "crates/ripr/src/output/observed_values.rs",

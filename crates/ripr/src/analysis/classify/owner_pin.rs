@@ -44,6 +44,7 @@
 pub(super) mod closure_adaptor;
 mod expected_binding;
 mod fallible_check;
+mod helper_arguments;
 pub(super) mod short_circuit;
 pub(in crate::analysis) use fallible_check::{FallibleCheckReceipt, fallible_check_receipt};
 
@@ -82,7 +83,7 @@ use ra_ap_syntax::{
     ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasModuleItem, HasName},
 };
 use rayon::prelude::*;
-use std::cell::OnceCell;
+use std::cell::{Cell, OnceCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -2913,6 +2914,64 @@ impl OwnerReturnPin {
         })
     }
 
+    /// RIPR-SPEC-0197 check-helper argument pins: the test-scope texts a
+    /// borrowed helper assertion's two compared parameters stand for, read
+    /// only for a whole-return owner pin whose assertion is
+    /// `assert_eq!(a, b)` or `assert!(a == b)` over two plain parameters of
+    /// a helper that never names the owner.
+    fn substituted_helper_operands(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+        compared: &[String; 2],
+        skip: usize,
+    ) -> Option<[String; 2]> {
+        if !matches!(self.path, ReturnPathGate::Any)
+            || (test.start_line..=test.end_line).contains(&assertion.line)
+            || !compared.iter().all(|operand| is_plain_identifier(operand))
+        {
+            return None;
+        }
+        let loan = syntax.helper_loan(test, assertion, index)?;
+        // A helper that names the owner may feed it into either side.
+        if contains_as_whole_word(&mask_comments_and_strings(&loan.helper), &self.name) {
+            return None;
+        }
+        helper_arguments::substituted_operands(
+            test,
+            &loan,
+            [compared[0].as_str(), compared[1].as_str()],
+            &self.name,
+            index,
+            |operands| self.substituted_pin(operands, index).is_some(),
+            skip,
+        )
+    }
+
+    /// The owner call, the literal expected value and the call text of a
+    /// substituted helper comparison: one side is the owner call (or a
+    /// template rendering of a scalar owner's call), the other a literal.
+    fn substituted_pin<'a>(
+        &self,
+        operands: &'a [String; 2],
+        index: &RustIndex,
+    ) -> Option<(CallShape<'a>, String, Option<&'a str>)> {
+        [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
+            let expected = helper_arguments::expected_literal(&operands[other], index)?;
+            if let Some(call) = self.awaited_call_shape(&operands[at], &self.name) {
+                return Some((call, expected, Some(operands[at].as_str())));
+            }
+            let rendered = self
+                .returns_scalar
+                .then(|| helper_arguments::rendered_template_call(&operands[at], &expected))
+                .flatten()?;
+            self.awaited_call_shape(rendered, &self.name)
+                .map(|call| (call, expected, None))
+        })
+    }
+
     /// The test-side gates: whether `assertion` in `test` pins the owner's
     /// return value through a call that names the owner.
     /// [`owner_call_shape`], reading an `async` owner's result through one
@@ -2936,6 +2995,32 @@ impl OwnerReturnPin {
         index: &RustIndex,
         imports_foreign: ForeignImport<'_>,
         syntax: &OwnerPinSyntax,
+    ) -> bool {
+        // A selected check-helper argument pin that a later gate refuses
+        // (another owner of the same name, a scope or identity gate) leaves
+        // the helper's later eager calls to try: an unrelated earlier call
+        // must not hide the genuine pin.
+        let mut probe = HelperCallProbe::default();
+        loop {
+            if self.admits_candidate(test, assertion, index, imports_foreign, syntax, &probe) {
+                return true;
+            }
+            if !probe.selected.get() {
+                return false;
+            }
+            probe.skip += 1;
+            probe.selected.set(false);
+        }
+    }
+
+    fn admits_candidate(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        imports_foreign: ForeignImport<'_>,
+        syntax: &OwnerPinSyntax,
+        probe: &HelperCallProbe,
     ) -> bool {
         // A `#[should_panic]` test passes when the values differ.
         if test
@@ -2993,9 +3078,37 @@ impl OwnerReturnPin {
                 unwrapped_call
             };
         let mut unwrapped = false;
+        // RIPR-SPEC-0197 check-helper argument pins: a borrowed helper
+        // assertion that compares two of the helper's own parameters reads
+        // as comparing the arguments the test's eager call passes.
+        let compared = if is_guard || renders || indexes {
+            None
+        } else if reads_assert_eq {
+            assertion_comparison_operands(&assertion.text)
+                .map(|[left, right]| [left.trim().to_string(), right.trim().to_string()])
+        } else {
+            equality.clone()
+        };
+        let substituted = compared.and_then(|compared| {
+            self.substituted_helper_operands(test, assertion, index, syntax, &compared, probe.skip)
+        });
+        if probe.skip > 0 && substituted.is_none() {
+            // Every eligible call was already tried; the plain readings
+            // below were not what the first attempt selected.
+            return false;
+        }
+        probe.selected.set(substituted.is_some());
+        let substituted_expected;
         // RIPR-SPEC-0265: the text of the owner call, when one operand is it,
         // so an adaptor gate can read the argument the call passes.
-        let (call, expected, call_text): (_, _, Option<&str>) = if reads_assert_eq {
+        let (call, expected, call_text): (_, _, Option<&str>) = if let Some(operands) = &substituted
+        {
+            let Some((call, expected, call_text)) = self.substituted_pin(operands, index) else {
+                return false;
+            };
+            substituted_expected = expected;
+            (call, substituted_expected.as_str(), call_text)
+        } else if reads_assert_eq {
             let Some(operands) = assertion_comparison_operands(&assertion.text) else {
                 return false;
             };
@@ -3004,10 +3117,7 @@ impl OwnerReturnPin {
             let rendered = (self.returns_scalar && matches!(self.path, ReturnPathGate::Any))
                 .then(|| {
                     [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
-                        rendered_scalar_operand(operands[at])
-                            .filter(|_| is_plain_string_literal(operands[other]))
-                            // #7905: every NaN payload renders as `NaN`.
-                            .filter(|_| operands[other].trim() != "\"NaN\"")
+                        helper_arguments::rendered_template_call(operands[at], operands[other])
                             .and_then(|call| self.awaited_call_shape(call, &self.name))
                             .map(|call| (call, operands[other], None))
                     })
@@ -3232,11 +3342,14 @@ impl OwnerReturnPin {
         // registration, and an assertion attributed to it from anywhere else
         // sees bindings that are not in it.
         let loan = syntax.helper_loan(test, assertion, index);
-        let helper = loan.as_ref().map(|loan| loan.helper.clone());
+        let loaned = loan.as_ref().map(|loan| loan.helper.clone());
         let in_body = (test.start_line..=test.end_line).contains(&assertion.line);
-        if in_body == helper.is_some() {
+        if in_body == loaned.is_some() {
             return false;
         }
+        // A substituted pin reads both operands in the test's own scope, so
+        // the gates below treat it as the test's assertion, not the helper's.
+        let helper = loaned.filter(|_| substituted.is_none());
         // #6578 review: a borrowed helper assertion compares the helper's
         // parameters, which the test may fill from a fixture that calls the
         // owner (`check(want)` with `#[fixture] fn want() { weight(4) }`).
@@ -7761,7 +7874,7 @@ fn std_rooted_macro_path(text: &str, macro_name: &str) -> Option<String> {
 }
 
 /// `assert_eq!` whose only nested macros are `expansion` (`format!`, which
-/// [`rendered_scalar_operand`] reads, or `vec!`, which
+/// [`helper_arguments::rendered_template_call`] reads, or `vec!`, which
 /// [`single_element_index`] reads).
 fn is_assert_eq_over(text: &str, expansion: &str) -> bool {
     let masked = mask_comments_and_strings(text);
@@ -9320,25 +9433,6 @@ fn let_initializer(binding: &str) -> Option<&str> {
     (!initializer.starts_with(['=', '>'])).then(|| initializer.trim())
 }
 
-/// trap-shine-debug-exact-control: the call `operand` renders when it is
-/// exactly `format!("{}", call)` or `format!("{:?}", call)`. A primitive
-/// scalar's std `Display` and `Debug` text differs for every value but NaN,
-/// so comparing it with an exact string pins the value; the text `NaN`
-/// is refused (#7905). Width, precision,
-/// alternate and hex flags, extra arguments and other wrappers are refused.
-fn rendered_scalar_operand(operand: &str) -> Option<&str> {
-    let inner = operand
-        .trim()
-        .strip_prefix("format!")?
-        .trim_start()
-        .strip_prefix('(')?
-        .strip_suffix(')')?;
-    match split_top_level_arguments(inner)?.as_slice() {
-        [spec, call] | [spec, call, ""] if matches!(*spec, "\"{}\"" | "\"{:?}\"") => Some(call),
-        _ => None,
-    }
-}
-
 const INTEGER_TYPES: &[&str] = &[
     "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
 ];
@@ -9624,14 +9718,6 @@ fn value_guard_subject<'a>(condition: &str, assertion: &'a str) -> Option<&'a st
         _ => false,
     };
     spares_wrong.then_some(subject)
-}
-
-/// A plain `"..."` string literal with no escapes or inner quotes.
-fn is_plain_string_literal(text: &str) -> bool {
-    text.trim()
-        .strip_prefix('"')
-        .and_then(|rest| rest.strip_suffix('"'))
-        .is_some_and(|inner| !inner.contains(['"', '\\']))
 }
 
 /// cell-0094: whether `owner` declares a primitive scalar return type that
@@ -12055,3 +12141,11 @@ const BY_VALUE_PRELUDE_METHODS: &[&str] = &[
 
 #[cfg(test)]
 mod tests;
+
+/// Which eligible eager call of a borrowed check helper one admission attempt
+/// reads, and whether the attempt selected one (RIPR-SPEC-0197).
+#[derive(Default)]
+struct HelperCallProbe {
+    skip: usize,
+    selected: Cell<bool>,
+}

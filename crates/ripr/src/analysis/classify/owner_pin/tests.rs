@@ -10227,6 +10227,10 @@ fn a_scalar_rendering_compared_with_exact_text_pins() {
         "assert_eq!(\"12\", format!(\"{}\", crate::weight(4)));",
         "assert_eq!(format!(\"{}\", crate::weight(4),), \"12\");",
         "assert_eq!(format!(\"{:?}\", crate::weight(4)), \"12\", \"rendered\");",
+        // RIPR-SPEC-0231 example 12: fixed text around the one placeholder
+        // fixes where the rendering starts and ends.
+        "assert_eq!(format!(\"w{}\", crate::weight(4)), \"w12\");",
+        "assert_eq!(format!(\"{{\\\"w\\\":{}}}\", crate::weight(4)), \"{\\\"w\\\":12}\");",
     ] {
         let lib = unit_tests("", body);
         assert_eq!(path_admitted(&lib, "x * 3", None), [body], "{body}");
@@ -10236,8 +10240,11 @@ fn a_scalar_rendering_compared_with_exact_text_pins() {
         "assert_eq!(format!(\"{:x}\", crate::weight(4)), \"c\");",
         "assert_eq!(format!(\"{:#?}\", crate::weight(4)), \"12\");",
         "assert_eq!(format!(\"{:>3}\", crate::weight(4)), \" 12\");",
-        "assert_eq!(format!(\"w{}\", crate::weight(4)), \"w12\");",
         "assert_eq!(format!(\"{}{}\", crate::weight(4), 1), \"121\");",
+        // The expected text does not hold the template's text, or holds
+        // nothing where the rendering goes.
+        "assert_eq!(format!(\"w{}\", crate::weight(4)), \"v12\");",
+        "assert_eq!(format!(\"w{}\", crate::weight(4)), \"w\");",
         // The other side is not plain literal text.
         "let want = String::from(\"12\");\n        assert_eq!(format!(\"{}\", crate::weight(4)), want);",
         "assert_eq!(format!(\"{}\", crate::weight(4)), format!(\"{}\", 12));",
@@ -10247,6 +10254,8 @@ fn a_scalar_rendering_compared_with_exact_text_pins() {
         "assert_eq!(format!(\"{}\", crate::weight(dbg!(4))), \"12\");",
         "assert_eq!(format!(\"{}\", crate::weight(4) / 2), \"6\");",
         "assert_eq!(format!(\"{}\", crate::weight(4)).len(), 2);",
+        "assert_eq!(format!(\"{}\", crate::weight(4)).len().to_string(), \"2\");",
+        "assert_eq!(format!(\"{}\", crate::weight(4)).replace(\"6\", \"2\"), \"12\");",
         "assert_ne!(format!(\"{}\", crate::weight(4)), \"13\");",
         "assert!(!format!(\"{:?}\", crate::weight(4)).is_empty());",
     ] {
@@ -10265,6 +10274,7 @@ fn a_scalar_rendering_compared_with_exact_text_pins() {
         "assert_eq!(format!(\"{}\", crate::weight(4)), \"NaN\");",
         "assert_eq!(\"NaN\", format!(\"{:?}\", crate::weight(4)));",
         "assert_eq!(\"NaN\", format!(\"{}\", crate::weight(4)));",
+        "assert_eq!(format!(\"w={}\", crate::weight(4)), \"w=NaN\");",
     ] {
         assert!(
             path_admitted(&float_tests(body), "x * 3", None).is_empty(),
