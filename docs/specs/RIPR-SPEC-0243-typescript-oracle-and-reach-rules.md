@@ -928,6 +928,8 @@ to `amount - 20`, and `tests/lib.test.ts` has
   `extract_tests_maps_class_tothrow_to_exact_error_variant_oracle`,
   `extract_tests_keeps_lowercase_ident_tothrow_broad`,
   `find_related_tests_matches_named_import_alias_calls`,
+  `find_related_tests_module_value_use_enclosing_scope_shadow_negatives`,
+  `find_related_tests_module_value_use_masking_only_negatives`,
   `default_import_does_not_credit_named_non_default_owner`,
   `overcredit_4103_spy_fabrication_blocks_owner_credit_and_names_limitation`.
 - Existing: `crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs`

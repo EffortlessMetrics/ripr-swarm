@@ -2935,6 +2935,24 @@ it.each([1, 2])("parameter named stop", (stop) => {
     assert_eq!(tests.len(), 2);
     let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
     assert!(candidates.is_empty(), "{candidates:?}");
+
+    let namespace = extract_tests(
+        Path::new("tests/scope_ns.test.ts"),
+        r#"import * as ns from "../src/owners";
+
+describe("suite with a describe-level ns", () => {
+    const ns = { run: (v: unknown[]) => v, stop: 1 };
+
+    test("uses the local ns", () => {
+        expect(ns.run([ns.stop])).toEqual([1]);
+    });
+});
+"#,
+    );
+    assert_eq!(namespace.len(), 1);
+    let candidates =
+        related_test_candidates(&owner, &namespace, None, &ReExportIndex::empty(), None);
+    assert!(candidates.is_empty(), "{candidates:?}");
 }
 
 #[test]
