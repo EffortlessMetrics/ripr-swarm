@@ -37,3 +37,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — match_arm_tuple_terminal_inherited_constructor (4)
+
+Reason:
+RIPR-SPEC-0108: #7840 wrapped-signature parameter names now label observed function-argument values; classification unchanged
+
+Command:
+`cargo xtask goldens bless match_arm_tuple_terminal_inherited_constructor --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

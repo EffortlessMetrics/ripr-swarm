@@ -10,7 +10,14 @@ import {
   Trace
 } from 'vscode-languageclient/node';
 import { explicitSetting, getConfig, RiprConfig } from './config';
-import { missingServerRemedy, requestedServerVersion, resolveServer, ResolveFailure, ResolvedServer } from './serverResolver';
+import {
+  requestedServerVersion,
+  resolveServer,
+  ResolveFailure,
+  ResolveFailureKind,
+  ResolvedServer,
+  resolutionFailureRecovery
+} from './serverResolver';
 import { setupFilePath, hasUnsafeShellMetacharacter, redirectTargetMatches, redirectStaysInWorkspace, serverShellArg, normalizePath, sameWorkspaceRoot, rootMatchesWorkspace, objectField, stringField, boundedStringField, arrayLength, numberFieldValue, TEST_RUNNER_VERIFY_COMMAND_PREFIXES, testRunnerCommandLeavesScope } from './packetJson';
 import { riprDocumentSelectorsForWorkspace, extensionVersion, traceFromConfig, currentWorkspaceRootState, workspaceRootStateNoWorkspace, workspaceRootStateLabel, workspaceRootStateDetail, workspaceRootPickItems } from './workspaceHelpers';
 import type { WorkspaceRootPickItem } from './workspaceHelpers';
@@ -121,6 +128,27 @@ export const RIPR_DOCUMENT_SELECTORS: Array<{ language: string; scheme: 'file' }
 
 const SHOW_OUTPUT_ACTION = 'Show Output';
 const SELECT_WORKSPACE_ROOT_ACTION = 'Select Workspace Root';
+const OPEN_SETTINGS_ACTION = 'Open Settings';
+const COPY_DIAGNOSTIC_ACTION = 'Copy Diagnostic';
+const COPY_INSTALL_COMMAND_ACTION = 'Copy Install Command';
+const RETRY_ACTION = 'Retry';
+
+/**
+ * Popup actions for a missing-server error. Copy Install Command is only
+ * honest when no binary was found; download, HTTP, checksum and manifest
+ * failures get diagnostic, Show Output, and retry actions instead (#8588).
+ * Show Output matches the server-failed recovery from #8587.
+ */
+export function missingServerMessageActions(kind: ResolveFailureKind): string[] {
+  if (kind === 'missing_binary') {
+    return [OPEN_SETTINGS_ACTION, COPY_DIAGNOSTIC_ACTION, COPY_INSTALL_COMMAND_ACTION, RETRY_ACTION];
+  }
+  return [OPEN_SETTINGS_ACTION, COPY_DIAGNOSTIC_ACTION, SHOW_OUTPUT_ACTION, RETRY_ACTION];
+}
+
+export function resolutionFailureGuidance(failure: ResolveFailure, autoDownload: boolean): string {
+  return resolutionFailureRecovery(failure.kind, autoDownload, failure.remedy);
+}
 
 // Palette invocations of diagnostic-scoped commands arrive without the
 // payload a code action carries. Say how to invoke them with a target
@@ -622,9 +650,9 @@ export class RiprClientController {
         kind: 'serverUnavailable',
         summary: 'ripr server is not available.',
         detail: server.detail,
-        nextStep: `${server.remedy ?? missingServerRemedy(config.autoDownload)} Then run ripr: Restart Server.`
+        nextStep: `${resolutionFailureGuidance(server, config.autoDownload)} Then run ripr: Restart Server.`
       });
-      await this.showMissingServerMessage(server.message, server.detail, server.remedy);
+      await this.showMissingServerMessage(server);
       return;
     }
     this.server = server;
@@ -736,7 +764,7 @@ export class RiprClientController {
         // server that already died at the handshake.
         const reason = error instanceof Error ? error.message : String(error);
         this.updateStatus({
-          kind: 'serverUnavailable',
+          kind: 'serverFailed',
           summary: 'ripr server failed to start.',
           detail: `Server: ${server.source} (${server.detail})\n${reason}`,
           nextStep: 'Run ripr: Show Output to see the server error, fix it, then run ripr: Restart Server.'
@@ -2625,11 +2653,13 @@ export class RiprClientController {
       this.server = server;
       return server;
     }
-    await this.showMissingServerMessage(server.message, server.detail, server.remedy);
+    await this.showMissingServerMessage(server);
     return undefined;
   }
 
-  private async showMissingServerMessage(summary: string, detail: string, remedy?: string): Promise<void> {
+  private async showMissingServerMessage(failure: ResolveFailure): Promise<void> {
+    const summary = failure.message;
+    const detail = failure.detail;
     this.output.appendLine(summary);
     this.output.appendLine(detail);
     // Name the actual failure (HTTP/checksum/manifest) in the popup body —
@@ -2642,17 +2672,14 @@ export class RiprClientController {
       ? detail.split('\n')[0] || summary
       : summary;
     const separator = cause.endsWith('.') ? '' : '.';
-    const guidance = remedy ?? missingServerRemedy(this.runtime.getConfig().autoDownload);
+    const guidance = resolutionFailureGuidance(failure, this.runtime.getConfig().autoDownload);
     const selection = await this.runtime.showErrorMessage(
       `ripr server is not available: ${cause}${separator} ${guidance}`,
-      'Open Settings',
-      'Copy Diagnostic',
-      'Copy Install Command',
-      'Retry'
+      ...missingServerMessageActions(failure.kind)
     );
-    if (selection === 'Open Settings') {
+    if (selection === OPEN_SETTINGS_ACTION) {
       await vscode.commands.executeCommand('workbench.action.openSettings', 'ripr.server');
-    } else if (selection === 'Copy Diagnostic') {
+    } else if (selection === COPY_DIAGNOSTIC_ACTION) {
       try {
         await this.runtime.writeClipboard(`ripr server is not available\n${summary}\n${detail}`);
         this.runtime.showInformationMessage('Copied the ripr server diagnostic to the clipboard.');
@@ -2661,9 +2688,11 @@ export class RiprClientController {
         this.output.appendLine(`ripr copy server diagnostic failed: ${message}`);
         this.warnWithOutput('ripr could not copy the server diagnostic.');
       }
-    } else if (selection === 'Copy Install Command') {
+    } else if (selection === COPY_INSTALL_COMMAND_ACTION) {
       await this.runtime.writeClipboard('cargo install ripr');
-    } else if (selection === 'Retry') {
+    } else if (selection === SHOW_OUTPUT_ACTION) {
+      this.showOutput();
+    } else if (selection === RETRY_ACTION) {
       await this.restart();
     }
   }
@@ -3177,6 +3206,8 @@ function serverStartedSummary(kind: RiprStatusKind): string {
       return 'not yet; resolving server binary';
     case 'serverUnavailable':
       return 'no; server unavailable';
+    case 'serverFailed':
+      return 'no; server failed to start';
     case 'disabled':
       return 'no; extension disabled';
     case 'noWorkspace':
@@ -3209,6 +3240,7 @@ function evidenceFreshnessSummary(kind: RiprStatusKind): string {
     case 'noEnabledLanguages':
       return 'not projected; languages are disabled';
     case 'serverUnavailable':
+    case 'serverFailed':
     case 'noWorkspace':
     case 'workspaceAmbiguous':
     case 'disabled':
