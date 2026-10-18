@@ -515,7 +515,7 @@ pub(super) fn is_dunder_name(name: &str) -> bool {
 /// argument: `reversed(x)` runs `type(x).__reversed__`, `len(x)` runs
 /// `__len__`. Operator syntax (`x[i]`, `a == b`) is deliberately absent: it
 /// cannot be bound to a receiver by call shape.
-const PROTOCOL_ENTRIES: [(&str, &str); 8] = [
+pub(super) const PROTOCOL_ENTRIES: [(&str, &str); 8] = [
     ("reversed", "__reversed__"),
     ("len", "__len__"),
     ("bool", "__bool__"),
@@ -536,21 +536,20 @@ fn protocol_entry_calls(text: &str, body: &str, local: &str, builtin: &str) -> V
     let constructions: Vec<usize> = body
         .match_indices(&construct)
         .filter(|(idx, _)| {
-            python_callee_start_has_boundary(body, *idx)
-                && !line_prefix_looks_like_comment_or_string(body, *idx)
+            python_callee_start_has_boundary(body, *idx) && !python_text_hides_code(body, *idx)
         })
         .map(|(idx, _)| idx)
         .collect();
     let bound = match constructions.as_slice() {
         [only] => binding_target_for_construction(body, *only)
-            .filter(|var| assignment_count(body, var) == 1),
+            .filter(|var| assignment_count(body, var) == 1)
+            .filter(|var| !keyword_or_operator_binds_text(body, var, true)),
         _ => None,
     };
     let needle = format!("{builtin}(");
     text.match_indices(&needle)
         .filter(|(idx, _)| {
-            python_callee_start_has_boundary(text, *idx)
-                && !line_prefix_looks_like_comment_or_string(text, *idx)
+            python_callee_start_has_boundary(text, *idx) && !python_text_hides_code(text, *idx)
         })
         .filter(|(idx, _)| {
             let argument = text[idx + needle.len()..].trim_start();
@@ -570,6 +569,13 @@ fn protocol_entry_calls(text: &str, body: &str, local: &str, builtin: &str) -> V
         .collect()
 }
 
+/// Whether the test rebinds the builtin `name` (an import, an assignment,
+/// a `def`/`class`/`for`/`as`/walrus target, or a parameter), so a call spelled
+/// `name(...)` is no longer the builtin.
+fn builtin_is_shadowed(test: &PythonTest, name: &str) -> bool {
+    test.imports.iter().any(|import| import.alias == name) || test_rebinds_import_alias(test, name)
+}
+
 /// Protocol-entry calls of the owner dunder in `text` on a receiver bound to
 /// the owner class, each as `(builtin start, open paren)`; `body` is the
 /// test body that fixes the receiver binding.
@@ -582,6 +588,7 @@ fn owner_protocol_entry_calls(
         .iter()
         .filter(|(_, dunder)| *dunder == owner.name)
         .map(|(builtin, _)| *builtin)
+        .filter(|builtin| !builtin_is_shadowed(test, builtin))
         .collect();
     if builtins.is_empty() {
         return Vec::new();
@@ -616,12 +623,14 @@ pub(super) fn oracle_operand_protocol_entry(
     let Some(depth) = oracle_operand_depth(text) else {
         return false;
     };
+    let wrappers: Vec<&str> = ORDER_PRESERVING_WRAPPERS
+        .into_iter()
+        .filter(|wrapper| !builtin_is_shadowed(test, wrapper))
+        .collect();
     super::test_activation::activation_control(test).is_none()
         && owner_protocol_entry_calls(text, test, owner)
             .into_iter()
-            .any(|(start, open)| {
-                reaches_operand_depth(text, start, open, depth, &ORDER_PRESERVING_WRAPPERS)
-            })
+            .any(|(start, open)| reaches_operand_depth(text, start, open, depth, &wrappers))
 }
 
 /// Relation for a dunder method owner (`__init__`, `__setitem__`, ...).
@@ -1252,14 +1261,14 @@ pub(super) fn oracle_operand_calls(text: &str, callee: &str) -> bool {
 /// wrapper may ignore it (`always_true(utils.sign(0))`).
 const MATERIALIZING_WRAPPERS: [&str; 5] = ["list", "tuple", "set", "frozenset", "sorted"];
 
-/// Whether the call starting at `start` (its `(` at `open`) sits at the
-/// asserted operand `depth`, directly or only inside materializing wrappers
-/// that take it as their sole argument.
 /// Wrappers that keep the entry's element order. `sorted`/`set`/`frozenset`
 /// erase the ordering `__reversed__` determines, so a protocol entry under them
 /// asserts nothing about the owner.
 const ORDER_PRESERVING_WRAPPERS: [&str; 2] = ["list", "tuple"];
 
+/// Whether the call starting at `start` (its `(` at `open`) sits at the
+/// asserted operand `depth`, directly or only inside the given `wrappers`
+/// that take it as their sole argument.
 fn reaches_operand_depth(
     text: &str,
     start: usize,

@@ -7165,7 +7165,19 @@ fn protocol_entry_stays_uncredited_without_a_bound_owner_receiver() -> Result<()
         // Attribute-chained or suffixed names are not the builtin.
         "from src.nr import numeric_range\n\n\ndef test_attr():\n    assert list(helpers.reversed(numeric_range(0))) == []\n",
         "from src.nr import numeric_range\n\n\ndef test_suffix():\n    assert list(my_reversed(numeric_range(0))) == []\n",
-        // The entry sits in a comment or a string.
+        // The receiver is rebound by a loop target or a `with ... as` target.
+        "from src.nr import numeric_range\n\n\ndef test_loop():\n    r = numeric_range(0)\n    for r in [[1]]:\n        pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_with():\n    r = numeric_range(0)\n    with open_it() as r:\n        pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_walrus():\n    r = numeric_range(0)\n    (r := [1])\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_augmented():\n    r = numeric_range(0)\n    r += [1]\n    assert list(reversed(r)) == [1]\n",
+        // The entry name is replaced by an import or a local definition.
+        "from helpers import reversed\nfrom src.nr import numeric_range\n\n\ndef test_imported_entry():\n    assert list(reversed(numeric_range(0))) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_local_entry():\n    def reversed(x):\n        return x\n    assert list(reversed(numeric_range(0))) == []\n",
+        // The class is a same-named class from another module.
+        "from other import numeric_range\n\n\ndef test_foreign():\n    assert list(reversed(numeric_range(0))) == []\n",
+        "from other import numeric_range as Foreign\n\n\ndef test_foreign_alias():\n    assert list(reversed(Foreign(0))) == []\n",
+        // The entry sits in a comment (also a trailing one) or a string.
+        "from src.nr import numeric_range\n\n\ndef test_trailing_comment():\n    x = 1  # reversed(numeric_range(0))\n    assert x\n",
         "from src.nr import numeric_range\n\n\ndef test_comment():\n    # reversed(numeric_range(0))\n    assert True\n",
         "from src.nr import numeric_range\n\n\ndef test_string():\n    assert \"reversed(numeric_range(0))\"\n",
     ] {
@@ -7191,6 +7203,8 @@ fn protocol_entry_outside_the_assertion_or_under_an_unordered_wrapper_is_not_cre
         "from src.nr import numeric_range\n\n\ndef test_sorted():\n    assert sorted(reversed(numeric_range(0))) == []\n",
         "from src.nr import numeric_range\n\n\ndef test_set():\n    assert set(reversed(numeric_range(0))) == set()\n",
         "from src.nr import numeric_range\n\n\ndef test_frozenset():\n    assert frozenset(reversed(numeric_range(0))) == frozenset()\n",
+        // A replaced wrapper is not the order-preserving builtin.
+        "from helpers import list\nfrom src.nr import numeric_range\n\n\ndef test_imported_wrapper():\n    assert list(reversed(numeric_range(0))) == []\n",
     ] {
         let (finding, _) = classify_reversed_guard(test_src)?;
         assert_ne!(finding.class, ExposureClass::Exposed, "{test_src}");
@@ -7218,5 +7232,31 @@ fn protocol_entry_inside_an_opaque_wrapper_relates_but_is_not_credited() -> Resu
     );
     assert_ne!(finding.class, ExposureClass::Exposed);
     assert_eq!(finding.oracle_alignment.as_deref(), Some("orthogonal"));
+    Ok(())
+}
+
+#[test]
+fn every_protocol_entry_relates_only_its_own_dunder() -> Result<(), String> {
+    let src = "class Box:\n    def __init__(self, n):\n        self.n = n\n".to_string()
+        + &related_tests::PROTOCOL_ENTRIES
+            .iter()
+            .map(|(_, dunder)| format!("\n    def {dunder}(self):\n        return self.n\n"))
+            .collect::<String>();
+    let file = Path::new("src/box.py");
+    let owners = extract_owners(file, &src);
+    for (builtin, dunder) in related_tests::PROTOCOL_ENTRIES {
+        let test_src = format!(
+            "from src.box import Box\n\n\ndef test_entry():\n    assert {builtin}(Box(0))\n"
+        );
+        let tests = extract_tests(Path::new("tests/test_box.py"), &test_src);
+        assert_eq!(tests.len(), 1, "{test_src}");
+        for owner in owners.iter().filter(|owner| owner.name.starts_with("__")) {
+            let relations = candidate_relations(owner, &tests);
+            let entry = relations
+                .iter()
+                .any(|(_, kind)| *kind == "protocol_entry_call");
+            assert_eq!(entry, owner.name == dunder, "{builtin} vs {}", owner.name);
+        }
+    }
     Ok(())
 }
