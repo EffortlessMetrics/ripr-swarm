@@ -816,11 +816,13 @@ outcome incomplete. Human output renders it without the incomplete-scope hedge.
 
 `unevaluated_condition` (#8714) discloses conditional assertion credit: a
 credited test assertion sits under a branch condition static analysis cannot
-evaluate, so the credited oracle may never execute. The changed scope itself
-was fully read and probed — the limitation names the test file and the
-condition (detail prefix `typescript_conditional_assertion_credit`), and human
-output says the credited assertion sits under an unevaluable condition rather
-than claiming files were not analyzed.
+evaluate, so the credited oracle may never execute. The limitation names the
+test file and the condition (detail prefix `typescript_conditional_assertion_credit`),
+and human output says the credited assertion sits under an unevaluable
+condition rather than claiming files were not analyzed. Unlike `eol_only_churn`,
+this kind still marks the outcome incomplete — consumers gating on
+`analysis_complete` see these runs as partial; letting it ride a complete
+outcome is a separate, consumer-visible design decision (#8714 review).
 
 When an *unchanged* Rust test file is indexed by lexical fallback after the
 reference parser refuses it, and a classified owner consults that file for

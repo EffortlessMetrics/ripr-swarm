@@ -58,8 +58,11 @@ The TypeScript preview adapter:
   `typescript_conditional_assertion_credit` disclosure, naming the unevaluated
   condition `ok` and recording that the credited oracle may never execute
   (#8714). The kind is `unevaluated_condition`, not
-  `language_scope_unsupported`: the changed scope was fully analyzed; the
-  caveat is conditional credit, not unanalyzed files (review on #8714).
+  `language_scope_unsupported`, so the limitation names conditional credit
+  rather than unanalyzed files (review on #8714). The outcome is still
+  `partial_with_limitations`: unlike `eol_only_churn`, this kind marks the
+  run incomplete, so consumers gating on `analysis_complete` see it as
+  partial.
 
 ## Must Not
 

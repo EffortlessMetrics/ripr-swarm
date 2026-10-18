@@ -191,8 +191,11 @@ pub(crate) enum AnalysisLimitationKind {
     EolOnlyChurn,
     /// #8714: a credited assertion sits under a branch condition static
     /// analysis cannot evaluate, so the credited oracle may never execute.
-    /// The changed scope itself was fully read and probed; the limitation
-    /// discloses conditional credit, not unanalyzed files.
+    /// The limitation content discloses conditional credit rather than
+    /// unanalyzed files, but unlike `EolOnlyChurn` this kind still marks the
+    /// outcome incomplete: consumers gating on `analysis_complete` see these
+    /// runs as partial (#8714 review). Letting it ride a complete outcome is
+    /// a separate, consumer-visible design decision.
     UnevaluatedCondition,
 }
 
