@@ -1,6 +1,8 @@
 # Fixture: whole_tail_match_scrutinee_return
 
-Spec: RIPR-SPEC-0229, RIPR-SPEC-0108
+Spec: RIPR-SPEC-0229
+
+This refusal control also exercises RIPR-SPEC-0108.
 
 ## Given
 
