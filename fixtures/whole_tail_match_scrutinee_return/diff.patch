@@ -1,0 +1,10 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -2,0 +3,7 @@
++/// A returned scrutinee bypasses the match.
++pub(crate) fn charge(lease: &Lease) -> u64 {
++    match { return 600; lease.elapsed } {
++        Some(ms) => ms,
++        None => 600,
++    }
++}

@@ -15430,6 +15430,7 @@ tests = [
   "crates/ripr/tests/match_guard_edit.rs::an_added_guard_conjunct_keeps_the_arm_head",
 ]
 fixtures = [
+  "fixtures/whole_tail_match_scrutinee_return",
   "fixtures/field_match_helper_mutable",
   "fixtures/field_match_helper_taken",
   "fixtures/field_match_raw_option_shadow",
@@ -15446,6 +15447,7 @@ code = [
   "crates/ripr/src/analysis/value_resolution/option_field.rs",
   "crates/ripr/src/analysis/classify/arm_selection/field_selector.rs",
   "crates/ripr/src/analysis/classify/owner_pin.rs",
+  "crates/ripr/src/analysis/classify/owner_pin/whole_tail_match.rs",
   "crates/ripr/src/analysis/syntax/owner_pin.rs",
   "crates/ripr/src/analysis/classify/gap_admission.rs",
   "crates/ripr/src/domain/language.rs",
@@ -15461,6 +15463,8 @@ code = [
   "crates/ripr/src/output/human/explain.rs",
 ]
 outputs = [
+  "fixtures/whole_tail_match_scrutinee_return/expected/check.json",
+  "fixtures/whole_tail_match_scrutinee_return/expected/human.txt",
   "fixtures/match_arm_shadowed_assert/expected/check.json",
   "fixtures/match_arm_shadowed_assert/expected/human-full.txt",
   "docs/specs/RIPR-SPEC-0229-match-arm-selection-discriminator.md",

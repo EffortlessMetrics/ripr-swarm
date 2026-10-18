@@ -877,3 +877,13 @@ ArmSelector, activation facts, individual-arm gaps and unknown thresholds retain
 their existing authority. In particular, observing a `None` invocation's whole
 result cannot credit an unselected `Some` arm. Existing unchanged-match and
 nested/non-tail limitations remain outside this bounded receipt.
+
+The shared result-binding reader retains its source-order bounds: the supported
+immutable binding precedes the assertion on an earlier line. A same-line
+binding does not receive this receipt.
+
+`fixtures/whole_tail_match_scrutinee_return` and honesty-corpus case
+`rust_whole_tail_match_scrutinee_return_bypasses_observation` retain a compiling
+counterexample: a scrutinee returns before selection, so the original and all
+arm-zero mutants pass the same pin. Its header and individual arms must remain
+uncredited; the whole-result receipt cannot claim their result was observed.
