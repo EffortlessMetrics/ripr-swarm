@@ -45,7 +45,7 @@ Support-tier impact:
     its suggested location when such a relation exists. It still gets no
     canonical gap, as today.
   - rule 16: a `reachable_unrevealed` finding whose only bound oracle is
-    `weak_broad` on a strong-eligible kind becomes `static_unknown` and loses
+    `weak_broad` on a strong-eligible kind, on an owner-call relation, becomes `static_unknown` and loses
     its gap and suggested location.
 - Every other rule, including rules 1, 10 and 14, changes no output.
   Claim boundaries remain governed by
@@ -302,7 +302,9 @@ For each change, the first match wins:
     its kind or hint. Infect and propagate are `unknown`. Confidence is
     `0.5`. ripr never reports a runtime mutation outcome from a packet.
 16. **Broad oracle is unknown.** A relation whose bound oracle (rule 5) has
-    strength `weak_broad` and a kind rule 6 lists as strong-eligible reads
+    strength `weak_broad` and a kind rule 6 lists as strong-eligible, on a
+    `direct_owner_call`, `method_receiver` or `helper_call` relation (the
+    kinds that earn weak oracle credit under rule 7), reads
     `static_unknown`, not `reachable_unrevealed`. The producer grades
     `throws_ok`, `dies_ok` and `like(dies {...}, ...)` alike as `weak_broad`
     whatever the matcher pins (#6582), so a gap on it is wrong about as often
